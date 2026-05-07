@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cerebrum Platform</title>
+    <!-- Markdown rendering (graceful fallback to plain text if CDN blocked) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" defer></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         body { display: flex; height: 100vh; background: #0d0d0d; overflow: hidden; color: #e0e0e0; }
@@ -116,10 +119,12 @@
         </div>
         <div class="input-area">
             <div class="input-box">
-                <input type="file" id="fileInput" style="display: none" onchange="handleFile(this)" accept=".pdf,.docx,.txt,.jpg,.png">
-                <button onclick="document.getElementById('fileInput').click()" title="Upload file">📎</button>
-                <textarea id="textInput" rows="1" placeholder="Ask anything..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
-                <button onclick="sendMessage()" id="sendBtn">➤</button>
+                <input type="file" id="fileInput" style="display: none" onchange="handleFile(this)" accept=".pdf,.doc,.docx,.txt,.md,.csv,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp">
+                <button onclick="document.getElementById('fileInput').click()" title="Upload file (PDF, Word, Excel, image, text)">📎</button>
+                <textarea id="textInput" rows="1" placeholder="Ask anything…  (Shift+Enter for newline)" onkeydown="handleTextareaKeydown(event)"></textarea>
+                <button onclick="sendMessage()" id="sendBtn" title="Send (Enter)">➤</button>
+                <button onclick="abortChat()" id="stopBtn" style="display:none;background:#3a1a1a;color:#ff6666;" title="Stop generating">■</button>
+                <button onclick="resetChat()" id="resetBtn" style="background:#1a1a1a;color:#888;" title="Clear chat history">🗑</button>
             </div>
         </div>
     </div>
@@ -231,6 +236,72 @@ class CerebrumClient {
 
     chat(message, model = 'deepseek-chat') {
         return this._request('POST', '/v1/chat', { message, model, stream: false });
+    }
+
+    /**
+     * Stream chat tokens via SSE.
+     * onToken(text) called for each token. onDone(fullText) at end.
+     * Returns AbortController so caller can cancel.
+     */
+    chatStream({ prompt, history = [], model = 'deepseek-chat', sessionId = 'default', onToken, onDone, onError }) {
+        const controller = new AbortController();
+        (async () => {
+            let full = '';
+            try {
+                const resp = await fetch(`${this.base}/v1/chat/stream`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.key}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream',
+                    },
+                    body: JSON.stringify({ prompt, history, model, session_id: sessionId }),
+                    signal: controller.signal,
+                });
+                if (!resp.ok) {
+                    const txt = await resp.text().catch(() => '');
+                    throw new Error(`HTTP ${resp.status}: ${txt}`);
+                }
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buf = '';
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    let idx;
+                    while ((idx = buf.indexOf('\n\n')) !== -1) {
+                        const event = buf.slice(0, idx);
+                        buf = buf.slice(idx + 2);
+                        const line = event.split('\n').find(l => l.startsWith('data:'));
+                        if (!line) continue;
+                        const json = line.slice(5).trim();
+                        if (!json) continue;
+                        try {
+                            const obj = JSON.parse(json);
+                            if (obj.type === 'token' && obj.content) {
+                                full += obj.content;
+                                onToken && onToken(obj.content, full);
+                            } else if (obj.type === 'error') {
+                                throw new Error(obj.message || 'Stream error');
+                            } else if (obj.type === 'end') {
+                                // handled below
+                            }
+                        } catch (parseErr) {
+                            // Non-JSON event lines are ignored
+                        }
+                    }
+                }
+                onDone && onDone(full);
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    onDone && onDone(full + '\n\n_[stopped]_');
+                } else {
+                    onError && onError(err);
+                }
+            }
+        })();
+        return controller;
     }
 
     upload(formData) {
@@ -355,6 +426,26 @@ function formatTypeConversions(conversions) {
 
 const connectedDrives = {};
 let activeFileContext = null;
+let chatHistory = [];          // [{role:'user'|'assistant', content:'...'}]
+let activeChatController = null; // AbortController for the in-flight stream
+
+const HISTORY_KEY = 'cerebrum_chat_history_v1';
+const HISTORY_MAX_TURNS = 40;
+
+function loadHistory() {
+    try {
+        const raw = localStorage.getItem(HISTORY_KEY);
+        if (raw) chatHistory = JSON.parse(raw) || [];
+    } catch (e) { chatHistory = []; }
+}
+
+function saveHistory() {
+    try {
+        const trimmed = chatHistory.slice(-HISTORY_MAX_TURNS);
+        chatHistory = trimmed;
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+    } catch (e) {}
+}
 
 function setActiveFileContext(name, content, driveName) {
     activeFileContext = { name, content, driveName };
@@ -364,21 +455,41 @@ function clearActiveFileContext() {
     activeFileContext = null;
 }
 
-function addMessage(text, role = 'assistant') {
+// Render assistant text as markdown when marked.js is available; fall back to plain text otherwise.
+function renderMarkdown(text) {
+    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+        try {
+            const html = marked.parse(text || '', { gfm: true, breaks: true });
+            return DOMPurify.sanitize(html);
+        } catch (e) { /* fall through */ }
+    }
+    // Plain-text fallback: escape + preserve newlines
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML.replace(/\n/g, '<br>');
+}
+
+function addMessage(text, role = 'assistant', { persist = true } = {}) {
     const messages = document.getElementById('messages');
     const msg = document.createElement('div');
     msg.className = `msg ${role}`;
-    msg.innerHTML = `<div class="bubble"></div>`;
-    
-    // Handle HTML in error messages
-    if (role === 'error' && text.includes('<div')) {
-        msg.querySelector('.bubble').innerHTML = text;
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    if (role === 'assistant') {
+        bubble.innerHTML = renderMarkdown(text);
+    } else if (role === 'error' && typeof text === 'string' && text.includes('<div')) {
+        bubble.innerHTML = text;
     } else {
-        msg.querySelector('.bubble').textContent = text;
+        bubble.textContent = text;
     }
-    
+    msg.appendChild(bubble);
     messages.appendChild(msg);
     messages.scrollTop = messages.scrollHeight;
+    if (persist && (role === 'user' || role === 'assistant')) {
+        chatHistory.push({ role, content: String(text) });
+        saveHistory();
+    }
+    return bubble; // caller can use this to mutate during streaming
 }
 
 function setOutcomes(html) {
@@ -389,6 +500,21 @@ function showIndicator(active) {
     document.getElementById('chainIndicator').classList.toggle('active', active);
 }
 
+function setChatBusy(busy) {
+    document.getElementById('sendBtn').style.display = busy ? 'none' : '';
+    document.getElementById('stopBtn').style.display = busy ? '' : 'none';
+    document.getElementById('sendBtn').disabled = busy;
+    showIndicator(busy);
+}
+
+function abortChat() {
+    if (activeChatController) {
+        activeChatController.abort();
+        activeChatController = null;
+    }
+    setChatBusy(false);
+}
+
 function resetChat() {
     document.getElementById('messages').innerHTML = `
         <div class="msg assistant">
@@ -397,6 +523,25 @@ function resetChat() {
     `;
     setOutcomes('');
     clearActiveFileContext();
+    chatHistory = [];
+    saveHistory();
+    abortChat();
+}
+
+function handleTextareaKeydown(event) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        sendMessage();
+    }
+}
+
+function rehydrateMessagesFromHistory() {
+    if (!chatHistory.length) return;
+    const messages = document.getElementById('messages');
+    messages.innerHTML = '';
+    for (const turn of chatHistory) {
+        addMessage(turn.content, turn.role, { persist: false });
+    }
 }
 
 function renderDrives() {
@@ -771,19 +916,22 @@ async function sendMessage() {
     const input = document.getElementById('textInput');
     const userQuestion = input.value.trim();
     if (!userQuestion) return;
+    if (activeChatController) return; // already in flight
 
-    let text = userQuestion;
+    // Build the prompt that goes to the model — file context only goes into the
+    // *current* turn, not into history (so it's not duplicated each turn).
+    let prompt = userQuestion;
     if (activeFileContext && activeFileContext.content) {
-        text = `I am asking about the file "${activeFileContext.name}" from ${activeFileContext.driveName}.\n\nHere is the file content:\n---\n${activeFileContext.content}\n---\n\nMy question: ${userQuestion}`;
+        prompt = `I am asking about the file "${activeFileContext.name}" from ${activeFileContext.driveName}.\n\nHere is the file content:\n---\n${activeFileContext.content}\n---\n\nMy question: ${userQuestion}`;
     }
 
+    // Render user turn + persist
     addMessage(userQuestion, 'user');
     input.value = '';
     input.style.height = 'auto';
-    document.getElementById('sendBtn').disabled = true;
-    showIndicator(true);
+    setChatBusy(true);
 
-    // Replace stale outcomes with a "thinking" panel for the current question
+    // Update right-side outcomes panel
     const askedAt = new Date().toLocaleTimeString();
     setOutcomes(`<div class="outcome-item">
         <div class="outcome-label">💬 Latest answer</div>
@@ -792,27 +940,51 @@ async function sendMessage() {
         <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Thinking…</div>
     </div>`);
 
-    try {
-        const data = await client.chat(text);
-        const answer = data.text || data.result?.text || JSON.stringify(data);
-        addMessage(answer, 'assistant');
-        setOutcomes(`<div class="outcome-item">
-            <div class="outcome-label">💬 Latest answer</div>
-            <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}${activeFileContext ? ` · about <b>${escapeHtml(activeFileContext.name)}</b>` : ''}</div>
-            <div style="color:#ccc;font-size:12px;margin-top:8px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
-            <div style="color:#eee;font-size:13px;margin-top:8px;white-space:pre-wrap;">${escapeHtml(answer)}</div>
-        </div>`);
-    } catch (err) {
-        console.error('Chat error:', err);
-        addMessage(`Error: ${err.message}. Make sure the API server is running.`, 'error');
-        setOutcomes(`<div class="outcome-item">
-            <div class="outcome-label" style="color:#cc6666;">⚠️ Chat failed</div>
-            <div style="color:#cc8888;font-size:12px;margin-top:6px;">${escapeHtml(err.message)}</div>
-        </div>`);
-    }
+    // Empty assistant bubble we'll mutate as tokens arrive
+    const bubble = addMessage('', 'assistant', { persist: false });
+    // Backstop: if the chat block has no API key, no tokens will arrive.
+    // Show a placeholder so the user sees *something* before the end event.
+    bubble.innerHTML = '<span style="color:#666;">…</span>';
 
-    document.getElementById('sendBtn').disabled = false;
-    showIndicator(false);
+    // Send all but the latest user turn as history (latest is the prompt)
+    const history = chatHistory.filter(t => t.role === 'user' || t.role === 'assistant').slice(0, -1);
+
+    let finalText = '';
+    activeChatController = client.chatStream({
+        prompt,
+        history,
+        onToken: (_chunk, full) => {
+            finalText = full;
+            bubble.innerHTML = renderMarkdown(full);
+            const messages = document.getElementById('messages');
+            messages.scrollTop = messages.scrollHeight;
+        },
+        onDone: (full) => {
+            finalText = full || finalText || '_(no response)_';
+            bubble.innerHTML = renderMarkdown(finalText);
+            chatHistory.push({ role: 'assistant', content: finalText });
+            saveHistory();
+            setOutcomes(`<div class="outcome-item">
+                <div class="outcome-label">💬 Latest answer</div>
+                <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}${activeFileContext ? ` · about <b>${escapeHtml(activeFileContext.name)}</b>` : ''}</div>
+                <div style="color:#ccc;font-size:12px;margin-top:8px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
+                <div style="color:#eee;font-size:13px;margin-top:8px;">${renderMarkdown(finalText)}</div>
+            </div>`);
+            activeChatController = null;
+            setChatBusy(false);
+        },
+        onError: (err) => {
+            console.error('Chat error:', err);
+            bubble.innerHTML = `<span style="color:#ff6666;">Error: ${escapeHtml(err.message)}</span>`;
+            setOutcomes(`<div class="outcome-item">
+                <div class="outcome-label" style="color:#cc6666;">⚠️ Chat failed</div>
+                <div style="color:#cc8888;font-size:12px;margin-top:6px;">${escapeHtml(err.message)}</div>
+                <div style="color:#888;font-size:11px;margin-top:8px;">Likely cause: DEEPSEEK_API_KEY / ANTHROPIC_API_KEY not set in .env.</div>
+            </div>`);
+            activeChatController = null;
+            setChatBusy(false);
+        },
+    });
 }
 
 function renderPanels(panels, nextActions, fileName, sizeKb) {
@@ -1068,6 +1240,52 @@ async function handleFile(input) {
 document.getElementById('textInput').addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+});
+
+// Restore chat history (multi-turn memory persists across reloads)
+loadHistory();
+rehydrateMessagesFromHistory();
+
+// Drag-and-drop file upload anywhere in the main chat area
+(function setupDragDrop() {
+    const main = document.querySelector('.main') || document.body;
+    let dragDepth = 0;
+    function show() { main.style.outline = '2px dashed #8b5cf6'; main.style.outlineOffset = '-12px'; }
+    function hide() { main.style.outline = ''; main.style.outlineOffset = ''; }
+    main.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; show(); });
+    main.addEventListener('dragover',  e => { e.preventDefault(); });
+    main.addEventListener('dragleave', e => { e.preventDefault(); dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) hide(); });
+    main.addEventListener('drop',      e => {
+        e.preventDefault();
+        dragDepth = 0; hide();
+        const files = Array.from(e.dataTransfer.files || []);
+        if (!files.length) return;
+        // Reuse the single-file upload pipeline for the first file; if more
+        // were dropped, treat the rest as a local "drive" so user can pick.
+        const fakeInput = { files: [files[0]] };
+        handleFile(fakeInput);
+        if (files.length > 1) {
+            const folderPicker = { files };
+            handleLocalFiles(folderPicker);
+        }
+    });
+})();
+
+// Paste image from clipboard into chat → upload as file
+document.getElementById('textInput').addEventListener('paste', function(e) {
+    const items = (e.clipboardData || {}).items || [];
+    for (const item of items) {
+        if (item.type && item.type.startsWith('image/')) {
+            const blob = item.getAsFile();
+            if (blob) {
+                e.preventDefault();
+                const ext = (blob.type.split('/')[1] || 'png').replace('jpeg','jpg');
+                const file = new File([blob], `pasted_${Date.now()}.${ext}`, { type: blob.type });
+                handleFile({ files: [file] });
+                return;
+            }
+        }
+    }
 });
 
 // Check API health on load

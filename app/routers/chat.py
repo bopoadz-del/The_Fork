@@ -114,7 +114,24 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_api_key)
     prompt = body.get("prompt", body.get("message", ""))
     model = body.get("model", body.get("provider", "deepseek-chat"))
     session_id = body.get("session_id", "default")
-    history = body.get("history", [])
+    history = body.get("history", []) or []
+
+    # Flatten conversation history into a single prompt (the chat block doesn't
+    # yet accept structured messages). Cap to last 10 turns to stay under token
+    # budgets; trim each turn to 4000 chars to bound payload size.
+    if history:
+        recent = history[-10:]
+        parts = []
+        for turn in recent:
+            role = (turn.get("role") or "user").lower()
+            label = "User" if role == "user" else ("Assistant" if role in ("assistant", "ai") else role.capitalize())
+            content = str(turn.get("content") or "")[:4000]
+            if content:
+                parts.append(f"{label}: {content}")
+        parts.append(f"User: {prompt}")
+        full_prompt = "\n\n".join(parts)
+    else:
+        full_prompt = prompt
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
@@ -124,13 +141,25 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_api_key)
                 block_instances["chat"] = BLOCK_REGISTRY["chat"]()
 
             block = block_instances["chat"]
-            # Pass history if the block supports it in future; for now just use prompt
             result = await block.execute(
-                {"text": prompt, "history": history} if history else prompt,
+                full_prompt,
                 {"model": model, "stream": True}
             )
 
-            stream_gen = result.get("result", {}).get("stream")
+            # Surface backend errors (no API key, provider 4xx/5xx, etc.)
+            # Error can be at top level or nested under result.result.
+            if isinstance(result, dict) and result.get("status") == "error":
+                inner_err = (result.get("result") or {}) if isinstance(result.get("result"), dict) else {}
+                err_msg = (
+                    result.get("error")
+                    or inner_err.get("error")
+                    or "Chat block returned an error"
+                )
+                yield f"data: {json.dumps({'type': 'error', 'message': err_msg})}\n\n"
+                return
+
+            inner = result.get("result", {}) if isinstance(result, dict) else {}
+            stream_gen = inner.get("stream")
             if stream_gen:
                 async for token in stream_gen:
                     if isinstance(token, str) and token.startswith('{"type": "error"'):
@@ -139,7 +168,10 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_api_key)
                     yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
                     await asyncio.sleep(0.01)
             else:
-                text = result.get("result", {}).get("text", "")
+                text = inner.get("text", "")
+                if not text:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'No response from chat provider — check that DEEPSEEK_API_KEY or ANTHROPIC_API_KEY is set in .env'})}\n\n"
+                    return
                 words = text.split()
                 for word in words:
                     yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
