@@ -180,7 +180,21 @@
 // UNIVERSAL ADAPTER CLIENT - Same Origin (No CORS)
 // ─────────────────────────────────────────────────────────────
 const API_BASE = '';  // Same origin - relative paths
-const API_KEY = 'cb_master_22347732f8f09bed3ad4aee7f9849f77';
+// Dev key works when ENV=development (start-local.sh sets this).
+// Override via ?key=YOUR_KEY or localStorage.setItem('cerebrum_api_key', '...').
+const API_KEY = (() => {
+    const url = new URL(window.location.href);
+    const fromUrl = url.searchParams.get('key');
+    if (fromUrl) {
+        try { localStorage.setItem('cerebrum_api_key', fromUrl); } catch (e) {}
+        return fromUrl;
+    }
+    try {
+        const stored = localStorage.getItem('cerebrum_api_key');
+        if (stored) return stored;
+    } catch (e) {}
+    return 'cb_dev_key';
+})();
 
 class CerebrumClient {
     constructor(baseUrl = API_BASE, apiKey = API_KEY) {
