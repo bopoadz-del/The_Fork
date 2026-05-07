@@ -6,6 +6,16 @@ This fork strips out the hosted-platform machinery: no Render deploy, no marketp
 
 ---
 
+## Live (Codespace)
+
+When the maintainer's Codespace is running, the app is reachable at:
+
+**https://bookish-space-spork-q7g495jwqqvghjp9-8000.app.github.dev/**
+
+> Port forwarding is **private** by default — you must be signed into github.com as the Codespace owner in the same browser. The URL changes if the Codespace is recreated.
+
+---
+
 ## Quickstart
 
 ```bash
