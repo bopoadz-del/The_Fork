@@ -142,6 +142,9 @@
     
     <div class="chain-indicator" id="chainIndicator">⚡ Processing...</div>
 
+    <!-- Error toasts (surfaceError appends here) -->
+    <div id="toastStack" style="position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:2000;pointer-events:none;"></div>
+
     <!-- Drive Connect Modal -->
     <div class="modal-overlay" id="driveModal" onclick="if(event.target===this)hideDriveModal()">
         <div class="modal">
@@ -223,13 +226,12 @@ class CerebrumClient {
         if (body) opts.body = isFormData ? body : JSON.stringify(body);
         
         const response = await fetch(url, opts);
-        const responseData = await response.json().catch(() => null);
-        
         if (!response.ok) {
-            const errorText = responseData ? JSON.stringify(responseData) : await response.text();
-            throw new Error(`HTTP ${response.status}: ${errorText}`);
+            // Honors the unified error envelope at /v1/* (code/message/details)
+            // with a graceful fallback to {detail} or HTTP <status>.
+            throw await readApiError(response);
         }
-        return responseData;
+        return await response.json().catch(() => null);
     }
 
     execute(block, input = null, params = {}) {
@@ -502,6 +504,50 @@ function setOutcomes(html) {
     document.getElementById('outcomes').innerHTML = html;
 }
 
+// ── Unified error surfacing ─────────────────────────────────────────────
+// Replaces the scattered `console.error(...)` + silent `catch(e) {}` pattern.
+// Always logs to console; optionally toasts a user-visible card.
+function surfaceError(err, context, { toast = true, persist = false } = {}) {
+    const message = err instanceof Error ? err.message : String(err || 'Unknown error');
+    const summary = `${context ? context + ' — ' : ''}${message}`;
+    console.error('[surfaceError]', summary, err);
+    if (!toast) return;
+    const stack = document.getElementById('toastStack');
+    if (!stack) return;
+    const el = document.createElement('div');
+    el.style.cssText = `
+        background: #2a1a1a; color: #ff9999; border: 1px solid #5a2a2a;
+        border-radius: 8px; padding: 10px 14px; max-width: 360px;
+        font-size: 12px; line-height: 1.4; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        pointer-events: auto; cursor: pointer; animation: fadeIn 0.2s ease;
+    `;
+    const code = (err && err.code) ? `<div style="color:#ff6666;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">${escapeHtml(err.code)}</div>` : '';
+    el.innerHTML = `${code}<div>${escapeHtml(summary)}</div><div style="color:#888;font-size:10px;margin-top:6px;">click to dismiss</div>`;
+    el.onclick = () => el.remove();
+    stack.appendChild(el);
+    if (!persist) {
+        setTimeout(() => el.remove(), 8000);
+    }
+}
+
+// Parse the unified error envelope: {error: {code, message, details?}, detail: ...}
+async function readApiError(response) {
+    let body;
+    try { body = await response.json(); } catch (_) { body = null; }
+    const env = body && body.error;
+    if (env && (env.message || env.code)) {
+        const e = new Error(env.message || env.code);
+        e.code = env.code;
+        e.details = env.details;
+        e.status = response.status;
+        return e;
+    }
+    const fallback = (body && body.detail) || `HTTP ${response.status}`;
+    const e = new Error(typeof fallback === 'string' ? fallback : JSON.stringify(fallback));
+    e.status = response.status;
+    return e;
+}
+
 function showIndicator(active) {
     document.getElementById('chainIndicator').classList.toggle('active', active);
 }
@@ -633,7 +679,7 @@ async function handleLocalFiles(input) {
             try {
                 zvecResult = await client.execute('zvec', indexableNames.join('\n'), { operation: 'embed' });
             } catch (e) {
-                console.error('ZVec index failed:', e);
+                surfaceError(e, 'ZVec indexing failed (continuing without it)', { toast: false });
             }
         }
         
@@ -671,7 +717,7 @@ async function handleLocalFiles(input) {
         addMessage(`Loaded ${files.length} files from your device. "${firstFileObj ? firstFileObj.name : 'No file'}" is active. Ready to chat about it.`, 'assistant');
         
     } catch (err) {
-        console.error('Local files error:', err);
+        surfaceError(err, 'Local files');
         addMessage(`Error indexing files: ${err.message}`, 'error');
     }
     
@@ -705,7 +751,7 @@ async function connectDrive(driveType) {
             try {
                 zvecResult = await client.execute('zvec', indexableNames.join('\n'), { operation: 'embed' });
             } catch (e) {
-                console.error('ZVec index failed:', e);
+                surfaceError(e, 'ZVec indexing failed (continuing without it)', { toast: false });
             }
         }
         
@@ -731,7 +777,7 @@ async function connectDrive(driveType) {
         addMessage(`Connected to ${driveType.replace('_', ' ')}. ${files.length} files available.`, 'assistant');
         
     } catch (err) {
-        console.error('Drive connect error:', err);
+        surfaceError(err, 'Drive connect');
         addMessage(`Could not connect to ${driveType}: ${err.message}`, 'error');
     }
     
@@ -985,7 +1031,7 @@ function startAgentStream({ agent, prompt, history, bubble, askedAt, userQuestio
             </div>`);
         } catch (err) {
             if (err.name !== 'AbortError') {
-                console.error('Agent error:', err);
+                surfaceError(err, `Agent ${agent}`);
                 bubble.innerHTML = `<span style="color:#ff6666;">Error: ${escapeHtml(err.message)}</span>`;
                 setOutcomes(`<div class="outcome-item">
                     <div class="outcome-label" style="color:#cc6666;">⚠️ Agent failed</div>
@@ -1077,7 +1123,7 @@ async function sendMessage() {
             setChatBusy(false);
         },
         onError: (err) => {
-            console.error('Chat error:', err);
+            surfaceError(err, 'Chat');
             bubble.innerHTML = `<span style="color:#ff6666;">Error: ${escapeHtml(err.message)}</span>`;
             setOutcomes(`<div class="outcome-item">
                 <div class="outcome-label" style="color:#cc6666;">⚠️ Chat failed</div>
@@ -1372,7 +1418,7 @@ async function handleFile(input) {
         }
 
     } catch (err) {
-        console.error('File analysis error:', err);
+        surfaceError(err, 'File analysis');
         addMessage(`Error analysing file: ${err.message}`, 'error');
     }
 

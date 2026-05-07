@@ -5413,11 +5413,17 @@ Total Extension of Time Sought: {total_delay} days
         if extracted_text:
             chat_context_parts.append(f"\nExtracted text (first 3000 chars):\n{extracted_text[:3000]}")
 
+        # Boundary validation: every panel passes through the typed contract
+        # so a shape regression surfaces as a typed error_panel rather than
+        # rendering as raw JSON in the UI. (See app/core/panels.py)
+        from app.core.panels import validate_panel
+        validated_panels = [validate_panel(p) for p in panels]
+
         return {
             "status": "success",
             "action": "auto_pipeline",
             "doc_type": doc_type,
-            "panels": panels,
+            "panels": validated_panels,
             "downstream_actions_run": list(downstream.keys()),
             "next_actions": next_actions,
             "chat_context": "\n".join(chat_context_parts),

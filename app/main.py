@@ -16,11 +16,13 @@ for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 load_dotenv()
 
@@ -128,6 +130,74 @@ async def file_upload_security_middleware(request: Request, call_next):
         request = Request(request.scope, receive, request._send)
 
     return await call_next(request)
+
+
+# ── Unified error envelope ────────────────────────────────────────────────
+# All API errors are returned as:
+#   {"error": {"code": "<MACHINE>", "message": "<HUMAN>", "details"?: {...}},
+#    "detail": "<HUMAN>"}      # legacy, kept so existing UI code doesn't break.
+#
+# Status code → code mapping is generic; routes can raise HTTPException with
+# detail=<dict> to override (e.g. detail={"code":"INSUFFICIENT_QUOTA","message":...}).
+
+_STATUS_CODE_NAME = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHENTICATED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
+    422: "VALIDATION_ERROR",
+    429: "RATE_LIMITED",
+    500: "INTERNAL_ERROR",
+    502: "UPSTREAM_ERROR",
+    503: "UNAVAILABLE",
+    504: "TIMEOUT",
+}
+
+
+def _envelope(status: int, message: str, code: str | None = None, details=None):
+    body = {
+        "error": {
+            "code": code or _STATUS_CODE_NAME.get(status, "ERROR"),
+            "message": message,
+        },
+        "detail": message,  # legacy field — keep until callers migrate
+    }
+    if details is not None:
+        body["error"]["details"] = details
+    return body
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(_request: Request, exc: StarletteHTTPException):
+    detail = exc.detail
+    if isinstance(detail, dict):
+        msg = str(detail.get("message") or detail.get("error") or detail.get("detail") or "")
+        code = str(detail.get("code") or _STATUS_CODE_NAME.get(exc.status_code, "ERROR"))
+        rest = {k: v for k, v in detail.items() if k not in {"code", "message", "error", "detail"}}
+        body = _envelope(exc.status_code, msg, code, rest or None)
+    else:
+        body = _envelope(exc.status_code, str(detail))
+    return JSONResponse(status_code=exc.status_code, content=body, headers=getattr(exc, "headers", None) or None)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(_request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content=_envelope(422, "Request validation failed", "VALIDATION_ERROR", {"errors": exc.errors()}),
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    # Never leak internal stack traces in the response — log them, return generic.
+    return JSONResponse(
+        status_code=500,
+        content=_envelope(500, "Internal server error", "INTERNAL_ERROR"),
+    )
 
 
 # Include all routers
