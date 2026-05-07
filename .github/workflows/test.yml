@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main, fork-export-temp]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system deps for OCR + PDF
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Security scan
+        run: python scripts/security_scan.py
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data

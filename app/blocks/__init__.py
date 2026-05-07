@@ -39,6 +39,8 @@ from .onedrive import OneDriveBlock
 from .vector_search import VectorSearchBlock
 from .zvec import ZvecBlock
 from .cache_manager import CacheManagerBlock
+from .mcp_adapter import MCPAdapterBlock
+from .mcp_consumer import MCPConsumerBlock
 
 # ── Main Construction Container ───────────────────────────────────────────────
 from app.containers import ConstructionContainer
@@ -82,6 +84,10 @@ BLOCK_REGISTRY = {
     "vector_search":    VectorSearchBlock,
     "zvec":             ZvecBlock,
     "cache_manager":    CacheManagerBlock,
+
+    # MCP (agent interop)
+    "mcp_adapter":      MCPAdapterBlock,
+    "mcp_consumer":     MCPConsumerBlock,
 }
 
 
