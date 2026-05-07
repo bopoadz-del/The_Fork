@@ -5315,23 +5315,67 @@ Total Extension of Time Sought: {total_delay} days
 
         # Schedule → progress tracker
         if doc_type == "schedule":
-            try:
-                sched_result = await self.parse_primavera_schedule(
-                    {"file_path": file_path}, {}
-                )
-                downstream["schedule"] = sched_result
+            ext_for_sched = file_path.rsplit(".", 1)[-1].lower() if file_path else ""
+            if ext_for_sched == "xer":
+                # Primavera P6 — use the dedicated parser
+                try:
+                    sched_result = await self.parse_primavera_schedule(
+                        {"file_path": file_path}, {}
+                    )
+                    if sched_result.get("status") != "error":
+                        downstream["schedule"] = sched_result
+                        panels.append({
+                            "type": "schedule",
+                            "title": "Schedule",
+                            "data": sched_result,
+                        })
+                        next_actions.append({
+                            "action": "progress_tracker",
+                            "label": "Track Progress",
+                            "reason": "Schedule loaded",
+                        })
+                except Exception:
+                    pass
+            elif ext_for_sched in ("xlsx", "xls"):
+                # Excel schedule — build a summary panel from what document_engine
+                # already extracted, plus a quick row scan for date columns.
+                eng = doc_result.get("_engine_result") if isinstance(doc_result, dict) else None
+                eng = eng if isinstance(eng, dict) else {}
+                xlsx_summary = {
+                    "format": "xlsx",
+                    "file": file_path.split("/")[-1],
+                    "schedule_targets": eng.get("schedule_targets", []),
+                    "equipment_specs": eng.get("equipment_specs", []),
+                    "constraints": eng.get("constraints", [])[:10],
+                    "requirements_count": len(eng.get("requirements", [])),
+                }
+                # Best-effort row scan with openpyxl for milestones / dates
+                try:
+                    from openpyxl import load_workbook
+                    wb = load_workbook(file_path, read_only=True, data_only=True)
+                    sheet_summaries = []
+                    for ws in wb.worksheets[:5]:
+                        rows = list(ws.iter_rows(values_only=True, max_row=200))
+                        sheet_summaries.append({
+                            "name": ws.title,
+                            "row_count": ws.max_row,
+                            "col_count": ws.max_column,
+                            "preview": [list(r)[:8] for r in rows[:5]],
+                        })
+                    xlsx_summary["sheets"] = sheet_summaries
+                except Exception:
+                    pass
+                downstream["schedule"] = xlsx_summary
                 panels.append({
                     "type": "schedule",
-                    "title": "Schedule",
-                    "data": sched_result
+                    "title": "Schedule (Excel)",
+                    "data": xlsx_summary,
                 })
                 next_actions.append({
                     "action": "progress_tracker",
                     "label": "Track Progress",
-                    "reason": "Schedule loaded"
+                    "reason": "Excel schedule loaded — inspect sheets",
                 })
-            except Exception:
-                pass
 
         # Contract → process contract details
         if doc_type == "contract":
