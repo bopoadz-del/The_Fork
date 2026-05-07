@@ -1576,20 +1576,6 @@ class ConstructionContainer(UniversalContainer):
                     item_name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
                 ))
 
-        if not procurement_items:
-            rsmeans = self._get_rsmeans_data()
-            schedule_start = p.get("schedule_start") or data.get("schedule_start")
-            for item_name, qty, unit in [
-                ("Concrete C30", 450, "m3"), ("Rebar reinforcement", 52000, "kg"),
-                ("Curtain wall glazing", 1200, "m2"), ("HVAC system", 3500, "m2"),
-                ("Electrical installation", 3500, "m2"), ("Structural steel", 85000, "kg"),
-                ("Passenger lift", 2, "ea"), ("External cladding", 800, "m2"),
-            ]:
-                category, lead, supplier = self._classify_procurement_item(item_name)
-                unit_cost = self._lookup_unit_cost(item_name, unit, rsmeans)
-                total = unit_cost * qty
-                procurement_items.append(self._build_procurement_item(item_name, qty, unit, unit_cost, total, category, lead, supplier, schedule_start))
-
         procurement_items.sort(key=lambda x: x["lead_time_weeks"], reverse=True)
         critical = [i for i in procurement_items if i["priority"] == "critical"]
         total_cost = round(sum(i["total_cost"] for i in procurement_items), 2)
@@ -4194,23 +4180,6 @@ Total Extension of Time Sought: {total_delay} days
         boq = data.get("boq") or p.get("boq", [])
         suppliers = data.get("suppliers") or p.get("suppliers", [])
         constraints = p.get("constraints", {"max_suppliers": 5, "geographic_limit": None, "quality_threshold": 80, "payment_terms_preference": "net_30"})
-        
-        if not boq:
-            boq = [
-                {"id": "01", "description": "Concrete C30", "material_type": "concrete", "unit": "m3", "quantity": 450, "unit_rate": 155, "value": 69750},
-                {"id": "02", "description": "Rebar reinforcement", "material_type": "steel", "unit": "kg", "quantity": 52000, "unit_rate": 1.8, "value": 93600},
-                {"id": "03", "description": "Curtain wall glazing", "material_type": "glazing", "unit": "m2", "quantity": 1200, "unit_rate": 420, "value": 504000},
-                {"id": "04", "description": "HVAC system", "material_type": "mechanical", "unit": "m2", "quantity": 3500, "unit_rate": 125, "value": 437500},
-                {"id": "05", "description": "Electrical installation", "material_type": "electrical", "unit": "m2", "quantity": 3500, "unit_rate": 85, "value": 297500},
-            ]
-
-        if not suppliers:
-            suppliers = [
-                {"name": "Supplier A — Gulf Materials", "price_score": 82, "delivery_score": 85, "quality_score": 88, "financial_score": 90, "esg_score": 70, "support_score": 75, "lead_time": 4, "capabilities": ["concrete", "steel", "general"], "payment_terms": "net_30"},
-                {"name": "Supplier B — Emirates Building Supplies", "price_score": 78, "delivery_score": 90, "quality_score": 85, "financial_score": 85, "esg_score": 75, "support_score": 80, "lead_time": 3, "capabilities": ["concrete", "masonry", "general"], "payment_terms": "net_45"},
-                {"name": "Supplier C — Facades & Glass LLC", "price_score": 75, "delivery_score": 80, "quality_score": 92, "financial_score": 88, "esg_score": 80, "support_score": 85, "lead_time": 8, "capabilities": ["glazing", "cladding", "facades"], "payment_terms": "net_30"},
-                {"name": "Supplier D — MEP Solutions", "price_score": 80, "delivery_score": 82, "quality_score": 85, "financial_score": 83, "esg_score": 72, "support_score": 88, "lead_time": 6, "capabilities": ["mechanical", "electrical", "plumbing"], "payment_terms": "net_30"},
-            ]
         
         scored_suppliers = []
         for supplier in suppliers:
