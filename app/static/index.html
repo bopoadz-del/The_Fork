@@ -668,7 +668,7 @@ async function selectDriveFile(driveId, fileName) {
                 </div>`);
                 addMessage(`"${fileName}" loaded from ${drive.name}. Ask me anything about it.`, 'assistant');
 
-            } else if (kind === 'pdf' || kind === 'image') {
+            } else if (kind === 'pdf' || kind === 'image' || kind === 'docx' || kind === 'xlsx') {
                 setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
                     <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 1/2 — uploading and extracting…</div></div>`);
 
@@ -676,12 +676,30 @@ async function selectDriveFile(driveId, fileName) {
                 form.append('file', fileObj);
                 const uploadData = await client.upload(form);
                 const filePath = uploadData.file_path || uploadData.path || uploadData.filename;
-                const extractBlock = kind === 'pdf' ? 'pdf' : 'ocr';
 
                 let extractedText = '';
                 try {
-                    const extractResult = await client.execute(extractBlock, { action: 'extract_text', file_path: filePath }, {});
-                    extractedText = extractResult.result?.text || extractResult.result?.extracted_text || '';
+                    if (kind === 'pdf') {
+                        const r = await client.execute('pdf', { action: 'extract_text', file_path: filePath }, {});
+                        extractedText = r.result?.text || r.result?.extracted_text || '';
+                    } else if (kind === 'image') {
+                        const r = await client.execute('ocr', { action: 'extract_text', file_path: filePath }, {});
+                        extractedText = r.result?.text || r.result?.extracted_text || '';
+                    } else if (kind === 'docx') {
+                        const r = await client.execute('document_engine', {}, { docx_path: filePath });
+                        extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
+                    } else if (kind === 'xlsx') {
+                        try {
+                            const r = await client.execute('boq_processor', { file_path: filePath }, {});
+                            if (r.result && r.status !== 'error') {
+                                extractedText = JSON.stringify(r.result, null, 2).substring(0, 8000);
+                            }
+                        } catch (e) { /* fallback below */ }
+                        if (!extractedText) {
+                            const r = await client.execute('document_engine', {}, { xlsx_path: filePath });
+                            extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
+                        }
+                    }
                 } catch(e) {}
 
                 setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
@@ -979,14 +997,34 @@ async function handleFile(input) {
             </div>`);
             addMessage(`"${file.name}" loaded. Ask me anything about it.`, 'assistant');
 
-        } else if (kind === 'pdf' || kind === 'image') {
+        } else if (kind === 'pdf' || kind === 'image' || kind === 'docx' || kind === 'xlsx') {
             setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
                 <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 1/2 — extracting text…</div></div>`);
-            const extractBlock = kind === 'pdf' ? 'pdf' : 'ocr';
             let extractedText = '';
             try {
-                const extractResult = await client.execute(extractBlock, { action: 'extract_text', file_path: filePath }, {});
-                extractedText = extractResult.result?.text || extractResult.result?.extracted_text || '';
+                if (kind === 'pdf') {
+                    const r = await client.execute('pdf', { action: 'extract_text', file_path: filePath }, {});
+                    extractedText = r.result?.text || r.result?.extracted_text || '';
+                } else if (kind === 'image') {
+                    const r = await client.execute('ocr', { action: 'extract_text', file_path: filePath }, {});
+                    extractedText = r.result?.text || r.result?.extracted_text || '';
+                } else if (kind === 'docx') {
+                    const r = await client.execute('document_engine', {}, { docx_path: filePath });
+                    const docs = r.result?.documents || r.result?.requirements || [];
+                    extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
+                } else if (kind === 'xlsx') {
+                    // BOQ-style spreadsheets: try boq_processor first, then fall back to document_engine
+                    try {
+                        const r = await client.execute('boq_processor', { file_path: filePath }, {});
+                        if (r.result && r.status !== 'error') {
+                            extractedText = JSON.stringify(r.result, null, 2).substring(0, 8000);
+                        }
+                    } catch (e) { /* fallback below */ }
+                    if (!extractedText) {
+                        const r = await client.execute('document_engine', {}, { xlsx_path: filePath });
+                        extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
+                    }
+                }
             } catch(e) { /* extraction optional */ }
 
             setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>

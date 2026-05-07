@@ -1562,18 +1562,26 @@ class ConstructionContainer(UniversalContainer):
 
         # From quantities dict
         elif quantities:
+            # Aggregate metrics already covered by the cost panel — skip them as
+            # individual procurement items so the list reflects discrete trades.
+            aggregate_keys = {"floor_area_m2", "concrete_volume_m3", "steel_weight_kg", "rebar_length_m"}
             for item_name, qty_data in quantities.items():
+                if item_name in aggregate_keys:
+                    continue
                 if isinstance(qty_data, dict):
                     qty = float(qty_data.get("quantity", 0))
                     unit = qty_data.get("unit", "ea")
                 else:
                     qty = float(qty_data)
                     unit = "ea"
-                unit_cost = self._lookup_unit_cost(item_name, unit, rsmeans)
+                if qty <= 0:
+                    continue
+                clean_name = " ".join(str(item_name).split())  # collapse whitespace + newlines
+                unit_cost = self._lookup_unit_cost(clean_name, unit, rsmeans)
                 total = qty * unit_cost
-                cat, lead, supplier = self._classify_procurement_item(item_name)
+                cat, lead, supplier = self._classify_procurement_item(clean_name)
                 procurement_items.append(self._build_procurement_item(
-                    item_name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
+                    clean_name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
                 ))
 
         procurement_items.sort(key=lambda x: x["lead_time_weeks"], reverse=True)
@@ -2693,10 +2701,31 @@ class ConstructionContainer(UniversalContainer):
             "concrete_volume_m3": round(concrete_volume, 2),
             "steel_weight_kg": steel_weight_kg,
         }
+        # Whitelist of construction-material substrings — anything outside this is
+        # noise (e.g. "Server hall", "Purpose and Structure"). Match on lowercase
+        # substring so plurals + adjectives still hit (e.g. "fire door" → door).
+        material_whitelist = (
+            "door", "window", "column", "beam", "slab", "wall", "panel",
+            "glazing", "lintel", "lift", "elevator", "stair", "balustrade",
+            "louvre", "louver", "screen", "cladding", "roof", "rebar",
+            "anchor", "bolt", "fixture", "fitting", "valve", "duct",
+            "pipe", "cable", "luminaire", "lamp", "switch", "socket",
+            "outlet", "tile", "block", "brick", "kerb", "curb", "manhole",
+            "bollard", "gate", "fence", "railing", "handrail",
+            "pump", "fan", "tank", "boiler", "chiller", "ahu", "vav",
+            "fcu", "diffuser", "grille", "extinguisher", "sprinkler",
+            "hydrant", "detector", "sensor", "transformer", "generator",
+            "panelboard", "switchboard", "busbar",
+        )
         for item_name, count in counts.items():
-            if item_name and item_name != "unknown":
-                key = item_name.lower().replace(" ", "_")[:25] + "_count"
-                result[key] = int(count)
+            if not item_name or item_name == "unknown":
+                continue
+            # Collapse all whitespace (including embedded newlines from regex matches)
+            clean = " ".join(str(item_name).split()).lower()
+            if not clean or not any(m in clean for m in material_whitelist):
+                continue
+            key = clean.replace(" ", "_")[:25] + "_count"
+            result[key] = int(count)
         return result
     
     def _estimate_costs(self, quantities: Dict) -> Dict:
@@ -5110,11 +5139,35 @@ Total Extension of Time Sought: {total_delay} days
                 })
             except Exception:
                 pass
-        # Procurement button always shown after any document analysis
+        # Procurement: if we extracted real quantities, derive the procurement
+        # list inline so the user sees it without having to click another button.
+        # Otherwise just expose the button for manual triggering.
+        if has_quantities:
+            try:
+                proc_result = await self.procurement_list_generator(
+                    {"quantities": quantities, "schedule_start": p.get("schedule_start")},
+                    {"budget": p.get("budget")}
+                )
+                items = proc_result.get("procurement_list", []) or []
+                if items:
+                    downstream["procurement_list"] = proc_result
+                    panels.append({
+                        "type": "procurement",
+                        "title": "Procurement List",
+                        "data": {
+                            "procurement_list": items,
+                            "total_items": proc_result.get("total_items"),
+                            "total_procurement_cost": proc_result.get("total_procurement_cost"),
+                            "critical_long_lead_items": proc_result.get("critical_long_lead_items"),
+                            "action_required": proc_result.get("action_required", []),
+                        },
+                    })
+            except Exception:
+                pass
         next_actions.append({
             "action": "procurement_list_generator",
             "label": "Generate Procurement List",
-            "reason": "Generate prioritised procurement schedule"
+            "reason": "Re-run procurement scheduling with custom budget / start date"
         })
 
         # Risks → risk register
