@@ -1137,7 +1137,26 @@ async function sendMessage() {
 }
 
 function renderPanels(panels, nextActions, fileName, sizeKb) {
-    const typeIcons = { document_info: '📄', quantities: '📐', cost_estimate: '💰', risks: '⚠️', submittals: '📋', schedule: '📅', contract: '📜' };
+    const typeIcons = { document_info: '📄', quantities: '📐', cost_estimate: '💰', procurement: '📦', risks: '⚠️', submittals: '📋', schedule: '📅', contract: '📜' };
+
+    // Turn snake_case internal keys into something a human wants to read.
+    // "duct_opening_see_note_count" → "Duct opening (see note)"
+    // "concrete_volume_m3" → "Concrete volume (m³)"
+    function prettyKey(key) {
+        if (!key || typeof key !== 'string') return String(key || '');
+        const unitMap = { m2: 'm²', m3: 'm³', kg: 'kg', ea: 'ea', m: 'm', t: 't' };
+        const parts = key.replace(/_count$/, '').split('_');
+        const unitPart = parts[parts.length - 1];
+        let unit = '';
+        if (unitMap[unitPart]) {
+            unit = unitMap[unitPart];
+            parts.pop();
+        }
+        let label = parts.join(' ').trim();
+        if (label.length) label = label.charAt(0).toUpperCase() + label.slice(1);
+        if (unit) label += ` (${unit})`;
+        return label || key;
+    }
     let html = '';
 
     for (const panel of panels) {
@@ -1156,29 +1175,39 @@ function renderPanels(panels, nextActions, fileName, sizeKb) {
 
         } else if (panel.type === 'quantities') {
             const q = panel.data || {};
-            const entries = Object.entries(q).slice(0, 12);
+            // Hide zero-valued aggregate metrics — they're noise when extraction yielded nothing.
+            const allEntries = Object.entries(q).filter(([_, v]) => {
+                const num = typeof v === 'object' ? (v && v.quantity) : v;
+                return Number(num) !== 0;
+            });
+            const entries = allEntries.slice(0, 12);
             if (entries.length) {
                 html += `<table style="width:100%;font-size:12px;margin-top:6px;border-collapse:collapse;">
                     <tr style="color:#666;border-bottom:1px solid #333;"><th style="text-align:left;padding:3px 0;">Item</th><th style="text-align:right;padding:3px 0;">Qty</th><th style="text-align:right;padding:3px 0;">Unit</th></tr>`;
                 for (const [k, v] of entries) {
                     const qty = typeof v === 'object' ? v.quantity ?? v : v;
-                    const unit = typeof v === 'object' ? v.unit || '' : '';
-                    html += `<tr style="color:#ccc;border-bottom:1px solid #1a1a1a;"><td style="padding:3px 0;">${escapeHtml(String(k))}</td><td style="text-align:right;padding:3px 0;">${qty}</td><td style="text-align:right;padding:3px 4px;color:#888;">${unit}</td></tr>`;
+                    const unit = typeof v === 'object' ? v.unit || '' : (k.endsWith('_count') ? 'ea' : '');
+                    html += `<tr style="color:#ccc;border-bottom:1px solid #1a1a1a;"><td style="padding:3px 0;">${escapeHtml(prettyKey(String(k)))}</td><td style="text-align:right;padding:3px 0;">${qty}</td><td style="text-align:right;padding:3px 4px;color:#888;">${unit}</td></tr>`;
                 }
                 html += `</table>`;
-                if (Object.keys(q).length > 12) html += `<div style="color:#555;font-size:11px;margin-top:4px;">+${Object.keys(q).length - 12} more items</div>`;
+                if (allEntries.length > 12) html += `<div style="color:#555;font-size:11px;margin-top:4px;">+${allEntries.length - 12} more items</div>`;
             } else {
-                html += `<div style="color:#555;font-size:12px;margin-top:4px;">No quantities extracted</div>`;
+                html += `<div style="color:#555;font-size:12px;margin-top:4px;">No quantities extracted from this document</div>`;
             }
 
         } else if (panel.type === 'cost_estimate') {
             const s = panel.data || {};
-            html += `<div style="font-size:13px;margin-top:6px;">`;
-            if (s.subtotal) html += `<div style="color:#aaa;">Subtotal: <b style="color:#fff;">$${Number(s.subtotal).toLocaleString()}</b></div>`;
-            if (s.overhead) html += `<div style="color:#aaa;">Overhead: <b style="color:#ccc;">$${Number(s.overhead).toLocaleString()}</b></div>`;
-            if (s.contingency) html += `<div style="color:#aaa;">Contingency: <b style="color:#ccc;">$${Number(s.contingency).toLocaleString()}</b></div>`;
-            if (s.total_estimate) html += `<div style="color:#8b5cf6;font-size:15px;font-weight:600;margin-top:6px;">Total: $${Number(s.total_estimate).toLocaleString()}</div>`;
-            html += `</div>`;
+            const hasAny = ['subtotal', 'overhead', 'contingency', 'total_estimate'].some(k => Number(s[k]) > 0);
+            if (!hasAny) {
+                html += `<div style="color:#555;font-size:12px;margin-top:4px;">No cost data — extract quantities first</div>`;
+            } else {
+                html += `<div style="font-size:13px;margin-top:6px;">`;
+                if (s.subtotal) html += `<div style="color:#aaa;">Subtotal: <b style="color:#fff;">$${Number(s.subtotal).toLocaleString()}</b></div>`;
+                if (s.overhead) html += `<div style="color:#aaa;">Overhead: <b style="color:#ccc;">$${Number(s.overhead).toLocaleString()}</b></div>`;
+                if (s.contingency) html += `<div style="color:#aaa;">Contingency: <b style="color:#ccc;">$${Number(s.contingency).toLocaleString()}</b></div>`;
+                if (s.total_estimate) html += `<div style="color:#8b5cf6;font-size:15px;font-weight:600;margin-top:6px;">Total: $${Number(s.total_estimate).toLocaleString()}</div>`;
+                html += `</div>`;
+            }
 
         } else if (panel.type === 'risks') {
             const risks = Array.isArray(panel.data) ? panel.data : [];
@@ -1208,6 +1237,8 @@ function renderPanels(panels, nextActions, fileName, sizeKb) {
                 }
                 if (subs.length > 5) html += `<div style="color:#555;">+${subs.length - 5} more submittals</div>`;
                 html += `</div>`;
+            } else {
+                html += `<div style="color:#555;font-size:12px;margin-top:4px;">No submittals required</div>`;
             }
 
         } else if (panel.type === 'procurement') {
@@ -1227,8 +1258,8 @@ function renderPanels(panels, nextActions, fileName, sizeKb) {
                 for (const item of items.slice(0, 10)) {
                     const col = priorityColor[item.priority] || '#888';
                     html += `<tr style="border-bottom:1px solid #1a1a1a;">
-                        <td style="padding:3px 0;color:#ccc;font-size:11px;">${escapeHtml(item.item || '')}</td>
-                        <td style="text-align:right;padding:3px 0;color:#aaa;">${item.quantity} ${escapeHtml(item.unit || '')}</td>
+                        <td style="padding:3px 0;color:#ccc;font-size:11px;">${escapeHtml(prettyKey(item.item || ''))}</td>
+                        <td style="text-align:right;padding:3px 0;color:#aaa;">${item.quantity} ${escapeHtml(item.unit || 'ea')}</td>
                         <td style="text-align:right;padding:3px 4px;color:${col};font-weight:600;">${item.lead_time_weeks}w</td>
                     </tr>`;
                 }
@@ -1286,6 +1317,54 @@ function renderPanels(panels, nextActions, fileName, sizeKb) {
                 } else {
                     const raw = JSON.stringify(sd, null, 2).substring(0, 400);
                     html += `<div class="raw-output" style="margin-top:6px;font-size:11px;">${escapeHtml(raw)}</div>`;
+                }
+            }
+        } else if (panel.type === 'contract') {
+            const cd = panel.data || {};
+            // Top-level summary
+            const meta = [];
+            if (cd.contract_type) meta.push(`<span style="color:#aaa;">Type:</span> <b>${escapeHtml(cd.contract_type)}</b>`);
+            if (cd.document_length != null) meta.push(`<span style="color:#aaa;">Length:</span> ${cd.document_length} chars`);
+            if (cd.total_clauses != null) meta.push(`<span style="color:#aaa;">Clauses scanned:</span> ${cd.clauses_found || 0}/${cd.total_clauses}`);
+            if (meta.length) {
+                html += `<div style="font-size:12px;margin-top:6px;color:#ccc;">${meta.join(' · ')}</div>`;
+            }
+            // Per-clause findings
+            const clauses = cd.extracted_clauses || cd.clauses || {};
+            const found = Object.entries(clauses).filter(([_, v]) => v && (v.found || (v.count > 0)));
+            const missing = Object.entries(clauses).filter(([_, v]) => v && !v.found && !(v.count > 0));
+            if (found.length) {
+                html += `<div style="margin-top:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;margin-bottom:4px;">Found</div>`;
+                for (const [k, v] of found.slice(0, 6)) {
+                    const ex = (v.examples && v.examples[0]) ? ` — <span style="color:#888;">"${escapeHtml(String(v.examples[0]).substring(0, 80))}"</span>` : '';
+                    html += `<div style="color:#22c55e;font-size:12px;margin-bottom:3px;">✓ ${escapeHtml(prettyKey(k))} <span style="color:#666;">(${v.count || 1})</span>${ex}</div>`;
+                }
+                html += `</div>`;
+            }
+            if (missing.length) {
+                html += `<div style="margin-top:6px;"><div style="color:#888;font-size:10px;text-transform:uppercase;margin-bottom:4px;">Not found</div>`;
+                for (const [k, v] of missing.slice(0, 6)) {
+                    html += `<div style="color:#666;font-size:11px;margin-bottom:2px;">• ${escapeHtml(prettyKey(k))}</div>`;
+                }
+                if (missing.length > 6) html += `<div style="color:#555;font-size:10px;">+${missing.length - 6} more</div>`;
+                html += `</div>`;
+            }
+            if (!found.length && !missing.length) {
+                html += `<div style="color:#555;font-size:12px;margin-top:4px;">No structured clauses extracted yet.</div>`;
+            }
+            // Risk flags / red flags / parties / payment terms when present
+            for (const [field, label, color] of [
+                ['parties', 'Parties', '#ccc'],
+                ['payment_terms_summary', 'Payment terms', '#aaa'],
+                ['risk_flags', 'Risk flags', '#ef4444'],
+                ['liquidated_damages_summary', 'LDs', '#f59e0b'],
+            ]) {
+                const v = cd[field];
+                if (!v) continue;
+                if (Array.isArray(v) && v.length) {
+                    html += `<div style="margin-top:6px;font-size:12px;"><span style="color:#888;">${label}:</span> <span style="color:${color};">${v.slice(0, 3).map(x => escapeHtml(String(x))).join(', ')}</span></div>`;
+                } else if (typeof v === 'string') {
+                    html += `<div style="margin-top:6px;font-size:12px;"><span style="color:#888;">${label}:</span> <span style="color:${color};">${escapeHtml(v.substring(0, 200))}</span></div>`;
                 }
             }
         } else {

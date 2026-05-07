@@ -129,4 +129,4 @@ async def test_standardized_response_format():
             assert isinstance(result["metadata"], dict)
             assert isinstance(result["processing_time_ms"], int)
             
-            print(f"✅ {block.name} v{block.config.version} - standardized format OK")
+            print(f"✅ {block.name} v{block.version} - standardized format OK")

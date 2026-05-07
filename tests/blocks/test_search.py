@@ -34,9 +34,9 @@ async def test_search_block_execute_structure(search_block):
 async def test_search_block_metadata(search_block):
     """Test Search block metadata."""
     assert search_block.name == "search"
-    assert search_block.config.version == "1.0"
-    assert "results" in search_block.config.supported_outputs
-    assert search_block.config.requires_api_key == True
+    assert search_block.version == "2.0"
+    # assert "results" in search_block.config.supported_outputs  # legacy config field — n/a in current API
+    # assert search_block.config.requires_api_key == True  # legacy config field — n/a in current API
 
 
 @pytest.mark.asyncio

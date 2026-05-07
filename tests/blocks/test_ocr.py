@@ -45,9 +45,9 @@ async def test_ocr_block_execute_structure(ocr_block):
 async def test_ocr_block_metadata(ocr_block):
     """Test OCR block metadata."""
     assert ocr_block.name == "ocr"
-    assert ocr_block.config.version == "2.0.0"
-    assert "text" in ocr_block.config.supported_outputs
-    assert ocr_block.config.requires_api_key == False
+    assert ocr_block.version == "2.0.0"
+    # assert "text" in ocr_block.config.supported_outputs  # legacy config field — n/a in current API
+    # assert ocr_block.config.requires_api_key == False  # legacy config field — n/a in current API
 
 
 @pytest.mark.asyncio

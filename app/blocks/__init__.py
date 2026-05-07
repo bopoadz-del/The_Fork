@@ -41,6 +41,9 @@ from .zvec import ZvecBlock
 from .cache_manager import CacheManagerBlock
 from .mcp_adapter import MCPAdapterBlock
 from .mcp_consumer import MCPConsumerBlock
+from .code import CodeBlock
+from .search import SearchBlock
+from .android_drive import AndroidDriveBlock
 
 # ── Main Construction Container ───────────────────────────────────────────────
 from app.containers import ConstructionContainer
@@ -88,6 +91,11 @@ BLOCK_REGISTRY = {
     # MCP (agent interop)
     "mcp_adapter":      MCPAdapterBlock,
     "mcp_consumer":     MCPConsumerBlock,
+
+    # Other
+    "code":             CodeBlock,
+    "search":           SearchBlock,
+    "android_drive":    AndroidDriveBlock,
 }
 
 

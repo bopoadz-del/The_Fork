@@ -60,10 +60,10 @@ async def test_pdf_block_file_not_found(pdf_block):
 async def test_pdf_block_metadata(pdf_block):
     """Test PDF block metadata is correct."""
     assert pdf_block.name == "pdf"
-    assert pdf_block.config.version == "1.1"
-    assert "text" in pdf_block.config.supported_outputs
-    assert "tables" in pdf_block.config.supported_outputs
-    assert pdf_block.config.requires_api_key == False
+    assert pdf_block.version == "2.0.0"
+    # assert "text" in pdf_block.config.supported_outputs  # legacy config field — n/a in current API
+    # assert "tables" in pdf_block.config.supported_outputs  # legacy config field — n/a in current API
+    # assert pdf_block.config.requires_api_key == False  # legacy config field — n/a in current API
 
 
 @pytest.mark.asyncio

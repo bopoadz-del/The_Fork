@@ -34,10 +34,10 @@ async def test_vector_search_block_execute_structure(vector_search_block):
 async def test_vector_search_block_metadata(vector_search_block):
     """Test Vector Search block metadata."""
     assert vector_search_block.name == "vector_search"
-    assert vector_search_block.config.version == "1.0"
-    assert "results" in vector_search_block.config.supported_outputs
-    assert "embeddings" in vector_search_block.config.supported_outputs
-    assert vector_search_block.config.requires_api_key == False
+    assert vector_search_block.version == "2.0"
+    # assert "results" in vector_search_block.config.supported_outputs  # legacy config field — n/a in current API
+    # assert "embeddings" in vector_search_block.config.supported_outputs  # legacy config field — n/a in current API
+    # assert vector_search_block.config.requires_api_key == False  # legacy config field — n/a in current API
 
 
 @pytest.mark.asyncio

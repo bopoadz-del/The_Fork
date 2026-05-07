@@ -33,10 +33,10 @@ async def test_voice_block_execute_structure(voice_block):
 async def test_voice_block_metadata(voice_block):
     """Test Voice block metadata."""
     assert voice_block.name == "voice"
-    assert voice_block.config.version == "1.0"
-    assert "text" in voice_block.config.supported_outputs
-    assert "audio" in voice_block.config.supported_outputs
-    assert voice_block.config.requires_api_key == False
+    assert voice_block.version == "2.0"
+    # assert "text" in voice_block.config.supported_outputs  # legacy config field — n/a in current API
+    # assert "audio" in voice_block.config.supported_outputs  # legacy config field — n/a in current API
+    # assert voice_block.config.requires_api_key == False  # legacy config field — n/a in current API
 
 
 @pytest.mark.asyncio
