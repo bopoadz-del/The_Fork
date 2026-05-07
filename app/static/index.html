@@ -1524,16 +1524,43 @@ document.getElementById('textInput').addEventListener('paste', function(e) {
     }
 });
 
-// Check API health on load
-client.health()
-    .then(data => {
-        console.log('API Health:', data);
-        addMessage(`✅ Connected to API (${data.blocks_available} blocks available)`, 'system');
-    })
-    .catch(err => {
-        console.error('Health check failed:', err);
-        addMessage(`⚠️ API not available at ${API_BASE || 'same origin'}`, 'error');
-    });
+// Persistent banner when the API is unreachable — pings every 5s while down.
+function setApiOfflineBanner(visible, detail) {
+    let banner = document.getElementById('apiOfflineBanner');
+    if (!visible) { if (banner) banner.remove(); return; }
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'apiOfflineBanner';
+        banner.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0;
+            background: #3a1a1a; color: #ff9999; border-bottom: 1px solid #5a2a2a;
+            padding: 10px 16px; text-align: center; font-size: 13px; z-index: 3000;
+        `;
+        document.body.appendChild(banner);
+    }
+    banner.innerHTML = `⚠ API not reachable${detail ? ` — ${escapeHtml(detail)}` : ''}. Reconnecting…`;
+}
+
+let apiHealthOk = false;
+async function pollApiHealth() {
+    try {
+        const r = await fetch(`${API_BASE}/v1/health`, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (!apiHealthOk) {
+            apiHealthOk = true;
+            setApiOfflineBanner(false);
+            addMessage(`✅ Connected to API (${data.blocks_available} blocks available)`, 'system');
+        }
+    } catch (err) {
+        apiHealthOk = false;
+        setApiOfflineBanner(true, err.message || 'unreachable');
+    }
+}
+
+// Initial probe + periodic re-probe (cheap; only fires while down or on first load).
+pollApiHealth();
+setInterval(() => { if (!apiHealthOk) pollApiHealth(); }, 5000);
 
 // Initialize drives list
 renderDrives();
