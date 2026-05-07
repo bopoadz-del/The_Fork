@@ -56,14 +56,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_extra_origins = [
+    o.strip()
+    for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://cerebrum-platform-frontend-fork.onrender.com",
         "https://cerebrum-platform-api-fork.onrender.com",
         "http://localhost:3000",
+        "http://localhost:4173",
+        "http://localhost:5173",
         "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:4173",
+        "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
+        *_extra_origins,
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -131,3 +143,15 @@ if env in {"dev", "development", "local", "test", "testing"}:
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+# Mount built React dashboard if present (built locally; Render not required)
+_dashboard_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+if os.path.isdir(_dashboard_dir) and os.path.exists(os.path.join(_dashboard_dir, "index.html")):
+    app.mount(
+        "/dashboard",
+        StaticFiles(directory=_dashboard_dir, html=True),
+        name="dashboard",
+    )
+    logger.info("Dashboard mounted at /dashboard from %s", _dashboard_dir)
+else:
+    logger.info("Dashboard not built; skipping /dashboard mount (run: cd frontend && npm install && npm run build)")
