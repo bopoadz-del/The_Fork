@@ -5043,6 +5043,108 @@ Total Extension of Time Sought: {total_delay} days
             "pages": None,
         }
 
+    async def _process_office_document(self, file_path: str, ext: str, extracted_text: str = "") -> Dict:
+        """Route .docx / .xlsx through the document_engine and boq_processor blocks.
+
+        The legacy `_process_drawing` path uses fitz/PyMuPDF which only handles
+        PDFs and images. This helper produces a doc_result shaped like
+        process_document's output (status, doc_type, quantities, risks, ...) so
+        auto_pipeline can build panels without special-casing downstream.
+        """
+        from app.blocks import BLOCK_REGISTRY
+
+        is_xlsx = ext in ("xlsx", "xls")
+        is_docx = ext in ("docx", "doc")
+
+        engine_input = {}
+        engine_params = {"xlsx_path" if is_xlsx else "docx_path": file_path}
+
+        engine_result = {}
+        engine_block = BLOCK_REGISTRY.get("document_engine")
+        if engine_block:
+            try:
+                engine_instance = engine_block()
+                engine_result = await engine_instance.execute(engine_input, engine_params)
+            except Exception:
+                engine_result = {}
+
+        # For BOQ-style spreadsheets, also try boq_processor — it returns
+        # priced line items the procurement pipeline can use directly.
+        boq_items = []
+        boq_summary = {}
+        if is_xlsx:
+            boq_block = BLOCK_REGISTRY.get("boq_processor")
+            if boq_block:
+                try:
+                    boq_instance = boq_block()
+                    boq_result = await boq_instance.execute({"file_path": file_path}, {})
+                    if boq_result.get("status") == "success":
+                        boq_items = boq_result.get("line_items", []) or []
+                        boq_summary = {
+                            "item_count": boq_result.get("item_count", 0),
+                            "total_cost": boq_result.get("total_cost", 0),
+                            "currency": boq_result.get("currency", "USD"),
+                            "sections": boq_result.get("sections", []),
+                        }
+                except Exception:
+                    pass
+
+        # Heuristic doc_type: schedule/contract/specification/drawing based on
+        # filename and parsed content (consistent with _classify_document).
+        name = file_path.lower()
+        if any(k in name for k in ("schedule", "primavera", "p6", "_schedule", "l2_schedule", "l3_schedule")):
+            doc_type = "schedule"
+        elif any(k in name for k in ("contract", "agreement", "rfp", "request for proposal")):
+            doc_type = "contract"
+        elif any(k in name for k in ("spec", "basis of design", "performance basis")):
+            doc_type = "specification"
+        elif boq_items:
+            doc_type = "bom"
+        else:
+            doc_type = "specification" if is_docx else "schedule"
+
+        # Build a quantities dict from BOQ line items if we have them
+        quantities: Dict[str, Any] = {}
+        if boq_items:
+            for item in boq_items:
+                desc = (item.get("description") or item.get("item") or "").strip()
+                qty = item.get("quantity") or 0
+                unit = item.get("unit") or "ea"
+                if not desc or qty <= 0:
+                    continue
+                # Use whitelist filter consistent with _calculate_quantities
+                key = " ".join(desc.split()).lower().replace(" ", "_")[:40]
+                quantities[key] = {"quantity": float(qty), "unit": unit}
+
+        # Pull risks/requirements from document_engine if present
+        risks_raw = engine_result.get("risks", []) if isinstance(engine_result, dict) else []
+        risks = []
+        for r in risks_raw[:20]:
+            if isinstance(r, dict):
+                risks.append({
+                    "description": r.get("description") or r.get("title") or str(r)[:120],
+                    "likelihood": r.get("likelihood", "medium"),
+                    "impact": r.get("impact", "medium"),
+                })
+
+        equipment_specs = engine_result.get("equipment_specs", []) if isinstance(engine_result, dict) else []
+        requirements = engine_result.get("requirements", []) if isinstance(engine_result, dict) else []
+
+        return {
+            "status": "success",
+            "doc_type": doc_type,
+            "quantities": quantities,
+            "boq_summary": boq_summary,
+            "boq_items": boq_items,
+            "risks": risks,
+            "specifications": [r for r in requirements if isinstance(r, dict)][:50],
+            "equipment_specs": equipment_specs,
+            "title": None,
+            "project": None,
+            "pages": None,
+            "_engine_result": engine_result,
+        }
+
     async def auto_pipeline(self, input_data: Any, params: Dict) -> Dict:
         """
         Single-call intelligent pipeline.
@@ -5059,7 +5161,12 @@ Total Extension of Time Sought: {total_delay} days
             return {"status": "error", "error": "Provide file_path or extracted_text"}
 
         # ── Step 1: domain analysis ──────────────────────────────────────────
-        if file_path:
+        # Detect docx/xlsx up front and route through document_engine, since
+        # process_document → _process_drawing uses fitz which only handles PDFs.
+        ext = file_path.rsplit(".", 1)[-1].lower() if file_path else ""
+        if file_path and ext in ("docx", "doc", "xlsx", "xls"):
+            doc_result = await self._process_office_document(file_path, ext, extracted_text)
+        elif file_path:
             doc_result = await self.process_document(
                 {"file_path": file_path, "extracted_text": extracted_text},
                 {"doc_type": p.get("doc_type", "auto"), "file_path": file_path}
