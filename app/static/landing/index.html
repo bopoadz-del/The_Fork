@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cerebrum Blocks - Build AI Like Lego</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        
+        /* Navigation */
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(10, 10, 15, 0.8);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid #1e1e2e;
+            z-index: 1000;
+            padding: 16px 0;
+        }
+        
+        .navbar .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 700;
+            font-size: 1.25rem;
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-decoration: none;
+        }
+        
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            -webkit-text-fill-color: initial;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        
+        .nav-links a {
+            color: #888;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        
+        .nav-links a:hover {
+            color: #fff;
+        }
+        
+        /* Hero Section */
+        .hero {
+            padding: 160px 0 100px;
+            text-align: center;
+            background: 
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(108, 99, 255, 0.15), transparent),
+                radial-gradient(ellipse 60% 40% at 80% 60%, rgba(62, 198, 255, 0.1), transparent),
+                #0a0a0f;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%236c63ff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            opacity: 0.5;
+        }
+        
+        .hero .container {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(108, 99, 255, 0.1);
+            border: 1px solid rgba(108, 99, 255, 0.3);
+            padding: 8px 16px;
+            border-radius: 100px;
+            font-size: 0.875rem;
+            color: #6c63ff;
+            margin-bottom: 32px;
+        }
+        
+        .badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: #00cc88;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .hero h1 {
+            font-size: 4.5rem;
+            font-weight: 800;
+            margin-bottom: 24px;
+            line-height: 1.1;
+            background: linear-gradient(135deg, #fff 0%, #a5b4fc 50%, #6c63ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero p {
+            font-size: 1.35rem;
+            color: #888;
+            max-width: 650px;
+            margin: 0 auto 40px;
+            line-height: 1.6;
+        }
+        
+        .cta-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-bottom: 80px;
+        }
+        
+        .btn {
+            padding: 14px 28px;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            color: #fff;
+            box-shadow: 0 4px 20px rgba(108, 99, 255, 0.3);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(108, 99, 255, 0.4);
+        }
+        
+        .btn-secondary {
+            background: transparent;
+            color: #fff;
+            border: 1px solid #2e2e3e;
+        }
+        
+        .btn-secondary:hover {
+            border-color: #6c63ff;
+            background: rgba(108, 99, 255, 0.05);
+        }
+        
+        /* Stats Bar */
+        .stats-bar {
+            display: flex;
+            justify-content: center;
+            gap: 60px;
+            padding: 32px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid #1e1e2e;
+            border-radius: 16px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .stat-label {
+            font-size: 0.875rem;
+            color: #666;
+            margin-top: 4px;
+        }
+        
+        /* Blocks Section */
+        .blocks {
+            padding: 100px 0;
+            background: #0d0d18;
+        }
+        
+        .section-header {
+            text-align: center;
+            margin-bottom: 64px;
+        }
+        
+        .section-header h2 {
+            font-size: 2.75rem;
+            font-weight: 800;
+            margin-bottom: 16px;
+        }
+        
+        .section-header p {
+            color: #666;
+            font-size: 1.15rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .blocks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        
+        .block-card {
+            background: #151525;
+            border: 1px solid #1e1e2e;
+            border-radius: 16px;
+            padding: 28px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        
+        .block-card:hover {
+            border-color: #6c63ff;
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+        
+        .block-card:hover .block-icon {
+            transform: scale(1.1);
+        }
+        
+        .block-icon {
+            width: 52px;
+            height: 52px;
+            background: linear-gradient(135deg, #6c63ff22, #3ec6ff22);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            margin-bottom: 20px;
+            transition: transform 0.3s;
+            border: 1px solid rgba(108, 99, 255, 0.2);
+        }
+        
+        .block-card h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+        
+        .block-card p {
+            color: #666;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        
+        .block-tag {
+            display: inline-block;
+            padding: 4px 10px;
+            background: rgba(108, 99, 255, 0.1);
+            border-radius: 6px;
+            font-size: 0.75rem;
+            color: #6c63ff;
+            margin-top: 12px;
+            font-weight: 500;
+        }
+        
+        /* How It Works */
+        .how-it-works {
+            padding: 100px 0;
+            background: #0a0a0f;
+        }
+        
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 40px;
+            margin-top: 64px;
+        }
+        
+        .step {
+            text-align: center;
+            padding: 40px 32px;
+            background: #151525;
+            border: 1px solid #1e1e2e;
+            border-radius: 20px;
+            position: relative;
+        }
+        
+        .step::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #6c63ff, #3ec6ff);
+            border-radius: 20px 20px 0 0;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .step:hover::before {
+            opacity: 1;
+        }
+        
+        .step-number {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            font-weight: 800;
+            margin: 0 auto 24px;
+            color: #fff;
+            box-shadow: 0 10px 30px rgba(108, 99, 255, 0.3);
+        }
+        
+        .step h3 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .step p {
+            color: #666;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        
+        /* Code Section */
+        .code-section {
+            padding: 100px 0;
+            background: #0d0d18;
+        }
+        
+        .code-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: -1px;
+            padding: 0 4px;
+        }
+        
+        .code-tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            color: #666;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 8px 8px 0 0;
+            transition: all 0.2s;
+        }
+        
+        .code-tab:hover {
+            color: #fff;
+        }
+        
+        .code-tab.active {
+            background: #080810;
+            color: #fff;
+            border: 1px solid #1e1e2e;
+            border-bottom: none;
+        }
+        
+        .code-block {
+            background: #080810;
+            border: 1px solid #1e1e2e;
+            border-radius: 0 16px 16px 16px;
+            padding: 32px;
+            overflow-x: auto;
+        }
+        
+        .code-block pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.8;
+            color: #c9d1d9;
+        }
+        
+        .code-block .keyword { color: #ff7b72; }
+        .code-block .string { color: #a5d6ff; }
+        .code-block .function { color: #d2a8ff; }
+        .code-block .comment { color: #8b949e; font-style: italic; }
+        .code-block .number { color: #79c0ff; }
+        
+        /* Live Demo */
+        .demo-section {
+            padding: 100px 0;
+            background: #0a0a0f;
+        }
+        
+        .demo-container {
+            background: #151525;
+            border: 1px solid #1e1e2e;
+            border-radius: 20px;
+            overflow: hidden;
+        }
+        
+        .demo-header {
+            padding: 20px 24px;
+            background: #1a1a2e;
+            border-bottom: 1px solid #1e1e2e;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .demo-dots {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .demo-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .demo-dot.red { background: #ff5f56; }
+        .demo-dot.yellow { background: #ffbd2e; }
+        .demo-dot.green { background: #27ca40; }
+        
+        .demo-title {
+            font-size: 0.875rem;
+            color: #666;
+            margin-left: 8px;
+        }
+        
+        .demo-body {
+            padding: 32px;
+        }
+        
+        .demo-input {
+            width: 100%;
+            background: #080810;
+            border: 1px solid #1e1e2e;
+            border-radius: 12px;
+            padding: 16px 20px;
+            color: #fff;
+            font-size: 1rem;
+            margin-bottom: 20px;
+            font-family: inherit;
+        }
+        
+        .demo-input:focus {
+            outline: none;
+            border-color: #6c63ff;
+        }
+        
+        .demo-buttons {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+        }
+        
+        .demo-btn {
+            padding: 10px 18px;
+            background: #1e1e2e;
+            border: 1px solid #2e2e3e;
+            border-radius: 8px;
+            color: #888;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .demo-btn:hover {
+            border-color: #6c63ff;
+            color: #fff;
+        }
+        
+        .demo-output {
+            background: #080810;
+            border: 1px solid #1e1e2e;
+            border-radius: 12px;
+            padding: 24px;
+            min-height: 120px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            color: #888;
+        }
+        
+        .demo-output.has-content {
+            color: #c9d1d9;
+        }
+        
+        /* Pricing */
+        .pricing {
+            padding: 100px 0;
+            background: #0d0d18;
+        }
+        
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            margin-top: 64px;
+        }
+        
+        .pricing-card {
+            background: #151525;
+            border: 1px solid #1e1e2e;
+            border-radius: 20px;
+            padding: 40px 32px;
+            text-align: center;
+            transition: all 0.3s;
+        }
+        
+        .pricing-card:hover {
+            transform: translateY(-4px);
+        }
+        
+        .pricing-card.popular {
+            border-color: #6c63ff;
+            background: linear-gradient(180deg, #151525 0%, #1a1a35 100%);
+            position: relative;
+            transform: scale(1.05);
+        }
+        
+        .popular-badge {
+            position: absolute;
+            top: -14px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            color: #fff;
+            padding: 6px 18px;
+            border-radius: 100px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .pricing-card h3 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .price {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin: 24px 0;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 4px;
+        }
+        
+        .price span {
+            font-size: 1rem;
+            color: #666;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        
+        .features {
+            list-style: none;
+            margin: 32px 0;
+            text-align: left;
+        }
+        
+        .features li {
+            padding: 12px 0;
+            color: #aaa;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.95rem;
+        }
+        
+        .features li::before {
+            content: '✓';
+            width: 20px;
+            height: 20px;
+            background: rgba(0, 204, 136, 0.1);
+            color: #00cc88;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            flex-shrink: 0;
+        }
+        
+        /* Footer */
+        .footer {
+            padding: 80px 0 40px;
+            background: #080810;
+            border-top: 1px solid #1e1e2e;
+        }
+        
+        .footer-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 60px;
+            margin-bottom: 60px;
+        }
+        
+        .footer-brand {
+            max-width: 300px;
+        }
+        
+        .footer-brand .logo {
+            margin-bottom: 16px;
+            display: inline-flex;
+        }
+        
+        .footer-brand p {
+            color: #666;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        
+        .footer-links h4 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .footer-links a {
+            display: block;
+            color: #666;
+            text-decoration: none;
+            padding: 8px 0;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+        
+        .footer-links a:hover {
+            color: #6c63ff;
+        }
+        
+        .footer-bottom {
+            padding-top: 40px;
+            border-top: 1px solid #1e1e2e;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .footer-bottom p {
+            color: #444;
+            font-size: 0.875rem;
+        }
+        
+        .social-links {
+            display: flex;
+            gap: 16px;
+        }
+        
+        .social-links a {
+            width: 40px;
+            height: 40px;
+            background: #151525;
+            border: 1px solid #1e1e2e;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        
+        .social-links a:hover {
+            border-color: #6c63ff;
+            color: #6c63ff;
+        }
+        
+        /* Chat Widget */
+        .chat-widget {
+            position: fixed;
+            bottom: 100px;
+            right: 30px;
+            width: 400px;
+            max-height: 600px;
+            background: #151525;
+            border: 1px solid #2e2e3e;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 1000;
+        }
+        
+        .chat-widget.active {
+            display: flex;
+        }
+        
+        .chat-header {
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .chat-header h4 {
+            margin: 0;
+            color: #fff;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .chat-close {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 1.5rem;
+            cursor: pointer;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+        
+        .chat-close:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 350px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .message {
+            padding: 14px 18px;
+            border-radius: 16px;
+            max-width: 85%;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            animation: messageIn 0.3s ease;
+        }
+        
+        @keyframes messageIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message.user {
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            margin-left: auto;
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+        
+        .message.assistant {
+            background: #1e1e2e;
+            margin-right: auto;
+            color: #e0e0e0;
+            border-bottom-left-radius: 4px;
+        }
+        
+        .message.error {
+            background: rgba(255, 68, 68, 0.1);
+            border: 1px solid rgba(255, 68, 68, 0.3);
+            color: #ff6b6b;
+        }
+        
+        .chat-input {
+            padding: 16px 20px;
+            border-top: 1px solid #2e2e3e;
+            display: flex;
+            gap: 12px;
+        }
+        
+        .chat-input input {
+            flex: 1;
+            background: #0a0a0f;
+            border: 1px solid #2e2e3e;
+            border-radius: 12px;
+            padding: 12px 16px;
+            color: #fff;
+            font-size: 0.95rem;
+            font-family: inherit;
+        }
+        
+        .chat-input input:focus {
+            outline: none;
+            border-color: #6c63ff;
+        }
+        
+        .chat-input button {
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            border: none;
+            border-radius: 12px;
+            padding: 12px 24px;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .chat-input button:hover {
+            transform: scale(1.05);
+        }
+        
+        .chat-input button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .chat-toggle {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            border: none;
+            border-radius: 50%;
+            color: #fff;
+            font-size: 1.5rem;
+            cursor: pointer;
+            box-shadow: 0 10px 40px rgba(108, 99, 255, 0.4);
+            z-index: 999;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .chat-toggle:hover {
+            transform: scale(1.1);
+            box-shadow: 0 15px 50px rgba(108, 99, 255, 0.5);
+        }
+        
+        .chat-toggle.hidden {
+            transform: scale(0);
+            opacity: 0;
+        }
+        
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 8px 12px;
+        }
+        
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: #666;
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+        
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        
+        @keyframes typing {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .pricing-grid {
+                grid-template-columns: 1fr;
+                max-width: 400px;
+                margin: 64px auto 0;
+            }
+            
+            .pricing-card.popular {
+                transform: none;
+                order: -1;
+            }
+            
+            .steps {
+                grid-template-columns: 1fr;
+            }
+            
+            .footer-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2.75rem; }
+            .hero p { font-size: 1.1rem; }
+            .nav-links { display: none; }
+            .stats-bar { flex-direction: column; gap: 24px; }
+            .chat-widget { width: calc(100% - 40px); right: 20px; bottom: 90px; }
+            .footer-grid { grid-template-columns: 1fr; gap: 40px; }
+            .footer-bottom { flex-direction: column; gap: 20px; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="logo">
+                <div class="logo-icon">🧠</div>
+                Cerebrum
+            </a>
+            <div class="nav-links">
+                <a href="#blocks">Blocks</a>
+                <a href="#docs">Docs</a>
+                <a href="#pricing">Pricing</a>
+                <a href="/dashboard" class="btn btn-primary" style="padding: 10px 20px;">Dashboard</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="badge">🔥 DeepSeek: $0.14/M tokens — 5x Cheaper than GPT-3.5</div>
+            <h1>Build AI Like Lego</h1>
+            <p>15 AI blocks. Snap them together. Deploy anywhere. From PDF processing to chat completions with <strong>DeepSeek</strong> (cheapest LLM!) — build production-ready AI in minutes, not months.</p>
+            <div class="cta-buttons">
+                <a href="#blocks" class="btn btn-primary">Explore All Blocks</a>
+                <a href="#demo" class="btn btn-secondary">Try Live Demo</a>
+            </div>
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <div class="stat-value" id="blockCount">15</div>
+                    <div class="stat-label">AI Blocks</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">3</div>
+                    <div class="stat-label">Lines of Code</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">1</div>
+                    <div class="stat-label">API Key</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">∞</div>
+                    <div class="stat-label">Possibilities</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Blocks Section -->
+    <section class="blocks" id="blocks">
+        <div class="container">
+            <div class="section-header">
+                <h2>15 Blocks. Infinite Possibilities.</h2>
+                <p>Each block is a fully-featured AI capability. Chain them together to build anything you can imagine.</p>
+            </div>
+            <div class="blocks-grid" id="blocksGrid">
+                <!-- Blocks will be loaded dynamically -->
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how-it-works">
+        <div class="container">
+            <div class="section-header">
+                <h2>How It Works</h2>
+                <p>From idea to production in 3 simple steps.</p>
+            </div>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3>Pick Your Blocks</h3>
+                    <p>Choose from 15 AI blocks. Each is a complete AI capability ready to use with a single API call.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3>Chain Them Together</h3>
+                    <p>Use our SDK to chain blocks: PDF → OCR → Chat = Document AI in just 3 lines of code.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3>Deploy Anywhere</h3>
+                    <p>Same code runs locally, on-premise, or in the cloud. Auto-scaling built-in.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Code Section -->
+    <section class="code-section" id="docs">
+        <div class="container">
+            <div class="section-header">
+                <h2>Simple Code. Powerful Results.</h2>
+                <p>No boilerplate. No complex setup. Just snap blocks together.</p>
+            </div>
+            <div class="code-tabs">
+                <button class="code-tab active" onclick="switchTab('python')">Python</button>
+                <button class="code-tab" onclick="switchTab('javascript')">JavaScript</button>
+                <button class="code-tab" onclick="switchTab('curl')">cURL</button>
+            </div>
+            <div class="code-block">
+                <pre id="codePython"><span class="comment"># Document AI Pipeline: PDF → OCR → Chat Summary</span>
+<span class="keyword">import</span> requests
+
+<span class="comment"># 1. Extract text from PDF</span>
+pdf_result = requests.post(<span class="string">"https://cerebrum-blocks.onrender.com/v1/execute"</span>, json={
+    <span class="string">"block"</span>: <span class="string">"pdf"</span>,
+    <span class="string">"input"</span>: <span class="string">"contract.pdf"</span>,
+    <span class="string">"params"</span>: {<span class="string">"extract"</span>: <span class="string">"text"</span>}
+}).json()
+
+<span class="comment"># 2. Get AI summary via Chat (DeepSeek = cheapest!)</span>
+chat_result = requests.post(<span class="string">"https://cerebrum-blocks.onrender.com/v1/chat"</span>, json={
+    <span class="string">"message"</span>: <span class="string">f"Summarize: {pdf_result['result']['text'][:2000]}"</span>,
+    <span class="string">"model"</span>: <span class="string">"deepseek-chat"</span>,
+    <span class="string">"provider"</span>: <span class="string">"deepseek"</span>
+}).json()
+
+<span class="keyword">print</span>(chat_result[<span class="string">"text"</span>])
+<span class="comment"># "This contract outlines payment terms of $50,000..."</span></pre>
+                <pre id="codeJavascript" style="display:none"><span class="comment">// Document AI Pipeline: PDF → OCR → Chat Summary</span>
+<span class="keyword">const</span> response = <span class="keyword">await</span> fetch(<span class="string">'https://cerebrum-blocks.onrender.com/v1/chain'</span>, {
+  method: <span class="string">'POST'</span>,
+  headers: { <span class="string">'Content-Type'</span>: <span class="string">'application/json'</span> },
+  body: JSON.stringify({
+    steps: [
+      { block: <span class="string">'pdf'</span>, params: { extract: <span class="string">'text'</span> } },
+      { block: <span class="string">'chat'</span>, params: { 
+        prompt: <span class="string">'Summarize this document:'</span>,
+        model: <span class="string">'deepseek-chat'</span>,
+        provider: <span class="string">'deepseek'</span>
+      }}
+    ],
+    initial_input: <span class="string">'contract.pdf'</span>
+  })
+});
+
+<span class="keyword">const</span> result = <span class="keyword">await</span> response.json();
+console.log(result.final_output);
+<span class="comment">// "This contract outlines payment terms..."</span></pre>
+                <pre id="codeCurl" style="display:none"><span class="comment"># Chain multiple blocks in one request</span>
+curl -X POST https://cerebrum-blocks.onrender.com/v1/chain \
+  -H <span class="string">"Content-Type: application/json"</span> \
+  -d <span class="string">'{
+    "steps": [
+      {"block": "ocr", "params": {"lang": "eng"}},
+      {"block": "translate", "params": {"target": "en"}},
+      {"block": "chat", "params": {"prompt": "Extract key info:"}}
+    ],
+    "initial_input": "invoice.png"
+  }'</span></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Live Demo -->
+    <section class="demo-section" id="demo">
+        <div class="container">
+            <div class="section-header">
+                <h2>Try It Live</h2>
+                <p>Test the Chat block directly from your browser.</p>
+            </div>
+            <div class="demo-container">
+                <div class="demo-header">
+                    <div class="demo-dots">
+                        <div class="demo-dot red"></div>
+                        <div class="demo-dot yellow"></div>
+                        <div class="demo-dot green"></div>
+                    </div>
+                    <span class="demo-title">Live API Demo — Chat Block</span>
+                </div>
+                <div class="demo-body">
+                    <input type="text" class="demo-input" id="demoInput" placeholder="Ask anything... (e.g., 'Explain quantum computing in simple terms')">
+                    <div class="demo-buttons">
+                        <button class="demo-btn" onclick="runDemo('What is AI?')">What is AI?</button>
+                        <button class="demo-btn" onclick="runDemo('Write a Python hello world')">Python Hello World</button>
+                        <button class="demo-btn" onclick="runDemo('Summarize: The quick brown fox')">Summarize Text</button>
+                    </div>
+                    <div class="demo-output" id="demoOutput">Click a button above or type your own question and press Enter...</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing -->
+    <section class="pricing" id="pricing">
+        <div class="container">
+            <div class="section-header">
+                <h2>Simple Pricing</h2>
+                <p>Start free, scale as you grow. No hidden fees.</p>
+            </div>
+            <div class="pricing-grid">
+                <div class="pricing-card">
+                    <h3>Free</h3>
+                    <div class="price">$0<span>/month</span></div>
+                    <ul class="features">
+                        <li>All 15 AI blocks</li>
+                        <li>1,000 requests/month</li>
+                        <li>Community support</li>
+                        <li>Self-hosted option</li>
+                        <li>Open source</li>
+                    </ul>
+                    <button class="btn btn-secondary" style="width: 100%;">Get Started</button>
+                </div>
+                <div class="pricing-card popular">
+                    <div class="popular-badge">Most Popular</div>
+                    <h3>Pro</h3>
+                    <div class="price">$29<span>/month</span></div>
+                    <ul class="features">
+                        <li>All 15 AI blocks</li>
+                        <li>50,000 requests/month</li>
+                        <li>Priority support</li>
+                        <li>Hosted on Render</li>
+                        <li>Usage analytics</li>
+                        <li>Custom API keys</li>
+                    </ul>
+                    <button class="btn btn-primary" style="width: 100%;">Upgrade to Pro</button>
+                </div>
+                <div class="pricing-card">
+                    <h3>Enterprise</h3>
+                    <div class="price">Custom</div>
+                    <ul class="features">
+                        <li>Everything in Pro</li>
+                        <li>Unlimited requests</li>
+                        <li>Custom blocks</li>
+                        <li>SLA guarantee</li>
+                        <li>Dedicated support</li>
+                        <li>On-premise deployment</li>
+                    </ul>
+                    <button class="btn btn-secondary" style="width: 100%;">Contact Sales</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <a href="/" class="logo">
+                        <div class="logo-icon">🧠</div>
+                        Cerebrum
+                    </a>
+                    <p>Build AI applications like Lego. 15 blocks. One API. Infinite possibilities.</p>
+                </div>
+                <div class="footer-links">
+                    <h4>Product</h4>
+                    <a href="#blocks">Blocks</a>
+                    <a href="#docs">Documentation</a>
+                    <a href="#pricing">Pricing</a>
+                    <a href="/dashboard">Dashboard</a>
+                </div>
+                <div class="footer-links">
+                    <h4>Resources</h4>
+                    <a href="/docs">API Reference</a>
+                    <a href="https://github.com/bopoadz-del/cerebrum-blocks">GitHub</a>
+                    <a href="#">Examples</a>
+                    <a href="#">Blog</a>
+                </div>
+                <div class="footer-links">
+                    <h4>Company</h4>
+                    <a href="#">About</a>
+                    <a href="#">Contact</a>
+                    <a href="#">Privacy</a>
+                    <a href="#">Terms</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>© 2025 Cerebrum Blocks. Built with 💜 for developers.</p>
+                <div class="social-links">
+                    <a href="#" aria-label="GitHub">📦</a>
+                    <a href="#" aria-label="Twitter">🐦</a>
+                    <a href="#" aria-label="Discord">💬</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Chat Widget -->
+    <button class="chat-toggle" id="chatToggle" onclick="toggleChat()">💬</button>
+    
+    <div class="chat-widget" id="chatWidget">
+        <div class="chat-header">
+            <h4>🧠 Cerebrum Assistant</h4>
+            <button class="chat-close" onclick="toggleChat()">×</button>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="message assistant">👋 Hello! I'm the Cerebrum Blocks AI Assistant powered by DeepSeek. I know all about our 15 AI blocks, pricing (DeepSeek is cheapest at $0.14/M tokens!), and how to chain them together. Ask me anything!</div>
+        </div>
+        <div class="chat-input">
+            <input type="text" id="chatInput" placeholder="Type your message..." onkeypress="handleKeyPress(event)">
+            <button onclick="sendMessage()" id="sendBtn">Send</button>
+        </div>
+    </div>
+
+    <script>
+        // Cerebrum Blocks AI Assistant System Prompt
+        // This trains DeepSeek to be knowledgeable about Cerebrum Blocks
+        const CEREBRUM_SYSTEM_PROMPT = `You are the Cerebrum Blocks AI Assistant, an expert on the Cerebrum Blocks platform. You help developers build AI applications using modular AI blocks.
+
+ABOUT CEREBRUM BLOCKS:
+Cerebrum Blocks lets developers build AI applications like Lego - snapping together pre-built AI capabilities. Tagline: "Build AI Like Lego" and "AI for Developers in 3 Lines of Code".
+
+THE 15 AI BLOCKS:
+• Chat: DeepSeek($0.14/M, default/cheapest!), Groq(fastest), GPT-4, Claude + streaming
+• PDF: Extract text, tables, images from documents
+• OCR: Extract text from images and scans
+• Image: Analysis & generation
+• Translate: 100+ languages
+• Code: Generation & execution
+• Web: Scraping & browsing
+• Search: Web search (Serper, Bing, DuckDuckGo)
+• Vector_Search: Semantic search with ChromaDB
+• Zvec: Zero-shot embeddings & semantic operations
+• Storage: Google Drive, OneDrive, Local Drive, Android Drive
+• Voice: Text-to-speech & speech-to-text
+
+PRICING:
+• Platform: Free (1K req/mo) | Pro $29 (50K req/mo) | Enterprise (custom)
+• LLMs: DeepSeek $0.14/M (5x cheaper than GPT-3.5!), Groq $0.59/M, GPT-3.5 $0.50/M, GPT-4 $2.50/M
+
+API: https://cerebrum-blocks.onrender.com
+Endpoints: /v1/blocks, /v1/execute, /v1/chain, /v1/chat
+
+BLOCK CHAINING EXAMPLES:
+• Document AI: PDF → OCR → Chat
+• Translation: OCR → Translate → Chat
+• Research: Web → Search → Chat → Vector_Search
+
+You recommend DeepSeek (cheapest), suggest block chains, give code examples. Emphasize: One API, 15 blocks, infinite possibilities!`;
+
+        // Block data with icons and descriptions
+        const blockData = {
+            'chat': { icon: '💬', desc: 'AI chat with DeepSeek ($0.14/M), Groq, GPT-4, Claude', tag: 'AI' },
+            'pdf': { icon: '📄', desc: 'Extract text, images from PDF documents', tag: 'Document' },
+            'ocr': { icon: '👁️', desc: 'Extract text from images and scans', tag: 'Vision' },
+            'voice': { icon: '🔊', desc: 'Text-to-speech and speech-to-text', tag: 'Audio' },
+            'image': { icon: '🖼️', desc: 'Image analysis and generation', tag: 'Vision' },
+            'translate': { icon: '🌐', desc: 'Translate between 100+ languages', tag: 'NLP' },
+            'code': { icon: '💻', desc: 'Code generation and execution', tag: 'Dev' },
+            'web': { icon: '🕸️', desc: 'Web scraping and browsing', tag: 'Web' },
+            'search': { icon: '🔎', desc: 'Web search with multiple providers', tag: 'Web' },
+            'vector_search': { icon: '🔍', desc: 'Semantic search with embeddings', tag: 'AI' },
+            'zvec': { icon: '🧮', desc: 'Zero-shot vector embeddings & semantic ops', tag: 'AI' },
+            'google_drive': { icon: '📁', desc: 'Google Drive integration', tag: 'Storage' },
+            'onedrive': { icon: '☁️', desc: 'Microsoft OneDrive integration', tag: 'Storage' },
+            'local_drive': { icon: '💾', desc: 'Local file system access', tag: 'Storage' },
+            'android_drive': { icon: '📱', desc: 'Android storage integration', tag: 'Storage' }
+        };
+
+        // Load blocks dynamically
+        async function loadBlocks() {
+            const grid = document.getElementById('blocksGrid');
+            
+            try {
+                const response = await fetch('/v1/blocks');
+                const data = await response.json();
+                
+                // Update block count
+                document.getElementById('blockCount').textContent = data.blocks.length;
+                
+                // Render blocks
+                grid.innerHTML = data.blocks.map(block => {
+                    const info = blockData[block.name] || { icon: '📦', desc: block.description || 'AI Block', tag: 'AI' };
+                    return `
+                        <div class="block-card" onclick="showBlockDetails('${block.name}')">
+                            <div class="block-icon">${info.icon}</div>
+                            <h3>${block.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h3>
+                            <p>${info.desc}</p>
+                            <span class="block-tag">${info.tag}</span>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to load blocks:', error);
+                // Fallback to static blocks
+                grid.innerHTML = Object.entries(blockData).map(([name, info]) => `
+                    <div class="block-card">
+                        <div class="block-icon">${info.icon}</div>
+                        <h3>${name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h3>
+                        <p>${info.desc}</p>
+                        <span class="block-tag">${info.tag}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // Show block details (placeholder)
+        function showBlockDetails(blockName) {
+            console.log('Block clicked:', blockName);
+        }
+
+        // Code tab switching
+        function switchTab(lang) {
+            document.querySelectorAll('.code-tab').forEach(tab => tab.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            document.getElementById('codePython').style.display = lang === 'python' ? 'block' : 'none';
+            document.getElementById('codeJavascript').style.display = lang === 'javascript' ? 'block' : 'none';
+            document.getElementById('codeCurl').style.display = lang === 'curl' ? 'block' : 'none';
+        }
+
+        // Live demo
+        async function runDemo(message) {
+            const output = document.getElementById('demoOutput');
+            const input = document.getElementById('demoInput');
+            
+            if (message) input.value = message;
+            else message = input.value;
+            
+            if (!message.trim()) return;
+            
+            output.textContent = '⏳ Processing with DeepSeek...';
+            output.classList.add('has-content');
+            
+            try {
+                const response = await fetch('/v1/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        block: 'chat',
+                        input: message,
+                        params: {
+                            provider: 'deepseek',
+                            model: 'deepseek-chat',
+                            system: CEREBRUM_SYSTEM_PROMPT
+                        }
+                    })
+                });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const result = await response.json();
+                const text = result.result?.text || result.text || 'No response received';
+                output.textContent = text;
+                
+                // Add provider info if available
+                if (result.result?.model || result.model) {
+                    output.textContent += `\n\n[Powered by: ${result.result?.model || result.model}]`;
+                }
+            } catch (error) {
+                output.textContent = `❌ Error: ${error.message}\n\nNote: The API might be starting up (Render free tier sleeps after 15 min). Try again in 30 seconds.`;
+            }
+        }
+
+        document.getElementById('demoInput')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') runDemo();
+        });
+
+        // Chat widget
+        function toggleChat() {
+            const widget = document.getElementById('chatWidget');
+            const toggle = document.getElementById('chatToggle');
+            widget.classList.toggle('active');
+            toggle.classList.toggle('hidden');
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') sendMessage();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const messages = document.getElementById('chatMessages');
+            const sendBtn = document.getElementById('sendBtn');
+            const text = input.value.trim();
+            
+            if (!text) return;
+            
+            // Add user message
+            const userMsg = document.createElement('div');
+            userMsg.className = 'message user';
+            userMsg.textContent = text;
+            messages.appendChild(userMsg);
+            input.value = '';
+            messages.scrollTop = messages.scrollHeight;
+            
+            // Show typing indicator
+            sendBtn.disabled = true;
+            sendBtn.textContent = '...';
+            
+            try {
+                const response = await fetch('/v1/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        block: 'chat',
+                        input: text,
+                        params: {
+                            provider: 'deepseek',
+                            model: 'deepseek-chat',
+                            system: CEREBRUM_SYSTEM_PROMPT
+                        }
+                    })
+                });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const result = await response.json();
+                const responseText = result.result?.text || result.text || 'I received your message!';
+                
+                const assistantMsg = document.createElement('div');
+                assistantMsg.className = 'message assistant';
+                assistantMsg.textContent = responseText;
+                messages.appendChild(assistantMsg);
+            } catch (error) {
+                const errorMsg = document.createElement('div');
+                errorMsg.className = 'message error';
+                errorMsg.textContent = `Sorry, I couldn't connect to the API. Error: ${error.message}`;
+                messages.appendChild(errorMsg);
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send';
+                messages.scrollTop = messages.scrollHeight;
+            }
+        }
+
+        // Initialize
+        loadBlocks();
+    </script>
+</body>
+</html>

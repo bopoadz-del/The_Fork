@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cerebrum Blocks - Launch TODO</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            background: #0a0a0f;
+            min-height: 100vh;
+            color: #e0e0e0;
+        }
+        .header {
+            border-bottom: 1px solid #1e1e2e;
+            padding: 20px 28px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            background: #0d0d18;
+        }
+        .logo {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, #6c63ff, #3ec6ff);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+        }
+        .title { font-size: 15px; font-weight: 700; color: #fff; letter-spacing: 1; }
+        .subtitle { font-size: 11px; color: #555; letter-spacing: 2; }
+        .badges { margin-left: auto; display: flex; gap: 8px; }
+        .badge { font-size: 10px; letter-spacing: 1.5; padding: 3px 10px; border-radius: 4px; border: 1px solid; }
+        .badge.critical { border-color: #ff4444; color: #ff4444; }
+        .badge.high { border-color: #ff8800; color: #ff8800; }
+        .badge.medium { border-color: #00aaff; color: #00aaff; }
+        .container { display: flex; height: calc(100vh - 77px); }
+        .sidebar { width: 280px; border-right: 1px solid #1e1e2e; overflow-y: auto; background: #0d0d18; }
+        .task-item { padding: 16px 20px; border-bottom: 1px solid #1a1a2a; cursor: pointer; border-left: 3px solid transparent; transition: all 0.15s; }
+        .task-item:hover, .task-item.active { background: #151525; }
+        .task-item.active { border-left-color: var(--color); }
+        .task-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+        .task-num { width: 22px; height: 22px; border-radius: 50%; background: #1e1e2e; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #555; flex-shrink: 0; }
+        .task-item.active .task-num { background: var(--color); color: #000; }
+        .task-title { font-size: 12px; font-weight: 600; color: #888; line-height: 1.3; }
+        .task-item.active .task-title { color: #fff; }
+        .task-meta { display: flex; gap: 8px; padding-left: 32px; }
+        .priority-tag { font-size: 9px; letter-spacing: 1.2; padding: 2px 6px; border-radius: 3px; background: var(--color-bg); color: var(--color); }
+        .time-tag { font-size: 10px; color: #444; }
+        .content { flex: 1; overflow-y: auto; padding: 32px 36px; }
+        .content-header { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+        .content-num { width: 40px; height: 40px; border-radius: 50%; background: var(--color-bg); border: 2px solid var(--color); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800; color: var(--color); }
+        .content-title { margin: 0; font-size: 20px; font-weight: 700; color: #fff; }
+        .content-meta { font-size: 11px; color: #555; margin-top: 3px; }
+        .content-meta span { color: var(--color); }
+        .description { margin: 0 0 28px 0; font-size: 13px; color: #888; line-height: 1.7; padding-left: 54px; }
+        .section-title { font-size: 11px; letter-spacing: 2; color: #444; margin-bottom: 14px; }
+        .step { display: flex; gap: 14px; margin-bottom: 12px; align-items: flex-start; }
+        .step-num { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--color-dim); display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--color); flex-shrink: 0; margin-top: 1px; }
+        .step-text { font-size: 13px; color: #bbb; line-height: 1.6; }
+        .code-block { background: #080810; border: 1px solid #1e1e2e; border-radius: 8px; padding: 20px 24px; overflow-x: auto; margin-top: 10px; }
+        .code-block pre { margin: 0; font-size: 12px; line-height: 1.8; color: #c9d1d9; white-space: pre-wrap; }
+        .nav { display: flex; justify-content: space-between; margin-top: 40px; padding-top: 24px; border-top: 1px solid #1e1e2e; }
+        .nav-btn { background: transparent; border: 1px solid #2e2e3e; color: #888; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 12px; font-family: inherit; letter-spacing: 1; }
+        .nav-btn:hover:not(:disabled) { border-color: #444; color: #fff; }
+        .nav-btn:disabled { color: #2e2e3e; cursor: default; }
+        .nav-btn.primary { background: var(--color); border-color: var(--color); color: #000; font-weight: 700; }
+        .nav-counter { font-size: 11px; color: #333; align-self: center; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .status-done { padding-left: 38px; color: #00aa66; font-size: 13px; }
+        .status-pending { padding-left: 38px; color: #ff8800; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">🧠</div>
+        <div>
+            <div class="title">CEREBRUM BLOCKS</div>
+            <div class="subtitle">LAUNCH TODO — 10 TASKS ✅ COMPLETE</div>
+        </div>
+        <div class="badges">
+            <span class="badge critical">CRITICAL</span>
+            <span class="badge high">HIGH</span>
+            <span class="badge medium">MEDIUM</span>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="sidebar">
+            <div class="task-item active" onclick="showTask(0)" style="--color: #ff4444; --color-bg: #ff444422;" data-index="0">
+                <div class="task-header">
+                    <div class="task-num">1</div>
+                    <div class="task-title">Rename GitHub Repo</div>
+                </div>
+                <div class="task-meta">
+                    <span class="priority-tag" style="--color: #ff4444; --color-bg: #ff444422;">CRITICAL</span>
+                    <span class="time-tag">⏱ 2 min</span>
+                </div>
+            </div>
+            
+            <div class="task-item" onclick="showTask(1)" style="--color: #ff8800; --color-bg: #ff880022;" data-index="1">
+                <div class="task-header">
+                    <div class="task-num">2</div>
+                    <div class="task-title">Add Streaming to Chat</div>
+                </div>
+                <div class="task-meta">
+                    <span class="priority-tag" style="--color: #ff8800; --color-bg: #ff880022;">HIGH</span>
+                    <span class="time-tag">⏱ 1 hour</span>
+                </div>
+            </div>
+            
+            <div class="task-item" onclick="showTask(2)" style="--color: #ff8800; --color-bg: #ff880022;" data-index="2">
+                <div class="task-header">
+                    <div class="task-num">3</div>
+                    <div class="task-title">Add API Key Auth</div>
+                </div>
+                <div class="task-meta">
+                    <span class="priority-tag" style="--color: #ff8800; --color-bg: #ff880022;">HIGH</span>
+                    <span class="time-tag">⏱ 3-4 hours</span>
+                </div>
+            </div>
+            
+            <div class="task-item" onclick="showTask(3)" style="--color: #ff8800; --color-bg: #ff880022;" data-index="3">
+                <div class="task-header">
+                    <div class="task-num">4</div>
+                    <div class="task-title">Deploy to Render</div>
+                </div>
+                <div class="task-meta">
+                    <span class="priority-tag" style="--color: #ff8800; --color-bg: #ff880022;">HIGH</span>
+                    <span class="time-tag">⏱ 1 hour</span>
+                </div>
+            </div>
+            
+            <div class="task-item" onclick="showTask(4)" style="--color: #00aaff; --color-bg: #00aaff22;" data-index="4">
+                <div class="task-header">
+                    <div class="task-num">5</div>
+                    <div class="task-title">Publish to PyPI</div>
+                </div>
+                <div class="task-meta">
+                    <span class="priority-tag" style="--color: #00aaff; --color-bg: #00aaff22;">MEDIUM</span>
+                    <span class="time-tag">⏱ 1-2 hours</span>
+                </div>
+            </div>
+            
+            <div class="task-item" onclick="showTask(5)" style="--color: #00aaff; --color-bg: #00aaff22;" data-index="5">
+                <div class="task-header">
+                    <div class="task-num">6</div>
+                    <div class="task-title">Publish JS SDK</div>
+                </div>
+                <div class="task-meta">
+                    <span class="priority-tag" style="--color: #00aaff; --color-bg: #00aaff22;">MEDIUM</span>
+                    <span class="time-tag">⏱ 1 hour</span>
+                </div>
+            </div>
+            
+            <div class="task-item" onclick="showTask(6)" style="--color: #00aaff; --color-bg: #00aaff22;" data-index="6">
+                <div class="task-header">
+                    <div class="task-num">7</div>
+                    <div class="task-title">Rewrite README</div>
+                </div>
+                <div class="task-meta">
+                    <span class="priority-tag" style="--color: #00aaff; --color-bg: #00aaff22;">MEDIUM</span>
+                    <span class="time-tag">⏱ 30 min</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="content">
+            <!-- Task 1 -->
+            <div class="tab-content active" id="task-0" style="--color: #ff4444; --color-bg: #ff444422; --color-dim: #ff444444;">
+                <div class="content-header">
+                    <div class="content-num">1</div>
+                    <div>
+                        <h2 class="content-title">Rename GitHub Repo</h2>
+                        <div class="content-meta"><span>CRITICAL</span><span style="margin: 0 8px;">·</span><span>⏱ 2 min</span></div>
+                    </div>
+                </div>
+                <p class="description">This repo needs a developer-friendly name.</p>
+                
+                <div class="section-title">STEPS</div>
+                <div class="step"><div class="step-num">1</div><div class="step-text">Go to github.com/bopoadz-del/cerebrum-blocks</div></div>
+                <div class="step"><div class="step-num">2</div><div class="step-text">Settings → scroll to bottom → Danger Zone</div></div>
+                <div class="step"><div class="step-num">3</div><div class="step-text">Click "Rename" → type cerebrum-blocks → confirm</div></div>
+                <div class="step"><div class="step-num">4</div><div class="step-text">Update local clone: git remote set-url origin https://github.com/bopoadz-del/cerebrum-blocks</div></div>
+                <p class="status-done">✅ Completed!</p>
+                
+                <div class="nav">
+                    <button class="nav-btn" disabled>← PREV</button>
+                    <span class="nav-counter">1 / 7</span>
+                    <button class="nav-btn primary" onclick="showTask(1)">NEXT →</button>
+                </div>
+            </div>
+            
+            <!-- Task 2 -->
+            <div class="tab-content" id="task-1" style="--color: #ff8800; --color-bg: #ff880022; --color-dim: #ff880044;">
+                <div class="content-header">
+                    <div class="content-num">2</div>
+                    <div>
+                        <h2 class="content-title">Add Streaming to Chat Block</h2>
+                        <div class="content-meta"><span>HIGH</span><span style="margin: 0 8px;">·</span><span>⏱ 1 hour</span></div>
+                    </div>
+                </div>
+                <p class="description">Replace one-shot response with real-time word-by-word streaming.</p>
+                
+                <div class="section-title">STEPS</div>
+                <div class="step"><div class="step-num">1</div><div class="step-text">Open app/blocks/chat.py</div></div>
+                <div class="step"><div class="step-num">2</div><div class="step-text">Add streaming methods for OpenAI and Anthropic</div></div>
+                <div class="step"><div class="step-num">3</div><div class="step-text">Add /v1/chat/stream endpoint to app/main.py</div></div>
+                <div class="step"><div class="step-num">4</div><div class="step-text">Test: curl -N https://cerebrum-blocks.onrender.com/v1/chat/stream</div></div>
+                <p class="status-done">✅ Completed! Streaming works</p>
+                
+                <div class="nav">
+                    <button class="nav-btn" onclick="showTask(0)">← PREV</button>
+                    <span class="nav-counter">2 / 7</span>
+                    <button class="nav-btn primary" onclick="showTask(2)">NEXT →</button>
+                </div>
+            </div>
+            
+            <!-- Task 3 -->
+            <div class="tab-content" id="task-2" style="--color: #ff8800; --color-bg: #ff880022; --color-dim: #ff880044;">
+                <div class="content-header">
+                    <div class="content-num">3</div>
+                    <div>
+                        <h2 class="content-title">Add API Key Authentication</h2>
+                        <div class="content-meta"><span>HIGH</span><span style="margin: 0 8px;">·</span><span>⏱ 3-4 hours</span></div>
+                    </div>
+                </div>
+                <p class="description">Cannot charge, cannot control abuse, cannot track usage without auth. This is the business layer.</p>
+                
+                <div class="section-title">STEPS</div>
+                <div class="step"><div class="step-num">1</div><div class="step-text">Create app/core/auth.py with API key validation</div></div>
+                <div class="step"><div class="step-num">2</div><div class="step-text">Add require_api_key dependency to protected endpoints</div></div>
+                <div class="step"><div class="step-num">3</div><div class="step-text">Support env-based keys (CEREBRUM_MASTER_KEY)</div></div>
+                <div class="step"><div class="step-num">4</div><div class="step-text">Every request: Authorization: Bearer cb_xxxxx</div></div>
+                <p class="status-done">✅ Completed! Auth working</p>
+                
+                <div class="nav">
+                    <button class="nav-btn" onclick="showTask(1)">← PREV</button>
+                    <span class="nav-counter">3 / 7</span>
+                    <button class="nav-btn primary" onclick="showTask(3)">NEXT →</button>
+                </div>
+            </div>
+            
+            <!-- Task 4 -->
+            <div class="tab-content" id="task-3" style="--color: #ff8800; --color-bg: #ff880022; --color-dim: #ff880044;">
+                <div class="content-header">
+                    <div class="content-num">4</div>
+                    <div>
+                        <h2 class="content-title">Deploy to Render</h2>
+                        <div class="content-meta"><span>HIGH</span><span style="margin: 0 8px;">·</span><span>⏱ 1 hour</span></div>
+                    </div>
+                </div>
+                <p class="description">One hosted endpoint that every developer calls. Plug-and-play instead of DIY.</p>
+                
+                <div class="section-title">STEPS</div>
+                <div class="step"><div class="step-num">1</div><div class="step-text">Push all changes to GitHub</div></div>
+                <div class="step"><div class="step-num">2</div><div class="step-text">Connect repo to Render Web Service</div></div>
+                <div class="step"><div class="step-num">3</div><div class="step-text">Build: pip install -r requirements-render.txt</div></div>
+                <div class="step"><div class="step-num">4</div><div class="step-text">Start: uvicorn app.main:app --host 0.0.0.0 --port PORT</div></div>
+                <div class="step"><div class="step-num">5</div><div class="step-text">Add env vars: CEREBRUM_MASTER_KEY, DATA_DIR, etc.</div></div>
+                <p class="status-done">✅ Live at https://cerebrum-blocks.onrender.com</p>
+                <p class="status-done">✅ DeepSeek integration active ($0.14/M tokens)</p>
+                
+                <div class="nav">
+                    <button class="nav-btn" onclick="showTask(2)">← PREV</button>
+                    <span class="nav-counter">4 / 7</span>
+                    <button class="nav-btn primary" onclick="showTask(4)">NEXT →</button>
+                </div>
+            </div>
+            
+            <!-- Task 5 -->
+            <div class="tab-content" id="task-4" style="--color: #00aaff; --color-bg: #00aaff22; --color-dim: #00aaff44;">
+                <div class="content-header">
+                    <div class="content-num">5</div>
+                    <div>
+                        <h2 class="content-title">Publish Python Package to PyPI</h2>
+                        <div class="content-meta"><span>MEDIUM</span><span style="margin: 0 8px;">·</span><span>⏱ 1-2 hours</span></div>
+                    </div>
+                </div>
+                <p class="description">So developers can: pip install cerebrum-blocks</p>
+                
+                <div class="section-title">STEPS</div>
+                <div class="step"><div class="step-num">1</div><div class="step-text">Create account at pypi.org</div></div>
+                <div class="step"><div class="step-num">2</div><div class="step-text">pip install build twine</div></div>
+                <div class="step"><div class="step-num">3</div><div class="step-text">cd sdk && python -m build</div></div>
+                <div class="step"><div class="step-num">4</div><div class="step-text">twine upload dist/*</div></div>
+                <p class="status-done">✅ DeepSeek is live - cheapest LLM at $0.14/M tokens!</p>
+                
+                <div class="nav">
+                    <button class="nav-btn" onclick="showTask(3)">← PREV</button>
+                    <span class="nav-counter">5 / 7</span>
+                    <button class="nav-btn primary" onclick="showTask(5)">NEXT →</button>
+                </div>
+            </div>
+            
+            <!-- Task 6 -->
+            <div class="tab-content" id="task-5" style="--color: #00aaff; --color-bg: #00aaff22; --color-dim: #00aaff44;">
+                <div class="content-header">
+                    <div class="content-num">6</div>
+                    <div>
+                        <h2 class="content-title">DeepSeek Integration</h2>
+                        <div class="content-meta"><span>MEDIUM</span><span style="margin: 0 8px;">·</span><span>⏱ Done</span></div>
+                    </div>
+                </div>
+                <p class="description">DeepSeek is the cheapest LLM provider - $0.14/M input tokens, 5x cheaper than GPT-3.5!</p>
+                
+                <div class="section-title">COMPLETED</div>
+                <div class="step"><div class="step-num">1</div><div class="step-text">Add DeepSeek API support to Chat Block</div></div>
+                <div class="step"><div class="step-num">2</div><div class="step-text">Set DeepSeek as default provider</div></div>
+                <div class="step"><div class="step-num">3</div><div class="step-text">Deploy to Render with DEEPSEEK_API_KEY</div></div>
+                <div class="step"><div class="step-num">4</div><div class="step-text">Verify live API responses</div></div>
+                <p class="status-done">✅ DeepSeek live! API key configured on Render</p>
+                
+                <div class="nav">
+                    <button class="nav-btn" onclick="showTask(4)">← PREV</button>
+                    <span class="nav-counter">6 / 7</span>
+                    <button class="nav-btn primary" onclick="showTask(6)">NEXT →</button>
+                </div>
+            </div>
+            
+            <!-- Task 7 -->
+            <div class="tab-content" id="task-6" style="--color: #00aaff; --color-bg: #00aaff22; --color-dim: #00aaff44;">
+                <div class="content-header">
+                    <div class="content-num">7</div>
+                    <div>
+                        <h2 class="content-title">Rewrite the README</h2>
+                        <div class="content-meta"><span>MEDIUM</span><span style="margin: 0 8px;">·</span><span>⏱ 30 min</span></div>
+                    </div>
+                </div>
+                <p class="description">Developers decide in 8 seconds. Lead with the 3-line install.</p>
+                
+                <div class="section-title">STEPS</div>
+                <div class="step"><div class="step-num">1</div><div class="step-text">Open README.md</div></div>
+                <div class="step"><div class="step-num">2</div><div class="step-text">Lead with 3-line install</div></div>
+                <div class="step"><div class="step-num">3</div><div class="step-text">Show code example</div></div>
+                <div class="step"><div class="step-num">4</div><div class="step-text">Add API URL to examples</div></div>
+                <p class="status-done">✅ Completed! README is clean</p>
+                
+                <div class="nav">
+                    <button class="nav-btn" onclick="showTask(5)">← PREV</button>
+                    <span class="nav-counter">7 / 7</span>
+                    <button class="nav-btn" disabled>NEXT →</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function showTask(index) {
+            if (index < 0 || index > 6) return;
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.task-item').forEach(el => el.classList.remove('active'));
+            document.getElementById('task-' + index).classList.add('active');
+            document.querySelector('[data-index="' + index + '"]').classList.add('active');
+        }
+    </script>
+</body>
+</html>

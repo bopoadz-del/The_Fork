@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cerebrum Blocks - 13 AI Building Blocks</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        .header {
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding: 20px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .logo {
+            width: 50px; height: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 28px;
+            box-shadow: 0 8px 32px rgba(102,126,234,0.4);
+        }
+        .brand-text h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .brand-text p {
+            font-size: 13px;
+            color: rgba(255,255,255,0.6);
+            margin-top: 2px;
+        }
+        .nav-links {
+            display: flex;
+            gap: 30px;
+        }
+        .nav-links a {
+            color: rgba(255,255,255,0.7);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover, .nav-links a.active {
+            color: #fff;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px;
+        }
+        .hero {
+            text-align: center;
+            padding: 60px 20px 40px;
+        }
+        .hero h2 {
+            font-size: 56px;
+            font-weight: 800;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #fff 0%, #a78bfa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -1px;
+        }
+        .hero p {
+            font-size: 20px;
+            color: rgba(255,255,255,0.7);
+            max-width: 600px;
+            margin: 0 auto 30px;
+            line-height: 1.6;
+        }
+        .api-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 50px;
+            padding: 10px 20px;
+            font-size: 14px;
+            color: rgba(255,255,255,0.8);
+        }
+        .api-badge .dot {
+            width: 8px; height: 8px;
+            background: #10b981;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .blocks-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            margin-top: 40px;
+            padding: 20px 0;
+        }
+        @media (max-width: 1200px) {
+            .blocks-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 900px) {
+            .blocks-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 600px) {
+            .blocks-grid { grid-template-columns: 1fr; }
+        }
+        
+        .block-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 32px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            text-decoration: none;
+            display: block;
+        }
+        .block-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(135deg, rgba(102,126,234,0.15) 0%, rgba(118,75,162,0.15) 100%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .block-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            border-color: rgba(102,126,234,0.6);
+            box-shadow: 0 25px 50px rgba(0,0,0,0.4), 0 0 30px rgba(102,126,234,0.2);
+        }
+        .block-card:hover::before {
+            opacity: 1;
+        }
+        .block-icon {
+            width: 64px; height: 64px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 32px;
+            margin-bottom: 20px;
+            position: relative;
+            z-index: 1;
+            box-shadow: 0 8px 24px rgba(102,126,234,0.3);
+        }
+        .block-card h3 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            position: relative;
+            z-index: 1;
+            color: #fff;
+        }
+        .block-card p {
+            font-size: 14px;
+            color: rgba(255,255,255,0.6);
+            line-height: 1.6;
+            margin-bottom: 20px;
+            position: relative;
+            z-index: 1;
+        }
+        .block-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            position: relative;
+            z-index: 1;
+        }
+        .tag {
+            font-size: 11px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.7);
+            border: 1px solid rgba(255,255,255,0.1);
+            font-weight: 500;
+        }
+        .tag.api-key {
+            background: rgba(245,158,11,0.2);
+            color: #f59e0b;
+            border-color: rgba(245,158,11,0.3);
+        }
+        .tag.error {
+            background: rgba(239,68,68,0.2);
+            color: #ef4444;
+            border-color: rgba(239,68,68,0.3);
+        }
+        .tag.inputs {
+            background: rgba(16,185,129,0.2);
+            color: #10b981;
+            border-color: rgba(16,185,129,0.3);
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 60px 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            margin-top: 60px;
+        }
+        .footer p {
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+        }
+        .footer a {
+            color: #a78bfa;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .footer a:hover {
+            color: #fff;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 100px;
+            font-size: 18px;
+            color: rgba(255,255,255,0.6);
+        }
+        .error {
+            text-align: center;
+            padding: 100px;
+            color: #ef4444;
+        }
+        
+        .github-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 12px;
+            font-size: 12px;
+            color: rgba(255,255,255,0.5);
+            transition: color 0.2s;
+        }
+        .block-card:hover .github-link {
+            color: #a78bfa;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="brand">
+            <div class="logo">🧠</div>
+            <div class="brand-text">
+                <h1>Cerebrum Blocks</h1>
+                <p>Build AI like Lego</p>
+            </div>
+        </div>
+        <nav class="nav-links">
+            <a href="/" class="active">Blocks</a>
+            <a href="/docs">API Docs</a>
+            <a href="/todo">Launch TODO</a>
+        </nav>
+    </header>
+    
+    <div class="container">
+        <section class="hero">
+            <h2>15 AI Building Blocks</h2>
+            <p>One API. Infinite Possibilities. Mix and match blocks to build powerful AI applications in minutes.</p>
+            <div class="api-badge">
+                <span class="dot"></span>
+                <span>API Live at cerebrum-blocks.onrender.com</span>
+            </div>
+        </section>
+        
+        <div id="blocks-container" class="blocks-grid">
+            <div class="loading">Loading blocks...</div>
+        </div>
+    </div>
+    
+    <footer class="footer">
+        <p>Built with ❤️ · <a href="https://github.com/bopoadz-del/cerebrum-blocks">GitHub</a> · <a href="/docs">API Documentation</a></p>
+    </footer>
+    
+    <script>
+        const blockIcons = {
+            chat: '💬',
+            pdf: '📄',
+            ocr: '👁️',
+            voice: '🎙️',
+            image: '🖼️',
+            translate: '🌐',
+            code: '💻',
+            web: '🕸️',
+            vector_search: '🔍',
+            search: '🔎',
+            zvec: '🧮',
+            google_drive: '📁',
+            onedrive: '☁️',
+            local_drive: '💾',
+            android_drive: '📱'
+        };
+        
+        const GITHUB_REPO = 'https://github.com/bopoadz-del/cerebrum-blocks';
+        
+        async function loadBlocks() {
+            const container = document.getElementById('blocks-container');
+            
+            try {
+                const response = await fetch('/v1/blocks', {
+                    headers: { 'Authorization': 'Bearer demo' }
+                });
+                
+                if (!response.ok) {
+                    const publicResponse = await fetch('/v1/blocks');
+                    if (!publicResponse.ok) throw new Error('Failed to load blocks');
+                    const data = await publicResponse.json();
+                    renderBlocks(data.blocks);
+                    return;
+                }
+                
+                const data = await response.json();
+                renderBlocks(data.blocks);
+            } catch (err) {
+                renderBlocks(getFallbackBlocks());
+            }
+        }
+        
+        function getFallbackBlocks() {
+            return [
+                { name: 'chat', version: '1.3', description: 'AI chat with DeepSeek ($0.14/M - cheapest!), Groq, OpenAI, Anthropic + streaming', requires_api_key: true, supported_inputs: ['text', 'messages', 'file_result'], supported_outputs: ['text', 'stream', 'tokens', 'model'] },
+                { name: 'pdf', version: '1.1', description: 'Extract text, tables, images, and metadata from PDF files', requires_api_key: false, supported_inputs: ['file', 'file_path', 'source_id'], supported_outputs: ['text', 'tables', 'images', 'metadata', 'pages'] },
+                { name: 'ocr', version: '1.0', description: 'Extract text from images using OCR', requires_api_key: false, supported_inputs: ['image', 'file_path', 'base64'], supported_outputs: ['text', 'bounding_boxes'] },
+                { name: 'voice', version: '1.0', description: 'Speech-to-text and text-to-speech processing', requires_api_key: false, supported_inputs: ['audio', 'text'], supported_outputs: ['text', 'audio'] },
+                { name: 'image', version: '1.0', description: 'Image analysis and generation', requires_api_key: true, supported_inputs: ['image', 'prompt'], supported_outputs: ['description', 'image'] },
+                { name: 'translate', version: '1.0', description: 'Text translation with multiple providers', requires_api_key: false, supported_inputs: ['text'], supported_outputs: ['translation'] },
+                { name: 'code', version: '1.0', description: 'Code execution, analysis, and transformation', requires_api_key: false, supported_inputs: ['code', 'text'], supported_outputs: ['output', 'analysis'] },
+                { name: 'web', version: '1.0', description: 'Web scraping and HTTP requests', requires_api_key: false, supported_inputs: ['url', 'html'], supported_outputs: ['content', 'data'] },
+                { name: 'search', version: '1.0', description: 'Web search using Serper, Bing, or DuckDuckGo', requires_api_key: true, supported_inputs: ['query'], supported_outputs: ['results'] },
+                { name: 'vector_search', version: '1.0', description: 'Vector similarity search using ChromaDB', requires_api_key: false, supported_inputs: ['query', 'text', 'documents'], supported_outputs: ['results', 'embeddings', 'matches'] },
+                { name: 'zvec', version: '1.0', description: 'Zero-shot vector embeddings and semantic operations', requires_api_key: false, supported_inputs: ['text', 'query', 'vectors', 'labels'], supported_outputs: ['embeddings', 'similarities', 'classifications', 'vectors'] },
+                { name: 'google_drive', version: '1.0', description: 'Google Drive file upload, download, and management', requires_api_key: true, supported_inputs: ['file', 'path'], supported_outputs: ['file', 'metadata'] },
+                { name: 'onedrive', version: '1.0', description: 'Microsoft OneDrive file upload, download, and management', requires_api_key: true, supported_inputs: ['file', 'path'], supported_outputs: ['file', 'metadata'] },
+                { name: 'local_drive', version: '1.0', description: 'Local filesystem file operations', requires_api_key: false, supported_inputs: ['file', 'path'], supported_outputs: ['file'] },
+                { name: 'android_drive', version: '1.0', description: 'Android storage file access and management', requires_api_key: false, supported_inputs: ['file', 'path'], supported_outputs: ['file', 'metadata'] },
+            ];
+        }
+        
+        function renderBlocks(blocks) {
+            const container = document.getElementById('blocks-container');
+            container.innerHTML = '';
+            
+            blocks.forEach(block => {
+                const hasError = block.error || block.status === 'failed_to_load';
+                const githubUrl = \`${GITHUB_REPO}/blob/main/app/blocks/\${block.name}.py\`;
+                
+                const card = document.createElement('a');
+                card.className = 'block-card';
+                card.href = githubUrl;
+                card.target = '_blank';
+                card.innerHTML = \`
+                    <div class="block-icon">\${blockIcons[block.name] || '🔧'}</div>
+                    <h3>\${formatBlockName(block.name)}</h3>
+                    <p>\${block.description}</p>
+                    <div class="block-meta">
+                        <span class="tag">v\${block.version || '1.0'}</span>
+                        \${block.requires_api_key ? '<span class="tag api-key">🔑 API Key</span>' : ''}
+                        \${hasError ? '<span class="tag error">⚠️ Limited</span>' : ''}
+                        \${block.supported_inputs ? \`<span class="tag inputs">\${block.supported_inputs.length} inputs</span>\` : ''}
+                    </div>
+                    <div class="github-link">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                        View source on GitHub →
+                    </div>
+                \`;
+                container.appendChild(card);
+            });
+        }
+        
+        function formatBlockName(name) {
+            return name.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+        
+        loadBlocks();
+    </script>
+</body>
+</html>

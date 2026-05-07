@@ -1,0 +1,81 @@
+services:
+  # PLATFORM BACKEND - Block execution
+  - type: web
+    name: cerebrum-platform-api
+    env: python
+    plan: starter
+    runtime: python-3.11.0
+    buildCommand: apt-get update -qq && apt-get install -y -qq tesseract-ocr && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATA_DIR
+        value: /app/data
+      - key: ENV
+        value: production
+      - key: DEEPSEEK_API_KEY
+        value: sk-62229915230e448b82ea08550d11fa86
+      - key: CEREBRUM_API_KEY_FRONTEND
+        sync: false
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
+    healthCheckPath: /health
+
+  # PLATFORM FRONTEND
+  - type: web
+    name: cerebrum-platform
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://cerebrum-platform-api.onrender.com
+      - key: VITE_API_KEY
+        sync: false
+
+  # STORE BACKEND - Block catalog
+  - type: web
+    name: cerebrum-store-api
+    env: python
+    plan: starter
+    runtime: python-3.11.0
+    rootDir: store
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENV
+        value: production
+    healthCheckPath: /health
+
+  # CLAUDE TELEGRAM BOT — Full Claude Code agent, clones repo on startup
+  - type: worker
+    name: claude-telegram-bot
+    env: python
+    plan: starter
+    rootDir: claudebot
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: WORK_DIR
+        value: /workspace
+      - key: HISTORY_DIR
+        value: /tmp/history
+
+  # STORE FRONTEND
+  - type: web
+    name: cerebrum-store
+    env: static
+    rootDir: store
+    buildCommand: mkdir -p dist && cp src/index.html dist/
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://cerebrum-store-api.onrender.com

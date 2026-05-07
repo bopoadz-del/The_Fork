@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cerebrum Platform</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body { display: flex; height: 100vh; background: #0d0d0d; overflow: hidden; color: #e0e0e0; }
+        .sidebar { width: 280px; background: #0a0a0a; border-right: 1px solid #222; padding: 20px; display: flex; flex-direction: column; }
+        .logo { font-size: 20px; font-weight: 600; margin-bottom: 24px; display: flex; align-items: center; gap: 10px; }
+        .logo::before { content: "◆"; color: #8b5cf6; font-size: 24px; }
+        .new-btn { width: 100%; padding: 12px; background: #1a1a1a; border: 1px solid #333; color: #fff; border-radius: 8px; cursor: pointer; margin-bottom: 8px; }
+        .new-btn:hover { background: #252525; }
+        .connect-btn { width: 100%; padding: 12px; background: #8b5cf6; border: 1px solid #8b5cf6; color: #fff; border-radius: 8px; cursor: pointer; margin-bottom: 24px; font-size: 14px; }
+        .connect-btn:hover { background: #7c4ddb; }
+        .section { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .section button { background: transparent; border: none; color: #8b5cf6; cursor: pointer; font-size: 11px; padding: 0; }
+        .projects { flex: 1; overflow-y: auto; }
+        .project { padding: 10px 12px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; color: #999; }
+        .project:hover, .project.active { background: #1a1a1a; color: #fff; }
+        .drive-project { margin-bottom: 8px; }
+        .drive-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 6px; cursor: pointer; color: #ccc; font-size: 14px; }
+        .drive-header:hover, .drive-header.active { background: #1a1a1a; color: #fff; }
+        .drive-header .icon { font-size: 16px; }
+        .drive-header .toggle { margin-left: auto; font-size: 10px; color: #666; transition: transform 0.2s; }
+        .drive-header.expanded .toggle { transform: rotate(90deg); }
+        .drive-files { padding-left: 24px; display: none; }
+        .drive-files.expanded { display: block; }
+        .drive-file { padding: 6px 10px; border-radius: 4px; cursor: pointer; color: #888; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+        .drive-file:hover { background: #151515; color: #fff; }
+        .drive-file .zvec-badge { margin-left: auto; font-size: 10px; background: #8b5cf620; color: #8b5cf6; padding: 2px 6px; border-radius: 4px; }
+        .drive-empty { padding: 8px 10px; color: #555; font-size: 12px; font-style: italic; }
+        .main { flex: 1; display: flex; flex-direction: column; max-width: 800px; margin: 0 auto; width: 100%; }
+        header { padding: 16px; border-bottom: 1px solid #1a1a1a; text-align: center; color: #666; }
+        .messages { flex: 1; overflow-y: auto; padding: 40px 20px; }
+        .msg { margin-bottom: 24px; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .msg.user { text-align: right; }
+        .bubble { display: inline-block; padding: 12px 16px; border-radius: 12px; font-size: 15px; max-width: 80%; white-space: pre-wrap; word-wrap: break-word; }
+        .msg.user .bubble { background: #8b5cf6; color: #fff; }
+        .msg.assistant .bubble { background: #1a1a1a; color: #d0d0d0; border: 1px solid #2a2a2a; }
+        .msg.error .bubble { background: #3a1a1a; color: #ff6666; border: 1px solid #5a2a2a; }
+        .msg.system .bubble { background: #1a2a1a; color: #66ff66; border: 1px solid #2a5a2a; font-size: 13px; }
+        .input-area { padding: 20px; border-top: 1px solid #1a1a1a; }
+        .input-box { display: flex; gap: 12px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 12px; }
+        input, textarea { flex: 1; background: transparent; border: none; color: #fff; font-size: 15px; outline: none; resize: none; min-height: 24px; }
+        button { padding: 8px 16px; background: #8b5cf6; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #7c4ddb; }
+        button:disabled { background: #333; cursor: not-allowed; }
+        .outcomes { width: 320px; background: #0a0a0a; border-left: 1px solid #222; padding: 20px; overflow-y: auto; }
+        .outcomes h3 { margin-bottom: 16px; color: #fff; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+        .outcome-item { padding: 12px; background: #1a1a1a; border-radius: 8px; margin-bottom: 12px; border: 1px solid #2a2a2a; }
+        .outcome-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 4px; }
+        .outcome-value { font-size: 18px; color: #8b5cf6; font-weight: 600; }
+        .chain-indicator { position: fixed; top: 20px; right: 360px; background: rgba(139, 92, 246, 0.1); border: 1px solid #8b5cf6; color: #8b5cf6; padding: 10px 16px; border-radius: 10px; font-size: 13px; display: none; }
+        .chain-indicator.active { display: block; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .file-preview { max-width: 100%; max-height: 200px; border-radius: 8px; margin-top: 8px; }
+        .raw-output { background: #0f0f0f; border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; margin-top: 12px; font-family: monospace; font-size: 12px; color: #888; overflow-x: auto; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+        /* Error display */
+        .validation-error { background: #3a1a1a; border: 1px solid #5a2a2a; border-radius: 8px; padding: 12px; margin-top: 8px; }
+        .validation-error h4 { color: #ff6666; font-size: 13px; margin-bottom: 8px; }
+        .validation-error ul { color: #cc8888; font-size: 12px; margin-left: 16px; }
+        .validation-error li { margin-bottom: 4px; }
+        /* Modal */
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: #151515; border: 1px solid #333; border-radius: 12px; padding: 24px; width: 320px; }
+        .modal h3 { margin-bottom: 16px; font-size: 16px; color: #fff; }
+        .drive-option { display: flex; align-items: center; gap: 12px; padding: 12px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+        .drive-option:hover { background: #252525; border-color: #8b5cf6; }
+        .drive-option .icon { font-size: 20px; }
+        .drive-option .name { font-size: 14px; color: #e0e0e0; }
+        .drive-option .desc { font-size: 11px; color: #666; }
+        .modal-close { width: 100%; margin-top: 8px; padding: 10px; background: transparent; border: 1px solid #333; color: #999; border-radius: 6px; cursor: pointer; }
+        .modal-close:hover { border-color: #666; color: #fff; }
+        /* Type conversion badge */
+        .type-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 8px; }
+        .type-badge.pdf { background: #8b5cf620; color: #8b5cf6; }
+        .type-badge.text { background: #22c55e20; color: #22c55e; }
+        .type-badge.image { background: #f59e0b20; color: #f59e0b; }
+        .type-badge.converted { background: #3b82f620; color: #3b82f6; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="logo">Cerebrum</div>
+        <button class="new-btn" onclick="resetChat()">+ New Chat</button>
+        <button class="connect-btn" onclick="showDriveModal()">☁️ Connect Drive</button>
+        
+        <div class="section">
+            <span>Projects</span>
+        </div>
+        <div class="projects" id="projectsList">
+            <div class="project active">Diriyah Phase 1</div>
+            <div class="project">Qiddam Tower</div>
+            <div class="project">KAUST Lab</div>
+        </div>
+        
+        <div class="section" style="margin-top: 16px;">
+            <span>Connected Drives</span>
+            <button onclick="clearAllDrives()">Clear</button>
+        </div>
+        <div class="projects" id="drivesList">
+            <!-- Drives injected here -->
+        </div>
+    </div>
+    
+    <div class="main">
+        <header>Cerebrum Platform</header>
+        <div class="messages" id="messages">
+            <div class="msg assistant">
+                <div class="bubble">Hello! Upload a file, connect a drive, or type a message to get started.</div>
+            </div>
+        </div>
+        <div class="input-area">
+            <div class="input-box">
+                <input type="file" id="fileInput" style="display: none" onchange="handleFile(this)" accept=".pdf,.docx,.txt,.jpg,.png">
+                <button onclick="document.getElementById('fileInput').click()" title="Upload file">📎</button>
+                <textarea id="textInput" rows="1" placeholder="Ask anything..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+                <button onclick="sendMessage()" id="sendBtn">➤</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="outcomes">
+        <h3>Results</h3>
+        <div id="outcomes"></div>
+    </div>
+    
+    <div class="chain-indicator" id="chainIndicator">⚡ Processing...</div>
+
+    <!-- Drive Connect Modal -->
+    <div class="modal-overlay" id="driveModal" onclick="if(event.target===this)hideDriveModal()">
+        <div class="modal">
+            <h3>Connect a Drive</h3>
+            <div class="drive-option" onclick="browseLocalFiles()">
+                <span class="icon">💻</span>
+                <div>
+                    <div class="name">My Device Files</div>
+                    <div class="desc">Pick files from this computer</div>
+                </div>
+            </div>
+            <div class="drive-option" onclick="connectDrive('local_drive')">
+                <span class="icon">🖥️</span>
+                <div>
+                    <div class="name">Server Files</div>
+                    <div class="desc">Browse files on the server VM</div>
+                </div>
+            </div>
+            <div class="drive-option disabled" style="opacity:0.5;cursor:not-allowed;" title="Configure OAuth in settings first">
+                <span class="icon">📁</span>
+                <div>
+                    <div class="name">Google Drive <span style="color:#888;font-size:10px;">(needs setup)</span></div>
+                    <div class="desc">Requires OAuth credentials</div>
+                </div>
+            </div>
+            <div class="drive-option disabled" style="opacity:0.5;cursor:not-allowed;" title="Configure OAuth in settings first">
+                <span class="icon">☁️</span>
+                <div>
+                    <div class="name">OneDrive <span style="color:#888;font-size:10px;">(needs setup)</span></div>
+                    <div class="desc">Requires Microsoft auth token</div>
+                </div>
+            </div>
+            <div class="drive-option disabled" style="opacity:0.5;cursor:not-allowed;" title="ADB or USB connection required">
+                <span class="icon">📱</span>
+                <div>
+                    <div class="name">Android Drive <span style="color:#888;font-size:10px;">(needs setup)</span></div>
+                    <div class="desc">Requires ADB/USB connection</div>
+                </div>
+            </div>
+            <button class="modal-close" onclick="hideDriveModal()">Cancel</button>
+        </div>
+    </div>
+    <input type="file" id="localFilePicker" style="display:none" multiple webkitdirectory onchange="handleLocalFiles(this)">
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// UNIVERSAL ADAPTER CLIENT - Same Origin (No CORS)
+// ─────────────────────────────────────────────────────────────
+const API_BASE = '';  // Same origin - relative paths
+const API_KEY = 'cb_master_22347732f8f09bed3ad4aee7f9849f77';
+
+class CerebrumClient {
+    constructor(baseUrl = API_BASE, apiKey = API_KEY) {
+        this.base = baseUrl;
+        this.key = apiKey;
+    }
+
+    async _request(method, path, body = null, isFormData = false) {
+        const url = `${this.base}${path}`;
+        const headers = { 'Authorization': `Bearer ${this.key}` };
+        if (body && !isFormData) {
+            headers['Content-Type'] = 'application/json';
+        }
+        const opts = { method, headers };
+        if (body) opts.body = isFormData ? body : JSON.stringify(body);
+        
+        const response = await fetch(url, opts);
+        const responseData = await response.json().catch(() => null);
+        
+        if (!response.ok) {
+            const errorText = responseData ? JSON.stringify(responseData) : await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        return responseData;
+    }
+
+    execute(block, input = null, params = {}) {
+        return this._request('POST', '/v1/execute', { block, input, params });
+    }
+
+    chain(steps, initialInput = null) {
+        return this._request('POST', '/v1/chain', { steps, initial_input: initialInput });
+    }
+
+    chat(message, model = 'deepseek-chat') {
+        return this._request('POST', '/v1/chat', { message, model, stream: false });
+    }
+
+    upload(formData) {
+        return this._request('POST', '/v1/upload', formData, true);
+    }
+
+    async health() {
+        const r = await fetch(`${this.base}/health`);
+        if (!r.ok) throw new Error(`Health check failed: ${r.status}`);
+        return r.json();
+    }
+}
+
+const client = new CerebrumClient();
+
+// ─────────────────────────────────────────────────────────────
+// CHAIN HELPERS
+// ─────────────────────────────────────────────────────────────
+const TEXT_EXTS = new Set(['txt','md','csv','json','xml','html','htm','js','ts','py','java','c','cpp','h','css','yaml','yml','ini','log','sh','sql','tsx','jsx','sh','bat']);
+const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','bmp','tiff','tif']);
+const DOCX_EXTS = new Set(['docx','doc']);
+const XLSX_EXTS = new Set(['xlsx','xls']);
+
+function getExt(name) {
+    return (name.split('.').pop() || '').toLowerCase();
+}
+
+function isTextFile(name) { return TEXT_EXTS.has(getExt(name)); }
+function isImageFile(name) { return IMAGE_EXTS.has(getExt(name)); }
+function isPdfFile(name) { return getExt(name) === 'pdf'; }
+function isDocxFile(name) { return DOCX_EXTS.has(getExt(name)); }
+function isXlsxFile(name) { return XLSX_EXTS.has(getExt(name)); }
+
+function getFileKind(name) {
+    if (isTextFile(name)) return 'text';
+    if (isPdfFile(name)) return 'pdf';
+    if (isImageFile(name)) return 'image';
+    if (isDocxFile(name)) return 'docx';
+    if (isXlsxFile(name)) return 'xlsx';
+    return 'binary';
+}
+
+function getTypeBadge(kind) {
+    const badges = {
+        'pdf': '<span class="type-badge pdf">PDF</span>',
+        'text': '<span class="type-badge text">TEXT</span>',
+        'image': '<span class="type-badge image">IMG</span>',
+    };
+    return badges[kind] || '';
+}
+
+/**
+ * Run a chain using the server-side /v1/chain endpoint
+ * This provides full type validation and automatic conversion
+ */
+async function runChain(label, steps, onProgress) {
+    onProgress(-1, 'validation', 'running');
+    
+    // Convert steps to server format
+    const serverSteps = steps.map((step, i) => ({
+        block: step.block,
+        params: step.params || {},
+        input_mapping: step.input_mapping || null,
+        label: step.label || step.block
+    }));
+    
+    try {
+        const result = await client.chain(serverSteps, null);
+        
+        // Handle validation failure (before execution)
+        if (result.status === 'validation_failed') {
+            const errorHtml = formatValidationErrors(result.validation_errors);
+            throw new Error(`Chain validation failed:\n${errorHtml}`);
+        }
+        
+        // Handle execution error
+        if (result.status === 'error') {
+            throw new Error(result.error || `Step ${result.step || '?'} failed`);
+        }
+        
+        // Simulate progress for each completed step
+        if (result.results) {
+            for (let i = 0; i < result.results.length; i++) {
+                onProgress(i, steps[i]?.label || steps[i]?.block, 'done');
+            }
+        }
+        
+        return {
+            finalOutput: result.final_output,
+            results: result.results,
+            typeConversions: result.type_conversions || [],
+            stepsExecuted: result.steps_executed
+        };
+    } catch (error) {
+        // Check if it's a validation error with HTML
+        if (error.message.includes('Chain validation failed')) {
+            throw error;  // Pass through with HTML
+        }
+        throw new Error(`Chain execution failed: ${error.message}`);
+    }
+}
+
+function formatValidationErrors(errors) {
+    if (!errors || errors.length === 0) return '';
+    
+    return `
+<div class="validation-error">
+    <h4>Type Mismatch Detected</h4>
+    <ul>
+        ${errors.map(e => `<li><strong>Step ${e.step}</strong>: ${e.message}</li>`).join('')}
+    </ul>
+</div>`;
+}
+
+function formatTypeConversions(conversions) {
+    if (!conversions || conversions.length === 0) return '';
+    
+    return conversions.map(c => 
+        `<span class="type-badge converted" title="Step ${c.step}: ${c.from} → ${c.to} (${c.operation})">↻</span>`
+    ).join('');
+}
+
+const connectedDrives = {};
+let activeFileContext = null;
+
+function setActiveFileContext(name, content, driveName) {
+    activeFileContext = { name, content, driveName };
+}
+
+function clearActiveFileContext() {
+    activeFileContext = null;
+}
+
+function addMessage(text, role = 'assistant') {
+    const messages = document.getElementById('messages');
+    const msg = document.createElement('div');
+    msg.className = `msg ${role}`;
+    msg.innerHTML = `<div class="bubble"></div>`;
+    
+    // Handle HTML in error messages
+    if (role === 'error' && text.includes('<div')) {
+        msg.querySelector('.bubble').innerHTML = text;
+    } else {
+        msg.querySelector('.bubble').textContent = text;
+    }
+    
+    messages.appendChild(msg);
+    messages.scrollTop = messages.scrollHeight;
+}
+
+function setOutcomes(html) {
+    document.getElementById('outcomes').innerHTML = html;
+}
+
+function showIndicator(active) {
+    document.getElementById('chainIndicator').classList.toggle('active', active);
+}
+
+function resetChat() {
+    document.getElementById('messages').innerHTML = `
+        <div class="msg assistant">
+            <div class="bubble">Hello! Upload a file, connect a drive, or type a message to get started.</div>
+        </div>
+    `;
+    setOutcomes('');
+    clearActiveFileContext();
+}
+
+function renderDrives() {
+    const list = document.getElementById('drivesList');
+    if (Object.keys(connectedDrives).length === 0) {
+        list.innerHTML = '<div style="color: #555; font-size: 12px; padding: 8px;">No drives connected</div>';
+        return;
+    }
+    
+    list.innerHTML = Object.entries(connectedDrives).map(([id, drive]) => `
+        <div class="drive-project">
+            <div class="drive-header" onclick="toggleDrive('${id}')">
+                <span class="icon">${drive.icon}</span>
+                <span>${drive.name}</span>
+                <span class="toggle">▶</span>
+            </div>
+            <div class="drive-files" id="drive-files-${id}">
+                ${drive.files.length === 0 ? '<div class="drive-empty">No files found</div>' : ''}
+                ${drive.files.map((f, i) => `
+                    <div class="drive-file" onclick="selectDriveFile('${id}', '${typeof f === 'string' ? f.replace(/'/g, "\\'") : f.name?.replace(/'/g, "\\'") || ''}')">
+                        <span>📄</span>
+                        <span>${typeof f === 'string' ? f : (f.name || f)}</span>
+                        ${drive.indexed ? '<span class="zvec-badge">Z</span>' : ''}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `).join('');
+}
+
+function toggleDrive(id) {
+    const el = document.getElementById(`drive-files-${id}`);
+    const header = el.previousElementSibling;
+    el.classList.toggle('expanded');
+    header.classList.toggle('expanded');
+}
+
+function showDriveModal() {
+    document.getElementById('driveModal').classList.add('active');
+}
+
+function hideDriveModal() {
+    document.getElementById('driveModal').classList.remove('active');
+}
+
+function browseLocalFiles() {
+    document.getElementById('localFilePicker').click();
+}
+
+function clearAllDrives() {
+    Object.keys(connectedDrives).forEach(k => delete connectedDrives[k]);
+    renderDrives();
+    addMessage('All drives disconnected.', 'system');
+}
+
+async function readFileContent(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = reject;
+        if (file.type.startsWith('image/')) {
+            resolve('[Image file - content extracted on server]');
+        } else {
+            reader.readAsText(file);
+        }
+    });
+}
+
+async function handleLocalFiles(input) {
+    const files = Array.from(input.files);
+    if (files.length === 0) return;
+    
+    showIndicator(true);
+    addMessage(`Loading ${files.length} local files...`, 'system');
+    
+    try {
+        const fileNames = files.map(f => f.name);
+        const folderName = files[0].webkitRelativePath ? files[0].webkitRelativePath.split('/')[0] : 'My Device Files';
+        
+        const indexableNames = fileNames.filter(n => isTextFile(n) || isPdfFile(n)).slice(0, 200);
+        let zvecResult = null;
+        if (indexableNames.length > 0) {
+            try {
+                zvecResult = await client.execute('zvec', indexableNames.join('\n'), { operation: 'embed' });
+            } catch (e) {
+                console.error('ZVec index failed:', e);
+            }
+        }
+        
+        const driveId = 'my_device_' + Date.now();
+        connectedDrives[driveId] = {
+            name: folderName,
+            icon: '💻',
+            files: fileNames,
+            fileObjects: files,
+            indexed: !!zvecResult,
+            path: './',
+            isLocal: true
+        };
+        
+        renderDrives();
+        
+        const firstFileObj = files[0];
+        if (firstFileObj && isTextFile(firstFileObj.name)) {
+            const firstContent = await readFileContent(firstFileObj);
+            const trimmed = firstContent.length > 5000 ? firstContent.substring(0, 5000) + '\n\n... [truncated] ...' : firstContent;
+            setActiveFileContext(firstFileObj.name, trimmed, folderName);
+        } else if (firstFileObj) {
+            setActiveFileContext(firstFileObj.name, `[${getFileKind(firstFileObj.name).toUpperCase()} file — select it to run extraction chain]`, folderName);
+        }
+        
+        const outcomeHtml = `
+            <div class="outcome-item">
+                <div class="outcome-label">Connected</div>
+                <div class="outcome-value" style="font-size: 16px;">${folderName}</div>
+                <div style="color: #888; font-size: 12px; margin-top: 4px;">${files.length} local files</div>
+                ${zvecResult ? `<div style="color: #8b5cf6; font-size: 11px; margin-top: 4px;">✅ ZVec indexed ${indexableNames.length} files</div>` : ''}
+            </div>
+        `;
+        setOutcomes(outcomeHtml);
+        addMessage(`Loaded ${files.length} files from your device. "${firstFileObj ? firstFileObj.name : 'No file'}" is active. Ready to chat about it.`, 'assistant');
+        
+    } catch (err) {
+        console.error('Local files error:', err);
+        addMessage(`Error indexing files: ${err.message}`, 'error');
+    }
+    
+    showIndicator(false);
+    input.value = '';
+}
+
+async function connectDrive(driveType) {
+    hideDriveModal();
+    showIndicator(true);
+    addMessage(`Connecting to ${driveType.replace('_', ' ')}...`, 'system');
+    
+    try {
+        const listData = await client.execute(driveType, null, { operation: 'list', folder_path: './' });
+        console.log(`${driveType} list:`, listData);
+        
+        let files = [];
+        if (listData.result) {
+            if (Array.isArray(listData.result.files)) {
+                files = listData.result.files;
+            } else if (Array.isArray(listData.result.paths)) {
+                files = listData.result.paths;
+            } else if (Array.isArray(listData.result.results)) {
+                files = listData.result.results;
+            }
+        }
+        
+        let zvecResult = null;
+        const indexableNames = files.filter(n => typeof n === 'string' && (isTextFile(n) || isPdfFile(n))).slice(0, 200);
+        if (indexableNames.length > 0) {
+            try {
+                zvecResult = await client.execute('zvec', indexableNames.join('\n'), { operation: 'embed' });
+            } catch (e) {
+                console.error('ZVec index failed:', e);
+            }
+        }
+        
+        connectedDrives[driveType] = {
+            name: driveType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            icon: driveType.includes('google') ? '📁' : driveType.includes('one') ? '☁️' : driveType.includes('android') ? '📱' : '🖥️',
+            files: files,
+            indexed: !!zvecResult,
+            path: './'
+        };
+        
+        renderDrives();
+        
+        const outcomeHtml = `
+            <div class="outcome-item">
+                <div class="outcome-label">Connected</div>
+                <div class="outcome-value" style="font-size: 16px;">${driveType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</div>
+                <div style="color: #888; font-size: 12px; margin-top: 4px;">${files.length} files found</div>
+                ${zvecResult ? `<div style="color: #8b5cf6; font-size: 11px; margin-top: 4px;">✅ ZVec indexed ${indexableNames.length} files</div>` : ''}
+            </div>
+        `;
+        setOutcomes(outcomeHtml);
+        addMessage(`Connected to ${driveType.replace('_', ' ')}. ${files.length} files available.`, 'assistant');
+        
+    } catch (err) {
+        console.error('Drive connect error:', err);
+        addMessage(`Could not connect to ${driveType}: ${err.message}`, 'error');
+    }
+    
+    showIndicator(false);
+}
+
+function getDriveIcon(type) {
+    const icons = {
+        google_drive: '📁',
+        onedrive: '☁️',
+        local_drive: '💾',
+        android_drive: '📱'
+    };
+    return icons[type] || '💿';
+}
+
+function renderDrives() {
+    const container = document.getElementById('drivesList');
+    if (Object.keys(connectedDrives).length === 0) {
+        container.innerHTML = '<div class="drive-empty">No drives connected yet</div>';
+        return;
+    }
+    
+    container.innerHTML = Object.entries(connectedDrives).map(([key, drive]) => `
+        <div class="drive-project">
+            <div class="drive-header" onclick="toggleDrive('${key}')" id="drive-header-${key}">
+                <span class="icon">${drive.icon}</span>
+                <span>${drive.name}</span>
+                <span class="toggle">▶</span>
+            </div>
+            <div class="drive-files" id="drive-files-${key}">
+                ${drive.files.length === 0 
+                    ? '<div class="drive-empty">No files found</div>' 
+                    : drive.files.map(f => `
+                        <div class="drive-file" onclick="selectDriveFile('${key}', '${typeof f === 'string' ? f.replace(/'/g, "\\'") : JSON.stringify(f).replace(/'/g, "\\'")}')">
+                            <span>${typeof f === 'string' ? f : (f.name || f.text || JSON.stringify(f))}</span>
+                            ${drive.indexed ? '<span class="zvec-badge">zvec</span>' : ''}
+                        </div>
+                    `).join('')
+                }
+            </div>
+        </div>
+    `).join('');
+}
+
+function toggleDrive(key) {
+    const header = document.getElementById(`drive-header-${key}`);
+    const files = document.getElementById(`drive-files-${key}`);
+    header.classList.toggle('expanded');
+    files.classList.toggle('expanded');
+}
+
+function clearAllDrives() {
+    Object.keys(connectedDrives).forEach(k => delete connectedDrives[k]);
+    renderDrives();
+    addMessage('All drives disconnected.', 'system');
+}
+
+
+async function selectDriveFile(driveId, fileName) {
+    showIndicator(true);
+    const drive = connectedDrives[driveId];
+    if (!drive) return;
+
+    try {
+        const kind = getFileKind(fileName);
+
+        if (drive.isLocal && drive.fileObjects) {
+            const fileObj = drive.fileObjects.find(f => f.name === fileName);
+            if (!fileObj) {
+                addMessage(`File not found: ${fileName}`, 'error');
+                showIndicator(false);
+                return;
+            }
+            const sizeKb = (fileObj.size / 1024).toFixed(1);
+
+            if (kind === 'text') {
+                const fileContent = await readFileContent(fileObj);
+                const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
+                setActiveFileContext(fileName, trimmed, drive.name);
+                setOutcomes(`<div class="outcome-item">
+                    <div class="outcome-label">📄 ${fileName}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · From ${drive.name}</div>
+                    <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 1000))}${trimmed.length > 1000 ? '…' : ''}</div>
+                </div>`);
+                addMessage(`"${fileName}" loaded from ${drive.name}. Ask me anything about it.`, 'assistant');
+
+            } else if (kind === 'pdf' || kind === 'image') {
+                setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
+                    <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 1/2 — uploading and extracting…</div></div>`);
+
+                const form = new FormData();
+                form.append('file', fileObj);
+                const uploadData = await client.upload(form);
+                const filePath = uploadData.file_path || uploadData.path || uploadData.filename;
+                const extractBlock = kind === 'pdf' ? 'pdf' : 'ocr';
+
+                let extractedText = '';
+                try {
+                    const extractResult = await client.execute(extractBlock, { action: 'extract_text', file_path: filePath }, {});
+                    extractedText = extractResult.result?.text || extractResult.result?.extracted_text || '';
+                } catch(e) {}
+
+                setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
+                    <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 2/2 — construction intelligence…</div></div>`);
+
+                const pipelineResult = await client.execute('construction',
+                    { file_path: filePath, extracted_text: extractedText },
+                    { action: 'auto_pipeline', doc_type: 'auto' }
+                );
+                const r = pipelineResult.result || {};
+                const chatCtx = r.chat_context || `File: ${fileName}\nSource: ${drive.name}\n\n${extractedText.substring(0, 3000)}`;
+                setActiveFileContext(fileName, chatCtx, drive.name);
+                activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
+                setOutcomes(renderPanels(r.panels || [], r.next_actions || [], fileName, sizeKb));
+                addMessage(`"${fileName}" from ${drive.name} analysed (${r.doc_type || 'document'}). Ask me anything about it.`, 'assistant');
+
+            } else {
+                setActiveFileContext(fileName, '[Binary file]', drive.name);
+                setOutcomes(`<div class="outcome-item">
+                    <div class="outcome-label">📦 ${fileName}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">Binary file from ${drive.name}</div>
+                </div>`);
+                addMessage(`"${fileName}" from ${drive.name} — binary format.`, 'assistant');
+            }
+        } else {
+            const readData = await client.execute('local_drive', null, { operation: 'read', file_path: fileName });
+            const fileContent = readData.result?.content || readData.result?.text || '';
+            const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
+            setActiveFileContext(fileName, trimmed, drive.name);
+            setOutcomes(`<div class="outcome-item">
+                <div class="outcome-label">📄 ${fileName}</div>
+                <div style="color:#888;font-size:12px;margin-top:4px;">From ${drive.name}</div>
+                <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 800))}${trimmed.length > 800 ? '…' : ''}</div>
+            </div>`);
+            addMessage(`"${fileName}" loaded from ${drive.name}. Ask me anything about it.`, 'assistant');
+        }
+
+        try {
+            const zvecData = await client.execute('zvec', fileName, {
+                operation: 'search',
+                corpus: drive.files.filter(f => typeof f === 'string'),
+                top_k: 3
+            });
+            const related = zvecData.result?.results || [];
+            if (related.length > 0) {
+                document.getElementById('outcomes').innerHTML += `<div class="outcome-item">
+                    <div class="outcome-label">🔍 Related Files</div>
+                    <div style="color:#ccc;font-size:12px;margin-top:6px;">
+                        ${related.map(r => `<div style="margin-bottom:4px;">• ${escapeHtml(r.text || String(r))} ${r.score ? `<span style="color:#555;">(${Math.round(r.score*100)}%)</span>` : ''}</div>`).join('')}
+                    </div>
+                </div>`;
+            }
+        } catch (e) { /* ZVec optional */ }
+
+    } catch (err) {
+        addMessage(`Error loading file: ${err.message}`, 'error');
+    }
+
+    showIndicator(false);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function sendMessage() {
+    const input = document.getElementById('textInput');
+    let text = input.value.trim();
+    if (!text) return;
+
+    if (activeFileContext && activeFileContext.content) {
+        text = `I am asking about the file "${activeFileContext.name}" from ${activeFileContext.driveName}.\n\nHere is the file content:\n---\n${activeFileContext.content}\n---\n\nMy question: ${text}`;
+    }
+
+    addMessage(input.value.trim(), 'user');
+    input.value = '';
+    input.style.height = 'auto';
+    document.getElementById('sendBtn').disabled = true;
+    showIndicator(true);
+
+    try {
+        const data = await client.chat(text);
+        addMessage(data.text || data.result?.text || JSON.stringify(data), 'assistant');
+    } catch (err) {
+        console.error('Chat error:', err);
+        addMessage(`Error: ${err.message}. Make sure the API server is running.`, 'error');
+    }
+
+    document.getElementById('sendBtn').disabled = false;
+    showIndicator(false);
+}
+
+function renderPanels(panels, nextActions, fileName, sizeKb) {
+    const typeIcons = { document_info: '📄', quantities: '📐', cost_estimate: '💰', risks: '⚠️', submittals: '📋', schedule: '📅', contract: '📜' };
+    let html = '';
+
+    for (const panel of panels) {
+        const icon = typeIcons[panel.type] || '📌';
+        html += `<div class="outcome-item"><div class="outcome-label">${icon} ${panel.title}</div>`;
+
+        if (panel.type === 'document_info') {
+            const d = panel.data || {};
+            html += `<div style="color:#ccc;font-size:13px;margin-top:6px;">
+                <div><b>Type:</b> ${d.doc_type || 'unknown'}</div>
+                ${d.title ? `<div><b>Title:</b> ${escapeHtml(d.title)}</div>` : ''}
+                ${d.project ? `<div><b>Project:</b> ${escapeHtml(d.project)}</div>` : ''}
+                ${d.pages ? `<div><b>Pages:</b> ${d.pages}</div>` : ''}
+                <div style="color:#555;font-size:11px;margin-top:4px;">${sizeKb} KB</div>
+            </div>`;
+
+        } else if (panel.type === 'quantities') {
+            const q = panel.data || {};
+            const entries = Object.entries(q).slice(0, 12);
+            if (entries.length) {
+                html += `<table style="width:100%;font-size:12px;margin-top:6px;border-collapse:collapse;">
+                    <tr style="color:#666;border-bottom:1px solid #333;"><th style="text-align:left;padding:3px 0;">Item</th><th style="text-align:right;padding:3px 0;">Qty</th><th style="text-align:right;padding:3px 0;">Unit</th></tr>`;
+                for (const [k, v] of entries) {
+                    const qty = typeof v === 'object' ? v.quantity ?? v : v;
+                    const unit = typeof v === 'object' ? v.unit || '' : '';
+                    html += `<tr style="color:#ccc;border-bottom:1px solid #1a1a1a;"><td style="padding:3px 0;">${escapeHtml(String(k))}</td><td style="text-align:right;padding:3px 0;">${qty}</td><td style="text-align:right;padding:3px 4px;color:#888;">${unit}</td></tr>`;
+                }
+                html += `</table>`;
+                if (Object.keys(q).length > 12) html += `<div style="color:#555;font-size:11px;margin-top:4px;">+${Object.keys(q).length - 12} more items</div>`;
+            } else {
+                html += `<div style="color:#555;font-size:12px;margin-top:4px;">No quantities extracted</div>`;
+            }
+
+        } else if (panel.type === 'cost_estimate') {
+            const s = panel.data || {};
+            html += `<div style="font-size:13px;margin-top:6px;">`;
+            if (s.subtotal) html += `<div style="color:#aaa;">Subtotal: <b style="color:#fff;">$${Number(s.subtotal).toLocaleString()}</b></div>`;
+            if (s.overhead) html += `<div style="color:#aaa;">Overhead: <b style="color:#ccc;">$${Number(s.overhead).toLocaleString()}</b></div>`;
+            if (s.contingency) html += `<div style="color:#aaa;">Contingency: <b style="color:#ccc;">$${Number(s.contingency).toLocaleString()}</b></div>`;
+            if (s.total_estimate) html += `<div style="color:#8b5cf6;font-size:15px;font-weight:600;margin-top:6px;">Total: $${Number(s.total_estimate).toLocaleString()}</div>`;
+            html += `</div>`;
+
+        } else if (panel.type === 'risks') {
+            const risks = Array.isArray(panel.data) ? panel.data : [];
+            const levelColor = { high: '#ef4444', medium: '#f59e0b', low: '#22c55e', critical: '#dc2626' };
+            if (risks.length) {
+                html += `<div style="margin-top:6px;">`;
+                for (const r of risks.slice(0, 6)) {
+                    const lvl = (r.likelihood || r.level || r.severity || 'medium').toLowerCase();
+                    const col = levelColor[lvl] || '#f59e0b';
+                    html += `<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:5px;">
+                        <span style="background:${col};color:#fff;font-size:10px;padding:2px 6px;border-radius:3px;flex-shrink:0;margin-top:1px;">${lvl.toUpperCase()}</span>
+                        <span style="color:#ccc;font-size:12px;">${escapeHtml(r.description || r.risk || r.name || String(r))}</span>
+                    </div>`;
+                }
+                if (risks.length > 6) html += `<div style="color:#555;font-size:11px;">+${risks.length - 6} more risks</div>`;
+                html += `</div>`;
+            } else {
+                html += `<div style="color:#555;font-size:12px;margin-top:4px;">No risks identified</div>`;
+            }
+
+        } else if (panel.type === 'submittals') {
+            const subs = Array.isArray(panel.data) ? panel.data : [];
+            if (subs.length) {
+                html += `<div style="color:#ccc;font-size:12px;margin-top:6px;">`;
+                for (const s of subs.slice(0, 5)) {
+                    html += `<div style="margin-bottom:4px;">• ${escapeHtml(s.description || s.title || s.name || String(s))}</div>`;
+                }
+                if (subs.length > 5) html += `<div style="color:#555;">+${subs.length - 5} more submittals</div>`;
+                html += `</div>`;
+            }
+
+        } else if (panel.type === 'procurement') {
+            const pd = panel.data || {};
+            const items = pd.procurement_list || [];
+            html += `<div style="font-size:12px;margin-top:6px;">`;
+            if (pd.total_procurement_cost) {
+                html += `<div style="color:#8b5cf6;font-weight:600;margin-bottom:8px;">Total: $${Number(pd.total_procurement_cost).toLocaleString()}</div>`;
+            }
+            if (pd.critical_long_lead_items) {
+                html += `<div style="color:#ef4444;font-size:11px;margin-bottom:6px;">⚠ ${pd.critical_long_lead_items} critical long-lead items</div>`;
+            }
+            if (items.length) {
+                const priorityColor = { critical: '#ef4444', high: '#f59e0b', normal: '#22c55e' };
+                html += `<table style="width:100%;border-collapse:collapse;">
+                    <tr style="color:#666;font-size:11px;border-bottom:1px solid #333;"><th style="text-align:left;padding:3px 0;">Item</th><th style="text-align:right;padding:3px 0;">Qty</th><th style="text-align:right;padding:3px 0;">Lead</th></tr>`;
+                for (const item of items.slice(0, 10)) {
+                    const col = priorityColor[item.priority] || '#888';
+                    html += `<tr style="border-bottom:1px solid #1a1a1a;">
+                        <td style="padding:3px 0;color:#ccc;font-size:11px;">${escapeHtml(item.item || '')}</td>
+                        <td style="text-align:right;padding:3px 0;color:#aaa;">${item.quantity} ${escapeHtml(item.unit || '')}</td>
+                        <td style="text-align:right;padding:3px 4px;color:${col};font-weight:600;">${item.lead_time_weeks}w</td>
+                    </tr>`;
+                }
+                html += `</table>`;
+                if (items.length > 10) html += `<div style="color:#555;font-size:11px;margin-top:4px;">+${items.length - 10} more items</div>`;
+            } else {
+                html += `<div style="color:#555;">No procurement items generated</div>`;
+            }
+            if (pd.action_required && pd.action_required.length) {
+                html += `<div style="margin-top:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;margin-bottom:4px;">Action Required</div>`;
+                for (const a of pd.action_required.slice(0, 3)) {
+                    html += `<div style="color:#f59e0b;font-size:11px;margin-bottom:3px;">• ${escapeHtml(a)}</div>`;
+                }
+                html += `</div>`;
+            }
+            html += `</div>`;
+
+        } else {
+            const raw = JSON.stringify(panel.data || {}, null, 2).substring(0, 400);
+            html += `<div class="raw-output" style="margin-top:6px;font-size:11px;">${escapeHtml(raw)}</div>`;
+        }
+
+        html += `</div>`;
+    }
+
+    if (nextActions && nextActions.length) {
+        html += `<div class="outcome-item"><div class="outcome-label">🔧 Next Actions</div><div style="margin-top:6px;">`;
+        for (const a of nextActions) {
+            html += `<button onclick="triggerAction('${a.action}')" style="display:block;width:100%;text-align:left;background:#1a1a1a;border:1px solid #333;color:#8b5cf6;padding:7px 10px;border-radius:6px;cursor:pointer;margin-bottom:5px;font-size:12px;">
+                ▶ ${escapeHtml(a.label)}
+                <span style="color:#555;font-size:11px;display:block;">${escapeHtml(a.reason || '')}</span>
+            </button>`;
+        }
+        html += `</div></div>`;
+    }
+
+    return html;
+}
+
+async function triggerAction(action) {
+    if (!activeFileContext) return;
+    showIndicator(true);
+    addMessage(`Running ${action}...`, 'system');
+    try {
+        const inputData = {
+            ...(activeFileContext.pipelineResult || {}),
+            quantities: activeFileContext.quantities || {},
+            line_items: activeFileContext.costLineItems || [],
+        };
+        const data = await client.execute('construction', inputData, { action });
+        const result = data.result || {};
+        const panelType = action === 'procurement_list_generator' ? 'procurement' : 'raw';
+        const panelTitle = action === 'procurement_list_generator' ? 'Procurement List' : action;
+        setOutcomes(renderPanels([{ type: panelType, title: panelTitle, data: result }], [], activeFileContext.name, ''));
+        addMessage(`${panelTitle} generated. Check the outcomes panel.`, 'assistant');
+    } catch(e) {
+        addMessage(`${action} failed: ${e.message}`, 'error');
+    }
+    showIndicator(false);
+}
+
+async function handleFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    addMessage(`📎 ${file.name}`, 'user');
+    document.getElementById('sendBtn').disabled = true;
+    showIndicator(true);
+    setOutcomes('<p style="color:#666;">Uploading and analysing…</p>');
+
+    try {
+        const form = new FormData();
+        form.append('file', file);
+        const uploadData = await client.upload(form);
+        const kind = getFileKind(file.name);
+        const sizeKb = (file.size / 1024).toFixed(1);
+        const filePath = uploadData.file_path || uploadData.path || uploadData.filename;
+
+        if (kind === 'text') {
+            const fileContent = await readFileContent(file);
+            const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
+            setActiveFileContext(file.name, trimmed, 'Upload');
+            setOutcomes(`<div class="outcome-item">
+                <div class="outcome-label">📄 ${file.name}</div>
+                <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · Text file loaded</div>
+                <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 1000))}${trimmed.length > 1000 ? '…' : ''}</div>
+            </div>`);
+            addMessage(`"${file.name}" loaded. Ask me anything about it.`, 'assistant');
+
+        } else if (kind === 'pdf' || kind === 'image') {
+            setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
+                <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 1/2 — extracting text…</div></div>`);
+            const extractBlock = kind === 'pdf' ? 'pdf' : 'ocr';
+            let extractedText = '';
+            try {
+                const extractResult = await client.execute(extractBlock, { action: 'extract_text', file_path: filePath }, {});
+                extractedText = extractResult.result?.text || extractResult.result?.extracted_text || '';
+            } catch(e) { /* extraction optional */ }
+
+            setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
+                <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 2/2 — construction intelligence…</div></div>`);
+            const pipelineResult = await client.execute('construction',
+                { file_path: filePath, extracted_text: extractedText },
+                { action: 'auto_pipeline', doc_type: 'auto' }
+            );
+            const r = pipelineResult.result || {};
+            const chatCtx = r.chat_context || `File: ${file.name}\nType: ${r.doc_type || 'unknown'}\n\n${extractedText.substring(0, 3000)}`;
+            setActiveFileContext(file.name, chatCtx, 'Upload');
+            activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
+            const qPanel = (r.panels || []).find(p => p.type === 'quantities');
+            const cPanel = (r.panels || []).find(p => p.type === 'cost_estimate');
+            activeFileContext.quantities = (qPanel && qPanel.data) || {};
+            activeFileContext.costLineItems = (cPanel && cPanel.line_items) || [];
+            setOutcomes(renderPanels(r.panels || [], r.next_actions || [], file.name, sizeKb));
+            const actionsRun = (r.downstream_actions_run || []).join(', ') || 'none';
+            addMessage(`"${file.name}" analysed (${r.doc_type || 'document'}). ${(r.panels || []).length} intelligence panels. Actions: ${actionsRun}. Ask me anything.`, 'assistant');
+
+        } else {
+            setActiveFileContext(file.name, `[Binary file — ${kind}]`, 'Upload');
+            setOutcomes(`<div class="outcome-item">
+                <div class="outcome-label">📦 ${file.name}</div>
+                <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · Binary file</div>
+            </div>`);
+            addMessage(`"${file.name}" uploaded. Binary format — limited analysis available.`, 'assistant');
+        }
+
+    } catch (err) {
+        console.error('File analysis error:', err);
+        addMessage(`Error analysing file: ${err.message}`, 'error');
+    }
+
+    document.getElementById('sendBtn').disabled = false;
+    showIndicator(false);
+    input.value = '';
+}
+
+// Auto-resize textarea
+document.getElementById('textInput').addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+});
+
+// Check API health on load
+client.health()
+    .then(data => {
+        console.log('API Health:', data);
+        addMessage(`✅ Connected to API (${data.blocks_available} blocks available)`, 'system');
+    })
+    .catch(err => {
+        console.error('Health check failed:', err);
+        addMessage(`⚠️ API not available at ${API_BASE || 'same origin'}`, 'error');
+    });
+
+// Initialize drives list
+renderDrives();
+</script>
+</body>
+</html>
