@@ -751,25 +751,46 @@ function escapeHtml(text) {
 
 async function sendMessage() {
     const input = document.getElementById('textInput');
-    let text = input.value.trim();
-    if (!text) return;
+    const userQuestion = input.value.trim();
+    if (!userQuestion) return;
 
+    let text = userQuestion;
     if (activeFileContext && activeFileContext.content) {
-        text = `I am asking about the file "${activeFileContext.name}" from ${activeFileContext.driveName}.\n\nHere is the file content:\n---\n${activeFileContext.content}\n---\n\nMy question: ${text}`;
+        text = `I am asking about the file "${activeFileContext.name}" from ${activeFileContext.driveName}.\n\nHere is the file content:\n---\n${activeFileContext.content}\n---\n\nMy question: ${userQuestion}`;
     }
 
-    addMessage(input.value.trim(), 'user');
+    addMessage(userQuestion, 'user');
     input.value = '';
     input.style.height = 'auto';
     document.getElementById('sendBtn').disabled = true;
     showIndicator(true);
 
+    // Replace stale outcomes with a "thinking" panel for the current question
+    const askedAt = new Date().toLocaleTimeString();
+    setOutcomes(`<div class="outcome-item">
+        <div class="outcome-label">💬 Latest answer</div>
+        <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}</div>
+        <div style="color:#ccc;font-size:12px;margin-top:6px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
+        <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Thinking…</div>
+    </div>`);
+
     try {
         const data = await client.chat(text);
-        addMessage(data.text || data.result?.text || JSON.stringify(data), 'assistant');
+        const answer = data.text || data.result?.text || JSON.stringify(data);
+        addMessage(answer, 'assistant');
+        setOutcomes(`<div class="outcome-item">
+            <div class="outcome-label">💬 Latest answer</div>
+            <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}${activeFileContext ? ` · about <b>${escapeHtml(activeFileContext.name)}</b>` : ''}</div>
+            <div style="color:#ccc;font-size:12px;margin-top:8px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
+            <div style="color:#eee;font-size:13px;margin-top:8px;white-space:pre-wrap;">${escapeHtml(answer)}</div>
+        </div>`);
     } catch (err) {
         console.error('Chat error:', err);
         addMessage(`Error: ${err.message}. Make sure the API server is running.`, 'error');
+        setOutcomes(`<div class="outcome-item">
+            <div class="outcome-label" style="color:#cc6666;">⚠️ Chat failed</div>
+            <div style="color:#cc8888;font-size:12px;margin-top:6px;">${escapeHtml(err.message)}</div>
+        </div>`);
     }
 
     document.getElementById('sendBtn').disabled = false;
