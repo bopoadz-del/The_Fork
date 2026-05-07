@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 from app.blocks import BLOCK_REGISTRY
 from app.dependencies import block_instances, _create_block_instance, init_blocks
 from app.routers import (
+    agents as agents_router,
     auth,
     blocks,
     chain,
@@ -42,10 +43,13 @@ from app.routers import (
     static,
     upload,
 )
+from app.agents import load_agents
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize all blocks eagerly at startup to avoid race conditions."""
+    """Initialize all blocks + load runtime agents at startup."""
     await init_blocks()
+    loaded = load_agents()
+    logger.info("Loaded %d runtime agents: %s", len(loaded), ", ".join(sorted(loaded.keys())))
     yield
 
 
@@ -137,6 +141,7 @@ app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(health.router)
 app.include_router(mcp.router)
+app.include_router(agents_router.router)
 app.include_router(static.router)
 # Debug routes — only in non-production environments
 env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()

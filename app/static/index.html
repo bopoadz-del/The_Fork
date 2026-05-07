@@ -111,7 +111,13 @@
     </div>
     
     <div class="main">
-        <header>Cerebrum Platform</header>
+        <header style="display:flex;align-items:center;justify-content:center;gap:12px;">
+            <span>Cerebrum Platform</span>
+            <select id="agentPicker" onchange="onAgentChange(this.value)" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#e0e0e0;border-radius:6px;padding:4px 8px;font-size:13px;">
+                <option value="">— Default chat —</option>
+            </select>
+            <span id="agentToolsHint" style="color:#666;font-size:11px;"></span>
+        </header>
         <div class="messages" id="messages">
             <div class="msg assistant">
                 <div class="bubble">Hello! Upload a file, connect a drive, or type a message to get started.</div>
@@ -912,6 +918,97 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Stream from /v1/agents/<name>/chat/stream — handles tool_call / tool_result events
+function startAgentStream({ agent, prompt, history, bubble, askedAt, userQuestion }) {
+    const controller = new AbortController();
+    let finalText = '';
+    let toolCalls = [];
+
+    (async () => {
+        try {
+            const resp = await fetch(`/v1/agents/${encodeURIComponent(agent)}/chat/stream`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
+                },
+                body: JSON.stringify({ message: prompt, history }),
+                signal: controller.signal,
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buf = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                let idx;
+                while ((idx = buf.indexOf('\n\n')) !== -1) {
+                    const ev = buf.slice(0, idx);
+                    buf = buf.slice(idx + 2);
+                    const line = ev.split('\n').find(l => l.startsWith('data:'));
+                    if (!line) continue;
+                    const json = line.slice(5).trim();
+                    if (!json) continue;
+                    let obj;
+                    try { obj = JSON.parse(json); } catch (_) { continue; }
+
+                    if (obj.type === 'token' && obj.content) {
+                        finalText += obj.content;
+                        bubble.innerHTML = renderToolBadges(toolCalls) + renderMarkdown(finalText);
+                        document.getElementById('messages').scrollTop = 1e9;
+                    } else if (obj.type === 'tool_call') {
+                        toolCalls.push({ name: obj.tool, status: 'running', args_preview: obj.args_preview });
+                        bubble.innerHTML = renderToolBadges(toolCalls) + renderMarkdown(finalText);
+                    } else if (obj.type === 'tool_result') {
+                        const last = toolCalls.filter(t => t.name === obj.tool).slice(-1)[0];
+                        if (last) { last.status = obj.ok ? 'ok' : 'error'; last.summary = obj.summary; }
+                        bubble.innerHTML = renderToolBadges(toolCalls) + renderMarkdown(finalText);
+                    } else if (obj.type === 'error') {
+                        throw new Error(obj.message || 'Agent error');
+                    }
+                }
+            }
+
+            const answer = finalText || '_(no response)_';
+            chatHistory.push({ role: 'assistant', content: answer });
+            saveHistory();
+            setOutcomes(`<div class="outcome-item">
+                <div class="outcome-label">${(toolCalls.length ? '🛠 ' : '💬 ')}Agent: ${escapeHtml(agent)}</div>
+                <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}${toolCalls.length ? ` · ${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''}` : ''}</div>
+                <div style="color:#ccc;font-size:12px;margin-top:8px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
+                <div style="color:#eee;font-size:13px;margin-top:8px;">${renderMarkdown(answer)}</div>
+            </div>`);
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                console.error('Agent error:', err);
+                bubble.innerHTML = `<span style="color:#ff6666;">Error: ${escapeHtml(err.message)}</span>`;
+                setOutcomes(`<div class="outcome-item">
+                    <div class="outcome-label" style="color:#cc6666;">⚠️ Agent failed</div>
+                    <div style="color:#cc8888;font-size:12px;margin-top:6px;">${escapeHtml(err.message)}</div>
+                </div>`);
+            }
+        } finally {
+            activeChatController = null;
+            setChatBusy(false);
+        }
+    })();
+
+    return controller;
+}
+
+function renderToolBadges(toolCalls) {
+    if (!toolCalls.length) return '';
+    const colors = { running: '#8b5cf6', ok: '#22c55e', error: '#ef4444' };
+    return `<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;">` +
+        toolCalls.map(t => `<span style="background:${colors[t.status] || '#666'}20;color:${colors[t.status] || '#888'};border:1px solid ${colors[t.status] || '#444'}40;border-radius:4px;padding:2px 8px;font-size:11px;">${t.status === 'running' ? '⏳' : t.status === 'ok' ? '✓' : '✗'} ${escapeHtml(t.name)}</span>`).join('') +
+        `</div>`;
+}
+
 async function sendMessage() {
     const input = document.getElementById('textInput');
     const userQuestion = input.value.trim();
@@ -950,6 +1047,12 @@ async function sendMessage() {
     const history = chatHistory.filter(t => t.role === 'user' || t.role === 'assistant').slice(0, -1);
 
     let finalText = '';
+    // If a runtime agent is selected, stream from /v1/agents/<name>/chat/stream;
+    // otherwise fall through to the plain chat block.
+    if (activeAgent) {
+        activeChatController = startAgentStream({ agent: activeAgent, prompt, history, bubble, askedAt, userQuestion });
+        return;
+    }
     activeChatController = client.chatStream({
         prompt,
         history,
@@ -1287,6 +1390,51 @@ document.getElementById('textInput').addEventListener('input', function() {
 // Restore chat history (multi-turn memory persists across reloads)
 loadHistory();
 rehydrateMessagesFromHistory();
+
+// ── Runtime agents ───────────────────────────────────────────────────────
+const AGENT_KEY = 'cerebrum_active_agent_v1';
+let activeAgent = null;
+
+function onAgentChange(name) {
+    activeAgent = name || null;
+    try { localStorage.setItem(AGENT_KEY, activeAgent || ''); } catch (e) {}
+    const hint = document.getElementById('agentToolsHint');
+    if (!activeAgent) {
+        hint.textContent = '';
+        return;
+    }
+    fetch(`/v1/agents/${encodeURIComponent(activeAgent)}`, {
+        headers: { 'Authorization': `Bearer ${API_KEY}` }
+    })
+    .then(r => r.ok ? r.json() : null)
+    .then(info => {
+        if (info) hint.textContent = `${info.icon || '🤖'} ${info.tools.length} tools`;
+    })
+    .catch(() => {});
+}
+
+(async function loadAgents() {
+    try {
+        const r = await fetch('/v1/agents', {
+            headers: { 'Authorization': `Bearer ${API_KEY}` }
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        const picker = document.getElementById('agentPicker');
+        const stored = (() => { try { return localStorage.getItem(AGENT_KEY) || ''; } catch (e) { return ''; } })();
+        for (const a of data.agents || []) {
+            const opt = document.createElement('option');
+            opt.value = a.name;
+            opt.textContent = `${a.icon || '🤖'} ${a.name}`;
+            opt.title = a.description;
+            picker.appendChild(opt);
+        }
+        if (stored) {
+            picker.value = stored;
+            onAgentChange(stored);
+        }
+    } catch (e) { /* agents endpoint optional */ }
+})();
 
 // Drag-and-drop file upload anywhere in the main chat area
 (function setupDragDrop() {
