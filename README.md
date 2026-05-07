@@ -1,244 +1,226 @@
-# 🧠 Cerebrum Blocks
+# The Fork
 
-> **Build AI Like Lego — Snap together blocks. Launch any vertical.**
+A self-contained fork of Cerebrum Blocks — a FastAPI service that exposes a catalog of AI / document / construction "blocks" through a single universal `/v1/execute` endpoint, plus a small React dashboard for trying them in the browser.
 
-Cerebrum is a **block store for AI**. Instead of building pipelines from scratch, you snap together pre-built blocks — each one a fully-working AI capability — and chain them into whatever product you need.
-
----
-
-## 🏪 The Store: 50+ Plug & Play Blocks
-
-Think of it as an app store, but every "app" is an AI block you can wire into your own system. We ship **50+ blocks** across 6 categories, all with the same universal API:
-
-| Category | Blocks |
-|----------|--------|
-| **🤖 AI Core** | `chat`, `code`, `search`, `translate`, `voice`, `web`, `zvec` |
-| **👁️ Vision & Media** | `image`, `ocr`, `vector_search` |
-| **📄 Documents** | `pdf`, `web`, `ocr` |
-| **🔌 Integrations** | `google_drive`, `onedrive`, `local_drive`, `android_drive`, `email`, `webhook`, `voice` |
-| **🛡️ Infrastructure** | `memory`, `auth`, `monitoring`, `queue`, `rate_limiter`, `sandbox`, `audit`, `secrets`, `health_check`, `failover`, `event_bus` |
-| **🏗️ Domain Containers** | `construction`, `medical`, `legal`, `finance`, `security`, `ai_core`, `store` |
-
-Each block exposes:
-- One `execute()` endpoint
-- A `ui_schema` so frontends auto-render inputs
-- Standardized JSON output you can pass to the next block
-
-**Swap one block. Change the provider. Chain 10 of them. It all just works.**
+This fork strips out the hosted-platform machinery: no Render deploy, no marketplace/store frontend. Everything runs on your laptop or in a Codespace.
 
 ---
 
-## ⚡ 3-Command Quickstart
+## Quickstart
 
 ```bash
-git clone https://github.com/bopoadz-del/Cerebrum-Blocks.git
-cd Cerebrum-Blocks
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+git clone https://github.com/bopoadz-del/The_Fork.git
+cd The_Fork
+./start-local.sh
 ```
 
-Open `http://localhost:8000` and you can immediately run any block.
+Then open:
 
----
+| URL | What it is |
+|-----|------------|
+| `http://localhost:8000/`           | Landing page |
+| `http://localhost:8000/dashboard/` | React dashboard (block playground) |
+| `http://localhost:8000/docs`       | Interactive Swagger UI |
+| `http://localhost:8000/v1/health`  | JSON health check |
 
-## 🎮 The Platform: Built From Blocks
+The launcher will:
+1. `npm install` + build the React frontend the first time (only).
+2. Source `.env` if present (so `DEEPSEEK_API_KEY` etc. flow through).
+3. Start uvicorn on `:8000`.
 
-The Cerebrum Platform is **itself built from these blocks**. It is a live demo of what happens when you snap them together:
-
-- **Chat UI** → powered by the `chat` block
-- **File upload + analysis** → `pdf` → `ocr` → `chat` chain
-- **Drive connect** → `local_drive` / `google_drive` / `onedrive` / `android_drive` blocks
-- **ZVec indexing** → `zvec` block embeds file lists so search works across drives
-- **Domain assistants** → `construction`, `medical`, `legal`, `finance` containers
-
-### Live Architecture
-
-| Product | What it is | Live URL |
-|---------|-----------|----------|
-| **Platform API** | FastAPI backend executing 22+ blocks | [cerebrum-platform-api.onrender.com](https://cerebrum-platform-api.onrender.com) |
-| **Platform UI** | Chat interface, drive connect, chain builder | [cerebrum-platform.onrender.com](https://cerebrum-platform.onrender.com) |
-| **Store API** | Catalog of all 50+ blocks | [cerebrum-store-api.onrender.com](https://cerebrum-store-api.onrender.com) |
-| **Store UI** | Browse and discover blocks | [cerebrum-store.onrender.com](https://cerebrum-store.onrender.com) |
-
----
-
-## 🔗 Chaining Blocks: The Killer Feature
-
-Blocks are designed to be chained. The output of one block becomes the input of the next.
+Useful flags:
 
 ```bash
-curl -X POST https://cerebrum-platform-api.onrender.com/v1/chain \
+./start-local.sh --rebuild   # force a fresh dashboard build
+./start-local.sh --dev       # also start vite dev server on :5173 (HMR)
+```
+
+### Run with Docker instead
+
+```bash
+docker compose up --build
+# → http://localhost:8000
+```
+
+---
+
+## Authentication
+
+Every `/v1/*` call needs an API key.
+
+In `ENV=development` (the default for `start-local.sh`), a built-in dev key is enabled:
+
+```bash
+curl -H "Authorization: Bearer cb_dev_key" http://localhost:8000/v1/blocks
+```
+
+For real keys, set environment variables of the form `CEREBRUM_API_KEY_<NAME>=<key>` in `.env`.
+
+---
+
+## Universal API
+
+Every block speaks the same shape — one endpoint, JSON in, JSON out.
+
+**Single block:**
+
+```bash
+curl -X POST http://localhost:8000/v1/execute \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer cb_dev_key" \
   -d '{
-    "steps": [
-      {"block": "pdf",   "params": {"extract_text": true}},
-      {"block": "construction", "params": {"action": "extract_measurements"}},
-      {"block": "chat",  "params": {}}
-    ],
-    "initial_input": {"url": "floorplan.pdf"}
+    "block": "translate",
+    "input": "hello world",
+    "params": {"target": "fr"}
   }'
 ```
 
-Another example — analyze a contract:
+**Chain blocks (output of one → input of next):**
 
 ```bash
-curl -X POST https://cerebrum-platform-api.onrender.com/v1/execute \
+curl -X POST http://localhost:8000/v1/chain \
   -H "Content-Type: application/json" \
-  -d '{"block": "legal", "params": {"action": "process_contract"}}'
+  -H "Authorization: Bearer cb_dev_key" \
+  -d '{
+    "steps": [
+      {"block": "pdf",  "params": {"extract_text": true}},
+      {"block": "chat", "params": {}}
+    ],
+    "initial_input": {"url": "report.pdf"}
+  }'
 ```
 
-Or search across your connected drives with ZVec:
+**Discover blocks:**
 
 ```bash
-curl -X POST https://cerebrum-platform-api.onrender.com/v1/execute \
-  -H "Content-Type: application/json" \
-  -d '{"block": "zvec", "input": "budget report", "params": {"operation": "search"}}'
+curl -H "Authorization: Bearer cb_dev_key" http://localhost:8000/v1/blocks
+```
+
+Each block returns a `ui_schema` so the dashboard auto-renders inputs.
+
+---
+
+## Blocks Available in This Fork
+
+The server reports 28 blocks loaded at startup. They fall into four buckets:
+
+### Documents & content (7)
+- `pdf`, `pdf_v2` — PDF text & table extraction
+- `ocr`, `ocr_v2` — OCR over images (uses Tesseract)
+- `image` — Image analysis via Claude Vision (or basic metadata fallback)
+- `document_engine` — Parse → Reason → Map pipeline for technical docs
+- `web` — Fetch and extract content from any URL
+
+### Language & AI (5)
+- `chat` — LLM chat (DeepSeek by default; ANTHROPIC_API_KEY also supported)
+- `translate` — 20+ languages, no API key needed
+- `voice` — Text-to-speech (gTTS) and speech-to-text (Google STT)
+- `vector_search` — In-memory semantic search
+- `zvec` — TF-IDF embeddings, similarity, zero-shot classification
+
+### Construction domain (10)
+- `construction_v2` — Construction document analysis (typed I/O)
+- `boq_processor` — Parse Excel/CSV Bills of Quantities
+- `bim`, `bim_extractor` — IFC building elements, quantities, clash report
+- `drawing_qto` — Measurements / areas / volumes from DXF/DWG
+- `primavera_parser` — Parse P6 `.xer` schedule files
+- `spec_analyzer` — Grade requirements, material specs, compliance
+- `formula_executor` — Chat-to-code: generate & run Python formulas
+- `sympy_reasoning` — Symbolic variance analysis
+- `historical_benchmark` — RS Means-style unit costs & market data
+- `smart_orchestrator` — Keyword router that maps user messages to the right construction block
+
+### Drives & infrastructure (4)
+- `local_drive` — Local filesystem list/read/write
+- `google_drive` — Google Drive (needs `GOOGLE_CLIENT_ID` + token)
+- `onedrive` — OneDrive (needs `AZURE_CLIENT_ID` + token)
+- `cache_manager` — Redis wrapper with get/set/delete/stats
+
+Get the live list at runtime:
+
+```bash
+curl -H "Authorization: Bearer cb_dev_key" http://localhost:8000/v1/blocks \
+  | jq '.blocks[] | {name, layer, description}'
 ```
 
 ---
 
-## 📦 Full Block Catalog
+## Configuration
 
-### Core AI (11)
-- `chat` — Multi-provider LLM chat (DeepSeek, Groq, OpenAI)
-- `code` — Code execution & analysis
-- `search` — Web search
-- `translate` — Language translation
-- `voice` — Text-to-speech & speech-to-text
-- `web` — Web scraping & HTML parsing
-- `zvec` — Zero-shot vector ops (embed, classify, similarity, search)
-- `image` — Image analysis
-- `ocr` — Text extraction from images
-- `pdf` — PDF text & table extraction
-- `vector_search` — Semantic search
+Drop a `.env` in the repo root. All keys are optional — blocks that need them will report a clear error if they're missing.
 
-### Drive & Storage (4)
-- `google_drive` — Google Drive integration
-- `onedrive` — Microsoft OneDrive integration
-- `local_drive` — Local filesystem access
-- `android_drive` — Android storage integration
+```dotenv
+# LLM providers (chat, formula_executor, etc.)
+DEEPSEEK_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
 
-### Infrastructure & Security (12)
-- `memory` — High-speed cache with TTL
-- `auth` — API key validation, RBAC
-- `monitoring` — Provider leaderboard & failover prediction
-- `queue` — Background job queue
-- `rate_limiter` — Request throttling
-- `sandbox` — Code safety validation
-- `audit` — Audit event logging
-- `secrets` — Secret management
-- `health_check` — System health probes
-- `failover` — Automatic provider switching
-- `event_bus` — Cross-block messaging
-- `database` — Data persistence layer
+# Drive integrations
+GOOGLE_CLIENT_ID=...
+GOOGLE_REFRESH_TOKEN=...
+AZURE_CLIENT_ID=...
+ONEDRIVE_ACCESS_TOKEN=...
 
-### Workflow & Communication (8)
-- `email` — Email sending
-- `webhook` — Webhook dispatch
-- `notification` — Push / SMS alerts
-- `team` — Multi-user workspaces
-- `workflow` — Workflow orchestration
-- `review` — Approval flows
-- `documentation` — Auto-doc generation
-- `version` — Block versioning
+# Redis (for cache_manager)
+REDIS_URL=redis://localhost:6379
 
-### Analytics & Discovery (7)
-- `analytics` — Usage analytics
-- `discovery` — Block discovery engine
-- `dashboard` — Metrics dashboard
-- `error_tracking` — Error aggregation
-- `migration` — Schema / block migration
-- `billing` — Usage tracking
-- `payment_split` — Revenue sharing logic
-
-### Domain Containers (7)
-- `construction` — BIM, QA, progress tracking, material extraction
-- `medical` — DICOM, HIPAA validation, clinical entities
-- `legal` — Contract analysis, precedent matching
-- `finance` — Risk analysis, compliance reporting
-- `security` — Auth, rate limits, sandbox, audit
-- `ai_core` — Adaptive routing & provider leaderboard
-- `store` — Catalog & discovery logic
-
-**Total: 50+ blocks, all with the same universal API.**
+# Misc
+DATA_DIR=./data
+ENV=development
+CORS_EXTRA_ORIGINS=http://localhost:9000   # comma-separated
+```
 
 ---
 
-## 🏗️ How It Works
+## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
-│         Your Product / UI               │
+│   React dashboard (frontend/dist)       │  served at /dashboard
 └─────────────┬───────────────────────────┘
-              │
+              │ HTTP (CORS open to localhost)
 ┌─────────────▼───────────────────────────┐
-│      Cerebrum Platform API              │
-│  (FastAPI router for all blocks)        │
+│   FastAPI app (app/main.py)             │
+│   /v1/execute, /v1/chain, /v1/blocks ...│
 └─────────────┬───────────────────────────┘
               │
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
-┌───────┐ ┌───────┐ ┌───────┐
-│  pdf  │ │  ocr  │ │  chat │  ← Core Blocks
-└───┬───┘ └───┬───┘ └───┬───┘
-    │         │         │
-    └─────────┴─────────┘
-              │
-    ┌─────────┴─────────┐
-    ▼                   ▼
-┌───────────┐     ┌───────────┐
-│construction│     │  medical  │  ← Domain Containers
-└───────────┘     └───────────┘
+        ┌─────┴──────┐
+        ▼            ▼
+┌──────────────┐  ┌──────────────┐
+│ block: pdf   │  │ block: chat  │  ... 28 blocks total
+└──────────────┘  └──────────────┘
 ```
 
-Each block inherits from `UniversalBlock` and implements:
+Each block lives in `app/blocks/<name>.py`, inherits from `UniversalBlock`, and implements:
+
 - `process(input_data, params)` — the actual logic
-- `execute(input_data, params)` — standardized wrapper with timing, error handling, and `source_id`
+- `execute(input_data, params)` — wrapper added by the base class (timing, error handling, `source_id`)
+
+Routers wire the catalog to HTTP in `app/routers/`.
 
 ---
 
-## 🚀 Deployment
+## Repo Layout
 
-### Render (Production)
-All 4 services auto-deploy on `git push origin main`.
-
-| Service | URL |
-|---------|-----|
-| Platform API | https://cerebrum-platform-api.onrender.com |
-| Platform UI | https://cerebrum-platform.onrender.com |
-| Store API | https://cerebrum-store-api.onrender.com |
-| Store UI | https://cerebrum-store.onrender.com |
-
-### Docker
-```bash
-docker compose up --build
 ```
-Then open http://localhost:8000.
+app/
+  main.py             FastAPI app + CORS + /dashboard mount
+  blocks/             28 universal blocks
+  routers/            HTTP routers (blocks, execute, chain, chat, ...)
+  core/               UniversalBlock base, auth, schema registry
+  static/             Landing page assets
+frontend/             React + Vite dashboard (mounted at /dashboard)
+data/                 DATA_DIR — uploads & block state
+docker-compose.yml    Single-container setup
+start-local.sh        One-command launcher (build + serve)
+```
 
 ---
 
-## 📚 Documentation
+## Documentation
 
-| Document | Description |
-|----------|-------------|
-| **[API.md](API.md)** | Full API reference |
-| **[DOMAIN_CONTAINER_SPEC.md](DOMAIN_CONTAINER_SPEC.md)** | Build your own container |
-| **[RENDER_DEPLOY.md](RENDER_DEPLOY.md)** | Deployment guide |
+- [API.md](API.md) — full endpoint reference
+- [API docs (live)](http://localhost:8000/docs) — once the server is running
 
 ---
 
-## 🌐 Links
-
-- **Platform:** https://cerebrum-platform.onrender.com
-- **Store:** https://cerebrum-store.onrender.com
-- **GitHub:** https://github.com/bopoadz-del/Cerebrum-Blocks
-- **Docker Hub:** https://hub.docker.com/r/bopoadz-del/cerebrum-blocks
-
----
-
-**Version:** 2.0.0 — Domain Adapter Protocol  
-**Blocks:** 50+ plug & play modules  
-**Status:** ✅ **Production Ready**
-
----
-
-*One block at a time. Build anything.*
+*Fork of [bopoadz-del/Cerebrum-Blocks](https://github.com/bopoadz-del/Cerebrum-Blocks). Trimmed for local use — no hosted platform, no marketplace.*
