@@ -55,3 +55,9 @@ frontend/node_modules
 
 vault/secrets.tar.gz
 claudebot/KEYS.md
+
+# Claude Code local settings (personal, machine-specific)
+.claude/settings.local.json
+
+# Runtime data directory (uploads, SQLite DB, audit log)
+data/

@@ -56,6 +56,19 @@
         .outcome-item { padding: 12px; background: #1a1a1a; border-radius: 8px; margin-bottom: 12px; border: 1px solid #2a2a2a; }
         .outcome-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 4px; }
         .outcome-value { font-size: 18px; color: #8b5cf6; font-weight: 600; }
+        /* Artifacts panel (Roadmap V2 · Epic 4) */
+        .artifact { background: #141414; border: 1px solid #2a2a2a; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+        .artifact-head { font-size: 11px; color: #cbb6ff; background: #1c1530; padding: 7px 10px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid #2a2a2a; }
+        .artifact-code { margin: 0; padding: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #d6d6d6; white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; }
+        .artifact-scroll { overflow-x: auto; }
+        .artifact-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .artifact-table th { text-align: left; color: #888; padding: 5px 8px; border-bottom: 1px solid #333; white-space: nowrap; }
+        .artifact-table td { color: #ccc; padding: 5px 8px; border-bottom: 1px solid #1c1c1c; }
+        .artifact-link { display: block; color: #8b5cf6; padding: 7px 10px; font-size: 12px; text-decoration: none; border-bottom: 1px solid #1c1c1c; }
+        .artifact-link:hover { background: #1a1a1a; }
+        .artifact-file { color: #ccc; padding: 7px 10px; font-size: 12px; border-bottom: 1px solid #1c1c1c; }
+        .artifact-more { color: #555; font-size: 11px; padding: 6px 10px; }
+        .artifact-empty { color: #555; font-size: 12px; }
         .chain-indicator { position: fixed; top: 20px; right: 360px; background: rgba(139, 92, 246, 0.1); border: 1px solid #8b5cf6; color: #8b5cf6; padding: 10px 16px; border-radius: 10px; font-size: 13px; display: none; }
         .chain-indicator.active { display: block; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -866,9 +879,7 @@ async function selectDriveFile(driveId, fileName) {
                 addMessage(`"${fileName}" loaded from ${drive.name}. Ask me anything about it.`, 'assistant');
 
             } else if (kind === 'pdf' || kind === 'image' || kind === 'docx' || kind === 'xlsx') {
-                setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
-                    <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 1/2 — uploading and extracting…</div></div>`);
-
+                // Roadmap V2 · 0.3 — store + extract text only; no auto-pipeline.
                 const form = new FormData();
                 form.append('file', fileObj);
                 const uploadData = await client.upload(form);
@@ -886,32 +897,19 @@ async function selectDriveFile(driveId, fileName) {
                         const r = await client.execute('document_engine', {}, { docx_path: filePath });
                         extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
                     } else if (kind === 'xlsx') {
-                        try {
-                            const r = await client.execute('boq_processor', { file_path: filePath }, {});
-                            if (r.result && r.status !== 'error') {
-                                extractedText = JSON.stringify(r.result, null, 2).substring(0, 8000);
-                            }
-                        } catch (e) { /* fallback below */ }
-                        if (!extractedText) {
-                            const r = await client.execute('document_engine', {}, { xlsx_path: filePath });
-                            extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
-                        }
+                        const r = await client.execute('document_engine', {}, { xlsx_path: filePath });
+                        extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
                     }
                 } catch(e) {}
 
-                setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
-                    <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 2/2 — construction intelligence…</div></div>`);
-
-                const pipelineResult = await client.execute('construction',
-                    { file_path: filePath, extracted_text: extractedText },
-                    { action: 'auto_pipeline', doc_type: 'auto' }
-                );
-                const r = pipelineResult.result || {};
-                const chatCtx = r.chat_context || `File: ${fileName}\nSource: ${drive.name}\n\n${extractedText.substring(0, 3000)}`;
-                setActiveFileContext(fileName, chatCtx, drive.name);
+                setActiveFileContext(fileName, extractedText || `File: ${fileName} (${kind})`, drive.name);
                 activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
-                setOutcomes(renderPanels(r.panels || [], r.next_actions || [], fileName, sizeKb));
-                addMessage(`"${fileName}" from ${drive.name} analysed (${r.doc_type || 'document'}). Ask me anything about it.`, 'assistant');
+                setOutcomes(`<div class="outcome-item">
+                    <div class="outcome-label">📎 ${fileName}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · From ${drive.name} · stored, not analysed</div>
+                    <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Ask in chat to analyse it.</div>
+                </div>`);
+                addMessage(`"${fileName}" attached from ${drive.name} — stored, no analysis run. Ask me what you need and I'll answer here.`, 'assistant');
 
             } else {
                 setActiveFileContext(fileName, '[Binary file]', drive.name);
@@ -1389,6 +1387,46 @@ function renderPanels(panels, nextActions, fileName, sizeKb) {
     return html;
 }
 
+// Render artifacts (Roadmap V2 · Epic 4) — Claude-style side panel: code,
+// tables, links, files shown on demand, never auto-filled.
+function renderArtifacts(artifacts) {
+    if (!artifacts || !artifacts.length) {
+        return '<p class="artifact-empty">No artifacts — the answer is in the chat.</p>';
+    }
+    const icons = { text: '📄', code: '💻', table: '▦', schedule: '📅', file: '📎', link: '🔗' };
+    let html = '';
+    for (const a of artifacts) {
+        const p = a.payload || {};
+        html += `<div class="artifact"><div class="artifact-head">${icons[a.type] || '📌'} ${escapeHtml(a.title || a.type)}</div>`;
+        if (a.type === 'code') {
+            html += `<pre class="artifact-code"><code>${escapeHtml(p.code || '')}</code></pre>`;
+        } else if (a.type === 'table') {
+            const cols = p.columns || [], rows = p.rows || [];
+            html += `<div class="artifact-scroll"><table class="artifact-table"><thead><tr>`;
+            html += cols.map(c => `<th>${escapeHtml(String(c))}</th>`).join('');
+            html += `</tr></thead><tbody>`;
+            for (const r of rows.slice(0, 50)) {
+                html += `<tr>` + (r || []).map(c => `<td>${escapeHtml(String(c))}</td>`).join('') + `</tr>`;
+            }
+            html += `</tbody></table></div>`;
+            if (rows.length > 50) html += `<div class="artifact-more">+${rows.length - 50} more rows</div>`;
+        } else if (a.type === 'link') {
+            for (const l of (p.links || [])) {
+                html += `<a class="artifact-link" href="${escapeHtml(l.url || '#')}" target="_blank" rel="noopener">${escapeHtml(l.label || l.url || 'link')}</a>`;
+            }
+        } else if (a.type === 'file') {
+            for (const f of (p.files || [])) {
+                const sz = f.size ? ` <span style="color:#666;">(${f.size} B)</span>` : '';
+                html += `<div class="artifact-file">📎 ${escapeHtml(f.name || String(f))}${sz}</div>`;
+            }
+        } else {
+            html += `<pre class="artifact-code">${escapeHtml(p.text || JSON.stringify(p, null, 2))}</pre>`;
+        }
+        html += `</div>`;
+    }
+    return html;
+}
+
 async function triggerAction(action) {
     if (!activeFileContext) return;
     showIndicator(true);
@@ -1401,10 +1439,15 @@ async function triggerAction(action) {
         };
         const data = await client.execute('construction', inputData, { action });
         const result = data.result || {};
-        const panelType = action === 'procurement_list_generator' ? 'procurement' : 'raw';
+        const artifacts = data.artifacts || [];
         const panelTitle = action === 'procurement_list_generator' ? 'Procurement List' : action;
-        setOutcomes(renderPanels([{ type: panelType, title: panelTitle, data: result }], [], activeFileContext.name, ''));
-        addMessage(`${panelTitle} generated. Check the outcomes panel.`, 'assistant');
+        if (artifacts.length) {
+            setOutcomes(renderArtifacts(artifacts));
+        } else {
+            const panelType = action === 'procurement_list_generator' ? 'procurement' : 'raw';
+            setOutcomes(renderPanels([{ type: panelType, title: panelTitle, data: result }], [], activeFileContext.name, ''));
+        }
+        addMessage(`${panelTitle} ready — see the artifacts panel.`, 'assistant');
     } catch(e) {
         addMessage(`${action} failed: ${e.message}`, 'error');
     }
@@ -1440,8 +1483,9 @@ async function handleFile(input) {
             addMessage(`"${file.name}" loaded. Ask me anything about it.`, 'assistant');
 
         } else if (kind === 'pdf' || kind === 'image' || kind === 'docx' || kind === 'xlsx') {
-            setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
-                <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 1/2 — extracting text…</div></div>`);
+            // Roadmap V2 · 0.3 — attaching a file STORES it and extracts text so
+            // the chat can read it. It no longer auto-runs the analysis pipeline;
+            // the panel-generating commands run only when you ask in chat.
             let extractedText = '';
             try {
                 if (kind === 'pdf') {
@@ -1452,40 +1496,21 @@ async function handleFile(input) {
                     extractedText = r.result?.text || r.result?.extracted_text || '';
                 } else if (kind === 'docx') {
                     const r = await client.execute('document_engine', {}, { docx_path: filePath });
-                    const docs = r.result?.documents || r.result?.requirements || [];
                     extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
                 } else if (kind === 'xlsx') {
-                    // BOQ-style spreadsheets: try boq_processor first, then fall back to document_engine
-                    try {
-                        const r = await client.execute('boq_processor', { file_path: filePath }, {});
-                        if (r.result && r.status !== 'error') {
-                            extractedText = JSON.stringify(r.result, null, 2).substring(0, 8000);
-                        }
-                    } catch (e) { /* fallback below */ }
-                    if (!extractedText) {
-                        const r = await client.execute('document_engine', {}, { xlsx_path: filePath });
-                        extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
-                    }
+                    const r = await client.execute('document_engine', {}, { xlsx_path: filePath });
+                    extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
                 }
             } catch(e) { /* extraction optional */ }
 
-            setOutcomes(`<div class="outcome-item"><div class="outcome-label">⚙️ Processing</div>
-                <div style="color:#8b5cf6;font-size:12px;margin-top:4px;">Step 2/2 — construction intelligence…</div></div>`);
-            const pipelineResult = await client.execute('construction',
-                { file_path: filePath, extracted_text: extractedText },
-                { action: 'auto_pipeline', doc_type: 'auto' }
-            );
-            const r = pipelineResult.result || {};
-            const chatCtx = r.chat_context || `File: ${file.name}\nType: ${r.doc_type || 'unknown'}\n\n${extractedText.substring(0, 3000)}`;
-            setActiveFileContext(file.name, chatCtx, 'Upload');
+            setActiveFileContext(file.name, extractedText || `File: ${file.name} (${kind})`, 'Upload');
             activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
-            const qPanel = (r.panels || []).find(p => p.type === 'quantities');
-            const cPanel = (r.panels || []).find(p => p.type === 'cost_estimate');
-            activeFileContext.quantities = (qPanel && qPanel.data) || {};
-            activeFileContext.costLineItems = (cPanel && cPanel.line_items) || [];
-            setOutcomes(renderPanels(r.panels || [], r.next_actions || [], file.name, sizeKb));
-            const actionsRun = (r.downstream_actions_run || []).join(', ') || 'none';
-            addMessage(`"${file.name}" analysed (${r.doc_type || 'document'}). ${(r.panels || []).length} intelligence panels. Actions: ${actionsRun}. Ask me anything.`, 'assistant');
+            setOutcomes(`<div class="outcome-item">
+                <div class="outcome-label">📎 ${file.name}</div>
+                <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · stored, not analysed</div>
+                <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Ask in chat to analyse it.</div>
+            </div>`);
+            addMessage(`"${file.name}" attached and stored — I haven't run any analysis. Ask me what you need (e.g. "summarise this", "extract the BOQ") and I'll answer here.`, 'assistant');
 
         } else {
             setActiveFileContext(file.name, `[Binary file — ${kind}]`, 'Upload');

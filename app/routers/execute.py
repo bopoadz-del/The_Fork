@@ -39,6 +39,18 @@ async def execute(request: ExecuteRequest, auth: dict = Depends(require_api_key)
         adapted_input = adapt_input(request.input, block)
         
         result = await block.execute(adapted_input, request.params or {})
+
+        # Attach artifacts for the side panel (Roadmap V2 · Epic 4).
+        try:
+            from app.core.artifacts import result_to_artifacts
+            if isinstance(result, dict) and "artifacts" not in result:
+                inner = result.get("result", result)
+                result["artifacts"] = result_to_artifacts(
+                    inner if isinstance(inner, dict) else {}
+                )
+        except Exception:
+            pass
+
         return result
 
     except Exception as e:

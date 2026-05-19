@@ -28,6 +28,7 @@ from .formula_executor import FormulaExecutorBlock
 from .sympy_reasoning import SymPyReasoningBlock
 from .historical_benchmark import HistoricalBenchmarkBlock
 from .smart_orchestrator import SmartOrchestratorBlock
+from .orchestrator import OrchestratorBlock
 from .construction_v2 import ConstructionBlockV2
 
 # ── File Access ───────────────────────────────────────────────────────────────
@@ -77,6 +78,7 @@ BLOCK_REGISTRY = {
     "sympy_reasoning":      SymPyReasoningBlock,
     "historical_benchmark": HistoricalBenchmarkBlock,
     "smart_orchestrator":   SmartOrchestratorBlock,
+    "orchestrator":         OrchestratorBlock,
 
     # File Access
     "local_drive":      LocalDriveBlock,
