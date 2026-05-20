@@ -58,3 +58,50 @@ class InMemorySessionStore(SessionStore):
 
     def delete(self, session_id: str) -> bool:
         return self._data.pop(session_id, None) is not None
+
+
+class RedisSessionStore(SessionStore):
+    """Redis backend. Sessions are JSON blobs keyed `session:<id>` with a TTL.
+
+    Requires the `redis` package and a reachable server. Only instantiated
+    when REDIS_URL is set — see get_session_store().
+    """
+
+    _PREFIX = "session:"
+
+    def __init__(self, redis_url: str, ttl_seconds: int = DEFAULT_TTL_SECONDS):
+        import redis  # imported lazily so the dependency is optional
+        self._ttl = ttl_seconds
+        self._client = redis.from_url(redis_url, decode_responses=True)
+
+    def _key(self, session_id: str) -> str:
+        return f"{self._PREFIX}{session_id}"
+
+    def get(self, session_id: str) -> Optional[ProjectSession]:
+        raw = self._client.get(self._key(session_id))
+        if raw is None:
+            return None
+        return ProjectSession.model_validate_json(raw)
+
+    def save(self, session: ProjectSession) -> None:
+        session.touch()
+        self._client.set(
+            self._key(session.id), session.model_dump_json(), ex=self._ttl
+        )
+
+    def delete(self, session_id: str) -> bool:
+        return self._client.delete(self._key(session_id)) > 0
+
+
+def get_session_store() -> SessionStore:
+    """Pick a backend: Redis when REDIS_URL is set and reachable, else
+    in-memory. Falls back to in-memory if Redis cannot be reached."""
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        try:
+            store = RedisSessionStore(redis_url)
+            store._client.ping()
+            return store
+        except Exception:
+            pass  # fall through to in-memory
+    return InMemorySessionStore()
