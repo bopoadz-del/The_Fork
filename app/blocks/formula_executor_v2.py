@@ -141,8 +141,12 @@ class FormulaExecutorV2Block(UniversalBlock):
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
         params = params or {}
         data = input_data if isinstance(input_data, dict) else {}
+        # InputAdapter wraps a bare string as {"text": "..."}; accept that and
+        # the legacy {"input": "..."} shape as the task description too.
         task = data.get("task") or data.get("formula_description") \
-            or params.get("task") or (str(input_data) if not isinstance(input_data, dict) else "")
+            or data.get("text") or data.get("input") \
+            or params.get("task") \
+            or (str(input_data) if not isinstance(input_data, dict) else "")
         variables = dict(data.get("variables") or data.get("input_values") or {})
 
         if not task.strip():

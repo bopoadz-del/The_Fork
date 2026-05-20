@@ -95,8 +95,11 @@ Legend: doc = plan document written · impl = implemented + tests passing.
 | 1b — pm_computations extended | ✅ | ✅ |
 | 2 — session state store | ✅ | ✅ |
 | 3 — sandbox | ✅ | ✅ |
-| 4 — formula_executor v2 | ✅ | ⏳ |
-| 5 — project reasoner | ✅ | ⏳ |
-| 6 — API & UI | ✅ | ⏳ |
+| 4 — formula_executor v2 | ✅ | ✅ |
+| 5 — project reasoner | ✅ | ✅ |
+| 6 — API & UI | ✅ | ✅ |
+
+All 7 plans implemented. Reasoning Engine suite: 128 passed, 1 skipped
+(Redis + live-LLM tests skip without `REDIS_URL` / `DEEPSEEK_API_KEY`).
 
 Execute Plan N only after Plan N-1's tests pass.
