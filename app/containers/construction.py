@@ -923,113 +923,26 @@ class ConstructionContainer(UniversalContainer):
             return 0
 
     # SPECIFICATIONS (CSI MasterFormat)
-    async def process_specification_full(self, input_data: Any, params: Dict) -> Dict:
-        data = input_data if isinstance(input_data, dict) else {}
-        p = params or {}
-        file_path = data.get("file_path") or p.get("file_path")
-        extracted_text = data.get("extracted_text") or p.get("extracted_text") or ""
-        division_filter = p.get("division")
+    def _get_spec_analyzer_block(self):
+        """Resolve the spec_analyzer block — dependency injection first, registry fallback."""
+        block = self.get_dep("spec_analyzer")
+        if block is None:
+            from app.blocks import BLOCK_REGISTRY
+            block_cls = BLOCK_REGISTRY.get("spec_analyzer")
+            if block_cls is not None:
+                block = block_cls()
+        return block
 
-        if not file_path and not extracted_text:
-            return {
-                "status": "success",
-                "demo_mode": True,
-                "action": "specification_analysis",
-                "file_name": "sample_spec.pdf",
-                "divisions_found": [3, 4, 5, 7, 8, 9, 21, 22, 23, 26, 28, 31, 32],
-                "total_sections_analyzed": 13,
-                "spec_items": [
-                    {"category": "Division 03", "key": "Concrete", "value": "CSI Div 03 — Reinforced Concrete: C30/37 mix design, 28-day compressive strength, max w/c ratio 0.50", "section": "structural", "confidence": 0.95},
-                    {"category": "Division 04", "key": "Masonry", "value": "CSI Div 04 — Masonry: External cavity wall, inner leaf dense aggregate block, outer leaf facing brick", "section": "envelope", "confidence": 0.92},
-                    {"category": "Division 05", "key": "Metals", "value": "CSI Div 05 — Structural Steelwork: Grade S355 JR, hot-dip galvanised connections, composite metal deck", "section": "structural", "confidence": 0.94},
-                    {"category": "Division 07", "key": "Thermal & Moisture", "value": "CSI Div 07 — Waterproofing: Single-ply TPO membrane, min 1.5mm thickness, 20-year warranty", "section": "envelope", "confidence": 0.91},
-                    {"category": "Division 08", "key": "Openings", "value": "CSI Div 08 — Curtain Wall: Aluminium unitised system, thermally broken, U-value ≤1.6 W/m²K, CWCT standard", "section": "envelope", "confidence": 0.93},
-                    {"category": "Division 09", "key": "Finishes", "value": "CSI Div 09 — Finishes: Raised access floor 600×600, gypsum board partitions, acoustic ceiling tiles", "section": "interiors", "confidence": 0.90},
-                    {"category": "Division 23", "key": "HVAC", "value": "CSI Div 23 — HVAC: VAV system, fresh air min 10 l/s/person, ASHRAE 90.1 energy compliance", "section": "mep", "confidence": 0.88},
-                    {"category": "Division 26", "key": "Electrical", "value": "CSI Div 26 — Electrical: LV distribution, metered tenant circuits, LED lighting min 400 lux open office", "section": "mep", "confidence": 0.89},
-                ],
-                "materials_referenced": ["concrete", "steel", "glass", "aluminum", "insulation", "membrane"],
-                "methods_specified": ["in-situ concrete", "precast", "site welding", "bolted connections"],
-                "testing_requirements": ["28-day cube test", "weld inspection", "air permeability test", "thermographic survey"],
-                "qa_qc_requirements": ["ITP submission", "material approval", "mock-up panel", "commissioning"],
-                "recommendations": [
-                    "Issue RFI for concrete mix design approval prior to pour",
-                    "Pre-order long-lead curtain wall units — 16-week lead time",
-                    "Schedule mock-up panel inspection at week 4 of construction",
-                ],
-            }
+    @staticmethod
+    def _split_csi_divisions(full_text: str, division_filter=None) -> tuple:
+        """CSI MasterFormat division-splitting (container-only — the block has no equivalent).
 
-        if not file_path:
-            # Parse from extracted_text only
-            return self._process_spec_from_text(extracted_text, division_filter)
-
-        try:
-            import fitz
-            doc = fitz.open(file_path)
-            full_text = ""
-            for page in doc:
-                full_text += page.get_text()
-            doc.close()
-        except Exception as e:
-            return {"status": "error", "error": f"Could not read spec file: {str(e)}"}
-        
+        Groups raw spec text into Divisions 01–49 by leading 2-digit codes.
+        Returns (detected_divisions, division_spec_items).
+        """
         divisions = {i: [] for i in range(1, 50)}
         current_division = None
-        lines = full_text.split('\n')
-        
-        for line in lines:
-            division_match = re.match(r'^(\d{2})\s{3,}', line)
-            if division_match:
-                div_num = int(division_match.group(1))
-                if 1 <= div_num <= 49:
-                    current_division = div_num
-                    divisions[current_division].append(line.strip())
-            elif current_division and line.strip():
-                divisions[current_division].append(line.strip())
-        
-        detected_divisions = [i for i, content in divisions.items() if content]
-        
-        spec_items = []
-        for div_num, content in divisions.items():
-            if not content:
-                continue
-            if division_filter and str(div_num) != str(division_filter):
-                continue
-            full_content = '\n'.join(content)
-            materials = self._extract_materials(full_content)
-            methods = self._extract_methods(full_content)
-            testing = self._extract_testing_requirements(full_content)
-            qa_qc = self._extract_qaqc(full_content)
-            
-            spec_items.append(SpecItem(
-                category=f"Division {div_num:02d}",
-                key="content",
-                value=f"{len(content)} paragraphs",
-                section="general",
-                confidence=0.9
-            ))
-        
-        return {
-            "status": "success",
-            "action": "specification_analysis",
-            "file_name": Path(file_path).name,
-            "divisions_found": detected_divisions,
-            "division_filter_applied": division_filter,
-            "total_sections_analyzed": len(spec_items),
-            "spec_items": [asdict(item) for item in spec_items],
-            "materials_referenced": materials if 'materials' in dir() else [],
-            "methods_specified": methods if 'methods' in dir() else [],
-            "testing_requirements": testing if 'testing' in dir() else [],
-            "qa_qc_requirements": qa_qc if 'qa_qc' in dir() else []
-        }
-    
-    async def analyze_spec_section(self, input_data: Any, params: Dict) -> Dict:
-        return await self.process_specification_full(input_data, params)
-
-    def _process_spec_from_text(self, text: str, division_filter=None) -> Dict:
-        divisions = {i: [] for i in range(1, 50)}
-        current_division = None
-        for line in text.split('\n'):
+        for line in full_text.split('\n'):
             m = re.match(r'^(\d{2})\s{2,}', line)
             if m:
                 div_num = int(m.group(1))
@@ -1038,51 +951,137 @@ class ConstructionContainer(UniversalContainer):
                     divisions[current_division].append(line.strip())
             elif current_division and line.strip():
                 divisions[current_division].append(line.strip())
+
         detected = [i for i, c in divisions.items() if c]
-        spec_items = []
-        full_text_lower = text.lower()
-        materials = self._extract_materials(text)
+        division_items = []
         for div_num, content in divisions.items():
             if not content:
                 continue
             if division_filter and str(div_num) != str(division_filter):
                 continue
-            spec_items.append({"category": f"Division {div_num:02d}", "key": "content", "value": f"{len(content)} paragraphs extracted", "section": "general", "confidence": 0.85})
+            division_items.append({
+                "category": f"Division {div_num:02d}",
+                "key": "content",
+                "value": f"{len(content)} paragraphs",
+                "section": "general",
+                "confidence": 0.9,
+            })
+        return detected, division_items
+
+    async def process_specification_full(self, input_data: Any, params: Dict) -> Dict:
+        """Analyse a project specification.
+
+        Delegates genuine grade / material / compliance extraction to the
+        spec_analyzer block — no demo mode, no fabricated divisions. The CSI
+        MasterFormat division-splitting layer (which the block has no equivalent
+        for) stays here in the container.
+        """
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        file_path = data.get("file_path") or p.get("file_path")
+        extracted_text = data.get("extracted_text") or p.get("extracted_text") or ""
+        division_filter = p.get("division")
+
+        if not file_path and not extracted_text:
+            return {
+                "status": "error",
+                "action": "specification_analysis",
+                "error": "No specification provided — pass file_path (PDF) or extracted_text",
+            }
+
+        block = self._get_spec_analyzer_block()
+        if block is None:
+            return {
+                "status": "error",
+                "action": "specification_analysis",
+                "error": "spec_analyzer block unavailable — cannot extract grades/materials/compliance",
+            }
+
+        # Delegate grade/material/compliance extraction to the block.
+        block_input = {"file_path": file_path} if file_path else {"text": extracted_text}
+        result = await block.process(block_input, p)
+        if not isinstance(result, dict) or result.get("status") != "success":
+            err = result.get("error") if isinstance(result, dict) else "spec_analyzer block failed"
+            return {
+                "status": "error",
+                "action": "specification_analysis",
+                "error": err or "spec_analyzer block failed",
+            }
+
+        grade_requirements = result.get("grade_requirements", []) or []
+        material_specs = result.get("material_specs", []) or []
+        compliance_flags = result.get("compliance_flags", []) or []
+
+        # CSI division-splitting — container-only layer, the block has no equivalent.
+        # The block already extracted PDF text; re-read it here only for splitting.
+        full_text = extracted_text
+        if file_path:
+            try:
+                import fitz
+                doc = fitz.open(file_path)
+                full_text = "".join(page.get_text() for page in doc)
+                doc.close()
+            except Exception as e:
+                return {"status": "error", "action": "specification_analysis",
+                        "error": f"Could not read spec file for division-splitting: {str(e)}"}
+
+        detected_divisions, division_items = self._split_csi_divisions(full_text, division_filter)
+
+        # Map the block's output into the spec_items shape callers expect:
+        # one item per CSI division, plus one item per extracted grade / material.
+        spec_items = list(division_items)
+        for g in grade_requirements:
+            spec_items.append({
+                "category": "Grade Requirement",
+                "key": g.get("type", "grade"),
+                "value": g.get("value", ""),
+                "section": g.get("context", ""),
+                "confidence": 0.9,
+            })
+        for m in material_specs:
+            spec_items.append({
+                "category": "Material Spec",
+                "key": m.get("material_type", "material"),
+                "value": m.get("specification", ""),
+                "section": "materials",
+                "confidence": 0.85,
+            })
+
+        # Derive testing / QA-QC response keys from the block's compliance flags
+        # (the block's compliance_flags supersede the old binary sentinel helpers).
+        testing_flags = {"test_certificate"}
+        qaqc_flags = {"shop_drawing", "mockup_required", "submittal", "material_approval", "approval_required"}
+        testing_requirements = [
+            f.get("context", f.get("keyword", "")) for f in compliance_flags
+            if f.get("flag_type") in testing_flags
+        ]
+        qa_qc_requirements = [
+            f.get("context", f.get("keyword", "")) for f in compliance_flags
+            if f.get("flag_type") in qaqc_flags
+        ]
+
+        materials_referenced = sorted({m.get("material_type", "") for m in material_specs if m.get("material_type")})
+
         return {
             "status": "success",
             "action": "specification_analysis",
-            "file_name": "extracted_text",
-            "divisions_found": detected or [3, 5, 9],
-            "total_sections_analyzed": len(spec_items) or 1,
-            "spec_items": spec_items or [{"category": "General", "key": "spec_text", "value": text[:200], "section": "general", "confidence": 0.7}],
-            "materials_referenced": materials,
-            "methods_specified": self._extract_methods(text),
-            "testing_requirements": self._extract_testing_requirements(text),
-            "qa_qc_requirements": [],
+            "file_name": Path(file_path).name if file_path else "extracted_text",
+            "divisions_found": detected_divisions,
+            "division_filter_applied": division_filter,
+            "total_sections_analyzed": len(spec_items),
+            "spec_items": spec_items,
+            "grade_requirements": grade_requirements,
+            "material_specs": material_specs,
+            "compliance_flags": compliance_flags,
+            "materials_referenced": materials_referenced,
+            "methods_specified": [],
+            "testing_requirements": testing_requirements,
+            "qa_qc_requirements": qa_qc_requirements,
+            "standards_referenced": result.get("standards_referenced", []),
         }
 
-    def _extract_materials(self, text: str) -> List[str]:
-        materials = []
-        material_keywords = ["concrete", "steel", "rebar", "brick", "block", "glass", "aluminum", "timber", "insulation", "membrane"]
-        for kw in material_keywords:
-            if kw in text.lower():
-                materials.append(kw)
-        return materials
-    
-    def _extract_methods(self, text: str) -> List[str]:
-        return []
-    
-    def _extract_testing_requirements(self, text: str) -> List[str]:
-        requirements = []
-        if re.search(r'\btest\b|\bsample\b|\blab\b', text, re.IGNORECASE):
-            requirements.append("Testing requirements found")
-        return requirements
-    
-    def _extract_qaqc(self, text: str) -> List[str]:
-        qa = []
-        if re.search(r'\binspection\b|\bwitness\b|\bhold point\b', text, re.IGNORECASE):
-            qa.append("Inspection/witness requirements")
-        return qa
+    async def analyze_spec_section(self, input_data: Any, params: Dict) -> Dict:
+        return await self.process_specification_full(input_data, params)
 
     # COST ESTIMATION — per-item rates delegated to the historical_benchmark block;
     # overhead / profit / contingency markup aggregation stays container-only.
