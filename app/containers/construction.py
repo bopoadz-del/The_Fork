@@ -943,6 +943,9 @@ class ConstructionContainer(UniversalContainer):
         divisions = {i: [] for i in range(1, 50)}
         current_division = None
         for line in full_text.split('\n'):
+            # \s{2,} is intentional and unified across PDF and extracted-text
+            # inputs: the old file-path-only path used \s{3,}, but \s{2,} is the
+            # more permissive of the two and matches everything \s{3,} would.
             m = re.match(r'^(\d{2})\s{2,}', line)
             if m:
                 div_num = int(m.group(1))
@@ -967,6 +970,35 @@ class ConstructionContainer(UniversalContainer):
                 "confidence": 0.9,
             })
         return detected, division_items
+
+    @staticmethod
+    def _topup_keyword_matches(full_text: str, keywords: list, existing: list = None) -> list:
+        """Scan full_text for keyword hits and UNION with block-derived results.
+
+        Restores the coverage of the old _extract_testing_requirements /
+        _extract_qaqc helpers, whose bare-word matching was broader than the
+        spec_analyzer block's compliance keyword/pattern sets. For each keyword
+        found (word-boundary, case-insensitive) produces a useful entry: the
+        matched keyword plus a short surrounding-context snippet. Results are
+        merged with `existing` (the block's flags) and deduplicated, preserving
+        the block's entries first.
+        """
+        merged = list(existing or [])
+        seen = {str(e).strip().lower() for e in merged}
+        text = full_text or ""
+        for kw in keywords:
+            # word-boundary, case-insensitive — \b around the literal keyword
+            m = re.search(r'\b' + re.escape(kw) + r'\b', text, re.IGNORECASE)
+            if not m:
+                continue
+            start = max(0, m.start() - 40)
+            end = min(len(text), m.end() + 40)
+            snippet = " ".join(text[start:end].split())
+            entry = f"{kw}: {snippet}" if snippet else kw
+            if entry.strip().lower() not in seen:
+                seen.add(entry.strip().lower())
+                merged.append(entry)
+        return merged
 
     async def process_specification_full(self, input_data: Any, params: Dict) -> Dict:
         """Analyse a project specification.
@@ -1060,7 +1092,38 @@ class ConstructionContainer(UniversalContainer):
             if f.get("flag_type") in qaqc_flags
         ]
 
-        materials_referenced = sorted({m.get("material_type", "") for m in material_specs if m.get("material_type")})
+        # Top-up pass over full_text — the block's compliance keyword/pattern sets
+        # are narrower than the old _extract_testing_requirements / _extract_qaqc
+        # helpers, which fired on bare words. Restore that coverage and UNION it
+        # with the block's richer flags (deduplicated, order-preserving).
+        testing_requirements = self._topup_keyword_matches(
+            full_text, ["test", "sample", "lab"], existing=testing_requirements,
+        )
+        qa_qc_requirements = self._topup_keyword_matches(
+            full_text, ["inspection", "witness", "hold point", "hold-point"],
+            existing=qa_qc_requirements,
+        )
+
+        # materials_referenced: UNION the block-derived material types with a
+        # substring pass over the old _extract_materials 10-keyword set, since the
+        # block's material_specs drop brick/block/glass/aluminum/timber. Deduplicated.
+        material_keywords = [
+            "concrete", "steel", "rebar", "brick", "block", "glass",
+            "aluminum", "timber", "insulation", "membrane",
+        ]
+        materials_seen = set()
+        materials_referenced = []
+        for m in material_specs:
+            mt = m.get("material_type", "")
+            if mt and mt.lower() not in materials_seen:
+                materials_seen.add(mt.lower())
+                materials_referenced.append(mt)
+        lowered_text = full_text.lower()
+        for kw in material_keywords:
+            if kw in lowered_text and kw not in materials_seen:
+                materials_seen.add(kw)
+                materials_referenced.append(kw)
+        materials_referenced.sort()
 
         return {
             "status": "success",
