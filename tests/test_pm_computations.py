@@ -74,3 +74,50 @@ def test_topological_order_detects_cycle():
 def test_topological_order_rejects_unknown_predecessor():
     with pytest.raises(ValueError):
         topological_order([_act("A", 1, ["GHOST"])])
+
+
+from app.lib.pm_computations import cpm_forward_pass
+
+
+def _index(acts):
+    return {a.id: a for a in acts}
+
+
+def test_forward_pass_linear_chain():
+    acts = [_act("A", 3), _act("B", 2, ["A"]), _act("C", 4, ["B"])]
+    fwd = cpm_forward_pass(_index(acts), topological_order(acts))
+    assert fwd["A"] == (0, 3)
+    assert fwd["B"] == (3, 5)
+    assert fwd["C"] == (5, 9)
+
+
+def test_forward_pass_parallel_takes_max():
+    acts = [_act("A", 3), _act("B", 2, ["A"]), _act("C", 5, ["A"]),
+            _act("D", 1, ["B", "C"])]
+    fwd = cpm_forward_pass(_index(acts), topological_order(acts))
+    assert fwd["D"] == (8, 9)  # max(B.EF 5, C.EF 8)
+
+
+def test_forward_pass_fs_lag():
+    acts = [_act("A", 3),
+            Activity(id="B", duration=2, predecessors=[
+                Dependency(predecessor_id="A", type=DependencyType.FS, lag=2)])]
+    fwd = cpm_forward_pass(_index(acts), topological_order(acts))
+    assert fwd["B"] == (5, 7)
+
+
+def test_forward_pass_negative_lag_overlaps():
+    # FS lag -2: B starts 2 working days before A finishes
+    acts = [_act("A", 6),
+            Activity(id="B", duration=4, predecessors=[
+                Dependency(predecessor_id="A", type=DependencyType.FS, lag=-2)])]
+    fwd = cpm_forward_pass(_index(acts), topological_order(acts))
+    assert fwd["B"] == (4, 8)  # A.EF 6 + lag -2 = 4
+
+
+def test_forward_pass_start_to_start():
+    acts = [_act("A", 10),
+            Activity(id="B", duration=4, predecessors=[
+                Dependency(predecessor_id="A", type=DependencyType.SS, lag=2)])]
+    fwd = cpm_forward_pass(_index(acts), topological_order(acts))
+    assert fwd["B"] == (2, 6)

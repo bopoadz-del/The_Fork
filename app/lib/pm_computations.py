@@ -55,3 +55,28 @@ def topological_order(activities: List[Activity]) -> List[str]:
             f"Circular dependency among: {', '.join(cycle)}"
         )
     return order
+
+
+def cpm_forward_pass(
+    acts: Dict[str, Activity], order: List[str]
+) -> Dict[str, Tuple[int, int]]:
+    """Compute (ES, EF) working-day offsets. `order` must be topological."""
+    es: Dict[str, int] = {}
+    ef: Dict[str, int] = {}
+    for nid in order:
+        a = acts[nid]
+        start = 0
+        for dep in a.predecessors:
+            p_es, p_ef = es[dep.predecessor_id], ef[dep.predecessor_id]
+            if dep.type == DependencyType.FS:
+                cand = p_ef + dep.lag
+            elif dep.type == DependencyType.SS:
+                cand = p_es + dep.lag
+            elif dep.type == DependencyType.FF:
+                cand = p_ef + dep.lag - a.duration
+            else:  # SF
+                cand = p_es + dep.lag - a.duration
+            start = max(start, cand)
+        es[nid] = start
+        ef[nid] = start + a.duration
+    return {nid: (es[nid], ef[nid]) for nid in order}
