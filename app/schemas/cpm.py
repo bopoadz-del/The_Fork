@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -52,12 +52,18 @@ class WorkCalendar(BaseModel):
         return d
 
 
+class ResourceAssignment(BaseModel):
+    trade: str
+    count: float = 1.0  # crew size / headcount on the activity
+
+
 class Activity(BaseModel):
     id: str = Field(min_length=1)
     name: str = ""
     duration: int = Field(ge=0)  # working days
     predecessors: List[Dependency] = Field(default_factory=list)
     wbs_code: str = ""
+    resources: List[ResourceAssignment] = Field(default_factory=list)
 
 
 class CPMResult(BaseModel):
@@ -90,3 +96,27 @@ class CPMOutput(BaseModel):
     critical_path: List[str]
     critical_percentage: float
     near_critical: List[str]
+
+
+class HistogramPeriod(BaseModel):
+    index: int
+    label: str
+    total: float
+    by_trade: Dict[str, float]
+
+
+class ResourceHistogram(BaseModel):
+    period_unit: str            # 'week' | 'month'
+    periods: List[HistogramPeriod]
+    peak_total: float
+    peak_period: str
+    by_trade_totals: Dict[str, float]
+    total_manhours: float
+
+
+class GanttBar(BaseModel):
+    id: str
+    name: str
+    start_day: int
+    end_day: int
+    is_critical: bool
