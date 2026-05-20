@@ -2344,37 +2344,59 @@ class ConstructionContainer(UniversalContainer):
         }
         return tasks.get(system_type, [("annually", "General inspection and service")])
 
+    def _get_bim_extractor_block(self):
+        """Resolve the bim_extractor block — dependency injection first, registry fallback."""
+        block = self.get_dep("bim_extractor")
+        if block is None:
+            from app.blocks import BLOCK_REGISTRY
+            block_cls = BLOCK_REGISTRY.get("bim_extractor")
+            if block_cls is not None:
+                block = block_cls()
+        return block
+
     async def bim_analysis(self, input_data: Any, params: Dict) -> Dict:
-        """Analyse a BIM / IFC model for element counts, quantities, and issues."""
+        """Analyse a BIM / IFC model for element counts, quantities, and issues.
+
+        Delegates genuine IFC parsing to the bim_extractor block — no demo mode,
+        no fabricated quantities. A missing or bad IFC file returns an error.
+        """
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
 
         ifc_file = data.get("ifc_file") or data.get("file_path") or p.get("ifc_file") or p.get("file_path")
-
         if not ifc_file:
             return {
-                "status": "success",
+                "status": "error",
                 "action": "bim_analysis",
-                "note": "Demo mode — provide ifc_file or file_path pointing to an IFC model for full analysis",
-                "model_summary": {"element_count": 0, "disciplines": ["Architecture", "Structure", "MEP"], "ifc_schema": "IFC4"},
-                "element_counts": {"IfcWall": 0, "IfcSlab": 0, "IfcColumn": 0, "IfcBeam": 0, "IfcDoor": 0, "IfcWindow": 0},
-                "extracted_quantities": {},
-                "model_health": {"missing_properties": [], "unclassified_elements": 0, "geometry_issues": 0},
-                "recommendations": ["Upload an IFC file to extract element counts, quantities, and coordination issues"],
+                "error": "No IFC file provided — pass ifc_file or file_path pointing to an .ifc model",
             }
 
-        model_data = await self._parse_ifc_geometries(ifc_file)
-        element_count = model_data.get("element_count", 0)
-        disciplines = model_data.get("disciplines", [])
+        block = self._get_bim_extractor_block()
+        if block is None:
+            return {"status": "error", "action": "bim_analysis", "error": "bim_extractor block unavailable"}
 
-        extracted_quantities = {
-            "walls_m2": element_count * 2.5,
-            "slabs_m2": element_count * 1.8,
-            "columns_ea": max(1, element_count // 50),
-            "beams_ea": max(1, element_count // 30),
-            "doors_ea": max(1, element_count // 80),
-            "windows_ea": max(1, element_count // 60),
-        }
+        result = await block.process({"file_path": ifc_file}, p)
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return {
+                "status": "error",
+                "action": "bim_analysis",
+                "error": (result or {}).get("error", "bim_extractor failed") if isinstance(result, dict) else "bim_extractor failed",
+            }
+
+        # Real, block-extracted data — remap into the bim_analysis response shape.
+        quantities = result.get("quantities", {})
+        element_count = result.get("element_count", 0)
+        # Per-category counts straight from the block's quantities tally.
+        element_counts = {cat: q.get("count", 0) for cat, q in quantities.items()}
+        # extracted_quantities keeps the block's full per-category breakdown.
+        extracted_quantities = quantities
+        # Disciplines derived from the real categories present, not synthesised.
+        disciplines = sorted(quantities.keys())
+
+        # Floor area from real slab quantities where the IFC exposes areas.
+        floor_area = 0.0
+        for slab in quantities.get("slabs", {}).get("items", []):
+            floor_area += slab.get("netarea") or slab.get("grossarea") or 0
 
         return {
             "status": "success",
@@ -2383,10 +2405,15 @@ class ConstructionContainer(UniversalContainer):
             "model_summary": {
                 "total_elements": element_count,
                 "disciplines": disciplines,
-                "ifc_schema": "IFC4",
+                "ifc_schema": result.get("ifc_schema", ""),
             },
+            "project_info": result.get("project_info", {}),
+            "storeys": result.get("storeys", []),
+            "spaces": result.get("spaces", []),
+            "element_counts": element_counts,
             "extracted_quantities": extracted_quantities,
-            "estimated_floor_area_m2": round(extracted_quantities["slabs_m2"], 0),
+            "estimated_floor_area_m2": round(floor_area, 2),
+            "clash_report": result.get("clash_report", {}),
             "recommendations": [
                 "Run clash detection to identify coordination issues",
                 "Export quantities to BOQ for cost estimation",
@@ -2731,140 +2758,99 @@ class ConstructionContainer(UniversalContainer):
         return risks
 
     async def bim_clash_detection(self, input_data: Any, params: Dict) -> Dict:
-        """Detect hard, soft, and clearance clashes across discipline BIM models."""
+        """Detect clashes in BIM / IFC discipline models.
+
+        Delegates to the bim_extractor block, which runs a real intra-model
+        clash report per IFC file. No demo mode, no fabricated clashes — a
+        missing or bad IFC file returns an error.
+        """
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
 
-        ifc_file = data.get("ifc_file") or p.get("ifc_file")
-        discipline_models = p.get("discipline_models") or data.get("discipline_models", [])
+        ifc_file = data.get("ifc_file") or p.get("ifc_file") or data.get("file_path") or p.get("file_path")
+        discipline_models = list(p.get("discipline_models") or data.get("discipline_models", []))
         if ifc_file and ifc_file not in discipline_models:
             discipline_models = [ifc_file] + discipline_models
-        tolerance = float(p.get("tolerance", 0.05))
-        clash_types = p.get("clash_types", ["hard", "soft", "clearance"])
 
         if not discipline_models:
             return {
-                "status": "success",
+                "status": "error",
                 "action": "bim_clash_detection",
-                "note": "Demo mode — provide ifc_file or discipline_models list for real clash detection",
-                "clash_summary": {"hard_clashes": 0, "soft_clashes": 0, "clearance_violations": 0, "total_issues": 0},
-                "by_discipline": {},
-                "recommendations": ["Upload IFC discipline models (Architecture, Structure, MEP) to run clash detection"],
-                "typical_clash_zones": ["MEP vs Structure at beam penetrations", "Ductwork vs ceiling void conflicts", "Pipe routes through structural walls"],
+                "error": "No IFC file provided — pass ifc_file, file_path, or discipline_models pointing to .ifc models",
             }
 
-        model_data = await self._parse_ifc_geometries(discipline_models[0])
+        block = self._get_bim_extractor_block()
+        if block is None:
+            return {"status": "error", "action": "bim_clash_detection", "error": "bim_extractor block unavailable"}
 
+        # The block runs an intra-model clash report per file; aggregate across
+        # the supplied discipline models. Cross-model clashing is not fabricated.
+        block_params = dict(p)
+        block_params["run_clash_detection"] = True
         clashes: List[Dict] = []
-        if len(discipline_models) >= 2:
-            for i in range(len(discipline_models) - 1):
-                clashes.extend(
-                    self._detect_model_clashes(
-                        discipline_models[i], discipline_models[i + 1], tolerance, clash_types
-                    )
-                )
-        else:
-            clashes = self._detect_internal_clashes(model_data, tolerance)
+        total_elements = 0
+        models_processed: List[str] = []
+        detection_method = "name_duplicate_proxy"
+        for model_file in discipline_models:
+            result = await block.process({"file_path": model_file}, block_params)
+            if not isinstance(result, dict) or result.get("status") != "success":
+                return {
+                    "status": "error",
+                    "action": "bim_clash_detection",
+                    "error": (result or {}).get("error", f"bim_extractor failed for {model_file}") if isinstance(result, dict) else "bim_extractor failed",
+                }
+            models_processed.append(model_file)
+            total_elements += result.get("element_count", 0)
+            clash_report = result.get("clash_report", {})
+            detection_method = clash_report.get("detection_method", detection_method)
+            for c in clash_report.get("clashes", []):
+                clashes.append(self._normalize_block_clash(c, model_file))
 
-        by_severity = self._categorize_clash_severity(clashes)
         by_discipline = self._group_clashes_by_discipline(clashes)
-        resolution_order = self._prioritize_clash_resolution(clashes)
-        total_elements = model_data.get("element_count", 0)
         clash_ratio = len(clashes) / total_elements if total_elements else 0
 
         return {
             "status": "success",
             "action": "clash_detection",
             "model_summary": {
-                "file_analyzed": discipline_models[0],
+                "files_analyzed": models_processed,
                 "total_elements_checked": total_elements,
-                "models_clashed": len(discipline_models),
+                "models_clashed": len(models_processed),
             },
             "clash_summary": {
                 "total_clashes": len(clashes),
-                "hard_clashes": len([c for c in clashes if c["type"] == "hard"]),
-                "soft_clashes": len([c for c in clashes if c["type"] == "soft"]),
-                "clearance_issues": len([c for c in clashes if c["type"] == "clearance"]),
-                "critical": len(by_severity.get("critical", [])),
-                "high": len(by_severity.get("high", [])),
-                "medium": len(by_severity.get("medium", [])),
-                "low": len(by_severity.get("low", [])),
+                "warnings": len([c for c in clashes if c["severity"] == "warning"]),
                 "clash_ratio_percent": round(clash_ratio * 100, 2),
+                "detection_method": detection_method,
             },
             "clashes": clashes[:100] if not p.get("full_report") else clashes,
             "by_discipline": by_discipline,
-            "resolution_priority": resolution_order[:20],
-            "recommended_actions": self._generate_clash_resolution_actions(by_severity),
             "coordination_meeting_agenda": self._generate_coordination_agenda(clashes),
-            "bim_compliance_score": round(max(0.0, 100.0 - (clash_ratio * 1000)), 1),
         }
-    
-    async def _parse_ifc_geometries(self, file_path: str) -> Dict:
+
+    def _normalize_block_clash(self, clash: Dict, model_file: str) -> Dict:
+        """Normalize a bim_extractor clash into the container clash shape so the
+        thin shaping helpers (by-discipline grouping, coordination agenda) work."""
+        category = clash.get("category", "unknown")
         return {
-            "element_count": 1500,
-            "disciplines": ["structural", "architectural", "mep"],
-            "bounding_boxes": [],
-            "elements": []
+            "clash_id": f"CLASH-{abs(hash((model_file, clash.get('element_a'), clash.get('element_b')))) % 100000:05d}",
+            "type": clash.get("type", "name_duplicate"),
+            "description": clash.get("description", ""),
+            "severity": clash.get("severity", "warning"),
+            "involved_disciplines": [category],
+            "category": category,
+            "element_a": clash.get("element_a"),
+            "element_b": clash.get("element_b"),
+            "model_file": model_file,
         }
-    
-    def _detect_model_clashes(self, model_a: str, model_b: str, tolerance: float, clash_types: List[str]) -> List[Dict]:
-        clashes = []
-        clash_scenarios = [
-            {"type": "hard", "desc": "Duct intersecting beam", "severity": "critical", "disciplines": ["mep", "structural"]},
-            {"type": "hard", "desc": "Pipe crossing column", "severity": "critical", "disciplines": ["mep", "structural"]},
-            {"type": "soft", "desc": "Insufficient access space for maintenance", "severity": "medium", "disciplines": ["mep", "architectural"]},
-            {"type": "clearance", "desc": "Cable tray too close to sprinkler", "severity": "low", "disciplines": ["electrical", "fire_protection"]}
-        ]
-        for i, scenario in enumerate(clash_scenarios):
-            clashes.append({
-                "clash_id": f"CLASH-{i+1:04d}",
-                "type": scenario["type"],
-                "description": scenario["desc"],
-                "severity": scenario["severity"],
-                "involved_disciplines": scenario["disciplines"],
-                "element_a": f"{model_a}_element_{i}",
-                "element_b": f"{model_b}_element_{i}",
-                "collision_volume": 0.5,
-                "suggested_resolution": self._suggest_clash_resolution(scenario)
-            })
-        return clashes
-    
-    def _detect_internal_clashes(self, model_data: Dict, tolerance: float) -> List[Dict]:
-        return []
-    
-    def _categorize_clash_severity(self, clashes: List[Dict]) -> Dict:
-        result = {"critical": [], "high": [], "medium": [], "low": []}
-        for clash in clashes:
-            result[clash.get("severity", "medium")].append(clash)
-        return result
-    
+
     def _group_clashes_by_discipline(self, clashes: List[Dict]) -> Dict:
         result = {}
         for clash in clashes:
             for disc in clash.get("involved_disciplines", ["unknown"]):
                 result.setdefault(disc, []).append(clash)
         return result
-    
-    def _prioritize_clash_resolution(self, clashes: List[Dict]) -> List[Dict]:
-        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        return sorted(clashes, key=lambda x: severity_order.get(x.get("severity"), 4))
-    
-    def _suggest_clash_resolution(self, scenario: Dict) -> str:
-        resolutions = {
-            "hard": "Reroute element to avoid collision",
-            "soft": "Verify clearances per maintenance requirements",
-            "clearance": "Adjust routing to meet code clearances"
-        }
-        return resolutions.get(scenario["type"], "Review coordination")
-    
-    def _generate_clash_resolution_actions(self, by_severity: Dict) -> List[str]:
-        actions = []
-        if by_severity.get("critical"):
-            actions.append("Schedule emergency coordination meeting for critical clashes")
-        if by_severity.get("hard"):
-            actions.append("Assign clashes to respective trade contractors for resolution")
-        return actions
-    
+
     def _generate_coordination_agenda(self, clashes: List[Dict]) -> List[str]:
         return [f"Review {c['description']} ({c['clash_id']})" for c in clashes[:10]]
 
