@@ -12,11 +12,38 @@ platform. Write a SHORT Python snippet that solves the described task.
 HARD RULES:
 - Assign the final answer to a variable named `result`.
 - Use ONLY the input variables listed below — they are already in scope.
-- You MAY import from the standard library `math` module and from \
-`app.lib.pm_computations` (tested project-management functions, e.g. \
-`compute_cpm`, `resource_histogram`, `gantt_data`, `compress_schedule`).
+- You MAY import ONLY from these modules: `math`, `statistics`, `datetime`, \
+`json`, `app.lib.pm_computations`, `app.schemas.cpm`.
 - Do NOT read files, make network calls, or import anything else.
 - Return ONLY a single fenced ```python code block — no prose.
+
+PROJECT-MANAGEMENT LIBRARY — `app.lib.pm_computations`:
+Its functions take and return Pydantic models from `app.schemas.cpm`. Read
+result fields with ATTRIBUTE access (`out.project_duration`), never `out[...]`.
+
+- compute_cpm(data: CPMInput) -> CPMOutput
+- resource_histogram(results, activities, period_unit="week") -> ResourceHistogram
+- gantt_data(results: list[CPMResult]) -> list[GanttBar]
+- compress_schedule(data: CPMInput, reductions: dict[str, int]) -> CPMOutput
+
+Models in `app.schemas.cpm`:
+- Activity(id: str, duration: int, name="", predecessors: list[Dependency]=[])
+- Dependency(predecessor_id: str, type="FS", lag=0)
+- CPMInput(activities: list[Activity], project_start=None)
+- CPMOutput fields: .project_duration (int), .critical_path (list[str]),
+  .results (list[CPMResult], each with .id .duration .total_float .is_critical)
+
+Example — duration of activities A(3d) -> B(5d) -> C(2d) in series:
+```python
+from app.lib.pm_computations import compute_cpm
+from app.schemas.cpm import CPMInput, Activity, Dependency
+data = CPMInput(activities=[
+    Activity(id="A", duration=3),
+    Activity(id="B", duration=5, predecessors=[Dependency(predecessor_id="A")]),
+    Activity(id="C", duration=2, predecessors=[Dependency(predecessor_id="B")]),
+])
+result = compute_cpm(data).project_duration
+```
 """
 
 
