@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field
 
@@ -13,7 +13,7 @@ def _now() -> str:
 
 
 class Message(BaseModel):
-    role: str       # 'user' | 'assistant'
+    role: Literal["user", "assistant"]
     content: str
     ts: str = Field(default_factory=_now)
 

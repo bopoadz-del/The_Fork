@@ -1,7 +1,11 @@
 """Tests for the session state store — Reasoning Engine Plan 2."""
 
+import os as _os
+import time as _time
+
 import pytest
 
+from app.core.session_store import InMemorySessionStore, get_session_store
 from app.schemas.project_session import Artifact, Message, ProjectSession
 
 
@@ -17,9 +21,6 @@ def test_message_and_artifact_models():
     assert m.role == "user"
     a = Artifact(name="schedule.xlsx", path="/data/x.xlsx", type="excel")
     assert a.type == "excel"
-
-
-from app.core.session_store import InMemorySessionStore
 
 
 def test_get_or_create_is_idempotent():
@@ -53,9 +54,6 @@ def test_delete_removes_session():
     assert store.delete("s1") is False
 
 
-import time as _time
-
-
 def test_session_expires_after_ttl():
     store = InMemorySessionStore(ttl_seconds=1)
     store.get_or_create("s1")
@@ -73,22 +71,17 @@ def test_save_refreshes_ttl():
     assert store.get("s1") is not None       # still alive — refreshed
 
 
-import os as _os
-
-from app.core.session_store import get_session_store
-
-
 def test_factory_returns_in_memory_when_no_redis(monkeypatch):
     monkeypatch.delenv("REDIS_URL", raising=False)
     store = get_session_store()
-    from app.core.session_store import InMemorySessionStore as _IM
-    assert isinstance(store, _IM)
+    assert isinstance(store, InMemorySessionStore)
 
 
 @pytest.mark.skipif(not _os.getenv("REDIS_URL"), reason="no REDIS_URL configured")
 def test_redis_backend_roundtrip():
     from app.core.session_store import RedisSessionStore
     store = RedisSessionStore(_os.getenv("REDIS_URL"), ttl_seconds=60)
+    store.delete("redis_test_sess")
     s = store.get_or_create("redis_test_sess")
     s.data["x"] = 1
     store.save(s)
