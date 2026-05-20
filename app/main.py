@@ -37,19 +37,24 @@ from app.routers import (
     chain,
     chat,
     debug,
+    doc_types,
     execute,
     health,
     memory,
     mcp,
     monitoring,
+    projects,
     static,
     upload,
+    workflows,
 )
 from app.agents import load_agents
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize all blocks + load runtime agents at startup."""
     await init_blocks()
+    from app.core.projects import init_db
+    init_db()
     loaded = load_agents()
     logger.info("Loaded %d runtime agents: %s", len(loaded), ", ".join(sorted(loaded.keys())))
     yield
@@ -209,6 +214,9 @@ app.include_router(upload.router)
 app.include_router(auth.router)
 app.include_router(memory.router)
 app.include_router(monitoring.router)
+app.include_router(projects.router)
+app.include_router(doc_types.router)
+app.include_router(workflows.router)
 app.include_router(health.router)
 app.include_router(mcp.router)
 app.include_router(agents_router.router)
@@ -220,15 +228,3 @@ if env in {"dev", "development", "local", "test", "testing"}:
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-# Mount built React dashboard if present (built locally; Render not required)
-_dashboard_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
-if os.path.isdir(_dashboard_dir) and os.path.exists(os.path.join(_dashboard_dir, "index.html")):
-    app.mount(
-        "/dashboard",
-        StaticFiles(directory=_dashboard_dir, html=True),
-        name="dashboard",
-    )
-    logger.info("Dashboard mounted at /dashboard from %s", _dashboard_dir)
-else:
-    logger.info("Dashboard not built; skipping /dashboard mount (run: cd frontend && npm install && npm run build)")

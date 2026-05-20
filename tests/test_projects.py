@@ -1,0 +1,157 @@
+"""Tests for the Project entity, readiness gate, and execution-intent model.
+
+Roadmap V2 · Part 0 (0.1 / 0.2 / 0.3).
+"""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+H = {"Authorization": "Bearer cb_dev_key"}
+
+
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(app) as c:
+        yield c
+
+
+def _new_project(client, name="Test Project"):
+    r = client.post("/v1/projects", json={"name": name, "client": "ACME"}, headers=H)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _attach(client, pid, filename, role=None):
+    files = {"file": (filename, b"%PDF-1.4 test content", "application/pdf")}
+    data = {"role": role} if role else {}
+    return client.post(
+        f"/v1/projects/{pid}/documents", files=files, data=data, headers=H
+    )
+
+
+# ── 0.1 Project entity ──────────────────────────────────────────────────────
+
+def test_create_and_get_project(client):
+    proj = _new_project(client, "Diriyah Phase 1")
+    assert proj["name"] == "Diriyah Phase 1"
+    assert proj["client"] == "ACME"
+    assert proj["status"] == "active"
+
+    got = client.get(f"/v1/projects/{proj['id']}", headers=H)
+    assert got.status_code == 200
+    assert got.json()["id"] == proj["id"]
+    assert got.json()["documents"] == []
+
+
+def test_list_projects_includes_created(client):
+    proj = _new_project(client, "Listed Project")
+    r = client.get("/v1/projects", headers=H)
+    assert r.status_code == 200
+    ids = [p["id"] for p in r.json()["projects"]]
+    assert proj["id"] in ids
+
+
+def test_get_missing_project_404(client):
+    assert client.get("/v1/projects/nope1234", headers=H).status_code == 404
+
+
+def test_project_requires_auth(client):
+    assert client.get("/v1/projects").status_code in (401, 403)
+
+
+def test_delete_project(client):
+    proj = _new_project(client, "Doomed Project")
+    assert client.delete(f"/v1/projects/{proj['id']}", headers=H).status_code == 200
+    assert client.get(f"/v1/projects/{proj['id']}", headers=H).status_code == 404
+
+
+# ── 0.3 Execution-intent model — attaching a document runs nothing ──────────
+
+def test_attaching_document_stores_only(client):
+    proj = _new_project(client)
+    r = _attach(client, proj["id"], "site_drawing.pdf")
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["status"] == "stored"
+    # the response explicitly states no analysis was run
+    assert "no analysis" in body["message"].lower()
+    assert body["document"]["doc_type"] == "drawing"
+
+
+def test_document_role_auto_classified(client):
+    proj = _new_project(client)
+    _attach(client, proj["id"], "baseline_programme.pdf")
+    _attach(client, proj["id"], "daily_report_01.pdf")
+    _attach(client, proj["id"], "weekly_report_01.pdf")
+    docs = client.get(f"/v1/projects/{proj['id']}", headers=H).json()["documents"]
+    roles = sorted(d["doc_role"] for d in docs)
+    assert roles == ["baseline_schedule", "daily_report", "weekly_report"]
+
+
+def test_explicit_role_override(client):
+    proj = _new_project(client)
+    r = _attach(client, proj["id"], "random.pdf", role="weekly_report")
+    assert r.json()["document"]["doc_role"] == "weekly_report"
+
+
+# ── 0.2 Readiness gate ──────────────────────────────────────────────────────
+
+def test_new_project_is_not_ready(client):
+    proj = _new_project(client)
+    readiness = proj["readiness"]
+    assert readiness["ready"] is False
+    assert set(readiness["missing"]) == {
+        "baseline_schedule", "daily_reports", "weekly_reports", "aconex",
+    }
+
+
+def test_readiness_progresses_as_inputs_arrive(client):
+    proj = _new_project(client)
+    pid = proj["id"]
+
+    _attach(client, pid, "baseline_schedule.pdf")
+    _attach(client, pid, "daily_report.pdf")
+    _attach(client, pid, "weekly_report.pdf")
+    readiness = client.get(f"/v1/projects/{pid}", headers=H).json()["readiness"]
+    # docs present but Aconex still missing → still not ready
+    assert readiness["ready"] is False
+    assert readiness["missing"] == ["aconex"]
+
+    client.post(f"/v1/projects/{pid}/connectors/aconex",
+                json={"connected": True}, headers=H)
+    readiness = client.get(f"/v1/projects/{pid}", headers=H).json()["readiness"]
+    assert readiness["ready"] is True
+    assert readiness["missing"] == []
+
+
+def test_progress_blocked_when_not_ready(client):
+    proj = _new_project(client)
+    r = client.post(f"/v1/projects/{proj['id']}/progress",
+                     json={"planned_percent": 40, "actual_percent": 35}, headers=H)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "not_ready"
+    assert "baseline_schedule" in body["missing"]
+
+
+def test_progress_runs_when_ready(client):
+    proj = _new_project(client)
+    pid = proj["id"]
+    _attach(client, pid, "baseline_schedule.pdf")
+    _attach(client, pid, "daily_report.pdf")
+    _attach(client, pid, "weekly_report.pdf")
+    client.post(f"/v1/projects/{pid}/connectors/aconex",
+                json={"connected": True}, headers=H)
+
+    r = client.post(f"/v1/projects/{pid}/progress", json={
+        "planned_percent": 45, "actual_percent": 38, "contract_value": 12_000_000,
+    }, headers=H)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "success"
+    overall = body["tracker"]["overall_progress"]
+    assert overall["planned_percent"] == 45
+    assert overall["actual_percent"] == 38
+    assert overall["variance_percent"] == -7

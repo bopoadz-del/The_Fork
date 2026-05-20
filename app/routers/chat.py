@@ -17,6 +17,25 @@ class ChatRequest(BaseModel):
     message: str
     model: str = "deepseek-chat"
     stream: bool = False
+    project_id: Optional[str] = None
+
+
+def _with_project_memory(prompt: str, project_id: Optional[str]) -> str:
+    """Prepend a project's accumulated facts to the prompt (Roadmap V2 · Epic 3/4).
+
+    So a question can be answered from project memory without re-attaching the
+    source document. No-op when the chat is not scoped to a project.
+    """
+    if not project_id:
+        return prompt
+    try:
+        from app.core.project_memory import build_memory_context
+        ctx = build_memory_context(project_id, prompt)
+        if ctx:
+            return f"{ctx}\n\n---\n\n{prompt}"
+    except Exception:
+        pass
+    return prompt
 
 
 @router.post("/chat")
@@ -30,7 +49,8 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_api_key)):
             block_instances["chat"] = BLOCK_REGISTRY["chat"]()
 
         block = block_instances["chat"]
-        result = await block.execute(request.message, {
+        message = _with_project_memory(request.message, request.project_id)
+        result = await block.execute(message, {
             "model": request.model,
             "stream": False,
         })
@@ -132,6 +152,9 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_api_key)
         full_prompt = "\n\n".join(parts)
     else:
         full_prompt = prompt
+
+    # Scope the chat to a project — inject its accumulated memory (Epic 3/4).
+    full_prompt = _with_project_memory(full_prompt, body.get("project_id"))
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"

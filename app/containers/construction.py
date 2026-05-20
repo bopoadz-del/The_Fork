@@ -424,15 +424,21 @@ class ConstructionContainer(UniversalContainer):
                 text = ocr_result.get("result", {}).get("text", "")
                 measurements = self._extract_measurements_advanced(text, {})
                 specs = self._extract_specs_advanced(text)
-                return {
+                from app.core.confidence import assess_extraction_confidence
+                image_result = {
                     "status": "success",
                     "file_name": Path(file_path).name,
                     "source": "ocr",
                     "text": text[:2000],
                     "measurements": measurements,
                     "specifications": specs,
-                    "confidence": {"overall": 0.7, "text_extraction": 0.7, "ocr": ocr_result.get("confidence", 0)}
                 }
+                image_result["confidence"] = assess_extraction_confidence(
+                    image_result,
+                    expected_fields=["text", "measurements", "specifications"],
+                    ocr_quality=ocr_result.get("result", {}).get("quality"),
+                )
+                return image_result
             except Exception as e:
                 return {"status": "error", "error": f"Image OCR failed: {str(e)}"}
         return {"status": "error", "error": "OCR block not available for image processing"}
@@ -494,7 +500,20 @@ class ConstructionContainer(UniversalContainer):
         return {}
 
     def _calculate_confidence(self, result: Dict) -> Dict:
-        return {"overall": 0.7}
+        """Measured extraction confidence (Roadmap V2 · Epic 1).
+
+        Derived from real signals — text recovered, field coverage, OCR
+        quality — not a hardcoded constant.
+        """
+        from app.core.confidence import assess_extraction_confidence
+        return assess_extraction_confidence(
+            result,
+            expected_fields=[
+                "drawing_number", "revision", "scale", "title_block",
+                "detected_disciplines", "measurements", "specifications",
+            ],
+            ocr_quality=result.get("ocr_quality"),
+        )
 
     async def _detect_risks_from_drawing(self, result: Dict) -> List[Dict]:
         return []
@@ -1392,12 +1411,12 @@ class ConstructionContainer(UniversalContainer):
         data = input_data if isinstance(input_data, dict) else {}
         measurements = data.get("measurements") or data.get("quantities") or []
         if not measurements:
-            measurements = [
-                {"element": "Columns", "length": 4.0, "width": 0.5, "height": 0.5, "count": 24},
-                {"element": "Beams", "length": 8.0, "width": 0.4, "height": 0.6, "count": 48},
-                {"element": "Slabs", "length": 30.0, "width": 20.0, "height": 0.25, "count": 6},
-                {"element": "Walls", "length": 200.0, "width": 0.2, "height": 3.5, "count": 1},
-            ]
+            return {
+                "status": "error",
+                "error": "No measurements found — upload a drawing or supply a measurements list",
+                "quantities": {},
+                "measurements": [],
+            }
         quantities = self._calculate_quantities(measurements)
         return {"status": "success", "quantities": quantities, "measurements": measurements}
 
@@ -1434,12 +1453,11 @@ class ConstructionContainer(UniversalContainer):
             }
 
         if not quantities:
-            quantities = {
-                "concrete_m3": {"quantity": 450, "unit": "m3"},
-                "rebar_kg": {"quantity": 52000, "unit": "kg"},
-                "curtain_wall_m2": {"quantity": 1200, "unit": "m2"},
-                "hvac_m2": {"quantity": 3500, "unit": "m2"},
-                "electrical_m2": {"quantity": 3500, "unit": "m2"},
+            return {
+                "status": "error",
+                "error": "No quantities found — extract quantities or supply a BOQ first",
+                "summary": {},
+                "line_items": [],
             }
 
         return await self.generate_cost_estimate(
@@ -2751,14 +2769,6 @@ class ConstructionContainer(UniversalContainer):
             "concrete_co2_kg": round(concrete_carbon, 2),
             "steel_co2_kg": round(steel_carbon, 2),
             "total_embodied_carbon_kg": round(concrete_carbon + steel_carbon, 2)
-        }
-    
-    def _calculate_confidence(self, result: Dict) -> Dict:
-        return {
-            "overall": 0.85,
-            "text_extraction": 0.90,
-            "measurement_detection": 0.80,
-            "quantity_calculation": 0.75
         }
     
     async def _detect_risks_from_drawing(self, result: Dict) -> List[Dict]:

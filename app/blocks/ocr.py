@@ -20,7 +20,7 @@ class OCRBlock(TypedBlock):
     default_config = {
         "languages": ["en"],
         "preprocess": True,
-        "deskew": False,
+        "deskew": True,
         "contrast_factor": 1.5
     }
     
@@ -35,7 +35,7 @@ class OCRBlock(TypedBlock):
     output_schema = Schema(
         content_type=ContentType.TEXT,
         required_fields=["text"],
-        optional_fields=["confidence", "word_count", "engine", "preprocessed", "status"],
+        optional_fields=["confidence", "quality", "word_count", "engine", "preprocessed", "status"],
         format_hints={}
     )
     
@@ -119,6 +119,7 @@ class OCRBlock(TypedBlock):
         except Exception:
             tesseract_available = False
 
+        word_confidences = []
         if tesseract_available:
             try:
                 import pytesseract
@@ -130,7 +131,21 @@ class OCRBlock(TypedBlock):
                     text = pytesseract.image_to_string(img)
                     if text.strip():
                         all_texts.append(text.strip())
-                        all_confs.append(0.85)
+                    # Capture REAL per-word confidence (Roadmap V2 · Epic 5 / 1)
+                    # instead of the old hardcoded 0.85.
+                    try:
+                        data = pytesseract.image_to_data(
+                            img, output_type=pytesseract.Output.DICT
+                        )
+                        for conf in data.get("conf", []):
+                            try:
+                                c = float(conf)
+                            except (TypeError, ValueError):
+                                continue
+                            if c >= 0:
+                                word_confidences.append(c / 100.0)
+                    except Exception:
+                        pass
             except Exception as e:
                 tesseract_available = False
 
@@ -188,16 +203,22 @@ class OCRBlock(TypedBlock):
                 }
             return {"status": "error", "text": "", "confidence": 0, "error": f"Tesseract not installed; Vision OCR failed: {vision_error}"}
 
+        from app.core.image_quality import summarize_ocr_quality
+        quality = summarize_ocr_quality(word_confidences)
+
         if not all_texts:
-            return {"status": "success", "text": "", "confidence": 0, "message": "No text detected"}
-        
+            return {
+                "status": "success", "text": "", "confidence": 0,
+                "quality": quality, "message": "No text detected",
+            }
+
         full_text = "\n".join(all_texts)
-        avg_conf = sum(all_confs) / len(all_confs) if all_confs else 0
-        
+
         return {
             "status": "success",
             "text": full_text,
-            "confidence": round(avg_conf, 2),
+            "confidence": quality["ocr_confidence"],
+            "quality": quality,
             "word_count": len(full_text.split()),
             "engine": engine_used or "unknown",
             "preprocessed": preprocess,
@@ -282,7 +303,15 @@ class OCRBlock(TypedBlock):
         
         # Convert to grayscale
         gray = img.convert('L')
-        
+
+        # Deskew (Roadmap V2 · Epic 5) — straighten rotated/tilted scans
+        if self.config.get("deskew", True):
+            try:
+                from app.core.image_quality import deskew as _deskew
+                gray, _angle = _deskew(gray)
+            except Exception:
+                pass
+
         # Enhance contrast
         contrast_factor = self.config.get("contrast_factor", 1.5)
         enhancer = ImageEnhance.Contrast(gray)

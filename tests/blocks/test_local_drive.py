@@ -57,8 +57,8 @@ async def test_local_drive_block_list(local_drive_block):
 @pytest.mark.asyncio
 async def test_local_drive_block_write_and_read(local_drive_block):
     """Test Local Drive block write and read operations."""
-    # Write a file
-    test_path = "/tmp/test_write.txt"
+    # Write a file (OS-portable temp path — no hardcoded POSIX /tmp)
+    test_path = os.path.join(tempfile.gettempdir(), "test_write.txt")
     write_result = await local_drive_block.execute(
         None,
         {
