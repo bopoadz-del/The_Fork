@@ -92,3 +92,30 @@ def test_gantt_data_sorted_by_start():
     bars = gantt_data(compute_cpm(CPMInput(activities=acts)).results)
     starts = [b.start_day for b in bars]
     assert starts == sorted(starts)
+
+
+from app.lib.pm_computations import compress_schedule
+
+
+def test_compress_schedule_shortens_project():
+    # critical chain A(3)->B(5)->D(2)=10; cut B by 3 -> 7
+    acts = [_act("A", 3), _act("B", 5, ["A"]), _act("C", 2, ["A"]),
+            _act("D", 2, ["B", "C"])]
+    baseline = compute_cpm(CPMInput(activities=acts))
+    revised, delta = compress_schedule(CPMInput(activities=acts), {"B": 3})
+    assert baseline.project_duration == 10
+    assert revised.project_duration == 7
+    assert delta == 3
+
+
+def test_compress_schedule_rejects_unknown_activity():
+    acts = [_act("A", 3)]
+    with pytest.raises(ValueError):
+        compress_schedule(CPMInput(activities=acts), {"GHOST": 1})
+
+
+def test_compress_schedule_clamps_at_zero_duration():
+    # cutting more than the duration floors at 0, never negative
+    acts = [_act("A", 3), _act("B", 4, ["A"])]
+    revised, _delta = compress_schedule(CPMInput(activities=acts), {"B": 99})
+    assert revised.project_duration == 3  # B floored to duration 0

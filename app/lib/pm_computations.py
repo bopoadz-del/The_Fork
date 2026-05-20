@@ -265,3 +265,31 @@ def gantt_data(results: List[CPMResult]) -> List[GanttBar]:
     ]
     bars.sort(key=lambda b: (b.start_day, b.end_day))
     return bars
+
+
+def compress_schedule(
+    data: CPMInput, reductions: Dict[str, int]
+) -> Tuple[CPMOutput, int]:
+    """Apply working-day duration cuts to named activities and re-run CPM.
+
+    `reductions` maps activity id -> working days to remove (floored at 0
+    duration). Returns (revised CPMOutput, days saved vs the baseline).
+    Raises ValueError if an id is not in the network.
+    """
+    ids = {a.id for a in data.activities}
+    unknown = set(reductions) - ids
+    if unknown:
+        raise ValueError(f"Unknown activity ids: {', '.join(sorted(unknown))}")
+
+    baseline = compute_cpm(data)
+    revised_acts = []
+    for a in data.activities:
+        if a.id in reductions:
+            new_dur = max(0, a.duration - reductions[a.id])
+            revised_acts.append(a.model_copy(update={"duration": new_dur}))
+        else:
+            revised_acts.append(a)
+
+    revised = compute_cpm(data.model_copy(update={"activities": revised_acts}))
+    delta = baseline.project_duration - revised.project_duration
+    return revised, delta
