@@ -647,15 +647,22 @@ class ConstructionContainer(UniversalContainer):
             "detailed_activities": schedule_data.get("activities", [])[:50] if p.get("include_details") else None
         }
     
-    def _get_primavera_parser_block(self):
-        """Resolve the primavera_parser block — dependency injection first, registry fallback."""
-        block = self.get_dep("primavera_parser")
+    def _resolve_block(self, name: str):
+        """Resolve a block by name — dependency injection first, registry fallback.
+
+        Returns the block instance, or None if it is unavailable from both
+        the injected dependencies and the global BLOCK_REGISTRY.
+        """
+        block = self.get_dep(name)
         if block is None:
             from app.blocks import BLOCK_REGISTRY
-            block_cls = BLOCK_REGISTRY.get("primavera_parser")
-            if block_cls is not None:
-                block = block_cls()
+            block_cls = BLOCK_REGISTRY.get(name)
+            block = block_cls() if block_cls else None
         return block
+
+    def _get_primavera_parser_block(self):
+        """Resolve the primavera_parser block — dependency injection first, registry fallback."""
+        return self._resolve_block("primavera_parser")
 
     async def _parse_xer_file(self, file_path: str) -> Dict:
         """Parse a Primavera P6 .xer schedule by delegating to the primavera_parser block.
@@ -925,13 +932,7 @@ class ConstructionContainer(UniversalContainer):
     # SPECIFICATIONS (CSI MasterFormat)
     def _get_spec_analyzer_block(self):
         """Resolve the spec_analyzer block — dependency injection first, registry fallback."""
-        block = self.get_dep("spec_analyzer")
-        if block is None:
-            from app.blocks import BLOCK_REGISTRY
-            block_cls = BLOCK_REGISTRY.get("spec_analyzer")
-            if block_cls is not None:
-                block = block_cls()
-        return block
+        return self._resolve_block("spec_analyzer")
 
     @staticmethod
     def _split_csi_divisions(full_text: str, division_filter=None) -> tuple:
@@ -1248,13 +1249,7 @@ class ConstructionContainer(UniversalContainer):
     
     def _get_historical_benchmark_block(self):
         """Resolve the historical_benchmark block — DI first, registry fallback."""
-        block = self.get_dep("historical_benchmark")
-        if block is None:
-            from app.blocks import BLOCK_REGISTRY
-            block_cls = BLOCK_REGISTRY.get("historical_benchmark")
-            if block_cls is not None:
-                block = block_cls()
-        return block
+        return self._resolve_block("historical_benchmark")
 
     async def _lookup_unit_cost(
         self, item_name: str, unit: str,
@@ -2304,13 +2299,7 @@ class ConstructionContainer(UniversalContainer):
 
     def _get_bim_extractor_block(self):
         """Resolve the bim_extractor block — dependency injection first, registry fallback."""
-        block = self.get_dep("bim_extractor")
-        if block is None:
-            from app.blocks import BLOCK_REGISTRY
-            block_cls = BLOCK_REGISTRY.get("bim_extractor")
-            if block_cls is not None:
-                block = block_cls()
-        return block
+        return self._resolve_block("bim_extractor")
 
     async def bim_analysis(self, input_data: Any, params: Dict) -> Dict:
         """Analyse a BIM / IFC model for element counts, quantities, and issues.
@@ -5507,99 +5496,87 @@ Total Extension of Time Sought: {total_delay} days
 
     async def boq_process(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to BOQProcessorBlock: parse Excel/CSV BOQs."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("boq_processor")
-        if not block_cls:
-            return {"status": "error", "error": "boq_processor block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("boq_processor")
+        if block is None:
+            return {"status": "error", "error": "boq_processor block unavailable"}
+        return await block.process(input_data, params)
 
     async def spec_analyze(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to SpecAnalyzerBlock: extract grades, materials, compliance."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("spec_analyzer")
-        if not block_cls:
-            return {"status": "error", "error": "spec_analyzer block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("spec_analyzer")
+        if block is None:
+            return {"status": "error", "error": "spec_analyzer block unavailable"}
+        return await block.process(input_data, params)
 
     async def sympy_reason(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to SymPyReasoningBlock: variance analysis + recommendations."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("sympy_reasoning")
-        if not block_cls:
-            return {"status": "error", "error": "sympy_reasoning block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("sympy_reasoning")
+        if block is None:
+            return {"status": "error", "error": "sympy_reasoning block unavailable"}
+        return await block.process(input_data, params)
 
     async def drawing_qto(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to DrawingQTOBlock: DXF quantity take-off."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("drawing_qto")
-        if not block_cls:
-            return {"status": "error", "error": "drawing_qto block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("drawing_qto")
+        if block is None:
+            return {"status": "error", "error": "drawing_qto block unavailable"}
+        return await block.process(input_data, params)
 
     async def primavera_parse(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to PrimaveraParserBlock: parse .xer schedule files."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("primavera_parser")
-        if not block_cls:
-            return {"status": "error", "error": "primavera_parser block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("primavera_parser")
+        if block is None:
+            return {"status": "error", "error": "primavera_parser block unavailable"}
+        return await block.process(input_data, params)
 
     async def orchestrate(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to SmartOrchestratorBlock: keyword → action routing."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("smart_orchestrator")
-        if not block_cls:
-            return {"status": "error", "error": "smart_orchestrator block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("smart_orchestrator")
+        if block is None:
+            return {"status": "error", "error": "smart_orchestrator block unavailable"}
+        return await block.process(input_data, params)
 
     async def jetson_dispatch(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to JetsonGatewayBlock: edge dispatch."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("jetson_gateway")
-        if not block_cls:
-            return {"status": "error", "error": "jetson_gateway block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("jetson_gateway")
+        if block is None:
+            return {"status": "error", "error": "jetson_gateway block unavailable"}
+        return await block.process(input_data, params)
 
     async def formula_execute(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to FormulaExecutorBlock: chat-to-code formula execution."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("formula_executor")
-        if not block_cls:
-            return {"status": "error", "error": "formula_executor block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("formula_executor")
+        if block is None:
+            return {"status": "error", "error": "formula_executor block unavailable"}
+        return await block.process(input_data, params)
 
     async def bim_extract(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to BIMExtractorBlock: IFC element + quantity extraction."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("bim_extractor")
-        if not block_cls:
-            return {"status": "error", "error": "bim_extractor block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("bim_extractor")
+        if block is None:
+            return {"status": "error", "error": "bim_extractor block unavailable"}
+        return await block.process(input_data, params)
 
     async def learn(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to LearningEngineBlock: record corrections + promote tiers."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("learning_engine")
-        if not block_cls:
-            return {"status": "error", "error": "learning_engine block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("learning_engine")
+        if block is None:
+            return {"status": "error", "error": "learning_engine block unavailable"}
+        return await block.process(input_data, params)
 
     async def benchmark_lookup(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to HistoricalBenchmarkBlock: RS Means cost lookup."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("historical_benchmark")
-        if not block_cls:
-            return {"status": "error", "error": "historical_benchmark block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("historical_benchmark")
+        if block is None:
+            return {"status": "error", "error": "historical_benchmark block unavailable"}
+        return await block.process(input_data, params)
 
     async def recommend(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to RecommendationTemplateBlock: rule-based recommendations."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("recommendation_template")
-        if not block_cls:
-            return {"status": "error", "error": "recommendation_template block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("recommendation_template")
+        if block is None:
+            return {"status": "error", "error": "recommendation_template block unavailable"}
+        return await block.process(input_data, params)
 
     # ────────────────────────────────────────────────────────────────────────
 
