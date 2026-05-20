@@ -3,8 +3,26 @@
 import pytest
 
 from app.schemas.cpm import (
-    Activity, GanttBar, HistogramPeriod, ResourceAssignment, ResourceHistogram,
+    Activity, CPMInput, Dependency, GanttBar, HistogramPeriod,
+    ResourceAssignment, ResourceHistogram,
 )
+from app.lib.pm_computations import (
+    compress_schedule, compute_cpm, gantt_data, resource_histogram,
+)
+
+_PERIOD_DAYS = {"week": 5, "month": 21}
+
+
+def _act(act_id, dur, preds=None, resources=None):
+    return Activity(
+        id=act_id, duration=dur,
+        predecessors=[Dependency(predecessor_id=p) for p in (preds or [])],
+        resources=resources or [],
+    )
+
+
+def _index(results, act_id):
+    return next(r for r in results if r.id == act_id)
 
 
 def test_resource_assignment_defaults():
@@ -27,20 +45,6 @@ def test_histogram_and_gantt_models_construct():
     assert rh.peak_total == 12
     bar = GanttBar(id="A", name="Mob", start_day=0, end_day=5, is_critical=True)
     assert bar.end_day == 5
-
-
-from app.schemas.cpm import CPMInput, Dependency
-from app.lib.pm_computations import compute_cpm, resource_histogram
-
-_PERIOD_DAYS = {"week": 5, "month": 21}
-
-
-def _act(id, dur, preds=None, resources=None):
-    return Activity(
-        id=id, duration=dur,
-        predecessors=[Dependency(predecessor_id=p) for p in (preds or [])],
-        resources=resources or [],
-    )
 
 
 def test_resource_histogram_buckets_by_week():
@@ -74,9 +78,6 @@ def test_resource_histogram_total_manhours():
     assert hist.total_manhours == 320
 
 
-from app.lib.pm_computations import gantt_data
-
-
 def test_gantt_data_one_bar_per_activity():
     acts = [_act("A", 3), _act("B", 5, ["A"])]
     out = compute_cpm(CPMInput(activities=acts))
@@ -92,9 +93,6 @@ def test_gantt_data_sorted_by_start():
     bars = gantt_data(compute_cpm(CPMInput(activities=acts)).results)
     starts = [b.start_day for b in bars]
     assert starts == sorted(starts)
-
-
-from app.lib.pm_computations import compress_schedule
 
 
 def test_compress_schedule_shortens_project():
@@ -119,3 +117,11 @@ def test_compress_schedule_clamps_at_zero_duration():
     acts = [_act("A", 3), _act("B", 4, ["A"])]
     revised, _delta = compress_schedule(CPMInput(activities=acts), {"B": 99})
     assert revised.project_duration == 3  # B floored to duration 0
+
+
+def test_compress_schedule_noop_when_cut_has_no_float_impact():
+    acts = [_act("A", 3), _act("B", 5, ["A"]), _act("C", 2, ["A"]),
+            _act("D", 2, ["B", "C"])]
+    revised, delta = compress_schedule(CPMInput(activities=acts), {"C": 1})
+    assert delta == 0
+    assert revised.project_duration == 10

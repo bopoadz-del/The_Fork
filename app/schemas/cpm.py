@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -106,7 +106,7 @@ class HistogramPeriod(BaseModel):
 
 
 class ResourceHistogram(BaseModel):
-    period_unit: str            # 'week' | 'month'
+    period_unit: Literal["week", "month"]
     periods: List[HistogramPeriod]
     peak_total: float
     peak_period: str

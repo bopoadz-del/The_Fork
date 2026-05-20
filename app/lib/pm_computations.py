@@ -206,7 +206,9 @@ def resource_histogram(
 ) -> ResourceHistogram:
     """Time-phased manpower. An activity contributes its crew to every period
     its early-date span overlaps (concurrent headcount, not man-days)."""
-    length = _PERIOD_LENGTH.get(period_unit, 5)
+    if period_unit not in _PERIOD_LENGTH:
+        raise ValueError(f"period_unit must be one of {list(_PERIOD_LENGTH)}, got {period_unit!r}")
+    length = _PERIOD_LENGTH[period_unit]
     res_by_id = {a.id: a.resources for a in activities}
     es_ef = {r.id: (r.early_start_day, r.early_finish_day) for r in results}
 
@@ -234,7 +236,10 @@ def resource_histogram(
         ))
 
     for a in activities:
-        es, ef = es_ef.get(a.id, (0, 0))
+        if a.id not in es_ef:
+            raise ValueError(f"Activity '{a.id}' has no CPM result — "
+                             "pass results from the same network")
+        es, ef = es_ef[a.id]
         span = ef - es
         for res in a.resources:
             by_trade_totals[res.trade] = (
@@ -275,6 +280,9 @@ def compress_schedule(
     `reductions` maps activity id -> working days to remove (floored at 0
     duration). Returns (revised CPMOutput, days saved vs the baseline).
     Raises ValueError if an id is not in the network.
+
+    The returned delta is non-negative for FS-only networks and is 0 when
+    the reductions do not touch the critical path.
     """
     ids = {a.id for a in data.activities}
     unknown = set(reductions) - ids
