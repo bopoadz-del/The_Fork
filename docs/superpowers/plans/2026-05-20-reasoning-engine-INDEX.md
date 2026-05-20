@@ -85,14 +85,18 @@ USER ──▶ LAYER 1: REASONING ENGINE
 | `app/main.py` | 6 | MODIFY → mount router, init session store |
 | `requirements.txt` | 3 | MODIFY → add `RestrictedPython` |
 
-## Status (plan documents written)
+## Status
 
-- [x] Plan 1 — pm_computations CPM core → `2026-05-20-reasoning-engine-01-pm-computations.md`
-- [ ] Plan 1b — pm_computations extended (resource / gantt / excel / xer)
-- [ ] Plan 2 — session state store
-- [ ] Plan 3 — sandbox
-- [ ] Plan 4 — formula_executor v2
-- [ ] Plan 5 — project reasoner
-- [ ] Plan 6 — API & UI
+Legend: doc = plan document written · impl = implemented + tests passing.
+
+| Plan | Doc | Impl |
+|------|-----|------|
+| 1 — pm_computations CPM core | ✅ | ✅ |
+| 1b — pm_computations extended | ✅ | ✅ |
+| 2 — session state store | ✅ | ✅ |
+| 3 — sandbox | ✅ | ✅ |
+| 4 — formula_executor v2 | ✅ | ⏳ |
+| 5 — project reasoner | ✅ | ⏳ |
+| 6 — API & UI | ✅ | ⏳ |
 
 Execute Plan N only after Plan N-1's tests pass.

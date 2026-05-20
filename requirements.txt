@@ -46,6 +46,9 @@ ifcopenshell>=0.7.0
 # Intelligence Blocks (Week 4)
 scikit-learn>=1.4.0
 
+# Reasoning Engine — sandboxed code execution (Plan 3)
+RestrictedPython>=7.0
+
 # Optional - domain libraries (install as needed)
 # CoolProp>=6.6.0        # thermodynamics / HVAC
 # QuantLib-Python>=1.32  # quantitative finance
