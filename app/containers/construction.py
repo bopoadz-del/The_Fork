@@ -599,7 +599,7 @@ class ConstructionContainer(UniversalContainer):
         
         ext = Path(file_path).suffix.lower()
         if ext == '.xer':
-            schedule_data = self._parse_xer_file(file_path)
+            schedule_data = await self._parse_xer_file(file_path)
         elif ext == '.xml':
             schedule_data = self._parse_xml_schedule(file_path)
         else:
@@ -613,7 +613,7 @@ class ConstructionContainer(UniversalContainer):
         delay_analysis = None
         if baseline_file:
             if Path(baseline_file).suffix.lower() == '.xer':
-                baseline_data = self._parse_xer_file(baseline_file)
+                baseline_data = await self._parse_xer_file(baseline_file)
             else:
                 baseline_data = self._parse_xml_schedule(baseline_file)
             if baseline_data.get("status") != "error":
@@ -647,61 +647,83 @@ class ConstructionContainer(UniversalContainer):
             "detailed_activities": schedule_data.get("activities", [])[:50] if p.get("include_details") else None
         }
     
-    def _parse_xer_file(self, file_path: str) -> Dict:
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-            
-            sections = {}
-            current_section = None
-            headers = []
-            
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith('%T'):
-                    current_section = line[2:].strip()
-                    sections[current_section] = []
-                    headers = []
-                elif line.startswith('%F') and current_section:
-                    headers = line[2:].split('\t')
-                elif line.startswith('%R') and current_section and headers:
-                    values = line[2:].split('\t')
-                    record = dict(zip(headers, values))
-                    sections[current_section].append(record)
-            
-            project_info = sections.get('PROJECT', [{}])[0]
-            activities = sections.get('TASK', [])
-            relationships = sections.get('TASKPRED', [])
-            
-            structured_activities = []
-            for act in activities:
-                structured_activities.append({
-                    "id": act.get("task_id", ""),
-                    "name": act.get("task_name", ""),
-                    "start": act.get("act_start_date", act.get("early_start_date", "")),
-                    "finish": act.get("act_end_date", act.get("early_end_date", "")),
-                    "duration": act.get("target_drtn_hr_cnt", 0),
-                    "total_float": float(act.get("total_float_hr_cnt", 0)) / 8,
-                    "free_float": float(act.get("free_float_hr_cnt", 0)) / 8,
-                    "percent_complete": float(act.get("act_work_qty", 0)) / max(1, float(act.get("target_work_qty", 1))) * 100,
-                    "wbs": act.get("wbs_id", ""),
-                    "predecessors": [r.get("pred_task_id") for r in relationships if r.get("task_id") == act.get("task_id")],
-                    "successors": [r.get("task_id") for r in relationships if r.get("pred_task_id") == act.get("task_id")],
-                })
-            
+    def _get_primavera_parser_block(self):
+        """Resolve the primavera_parser block — dependency injection first, registry fallback."""
+        block = self.get_dep("primavera_parser")
+        if block is None:
+            from app.blocks import BLOCK_REGISTRY
+            block_cls = BLOCK_REGISTRY.get("primavera_parser")
+            if block_cls is not None:
+                block = block_cls()
+        return block
+
+    async def _parse_xer_file(self, file_path: str) -> Dict:
+        """Parse a Primavera P6 .xer schedule by delegating to the primavera_parser block.
+
+        The block returns a nested shape ({schedule_data, critical_path, milestones,
+        activities, wbs, resources}) with per-activity keys like ``total_float_days``
+        and ``original_duration_days``. Downstream container logic (``_calculate_cpm``,
+        ``_analyze_delays``, ``_extract_milestones``) expects a FLAT per-activity shape
+        with keys ``id``/``name``/``start``/``finish``/``duration``/``total_float``/
+        ``percent_complete``. This method runs the block and adapts its output to that
+        flat shape. A missing or bad file propagates the block's error honestly — no
+        fabricated schedule data.
+        """
+        block = self._get_primavera_parser_block()
+        if block is None:
             return {
-                "status": "success",
-                "file_type": "xer",
-                "project_id": project_info.get("proj_id", ""),
-                "project_name": project_info.get("proj_short_name", ""),
-                "data_date": project_info.get("last_recalc_date", ""),
-                "activities": structured_activities
+                "status": "error",
+                "error": "primavera_parser block unavailable — cannot parse .xer schedule",
             }
-            
+
+        try:
+            result = await block.process({"file_path": file_path})
         except Exception as e:
             return {"status": "error", "error": f"XER parse failed: {str(e)}"}
+
+        if not isinstance(result, dict) or result.get("status") == "error":
+            # Propagate the block's error result honestly.
+            return result if isinstance(result, dict) else {
+                "status": "error", "error": "primavera_parser returned no result"
+            }
+
+        # Adapter: block's nested per-activity dicts -> FLAT shape the container needs.
+        # Block keys      -> flat keys
+        #   id             -> id
+        #   name           -> name
+        #   start          -> start
+        #   finish         -> finish
+        #   original_duration_days (days) -> duration (HOURS; *8 to preserve the
+        #       hour-semantics _calculate_cpm assumes when it divides by 8)
+        #   total_float_days -> total_float (already in days)
+        #   percent_complete -> percent_complete
+        flat_activities = []
+        for a in result.get("activities", []):
+            flat_activities.append({
+                "id": a.get("id", ""),
+                "name": a.get("name", ""),
+                "start": a.get("start") or "",
+                "finish": a.get("finish") or "",
+                "duration": (a.get("original_duration_days") or 0) * 8,
+                "total_float": a.get("total_float_days", 999),
+                "free_float": a.get("total_float_days", 0),
+                "percent_complete": a.get("percent_complete", 0),
+                "wbs": a.get("wbs_id", ""),
+                "type": a.get("type", ""),
+                "status": a.get("status", ""),
+            })
+
+        schedule_meta = result.get("schedule_data", {}) or {}
+        project_meta = schedule_meta.get("project", {}) or {}
+
+        return {
+            "status": "success",
+            "file_type": "xer",
+            "project_id": project_meta.get("id", ""),
+            "project_name": project_meta.get("name", ""),
+            "data_date": project_meta.get("planned_start") or "",
+            "activities": flat_activities,
+        }
     
     def _parse_xml_schedule(self, file_path: str) -> Dict:
         try:
@@ -3179,19 +3201,24 @@ class ConstructionContainer(UniversalContainer):
         productivity_curves = data.get("productivity") or p.get("productivity", {})
         trade_breakdown = p.get("trade_breakdown", True)
         
-        activities = []
-        if schedule_file:
-            schedule_data = self._parse_xer_file(schedule_file)
-            activities = schedule_data.get("activities", [])
+        if not schedule_file:
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": "No schedule file provided — pass schedule_file pointing to a .xer schedule",
+            }
 
+        schedule_data = await self._parse_xer_file(schedule_file)
+        if schedule_data.get("status") == "error":
+            return schedule_data
+        activities = schedule_data.get("activities", [])
         if not activities:
-            # Generate synthetic histogram for a typical 52-week commercial project
-            import math
-            activities = []
-            trades = [("Civil", 12), ("Structure", 20), ("MEP", 18), ("Finishes", 14), ("Commissioning", 6)]
-            for trade, duration in trades:
-                for week in range(duration):
-                    activities.append({"name": f"{trade} W{week+1}", "resources": {"labor": int(8 + 4 * math.sin(week / duration * math.pi))}, "trade": trade})
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": "Schedule contains no activities — cannot build a resource histogram",
+            }
+
         histogram_data = self._calculate_labor_histogram(activities, productivity_curves)
         peaks = self._identify_resource_peaks(histogram_data)
         conflicts = self._identify_resource_conflicts(histogram_data)
@@ -3787,10 +3814,12 @@ Total Extension of Time Sought: {total_delay} days
                 "summary": f"Total project delay: {synthetic_delay_days} days. Recommended EOT: {int(synthetic_delay_days * 0.6)} days.",
             }
         
-        baseline = self._parse_xer_file(baseline_file)
-        updated = self._parse_xer_file(updated_file)
+        baseline = await self._parse_xer_file(baseline_file)
+        updated = await self._parse_xer_file(updated_file)
         if baseline.get("status") == "error":
             return baseline
+        if updated.get("status") == "error":
+            return updated
         
         if analysis_method == "time_impact":
             results = self._run_time_impact_analysis(baseline, updated, delay_events)
@@ -3910,7 +3939,9 @@ Total Extension of Time Sought: {total_delay} days
 
         activities = []
         if schedule_file:
-            schedule_data = self._parse_xer_file(schedule_file)
+            schedule_data = await self._parse_xer_file(schedule_file)
+            if schedule_data.get("status") == "error":
+                return schedule_data
             activities = schedule_data.get("activities", [])
 
         project_duration_months = max(6, int(len(activities) / 20)) if activities else int(p.get("duration_months", 18))
