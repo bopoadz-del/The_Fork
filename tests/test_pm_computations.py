@@ -121,3 +121,51 @@ def test_forward_pass_start_to_start():
                 Dependency(predecessor_id="A", type=DependencyType.SS, lag=2)])]
     fwd = cpm_forward_pass(_index(acts), topological_order(acts))
     assert fwd["B"] == (2, 6)
+
+
+from datetime import date as _date
+
+from app.lib.pm_computations import compute_cpm
+
+
+def test_compute_cpm_identifies_critical_path():
+    # long path A(3)->B(5)->D(2)=10; A->C(2)->D has float
+    acts = [_act("A", 3), _act("B", 5, ["A"]), _act("C", 2, ["A"]),
+            _act("D", 2, ["B", "C"])]
+    out = compute_cpm(CPMInput(activities=acts))
+    assert out.project_duration == 10
+    assert out.critical_path == ["A", "B", "D"]
+    by_id = {r.id: r for r in out.results}
+    assert by_id["C"].total_float == 3
+    assert by_id["C"].is_critical is False
+    assert by_id["A"].is_critical is True
+
+
+def test_compute_cpm_free_float():
+    acts = [_act("A", 3), _act("B", 5, ["A"]), _act("C", 2, ["A"]),
+            _act("D", 2, ["B", "C"])]
+    by_id = {r.id: r for r in compute_cpm(CPMInput(activities=acts)).results}
+    assert by_id["C"].free_float == 3
+
+
+def test_compute_cpm_near_critical():
+    acts = [_act("A", 3), _act("B", 5, ["A"]), _act("C", 4, ["A"]),
+            _act("D", 2, ["B", "C"])]
+    assert "C" in compute_cpm(CPMInput(activities=acts)).near_critical
+
+
+def test_compute_cpm_projects_dates():
+    out = compute_cpm(CPMInput(activities=[_act("A", 5)],
+                               project_start=_date(2026, 5, 18)))
+    assert out.results[0].early_start == _date(2026, 5, 18)
+    assert out.results[0].early_finish == _date(2026, 5, 25)
+
+
+def test_compute_cpm_empty_input():
+    out = compute_cpm(CPMInput(activities=[]))
+    assert out.project_duration == 0 and out.results == []
+
+
+def test_compute_cpm_rejects_duplicate_ids():
+    with pytest.raises(ValueError):
+        compute_cpm(CPMInput(activities=[_act("A", 1), _act("A", 2)]))
