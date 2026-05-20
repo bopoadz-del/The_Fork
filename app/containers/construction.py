@@ -97,33 +97,6 @@ class ConstructionContainer(UniversalContainer):
     }
 
     # ─────────────────────────────────────────────────────────────────
-    # ROUTING TABLE
-    # ─────────────────────────────────────────────────────────────────
-    async def route(self, action: str, input_data: Any, params: Dict) -> Dict:
-        routes = {
-            "process_document": self.process_document,
-            "extract_quantities": self.extract_quantities,
-            "analyze_spec": self.analyze_spec_section,
-            "cost_estimate": self.generate_cost_estimate,
-            "schedule_risk": self.analyze_schedule_risk,
-            "contract_review": self.review_contract_clause,
-            "safety_audit": self.safety_compliance_audit,
-            "carbon_report": self.generate_carbon_report,
-            "procurement": self.procurement_analysis,
-            "status": self._status,
-        }
-        handler = routes.get(action, self._status)
-        return await handler(input_data, params)
-
-    async def _status(self, input_data: Any, params: Dict) -> Dict:
-        return {
-            "status": "success",
-            "container": self.name,
-            "version": self.version,
-            "actions_available": list(self.route.__code__.co_consts[1].keys()) if hasattr(self.route.__code__, 'co_consts') else []
-        }
-
-    # ─────────────────────────────────────────────────────────────────
     # DOCUMENT PROCESSING
     # ─────────────────────────────────────────────────────────────────
     
@@ -388,20 +361,6 @@ class ConstructionContainer(UniversalContainer):
         file_path = data.get("file_path") or p.get("file_path")
         return await self._process_image(file_path, p)
     
-    def _extract_drawing_number(self, filename: str) -> str:
-        """Extract drawing number from filename (e.g., 'A-101-plan.pdf' -> 'A-101')."""
-        import re
-        # Look for patterns like A-101, ARCH-001, C-501, etc.
-        match = re.search(r'([A-Z]+-?\d{3,})', filename.upper())
-        return match.group(1) if match else "Unknown"
-    
-    def _extract_revision(self, filename: str) -> str:
-        """Extract revision from filename (e.g., 'plan-rev-A.pdf' -> 'A')."""
-        import re
-        # Look for rev patterns
-        match = re.search(r'[Rr][Ee][Vv][-_]?(\w)', filename)
-        return match.group(1) if match else "A"
-    
     async def _download_file(self, url: str) -> str:
         import uuid
         import httpx
@@ -453,52 +412,6 @@ class ConstructionContainer(UniversalContainer):
         m = re.search(r'[Rr][Ee]?[Vv]?\s*([A-Z0-9])', filename)
         return m.group(1).upper() if m else ""
 
-    def _extract_measurements_advanced(self, raw_text: str, text_dict: Dict) -> List[Dict]:
-        return []
-
-    def _extract_tables_advanced(self, page) -> List[Dict]:
-        return []
-
-    def _extract_annotations(self, page) -> List[Dict]:
-        return []
-
-    def _extract_specs_advanced(self, raw_text: str) -> List[Dict]:
-        return []
-
-    def _detect_disciplines(self, raw_text: str) -> List[str]:
-        disciplines = []
-        raw = raw_text.lower()
-        if any(k in raw for k in ["structural", "rebar", "concrete", "foundation"]):
-            disciplines.append("Structural")
-        if any(k in raw for k in ["architectural", "elevation", "finish", "floor plan"]):
-            disciplines.append("Architectural")
-        if any(k in raw for k in ["mechanical", "hvac", "duct", "air"]):
-            disciplines.append("Mechanical")
-        if any(k in raw for k in ["electrical", "lighting", "power", "circuit"]):
-            disciplines.append("Electrical")
-        if any(k in raw for k in ["plumbing", "pipe", "drain", "water"]):
-            disciplines.append("Plumbing")
-        if not disciplines:
-            disciplines.append("General")
-        return disciplines
-
-    def _extract_title_block(self, sheet_data: Dict) -> Dict:
-        return {}
-
-    def _extract_scale(self, raw_text: str) -> Optional[str]:
-        import re
-        m = re.search(r'(\d+\s*[:/]\s*\d+)', raw_text)
-        return m.group(1) if m else None
-
-    def _calculate_quantities(self, measurements: List[Dict]) -> Dict:
-        return {}
-
-    def _estimate_costs(self, quantities: Dict) -> Dict:
-        return {}
-
-    def _estimate_carbon(self, quantities: Dict) -> Dict:
-        return {}
-
     def _calculate_confidence(self, result: Dict) -> Dict:
         """Measured extraction confidence (Roadmap V2 · Epic 1).
 
@@ -514,9 +427,6 @@ class ConstructionContainer(UniversalContainer):
             ],
             ocr_quality=result.get("ocr_quality"),
         )
-
-    async def _detect_risks_from_drawing(self, result: Dict) -> List[Dict]:
-        return []
 
     # CONTRACT MANAGEMENT
     async def process_contract(self, input_data: Any, params: Dict) -> Dict:
