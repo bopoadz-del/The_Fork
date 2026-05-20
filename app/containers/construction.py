@@ -5006,37 +5006,38 @@ Total Extension of Time Sought: {total_delay} days
         cost_result = {}
         if has_quantities:
             try:
-                # Use area-based all-in rate when GFA is available (avoids double-counting
-                # concrete + steel which are already embedded in the composite $/m² rate).
-                # Fall back to elemental pricing only when no floor area is known.
-                gfa = quantities.get("floor_area_m2", 0)
-                if isinstance(gfa, dict):
-                    gfa = gfa.get("quantity", 0)
-                if gfa > 0:
-                    subtotal = gfa * 1200  # $1,200/m² composite (structure+MEP+finishes)
+                # Real cost estimate — delegates per-item unit rates to the
+                # historical_benchmark block. No fabricated composite $/m² rate.
+                cost_result = await self.generate_cost_estimate(
+                    {"quantities": quantities},
+                    {
+                        "quantities": quantities,
+                        "location": p.get("location", "US National Average"),
+                        "project_type": p.get("project_type", "general_building"),
+                    },
+                )
+                if isinstance(cost_result, dict) and cost_result.get("status") == "success":
+                    downstream["cost_estimate"] = cost_result
+                    panels.append({
+                        "type": "cost_estimate",
+                        "title": "Cost Estimate",
+                        "data": cost_result.get("summary", {}),
+                        "line_items": cost_result.get("line_items", []),
+                        "unpriced_items": cost_result.get("unpriced_items", []),
+                    })
                 else:
-                    subtotal = (
-                        quantities.get("concrete_volume_m3", 0) * 150 +
-                        quantities.get("steel_weight_kg", 0) * 1.8
-                    )
-                overhead = round(subtotal * 0.10, 2)
-                contingency = round(subtotal * 0.05, 2)
-                total_estimate = round(subtotal + overhead + contingency, 2)
-                cost_result = {
-                    "summary": {
-                        "subtotal": round(subtotal, 2),
-                        "overhead": overhead,
-                        "contingency": contingency,
-                        "total_estimate": total_estimate,
-                    }
-                }
-                downstream["cost_estimate"] = cost_result
-                panels.append({
-                    "type": "cost_estimate",
-                    "title": "Cost Estimate",
-                    "data": cost_result["summary"],
-                    "line_items": []
-                })
+                    # Estimate failed — surface the reason honestly, no fake number.
+                    downstream["cost_estimate"] = cost_result
+                    panels.append({
+                        "type": "cost_estimate",
+                        "title": "Cost Estimate",
+                        "data": {},
+                        "line_items": [],
+                        "unpriced_items": [],
+                        "error": (cost_result or {}).get(
+                            "error", "Cost estimate unavailable"
+                        ) if isinstance(cost_result, dict) else "Cost estimate unavailable",
+                    })
             except Exception:
                 pass
         # Procurement: if we extracted real quantities, derive the procurement
