@@ -82,7 +82,7 @@ def cpm_forward_pass(
     return {nid: (es[nid], ef[nid]) for nid in order}
 
 
-def _successor_map(acts: Dict[str, Activity]) -> Dict[str, list]:
+def _successor_map(acts: Dict[str, Activity]) -> Dict[str, List[Tuple[str, DependencyType, int]]]:
     """Map each activity id to a list of (successor_id, dep_type, lag)."""
     succ: Dict[str, list] = {nid: [] for nid in acts}
     for a in acts.values():
@@ -162,7 +162,7 @@ def compute_cpm(data: CPMInput) -> CPMOutput:
     cal, start = data.calendar, data.project_start
 
     def proj(offset: int):
-        return cal.nth_working_day(start, offset) if start else None
+        return cal.nth_working_day(start, offset) if (start and offset >= 0) else None
 
     results: List[CPMResult] = []
     for nid in order:

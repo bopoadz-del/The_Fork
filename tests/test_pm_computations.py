@@ -1,8 +1,13 @@
 """Tests for pm_computations — Reasoning Engine Plan 1 (CPM core)."""
 
+from datetime import date, date as _date
+
 import pytest
 
-from app.schemas.cpm import Activity, CPMInput, Dependency, DependencyType
+from app.schemas.cpm import Activity, CPMInput, Dependency, DependencyType, WorkCalendar
+from app.lib.pm_computations import (
+    CircularDependencyError, topological_order, cpm_forward_pass, compute_cpm,
+)
 
 
 def test_activity_defaults():
@@ -25,11 +30,6 @@ def test_empty_activity_id_rejected():
         Activity(id="", duration=1)
 
 
-from datetime import date
-
-from app.schemas.cpm import WorkCalendar
-
-
 def test_nth_working_day_zero_is_first_working_day():
     # 2026-05-18 is a Monday
     assert WorkCalendar().nth_working_day(date(2026, 5, 18), 0) == date(2026, 5, 18)
@@ -50,14 +50,15 @@ def test_nth_working_day_advances_off_weekend_start():
     assert WorkCalendar().nth_working_day(date(2026, 5, 23), 0) == date(2026, 5, 25)
 
 
-from app.lib.pm_computations import CircularDependencyError, topological_order
-
-
 def _act(id, dur, preds=None):
     return Activity(
         id=id, duration=dur,
         predecessors=[Dependency(predecessor_id=p) for p in (preds or [])],
     )
+
+
+def _index(acts):
+    return {a.id: a for a in acts}
 
 
 def test_topological_order_linear_chain():
@@ -74,13 +75,6 @@ def test_topological_order_detects_cycle():
 def test_topological_order_rejects_unknown_predecessor():
     with pytest.raises(ValueError):
         topological_order([_act("A", 1, ["GHOST"])])
-
-
-from app.lib.pm_computations import cpm_forward_pass
-
-
-def _index(acts):
-    return {a.id: a for a in acts}
 
 
 def test_forward_pass_linear_chain():
@@ -123,9 +117,26 @@ def test_forward_pass_start_to_start():
     assert fwd["B"] == (2, 6)
 
 
-from datetime import date as _date
+def test_forward_pass_finish_to_finish():
+    # A duration=5 -> EF=5. B has FF dep on A, lag=0, duration=3.
+    # cand = p_ef + lag - a.duration = 5 + 0 - 3 = 2
+    # B.ES=2, B.EF=5
+    acts = [_act("A", 5),
+            Activity(id="B", duration=3, predecessors=[
+                Dependency(predecessor_id="A", type=DependencyType.FF, lag=0)])]
+    fwd = cpm_forward_pass(_index(acts), topological_order(acts))
+    assert fwd["B"] == (2, 5)
 
-from app.lib.pm_computations import compute_cpm
+
+def test_forward_pass_start_to_finish():
+    # A duration=5 -> ES=0. B has SF dep on A, lag=6, duration=4.
+    # cand = p_es + lag - a.duration = 0 + 6 - 4 = 2
+    # B.ES=2, B.EF=6
+    acts = [_act("A", 5),
+            Activity(id="B", duration=4, predecessors=[
+                Dependency(predecessor_id="A", type=DependencyType.SF, lag=6)])]
+    fwd = cpm_forward_pass(_index(acts), topological_order(acts))
+    assert fwd["B"] == (2, 6)
 
 
 def test_compute_cpm_identifies_critical_path():
@@ -169,6 +180,27 @@ def test_compute_cpm_empty_input():
 def test_compute_cpm_rejects_duplicate_ids():
     with pytest.raises(ValueError):
         compute_cpm(CPMInput(activities=[_act("A", 1), _act("A", 2)]))
+
+
+def test_compute_cpm_with_ff_dependency():
+    # A(5) -> B(3) via FF lag=0.
+    # Forward: A.ES=0, A.EF=5. B: cand = 5+0-3 = 2, B.ES=2, B.EF=5.
+    # Project duration = max(5, 5) = 5.
+    # Backward: B.LF=5, B.LS=2. A (succ=B via FF): cand = B.LF - lag = 5-0=5.
+    #   A.LF=5, A.LS=0. Both TF=0 -> both critical.
+    acts = [_act("A", 5),
+            Activity(id="B", duration=3, predecessors=[
+                Dependency(predecessor_id="A", type=DependencyType.FF, lag=0)])]
+    out = compute_cpm(CPMInput(activities=acts))
+    assert out.project_duration == 5
+    by_id = {r.id: r for r in out.results}
+    assert by_id["A"].early_start_day == 0
+    assert by_id["A"].early_finish_day == 5
+    assert by_id["B"].early_start_day == 2
+    assert by_id["B"].early_finish_day == 5
+    assert by_id["A"].total_float == 0
+    assert by_id["B"].total_float == 0
+    assert set(out.critical_path) == {"A", "B"}
 
 
 def test_compute_cpm_realistic_network():

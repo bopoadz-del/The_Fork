@@ -23,16 +23,18 @@ class Dependency(BaseModel):
 
 
 class WorkCalendar(BaseModel):
-    """A working-day calendar. Monday=0 .. Sunday=6.
+    """A working-day calendar. Monday=0 .. Sunday=6."""
 
-    The nth_working_day() method is added in Task 2.
-    """
     work_weekdays: List[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
     holidays: List[date] = Field(default_factory=list)
 
     def nth_working_day(self, start: date, n: int) -> date:
         """Calendar date of the n-th working day (0-indexed); offset 0 is the
         first working day on or after `start`."""
+        if not self.work_weekdays:
+            raise ValueError("WorkCalendar.work_weekdays is empty — no working days")
+        if n < 0:
+            raise ValueError("nth_working_day: n must be >= 0")
         work = set(self.work_weekdays)
         hol = set(self.holidays)
 
