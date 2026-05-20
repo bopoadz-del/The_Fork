@@ -48,3 +48,29 @@ def test_nth_working_day_skips_holiday():
 def test_nth_working_day_advances_off_weekend_start():
     # Sat 23, offset 0 -> Mon 25
     assert WorkCalendar().nth_working_day(date(2026, 5, 23), 0) == date(2026, 5, 25)
+
+
+from app.lib.pm_computations import CircularDependencyError, topological_order
+
+
+def _act(id, dur, preds=None):
+    return Activity(
+        id=id, duration=dur,
+        predecessors=[Dependency(predecessor_id=p) for p in (preds or [])],
+    )
+
+
+def test_topological_order_linear_chain():
+    acts = [_act("C", 1, ["B"]), _act("A", 1), _act("B", 1, ["A"])]
+    assert topological_order(acts) == ["A", "B", "C"]
+
+
+def test_topological_order_detects_cycle():
+    acts = [_act("A", 1, ["B"]), _act("B", 1, ["A"])]
+    with pytest.raises(CircularDependencyError):
+        topological_order(acts)
+
+
+def test_topological_order_rejects_unknown_predecessor():
+    with pytest.raises(ValueError):
+        topological_order([_act("A", 1, ["GHOST"])])
