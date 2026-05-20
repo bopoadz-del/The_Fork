@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple
 
 from app.schemas.cpm import (
     Activity, CPMInput, CPMOutput, CPMResult, DependencyType,
+    GanttBar, HistogramPeriod, ResourceHistogram,
 )
 
 
@@ -191,4 +192,62 @@ def compute_cpm(data: CPMInput) -> CPMOutput:
         critical_path=[r.id for r in critical],
         critical_percentage=round(len(critical) / len(results) * 100, 1),
         near_critical=near,
+    )
+
+
+_PERIOD_LENGTH = {"week": 5, "month": 21}
+_HOURS_PER_DAY = 8
+
+
+def resource_histogram(
+    results: List[CPMResult],
+    activities: List[Activity],
+    period_unit: str = "week",
+) -> ResourceHistogram:
+    """Time-phased manpower. An activity contributes its crew to every period
+    its early-date span overlaps (concurrent headcount, not man-days)."""
+    length = _PERIOD_LENGTH.get(period_unit, 5)
+    res_by_id = {a.id: a.resources for a in activities}
+    es_ef = {r.id: (r.early_start_day, r.early_finish_day) for r in results}
+
+    if results:
+        last_day = max(ef for (_es, ef) in es_ef.values())
+        n_periods = max(1, -(-last_day // length))  # ceil division
+    else:
+        n_periods = 0
+
+    periods: List[HistogramPeriod] = []
+    by_trade_totals: Dict[str, float] = {}
+    total_manhours = 0.0
+
+    for p in range(n_periods):
+        p_start, p_end = p * length, (p + 1) * length
+        by_trade: Dict[str, float] = {}
+        for rid, (es, ef) in es_ef.items():
+            if ef <= p_start or es >= p_end:
+                continue  # activity does not overlap this period
+            for res in res_by_id.get(rid, []):
+                by_trade[res.trade] = by_trade.get(res.trade, 0.0) + res.count
+        periods.append(HistogramPeriod(
+            index=p, label=f"{period_unit[0].upper()}{p + 1}",
+            total=round(sum(by_trade.values()), 2), by_trade=by_trade,
+        ))
+
+    for a in activities:
+        es, ef = es_ef.get(a.id, (0, 0))
+        span = ef - es
+        for res in a.resources:
+            by_trade_totals[res.trade] = (
+                by_trade_totals.get(res.trade, 0.0) + res.count
+            )
+            total_manhours += res.count * span * _HOURS_PER_DAY
+
+    peak = max(periods, key=lambda hp: hp.total, default=None)
+    return ResourceHistogram(
+        period_unit=period_unit,
+        periods=periods,
+        peak_total=peak.total if peak else 0.0,
+        peak_period=peak.label if peak else "",
+        by_trade_totals=by_trade_totals,
+        total_manhours=round(total_manhours, 2),
     )

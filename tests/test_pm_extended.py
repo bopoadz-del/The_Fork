@@ -27,3 +27,48 @@ def test_histogram_and_gantt_models_construct():
     assert rh.peak_total == 12
     bar = GanttBar(id="A", name="Mob", start_day=0, end_day=5, is_critical=True)
     assert bar.end_day == 5
+
+
+from app.schemas.cpm import CPMInput, Dependency
+from app.lib.pm_computations import compute_cpm, resource_histogram
+
+_PERIOD_DAYS = {"week": 5, "month": 21}
+
+
+def _act(id, dur, preds=None, resources=None):
+    return Activity(
+        id=id, duration=dur,
+        predecessors=[Dependency(predecessor_id=p) for p in (preds or [])],
+        resources=resources or [],
+    )
+
+
+def test_resource_histogram_buckets_by_week():
+    # A: 10 working days, crew of 4 -> spans weeks 0 and 1
+    acts = [_act("A", 10, resources=[ResourceAssignment(trade="civil", count=4)])]
+    out = compute_cpm(CPMInput(activities=acts))
+    hist = resource_histogram(out.results, acts, period_unit="week")
+    assert hist.period_unit == "week"
+    assert len(hist.periods) == 2
+    assert hist.periods[0].by_trade["civil"] == 4
+    assert hist.peak_total == 4
+
+
+def test_resource_histogram_sums_concurrent_trades():
+    # A and B both run in week 0, different trades
+    acts = [
+        _act("A", 5, resources=[ResourceAssignment(trade="civil", count=6)]),
+        _act("B", 5, resources=[ResourceAssignment(trade="mep", count=3)]),
+    ]
+    out = compute_cpm(CPMInput(activities=acts))
+    hist = resource_histogram(out.results, acts, period_unit="week")
+    assert hist.periods[0].total == 9
+    assert hist.peak_total == 9
+
+
+def test_resource_histogram_total_manhours():
+    # crew 4 x 10 days x 8 h = 320
+    acts = [_act("A", 10, resources=[ResourceAssignment(trade="civil", count=4)])]
+    out = compute_cpm(CPMInput(activities=acts))
+    hist = resource_histogram(out.results, acts, period_unit="week")
+    assert hist.total_manhours == 320
