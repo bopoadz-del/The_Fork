@@ -35,7 +35,7 @@ class OCRBlock(TypedBlock):
     output_schema = Schema(
         content_type=ContentType.TEXT,
         required_fields=["text"],
-        optional_fields=["confidence", "quality", "word_count", "engine", "preprocessed", "status"],
+        optional_fields=["confidence", "quality", "has_markup", "markup", "word_count", "engine", "preprocessed", "status"],
         format_hints={}
     )
     
@@ -101,7 +101,12 @@ class OCRBlock(TypedBlock):
         
         preprocess = params.get("preprocess", self.config.get("preprocess", True))
         languages = params.get("languages", self.config.get("languages", ["en"]))
-        
+
+        # Detect coloured markup / redlines BEFORE preprocessing greys the image
+        # out (Roadmap V2 · Epic 5). Annotated regions are flagged, not mangled
+        # into the extracted text.
+        markup = self._detect_markup(image_path)
+
         # Detect if input is a PDF and convert pages to images
         page_images = self._prepare_images(image_path, preprocess)
         if not page_images:
@@ -175,6 +180,8 @@ class OCRBlock(TypedBlock):
                             "status": "success",
                             "text": text,
                             "confidence": 0.92,
+                            "has_markup": markup["has_markup"],
+                            "markup": markup,
                             "word_count": len(text.split()),
                             "engine": "claude_vision",
                             "preprocessed": False,
@@ -195,6 +202,8 @@ class OCRBlock(TypedBlock):
                     "status": "success",
                     "text": pdf_text,
                     "confidence": 0.95,
+                    "has_markup": markup["has_markup"],
+                    "markup": markup,
                     "word_count": len(pdf_text.split()),
                     "engine": "pymupdf_fallback",
                     "preprocessed": False,
@@ -210,6 +219,8 @@ class OCRBlock(TypedBlock):
             return {
                 "status": "success", "text": "", "confidence": 0,
                 "quality": quality, "message": "No text detected",
+                "has_markup": markup["has_markup"],
+                "markup": markup,
             }
 
         full_text = "\n".join(all_texts)
@@ -219,6 +230,8 @@ class OCRBlock(TypedBlock):
             "text": full_text,
             "confidence": quality["ocr_confidence"],
             "quality": quality,
+            "has_markup": markup["has_markup"],
+            "markup": markup,
             "word_count": len(full_text.split()),
             "engine": engine_used or "unknown",
             "preprocessed": preprocess,
@@ -233,6 +246,45 @@ class OCRBlock(TypedBlock):
             return input_data.get("file_path") or input_data.get("path") or input_data.get("url")
         return None
     
+    def _detect_markup(self, file_path: str) -> Dict:
+        """Detect coloured markup / redlines on the input (Roadmap V2 · Epic 5).
+
+        Run on the ORIGINAL colour image, before preprocessing converts it to
+        greyscale. For PDFs the first page is rendered and checked. Returns the
+        `summarize_markup` verdict (`has_markup`, `coverage`, `region_count`,
+        `regions`, `caveat`) — annotated regions are flagged for the user, not
+        merged into the extracted text. Failures degrade gracefully to "clean".
+        """
+        from app.core.redline import detect_redlines, summarize_markup
+
+        clean = {
+            "has_markup": False, "coverage": 0.0, "region_count": 0,
+            "regions": [], "caveat": None,
+        }
+        try:
+            from PIL import Image
+
+            if file_path.lower().endswith(".pdf"):
+                import fitz  # PyMuPDF
+                doc = fitz.open(file_path)
+                if len(doc) == 0:
+                    doc.close()
+                    return clean
+                pix = doc.load_page(0).get_pixmap(dpi=150)
+                tmp = tempfile.mktemp(suffix="_markup.png")
+                pix.save(tmp)
+                doc.close()
+                img = Image.open(tmp)
+            else:
+                img = Image.open(file_path)
+
+            result = detect_redlines(img)
+            summary = summarize_markup(result)
+            summary["regions"] = result["regions"]
+            return summary
+        except Exception:
+            return clean
+
     def _prepare_images(self, file_path: str, preprocess: bool = True) -> list:
         """Convert input to a list of image file paths (handles PDFs and images)."""
         from PIL import Image

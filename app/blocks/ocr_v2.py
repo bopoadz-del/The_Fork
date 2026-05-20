@@ -99,7 +99,12 @@ class OCRBlockV2(TypedBlock):
         
         preprocess = params.get("preprocess", self.config.get("preprocess", True))
         languages = params.get("languages", self.config.get("languages", ["en"]))
-        
+
+        # Detect coloured markup / redlines on the ORIGINAL image, before
+        # preprocessing greys it out (Roadmap V2 · Epic 5). Annotated regions
+        # are flagged in the result, not mangled into the extracted text.
+        markup = self._detect_markup(image_path)
+
         # Preprocess image if enabled
         if preprocess:
             image_path = self._preprocess_image(image_path)
@@ -115,29 +120,37 @@ class OCRBlockV2(TypedBlock):
                     "text": "",
                     "source": "ocr",
                     "confidence": 0,
+                    "has_markup": markup["has_markup"],
+                    "markup": markup,
                     "metadata": {
                         "message": "No text detected",
                         "word_count": 0,
                         "engine": "easyocr",
-                        "preprocessed": preprocess
+                        "preprocessed": preprocess,
+                        "has_markup": markup["has_markup"],
+                        "markup": markup
                     }
                 }
-            
+
             texts = [r[1] for r in results if r[1].strip()]
             confs = [r[2] for r in results]
-            
+
             full_text = "\n".join(texts)
             avg_conf = sum(confs) / len(confs) if confs else 0
-            
+
             # Return TextContent format
             return {
                 "text": full_text,
                 "source": "ocr",
                 "confidence": round(avg_conf, 2),
+                "has_markup": markup["has_markup"],
+                "markup": markup,
                 "metadata": {
                     "word_count": len(full_text.split()),
                     "engine": "easyocr",
                     "preprocessed": preprocess,
+                    "has_markup": markup["has_markup"],
+                    "markup": markup,
                     "extracted_at": self._timestamp()
                 }
             }
@@ -158,12 +171,50 @@ class OCRBlockV2(TypedBlock):
                     input_data.get("image_path"))
         return None
     
+    def _detect_markup(self, file_path: str) -> Dict:
+        """Detect coloured markup / redlines on the input (Roadmap V2 · Epic 5).
+
+        Run on the ORIGINAL colour image, before preprocessing converts it to
+        greyscale. For PDFs the first page is rendered and checked. Returns the
+        `summarize_markup` verdict (`has_markup`, `coverage`, `region_count`,
+        `regions`, `caveat`). Failures degrade gracefully to "clean".
+        """
+        from app.core.redline import detect_redlines, summarize_markup
+
+        clean = {
+            "has_markup": False, "coverage": 0.0, "region_count": 0,
+            "regions": [], "caveat": None,
+        }
+        try:
+            from PIL import Image
+
+            if file_path.lower().endswith(".pdf"):
+                import fitz  # PyMuPDF
+                doc = fitz.open(file_path)
+                if len(doc) == 0:
+                    doc.close()
+                    return clean
+                pix = doc.load_page(0).get_pixmap(dpi=150)
+                tmp = tempfile.mktemp(suffix="_markup.png")
+                pix.save(tmp)
+                doc.close()
+                img = Image.open(tmp)
+            else:
+                img = Image.open(file_path)
+
+            result = detect_redlines(img)
+            summary = summarize_markup(result)
+            summary["regions"] = result["regions"]
+            return summary
+        except Exception:
+            return clean
+
     def _preprocess_image(self, image_path: str) -> str:
         """Enhance image for better OCR quality"""
         from PIL import Image, ImageEnhance, ImageFilter
-        
+
         img = Image.open(image_path)
-        
+
         # Convert to RGB if necessary
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')
