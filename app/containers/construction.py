@@ -1062,27 +1062,28 @@ class ConstructionContainer(UniversalContainer):
             qa.append("Inspection/witness requirements")
         return qa
 
-    # COST ESTIMATION (RSMeans-style)
+    # COST ESTIMATION — per-item rates delegated to the historical_benchmark block;
+    # overhead / profit / contingency markup aggregation stays container-only.
     async def generate_cost_estimate(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
-        
+
         quantities = p.get("quantities", data.get("quantities", {}))
         location = p.get("location", "US National Average")
         project_type = p.get("project_type", "general_building")
-        
-        rsmeans_data = self._get_rsmeans_data()
-        loc_factors = rsmeans_data.get("location_factors", {})
-        # case-insensitive location lookup
-        loc_key = next(
-            (k for k in loc_factors if k.lower() == location.lower()),
-            next((k for k in loc_factors if location.lower() in k.lower() or k.lower() in location.lower()), None)
-        )
-        location_factor = loc_factors.get(loc_key, 1.0) if loc_key else 1.0
+
+        block = self._get_historical_benchmark_block()
+        if block is None:
+            return {
+                "status": "error",
+                "action": "cost_estimate",
+                "error": "historical_benchmark block unavailable — cannot benchmark unit rates",
+            }
 
         _UNIT_SUFFIXES = {"_m3": "m3", "_m2": "m2", "_kg": "kg", "_lm": "lm", "_ea": "ea", "_nr": "nr"}
 
         line_items = []
+        unpriced_items = []
         for item_name, qty_data in quantities.items():
             if isinstance(qty_data, dict):
                 quantity = qty_data.get("quantity", 0)
@@ -1096,10 +1097,38 @@ class ConstructionContainer(UniversalContainer):
                         unit = u
                         break
 
-            base_rate = self._lookup_unit_cost(item_name, unit, rsmeans_data)
-            adjusted_rate = base_rate * location_factor
-            total = quantity * adjusted_rate
-            
+            result = await block.process(
+                {},
+                {
+                    "action": "lookup",
+                    "item": item_name,
+                    "unit": unit,
+                    "location": location,
+                    "project_type": project_type,
+                },
+            )
+            if not isinstance(result, dict) or result.get("status") != "success":
+                # No benchmark for this item — record honestly, do not fabricate a rate.
+                unpriced_items.append(item_name)
+                line_items.append({
+                    "item": item_name,
+                    "quantity": quantity,
+                    "unit": unit,
+                    "base_rate": None,
+                    "adjusted_rate": None,
+                    "location_factor": None,
+                    "total": None,
+                    "note": "no benchmark rate found — excluded from totals",
+                })
+                continue
+
+            rates = result.get("rates", {})
+            factors = result.get("factors", {})
+            base_rate = rates.get("base_usd")
+            adjusted_rate = rates.get("adjusted_usd")
+            location_factor = factors.get("location_factor", 1.0)
+            total = (quantity or 0) * (adjusted_rate or 0)
+
             line_items.append({
                 "item": item_name,
                 "quantity": quantity,
@@ -1107,21 +1136,22 @@ class ConstructionContainer(UniversalContainer):
                 "base_rate": base_rate,
                 "adjusted_rate": adjusted_rate,
                 "location_factor": location_factor,
-                "total": round(total, 2)
+                "total": round(total, 2),
             })
-        
-        subtotal = sum(item["total"] for item in line_items)
+
+        subtotal = sum(item["total"] for item in line_items if item["total"] is not None)
         overhead = subtotal * 0.10
         profit = subtotal * 0.08
         contingency = subtotal * 0.05
         total = subtotal + overhead + profit + contingency
-        
+
         return {
             "status": "success",
             "action": "cost_estimate",
             "location": location,
-            "location_factor": location_factor,
+            "project_type": project_type,
             "line_items": line_items,
+            "unpriced_items": unpriced_items,
             "summary": {
                 "subtotal": round(subtotal, 2),
                 "overhead": round(overhead, 2),
@@ -1132,190 +1162,44 @@ class ConstructionContainer(UniversalContainer):
             "confidence": "medium"
         }
     
-    def _get_rsmeans_data(self) -> Dict:
-        return {
-            "unit_costs": {
-                # Structural
-                "concrete_m3": 150.0,
-                "concrete_grade_c30_m3": 165.0,
-                "concrete_grade_c40_m3": 185.0,
-                "rebar_kg": 1.8,
-                "steel_kg": 2.5,
-                "structural_steel_kg": 3.2,
-                "formwork_m2": 45.0,
-                "formwork_soffit_m2": 55.0,
-                # Masonry
-                "block_m2": 35.0,
-                "masonry_m2": 65.0,
-                "brick_m2": 75.0,
-                # Envelope
-                "glazing_m2": 180.0,
-                "curtain_wall_m2": 420.0,
-                "cladding_m2": 210.0,
-                "roofing_m2": 95.0,
-                "waterproofing_m2": 40.0,
-                # Finishes
-                "finishes_m2": 55.0,
-                "tiling_m2": 85.0,
-                "flooring_m2": 70.0,
-                "painting_m2": 18.0,
-                "plaster_m2": 28.0,
-                "drylining_m2": 45.0,
-                "suspended_ceiling_m2": 60.0,
-                # MEP
-                "hvac_m2": 120.0,
-                "electrical_m2": 80.0,
-                "plumbing_m2": 65.0,
-                "fire_protection_m2": 35.0,
-                # Groundworks
-                "excavation_m3": 22.0,
-                "backfill_m3": 18.0,
-                "piling_lm": 280.0,
-                "drainage_lm": 95.0,
-                # Misc
-                "insulation_m2": 30.0,
-                "door_ea": 850.0,
-                "window_ea": 1200.0,
-                "lift_ea": 85000.0,
-                "scaffold_m2": 12.0,
+    def _get_historical_benchmark_block(self):
+        """Resolve the historical_benchmark block — DI first, registry fallback."""
+        block = self.get_dep("historical_benchmark")
+        if block is None:
+            from app.blocks import BLOCK_REGISTRY
+            block_cls = BLOCK_REGISTRY.get("historical_benchmark")
+            if block_cls is not None:
+                block = block_cls()
+        return block
+
+    async def _lookup_unit_cost(
+        self, item_name: str, unit: str,
+        location: str = "US National Average",
+        project_type: str = "general_building",
+    ):
+        """Delegate per-item unit-rate lookup to the historical_benchmark block.
+
+        Returns the location/project-adjusted USD rate (rates.adjusted_usd) as a
+        float, or None when the block has no benchmark for the item. No fabricated
+        fallback — an unknown item honestly yields None.
+        """
+        block = self._get_historical_benchmark_block()
+        if block is None:
+            return None
+
+        result = await block.process(
+            {},
+            {
+                "action": "lookup",
+                "item": item_name,
+                "unit": unit,
+                "location": location,
+                "project_type": project_type,
             },
-            "location_factors": {
-                "US National Average": 1.00,
-                "New York City": 1.35,
-                "San Francisco": 1.42,
-                "Los Angeles": 1.28,
-                "Chicago": 1.18,
-                "Houston": 1.05,
-                "Miami": 1.10,
-                "Dubai": 0.95,
-                "Abu Dhabi": 0.92,
-                "Riyadh": 0.88,
-                "Jeddah": 0.90,
-                "Doha": 0.97,
-                "Kuwait City": 0.93,
-                "London": 1.28,
-                "Manchester": 1.12,
-                "Paris": 1.22,
-                "Frankfurt": 1.18,
-                "Amsterdam": 1.20,
-                "Sydney": 1.15,
-                "Melbourne": 1.12,
-                "Singapore": 1.08,
-                "Hong Kong": 1.25,
-                "Tokyo": 1.30,
-                "Toronto": 1.10,
-                "Mumbai": 0.45,
-                "Delhi": 0.42,
-            },
-            "project_type_multipliers": {
-                "residential": 1.00,
-                "commercial": 1.15,
-                "industrial": 0.90,
-                "hospital": 1.45,
-                "education": 1.10,
-                "hotel": 1.25,
-                "general_building": 1.05,
-                "infrastructure": 0.85,
-                "mixed_use": 1.18,
-            },
-        }
-
-    def _lookup_unit_cost(self, item_name: str, unit: str, rsmeans_data: Dict) -> float:
-        uc = rsmeans_data.get("unit_costs", {})
-        n = item_name.lower()
-        u = unit.lower()
-
-        vol_units = {"m3", "cu m", "cubic meter", "m³"}
-        area_units = {"m2", "sq m", "square meter", "m²"}
-        weight_units = {"kg", "kilogram", "tonne", "t"}
-        len_units = {"lm", "m", "linear meter", "rm"}
-        count_units = {"ea", "no", "nr", "each", "item"}
-
-        if "curtain wall" in n or "curtain_wall" in n:
-            return uc.get("curtain_wall_m2", 420.0)
-        if "cladding" in n or "facade" in n:
-            return uc.get("cladding_m2", 210.0)
-        if "glazing" in n or "glass" in n:
-            return uc.get("glazing_m2", 180.0)
-        if "roofing" in n or "roof" in n:
-            return uc.get("roofing_m2", 95.0)
-        if "waterproof" in n:
-            return uc.get("waterproofing_m2", 40.0)
-        if "structural steel" in n:
-            return uc.get("structural_steel_kg", 3.2)
-        if ("steel" in n or "rebar" in n or "reinforcement" in n) and u in weight_units:
-            return uc.get("rebar_kg", 1.8)
-        if "steel" in n and u in weight_units:
-            return uc.get("steel_kg", 2.5)
-        if "c40" in n or "grade 40" in n or "40mpa" in n:
-            return uc.get("concrete_grade_c40_m3", 185.0)
-        if "c30" in n or "grade 30" in n or "30mpa" in n:
-            return uc.get("concrete_grade_c30_m3", 165.0)
-        if "concrete" in n and u in vol_units:
-            return uc.get("concrete_m3", 150.0)
-        if "soffit" in n or "slab formwork" in n:
-            return uc.get("formwork_soffit_m2", 55.0)
-        if "formwork" in n or "shuttering" in n:
-            return uc.get("formwork_m2", 45.0)
-        if "brick" in n:
-            return uc.get("brick_m2", 75.0)
-        if "block" in n and u in area_units:
-            return uc.get("block_m2", 35.0)
-        if "masonry" in n:
-            return uc.get("masonry_m2", 65.0)
-        if "suspended ceiling" in n or "false ceiling" in n:
-            return uc.get("suspended_ceiling_m2", 60.0)
-        if "drylining" in n or "dry lining" in n or "drywall" in n:
-            return uc.get("drylining_m2", 45.0)
-        if "plaster" in n:
-            return uc.get("plaster_m2", 28.0)
-        if "tile" in n or "tiling" in n:
-            return uc.get("tiling_m2", 85.0)
-        if "floor_area" in n or "gfa" in n or "gross_floor" in n:
-            return 1200.0  # composite all-in building rate $/m² (structure + MEP + finishes)
-        if "floor" in n and u in area_units:
-            return uc.get("flooring_m2", 70.0)
-        if "paint" in n:
-            return uc.get("painting_m2", 18.0)
-        if "finish" in n:
-            return uc.get("finishes_m2", 55.0)
-        if "hvac" in n or "air conditioning" in n or "mechanical" in n:
-            return uc.get("hvac_m2", 120.0)
-        if "electrical" in n or "lighting" in n or "power" in n:
-            return uc.get("electrical_m2", 80.0)
-        if "plumbing" in n or "sanitary" in n or "pipe" in n:
-            return uc.get("plumbing_m2", 65.0)
-        if "fire" in n and ("sprinkler" in n or "protection" in n):
-            return uc.get("fire_protection_m2", 35.0)
-        if "excavat" in n and u in vol_units:
-            return uc.get("excavation_m3", 22.0)
-        if "backfill" in n:
-            return uc.get("backfill_m3", 18.0)
-        if "pil" in n and u in len_units:
-            return uc.get("piling_lm", 280.0)
-        if "drain" in n and u in len_units:
-            return uc.get("drainage_lm", 95.0)
-        if "insulation" in n:
-            return uc.get("insulation_m2", 30.0)
-        if "scaffold" in n:
-            return uc.get("scaffold_m2", 12.0)
-        if "door" in n and u in count_units:
-            return uc.get("door_ea", 850.0)
-        if "window" in n and u in count_units:
-            return uc.get("window_ea", 1200.0)
-        if "lift" in n or "elevator" in n:
-            return uc.get("lift_ea", 85000.0)
-
-        # Fallback by unit type
-        if u in vol_units:
-            return 120.0
-        if u in area_units:
-            return 55.0
-        if u in weight_units:
-            return 2.0
-        if u in len_units:
-            return 45.0
-        return 50.0
+        )
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        return result.get("rates", {}).get("adjusted_usd")
 
     async def extract_quantities(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
@@ -1458,7 +1342,8 @@ class ConstructionContainer(UniversalContainer):
         boq = p.get("boq") or data.get("boq") or data.get("line_items", [])
         budget = float(p.get("budget") or data.get("summary", {}).get("total_estimate", 0))
         schedule_start = p.get("schedule_start_date") or data.get("schedule_start_date")
-        rsmeans = self._get_rsmeans_data()
+        location = p.get("location") or data.get("location") or "US National Average"
+        project_type = p.get("project_type") or data.get("project_type") or "general_building"
 
         procurement_items: List[Dict] = []
 
@@ -1468,8 +1353,8 @@ class ConstructionContainer(UniversalContainer):
                 name = item.get("item", item.get("description", "Unknown"))
                 qty = item.get("quantity", 0)
                 unit = item.get("unit", "ea")
-                unit_cost = item.get("adjusted_rate", item.get("base_rate", 0))
-                total = item.get("total", qty * unit_cost)
+                unit_cost = item.get("adjusted_rate") or item.get("base_rate") or 0
+                total = item.get("total") or (qty * unit_cost)
                 cat, lead, supplier = self._classify_procurement_item(name)
                 procurement_items.append(self._build_procurement_item(
                     name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
@@ -1481,8 +1366,10 @@ class ConstructionContainer(UniversalContainer):
                 name = item.get("description", item.get("item", "Unknown"))
                 qty = item.get("quantity", 0)
                 unit = item.get("unit", "ea")
-                unit_cost = item.get("unit_price", self._lookup_unit_cost(name, unit, rsmeans))
-                total = qty * unit_cost
+                unit_cost = item.get("unit_price")
+                if unit_cost is None:
+                    unit_cost = await self._lookup_unit_cost(name, unit, location, project_type)
+                total = qty * (unit_cost or 0)
                 cat, lead, supplier = self._classify_procurement_item(name)
                 procurement_items.append(self._build_procurement_item(
                     name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
@@ -1505,8 +1392,8 @@ class ConstructionContainer(UniversalContainer):
                 if qty <= 0:
                     continue
                 clean_name = " ".join(str(item_name).split())  # collapse whitespace + newlines
-                unit_cost = self._lookup_unit_cost(clean_name, unit, rsmeans)
-                total = qty * unit_cost
+                unit_cost = await self._lookup_unit_cost(clean_name, unit, location, project_type)
+                total = qty * (unit_cost or 0)
                 cat, lead, supplier = self._classify_procurement_item(clean_name)
                 procurement_items.append(self._build_procurement_item(
                     clean_name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
@@ -1543,8 +1430,8 @@ class ConstructionContainer(UniversalContainer):
             "item": name,
             "quantity": qty,
             "unit": unit,
-            "unit_cost": round(unit_cost, 2),
-            "total_cost": round(total, 2),
+            "unit_cost": round(unit_cost or 0, 2),
+            "total_cost": round(total or 0, 2),
             "category": category,
             "lead_time_weeks": lead,
             "supplier_type": supplier,
