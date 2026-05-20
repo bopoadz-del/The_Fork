@@ -85,7 +85,17 @@ def test_text_is_fallback_only():
 
 # ── /v1/execute attaches artifacts ──────────────────────────────────────────
 
-def test_execute_response_carries_artifacts(client):
+def test_execute_response_carries_artifacts(client, monkeypatch):
+    # formula_executor now delegates to the LLM-backed v2 block (Reasoning
+    # Engine Plan 4). Mock the LLM seam so this plumbing test stays
+    # deterministic without a DEEPSEEK_API_KEY.
+    from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
+
+    async def _fake_llm(self, prompt):
+        return "result = 2 + 2"
+
+    monkeypatch.setattr(FormulaExecutorV2Block, "_call_llm", _fake_llm)
+
     r = client.post("/v1/execute", json={
         "block": "formula_executor", "input": "2 + 2", "params": {},
     }, headers=H)
