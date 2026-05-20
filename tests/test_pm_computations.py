@@ -169,3 +169,27 @@ def test_compute_cpm_empty_input():
 def test_compute_cpm_rejects_duplicate_ids():
     with pytest.raises(ValueError):
         compute_cpm(CPMInput(activities=[_act("A", 1), _act("A", 2)]))
+
+
+def test_compute_cpm_realistic_network():
+    """A 7-activity network with parallel branches, a lag, and an SS link."""
+    acts = [
+        _act("MOB", 5),
+        _act("EXC", 10, ["MOB"]),
+        _act("FND", 15, ["EXC"]),
+        Activity(id="STL", duration=20, predecessors=[
+            Dependency(predecessor_id="FND", type=DependencyType.FS, lag=2)]),
+        Activity(id="MEP", duration=18, predecessors=[
+            Dependency(predecessor_id="FND", type=DependencyType.SS, lag=5)]),
+        _act("ENV", 12, ["STL"]),
+        _act("FIT", 10, ["ENV", "MEP"]),
+    ]
+    out = compute_cpm(CPMInput(activities=acts, project_start=_date(2026, 6, 1)))
+    # longest path: MOB5 + EXC10 + FND15 + lag2 + STL20 + ENV12 + FIT10 = 74
+    assert out.project_duration == 74
+    assert out.critical_path == ["MOB", "EXC", "FND", "STL", "ENV", "FIT"]
+    by_id = {r.id: r for r in out.results}
+    assert by_id["MEP"].is_critical is False      # MEP branch is shorter
+    assert by_id["MEP"].total_float > 0
+    assert out.project_finish is not None
+    assert 0 <= out.critical_percentage <= 100
