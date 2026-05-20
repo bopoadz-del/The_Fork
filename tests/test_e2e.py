@@ -282,7 +282,6 @@ DRAWING_QTYS = {"concrete_c35": 1050, "rebar_500": 185}
 
 
 class TestConstructionBlocks:
-    pytestmark = pytest.mark.skip(reason='Legacy architecture tests - block/route expectations outdated')
 
     @pytest.mark.asyncio
     async def test_sympy_reasoning(self):
@@ -300,15 +299,28 @@ class TestConstructionBlocks:
         assert inner["items_analyzed"] == 3
 
     @pytest.mark.asyncio
-    async def test_boq_processor_inline_items(self):
+    async def test_boq_processor_file_csv(self):
+        """boq_processor parses real .csv/.xlsx BOQ files (no inline/demo path)."""
+        import tempfile, os
         from app.blocks.boq_processor import BOQProcessorBlock
         b = BOQProcessorBlock()
-        r = await b.execute({"items": BOQ_ITEMS}, {})
-        assert r["status"] == "success"
-        inner = _r(r)
-        assert inner.get("item_count") == 3
-        assert inner.get("total_cost") > 0
-        assert inner.get("source") == "inline"
+        f = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv", newline="")
+        f.write("description,quantity,unit,rate\n")
+        f.write("Concrete C35,1200,m3,240\n")
+        f.write("Rebar 500 MPa,180,t,920\n")
+        f.write("Formwork Slab,2400,m2,55\n")
+        f.close()
+        try:
+            r = await b.execute({"file_path": f.name}, {})
+            assert r["status"] == "success", f"BOQ parse failed: {_r(r).get('error')}"
+            inner = _r(r)
+            assert inner["item_count"] == 3
+            # 1200*240 + 180*920 + 2400*55 = 288000 + 165600 + 132000 = 585600
+            assert abs(inner["total_cost"] - 585_600) < 1, inner["total_cost"]
+            descs = {li["description"] for li in inner["line_items"]}
+            assert {"Concrete C35", "Rebar 500 MPa", "Formwork Slab"} == descs
+        finally:
+            os.unlink(f.name)
 
     @pytest.mark.asyncio
     async def test_boq_processor_no_input_error(self):
@@ -333,14 +345,26 @@ class TestConstructionBlocks:
         assert "materials" in inner or "grade_requirements" in inner
 
     @pytest.mark.asyncio
-    async def test_spec_analyzer_inline_materials(self):
+    async def test_spec_analyzer_material_extraction(self):
+        """spec_analyzer extracts material specs from raw spec text
+        (no inline materials/demo path — it parses PDF text or raw text)."""
         from app.blocks.spec_analyzer import SpecAnalyzerBlock
         b = SpecAnalyzerBlock()
-        r = await b.execute({"materials": SPEC_MATERIALS}, {})
+        spec_text = (
+            "Section 03300 - Cast-in-place Concrete: concrete shall be grade C40 "
+            "per ACI 318. Reinforcing steel shall be Grade 60 deformed bars. "
+            "Structural steel shall conform to ASTM A992. "
+            "Waterproofing membrane shall be Type IV below grade."
+        )
+        r = await b.execute({"text": spec_text}, {})
         assert r["status"] == "success"
         inner = _r(r)
-        assert inner.get("source") == "inline"
-        assert len(inner["materials"]) == 2
+        material_types = {m["material_type"] for m in inner["material_specs"]}
+        assert "concrete" in material_types
+        assert "rebar" in material_types or "structural_steel" in material_types
+        # grade C40 must be picked up by grade extraction
+        grades = {g.get("value", "").upper() for g in inner["grade_requirements"]}
+        assert "C40" in grades, inner["grade_requirements"]
 
     @pytest.mark.asyncio
     async def test_spec_analyzer_no_input_error(self):
@@ -373,24 +397,31 @@ class TestConstructionBlocks:
 
     @pytest.mark.asyncio
     async def test_historical_benchmark_lookup(self):
+        """Block does keyword matching on an item description (field 'item'),
+        and returns a flat rate result — not a nested {items, packages} map."""
         from app.blocks.historical_benchmark import HistoricalBenchmarkBlock
         b = HistoricalBenchmarkBlock()
-        r = await b.execute({"items": [{"item_key": "concrete_c35"}, {"item_key": "rebar_500"}]}, {})
+        r = await b.execute({"item": "Concrete C40", "unit": "m3"}, {})
         assert r["status"] == "success"
         inner = _r(r)
-        # Block returns {"items": {item_key: {...}}, "packages": {...}}
-        assert "items" in inner
-        bm = inner["items"]
-        assert "concrete_c35" in bm
-        assert "avg_cost" in bm["concrete_c35"]
+        assert inner["status"] == "success"
+        assert "concrete" in inner["matched_key"]
+        assert inner["rates"]["adjusted_usd"] > 0
+        assert inner["rates"]["low_usd"] <= inner["rates"]["high_usd"]
+        assert inner["unit"]
 
     @pytest.mark.asyncio
-    async def test_historical_benchmark_all_packages(self):
+    async def test_historical_benchmark_catalogue(self):
+        """The 'catalogue' action lists every benchmarked item with its base rate."""
         from app.blocks.historical_benchmark import HistoricalBenchmarkBlock
         b = HistoricalBenchmarkBlock()
-        r = await b.execute({}, {"operation": "all"})
+        r = await b.execute({}, {"action": "catalogue"})
+        assert r["status"] == "success"
         inner = _r(r)
-        assert inner is not None
+        assert inner["total_items"] > 0
+        assert len(inner["items"]) == inner["total_items"]
+        first = inner["items"][0]
+        assert "key" in first and "base_rate_usd" in first and "trade" in first
 
     @pytest.mark.asyncio
     async def test_formula_executor(self):
@@ -953,16 +984,27 @@ class TestFullPipeline:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestContainers:
-    pytestmark = pytest.mark.skip(reason='Legacy architecture tests - block/route expectations outdated')
 
     @pytest.mark.asyncio
     async def test_construction_container(self):
         from app.containers.construction import ConstructionContainer
         c = ConstructionContainer()
-        r = await c.process({}, {"action": "status"})
-        assert "status" in r
+        # health_check is a real routed action — exercises the container's dispatch.
+        r = await c.process({}, {"action": "health_check"})
+        assert r["status"] == "success"
+        assert r["action"] == "health_check"
+        assert r["total_actions"] > 0
+        assert isinstance(r["actions"], list) and len(r["actions"]) == r["total_actions"]
+        # the container delegates to the standalone blocks — boq/spec actions present
+        assert "boq_process" in r["actions"]
+        assert "spec_analyze" in r["actions"]
+        # an unknown action returns a clean error, never fabricated data
+        err = await c.process({}, {"action": "definitely_not_an_action"})
+        assert err["status"] == "error"
+        assert "definitely_not_an_action" in err["error"]
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Legacy architecture tests - block/route expectations outdated')
     async def test_security_container_create_key(self):
         from app.containers.security import SecurityContainer
         c = SecurityContainer()
@@ -971,6 +1013,7 @@ class TestContainers:
         assert key.startswith("cb_"), f"Expected cb_ prefix, got: {key}"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Legacy architecture tests - block/route expectations outdated')
     async def test_ai_core_container_leaderboard(self):
         from app.containers.ai_core import AICoreContainer
         c = AICoreContainer()
@@ -978,6 +1021,7 @@ class TestContainers:
         assert "rankings" in r
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Legacy architecture tests - block/route expectations outdated')
     async def test_store_container_stats(self):
         from app.containers.store import StoreContainer
         c = StoreContainer()
@@ -988,6 +1032,7 @@ class TestContainers:
         assert r["status"] == "success"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Legacy architecture tests - block/route expectations outdated')
     async def test_ml_container(self):
         from app.containers.ml import MLContainer
         c = MLContainer()
@@ -995,6 +1040,7 @@ class TestContainers:
         assert "status" in r
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Legacy architecture tests - block/route expectations outdated')
     async def test_reasoning_engine_container(self):
         from app.containers.reasoning_engine import ReasoningEngineContainer
         c = ReasoningEngineContainer()
