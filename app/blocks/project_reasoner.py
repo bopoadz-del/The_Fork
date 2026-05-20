@@ -19,13 +19,50 @@ from app.schemas.project_session import ProjectSession
 
 
 def _extract_json(text: str) -> dict:
-    """Pull the first {...} object out of an LLM reply (it may add prose or
-    fences). Raises ValueError when there is no parsable object."""
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    """Pull a JSON object out of an LLM reply (it may add prose or fences).
+    Tries the whole string first, then decodes the first object starting at
+    the first '{' — trailing prose (even prose containing a '}') is ignored.
+    Raises ValueError when there is no parsable object."""
+    if not isinstance(text, str):
         raise ValueError("no JSON object in LLM reply")
-    return json.loads(text[start:end + 1])
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("no JSON object in LLM reply")
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text, start)
+    except ValueError:
+        raise ValueError("no JSON object in LLM reply")
+    return obj
+
+
+# Per-step bound for the DELIVER prompt: every step's result is included, but
+# no single step may exceed this, so nothing is silently dropped.
+_DELIVER_STEP_LIMIT = 2500
+
+
+def _render_step_results(run) -> str:
+    """Format this turn's step results (step + computed output) for the
+    DELIVER prompt. Each output is bounded individually."""
+    lines = []
+    for i, sr in enumerate(run.step_results, 1):
+        if sr.status == "success":
+            rendered = json.dumps(sr.output, default=str)
+            if len(rendered) > _DELIVER_STEP_LIMIT:
+                rendered = rendered[:_DELIVER_STEP_LIMIT] + "… (truncated)"
+            lines.append(
+                f"{i}. {sr.type} (-> {sr.output_key or 'default'}): "
+                f"OK\n   output: {rendered}"
+            )
+        else:
+            lines.append(
+                f"{i}. {sr.type} (-> {sr.output_key or 'default'}): "
+                f"ERROR — {sr.error}"
+            )
+    return "\n".join(lines) if lines else "(no steps executed)"
 
 
 class ProjectReasonerBlock(UniversalBlock):
@@ -89,6 +126,7 @@ class ProjectReasonerBlock(UniversalBlock):
             or (str(input_data) if not isinstance(input_data, dict) else "")
         session: ProjectSession = data.get("session") or params.get("session")
 
+        request = request or ""
         if not request.strip():
             return {"status": "error", "error": "No request provided"}
         if session is None:
@@ -110,12 +148,15 @@ class ProjectReasonerBlock(UniversalBlock):
         run = await PlanExecutor().run(plan, session)
 
         # ── DELIVER ──────────────────────────────────────────────────────
+        # Build the prompt from THIS turn's step results, not the whole
+        # accumulated session blob — so the answer sees exactly what was just
+        # computed and no step's output is silently truncated away.
         deliver_prompt = (
             f"You planned and executed steps for this request:\n{request}\n\n"
             f"UNDERSTANDING: {plan.understanding}\n"
             f"EXECUTION STATUS: {run.status}\n"
-            f"RESULTS (session data):\n"
-            f"{json.dumps(session.data, default=str)[:6000]}\n\n"
+            f"STEP RESULTS (from this turn):\n"
+            f"{_render_step_results(run)}\n\n"
             f"Write a clear, concise answer for the user from these results. "
             f"If the status is error or partial, explain what is missing."
         )
@@ -126,7 +167,7 @@ class ProjectReasonerBlock(UniversalBlock):
 
         session.add_message("assistant", answer)
 
-        status = "success" if run.status == "success" else run.status
+        status = run.status
         return {
             "status": status,
             "answer": answer,

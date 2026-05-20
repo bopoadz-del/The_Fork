@@ -42,6 +42,32 @@ def _cache_key(task: str, variables: Dict[str, Any]) -> str:
     return f"{task.strip().lower()}|{names}"
 
 
+def _error(
+    message: str,
+    *,
+    attempts: int = 0,
+    generated_code: str = "",
+    traceback: Optional[str] = None,
+    error_type: Optional[str] = None,
+    task: str = "",
+) -> Dict[str, Any]:
+    """Build an error result with the FULL key set every error path emits.
+
+    The three error exits in ``process()`` previously returned inconsistent
+    keys, so a caller doing ``out["generated_code"]`` could KeyError depending
+    on which failure fired. This helper guarantees a uniform shape; the
+    ``traceback`` key is always present (a test asserts on it)."""
+    return {
+        "status": "error",
+        "error": message,
+        "generated_code": generated_code,
+        "traceback": traceback if traceback is not None else message,
+        "error_type": error_type,
+        "attempts": attempts,
+        "task": task,
+    }
+
+
 def _run_sandboxed_with_timeout(
     code: str, variables: Dict[str, Any], timeout_seconds: int
 ) -> SandboxResult:
@@ -150,7 +176,7 @@ class FormulaExecutorV2Block(UniversalBlock):
         variables = dict(data.get("variables") or data.get("input_values") or {})
 
         if not task.strip():
-            return {"status": "error", "error": "No task description provided"}
+            return _error("No task description provided")
 
         timeout_seconds = int(self.config.get("timeout_seconds", 10))
         session = data.get("session") or params.get("session")
@@ -190,9 +216,10 @@ class FormulaExecutorV2Block(UniversalBlock):
             try:
                 raw = await self._call_llm(prompt)
             except Exception as e:
-                return {"status": "error",
-                        "error": f"Code generation failed: {e}",
-                        "attempts": attempt, "task": task}
+                return _error(
+                    f"Code generation failed: {e}",
+                    attempts=attempt, task=task,
+                )
 
             code = _strip_fences(raw)
             last_code = code
@@ -201,6 +228,13 @@ class FormulaExecutorV2Block(UniversalBlock):
             )
             if sandbox.success:
                 if session is not None:
+                    # Caching contract: this mutates the SAME ProjectSession
+                    # object the caller passed in (threaded by reference
+                    # reasoner -> plan_executor -> here). The caller MUST call
+                    # ``store.save(session)`` after ``process()`` returns for
+                    # this write to persist — process() does not save itself.
+                    # See app/routers/project.py::project_ask for the real
+                    # round trip.
                     session.code_cache[key] = code
                 return {
                     "status": "success",
@@ -217,12 +251,11 @@ class FormulaExecutorV2Block(UniversalBlock):
             prior_code = code
             prior_error = sandbox.error or last_error
 
-        return {
-            "status": "error",
-            "error": last_error,
-            "generated_code": last_code,
-            "traceback": last_error,
-            "error_type": last_error_type,
-            "attempts": max_attempts,
-            "task": task,
-        }
+        return _error(
+            last_error,
+            generated_code=last_code,
+            traceback=last_error,
+            error_type=last_error_type,
+            attempts=max_attempts,
+            task=task,
+        )

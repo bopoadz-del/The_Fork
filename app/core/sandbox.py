@@ -24,8 +24,9 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 from RestrictedPython import compile_restricted, safe_builtins
-from RestrictedPython.Eval import default_guarded_getiter
+from RestrictedPython.Eval import default_guarded_getitem, default_guarded_getiter
 from RestrictedPython.Guards import (
+    full_write_guard,
     guarded_iter_unpack_sequence,
     guarded_unpack_sequence,
     safer_getattr,
@@ -86,11 +87,16 @@ class SandboxResult(BaseModel):
 
     success: bool
     stdout: str = ""
+    #: The genuine computed value of the result variable. May be a
+    #: non-JSON-serializable object (e.g. a datetime or a custom type); the
+    #: caller is responsible for handling it — ``model_dump_json()`` will fail
+    #: on such values unless the caller coerces ``result`` first.
     result: Any = None
     error: Optional[str] = None
     error_type: Optional[str] = None
-    #: Final values of injected/created variables (best effort, for debugging).
-    namespace: Dict[str, Any] = Field(default_factory=dict)
+    #: Final values of injected/created variables, coerced to ``repr()``
+    #: strings (best effort, for debugging). Always JSON-serializable.
+    namespace: Dict[str, str] = Field(default_factory=dict)
 
 
 def _make_guarded_import() -> Any:
@@ -135,6 +141,31 @@ def _build_builtins() -> Dict[str, Any]:
     return builtins
 
 
+def _deepcopy_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-copy injected state so sandboxed mutations cannot leak back to the
+    caller. Copies each key individually: a key whose value cannot be
+    deep-copied (e.g. a ``threading.Lock``) falls back to passing the original
+    object through, and a :class:`UserWarning` is emitted so the caller knows
+    isolation was downgraded for that key.
+    """
+    copied: Dict[str, Any] = {}
+    leaked: list[str] = []
+    for key, value in state.items():
+        try:
+            copied[key] = copy.deepcopy(value)
+        except Exception:
+            copied[key] = value
+            leaked.append(key)
+    if leaked:
+        warnings.warn(
+            "Sandbox isolation downgraded: could not deep-copy state key(s) "
+            f"{sorted(leaked)}; the caller's original object(s) are exposed "
+            "to sandboxed code and may be mutated.",
+            stacklevel=2,
+        )
+    return copied
+
+
 def _build_globals(state: Dict[str, Any]) -> Dict[str, Any]:
     """Assemble the exec globals: restricted builtins, RestrictedPython
     guards, and the injected session ``state``."""
@@ -143,11 +174,11 @@ def _build_globals(state: Dict[str, Any]) -> Dict[str, Any]:
         # RestrictedPython rewrites code to call these helpers by name.
         "_print_": PrintCollector,
         "_getattr_": safer_getattr,
-        "_getitem_": lambda obj, key: obj[key],
+        "_getitem_": default_guarded_getitem,
         "_getiter_": default_guarded_getiter,
         "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
         "_unpack_sequence_": guarded_unpack_sequence,
-        "_write_": lambda obj: obj,
+        "_write_": full_write_guard,
     }
     # Inject session state as ordinary, mutable variables.
     glb.update(state)
@@ -164,7 +195,10 @@ def run_sandboxed(
     Args:
         code: Untrusted Python source to run.
         state: Variables injected into the namespace before execution
-            (the session-state round-trip). Defaults to empty.
+            (the session-state round-trip). Defaults to empty. Note: the
+            result is read only from the executed code's *local* scope, so a
+            state key named ``result_var`` (default ``"result"``) is injected
+            but silently ignored on read-back unless the code reassigns it.
         result_var: Name of the variable read back into
             :attr:`SandboxResult.result` after a successful run. If the
             variable is never assigned, ``result`` stays ``None``.
@@ -173,14 +207,19 @@ def run_sandboxed(
         A :class:`SandboxResult`. This function never raises for errors
         *inside* the sandboxed code — compile errors, blocked imports,
         and runtime exceptions are all captured into the result.
+
+    Raises:
+        SandboxError: For a *setup* misconfiguration by the caller (an
+            empty or non-string ``result_var``), never for sandboxed-code
+            failures.
     """
+    if not isinstance(result_var, str) or not result_var.isidentifier():
+        raise SandboxError(
+            f"result_var must be a valid Python identifier, got {result_var!r}."
+        )
     # Deep-copy so sandboxed mutations of injected mutables (lists, dicts)
     # never leak back into the caller's session state.
-    try:
-        injected = copy.deepcopy(dict(state or {}))
-    except Exception:
-        # Un-copyable value — fall back to a shallow copy rather than fail.
-        injected = dict(state or {})
+    injected = _deepcopy_state(state or {})
     glb = _build_globals(injected)
 
     # --- compile (catches SyntaxError and RestrictedPython rejections) -----
@@ -246,11 +285,20 @@ def _extract_stdout(local_ns: Dict[str, Any]) -> str:
         return ""
 
 
-def _safe_namespace(local_ns: Dict[str, Any]) -> Dict[str, Any]:
+def _safe_namespace(local_ns: Dict[str, Any]) -> Dict[str, str]:
     """Return the user-visible namespace, dropping RestrictedPython internals
-    (the ``_print`` collector, dunder names) for clean inspection."""
-    return {
-        k: v
-        for k, v in local_ns.items()
-        if not k.startswith("_")
-    }
+    (the ``_print`` collector, dunder names) for clean inspection.
+
+    Values are coerced to ``repr()`` strings so the namespace is always
+    JSON-serializable: it may contain functions, custom objects, etc., and
+    serializing those directly would crash :meth:`SandboxResult.model_dump`.
+    """
+    safe: Dict[str, str] = {}
+    for k, v in local_ns.items():
+        if k.startswith("_"):
+            continue
+        try:
+            safe[k] = repr(v)
+        except Exception:  # pragma: no cover - defensive
+            safe[k] = f"<unrepresentable {type(v).__name__}>"
+    return safe

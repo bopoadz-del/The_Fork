@@ -240,3 +240,93 @@ async def test_reasoner_reports_step_failure():
 def test_reasoner_is_registered():
     assert "project_reasoner" in BLOCK_REGISTRY
     assert get_block("project_reasoner") is ProjectReasonerBlock
+
+
+# ── code-review fixes ────────────────────────────────────────────────────
+
+
+class _CapturingReasoner(_MockReasoner):
+    """Like _MockReasoner but records the DELIVER prompt for inspection."""
+
+    async def _call_llm(self, prompt: str) -> str:
+        if self.calls == 1:                  # the DELIVER call is the 2nd
+            self.deliver_prompt = prompt
+        return await super()._call_llm(prompt)
+
+
+@pytest.mark.asyncio
+async def test_deliver_prompt_contains_this_turn_step_output():
+    # The DELIVER prompt must be built from this turn's StepResult.output,
+    # not from a blunt slice of the whole session blob.
+    session = _session_with_activities()
+    plan_json = json.dumps({"understanding": "critical path",
+                            "steps": [{"type": "compute_cpm"}]})
+    block = _CapturingReasoner(plan_json, "answer")
+    await block.process({"request": "critical path?", "session": session})
+    prompt = block.deliver_prompt
+    assert "STEP RESULTS (from this turn)" in prompt
+    assert "compute_cpm" in prompt
+    # the actual computed value (project_duration 10) must be in the prompt
+    assert "project_duration" in prompt
+    assert "10" in prompt
+    # and the old whole-session dump phrasing must be gone
+    assert "session data" not in prompt.lower()
+
+
+@pytest.mark.asyncio
+async def test_from_session_skips_non_allowlisted_key():
+    # generate_code's `from_session` is LLM-controlled — a key outside the
+    # allowlist must be silently skipped, not injected into the sandbox.
+    session = InMemorySessionStore().get_or_create("s1")
+    session.data["cpm_results"] = {"project_duration": 10}   # allowlisted
+    session.data["secret"] = "leak-me"                       # NOT allowlisted
+
+    captured = {}
+
+    class _SpyCodeGen(_MockCodeGen):
+        async def process(self, input_data, params=None):
+            captured["variables"] = dict(input_data.get("variables") or {})
+            return await super().process(input_data, params)
+
+    plan = ExecutionPlan(steps=[PlanStep(
+        type="generate_code",
+        args={"task": "x", "variables": {"a": 1, "b": 2},
+              "from_session": ["cpm_results", "secret"]},
+    )])
+    await PlanExecutor(code_block=_SpyCodeGen([])).run(plan, session)
+    assert "cpm_results" in captured["variables"]
+    assert "secret" not in captured["variables"]
+
+
+def test_extract_json_survives_trailing_prose_with_brace():
+    from app.blocks.project_reasoner import _extract_json
+    reply = ('{"understanding": "x", "steps": []}\n'
+             "Note: this plan uses the {placeholder} convention. Thanks!")
+    parsed = _extract_json(reply)
+    assert parsed["understanding"] == "x"
+    assert parsed["steps"] == []
+
+
+def test_extract_json_parses_clean_json_directly():
+    from app.blocks.project_reasoner import _extract_json
+    parsed = _extract_json('{"understanding": "y", "steps": []}')
+    assert parsed["understanding"] == "y"
+
+
+@pytest.mark.asyncio
+async def test_reasoner_handles_none_request():
+    # request=None must yield the error dict, not an AttributeError.
+    session = _session_with_activities()
+    block = _MockReasoner("unused", "unused")
+    out = await block.process({"request": None, "session": session})
+    assert out["status"] == "error"
+    assert "request" in out["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_step_result_carries_output():
+    session = _session_with_activities()
+    plan = ExecutionPlan(steps=[PlanStep(type="compute_cpm")])
+    result = await PlanExecutor().run(plan, session)
+    assert result.step_results[0].output is not None
+    assert result.step_results[0].output["project_duration"] == 10

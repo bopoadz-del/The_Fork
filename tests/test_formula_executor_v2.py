@@ -182,6 +182,41 @@ async def test_v2_reuses_cached_code_without_calling_the_llm():
     assert block.llm_calls == 1             # LLM NOT called again
 
 
+@pytest.mark.asyncio
+async def test_v2_cache_survives_a_full_store_round_trip():
+    # The cache contract: process() mutates the session by reference, and the
+    # CALLER must persist it. InMemorySessionStore.get() returns a deepcopy,
+    # so this only works if the session is saved AFTER process() writes the
+    # cache — mirroring project_ask's reasoner -> ... -> save(session) flow.
+    store = InMemorySessionStore()
+
+    # Turn 1: cache miss — process() writes code_cache, then the caller saves.
+    session = store.get_or_create("round-trip")
+    block1 = _MockLLMBlock(["result = length_m * 3"])
+    first = await block1.process({
+        "task": "triple the length", "variables": {"length_m": 4},
+        "session": session,
+    })
+    assert first["status"] == "success"
+    assert first.get("cache_hit") is False
+    assert block1.llm_calls == 1
+    store.save(session)                      # caller persists the turn
+
+    # Turn 2: a fresh session object is loaded from the store; the cached
+    # code must be there, so process() hits the cache and skips the LLM.
+    reloaded = store.get("round-trip")
+    assert reloaded is not None
+    block2 = _MockLLMBlock([])               # no scripted code: LLM use -> error
+    second = await block2.process({
+        "task": "triple the length", "variables": {"length_m": 7},
+        "session": reloaded,
+    })
+    assert second["status"] == "success"
+    assert second["cache_hit"] is True
+    assert second["result"] == 21            # cached code re-run with new value
+    assert block2.llm_calls == 0             # LLM NOT called
+
+
 # --------------------------------------------------------------------------
 # Task 5: Deprecation wrapper + block registration
 # --------------------------------------------------------------------------

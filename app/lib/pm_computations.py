@@ -312,6 +312,15 @@ _XER_PRED_TYPE = {
 }
 
 
+def _xer_hours(value) -> float:
+    """Parse an .xer hour-count cell; a malformed cell defaults to 0 rather
+    than aborting the whole import."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def parse_xer(text: str) -> List[Activity]:
     """Parse Primavera P6 `.xer` text into Activity objects.
 
@@ -361,7 +370,7 @@ def parse_xer(text: str) -> List[Activity]:
             continue
         ptype = _XER_PRED_TYPE.get(r.get("pred_type", "PR_FS"),
                                    DependencyType.FS)
-        lag_days = round(float(r.get("lag_hr_cnt") or 0) / _HOURS_PER_DAY)
+        lag_days = round(_xer_hours(r.get("lag_hr_cnt")) / _HOURS_PER_DAY)
         preds_by_tid.setdefault(tid, []).append(Dependency(
             predecessor_id=pred_code, type=ptype, lag=int(lag_days),
         ))
@@ -370,7 +379,7 @@ def parse_xer(text: str) -> List[Activity]:
     for r in task_rows:
         tid = r.get("task_id")
         dur_days = round(
-            float(r.get("target_drtn_hr_cnt") or 0) / _HOURS_PER_DAY
+            _xer_hours(r.get("target_drtn_hr_cnt")) / _HOURS_PER_DAY
         )
         activities.append(Activity(
             id=code_by_tid.get(tid) or tid,

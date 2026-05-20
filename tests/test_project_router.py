@@ -72,6 +72,30 @@ def test_ask_rejects_empty_request(client):
     assert resp.status_code == 422 or resp.json().get("status") == "error"
 
 
+def test_ask_rejects_oversized_activity_list(client):
+    # More than 5000 activities must be rejected to bound session memory.
+    big = [{"id": f"A{i}", "duration": 1, "predecessors": []}
+           for i in range(5001)]
+    resp = client.post("/v1/project/ask", json={
+        "session_id": "p_big",
+        "request": "go",
+        "activities": big,
+    }, headers=_HEADERS)
+    assert resp.status_code == 422
+
+
+def test_ask_accepts_activity_list_at_the_cap(client):
+    # Exactly 5000 activities is within the cap and must be accepted.
+    at_cap = [{"id": f"A{i}", "duration": 1, "predecessors": []}
+              for i in range(5000)]
+    resp = client.post("/v1/project/ask", json={
+        "session_id": "p_cap",
+        "request": "go",
+        "activities": at_cap,
+    }, headers=_HEADERS)
+    assert resp.status_code == 200
+
+
 def test_project_route_is_mounted():
     paths = {r.path for r in app.routes}
     assert "/v1/project/ask" in paths

@@ -1094,17 +1094,25 @@ async function askProject(message) {
             return;
         }
         const data = await resp.json();
+        // The router returns HTTP 200 even when the reasoner failed —
+        // surface the error visibly instead of an empty answer bubble.
+        if (data.status === 'error' || data.error) {
+            const msg = data.error || 'Project reasoning failed.';
+            surfaceError(msg, 'Project reasoning');
+            addMessage(msg, 'error');
+            return;
+        }
         addMessage(data.answer || '(no answer)', 'assistant');
         if (data.understanding) {
             setOutcomes(
                 `<div class="outcome-item">
                    <div class="outcome-label">Understood as</div>
                    <div class="outcome-value" style="font-size:13px;">`
-                + (data.understanding) + `</div></div>`);
+                + escapeHtml(data.understanding) + `</div></div>`);
         }
         if (Array.isArray(data.artifacts)) {
             data.artifacts.forEach(a => addMessage(
-                `📎 Artifact: ${a.name} (${a.type})`, 'system',
+                `📎 Artifact: ${escapeHtml(String(a.name))} (${escapeHtml(String(a.type))})`, 'system',
                 { persist: false }));
         }
     } catch (e) {

@@ -37,6 +37,8 @@ class StepResult(BaseModel):
     output_key: str
     status: str                    # 'success' | 'error'
     error: str = ""
+    output: Any = None             # this step's computed value (or a compact
+                                   # summary of it when large)
 
 
 class PlanRunResult(BaseModel):

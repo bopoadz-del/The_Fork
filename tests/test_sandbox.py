@@ -1,10 +1,13 @@
 """Tests for the RestrictedPython sandbox — Reasoning Engine Plan 3."""
 
+import threading
+
 import pytest
 
 from app.core.sandbox import (
     ALLOWED_MODULES,
     BLOCKED_BUILTINS,
+    SandboxError,
     SandboxResult,
     run_sandboxed,
 )
@@ -98,7 +101,8 @@ def test_state_round_trip_through_namespace():
     r = run_sandboxed("total = sum(crew)\nresult = total", state)
     assert r.success is True
     assert r.result == 12
-    assert r.namespace["total"] == 12
+    # namespace values are coerced to repr() strings for JSON-safety.
+    assert r.namespace["total"] == "12"
 
 
 def test_injected_state_is_copied_not_mutated_in_caller():
@@ -154,3 +158,43 @@ def test_sandbox_never_raises_for_bad_code():
     # Whatever the input, run_sandboxed returns a SandboxResult.
     for bad in ["@@@", "raise Exception('boom')", "1/0", "import os"]:
         assert isinstance(run_sandboxed(bad), SandboxResult)
+
+
+# --- Code-review fixes: isolation downgrade + JSON round-trip -------------
+
+def test_uncopyable_state_does_not_mutate_callers_dict():
+    # A threading.Lock cannot be deep-copied. Isolation is downgraded for
+    # that key (with a warning), but the caller's *dict* must stay intact.
+    lock = threading.Lock()
+    state = {"lock": lock, "items": [1, 2, 3]}
+    with pytest.warns(UserWarning, match="isolation downgraded"):
+        run_sandboxed("items.append(99)", state)
+    # Caller's dict identity/contents untouched: copyable keys still isolated.
+    assert state == {"lock": lock, "items": [1, 2, 3]}
+    assert state["lock"] is lock
+
+
+def test_copyable_keys_stay_isolated_even_with_an_uncopyable_sibling():
+    # The un-copyable Lock must not drag copyable siblings into shared state.
+    state = {"lock": threading.Lock(), "items": [1, 2, 3]}
+    with pytest.warns(UserWarning):
+        run_sandboxed("items.append(99)", state)
+    assert state["items"] == [1, 2, 3]
+
+
+def test_sandbox_result_json_round_trips_with_a_defined_function():
+    # Code that defines a function leaves a function object in the namespace;
+    # model_dump_json() must not crash on it (namespace is repr-coerced).
+    code = "def helper(x):\n    return x * 2\nresult = helper(21)"
+    r = run_sandboxed(code)
+    assert r.success is True and r.result == 42
+    payload = r.model_dump_json()  # must not raise
+    assert isinstance(payload, str)
+    # The function survives in the namespace as a repr string.
+    assert "helper" in r.namespace
+    assert isinstance(r.namespace["helper"], str)
+
+
+def test_invalid_result_var_raises_sandbox_error():
+    with pytest.raises(SandboxError):
+        run_sandboxed("result = 1", result_var="not an identifier")

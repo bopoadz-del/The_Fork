@@ -46,6 +46,14 @@ async def project_ask(
     if not body.request.strip():
         raise HTTPException(422, "request must not be empty")
 
+    # Cap client-supplied activities to bound session-store memory growth.
+    _MAX_ACTIVITIES = 5000
+    if body.activities is not None and len(body.activities) > _MAX_ACTIVITIES:
+        raise HTTPException(
+            422,
+            f"activities exceeds the maximum of {_MAX_ACTIVITIES}",
+        )
+
     session = _store.get_or_create(body.session_id)
     if body.activities is not None:
         session.data["activities"] = body.activities

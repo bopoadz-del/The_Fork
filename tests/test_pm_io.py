@@ -41,6 +41,29 @@ def test_parse_xer_empty_input_returns_empty_list():
     assert parse_xer("%E\n") == []
 
 
+def test_parse_xer_survives_non_numeric_duration():
+    # A malformed target_drtn_hr_cnt cell must default to 0, not abort parse.
+    xer = _MINIMAL_XER.replace(
+        "\t".join(["%R", "1001", "A", "Mobilise", "40"]),
+        "\t".join(["%R", "1001", "A", "Mobilise", "N/A"]),
+    )
+    acts = parse_xer(xer)
+    assert {a.id for a in acts} == {"A", "B"}
+    mob = next(a for a in acts if a.id == "A")
+    assert mob.duration == 0            # malformed cell -> 0
+
+
+def test_parse_xer_survives_non_numeric_lag():
+    # A malformed lag_hr_cnt cell must default to 0, not abort parse.
+    xer = _MINIMAL_XER.replace(
+        "\t".join(["%R", "1002", "1001", "PR_FS", "0"]),
+        "\t".join(["%R", "1002", "1001", "PR_FS", "bad"]),
+    )
+    acts = parse_xer(xer)
+    exc = next(a for a in acts if a.id == "B")
+    assert exc.predecessors[0].lag == 0
+
+
 from openpyxl import Workbook
 
 from app.lib.excel_templates import (
