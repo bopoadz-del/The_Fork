@@ -5093,8 +5093,17 @@ Total Extension of Time Sought: {total_delay} days
                             "error", "Cost estimate unavailable"
                         ) if isinstance(cost_result, dict) else "Cost estimate unavailable",
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                # Surface the failure honestly rather than silently dropping
+                # the panel — consistent with the else-branch above.
+                panels.append({
+                    "type": "cost_estimate",
+                    "title": "Cost Estimate",
+                    "data": {},
+                    "line_items": [],
+                    "unpriced_items": [],
+                    "error": f"Cost estimate failed: {e}",
+                })
         # Procurement: if we extracted real quantities, derive the procurement
         # list inline so the user sees it without having to click another button.
         # Otherwise just expose the button for manual triggering.
