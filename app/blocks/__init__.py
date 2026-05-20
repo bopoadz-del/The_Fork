@@ -25,6 +25,7 @@ from .drawing_qto import DrawingQTOBlock
 from .primavera_parser import PrimaveraParserBlock
 from .spec_analyzer import SpecAnalyzerBlock
 from .formula_executor import FormulaExecutorBlock
+from .formula_executor_v2 import FormulaExecutorV2Block
 from .sympy_reasoning import SymPyReasoningBlock
 from .historical_benchmark import HistoricalBenchmarkBlock
 from .smart_orchestrator import SmartOrchestratorBlock
@@ -75,6 +76,7 @@ BLOCK_REGISTRY = {
     "primavera_parser":     PrimaveraParserBlock,
     "spec_analyzer":        SpecAnalyzerBlock,
     "formula_executor":     FormulaExecutorBlock,
+    "formula_executor_v2":  FormulaExecutorV2Block,
     "sympy_reasoning":      SymPyReasoningBlock,
     "historical_benchmark": HistoricalBenchmarkBlock,
     "smart_orchestrator":   SmartOrchestratorBlock,
