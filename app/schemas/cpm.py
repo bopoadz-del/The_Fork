@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from enum import Enum
 from typing import List, Optional
 
@@ -29,6 +29,25 @@ class WorkCalendar(BaseModel):
     """
     work_weekdays: List[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
     holidays: List[date] = Field(default_factory=list)
+
+    def nth_working_day(self, start: date, n: int) -> date:
+        """Calendar date of the n-th working day (0-indexed); offset 0 is the
+        first working day on or after `start`."""
+        work = set(self.work_weekdays)
+        hol = set(self.holidays)
+
+        def is_working(d: date) -> bool:
+            return d.weekday() in work and d not in hol
+
+        d = start
+        while not is_working(d):
+            d += timedelta(days=1)
+        count = 0
+        while count < n:
+            d += timedelta(days=1)
+            if is_working(d):
+                count += 1
+        return d
 
 
 class Activity(BaseModel):
