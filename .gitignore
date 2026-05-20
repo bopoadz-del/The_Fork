@@ -61,3 +61,4 @@ claudebot/KEYS.md
 
 # Runtime data directory (uploads, SQLite DB, audit log)
 data/
+.playwright-mcp/
