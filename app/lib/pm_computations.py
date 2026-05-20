@@ -251,3 +251,17 @@ def resource_histogram(
         by_trade_totals=by_trade_totals,
         total_manhours=round(total_manhours, 2),
     )
+
+
+def gantt_data(results: List[CPMResult]) -> List[GanttBar]:
+    """One Gantt bar per activity, sorted by early start (then early finish)."""
+    bars = [
+        GanttBar(
+            id=r.id, name=r.name,
+            start_day=r.early_start_day, end_day=r.early_finish_day,
+            is_critical=r.is_critical,
+        )
+        for r in results
+    ]
+    bars.sort(key=lambda b: (b.start_day, b.end_day))
+    return bars

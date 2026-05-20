@@ -72,3 +72,23 @@ def test_resource_histogram_total_manhours():
     out = compute_cpm(CPMInput(activities=acts))
     hist = resource_histogram(out.results, acts, period_unit="week")
     assert hist.total_manhours == 320
+
+
+from app.lib.pm_computations import gantt_data
+
+
+def test_gantt_data_one_bar_per_activity():
+    acts = [_act("A", 3), _act("B", 5, ["A"])]
+    out = compute_cpm(CPMInput(activities=acts))
+    bars = gantt_data(out.results)
+    assert len(bars) == 2
+    a = next(b for b in bars if b.id == "A")
+    assert (a.start_day, a.end_day) == (0, 3)
+    assert a.is_critical is True
+
+
+def test_gantt_data_sorted_by_start():
+    acts = [_act("A", 3), _act("B", 5, ["A"]), _act("C", 2)]
+    bars = gantt_data(compute_cpm(CPMInput(activities=acts)).results)
+    starts = [b.start_day for b in bars]
+    assert starts == sorted(starts)
