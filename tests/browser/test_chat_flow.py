@@ -22,27 +22,20 @@ def test_send_message_streams_to_outcomes_panel(app_page, browser_console, brows
     assert has_answer or has_toast
 
 
-def test_outcomes_panel_refreshes_per_question(app_page):
-    """The 'Latest answer' card in the outcomes panel updates when a new question is sent.
+def test_plain_question_opens_no_panel(app_page):
+    """A plain chat question gets a plain reply — the side panel stays closed.
 
-    Regression test for the bug where the outcomes panel was stuck on the last
-    file-upload result no matter what the user asked.
+    Roadmap V2 · Epic 4: the always-on results dashboard is removed; the UI
+    reads as a chatbot. The artifacts panel opens only when a reply carries an
+    artifact, never on an ordinary question.
     """
-    # First question
-    app_page.locator("#textInput").fill("first question")
+    app_page.locator("#textInput").fill("a plain question")
     app_page.locator("#sendBtn").click()
-    app_page.wait_for_timeout(1500)
-    first_html = app_page.locator("#outcomes").inner_html()
+    app_page.wait_for_timeout(2000)
 
-    # Second question — should update outcomes
-    app_page.locator("#textInput").fill("second question")
-    app_page.locator("#sendBtn").click()
-    app_page.wait_for_timeout(1500)
-    second_html = app_page.locator("#outcomes").inner_html()
-
-    # The HTML should change; specifically, "second question" should appear somewhere.
-    assert second_html != first_html
-    assert "second question" in second_html or "Latest answer" in second_html
+    panel = app_page.locator("#outcomesPanel")
+    assert not panel.evaluate("el => el.classList.contains('open')")
+    assert panel.evaluate("el => getComputedStyle(el).display") == "none"
 
 
 def test_clear_chat_resets_history(app_page):

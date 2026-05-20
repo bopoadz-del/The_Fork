@@ -51,8 +51,14 @@
         button { padding: 8px 16px; background: #8b5cf6; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
         button:hover { background: #7c4ddb; }
         button:disabled { background: #333; cursor: not-allowed; }
-        .outcomes { width: 320px; background: #0a0a0a; border-left: 1px solid #222; padding: 20px; overflow-y: auto; }
-        .outcomes h3 { margin-bottom: 16px; color: #fff; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+        /* Side panel reads as an on-demand artifacts panel (Roadmap V2 · Epic 4),
+           not an always-on dashboard. Hidden until a reply carries an artifact. */
+        .outcomes { width: 340px; background: #0a0a0a; border-left: 1px solid #222; padding: 20px; overflow-y: auto; display: none; }
+        .outcomes.open { display: block; }
+        .outcomes-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .outcomes h3 { color: #fff; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+        .panel-close { background: transparent; border: 1px solid #333; color: #888; border-radius: 6px; padding: 4px 9px; font-size: 13px; cursor: pointer; }
+        .panel-close:hover { border-color: #666; color: #fff; }
         .outcome-item { padding: 12px; background: #1a1a1a; border-radius: 8px; margin-bottom: 12px; border: 1px solid #2a2a2a; }
         .outcome-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 4px; }
         .outcome-value { font-size: 18px; color: #8b5cf6; font-weight: 600; }
@@ -107,11 +113,10 @@
         
         <div class="section">
             <span>Projects</span>
+            <button onclick="createProject()" title="Create a new project">+ New</button>
         </div>
         <div class="projects" id="projectsList">
-            <div class="project active">Diriyah Phase 1</div>
-            <div class="project">Qiddam Tower</div>
-            <div class="project">KAUST Lab</div>
+            <div class="drive-empty">Loading projects…</div>
         </div>
         
         <div class="section" style="margin-top: 16px;">
@@ -152,8 +157,11 @@
         </div>
     </div>
     
-    <div class="outcomes">
-        <h3>Results</h3>
+    <div class="outcomes" id="outcomesPanel">
+        <div class="outcomes-head">
+            <h3 id="outcomesTitle">Artifacts</h3>
+            <button class="panel-close" onclick="closeArtifactPanel()" title="Close panel">✕</button>
+        </div>
         <div id="outcomes"></div>
     </div>
     
@@ -517,8 +525,30 @@ function addMessage(text, role = 'assistant', { persist = true } = {}) {
     return bubble; // caller can use this to mutate during streaming
 }
 
+// The side panel is an on-demand artifacts surface (Roadmap V2 · Epic 4).
+// setOutcomes only fills its content; it does NOT show the panel — call
+// openArtifactPanel() explicitly when a reply genuinely carries an artifact.
 function setOutcomes(html) {
     document.getElementById('outcomes').innerHTML = html;
+}
+
+function openArtifactPanel(title) {
+    const panel = document.getElementById('outcomesPanel');
+    if (title) document.getElementById('outcomesTitle').textContent = title;
+    panel.classList.add('open');
+}
+
+function closeArtifactPanel() {
+    document.getElementById('outcomesPanel').classList.remove('open');
+}
+
+// Show artifacts in the side panel — only when there is at least one.
+// A plain chat reply with no artifacts leaves the panel closed.
+function showArtifacts(artifacts, title) {
+    if (!artifacts || !artifacts.length) return false;
+    setOutcomes(renderArtifacts(artifacts));
+    openArtifactPanel(title || 'Artifacts');
+    return true;
 }
 
 // ── Unified error surfacing ─────────────────────────────────────────────
@@ -591,6 +621,7 @@ function resetChat() {
         </div>
     `;
     setOutcomes('');
+    closeArtifactPanel();
     clearActiveFileContext();
     chatHistory = [];
     saveHistory();
@@ -1025,20 +1056,11 @@ function startAgentStream({ agent, prompt, history, bubble, askedAt, userQuestio
             const answer = finalText || '_(no response)_';
             chatHistory.push({ role: 'assistant', content: answer });
             saveHistory();
-            setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">${(toolCalls.length ? '🛠 ' : '💬 ')}Agent: ${escapeHtml(agent)}</div>
-                <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}${toolCalls.length ? ` · ${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''}` : ''}</div>
-                <div style="color:#ccc;font-size:12px;margin-top:8px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
-                <div style="color:#eee;font-size:13px;margin-top:8px;">${renderMarkdown(answer)}</div>
-            </div>`);
+            // Agent reply lives in the chat thread — no auto-opened panel.
         } catch (err) {
             if (err.name !== 'AbortError') {
                 surfaceError(err, `Agent ${agent}`);
                 bubble.innerHTML = `<span style="color:#ff6666;">Error: ${escapeHtml(err.message)}</span>`;
-                setOutcomes(`<div class="outcome-item">
-                    <div class="outcome-label" style="color:#cc6666;">⚠️ Agent failed</div>
-                    <div style="color:#cc8888;font-size:12px;margin-top:6px;">${escapeHtml(err.message)}</div>
-                </div>`);
             }
         } finally {
             activeChatController = null;
@@ -1057,16 +1079,107 @@ function renderToolBadges(toolCalls) {
         `</div>`;
 }
 
+// ── Projects sidebar — real /v1/projects, scopes the chat ─────────
+// Roadmap V2 · Epic 4 Slice B. The sidebar lists real projects; selecting
+// one scopes project-mode chat to it (its id becomes the reasoning session).
+let projects = [];
+let activeProjectId = null;
+const ACTIVE_PROJECT_KEY = 'cerebrum_active_project_v1';
+
+function activeProject() {
+    return projects.find(p => p.id === activeProjectId) || null;
+}
+
+async function loadProjects() {
+    const list = document.getElementById('projectsList');
+    try {
+        const resp = await fetch(`${API_BASE}/v1/projects`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!resp.ok) throw await readApiError(resp);
+        const data = await resp.json();
+        projects = data.projects || [];
+    } catch (err) {
+        surfaceError(err, 'Projects', { toast: false });
+        list.innerHTML = '<div class="drive-empty">Could not load projects</div>';
+        return;
+    }
+    try {
+        const stored = localStorage.getItem(ACTIVE_PROJECT_KEY);
+        if (stored && projects.some(p => p.id === stored)) activeProjectId = stored;
+    } catch (e) {}
+    renderProjects();
+}
+
+function renderProjects() {
+    const list = document.getElementById('projectsList');
+    if (!projects.length) {
+        list.innerHTML = '<div class="drive-empty">No projects yet — click + New</div>';
+        return;
+    }
+    list.innerHTML = projects.map(p => `
+        <div class="project ${p.id === activeProjectId ? 'active' : ''}"
+             onclick="selectProject('${p.id}')" title="${escapeHtml(p.client || '')}">
+            ${escapeHtml(p.name)}
+        </div>
+    `).join('');
+}
+
+function selectProject(id) {
+    const proj = projects.find(p => p.id === id);
+    if (!proj) return;
+    activeProjectId = id;
+    try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
+    renderProjects();
+    // Selecting a project implies project-scoped chat.
+    if (!projectMode) {
+        projectMode = true;
+        const toggle = document.getElementById('projectModeToggle');
+        if (toggle) toggle.checked = true;
+    }
+    const docCount = (proj.documents || []).length;
+    addMessage(
+        `Project "${proj.name}" selected — chat is now scoped to it`
+        + (docCount ? ` (${docCount} document${docCount > 1 ? 's' : ''}).` : '.'),
+        'system', { persist: false }
+    );
+}
+
+async function createProject() {
+    const name = (prompt('New project name:') || '').trim();
+    if (!name) return;
+    try {
+        const resp = await fetch(`${API_BASE}/v1/projects`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${API_KEY}`,
+            },
+            body: JSON.stringify({ name }),
+        });
+        if (!resp.ok) throw await readApiError(resp);
+        const proj = await resp.json();
+        projects.unshift(proj);
+        addMessage(`Project "${proj.name}" created.`, 'system', { persist: false });
+        selectProject(proj.id);
+    } catch (err) {
+        surfaceError(err, 'Create project');
+    }
+}
+
 // ── Project reasoning mode (Reasoning Engine Plan 6) ──────────────
 let projectMode = false;
-// Per-tab session id so follow-up questions build on prior state.
+// Fallback per-tab session id when no real project is selected.
 const projectSessionId = 'proj-' + Math.random().toString(36).slice(2, 11);
 
 function onProjectModeChange(on) {
     projectMode = on;
+    const proj = activeProject();
     addMessage(
         on
-            ? 'Project mode ON — I will reason over your project (CPM, manpower, compression, custom analysis).'
+            ? (proj
+                ? `Project mode ON — scoped to "${proj.name}". I will reason over this project (CPM, manpower, compression, custom analysis).`
+                : 'Project mode ON — I will reason over your project. Pick a project in the sidebar to scope it.')
             : 'Project mode OFF — back to standard chat.',
         'system', { persist: false }
     );
@@ -1076,6 +1189,9 @@ async function askProject(message) {
     setChatBusy(true);
     showIndicator(true);
     try {
+        // Scope to the selected project's id so its reasoning session is
+        // distinct and persistent; fall back to a per-tab session otherwise.
+        const sessionId = activeProjectId || projectSessionId;
         const resp = await fetch(`${API_BASE}/v1/project/ask`, {
             method: 'POST',
             headers: {
@@ -1083,7 +1199,7 @@ async function askProject(message) {
                 'Authorization': `Bearer ${API_KEY}`,
             },
             body: JSON.stringify({
-                session_id: projectSessionId,
+                session_id: sessionId,
                 request: message,
             }),
         });
@@ -1103,17 +1219,12 @@ async function askProject(message) {
             return;
         }
         addMessage(data.answer || '(no answer)', 'assistant');
-        if (data.understanding) {
-            setOutcomes(
-                `<div class="outcome-item">
-                   <div class="outcome-label">Understood as</div>
-                   <div class="outcome-value" style="font-size:13px;">`
-                + escapeHtml(data.understanding) + `</div></div>`);
-        }
-        if (Array.isArray(data.artifacts)) {
-            data.artifacts.forEach(a => addMessage(
-                `📎 Artifact: ${escapeHtml(String(a.name))} (${escapeHtml(String(a.type))})`, 'system',
-                { persist: false }));
+        // Artifacts panel opens ON DEMAND — only when the reply produced
+        // something inspectable. A plain answer leaves the panel closed.
+        if (Array.isArray(data.artifacts) && data.artifacts.length) {
+            showArtifacts(data.artifacts, 'Artifacts');
+        } else {
+            closeArtifactPanel();
         }
     } catch (e) {
         surfaceError(String(e), 'Project reasoning');
@@ -1150,14 +1261,8 @@ async function sendMessage() {
 
     setChatBusy(true);
 
-    // Update right-side outcomes panel
+    // A plain question gets a plain chat reply — no panel (Roadmap V2 · Epic 4).
     const askedAt = new Date().toLocaleTimeString();
-    setOutcomes(`<div class="outcome-item">
-        <div class="outcome-label">💬 Latest answer</div>
-        <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}</div>
-        <div style="color:#ccc;font-size:12px;margin-top:6px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
-        <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Thinking…</div>
-    </div>`);
 
     // Empty assistant bubble we'll mutate as tokens arrive
     const bubble = addMessage('', 'assistant', { persist: false });
@@ -1189,23 +1294,13 @@ async function sendMessage() {
             bubble.innerHTML = renderMarkdown(finalText);
             chatHistory.push({ role: 'assistant', content: finalText });
             saveHistory();
-            setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">💬 Latest answer</div>
-                <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}${activeFileContext ? ` · about <b>${escapeHtml(activeFileContext.name)}</b>` : ''}</div>
-                <div style="color:#ccc;font-size:12px;margin-top:8px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
-                <div style="color:#eee;font-size:13px;margin-top:8px;">${renderMarkdown(finalText)}</div>
-            </div>`);
+            // Plain reply — the answer lives in the chat thread, no panel.
             activeChatController = null;
             setChatBusy(false);
         },
         onError: (err) => {
             surfaceError(err, 'Chat');
             bubble.innerHTML = `<span style="color:#ff6666;">Error: ${escapeHtml(err.message)}</span>`;
-            setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label" style="color:#cc6666;">⚠️ Chat failed</div>
-                <div style="color:#cc8888;font-size:12px;margin-top:6px;">${escapeHtml(err.message)}</div>
-                <div style="color:#888;font-size:11px;margin-top:8px;">Likely cause: DEEPSEEK_API_KEY / ANTHROPIC_API_KEY not set in .env.</div>
-            </div>`);
             activeChatController = null;
             setChatBusy(false);
         },
@@ -1520,10 +1615,11 @@ async function triggerAction(action) {
         const artifacts = data.artifacts || [];
         const panelTitle = action === 'procurement_list_generator' ? 'Procurement List' : action;
         if (artifacts.length) {
-            setOutcomes(renderArtifacts(artifacts));
+            showArtifacts(artifacts, panelTitle);
         } else {
             const panelType = action === 'procurement_list_generator' ? 'procurement' : 'raw';
             setOutcomes(renderPanels([{ type: panelType, title: panelTitle, data: result }], [], activeFileContext.name, ''));
+            openArtifactPanel(panelTitle);
         }
         addMessage(`${panelTitle} ready — see the artifacts panel.`, 'assistant');
     } catch(e) {
@@ -1539,7 +1635,7 @@ async function handleFile(input) {
     addMessage(`📎 ${file.name}`, 'user');
     document.getElementById('sendBtn').disabled = true;
     showIndicator(true);
-    setOutcomes('<p style="color:#666;">Uploading and analysing…</p>');
+    // Attaching a file runs no analysis and opens no panel (Roadmap V2 · Epic 0.3 / 4).
 
     try {
         const form = new FormData();
@@ -1548,6 +1644,30 @@ async function handleFile(input) {
         const kind = getFileKind(file.name);
         const sizeKb = (file.size / 1024).toFixed(1);
         const filePath = uploadData.file_path || uploadData.path || uploadData.filename;
+
+        // If a project is selected, also register the file under it — stores
+        // and classifies only, runs no analysis (Roadmap V2 · Epic 0.3).
+        if (activeProjectId) {
+            try {
+                const docForm = new FormData();
+                docForm.append('file', file);
+                const r = await fetch(`${API_BASE}/v1/projects/${activeProjectId}/documents`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${API_KEY}` },
+                    body: docForm,
+                });
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d.message) addMessage(d.message, 'system', { persist: false });
+                    const proj = activeProject();
+                    if (proj && d.document) {
+                        proj.documents = (proj.documents || []).concat(d.document);
+                    }
+                }
+            } catch (e) {
+                surfaceError(e, 'Attach to project', { toast: false });
+            }
+        }
 
         if (kind === 'text') {
             const fileContent = await readFileContent(file);
@@ -1746,6 +1866,9 @@ setInterval(() => { if (!apiHealthOk) pollApiHealth(); }, 5000);
 
 // Initialize drives list
 renderDrives();
+
+// Load the real project list into the sidebar (Roadmap V2 · Epic 4 Slice B).
+loadProjects();
 </script>
 </body>
 </html>
