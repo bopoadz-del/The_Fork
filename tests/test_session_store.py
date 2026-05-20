@@ -51,3 +51,23 @@ def test_delete_removes_session():
     assert store.delete("s1") is True
     assert store.get("s1") is None
     assert store.delete("s1") is False
+
+
+import time as _time
+
+
+def test_session_expires_after_ttl():
+    store = InMemorySessionStore(ttl_seconds=1)
+    store.get_or_create("s1")
+    assert store.get("s1") is not None
+    _time.sleep(1.1)
+    assert store.get("s1") is None          # expired and evicted
+
+
+def test_save_refreshes_ttl():
+    store = InMemorySessionStore(ttl_seconds=2)
+    s = store.get_or_create("s1")
+    _time.sleep(1.2)
+    store.save(s)                            # resets the 2s window
+    _time.sleep(1.2)
+    assert store.get("s1") is not None       # still alive — refreshed
