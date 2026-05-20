@@ -8,14 +8,13 @@ Roadmap V2 · Part 0:
 """
 
 import os
-import shutil
 import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core import audit, projects as store
+from app.core import audit, file_crypto, projects as store
 from app.blocks import BLOCK_REGISTRY
 from app.dependencies import (
     require_api_key,
@@ -190,9 +189,13 @@ async def add_document(
     file_id = str(uuid.uuid4())[:8]
     stored_as = f"{file_id}_{original_name}"
     filepath = os.path.join(DATA_DIR, stored_as)
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    size = os.path.getsize(filepath)
+    # Persist the document — encrypted at rest iff DATA_ENCRYPTION_KEY is set
+    # (opt-in; plaintext otherwise — see app/core/file_crypto.py). The recorded
+    # `size` is the original plaintext size, not the (larger) ciphertext size.
+    file.file.seek(0)
+    raw_bytes = file.file.read()
+    file_crypto.write_document(filepath, raw_bytes)
+    size = len(raw_bytes)
 
     if role is not None and role not in store.VALID_ROLES:
         raise HTTPException(

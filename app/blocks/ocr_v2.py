@@ -96,7 +96,15 @@ class OCRBlockV2(TypedBlock):
 
         if not os.path.exists(image_path):
             return self._error_response(f"File not found: {image_path}")
-        
+
+        # Decrypt-to-temp if the stored file is encrypted at rest. EasyOCR / PIL
+        # need a real file on disk. No-op for plaintext / legacy files.
+        from app.core.file_crypto import open_plaintext
+        with open_plaintext(image_path) as image_path:
+            return await self._process_image(image_path, params)
+
+    async def _process_image(self, image_path: str, params: Dict) -> Dict:
+        """Run OCR on a plaintext image path (post-decryption)."""
         preprocess = params.get("preprocess", self.config.get("preprocess", True))
         languages = params.get("languages", self.config.get("languages", ["en"]))
 

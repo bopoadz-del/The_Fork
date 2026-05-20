@@ -111,6 +111,21 @@ class DocumentEngineBlock(UniversalBlock):
         if not any(file_paths.values()):
             return {"status": "error", "error": "No input files provided (pdf/docx/xlsx). Pass file_path as pdf_path, docx_path, or xlsx_path."}
 
+        # Decrypt-to-temp if the stored files are encrypted at rest. Both the
+        # platform pdf/ocr blocks and the fallback parsers (fitz / python-docx /
+        # openpyxl) read by raw path. open_plaintext is a no-op for plaintext /
+        # legacy files (see app/core/file_crypto.py).
+        from contextlib import ExitStack
+        from app.core.file_crypto import open_plaintext
+        with ExitStack() as _crypto_stack:
+            file_paths = {
+                key: (_crypto_stack.enter_context(open_plaintext(p)) if p else None)
+                for key, p in file_paths.items()
+            }
+            return await self._run_pipeline(file_paths)
+
+    async def _run_pipeline(self, file_paths: Dict) -> Dict:
+        """Run the 3-layer pipeline on already-decrypted plaintext paths."""
         try:
             from blocks.document_engine.main import parse_all
             from blocks.document_engine.reasoner import DocumentReasoner

@@ -98,7 +98,16 @@ class OCRBlock(TypedBlock):
 
         if not os.path.exists(image_path):
             return {"status": "error", "text": "", "confidence": 0, "error": f"File not found: {image_path}"}
-        
+
+        # Decrypt-to-temp if the stored file is encrypted at rest. PIL /
+        # Tesseract / PyMuPDF all need a real file on disk, so every read below
+        # goes through this plaintext path. No-op for plaintext / legacy files.
+        from app.core.file_crypto import open_plaintext
+        with open_plaintext(image_path) as image_path:
+            return await self._process_image(image_path, params)
+
+    async def _process_image(self, image_path: str, params: Dict) -> Dict:
+        """Run OCR on a plaintext image/PDF path (post-decryption)."""
         preprocess = params.get("preprocess", self.config.get("preprocess", True))
         languages = params.get("languages", self.config.get("languages", ["en"]))
 
