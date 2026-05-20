@@ -1368,10 +1368,14 @@ class ConstructionContainer(UniversalContainer):
                 gross_valuation = round(direct_gross, 2)
                 contract_value = direct_gross
             else:
-                # Demo mode — sample IPC for a $5M project at 35% completion
-                contract_value = 5000000.0
-                work_done_pct = 0.35
-                gross_valuation = round(contract_value * work_done_pct, 2)
+                return {
+                    "status": "error",
+                    "error": (
+                        "No contract value or gross valuation supplied — "
+                        "provide 'contract_value' (with 'work_done_percent') "
+                        "or 'gross_valuation' to issue a payment certificate"
+                    ),
+                }
         else:
             gross_valuation = round(contract_value * work_done_pct, 2)
         retention_held = round(gross_valuation * retention_pct, 2)
@@ -1677,30 +1681,13 @@ class ConstructionContainer(UniversalContainer):
             photos = [data.get("file_path")]
         
         if not photos:
-            # Demo mode — return a standard compliance checklist without photo analysis
             return {
-                "status": "success",
-                "action": "safety_compliance_audit",
+                "status": "error",
+                "error": (
+                    "No site photos supplied — provide a 'photos' list or a "
+                    "'file_path' for image-based safety compliance analysis"
+                ),
                 "audit_type": audit_type,
-                "note": "Demo mode — provide 'photos' list or 'file_path' for image-based analysis",
-                "compliance_score": 72,
-                "violations": [
-                    {"category": "PPE", "severity": "medium", "description": "Hard hat compliance not verified — photo required"},
-                    {"category": "Housekeeping", "severity": "low", "description": "Debris clearance status unknown without site photos"},
-                    {"category": "Scaffolding", "severity": "high", "description": "Edge protection status requires visual inspection"},
-                ],
-                "compliant_items": [
-                    "Fire extinguisher placement — OSHA 1926.150",
-                    "First aid kit availability — OSHA 1926.50",
-                    "Emergency exits marked — OSHA 1926.34",
-                ],
-                "recommendations": [
-                    "Upload site photos for AI defect and safety violation detection",
-                    "Conduct daily toolbox talks and log attendance",
-                    "Ensure all workers wear PPE at all times",
-                ],
-                "immediate_actions": ["Verify edge protection on all open floor areas"],
-                "next_audit_date": (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d"),
             }
         
         violations = []
@@ -3852,28 +3839,14 @@ Total Extension of Time Sought: {total_delay} days
         analysis_method = p.get("method", "time_impact")
         
         if not baseline_file or not updated_file:
-            # Synthesise a realistic delay analysis without schedule files
-            synthetic_delay_days = sum(e.get("delay_days", 14) for e in delay_events) if delay_events else 28
             return {
-                "status": "success",
-                "action": "forensic_delay_analysis",
+                "status": "error",
+                "error": (
+                    "Forensic delay analysis requires both a baseline schedule "
+                    "and an updated/as-built schedule — provide 'baseline_file' "
+                    "and 'updated_file' (XER) for XER-based delay analysis"
+                ),
                 "analysis_method": analysis_method,
-                "note": "Generated from delay events — provide baseline_file and updated_file for full XER-based analysis",
-                "total_delay_days": synthetic_delay_days,
-                "employer_caused_days": int(synthetic_delay_days * 0.6),
-                "contractor_caused_days": int(synthetic_delay_days * 0.2),
-                "neutral_risk_days": int(synthetic_delay_days * 0.2),
-                "concurrent_delays": self._identify_concurrent_delays(delay_events) if delay_events else [],
-                "critical_path_impact": True if synthetic_delay_days > 14 else False,
-                "recommended_eot_days": int(synthetic_delay_days * 0.6),
-                "prolongation_cost_usd": synthetic_delay_days * 4500,
-                "apportionment": {
-                    "employer": "60%",
-                    "contractor": "20%",
-                    "neutral": "20%",
-                },
-                "delay_events_analysed": len(delay_events),
-                "summary": f"Total project delay: {synthetic_delay_days} days. Recommended EOT: {int(synthetic_delay_days * 0.6)} days.",
             }
         
         baseline = await self._parse_xer_file(baseline_file)
@@ -5483,33 +5456,28 @@ Total Extension of Time Sought: {total_delay} days
                 }
             return result
         
-        # Fallback: non-file requests
+        # Fallback: non-file requests — extract from PDF text if a PDF block is available
         pdf_block = self.get_dep("pdf")
         if pdf_block and input_data:
             pdf_result = await pdf_block.process(input_data, {"extract_tables": True})
             if pdf_result.get("status") == "success":
+                text = pdf_result.get("result", {}).get("text", "")
+                measurements = self._extract_measurements_advanced(text, {})
                 return {
                     "status": "success",
                     "source": "pdf_extraction",
-                    "quantities": {
-                        "concrete_volume_m3": 45.5,
-                        "steel_weight_kg": 1200,
-                        "floor_area_m2": 111.5
-                    },
-                    "confidence": 0.94,
-                    "extracted_text": pdf_result.get("result", {}).get("text", "")[:500]
+                    "measurements": measurements,
+                    "count": len(measurements),
+                    "extracted_text": text[:500],
                 }
-        
+            return pdf_result
+
         return {
-            "status": "success",
-            "source": "mock",
-            "quantities": {
-                "concrete_volume_m3": 45.5,
-                "steel_weight_kg": 1200,
-                "floor_area_m2": 111.5,
-                "rebar_length_m": 850
-            },
-            "confidence": 0.94
+            "status": "error",
+            "error": (
+                "Nothing to extract — supply a construction drawing/document "
+                "(file path or PDF input) for measurement extraction"
+            ),
         }
 
     async def generate_construction_report(self, input_data: Any, params: Dict) -> Dict:
