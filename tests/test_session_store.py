@@ -17,3 +17,37 @@ def test_message_and_artifact_models():
     assert m.role == "user"
     a = Artifact(name="schedule.xlsx", path="/data/x.xlsx", type="excel")
     assert a.type == "excel"
+
+
+from app.core.session_store import InMemorySessionStore
+
+
+def test_get_or_create_is_idempotent():
+    store = InMemorySessionStore()
+    a = store.get_or_create("s1")
+    b = store.get_or_create("s1")
+    assert a.id == b.id == "s1"
+    assert store.get("s1") is not None
+
+
+def test_get_missing_returns_none():
+    assert InMemorySessionStore().get("nope") is None
+
+
+def test_save_persists_mutations():
+    store = InMemorySessionStore()
+    s = store.get_or_create("s1")
+    s.data["activities"] = [{"id": "A"}]
+    s.add_message("user", "create a schedule")
+    store.save(s)
+    reloaded = store.get("s1")
+    assert reloaded.data["activities"] == [{"id": "A"}]
+    assert reloaded.history[0].content == "create a schedule"
+
+
+def test_delete_removes_session():
+    store = InMemorySessionStore()
+    store.get_or_create("s1")
+    assert store.delete("s1") is True
+    assert store.get("s1") is None
+    assert store.delete("s1") is False
