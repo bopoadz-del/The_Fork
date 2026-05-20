@@ -7,10 +7,11 @@ CPM math runs in working-day offsets (integers). See the plan header for the
 offset conventions.
 """
 
-from typing import Dict, List, Tuple
+from datetime import timedelta
+from typing import Dict, List, Optional, Tuple
 
 from app.schemas.cpm import (
-    Activity, CPMInput, CPMOutput, CPMResult, DependencyType,
+    Activity, CPMInput, CPMOutput, CPMResult, Dependency, DependencyType,
     GanttBar, HistogramPeriod, ResourceHistogram,
 )
 
@@ -301,3 +302,146 @@ def compress_schedule(
     revised = compute_cpm(data.model_copy(update={"activities": revised_acts}))
     delta = baseline.project_duration - revised.project_duration
     return revised, delta
+
+
+# ── I/O — Reasoning Engine Plan 6 ──────────────────────────────────────────
+
+_XER_PRED_TYPE = {
+    "PR_FS": DependencyType.FS, "PR_SS": DependencyType.SS,
+    "PR_FF": DependencyType.FF, "PR_SF": DependencyType.SF,
+}
+
+
+def parse_xer(text: str) -> List[Activity]:
+    """Parse Primavera P6 `.xer` text into Activity objects.
+
+    Pure parsing — the caller is responsible for reading the file. Reads the
+    TASK table (activities) and TASKPRED table (relationships). Durations come
+    from `target_drtn_hr_cnt` converted to working days at 8 h/day; lag from
+    `lag_hr_cnt` likewise. Unknown columns are ignored.
+    """
+    tables: Dict[str, Dict] = {}
+    current: str = ""
+    fields: List[str] = []
+
+    for line in text.splitlines():
+        if not line:
+            continue
+        cells = line.split("\t")
+        tag = cells[0]
+        if tag == "%T":
+            current = cells[1] if len(cells) > 1 else ""
+            tables[current] = {"fields": [], "rows": []}
+        elif tag == "%F":
+            fields = cells[1:]
+            if current in tables:
+                tables[current]["fields"] = fields
+        elif tag == "%R":
+            if current in tables:
+                row = dict(zip(tables[current]["fields"], cells[1:]))
+                tables[current]["rows"].append(row)
+        elif tag == "%E":
+            break
+
+    task_rows = tables.get("TASK", {}).get("rows", [])
+    pred_rows = tables.get("TASKPRED", {}).get("rows", [])
+    if not task_rows:
+        return []
+
+    # task_id -> task_code (the human id used as Activity.id)
+    code_by_tid = {r.get("task_id"): r.get("task_code") or r.get("task_id")
+                   for r in task_rows}
+
+    preds_by_tid: Dict[str, List[Dependency]] = {}
+    for r in pred_rows:
+        tid = r.get("task_id")
+        pred_tid = r.get("pred_task_id")
+        pred_code = code_by_tid.get(pred_tid)
+        if not tid or not pred_code:
+            continue
+        ptype = _XER_PRED_TYPE.get(r.get("pred_type", "PR_FS"),
+                                   DependencyType.FS)
+        lag_days = round(float(r.get("lag_hr_cnt") or 0) / _HOURS_PER_DAY)
+        preds_by_tid.setdefault(tid, []).append(Dependency(
+            predecessor_id=pred_code, type=ptype, lag=int(lag_days),
+        ))
+
+    activities: List[Activity] = []
+    for r in task_rows:
+        tid = r.get("task_id")
+        dur_days = round(
+            float(r.get("target_drtn_hr_cnt") or 0) / _HOURS_PER_DAY
+        )
+        activities.append(Activity(
+            id=code_by_tid.get(tid) or tid,
+            name=r.get("task_name") or "",
+            duration=max(0, int(dur_days)),
+            predecessors=preds_by_tid.get(tid, []),
+        ))
+    return activities
+
+
+def write_schedule_excel(
+    output: CPMOutput,
+    path: str,
+    histogram: "Optional[ResourceHistogram]" = None,
+) -> str:
+    """Write a CPMOutput to a formatted .xlsx and return the path.
+
+    This is the one genuinely I/O function in the library. Produces a
+    'Schedule' sheet (activity table + a Gantt grid) and, when `histogram` is
+    given, a 'Manpower' sheet.
+
+    DISPLAY NOTE: CPMResult finish offsets project one working day beyond the
+    activity's actual last day (see Plan 1 header). This function is
+    user-facing, so finish DATES shown here subtract one working day. The
+    *_day integer columns keep the raw offsets.
+    """
+    from openpyxl import Workbook
+    from app.lib.excel_templates import (
+        header_row, paint_gantt_row, write_histogram_block,
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Schedule"
+
+    total_days = max((r.early_finish_day for r in output.results), default=0)
+    gantt_first_col = 9  # day grid starts after the 8 table columns
+    header_row(ws, 1, [
+        "ID", "Name", "Duration",
+        "Early Start", "Early Finish", "Total Float", "Critical",
+        "",  # spacer before the day grid
+    ] + [f"D{d}" for d in range(total_days)])
+
+    def _finish_date(r):
+        # r.early_finish projects EF+1; show the real last working day.
+        if r.early_finish is None:
+            return ""
+        return str(r.early_finish - timedelta(days=1))
+
+    for i, r in enumerate(output.results, start=2):
+        ws.cell(row=i, column=1, value=r.id)
+        ws.cell(row=i, column=2, value=r.name)
+        ws.cell(row=i, column=3, value=r.duration)
+        ws.cell(row=i, column=4,
+                value=str(r.early_start) if r.early_start else "")
+        ws.cell(row=i, column=5, value=_finish_date(r))
+        ws.cell(row=i, column=6, value=r.total_float)
+        ws.cell(row=i, column=7, value="YES" if r.is_critical else "")
+        paint_gantt_row(
+            ws, row=i, first_col=gantt_first_col,
+            start_day=r.early_start_day, end_day=r.early_finish_day,
+            total_days=total_days, is_critical=r.is_critical,
+        )
+
+    if histogram is not None:
+        hs = wb.create_sheet("Manpower")
+        write_histogram_block(
+            hs, start_row=1,
+            periods=[{"label": p.label, "total": p.total}
+                     for p in histogram.periods],
+        )
+
+    wb.save(path)
+    return path

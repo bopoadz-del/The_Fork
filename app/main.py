@@ -43,6 +43,7 @@ from app.routers import (
     memory,
     mcp,
     monitoring,
+    project,
     projects,
     static,
     upload,
@@ -55,6 +56,12 @@ async def lifespan(app: FastAPI):
     await init_blocks()
     from app.core.projects import init_db
     init_db()
+    from app.core.session_store import get_session_store
+    from app.routers import project as project_router
+    app.state.project_store = get_session_store()
+    project_router._store = app.state.project_store
+    logger.info("Project session store ready: %s",
+                type(app.state.project_store).__name__)
     loaded = load_agents()
     logger.info("Loaded %d runtime agents: %s", len(loaded), ", ".join(sorted(loaded.keys())))
     yield
@@ -215,6 +222,7 @@ app.include_router(auth.router)
 app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
+app.include_router(project.router)
 app.include_router(doc_types.router)
 app.include_router(workflows.router)
 app.include_router(health.router)

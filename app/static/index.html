@@ -130,6 +130,10 @@
                 <option value="">— Default chat —</option>
             </select>
             <span id="agentToolsHint" style="color:#666;font-size:11px;"></span>
+            <label style="display:flex;align-items:center;gap:6px;color:#888;font-size:12px;cursor:pointer;">
+                <input type="checkbox" id="projectModeToggle" onchange="onProjectModeChange(this.checked)">
+                Project mode
+            </label>
         </header>
         <div class="messages" id="messages">
             <div class="msg assistant">
@@ -1053,6 +1057,65 @@ function renderToolBadges(toolCalls) {
         `</div>`;
 }
 
+// ── Project reasoning mode (Reasoning Engine Plan 6) ──────────────
+let projectMode = false;
+// Per-tab session id so follow-up questions build on prior state.
+const projectSessionId = 'proj-' + Math.random().toString(36).slice(2, 11);
+
+function onProjectModeChange(on) {
+    projectMode = on;
+    addMessage(
+        on
+            ? 'Project mode ON — I will reason over your project (CPM, manpower, compression, custom analysis).'
+            : 'Project mode OFF — back to standard chat.',
+        'system', { persist: false }
+    );
+}
+
+async function askProject(message) {
+    setChatBusy(true);
+    showIndicator(true);
+    try {
+        const resp = await fetch(`${API_BASE}/v1/project/ask`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${API_KEY}`,
+            },
+            body: JSON.stringify({
+                session_id: projectSessionId,
+                request: message,
+            }),
+        });
+        if (!resp.ok) {
+            const err = await readApiError(resp);
+            surfaceError(err, 'Project reasoning');
+            addMessage(`Project reasoning failed: ${err}`, 'error');
+            return;
+        }
+        const data = await resp.json();
+        addMessage(data.answer || '(no answer)', 'assistant');
+        if (data.understanding) {
+            setOutcomes(
+                `<div class="outcome-item">
+                   <div class="outcome-label">Understood as</div>
+                   <div class="outcome-value" style="font-size:13px;">`
+                + (data.understanding) + `</div></div>`);
+        }
+        if (Array.isArray(data.artifacts)) {
+            data.artifacts.forEach(a => addMessage(
+                `📎 Artifact: ${a.name} (${a.type})`, 'system',
+                { persist: false }));
+        }
+    } catch (e) {
+        surfaceError(String(e), 'Project reasoning');
+        addMessage(`Project reasoning failed: ${e}`, 'error');
+    } finally {
+        setChatBusy(false);
+        showIndicator(false);
+    }
+}
+
 async function sendMessage() {
     const input = document.getElementById('textInput');
     const userQuestion = input.value.trim();
@@ -1070,6 +1133,13 @@ async function sendMessage() {
     addMessage(userQuestion, 'user');
     input.value = '';
     input.style.height = 'auto';
+
+    // Project mode routes the question to the reasoning engine instead of chat.
+    if (projectMode) {
+        await askProject(userQuestion);
+        return;
+    }
+
     setChatBusy(true);
 
     // Update right-side outcomes panel
