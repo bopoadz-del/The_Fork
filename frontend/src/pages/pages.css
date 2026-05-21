@@ -194,47 +194,6 @@
   border: 1px solid rgba(30, 95, 168, 0.2);
 }
 
-/* ── Project Cards (Projects page) ── */
-.placeholder-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--space-4);
-}
-
-.project-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: var(--space-5) var(--space-6);
-  transition: box-shadow var(--transition), border-color var(--transition);
-  cursor: default;
-}
-
-.project-card:hover {
-  box-shadow: var(--shadow);
-  border-color: var(--accent);
-}
-
-.project-card__id {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--accent);
-  margin-bottom: var(--space-2);
-  letter-spacing: 0.05em;
-}
-
-.project-card__name {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: var(--space-2);
-}
-
-.project-card__meta {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
 /* ── Workspace Meta Table ── */
 .workspace-meta {
   background: var(--surface);
