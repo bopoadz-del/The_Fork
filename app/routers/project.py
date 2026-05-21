@@ -62,7 +62,6 @@ async def project_ask(
     if session is None:
         session = ProjectSession.new(body.session_id, user_id=caller_id)
         _store.save(session)
-        session = _store.get(body.session_id)
     elif session.user_id != caller_id:
         raise HTTPException(404, "Session not found")
     if body.activities is not None:
