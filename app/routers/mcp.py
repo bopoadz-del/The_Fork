@@ -9,10 +9,47 @@ or doesn't ship the SSE transport — see `mcp_router_available()`.
 
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.dependencies import require_api_key
+
 router = APIRouter()
+
+
+def _require_key_asgi(asgi_app):
+    """Wrap an ASGI app so every HTTP request must carry a valid API key.
+
+    Used to gate the /mcp/messages Mount: a Starlette Mount can't take a
+    FastAPI `Depends`, so auth is enforced here, reusing the same
+    `auth_manager.validate_key` that backs `require_api_key`.
+    """
+    from fastapi.security import HTTPAuthorizationCredentials
+    from app.core.auth import auth as auth_manager
+
+    async def _gated(scope, receive, send):
+        if scope.get("type") != "http":
+            await asgi_app(scope, receive, send)
+            return
+        header = ""
+        for key, value in scope.get("headers") or []:
+            if key == b"authorization":
+                header = value.decode("latin-1")
+                break
+        creds = None
+        if header.lower().startswith("bearer "):
+            creds = HTTPAuthorizationCredentials(
+                scheme="Bearer", credentials=header[7:])
+        try:
+            auth_manager.validate_key(creds)
+        except HTTPException as exc:
+            await JSONResponse(
+                {"detail": exc.detail}, status_code=exc.status_code,
+            )(scope, receive, send)
+            return
+        await asgi_app(scope, receive, send)
+
+    return _gated
 
 
 def mcp_router_available() -> bool:
@@ -25,7 +62,7 @@ def mcp_router_available() -> bool:
 
 
 @router.get("/mcp/info")
-async def mcp_info():
+async def mcp_info(auth: dict = Depends(require_api_key)):
     """Lightweight JSON describing the MCP surface — works even without SSE deps."""
     from app.blocks import BLOCK_REGISTRY
 
@@ -59,7 +96,8 @@ if mcp_router_available():
         """
         from starlette.routing import Mount
         app.router.routes.append(
-            Mount("/mcp/messages", app=_sse.handle_post_message)
+            Mount("/mcp/messages",
+                  app=_require_key_asgi(_sse.handle_post_message))
         )
         return True
 
@@ -100,7 +138,8 @@ if mcp_router_available():
         return server
 
     @router.get("/mcp/sse")
-    async def mcp_sse(request: Request):
+    async def mcp_sse(request: Request,
+                      auth: dict = Depends(require_api_key)):
         async with _sse.connect_sse(request.scope, request.receive, request._send) as streams:
             server = _build_server()
             await server.run(streams[0], streams[1], server.create_initialization_options())
