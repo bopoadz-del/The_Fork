@@ -24,6 +24,42 @@ from app.dependencies import require_user
 
 router = APIRouter()
 
+_WS_PREFIX = "ws-"
+
+
+def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
+    """Authoritative ownership check for a conversation, on both read and write.
+
+    Workspace conversations use the id ``ws-{projectId}`` — the project id is IN
+    the id, so ownership is derived from the id itself, NOT from the (spoofable)
+    stored ``project_id`` column on the conversation row.
+
+    - ``ws-{pid}`` id  → caller must own project ``pid`` (else 404). Covers both
+      "project doesn't exist" and "project belongs to someone else".
+    - non-``ws-`` id   → not a project-scoped workspace conversation. If a stored
+      conversation row exists with a ``project_id``, that ownership is checked;
+      a stored row with NO ``project_id`` has no ownership binding → 404; a
+      non-existent row is allowed (ad-hoc API conversation).
+
+    Raises HTTPException(404) when access is denied.
+    """
+    if conversation_id.startswith(_WS_PREFIX):
+        project_id = conversation_id[len(_WS_PREFIX):]
+        if store.get_project(project_id, user_id=auth["user_id"]) is None:
+            raise HTTPException(404, "Conversation not found")
+        return
+
+    # Non-workspace conversation id — fall back to the stored row's binding.
+    conv = agent_memory.get_conversation(conversation_id)
+    if conv is None:
+        return  # ad-hoc API conversation, not yet created
+    stored_pid = conv.get("project_id")
+    if stored_pid is None:
+        # No ownership binding at all — do not serve it.
+        raise HTTPException(404, "Conversation not found")
+    if store.get_project(stored_pid, user_id=auth["user_id"]) is None:
+        raise HTTPException(404, "Conversation not found")
+
 
 class AgentChatRequest(BaseModel):
     message: str
@@ -40,19 +76,17 @@ async def get_conversation_messages(
 ):
     """Return the stored messages for a conversation.
 
-    - Conversation not found  → 200, messages == [].
-    - Conversation found, has project_id → ownership check; 404 if user doesn't own it.
-    - Conversation found, no project_id  → return messages (agent-only conversation).
+    Ownership is enforced FIRST via ``_enforce_conversation_access`` — for a
+    ``ws-{pid}`` id this is derived from the id, not the stored row, so an
+    attacker probing a victim's conversation gets 404 (never an empty 200 that
+    would confirm the id format). A non-existent but owned conversation still
+    returns 200 with an empty list.
     """
+    _enforce_conversation_access(conversation_id, auth)
+
     conv = agent_memory.get_conversation(conversation_id)
     if conv is None:
         return {"conversation_id": conversation_id, "messages": []}
-
-    project_id = conv.get("project_id")
-    if project_id is not None:
-        project = store.get_project(project_id, user_id=auth["user_id"])
-        if project is None:
-            raise HTTPException(404, "Conversation not found")
 
     msgs = agent_memory.get_messages(conversation_id)
     return {"conversation_id": conversation_id, "messages": msgs}
@@ -99,7 +133,13 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
 
-    # Ownership check: if a project_id is provided, the caller must own it.
+    # Authoritative ownership check: a ws-{pid} conversation_id binds to a
+    # project; the caller must own it. This runs BEFORE the agent so an attacker
+    # cannot even create/write a victim's ws-{pid} conversation.
+    if req.conversation_id is not None:
+        _enforce_conversation_access(req.conversation_id, auth)
+
+    # Defense in depth: if a project_id is provided, the caller must own it.
     if req.project_id is not None:
         project = store.get_project(req.project_id, user_id=auth["user_id"])
         if project is None:
@@ -137,7 +177,13 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     project_id = body.get("project_id")
     conversation_id = body.get("conversation_id")
 
-    # Ownership check: if a project_id is provided, the caller must own it.
+    # Authoritative ownership check: a ws-{pid} conversation_id binds to a
+    # project; the caller must own it. Raised here (before StreamingResponse) so
+    # an attacker cannot create/write a victim's ws-{pid} conversation.
+    if conversation_id is not None:
+        _enforce_conversation_access(conversation_id, auth)
+
+    # Defense in depth: if a project_id is provided, the caller must own it.
     if project_id is not None:
         project = store.get_project(project_id, user_id=auth["user_id"])
         if project is None:

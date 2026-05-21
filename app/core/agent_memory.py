@@ -96,7 +96,19 @@ def get_or_create_conversation(
             "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
         ).fetchone()
         if row:
-            return dict(row)
+            existing = dict(row)
+            # Hygiene: backfill a NULL project_id when a real one is now known.
+            # Never overwrite a non-NULL stored value (would re-tenant the row).
+            if existing.get("project_id") is None and project_id is not None:
+                with _lock:
+                    conn.execute(
+                        "UPDATE conversations SET project_id = ?, updated_at = ? "
+                        "WHERE id = ? AND project_id IS NULL",
+                        (project_id, _now(), conversation_id),
+                    )
+                    conn.commit()
+                existing["project_id"] = project_id
+            return existing
     # Not found — create it
     now = _now()
     with _lock, _connect() as conn:

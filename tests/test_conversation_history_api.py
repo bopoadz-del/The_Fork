@@ -54,9 +54,19 @@ def _fake_llm(text: str = "LLM reply"):
 # ── tests ──────────────────────────────────────────────────────────────────────
 
 def test_history_empty_for_new_conversation(client):
-    """GET a conversation_id that has never been used returns 200 + empty list."""
+    """GET an owned-but-unused ws-{pid} conversation returns 200 + empty list.
+
+    The conversation row never existed, but the caller owns the project, so the
+    access check passes and an empty history is served.
+    """
     headers = _register_and_login(client, "empty")
-    cid = f"ws-never-used-{_RUN}"
+
+    proj_resp = client.post(
+        "/v1/projects", json={"name": f"EmptyConv-{_RUN}"}, headers=headers
+    )
+    assert proj_resp.status_code in (200, 201), proj_resp.text
+    pid = proj_resp.json()["id"]
+    cid = f"ws-{pid}"
 
     resp = client.get(f"/v1/agents/conversations/{cid}/messages", headers=headers)
 
@@ -150,3 +160,91 @@ def test_history_cross_tenant_404(client, monkeypatch):
     assert resp_b.status_code == 404, (
         f"Expected 404 for cross-tenant access, got {resp_b.status_code}: {resp_b.text}"
     )
+
+
+# ── cross-tenant data-leak regression (NULL-project_id attack) ──────────────────
+
+def test_attacker_cannot_precreate_victim_conversation(client, monkeypatch):
+    """An attacker must NOT be able to write to a victim's ws-{pid} conversation.
+
+    The original exploit: POST /chat with conversation_id=ws-{victim_pid} and
+    NO project_id in the body → get_or_create_conversation creates the row with
+    project_id=NULL and the chat endpoint skips its ownership check.
+
+    The fix derives ownership from the ws- id, so the write path now rejects
+    this with 404 before the agent ever runs.
+    """
+    monkeypatch.setattr(Agent, "_call_llm", _fake_llm("attacker reply"))
+
+    headers_victim = _register_and_login(client, "victim-pre")
+    headers_attacker = _register_and_login(client, "attacker-pre")
+
+    # Victim creates a project — project id is visible in workspace URLs.
+    proj_resp = client.post(
+        "/v1/projects", json={"name": f"Victim-Pre-{_RUN}"}, headers=headers_victim
+    )
+    assert proj_resp.status_code in (200, 201), proj_resp.text
+    pid = proj_resp.json()["id"]
+
+    # Attacker POSTs chat targeting the victim's ws-{pid} with NO project_id.
+    resp = client.post(
+        "/v1/agents/project-assistant/chat",
+        json={
+            "message": "precreate victim conversation",
+            "conversation_id": f"ws-{pid}",
+            # deliberately no project_id
+        },
+        headers=headers_attacker,
+    )
+    assert resp.status_code == 404, (
+        f"Expected 404 — attacker must not write victim's conversation, "
+        f"got {resp.status_code}: {resp.text}"
+    )
+
+    # The conversation row must NOT have been created.
+    from app.core import agent_memory as am
+    assert am.get_conversation(f"ws-{pid}") is None, (
+        "Attacker should not have been able to create the conversation row"
+    )
+
+
+def test_attacker_cannot_read_victim_conversation_even_if_precreated(client, monkeypatch):
+    """Worst case: a ws-{victim_pid} row already exists with project_id=NULL.
+
+    Even then, the attacker GET must be 404 (ownership is derived from the
+    ws- id, not the spoofable stored row), while the victim's own GET is 200.
+    """
+    monkeypatch.setattr(Agent, "_call_llm", _fake_llm("victim reply"))
+
+    headers_victim = _register_and_login(client, "victim-read")
+    headers_attacker = _register_and_login(client, "attacker-read")
+
+    proj_resp = client.post(
+        "/v1/projects", json={"name": f"Victim-Read-{_RUN}"}, headers=headers_victim
+    )
+    assert proj_resp.status_code in (200, 201), proj_resp.text
+    pid = proj_resp.json()["id"]
+    cid = f"ws-{pid}"
+
+    # Simulate the worst case: a NULL-project_id row already exists.
+    from app.core import agent_memory as am
+    am.get_or_create_conversation(cid, "project-assistant", project_id=None)
+    am.append_message(cid, "user", "victim secret")
+    am.append_message(cid, "assistant", "victim secret reply")
+
+    # Attacker GET — must be 404 (no ownership of pid).
+    resp_attacker = client.get(
+        f"/v1/agents/conversations/{cid}/messages", headers=headers_attacker
+    )
+    assert resp_attacker.status_code == 404, (
+        f"Expected 404 — attacker must not read victim's conversation, "
+        f"got {resp_attacker.status_code}: {resp_attacker.text}"
+    )
+
+    # Victim GET — must be 200 and see their own messages.
+    resp_victim = client.get(
+        f"/v1/agents/conversations/{cid}/messages", headers=headers_victim
+    )
+    assert resp_victim.status_code == 200, resp_victim.text
+    contents = [m["content"] for m in resp_victim.json()["messages"]]
+    assert "victim secret" in contents
