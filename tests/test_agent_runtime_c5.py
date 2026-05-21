@@ -627,3 +627,109 @@ async def test_final_answer_strips_dsml(tmp_path, monkeypatch):
     assert out["status"] == "success"
     assert "DSML" not in out["answer"]
     assert "Here is your answer." in out["answer"]
+
+
+# ── 19. DSML whole-block strip (the bug fix) ──────────────────────────────────
+
+# Exact markup from the bug report: the inner text "snagging commissioning
+# handover days 200 240 procurement 10" was reaching the UI.
+_DSML_BUG_WHOLE_BLOCK = (
+    'Real answer here. '
+    '<｜｜DSML｜｜tool_calls>'
+    '<｜｜DSML｜｜invoke name="search_project_documents">'
+    '<｜｜DSML｜｜parameter name="query">snagging commissioning handover'
+    '</｜｜DSML｜｜parameter>'
+    '</｜｜DSML｜｜invoke>'
+    '</｜｜DSML｜｜tool_calls>'
+)
+
+
+def test_strip_dsml_removes_whole_block():
+    """_strip_dsml must discard everything from the first DSML marker onward,
+    including any inner parameter text — not just the tags."""
+    result = rt._strip_dsml(_DSML_BUG_WHOLE_BLOCK)
+    assert result == "Real answer here."
+    assert "DSML" not in result
+    # The inner text of the parameter tag must NOT survive
+    assert "snagging" not in result
+
+
+def test_strip_dsml_plain_text():
+    """Plain text with no DSML is returned unchanged."""
+    text = "Just a plain final answer with no markup."
+    assert rt._strip_dsml(text) == text
+
+
+def test_parse_dsml_cleaned_content_has_no_inner_text():
+    """_parse_dsml_tool_calls must return cleaned_content with no DSML and no
+    parameter inner text; the parsed tool call itself must still be correct."""
+    import json as _json
+    cleaned, tool_calls = rt._parse_dsml_tool_calls(_DSML_BUG_WHOLE_BLOCK)
+
+    # No DSML markup in cleaned content
+    assert "DSML" not in cleaned
+    # The parameter value must NOT be in cleaned content
+    assert "snagging" not in cleaned
+    # Prose before the DSML block survives
+    assert "Real answer here." in cleaned
+
+    # Tool call was still parsed correctly
+    assert len(tool_calls) == 1
+    tc = tool_calls[0]
+    assert tc["function"]["name"] == "search_project_documents"
+    args = _json.loads(tc["function"]["arguments"])
+    assert args["query"] == "snagging commissioning handover"
+
+
+@pytest.mark.asyncio
+async def test_chat_empty_after_dsml_strip_forces_answer(tmp_path, monkeypatch):
+    """When the first LLM call returns content that is ONLY unparseable DSML
+    (nothing before the first marker), chat() must detect the empty stripped
+    content, make ONE forced no-tools call, and return that answer rather than
+    an empty bubble."""
+    _isolate(tmp_path, monkeypatch)
+
+    calls = {"n": 0, "with_tools_seen": []}
+
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+        calls["n"] += 1
+        calls["with_tools_seen"].append(with_tools)
+        if calls["n"] == 1:
+            # Only DSML, no prose before it — strip will yield empty string.
+            # No <｜｜DSML｜｜tool_calls> wrapper, so _parse_dsml_tool_calls
+            # finds no structured tool calls either; final_text is empty.
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {
+                        "content": (
+                            "<｜｜DSML｜｜garbled>"
+                            "val"
+                            "</｜｜DSML｜｜garbled>"
+                        ),
+                        "tool_calls": [],
+                    }
+                },
+                "raw": {},
+            }
+        # 2nd call: forced no-tools call — returns a real plain-text answer
+        return {
+            "status": "success",
+            "choice": {"message": {"content": "Here is a real answer."}},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", fake_llm)
+    agent = _make_agent()
+
+    out = await agent.chat("hi", api_key="k")
+
+    assert out["status"] == "success"
+    # Must NOT return empty, raw DSML, or parameter inner text
+    assert out["answer"] == "Here is a real answer."
+    assert "DSML" not in out["answer"]
+    assert "val" not in out["answer"]
+    # Exactly two LLM calls: 1 original + 1 forced
+    assert calls["n"] == 2
+    # The forced call must have been made with tools disabled
+    assert calls["with_tools_seen"][1] is False

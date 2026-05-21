@@ -46,10 +46,13 @@ DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 # tolerate a plain ASCII "|" variant and missing/extra pipes. `[｜|]{0,2}`
 # matches either pipe (or none) so partial/garbled markup is still handled.
 
-# Any DSML tag — opening or closing, well-formed or not — used for stripping.
-# Matches from "<" through the next ">" as long as "DSML" appears inside; also
-# matches a dangling "<...DSML..." fragment that never gets a closing ">".
-_DSML_TAG_RE = re.compile(r"<[^<>]*?DSML[^<>]*?(?:>|$)", re.IGNORECASE)
+# Matches the FIRST occurrence of a DSML marker in content so we can truncate
+# at that point. Handles both the angle-bracket tag form and a bare token
+# sequence (e.g. `｜｜DSML`), with either fullwidth U+FF5C or ASCII `|` pipes.
+_DSML_MARKER_RE = re.compile(
+    r"(?:<\s*[｜|]{0,3}\s*DSML|[｜|]{1,3}DSML)",
+    re.IGNORECASE,
+)
 # A full tool_calls block: <｜｜DSML｜｜tool_calls> ... </｜｜DSML｜｜tool_calls>
 _DSML_TOOLCALLS_RE = re.compile(
     r"<\s*[｜|]{0,2}\s*DSML\s*[｜|]{0,2}\s*tool_calls\s*>(.*?)"
@@ -73,18 +76,23 @@ _DSML_PARAM_RE = re.compile(
 
 
 def _strip_dsml(content: str) -> str:
-    """Remove every ``<｜｜DSML｜｜...>`` tag from ``content`` and trim.
+    """Discard the entire DSML region from ``content`` and return only the prose before it.
 
-    Used as a defensive final-answer scrub so no DSML markup — even partial or
-    garbled fragments that couldn't be parsed into tool calls — ever reaches
-    the user.
+    DeepSeek emits any tool-call markup AFTER any genuine prose, so we find the
+    first DSML marker and throw away everything from that point to the end of
+    the string — tags AND the inner parameter text.  This prevents raw parameter
+    values (e.g. query strings) from leaking into a displayed final answer.
+
+    If no DSML marker is present, returns ``content.strip()`` unchanged.
     """
-    if not content or "DSML" not in content:
-        return content or ""
-    cleaned = _DSML_TAG_RE.sub("", content)
-    # Collapse the runs of whitespace left where tags were removed.
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    return cleaned.strip()
+    if not content:
+        return ""
+    if "DSML" not in content:
+        return content.strip()
+    m = _DSML_MARKER_RE.search(content)
+    if m is None:
+        return content.strip()
+    return content[: m.start()].rstrip()
 
 
 def _parse_dsml_tool_calls(content: str) -> tuple[str, list[dict]]:
@@ -305,6 +313,20 @@ class Agent:
                 else:
                     # Genuine final answer — scrub any partial DSML fragments.
                     final_text = _strip_dsml(raw_content)
+                    # If the entire content was DSML (nothing usable before the
+                    # first marker), force one no-tools call so the model must
+                    # produce a plain-text answer instead of an empty bubble.
+                    if not final_text.strip():
+                        forced_resp = await self._call_llm(
+                            messages, api_key, project_id=project_id, with_tools=False
+                        )
+                        if forced_resp.get("status") == "error":
+                            final_text = "I wasn't able to produce a response — please rephrase."
+                        else:
+                            forced_msg = forced_resp["choice"].get("message") or {}
+                            final_text = _strip_dsml(forced_msg.get("content") or "")
+                            if not final_text.strip():
+                                final_text = "I wasn't able to produce a response — please rephrase."
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -427,6 +449,20 @@ class Agent:
                     # Final answer — stream it (we have the whole text but emit it in chunks
                     # so the UI feels live without an extra round-trip to the streaming endpoint).
                     final_text = _strip_dsml(raw_content)
+                    # If the entire content was DSML (nothing usable before the
+                    # first marker), force one no-tools call so the model must
+                    # produce a plain-text answer instead of an empty bubble.
+                    if not final_text.strip():
+                        forced_resp = await self._call_llm(
+                            messages, api_key, project_id=project_id, with_tools=False
+                        )
+                        if forced_resp.get("status") == "error":
+                            final_text = "I wasn't able to produce a response — please rephrase."
+                        else:
+                            forced_msg = forced_resp["choice"].get("message") or {}
+                            final_text = _strip_dsml(forced_msg.get("content") or "")
+                            if not final_text.strip():
+                                final_text = "I wasn't able to produce a response — please rephrase."
                     for chunk in _chunks(final_text, 80):
                         yield {"type": "token", "content": chunk}
                     if conversation_id:
