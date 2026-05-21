@@ -69,7 +69,7 @@ class TestConstructionV2MeasuredConfidence:
     """Each _analyze_* method should emit measured confidence, not hardcoded."""
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def setup_method(self):
         from app.blocks.construction_v2 import ConstructionBlockV2
@@ -163,7 +163,7 @@ class TestEnvelopeConfidence:
     """UniversalBlock.execute envelope confidence rules."""
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_no_confidence_key_gives_none(self):
         """A result dict without 'confidence' → envelope confidence is None."""
@@ -232,7 +232,7 @@ class TestBaseBlockEnvelopeConfidence:
     """app.core.block.BaseBlock.execute envelope confidence rules."""
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_no_confidence_key_gives_none(self):
         from app.core.block import BaseBlock, BlockConfig
