@@ -48,6 +48,7 @@ from app.routers import (
     projects,
     static,
     upload,
+    users,
     workflows,
 )
 from app.agents import load_agents
@@ -57,6 +58,8 @@ async def lifespan(app: FastAPI):
     await init_blocks()
     from app.core.projects import init_db
     init_db()
+    from app.core.users import init_db as init_users_db
+    init_users_db()
     from app.core.session_store import get_session_store
     from app.routers import project as project_router
     app.state.project_store = get_session_store()
@@ -224,6 +227,7 @@ app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
 app.include_router(project.router)
+app.include_router(users.router)
 app.include_router(doc_types.router)
 app.include_router(workflows.router)
 app.include_router(health.router)
