@@ -239,6 +239,7 @@ function DocumentsPanel({
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -266,12 +267,12 @@ function DocumentsPanel({
   async function handleDeleteDirect(doc: DocumentRecord) {
     if (!window.confirm(`Delete "${doc.original_name}"? This cannot be undone.`)) return
     setDeletingId(doc.id)
+    setDeleteError(null)
     try {
       await deleteDocument(projectId, doc.id)
       onDocumentRemoved(doc.id)
     } catch (err) {
-      // Surface error somewhere; for now just log
-      console.error('Delete failed:', err)
+      setDeleteError(err instanceof Error ? err.message : 'Delete failed.')
     } finally {
       setDeletingId(null)
     }
@@ -343,6 +344,9 @@ function DocumentsPanel({
         {uploadError && (
           <p className="docs-upload__error" role="alert">{uploadError}</p>
         )}
+        {deleteError && (
+          <p className="docs-upload__error" role="alert">{deleteError}</p>
+        )}
       </div>
     </div>
   )
@@ -381,6 +385,7 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
   const [query, setQuery] = useState('')
   const [driveFiles, setDriveFiles] = useState<DriveFile[]>([])
   const [searching, setSearching] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [importingId, setImportingId] = useState<string | null>(null)
   const [importErrors, setImportErrors] = useState<Record<string, string>>({})
@@ -414,10 +419,12 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
     e.preventDefault()
     setSearchError(null)
     setDriveFiles([])
+    setHasSearched(false)
     setSearching(true)
     try {
       const resp = await apiGet<{ files: DriveFile[] }>(`/v1/drive/files?q=${encodeURIComponent(query)}`)
       setDriveFiles(resp.files)
+      setHasSearched(true)
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : 'Drive search failed.')
     } finally {
@@ -529,7 +536,7 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
           ))}
         </ul>
       )}
-      {!searching && driveFiles.length === 0 && query && !searchError && (
+      {!searching && hasSearched && driveFiles.length === 0 && !searchError && (
         <p className="drive-no-results">No files found.</p>
       )}
     </div>
