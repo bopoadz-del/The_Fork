@@ -28,8 +28,18 @@ _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 _DRIVE_API = "https://www.googleapis.com/drive/v3"
 
-# Single-use OAuth state values issued by /connect (in-memory; single process).
-_pending_states: set = set()
+# Single-use OAuth state values issued by /connect, mapping state -> issued_at
+# epoch. NOTE: process-local — a multi-worker deployment would need a shared
+# store (e.g. Redis); this app runs single-worker.
+_pending_states: Dict[str, float] = {}
+_STATE_TTL = 600  # seconds — pending OAuth states expire after 10 minutes.
+
+
+def _prune_states() -> None:
+    """Drop pending OAuth states older than _STATE_TTL."""
+    cutoff = time.time() - _STATE_TTL
+    for state in [s for s, issued in _pending_states.items() if issued < cutoff]:
+        del _pending_states[state]
 
 
 def _redirect_uri() -> str:
@@ -79,8 +89,9 @@ async def drive_connect(auth: dict = Depends(require_api_key)):
     if not _configured():
         raise HTTPException(503, "Google Drive not configured — set "
                                  "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.")
+    _prune_states()
     state = secrets.token_urlsafe(24)
-    _pending_states.add(state)
+    _pending_states[state] = time.time()
     from urllib.parse import urlencode
     url = _AUTH_URL + "?" + urlencode({
         "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
@@ -95,11 +106,17 @@ async def drive_connect(auth: dict = Depends(require_api_key)):
 
 
 @router.get("/v1/drive/callback")
-async def drive_callback(code: str = Query(""), state: str = Query("")):
+async def drive_callback(code: str = Query(""), state: str = Query(""),
+                         error: str = Query("")):
     # No Bearer auth here — Google calls this. The single-use state is the gate.
+    _prune_states()
     if state not in _pending_states:
         raise HTTPException(400, "Invalid or expired OAuth state.")
-    _pending_states.discard(state)
+    _pending_states.pop(state, None)
+    # User clicked "Deny" (or consent otherwise failed): Google sends `error`
+    # and no `code`. The state was still consumed above; return gracefully.
+    if error:
+        return RedirectResponse("/?drive=denied", status_code=302)
     if not code:
         raise HTTPException(400, "Missing authorization code.")
     data = await _exchange_code(code)

@@ -68,6 +68,31 @@ def test_callback_exchanges_code_and_stores_token(client, monkeypatch):
     assert tok["expiry"] > time.time()
 
 
+def test_callback_consent_denied(client):
+    # User clicked "Deny": Google redirects back with `error` and no `code`.
+    # The state was issued by /connect, so it is a valid (consumable) state —
+    # the callback must redirect gracefully, not 400, and store no token.
+    r = client.get("/v1/drive/connect", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+
+    r = client.get(f"/v1/drive/callback?error=access_denied&state={state}",
+                    follow_redirects=False)
+    assert r.status_code in (302, 307)
+    assert drive_auth.load_token() is None
+
+
+def test_callback_rejects_expired_state(client):
+    # A state older than _STATE_TTL is pruned on the next callback and so
+    # fails the membership check → 400.
+    import app.routers.drive as drive_mod
+    stale = "stale-state-value"
+    drive_mod._pending_states[stale] = time.time() - drive_mod._STATE_TTL - 1
+
+    r = client.get(f"/v1/drive/callback?code=x&state={stale}",
+                    follow_redirects=False)
+    assert r.status_code == 400
+
+
 def test_status_not_connected(client):
     r = client.get("/v1/drive/status", headers=H)
     assert r.status_code == 200
