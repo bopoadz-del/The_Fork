@@ -47,6 +47,12 @@ def _redirect_uri() -> str:
                      "http://localhost:8000/v1/drive/callback")
 
 
+def _frontend_url() -> str:
+    # NOTE: if FRONTEND_URL is a different origin, ensure it is included in the
+    # CORS allow_origins list in app/main.py.
+    return os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+
 def _configured() -> bool:
     return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
 
@@ -116,7 +122,7 @@ async def drive_callback(code: str = Query(""), state: str = Query(""),
     # User clicked "Deny" (or consent otherwise failed): Google sends `error`
     # and no `code`. The state was still consumed above; return gracefully.
     if error:
-        return RedirectResponse("/?drive=denied", status_code=302)
+        return RedirectResponse(f"{_frontend_url()}/?drive=error", status_code=302)
     if not code:
         raise HTTPException(400, "Missing authorization code.")
     data = await _exchange_code(code)
@@ -128,7 +134,7 @@ async def drive_callback(code: str = Query(""), state: str = Query(""),
         "expiry": time.time() + int(data.get("expires_in", 3600)),
         "email": email,
     })
-    return RedirectResponse("/", status_code=302)
+    return RedirectResponse(f"{_frontend_url()}/?drive=connected", status_code=302)
 
 
 @router.get("/v1/drive/status")

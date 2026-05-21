@@ -62,6 +62,7 @@ def test_callback_exchanges_code_and_stores_token(client, monkeypatch):
     r = client.get(f"/v1/drive/callback?code=auth-code&state={state}",
                     follow_redirects=False)
     assert r.status_code in (302, 307)
+    assert r.headers["location"] == "http://localhost:5173/?drive=connected"
     tok = drive_auth.load_token()
     assert tok["access_token"] == "AT" and tok["refresh_token"] == "RT"
     assert tok["email"] == "me@example.com"
@@ -78,6 +79,7 @@ def test_callback_consent_denied(client):
     r = client.get(f"/v1/drive/callback?error=access_denied&state={state}",
                     follow_redirects=False)
     assert r.status_code in (302, 307)
+    assert r.headers["location"] == "http://localhost:5173/?drive=error"
     assert drive_auth.load_token() is None
 
 
