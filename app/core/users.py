@@ -133,10 +133,13 @@ def create_user(
     uid = str(uuid.uuid4())[:8]
     creds = hash_password(password)
     with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO users (id, email, password_hash, salt, "
-            "display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (uid, email, creds["hash"], creds["salt"],
-             display_name or email, role, _now()),
-        )
+        try:
+            conn.execute(
+                "INSERT INTO users (id, email, password_hash, salt, "
+                "display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (uid, email, creds["hash"], creds["salt"],
+                 display_name or email, role, _now()),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError(f"email '{email}' is already registered")
     return _public(get_user_by_id(uid))
