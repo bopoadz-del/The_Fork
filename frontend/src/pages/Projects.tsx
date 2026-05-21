@@ -1,8 +1,52 @@
-/* Projects page */
+import { useEffect, useState } from 'react'
 import AppHeader from '../components/AppHeader'
+import { apiGet } from '../lib/api'
+import ProjectCard, { type Project } from './ProjectCard'
+import NewProjectModal from './NewProjectModal'
 import './pages.css'
+import './projects.css'
+
+interface ProjectsResponse {
+  projects: Project[]
+}
+
+type PageState =
+  | { tag: 'loading' }
+  | { tag: 'error'; message: string }
+  | { tag: 'loaded'; projects: Project[] }
 
 export default function Projects() {
+  const [state, setState] = useState<PageState>({ tag: 'loading' })
+  const [showModal, setShowModal] = useState(false)
+
+  async function loadProjects() {
+    setState({ tag: 'loading' })
+    try {
+      const data = await apiGet<ProjectsResponse>('/v1/projects')
+      setState({ tag: 'loaded', projects: data.projects ?? [] })
+    } catch (err: unknown) {
+      setState({
+        tag: 'error',
+        message: err instanceof Error ? err.message : 'Failed to load projects.',
+      })
+    }
+  }
+
+  useEffect(() => {
+    void loadProjects()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function handleCreated(project: Project) {
+    setShowModal(false)
+    setState((prev) => {
+      if (prev.tag === 'loaded') {
+        return { tag: 'loaded', projects: [project, ...prev.projects] }
+      }
+      return { tag: 'loaded', projects: [project] }
+    })
+  }
+
   return (
     <div className="page-shell">
       <AppHeader
@@ -12,25 +56,74 @@ export default function Projects() {
       />
 
       <main className="page-main">
-        <div className="content-header">
-          <h1>Projects</h1>
-          <p className="page-description">
-            All active construction projects in your workspace.
-          </p>
+        <div className="projects-header">
+          <div className="projects-header__text">
+            <h1>Projects</h1>
+            <p className="page-description">
+              All construction projects in your workspace.
+            </p>
+          </div>
+          <button
+            className="btn btn--primary"
+            type="button"
+            onClick={() => setShowModal(true)}
+          >
+            + New project
+          </button>
         </div>
 
-        <div className="placeholder-grid">
-          {['PRJ-001', 'PRJ-002', 'PRJ-003'].map((id) => (
-            <div className="project-card" key={id}>
-              <div className="project-card__id mono">{id}</div>
-              <div className="project-card__name">Project Placeholder</div>
-              <div className="project-card__meta text-muted">
-                Route: /projects/{id.toLowerCase()}
-              </div>
-            </div>
-          ))}
-        </div>
+        {state.tag === 'loading' && (
+          <div className="projects-state">
+            <span className="projects-state__label">Loading…</span>
+          </div>
+        )}
+
+        {state.tag === 'error' && (
+          <div className="projects-state">
+            <span className="projects-state__label">Error</span>
+            <div className="projects-state__error-text">{state.message}</div>
+            <button
+              className="btn btn--ghost"
+              type="button"
+              onClick={() => void loadProjects()}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {state.tag === 'loaded' && state.projects.length === 0 && (
+          <div className="projects-state">
+            <div className="empty-mark" aria-hidden="true">◫</div>
+            <p className="projects-state__message">
+              No projects yet. Create your first project to start tracking
+              documents, readiness, and progress.
+            </p>
+            <button
+              className="btn btn--primary"
+              type="button"
+              onClick={() => setShowModal(true)}
+            >
+              + Create first project
+            </button>
+          </div>
+        )}
+
+        {state.tag === 'loaded' && state.projects.length > 0 && (
+          <div className="projects-grid">
+            {state.projects.map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        )}
       </main>
+
+      {showModal && (
+        <NewProjectModal
+          onClose={() => setShowModal(false)}
+          onCreated={handleCreated}
+        />
+      )}
     </div>
   )
 }

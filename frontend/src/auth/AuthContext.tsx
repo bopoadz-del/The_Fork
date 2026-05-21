@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { apiGet, apiPost } from '../lib/api'
+import { ApiError, apiGet, apiPost } from '../lib/api'
 import { clearToken, getToken, setToken } from '../lib/token'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -76,9 +76,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           display_name: me.display_name,
         })
       })
-      .catch(() => {
-        // Token is invalid or expired — discard it
-        clearToken()
+      .catch((err: unknown) => {
+        // Only discard the token on a real auth failure (401).
+        // Network errors (TypeError, no status) leave the token intact so a
+        // transient blip during bootstrap does not silently log the user out.
+        if (err instanceof ApiError && err.status === 401) {
+          clearToken()
+        }
       })
       .finally(() => {
         setLoading(false)

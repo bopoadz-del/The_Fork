@@ -2,6 +2,16 @@ import { getToken } from './token'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
+// ─── ApiError — carries HTTP status so callers can distinguish 401 vs network ──
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 function authHeaders(): Record<string, string> {
   const token = getToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
@@ -31,7 +41,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
     // body wasn't JSON — keep the HTTP status message
   }
 
-  throw new Error(message)
+  throw new ApiError(message, res.status)
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
