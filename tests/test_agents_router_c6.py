@@ -164,3 +164,40 @@ def test_reasoning_blocks_broadened():
         assert "formula_executor" in agent.allowed_blocks, (
             f"{agent_name} missing formula_executor"
         )
+
+
+def test_project_assistant_loads():
+    """project-assistant loads with can_delegate=True and exactly [sympy_reasoning, formula_executor] as allowed_blocks."""
+    agents = load_agents()
+
+    # New agent is present
+    assert "project-assistant" in agents, "project-assistant not in AGENT_REGISTRY"
+
+    pa = agents["project-assistant"]
+    assert pa.can_delegate is True, "project-assistant.can_delegate should be True"
+    assert pa.allowed_blocks == ["sympy_reasoning", "formula_executor"], (
+        f"project-assistant.allowed_blocks = {pa.allowed_blocks!r}; "
+        "expected ['sympy_reasoning', 'formula_executor']"
+    )
+
+    # Total count: the new agent makes 14
+    assert len(agents) == 14, f"Expected 14 agents total, got {len(agents)}: {sorted(agents)}"
+
+    # All 13 original agents still load without error
+    _ORIGINAL_AGENTS = {
+        "bim-analyst",
+        "construction-pm",
+        "contracts-manager",
+        "document-analyst",
+        "document-ingestion",
+        "external-mcp",
+        "heavy-reasoning",
+        "learning",
+        "quantity-surveyor",
+        "safety-officer",
+        "self-coding",
+        "smart-orchestrator",
+        "validation",
+    }
+    for name in _ORIGINAL_AGENTS:
+        assert name in agents, f"Original agent '{name}' missing after adding project-assistant"

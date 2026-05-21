@@ -766,7 +766,7 @@ export default function ProjectWorkspace() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/v1/agents/smart-orchestrator/chat/stream`, {
+      const res = await fetch(`${API_BASE}/v1/agents/project-assistant/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
