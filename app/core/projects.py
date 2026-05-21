@@ -62,6 +62,7 @@ def init_db() -> None:
                     client           TEXT,
                     status           TEXT NOT NULL DEFAULT 'active',
                     aconex_connected INTEGER NOT NULL DEFAULT 0,
+                    user_id          TEXT NOT NULL DEFAULT 'system',
                     created_at       TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS documents (
@@ -89,6 +90,17 @@ def init_db() -> None:
                 );
                 """
             )
+            # Migration for legacy DBs that don't have the user_id column yet.
+            cols = [r[1] for r in conn.execute(
+                "PRAGMA table_info(projects)"
+            ).fetchall()]
+            if "user_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE projects ADD COLUMN user_id TEXT"
+                )
+                conn.execute(
+                    "UPDATE projects SET user_id = 'system' WHERE user_id IS NULL"
+                )
         _initialized = True
 
 
@@ -136,24 +148,30 @@ def classify_doc_role(filename: str) -> str:
 
 # ── projects ────────────────────────────────────────────────────────────────
 
-def create_project(name: str, client: Optional[str] = None) -> Dict[str, Any]:
+def create_project(name: str, client: Optional[str] = None, user_id: str = "system") -> Dict[str, Any]:
     _ensure_db()
     pid = str(uuid.uuid4())[:8]
     with _lock, _connect() as conn:
         conn.execute(
-            "INSERT INTO projects (id, name, client, status, aconex_connected, created_at) "
-            "VALUES (?, ?, ?, 'active', 0, ?)",
-            (pid, name, client, _now()),
+            "INSERT INTO projects (id, name, client, status, aconex_connected, user_id, created_at) "
+            "VALUES (?, ?, ?, 'active', 0, ?, ?)",
+            (pid, name, client, user_id, _now()),
         )
     return get_project(pid)
 
 
-def list_projects() -> List[Dict[str, Any]]:
+def list_projects(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     _ensure_db()
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM projects ORDER BY created_at DESC"
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM projects ORDER BY created_at DESC"
+            ).fetchall()
     out = []
     for r in rows:
         p = dict(r)
@@ -163,7 +181,7 @@ def list_projects() -> List[Dict[str, Any]]:
     return out
 
 
-def get_project(project_id: str) -> Optional[Dict[str, Any]]:
+def get_project(project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     _ensure_db()
     with _connect() as conn:
         row = conn.execute(
@@ -171,11 +189,23 @@ def get_project(project_id: str) -> Optional[Dict[str, Any]]:
         ).fetchone()
     if not row:
         return None
+    if user_id is not None and row["user_id"] != user_id:
+        return None
     proj = dict(row)
     proj["aconex_connected"] = bool(proj["aconex_connected"])
     proj["documents"] = list_documents(project_id)
     proj["readiness"] = compute_readiness(project_id)
     return proj
+
+
+def project_owner(project_id: str) -> Optional[str]:
+    """Return the user_id that owns the project, or None if the project doesn't exist."""
+    _ensure_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+    return row["user_id"] if row else None
 
 
 def delete_project(project_id: str) -> bool:
