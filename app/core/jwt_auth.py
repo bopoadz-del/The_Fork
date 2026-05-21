@@ -5,6 +5,7 @@ if unset, a key is generated and persisted to {DATA_DIR}/.secret_key so
 tokens survive process restarts. DATA_DIR is read at call time so tests
 can relocate it.
 """
+import logging
 import os
 import secrets
 import threading
@@ -16,6 +17,8 @@ from jwt import InvalidTokenError  # re-exported for callers
 _ALGORITHM = "HS256"
 _lock = threading.Lock()
 _cached_secret: str | None = None
+
+logger = logging.getLogger(__name__)
 
 
 def _default_expiry() -> int:
@@ -29,6 +32,12 @@ def _secret_file() -> str:
     except OSError:
         import tempfile
         data_dir = tempfile.gettempdir()
+        logger.warning(
+            "Could not create DATA_DIR %r; signing secret will be stored in "
+            "temp dir %r — rotate the secret if this host is shared.",
+            os.getenv("DATA_DIR", "./data"),
+            data_dir,
+        )
     return os.path.join(data_dir, ".secret_key")
 
 
@@ -45,14 +54,21 @@ def _get_secret() -> str:
             _cached_secret = env_secret
             return _cached_secret
         path = _secret_file()
+        disk_secret: str | None = None
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
-                _cached_secret = f.read().strip()
+                disk_secret = f.read().strip() or None  # treat empty file as missing
+        if disk_secret:
+            _cached_secret = disk_secret
         else:
             _cached_secret = secrets.token_hex(32)
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(_cached_secret)
+                try:
+                    os.chmod(path, 0o600)
+                except OSError:
+                    pass  # no-op on platforms that don't support POSIX permissions
             except OSError:
                 pass  # fall back to in-memory secret for this process
         return _cached_secret
