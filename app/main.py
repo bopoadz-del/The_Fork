@@ -47,6 +47,7 @@ from app.routers import (
     monitoring,
     project,
     projects,
+    redline,
     static,
     upload,
     users,
@@ -230,6 +231,7 @@ app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
 app.include_router(doc_search.router)
+app.include_router(redline.router)
 app.include_router(project.router)
 app.include_router(users.router)
 app.include_router(doc_types.router)
