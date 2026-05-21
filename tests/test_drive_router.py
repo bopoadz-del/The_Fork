@@ -1,0 +1,68 @@
+import time
+import pytest
+from fastapi.testclient import TestClient
+from app.main import app
+from app.core import drive_auth
+
+H = {"Authorization": "Bearer cb_dev_key"}
+
+
+@pytest.fixture(autouse=True)
+def tmp_data(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/v1/drive/callback")
+    yield
+
+
+@pytest.fixture
+def client():
+    with TestClient(app) as c:
+        yield c
+
+
+def test_connect_returns_auth_url(client):
+    # /connect returns the consent URL as JSON (NOT a redirect) so the browser
+    # can fetch it with the Bearer header, then navigate client-side.
+    r = client.get("/v1/drive/connect", headers=H)
+    assert r.status_code == 200
+    url = r.json()["auth_url"]
+    assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth")
+    assert "scope=" in url and "drive.readonly" in url
+    assert "state=" in url and "access_type=offline" in url
+
+
+def test_connect_requires_auth(client):
+    assert client.get("/v1/drive/connect").status_code == 401
+
+
+def test_callback_rejects_bad_state(client):
+    r = client.get("/v1/drive/callback?code=x&state=never-issued",
+                    follow_redirects=False)
+    assert r.status_code == 400
+
+
+def test_callback_exchanges_code_and_stores_token(client, monkeypatch):
+    # issue a state via /connect
+    r = client.get("/v1/drive/connect", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+
+    async def fake_exchange(code):
+        assert code == "auth-code"
+        return {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600}
+
+    async def fake_email(access_token):
+        return "me@example.com"
+
+    import app.routers.drive as drive_mod
+    monkeypatch.setattr(drive_mod, "_exchange_code", fake_exchange)
+    monkeypatch.setattr(drive_mod, "_fetch_email", fake_email)
+
+    r = client.get(f"/v1/drive/callback?code=auth-code&state={state}",
+                    follow_redirects=False)
+    assert r.status_code in (302, 307)
+    tok = drive_auth.load_token()
+    assert tok["access_token"] == "AT" and tok["refresh_token"] == "RT"
+    assert tok["email"] == "me@example.com"
+    assert tok["expiry"] > time.time()
