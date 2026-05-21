@@ -227,6 +227,9 @@ app.include_router(doc_types.router)
 app.include_router(workflows.router)
 app.include_router(health.router)
 app.include_router(mcp.router)
+# Mount the MCP SSE POST endpoint directly on the app — include_router does
+# not propagate Starlette Mount routes (no-op if MCP SSE deps are absent).
+mcp.mount_message_endpoint(app)
 app.include_router(agents_router.router)
 app.include_router(static.router)
 # Debug routes — only in non-production environments

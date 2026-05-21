@@ -47,6 +47,22 @@ if mcp_router_available():
 
     _sse = SseServerTransport("/mcp/messages")
 
+    def mount_message_endpoint(app) -> bool:
+        """Mount the POST side of the MCP SSE transport on the FastAPI app.
+
+        Call this on the app itself (from main.py), NOT the APIRouter:
+        FastAPI's include_router does not propagate Starlette Mount routes, so
+        a Mount added to this router would be silently dropped. /mcp/sse sends
+        the client an `endpoint` event pointing at
+        /mcp/messages?session_id=...; without this mount every JSON-RPC POST
+        there 404s and the `initialize` handshake never completes.
+        """
+        from starlette.routing import Mount
+        app.router.routes.append(
+            Mount("/mcp/messages", app=_sse.handle_post_message)
+        )
+        return True
+
     def _build_server() -> "Server":
         from app.blocks import BLOCK_REGISTRY
         from app.dependencies import block_instances, _create_block_instance
@@ -55,24 +71,20 @@ if mcp_router_available():
 
         @server.list_tools()
         async def _list_tools():
-            tools = []
-            for name, block_class in BLOCK_REGISTRY.items():
-                if name in ("mcp_adapter",):
-                    continue
-                tools.append(
-                    Tool(
-                        name=name,
-                        description=getattr(block_class, "description", "") or f"Block: {name}",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "input": {"description": "Block input"},
-                                "params": {"type": "object", "description": "Optional block params"},
-                            },
-                        },
-                    )
+            # Single source of truth: delegate to the mcp_adapter catalog so the
+            # SSE surface and the mcp_adapter block never drift (and inherit its
+            # per-action input schemas). _build_tool_catalog already skips
+            # mcp_adapter itself.
+            from app.blocks.mcp_adapter import MCPAdapterBlock
+
+            return [
+                Tool(
+                    name=t["name"],
+                    description=t["description"],
+                    inputSchema=t["inputSchema"],
                 )
-            return tools
+                for t in MCPAdapterBlock._build_tool_catalog()
+            ]
 
         @server.call_tool()
         async def _call_tool(name: str, arguments: dict):
@@ -94,6 +106,10 @@ if mcp_router_available():
             await server.run(streams[0], streams[1], server.create_initialization_options())
 
 else:
+
+    def mount_message_endpoint(app) -> bool:
+        """No-op — the MCP SSE transport is unavailable, nothing to mount."""
+        return False
 
     @router.get("/mcp/sse")
     async def mcp_sse_unavailable():
