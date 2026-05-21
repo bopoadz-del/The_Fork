@@ -147,7 +147,41 @@ security = HTTPBearer(auto_error=False)
 async def require_api_key(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> Dict[str, Any]:
-    """Require valid API key for protected endpoints"""
+    """Require valid API key OR valid JWT for protected endpoints.
+
+    Try JWT first: if the bearer token is a valid JWT, resolve the user and
+    return a superset dict compatible with both legacy require_api_key callers
+    (who read user/tier/valid) and require_user callers (who read user_id/role/
+    email/auth_method).
+
+    If JWT decode fails (InvalidTokenError), fall through to the legacy
+    auth_manager.validate_key() path unchanged so cb_dev_key and real API keys
+    keep working exactly as before.
+    """
+    if credentials is not None:
+        try:
+            payload = jwt_auth.decode_token(credentials.credentials)
+        except jwt_auth.InvalidTokenError:
+            payload = None
+
+        if payload is not None:
+            user = users_store.get_user_by_id(payload.get("user_id"))
+            if not user:
+                raise HTTPException(status_code=401, detail="Token user no longer exists")
+            return {
+                # Legacy require_api_key keys (callers read these)
+                "user": user["email"],
+                "tier": user.get("role") or "user",
+                "valid": True,
+                # require_user / admin-check keys
+                "user_id": user["id"],
+                "role": user["role"],
+                "email": user["email"],
+                "auth_method": "jwt",
+            }
+
+    # JWT decode failed or no credentials — fall through to legacy key validation.
+    # validate_key(None) raises HTTPException(401) preserving the no-credentials behavior.
     return auth_manager.validate_key(credentials)
 
 
