@@ -1,9 +1,9 @@
-/* ProjectWorkspace — project detail + streaming chat (B4) */
+/* ProjectWorkspace — project detail + streaming chat (B4) + documents/Drive (B5) */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AppHeader from '../components/AppHeader'
 import { type Project } from './ProjectCard'
-import { apiGet, ApiError } from '../lib/api'
+import { apiGet, apiPost, apiPostForm, ApiError } from '../lib/api'
 import { getToken } from '../lib/token'
 import './pages.css'
 import './workspace.css'
@@ -17,11 +17,25 @@ interface ProjectDetail extends Project {
 
 interface DocumentRecord {
   id: string
-  name: string
+  project_id?: string
+  original_name: string
   doc_type?: string
   doc_role?: string
   size?: number
-  created_at?: string
+  uploaded_at?: string
+}
+
+interface DriveFile {
+  id: string
+  name: string
+  mimeType?: string
+  modifiedTime?: string
+}
+
+interface DriveStatus {
+  connected: boolean
+  email?: string | null
+  configured: boolean
 }
 
 interface ProjectReadiness {
@@ -59,6 +73,12 @@ function formatDate(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function readinessDisplay(r: ProjectReadiness): { label: string; ready: boolean } {
@@ -201,13 +221,331 @@ function ChatThread({ messages }: ChatThreadProps) {
   )
 }
 
+// ── DocumentsPanel ─────────────────────────────────────────────────────────
+
+interface DocumentsPanelProps {
+  projectId: string
+  documents: DocumentRecord[]
+  onDocumentAdded: (doc: DocumentRecord) => void
+  onDocumentRemoved: (docId: string) => void
+}
+
+function DocumentsPanel({
+  projectId,
+  documents,
+  onDocumentAdded,
+  onDocumentRemoved,
+}: DocumentsPanelProps) {
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadError(null)
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const resp = await apiPostForm<{ document: DocumentRecord }>(
+        `/v1/projects/${projectId}/documents`,
+        form,
+      )
+      onDocumentAdded(resp.document)
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed.')
+    } finally {
+      setUploading(false)
+      // Reset the input so the same file can be re-uploaded if needed
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  async function handleDeleteDirect(doc: DocumentRecord) {
+    if (!window.confirm(`Delete "${doc.original_name}"? This cannot be undone.`)) return
+    setDeletingId(doc.id)
+    try {
+      await deleteDocument(projectId, doc.id)
+      onDocumentRemoved(doc.id)
+    } catch (err) {
+      // Surface error somewhere; for now just log
+      console.error('Delete failed:', err)
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  return (
+    <div className="docs-panel">
+      {documents.length === 0 ? (
+        <div className="docs-empty">
+          <span className="docs-empty__icon" aria-hidden="true">◫</span>
+          <span className="docs-empty__label">No documents yet</span>
+        </div>
+      ) : (
+        <ul className="doc-list" aria-label="Project documents">
+          {documents.map((doc) => (
+            <li key={doc.id} className="doc-row">
+              <div className="doc-row__main">
+                <span className="doc-row__name" title={doc.original_name}>
+                  {doc.original_name}
+                </span>
+                <span className="doc-row__meta">
+                  {doc.doc_type && (
+                    <span className="doc-tag">{doc.doc_type}</span>
+                  )}
+                  {doc.doc_role && doc.doc_role !== 'other' && (
+                    <span className="doc-tag doc-tag--role">{doc.doc_role.replace('_', ' ')}</span>
+                  )}
+                </span>
+              </div>
+              <div className="doc-row__data">
+                {doc.size != null && (
+                  <span className="mono doc-row__size">{formatSize(doc.size)}</span>
+                )}
+                {doc.uploaded_at && (
+                  <span className="mono doc-row__date">{formatDate(doc.uploaded_at)}</span>
+                )}
+                <button
+                  type="button"
+                  className="doc-row__delete"
+                  aria-label={`Delete ${doc.original_name}`}
+                  disabled={deletingId === doc.id}
+                  onClick={() => void handleDeleteDirect(doc)}
+                >
+                  {deletingId === doc.id ? '…' : '×'}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="docs-upload">
+        <input
+          ref={fileInputRef}
+          type="file"
+          id="doc-file-input"
+          className="docs-upload__input"
+          onChange={(e) => void handleFileChange(e)}
+          disabled={uploading}
+          aria-label="Choose file to upload"
+        />
+        <label
+          htmlFor="doc-file-input"
+          className={`docs-upload__btn btn btn--ghost${uploading ? ' btn--disabled' : ''}`}
+          aria-busy={uploading}
+        >
+          {uploading ? 'Uploading…' : '+ Upload file'}
+        </label>
+        {uploadError && (
+          <p className="docs-upload__error" role="alert">{uploadError}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── deleteDocument helper (DELETE verb not in api.ts) ──────────────────────
+
+async function deleteDocument(projectId: string, documentId: string): Promise<void> {
+  const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000'
+  const token = getToken()
+  const res = await fetch(`${API_BASE}/v1/projects/${projectId}/documents/${documentId}`, {
+    method: 'DELETE',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`
+    try {
+      const body = await res.json() as { detail?: string }
+      if (typeof body.detail === 'string') msg = body.detail
+    } catch { /* not JSON */ }
+    throw new Error(msg)
+  }
+}
+
+// ── DrivePanel ─────────────────────────────────────────────────────────────
+
+interface DrivePanelProps {
+  projectId: string
+  onDocumentAdded: (doc: DocumentRecord) => void
+}
+
+function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
+  const [status, setStatus] = useState<DriveStatus | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [query, setQuery] = useState('')
+  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [importingId, setImportingId] = useState<string | null>(null)
+  const [importErrors, setImportErrors] = useState<Record<string, string>>({})
+
+  // Load Drive status on mount
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const s = await apiGet<DriveStatus>('/v1/drive/status')
+        if (!cancelled) setStatus(s)
+      } catch (err) {
+        if (!cancelled) setStatusError(err instanceof Error ? err.message : 'Failed to load Drive status.')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  async function handleConnect() {
+    setConnecting(true)
+    try {
+      const resp = await apiGet<{ auth_url: string }>('/v1/drive/connect')
+      window.location.href = resp.auth_url
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : 'Failed to start Drive connection.')
+      setConnecting(false)
+    }
+  }
+
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault()
+    setSearchError(null)
+    setDriveFiles([])
+    setSearching(true)
+    try {
+      const resp = await apiGet<{ files: DriveFile[] }>(`/v1/drive/files?q=${encodeURIComponent(query)}`)
+      setDriveFiles(resp.files)
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : 'Drive search failed.')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  async function handleImport(file: DriveFile) {
+    setImportingId(file.id)
+    setImportErrors((prev) => { const next = { ...prev }; delete next[file.id]; return next })
+    try {
+      const resp = await apiPost<{ document: DocumentRecord }>(
+        `/v1/projects/${projectId}/drive/import`,
+        { file_id: file.id, name: file.name },
+      )
+      onDocumentAdded(resp.document)
+      // Remove from search results to avoid double-import
+      setDriveFiles((prev) => prev.filter((f) => f.id !== file.id))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Import failed.'
+      setImportErrors((prev) => ({ ...prev, [file.id]: msg }))
+    } finally {
+      setImportingId(null)
+    }
+  }
+
+  if (statusError && !status) {
+    return (
+      <p className="drive-status-error" role="alert">{statusError}</p>
+    )
+  }
+
+  if (!status) {
+    return <p className="drive-loading">Checking Drive…</p>
+  }
+
+  if (!status.configured) {
+    return (
+      <p className="drive-not-configured">
+        Google Drive not configured on this server.
+      </p>
+    )
+  }
+
+  if (!status.connected) {
+    return (
+      <div className="drive-connect">
+        {statusError && <p className="drive-status-error" role="alert">{statusError}</p>}
+        <button
+          type="button"
+          className="btn btn--ghost drive-connect__btn"
+          onClick={() => void handleConnect()}
+          disabled={connecting}
+        >
+          {connecting ? 'Redirecting…' : 'Connect Google Drive'}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="drive-connected">
+      {status.email && (
+        <p className="drive-email">
+          Connected as <span className="mono">{status.email}</span>
+        </p>
+      )}
+      <form className="drive-search" onSubmit={(e) => void handleSearch(e)}>
+        <input
+          type="search"
+          className="drive-search__input"
+          placeholder="Search Drive files…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search Google Drive"
+          disabled={searching}
+        />
+        <button
+          type="submit"
+          className="btn btn--ghost drive-search__btn"
+          disabled={searching}
+          aria-label="Search"
+        >
+          {searching ? '…' : 'Search'}
+        </button>
+      </form>
+      {searchError && <p className="drive-search__error" role="alert">{searchError}</p>}
+      {driveFiles.length > 0 && (
+        <ul className="drive-file-list" aria-label="Google Drive files">
+          {driveFiles.map((file) => (
+            <li key={file.id} className="drive-file-row">
+              <span className="drive-file-row__name" title={file.name}>{file.name}</span>
+              <div className="drive-file-row__actions">
+                {importErrors[file.id] && (
+                  <span className="drive-file-row__error" role="alert">
+                    {importErrors[file.id]}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="btn btn--ghost drive-file-row__add"
+                  disabled={importingId === file.id}
+                  onClick={() => void handleImport(file)}
+                >
+                  {importingId === file.id ? '…' : 'Add'}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!searching && driveFiles.length === 0 && query && !searchError && (
+        <p className="drive-no-results">No files found.</p>
+      )}
+    </div>
+  )
+}
+
 // ── WorkspaceRail ──────────────────────────────────────────────────────────
 
 interface RailProps {
   project: ProjectDetail
+  documents: DocumentRecord[]
+  onDocumentAdded: (doc: DocumentRecord) => void
+  onDocumentRemoved: (docId: string) => void
 }
 
-function WorkspaceRail({ project }: RailProps) {
+function WorkspaceRail({ project, documents, onDocumentAdded, onDocumentRemoved }: RailProps) {
   const readiness = project.readiness
     ? readinessDisplay(project.readiness as ProjectReadiness)
     : null
@@ -257,20 +595,29 @@ function WorkspaceRail({ project }: RailProps) {
         )}
       </div>
 
-      {/* Documents placeholder — B5 will implement upload + list here */}
+      {/* Documents — B5 */}
       <div className="rail-section">
-        <div className="rail-section__title">Documents</div>
-        {/* TODO B5: replace with document list + upload button */}
-        <div className="rail-docs-placeholder">
-          <span className="rail-docs-placeholder__icon">◫</span>
-          <span>Document upload coming in B5</span>
+        <div className="rail-section__title">
+          Documents
+          {documents.length > 0 && (
+            <span className="rail-section__count">{documents.length}</span>
+          )}
         </div>
-        {Array.isArray(project.documents) && project.documents.length > 0 && (
-          <p style={{ marginTop: 'var(--space-2)', fontSize: '12px', color: 'var(--text-muted)' }}>
-            {project.documents.length} document
-            {project.documents.length !== 1 ? 's' : ''} attached
-          </p>
-        )}
+        <DocumentsPanel
+          projectId={project.id}
+          documents={documents}
+          onDocumentAdded={onDocumentAdded}
+          onDocumentRemoved={onDocumentRemoved}
+        />
+      </div>
+
+      {/* Google Drive — B5 */}
+      <div className="rail-section">
+        <div className="rail-section__title">Google Drive</div>
+        <DrivePanel
+          projectId={project.id}
+          onDocumentAdded={onDocumentAdded}
+        />
       </div>
     </aside>
   )
@@ -288,6 +635,7 @@ export default function ProjectWorkspace() {
   const { id } = useParams<{ id: string }>()
 
   const [wsState, setWsState] = useState<WorkspaceState>({ tag: 'loading' })
+  const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
   const [sessionId, setSessionId] = useState<string>('default')
@@ -303,15 +651,24 @@ export default function ProjectWorkspace() {
   // ── Load project ──────────────────────────────────────────────────────────
 
   useEffect(() => {
+    // B4 fix: abort any in-flight stream and reset chat + session when id changes
+    abortRef.current?.abort()
+    setMessages([])
+    setSessionId('default')
+
     if (!id) {
       setWsState({ tag: 'not-found' })
       return
     }
+    setWsState({ tag: 'loading' })
     let cancelled = false
     void (async () => {
       try {
         const project = await apiGet<ProjectDetail>(`/v1/projects/${id}`)
-        if (!cancelled) setWsState({ tag: 'ready', project })
+        if (!cancelled) {
+          setWsState({ tag: 'ready', project })
+          setDocuments(project.documents ?? [])
+        }
       } catch (err) {
         if (cancelled) return
         if (err instanceof ApiError && err.status === 404) {
@@ -326,6 +683,16 @@ export default function ProjectWorkspace() {
     })()
     return () => { cancelled = true }
   }, [id])
+
+  // ── Document mutation callbacks ───────────────────────────────────────────
+
+  const handleDocumentAdded = useCallback((doc: DocumentRecord) => {
+    setDocuments((prev) => [...prev, doc])
+  }, [])
+
+  const handleDocumentRemoved = useCallback((docId: string) => {
+    setDocuments((prev) => prev.filter((d) => d.id !== docId))
+  }, [])
 
   // Cleanup on unmount
   useEffect(() => () => { abortRef.current?.abort() }, [])
@@ -561,8 +928,13 @@ export default function ProjectWorkspace() {
           />
         </div>
 
-        {/* Right rail — project metadata + documents placeholder (B5 slot) */}
-        <WorkspaceRail project={project} />
+        {/* Right rail — project metadata + documents + Drive (B5) */}
+        <WorkspaceRail
+          project={project}
+          documents={documents}
+          onDocumentAdded={handleDocumentAdded}
+          onDocumentRemoved={handleDocumentRemoved}
+        />
       </div>
     </div>
   )

@@ -135,24 +135,330 @@
   border: 1px solid var(--border-light);
 }
 
-/* ── Documents placeholder (B5) ── */
-.rail-docs-placeholder {
+/* ── Rail section count badge ── */
+.rail-section__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rail-section__count {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: 10px;
+  padding: 1px 6px;
+  letter-spacing: 0;
+}
+
+/* ── DocumentsPanel — B5 ── */
+.docs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.docs-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-4) 0;
-  text-align: center;
+  padding: var(--space-5) 0 var(--space-3);
   color: var(--text-subtle);
   font-size: 12px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-md);
-  margin-top: var(--space-2);
 }
 
-.rail-docs-placeholder__icon {
-  font-size: 18px;
-  opacity: 0.5;
+.docs-empty__icon {
+  font-size: 20px;
+  opacity: 0.4;
+}
+
+.docs-empty__label {
+  letter-spacing: 0.02em;
+}
+
+/* Document list */
+.doc-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+}
+
+.doc-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-light);
+  background: var(--surface);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.doc-row:hover {
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.doc-row__main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.doc-row__name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
+  /* Truncate long filenames */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-row__meta {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.doc-tag {
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.doc-tag--role {
+  background: var(--accent-light);
+  color: var(--accent);
+  border-color: rgba(30, 95, 168, 0.15);
+}
+
+.doc-row__data {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.doc-row__size,
+.doc-row__date {
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+.doc-row__delete {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-subtle);
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition), background var(--transition);
+}
+
+.doc-row__delete:hover:not(:disabled) {
+  color: var(--danger);
+  background: rgba(185, 28, 28, 0.06);
+}
+
+.doc-row__delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Upload area */
+.docs-upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.docs-upload__input {
+  /* Hidden — triggered via label */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.docs-upload__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px var(--space-3);
+  width: 100%;
+}
+
+.docs-upload__btn.btn--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.docs-upload__error {
+  font-size: 11px;
+  color: var(--danger);
+  line-height: 1.4;
+  padding: var(--space-1) 0;
+}
+
+/* ── DrivePanel — B5 ── */
+.drive-loading,
+.drive-not-configured,
+.drive-status-error,
+.drive-no-results {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding: var(--space-2) 0;
+}
+
+.drive-status-error {
+  color: var(--danger);
+}
+
+.drive-not-configured {
+  color: var(--text-subtle);
+  font-style: italic;
+}
+
+.drive-connect {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.drive-connect__btn {
+  font-size: 12px;
+  padding: 6px var(--space-3);
+  width: 100%;
+}
+
+.drive-email {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-2);
+  line-height: 1.4;
+}
+
+.drive-search {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.drive-search__input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px var(--space-2);
+  font-size: 12px;
+  color: var(--text);
+  outline: none;
+  font-family: var(--font-sans);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.drive-search__input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.drive-search__input::placeholder {
+  color: var(--text-subtle);
+}
+
+.drive-search__btn {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 5px var(--space-3);
+}
+
+.drive-search__error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-bottom: var(--space-2);
+}
+
+/* Drive file list */
+.drive-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drive-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-light);
+  background: var(--surface);
+  transition: border-color var(--transition);
+}
+
+.drive-file-row:hover {
+  border-color: var(--border);
+}
+
+.drive-file-row__name {
+  font-size: 12px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-file-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.drive-file-row__error {
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.drive-file-row__add {
+  font-size: 11px;
+  padding: 3px 10px;
+  white-space: nowrap;
 }
 
 /* ── Chat Thread ── */
