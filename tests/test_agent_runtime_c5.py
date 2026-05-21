@@ -297,3 +297,90 @@ def test_remember_fact_tool_always_present():
     agent = _make_agent()
     names = [t["function"]["name"] for t in agent.tool_definitions()]
     assert "remember_fact" in names
+
+
+# ── 12. chat_stream basic (unchanged without new args) ───────────────────────
+
+@pytest.mark.asyncio
+async def test_chat_stream_unchanged_without_new_args(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(Agent, "_call_llm", _llm_text("streamed answer"))
+    agent = _make_agent()
+
+    events = []
+    async for ev in agent.chat_stream("hi", api_key="k"):
+        events.append(ev)
+
+    types = [ev["type"] for ev in events]
+    assert types[0] == "start"
+    assert "token" in types
+    assert types[-1] == "end"
+
+    token_text = "".join(ev["content"] for ev in events if ev["type"] == "token")
+    assert token_text == "streamed answer"
+
+
+# ── 13. chat_stream persists conversation ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_chat_stream_persists_conversation(tmp_path, monkeypatch):
+    am = _isolate(tmp_path, monkeypatch)
+    # Answer is >80 chars so chunking is actually exercised
+    long_answer = "This is a long streamed answer that definitely exceeds eighty characters in length, ensuring chunks."
+    monkeypatch.setattr(Agent, "_call_llm", _llm_text(long_answer))
+    agent = _make_agent()
+
+    async for _ in agent.chat_stream("hello", api_key="k", conversation_id="sv1"):
+        pass
+
+    msgs = am.get_messages("sv1")
+    roles_contents = [(m["role"], m["content"]) for m in msgs]
+    assert ("user", "hello") in roles_contents
+    assert ("assistant", long_answer) in roles_contents
+
+
+# ── 14. chat_stream injects project context ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_chat_stream_injects_project_context(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    import app.core.projects as store
+    proj = store.create_project("Stream Context Project")
+    pid = proj["id"]
+    store.set_fact(pid, "contract_value", "9999999")
+
+    box = {}
+    monkeypatch.setattr(Agent, "_call_llm", _llm_capture(box))
+    agent = _make_agent()
+
+    async for _ in agent.chat_stream("what is the contract value", api_key="k", project_id=pid):
+        pass
+
+    sys_text = "\n".join(m["content"] for m in box["messages"] if m["role"] == "system")
+    assert "9999999" in sys_text
+
+
+# ── 15. delegation propagates project_id ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_delegation_propagates_project_id(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    specialist = _make_agent(name="specialist")
+    monkeypatch.setitem(rt.AGENT_REGISTRY, "specialist", specialist)
+
+    box = {}
+    monkeypatch.setattr(Agent, "_call_llm", _llm_capture(box, text="specialist answer"))
+
+    caller = _make_agent(name="caller", can_delegate=True)
+    tool_call = {
+        "id": "d4",
+        "function": {
+            "name": "delegate_to_agent",
+            "arguments": '{"agent_name": "specialist", "message": "sub-task"}',
+        },
+    }
+    result = await caller._run_tool_call(
+        tool_call, api_key="k", project_id="proj-xyz", _call_stack=["caller"]
+    )
+    assert result["ok"] is True
+    assert box.get("project_id") == "proj-xyz"

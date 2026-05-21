@@ -465,6 +465,7 @@ class Agent:
             sub = await target.chat(
                 message,
                 api_key=api_key,
+                project_id=project_id,
                 _depth=_depth + 1,
                 _call_stack=_call_stack + [agent_name],
             )
