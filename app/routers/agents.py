@@ -18,7 +18,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agents import AGENT_REGISTRY, get_agent
-from app.dependencies import require_api_key
+from app.core import projects as store
+from app.dependencies import require_user
 
 router = APIRouter()
 
@@ -27,10 +28,12 @@ class AgentChatRequest(BaseModel):
     message: str
     history: Optional[List[Dict[str, str]]] = None
     model: Optional[str] = None  # override agent default if needed
+    project_id: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 @router.get("/v1/agents")
-async def list_agents(auth: dict = Depends(require_api_key)):
+async def list_agents(auth: dict = Depends(require_user)):
     return {
         "count": len(AGENT_REGISTRY),
         "agents": [
@@ -48,7 +51,7 @@ async def list_agents(auth: dict = Depends(require_api_key)):
 
 
 @router.get("/v1/agents/{name}")
-async def get_agent_info(name: str, auth: dict = Depends(require_api_key)):
+async def get_agent_info(name: str, auth: dict = Depends(require_user)):
     agent = get_agent(name)
     if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
@@ -65,18 +68,36 @@ async def get_agent_info(name: str, auth: dict = Depends(require_api_key)):
 
 
 @router.post("/v1/agents/{name}/chat")
-async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(require_api_key)):
+async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(require_user)):
     agent = get_agent(name)
     if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
+
+    # Ownership check: if a project_id is provided, the caller must own it.
+    if req.project_id is not None:
+        project = store.get_project(req.project_id, user_id=auth["user_id"])
+        if project is None:
+            raise HTTPException(404, "Project not found")
+
     if req.model:
         agent = _agent_with_override(agent, model=req.model)
-    result = await agent.chat(req.message, history=req.history)
+
+    result = await agent.chat(
+        req.message,
+        history=req.history,
+        project_id=req.project_id,
+        conversation_id=req.conversation_id,
+    )
+
+    # Echo conversation_id back so the client can resume the conversation.
+    if req.conversation_id is not None:
+        result["conversation_id"] = req.conversation_id
+
     return result
 
 
 @router.post("/v1/agents/{name}/chat/stream")
-async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(require_api_key)):
+async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(require_user)):
     agent = get_agent(name)
     if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
@@ -87,12 +108,26 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     message = body.get("message", "")
     history = body.get("history") or []
     model = body.get("model")
+    project_id = body.get("project_id")
+    conversation_id = body.get("conversation_id")
+
+    # Ownership check: if a project_id is provided, the caller must own it.
+    if project_id is not None:
+        project = store.get_project(project_id, user_id=auth["user_id"])
+        if project is None:
+            raise HTTPException(404, "Project not found")
+
     if model:
         agent = _agent_with_override(agent, model=model)
 
     async def event_stream():
         try:
-            async for evt in agent.chat_stream(message, history=history):
+            async for evt in agent.chat_stream(
+                message,
+                history=history,
+                project_id=project_id,
+                conversation_id=conversation_id,
+            ):
                 yield f"data: {json.dumps(evt, default=str)}\n\n"
                 await asyncio.sleep(0)  # yield to the event loop
         except Exception as e:

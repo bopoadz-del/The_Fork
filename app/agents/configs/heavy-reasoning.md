@@ -1,6 +1,7 @@
 ---
 name: heavy-reasoning
 description: Merges BOQ + drawing + spec results, detects inconsistencies, calculates cost/time impact, generates recommendations.
+can_delegate: true
 icon: 🧠
 model: deepseek-chat
 temperature: 0.1
