@@ -118,6 +118,16 @@ def get_or_create_conversation(
     return dict(row)
 
 
+def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
+    """Return the conversation row for the given id, or None if it does not exist."""
+    _ensure_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def list_conversations(
     agent_name: Optional[str] = None,
     project_id: Optional[str] = None,

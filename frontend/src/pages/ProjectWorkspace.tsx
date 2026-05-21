@@ -682,9 +682,30 @@ export default function ProjectWorkspace() {
     void (async () => {
       try {
         const project = await apiGet<ProjectDetail>(`/v1/projects/${id}`)
-        if (!cancelled) {
-          setWsState({ tag: 'ready', project })
-          setDocuments(project.documents ?? [])
+        if (cancelled) return
+        setWsState({ tag: 'ready', project })
+        setDocuments(project.documents ?? [])
+
+        // Load persisted conversation history for this workspace.
+        // If the user has already sent a message before this resolves,
+        // skip loading to avoid clobbering their in-progress turn.
+        try {
+          const hist = await apiGet<{
+            conversation_id: string
+            messages: Array<{ role: string; content: string }>
+          }>(`/v1/agents/conversations/ws-${id}/messages`)
+          if (cancelled) return
+          if (hist.messages.length > 0 && messagesRef.current.length === 0) {
+            setMessages(
+              hist.messages.map((m) => ({
+                id: msgId(),
+                role: (m.role === 'user' ? 'user' : 'assistant') as MessageRole,
+                content: m.content,
+              }))
+            )
+          }
+        } catch {
+          // History fetch failed — start with an empty thread, don't block the workspace
         }
       } catch (err) {
         if (cancelled) return

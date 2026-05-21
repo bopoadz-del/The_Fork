@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agents import AGENT_REGISTRY, get_agent
+from app.core import agent_memory
 from app.core import projects as store
 from app.dependencies import require_user
 
@@ -30,6 +31,31 @@ class AgentChatRequest(BaseModel):
     model: Optional[str] = None  # override agent default if needed
     project_id: Optional[str] = None
     conversation_id: Optional[str] = None
+
+
+@router.get("/v1/agents/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    auth: dict = Depends(require_user),
+):
+    """Return the stored messages for a conversation.
+
+    - Conversation not found  → 200, messages == [].
+    - Conversation found, has project_id → ownership check; 404 if user doesn't own it.
+    - Conversation found, no project_id  → return messages (agent-only conversation).
+    """
+    conv = agent_memory.get_conversation(conversation_id)
+    if conv is None:
+        return {"conversation_id": conversation_id, "messages": []}
+
+    project_id = conv.get("project_id")
+    if project_id is not None:
+        project = store.get_project(project_id, user_id=auth["user_id"])
+        if project is None:
+            raise HTTPException(404, "Conversation not found")
+
+    msgs = agent_memory.get_messages(conversation_id)
+    return {"conversation_id": conversation_id, "messages": msgs}
 
 
 @router.get("/v1/agents")
