@@ -55,6 +55,8 @@ interface ChatMessage {
   content: string
   streaming?: boolean
   error?: boolean
+  /** Transient tool-activity label shown while the agent is calling tools. Cleared on first token. */
+  toolStatus?: string
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -112,6 +114,11 @@ function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
         {isUser ? 'U' : 'TF'}
       </div>
       <div className="chat-message__bubble">
+        {message.toolStatus && (
+          <div className="chat-tool-status" aria-live="polite">
+            {message.toolStatus}
+          </div>
+        )}
         <div className="chat-message__content">
           {message.content}
           {message.streaming && <span className="chat-cursor" aria-hidden="true" />}
@@ -163,7 +170,7 @@ function ChatComposer({ onSend, disabled }: ChatComposerProps) {
           value={text}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="Ask anything about this project…"
+          placeholder="Ask about this project — documents, schedules, or run a calculation…"
           disabled={disabled}
           rows={1}
           aria-label="Chat message"
@@ -204,8 +211,9 @@ function ChatThread({ messages }: ChatThreadProps) {
         <div className="chat-empty__mark" aria-hidden="true">⌬</div>
         <p className="chat-empty__heading">Project Intelligence</p>
         <p className="chat-empty__hint">
-          Ask anything about this project — documents, schedule, contract status,
-          or anything else in the project context.
+          Ask about documents, drawings, schedules, or contract status. The
+          assistant can search your project files, run calculations, and
+          delegate to specialist agents.
         </p>
       </div>
     )
@@ -645,7 +653,10 @@ export default function ProjectWorkspace() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
-  const [sessionId, setSessionId] = useState<string>('default')
+
+  // Stable conversation id tied to this project — persists across page reloads
+  // so the backend agent memory carries context forward.
+  const conversationId = id ? `ws-${id}` : null
 
   // Mirror messages into a ref so handleSend can read current history without
   // being a stale closure or needing messages in its dependency array.
@@ -658,10 +669,9 @@ export default function ProjectWorkspace() {
   // ── Load project ──────────────────────────────────────────────────────────
 
   useEffect(() => {
-    // B4 fix: abort any in-flight stream and reset chat + session when id changes
+    // Abort any in-flight stream and reset chat when the project id changes
     abortRef.current?.abort()
     setMessages([])
-    setSessionId('default')
 
     if (!id) {
       setWsState({ tag: 'not-found' })
@@ -716,7 +726,7 @@ export default function ProjectWorkspace() {
       content: m.content,
     }))
 
-    // Append user message
+    // Append user message + empty streaming assistant bubble
     const userMsgId = msgId()
     const assistantMsgId = msgId()
 
@@ -732,18 +742,40 @@ export default function ProjectWorkspace() {
     const controller = new AbortController()
     abortRef.current = controller
 
+    /** Build a human-readable status label for an agent tool_call event. */
+    function toolStatusLabel(toolName: string, argsPreview: string): string {
+      let args: Record<string, unknown> = {}
+      try {
+        args = JSON.parse(argsPreview) as Record<string, unknown>
+      } catch { /* truncated JSON — ignore */ }
+
+      switch (toolName) {
+        case 'search_project_documents': {
+          const q = typeof args['query'] === 'string' ? args['query'] : ''
+          return q ? `Searching documents for "${q}"…` : 'Searching documents…'
+        }
+        case 'delegate_to_agent': {
+          const agent = typeof args['agent_name'] === 'string' ? args['agent_name'] : ''
+          return agent ? `Delegating to ${agent}…` : 'Delegating to specialist…'
+        }
+        case 'remember_fact':
+          return 'Saving fact to memory…'
+        default:
+          return `Running ${toolName}…`
+      }
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/v1/chat/stream`, {
+      const res = await fetch(`${API_BASE}/v1/agents/smart-orchestrator/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
         },
         body: JSON.stringify({
-          prompt: userText,
-          model: 'deepseek-chat',
-          session_id: sessionId,
+          message: userText,
           project_id: id ?? null,
+          conversation_id: conversationId,
           history: historyForRequest,
         }),
         signal: controller.signal,
@@ -762,6 +794,7 @@ export default function ProjectWorkspace() {
       const decoder = new TextDecoder('utf-8')
       let sseBuffer = ''
       let accumulatedContent = ''
+      let firstTokenReceived = false
 
       // Read the stream chunk by chunk
       for (;;) {
@@ -791,26 +824,59 @@ export default function ProjectWorkspace() {
             const evtType = evt['type'] as string | undefined
 
             if (evtType === 'start') {
-              if (typeof evt['session_id'] === 'string') {
-                setSessionId(evt['session_id'])
-              }
-            } else if (evtType === 'token') {
-              const token = typeof evt['content'] === 'string' ? evt['content'] : ''
-              accumulatedContent += token
-              const snap = accumulatedContent
+              // Agent stream start — {type, agent}. No session_id to echo back.
+            } else if (evtType === 'tool_call') {
+              // Show ephemeral status inside the assistant bubble while tools run.
+              const toolName = typeof evt['tool'] === 'string' ? evt['tool'] : 'tool'
+              const argsPreview = typeof evt['args_preview'] === 'string' ? evt['args_preview'] : ''
+              const status = toolStatusLabel(toolName, argsPreview)
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantMsgId
-                    ? { ...m, content: snap, streaming: true }
+                    ? { ...m, toolStatus: status }
                     : m
                 )
               )
+            } else if (evtType === 'tool_result') {
+              // Tool finished — clear the status; real tokens follow.
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMsgId
+                    ? { ...m, toolStatus: undefined }
+                    : m
+                )
+              )
+            } else if (evtType === 'token') {
+              const token = typeof evt['content'] === 'string' ? evt['content'] : ''
+              // Clear toolStatus on the first real token so no ghost label appears.
+              if (!firstTokenReceived) {
+                firstTokenReceived = true
+                accumulatedContent += token
+                const snap = accumulatedContent
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMsgId
+                      ? { ...m, content: snap, streaming: true, toolStatus: undefined }
+                      : m
+                  )
+                )
+              } else {
+                accumulatedContent += token
+                const snap = accumulatedContent
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMsgId
+                      ? { ...m, content: snap, streaming: true }
+                      : m
+                  )
+                )
+              }
             } else if (evtType === 'end') {
               const finalContent = accumulatedContent
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantMsgId
-                    ? { ...m, content: finalContent, streaming: false }
+                    ? { ...m, content: finalContent, streaming: false, toolStatus: undefined }
                     : m
                 )
               )
@@ -822,7 +888,7 @@ export default function ProjectWorkspace() {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantMsgId
-                    ? { ...m, content: errMsg, streaming: false, error: true }
+                    ? { ...m, content: errMsg, streaming: false, error: true, toolStatus: undefined }
                     : m
                 )
               )
@@ -835,16 +901,18 @@ export default function ProjectWorkspace() {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId && m.streaming
-            ? { ...m, streaming: false }
+            ? { ...m, streaming: false, toolStatus: undefined }
             : m
         )
       )
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        // Intentional cancel — mark assistant message as done, keep content
+        // Intentional cancel — mark assistant message done, keep content, clear tool status
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantMsgId && m.streaming ? { ...m, streaming: false } : m
+            m.id === assistantMsgId && m.streaming
+              ? { ...m, streaming: false, toolStatus: undefined }
+              : m
           )
         )
         return
@@ -853,14 +921,14 @@ export default function ProjectWorkspace() {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId
-            ? { ...m, content: errMsg, streaming: false, error: true }
+            ? { ...m, content: errMsg, streaming: false, error: true, toolStatus: undefined }
             : m
         )
       )
     } finally {
       setStreaming(false)
     }
-  }, [id, sessionId, streaming])
+  }, [id, conversationId, streaming])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
