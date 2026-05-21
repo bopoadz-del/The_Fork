@@ -188,11 +188,18 @@
                     <div class="desc">Browse files on the server VM</div>
                 </div>
             </div>
-            <div class="drive-option disabled" style="opacity:0.5;cursor:not-allowed;" title="Configure OAuth in settings first">
-                <span class="icon">📁</span>
-                <div>
-                    <div class="name">Google Drive <span style="color:#888;font-size:10px;">(needs setup)</span></div>
-                    <div class="desc">Requires OAuth credentials</div>
+            <!-- Google Drive — live status + file browser (Task 6) -->
+            <div id="googleDriveSection" style="border:1px solid #2a2a2a;border-radius:8px;padding:12px;margin-bottom:8px;background:#1a1a1a;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <span class="icon">📁</span>
+                    <span class="name">Google Drive</span>
+                </div>
+                <div id="driveStatusBox" style="font-size:12px;color:#888;">Checking…</div>
+                <div id="driveBrowser" style="display:none;margin-top:10px;">
+                    <input type="text" id="driveSearchInput" placeholder="Search Drive files…"
+                           onkeydown="if(event.key==='Enter')searchDriveFiles()"
+                           style="width:100%;box-sizing:border-box;background:#0f0f0f;border:1px solid #2a2a2a;color:#e0e0e0;border-radius:6px;padding:6px 8px;font-size:12px;">
+                    <div id="driveFilesList" style="margin-top:8px;max-height:220px;overflow-y:auto;"></div>
                 </div>
             </div>
             <div class="drive-option disabled" style="opacity:0.5;cursor:not-allowed;" title="Configure OAuth in settings first">
@@ -681,10 +688,141 @@ function toggleDrive(id) {
 
 function showDriveModal() {
     document.getElementById('driveModal').classList.add('active');
+    refreshDriveStatus();
 }
 
 function hideDriveModal() {
     document.getElementById('driveModal').classList.remove('active');
+}
+
+// ── Google Drive connection (Task 6) ───────────────────────────────────────
+// Last GET /v1/drive/files result — kept module-level so onclick handlers
+// reference a row by index instead of interpolating attacker-controlled
+// file names into an inline string.
+let driveFileResults = [];
+
+async function refreshDriveStatus() {
+    const box = document.getElementById('driveStatusBox');
+    const browser = document.getElementById('driveBrowser');
+    if (!box) return;
+    try {
+        const r = await fetch(`${API_BASE}/v1/drive/status`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        const s = await r.json();
+        if (s.configured === false) {
+            box.innerHTML = '<span style="color:#888;">Google Drive not configured</span>';
+            if (browser) browser.style.display = 'none';
+        } else if (s.connected === true) {
+            box.innerHTML =
+                `<span style="color:#22c55e;">Connected as ${escapeHtml(s.email || 'unknown')}</span>`
+                + ` <button onclick="disconnectDrive()" style="margin-left:8px;background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Disconnect</button>`;
+            if (browser) browser.style.display = 'block';
+        } else {
+            box.innerHTML =
+                `<button onclick="connectGoogleDrive()" style="background:#8b5cf6;border:none;color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;">Connect Google Drive</button>`;
+            if (browser) browser.style.display = 'none';
+        }
+    } catch (err) {
+        box.innerHTML = `<span style="color:#ff6666;">Drive status unavailable — ${escapeHtml(err.message || 'error')}</span>`;
+        if (browser) browser.style.display = 'none';
+    }
+}
+
+async function connectGoogleDrive() {
+    try {
+        const r = await fetch(`${API_BASE}/v1/drive/connect`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        const { auth_url } = await r.json();
+        window.location = auth_url;
+    } catch (err) {
+        surfaceError(err, 'Connect Google Drive');
+    }
+}
+
+async function disconnectDrive() {
+    try {
+        const r = await fetch(`${API_BASE}/v1/drive/disconnect`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        addMessage('Google Drive disconnected.', 'system', { persist: false });
+    } catch (err) {
+        surfaceError(err, 'Disconnect Google Drive');
+    }
+    refreshDriveStatus();
+}
+
+async function searchDriveFiles() {
+    const input = document.getElementById('driveSearchInput');
+    const listEl = document.getElementById('driveFilesList');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="drive-empty">Searching…</div>';
+    try {
+        const q = input ? input.value.trim() : '';
+        const r = await fetch(`${API_BASE}/v1/drive/files?q=${encodeURIComponent(q)}`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        const data = await r.json();
+        driveFileResults = data.files || [];
+        renderDriveFiles();
+    } catch (err) {
+        driveFileResults = [];
+        listEl.innerHTML = `<div class="drive-empty" style="color:#ff6666;">${escapeHtml(err.message || 'Search failed')}</div>`;
+    }
+}
+
+function renderDriveFiles() {
+    const listEl = document.getElementById('driveFilesList');
+    if (!listEl) return;
+    if (!driveFileResults.length) {
+        listEl.innerHTML = '<div class="drive-empty">No files found</div>';
+        return;
+    }
+    listEl.innerHTML = driveFileResults.map((f, i) => `
+        <div class="drive-file" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${escapeHtml(f.name || 'untitled')}</span>
+            <button onclick="importDriveFile(${i})"
+                    style="flex:none;background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Add to project</button>
+        </div>
+    `).join('');
+}
+
+async function importDriveFile(index) {
+    const file = driveFileResults[index];
+    if (!file) return;
+    if (!activeProjectId) {
+        addMessage('Select a project first, then add the Drive file to it.', 'system', { persist: false });
+        return;
+    }
+    showIndicator(true);
+    try {
+        const r = await fetch(`${API_BASE}/v1/projects/${activeProjectId}/drive/import`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ file_id: file.id, name: file.name }),
+        });
+        if (!r.ok) throw await readApiError(r);
+        const data = await r.json();
+        addMessage(data.message || `Imported "${file.name}" into the project.`, 'system', { persist: false });
+        const proj = activeProject();
+        if (proj && data.document) {
+            proj.documents = (proj.documents || []).concat(data.document);
+        }
+        // Refresh the active project's document list from the server.
+        await loadProjects();
+    } catch (err) {
+        surfaceError(err, 'Import Drive file');
+    }
+    showIndicator(false);
 }
 
 function browseLocalFiles() {
@@ -1869,6 +2007,10 @@ renderDrives();
 
 // Load the real project list into the sidebar (Roadmap V2 · Epic 4 Slice B).
 loadProjects();
+
+// Probe Google Drive connection state on load (Task 6) — also re-fetched
+// when the Connect Drive modal opens and after the OAuth redirect returns.
+refreshDriveStatus();
 </script>
 </body>
 </html>

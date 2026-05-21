@@ -93,3 +93,13 @@ def test_plain_chat_does_not_open_the_panel():
 
 def test_panel_has_a_close_button():
     assert "closeArtifactPanel()" in _HTML
+
+
+# ── Task 6 — Connect Drive modal + Drive file browser ───────────────────────
+
+def test_ui_has_drive_status_check():
+    html = open("app/static/index.html", encoding="utf-8").read()
+    assert "/v1/drive/status" in html
+    assert "/v1/drive/connect" in html
+    assert "/v1/drive/files" in html
+    assert "/drive/import" in html
