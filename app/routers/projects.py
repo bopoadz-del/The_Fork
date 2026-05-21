@@ -356,6 +356,8 @@ async def project_audit(
 @router.get("/v1/governance")
 async def governance_status(auth: dict = Depends(require_user)):
     """Where client data lives and how long it is kept (Roadmap V2 · Epic 6)."""
+    if auth["role"] != "admin":
+        raise HTTPException(403, "Admin only")
     retention = int(os.getenv("DATA_RETENTION_DAYS", "0") or "0")
     return {
         "data_directory": os.getenv("DATA_DIR", "./data"),

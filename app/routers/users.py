@@ -11,6 +11,12 @@ from app.dependencies import require_user
 
 router = APIRouter()
 
+# Dummy credentials for constant-time login (prevents email enumeration via
+# timing side-channel). Computed once at import so no PBKDF2 is run per request.
+_DUMMY_CREDS = users_store.hash_password("dummy-password-for-timing")
+_DUMMY_HASH = _DUMMY_CREDS["hash"]
+_DUMMY_SALT = _DUMMY_CREDS["salt"]
+
 
 class RegisterRequest(BaseModel):
     email: str
@@ -51,7 +57,12 @@ async def register(req: RegisterRequest):
 @router.post("/v1/users/login")
 async def login(req: LoginRequest):
     user = users_store.get_user_by_email(str(req.email))
-    if not user or not users_store.verify_password(
+    if user is None:
+        # Unknown email: run a dummy PBKDF2 to match the timing of a real
+        # verify_password call — prevents email enumeration via response time.
+        users_store.verify_password(req.password, _DUMMY_HASH, _DUMMY_SALT)
+        raise HTTPException(401, "Invalid email or password")
+    if not users_store.verify_password(
         req.password, user.get("password_hash"), user.get("salt")
     ):
         raise HTTPException(401, "Invalid email or password")
