@@ -312,7 +312,7 @@ def test_index_project_empty_project(fresh_db, monkeypatch):
 
 
 def test_index_document_incremental(fresh_db, tmp_path, monkeypatch):
-    """index_document adds one doc to an existing (possibly empty) index."""
+    """index_document adds to an existing index without discarding prior docs."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
     importlib.reload(doc_index)
@@ -320,19 +320,28 @@ def test_index_document_incremental(fresh_db, tmp_path, monkeypatch):
     proj = projects_mod.create_project("Gamma Project")
     pid = proj["id"]
 
-    content = b"Concrete pour completed on schedule per daily report."
-    doc_path = _write_txt_doc(tmp_path, "daily.txt", content)
-    doc = projects_mod.add_document(pid, "daily.txt", file_path=doc_path, size=len(content))
-    did = doc["id"]
+    # Doc A — indexed via index_project first
+    content_a = b"Foundation works are complete as per the structural report."
+    doc_path_a = _write_txt_doc(tmp_path, "baseline.txt", content_a)
+    doc_a = projects_mod.add_document(pid, "baseline.txt", file_path=doc_path_a, size=len(content_a))
+    doc_index.index_project(pid)  # establishes doc A in the index
 
-    result = doc_index.index_document(pid, did)
+    # Doc B — added afterwards, indexed incrementally
+    content_b = b"Concrete pour completed on schedule per daily report."
+    doc_path_b = _write_txt_doc(tmp_path, "daily.txt", content_b)
+    doc_b = projects_mod.add_document(pid, "daily.txt", file_path=doc_path_b, size=len(content_b))
+    did_b = doc_b["id"]
+
+    result = doc_index.index_document(pid, did_b)
 
     assert result["indexed"] == 1
 
     import json
     saved = json.load(open(doc_index._index_path(pid)))
     ids = [d["document_id"] for d in saved["documents"]]
-    assert did in ids
+    # Both docs must be present — proves load-modify-write preserved doc A
+    assert doc_a["id"] in ids
+    assert did_b in ids
 
 
 def test_invalidate_project_removes_index(fresh_db, tmp_path, monkeypatch):
