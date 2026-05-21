@@ -193,10 +193,12 @@ def index_project(project_id: str) -> Dict[str, Any]:
         ext = _ext_of(filename)
 
         if ext not in _SUPPORTED_EXTS:
+            fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
             skipped.append({
                 "document_id": doc["id"],
                 "filename": filename,
                 "reason": "unsupported_type",
+                "fingerprint": fingerprint,
             })
             continue
 
@@ -261,10 +263,12 @@ def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
     ]
 
     if ext not in _SUPPORTED_EXTS:
+        fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
         existing["skipped"].append({
             "document_id": document_id,
             "filename": filename,
             "reason": "unsupported_type",
+            "fingerprint": fingerprint,
         })
         existing["built_at"] = _now()
         _write_index(project_id, existing)
@@ -341,9 +345,13 @@ async def search_project_documents(
     db_docs = _projects.list_documents(project_id)
     db_by_id: Dict[str, Any] = {d["id"]: d for d in db_docs}
 
-    # Index map: document_id → index entry
+    # Index map: document_id → index entry (indexed documents)
     idx_by_id: Dict[str, Any] = {
         d["document_id"]: d for d in index.get("documents", [])
+    }
+    # Skipped map: document_id → skipped entry (known-unsupported documents)
+    skipped_by_id: Dict[str, Any] = {
+        s["document_id"]: s for s in index.get("skipped", [])
     }
 
     needs_reload = False
@@ -354,6 +362,11 @@ async def search_project_documents(
         expected_fp = f"{doc['uploaded_at']}:{doc['size']}"
         entry = idx_by_id.get(did)
         if entry is None or entry.get("fingerprint") != expected_fp:
+            # Check if this doc is already in skipped with a matching fingerprint
+            # (known-unsupported file, no re-indexing needed)
+            skipped_entry = skipped_by_id.get(did)
+            if skipped_entry is not None and skipped_entry.get("fingerprint") == expected_fp:
+                continue  # already known-unsupported, skip redundant work
             index_document(project_id, did)
             needs_reload = True
 
@@ -427,3 +440,17 @@ async def search_project_documents(
         })
 
     return results
+
+
+# ── eager (background) indexing ───────────────────────────────────────────────
+
+def maybe_eager_index(project_id: str, document_id: str) -> None:
+    """Index a single document if eager indexing is enabled (default: on).
+
+    Checks INDEX_ON_UPLOAD env var at call time — "1", "true", or "yes"
+    (case-insensitive) enables; anything else disables. Intended to be
+    scheduled via FastAPI BackgroundTasks so it runs after the response
+    is sent without blocking the upload.
+    """
+    if os.getenv("INDEX_ON_UPLOAD", "true").strip().lower() in ("1", "true", "yes"):
+        index_document(project_id, document_id)

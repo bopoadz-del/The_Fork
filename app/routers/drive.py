@@ -12,12 +12,12 @@ import uuid
 from typing import Any, Dict
 
 import httpx
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.dependencies import require_api_key, require_user
-from app.core import audit, drive_auth, file_crypto, projects as store
+from app.core import audit, doc_index, drive_auth, file_crypto, projects as store
 from app.routers import projects as projects_router
 from app.routers.projects import ALLOWED_DOC_EXTENSIONS
 
@@ -173,6 +173,7 @@ class DriveImportRequest(BaseModel):
 
 @router.post("/v1/projects/{project_id}/drive/import", status_code=201)
 async def drive_import(project_id: str, req: DriveImportRequest,
+                       background_tasks: BackgroundTasks,
                        auth: dict = Depends(require_user)):
     """Import a Google Drive file into a project as a document.
 
@@ -225,6 +226,7 @@ async def drive_import(project_id: str, req: DriveImportRequest,
         project_id, original_name, stored_as, filepath, size)
     audit.record("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size)
+    background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
     return {
         "status": "stored",
         "message": (

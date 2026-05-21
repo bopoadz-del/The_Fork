@@ -11,10 +11,10 @@ import os
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core import audit, file_crypto, projects as store
+from app.core import audit, doc_index, file_crypto, projects as store
 from app.blocks import BLOCK_REGISTRY
 from app.dependencies import (
     require_user,
@@ -167,6 +167,7 @@ async def list_connectors(project_id: str, auth: dict = Depends(require_user)):
 @router.post("/v1/projects/{project_id}/documents", status_code=201)
 async def add_document(
     project_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     role: Optional[str] = Form(None),
     auth: dict = Depends(require_user),
@@ -208,6 +209,7 @@ async def add_document(
     )
     audit.record("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
+    background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
     return {
         "status": "stored",
         "message": (

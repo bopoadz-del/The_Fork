@@ -37,6 +37,7 @@ from app.routers import (
     chain,
     chat,
     debug,
+    doc_search,
     doc_types,
     drive,
     execute,
@@ -226,6 +227,7 @@ app.include_router(auth.router)
 app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
+app.include_router(doc_search.router)
 app.include_router(project.router)
 app.include_router(users.router)
 app.include_router(doc_types.router)
