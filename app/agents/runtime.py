@@ -34,6 +34,103 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
 
+# ── DeepSeek DSML tool-call markup handling ─────────────────────────────────
+# deepseek-chat sometimes emits a tool call as inline text markup inside the
+# message `content` (its own "DSML" token format) instead of, or in addition
+# to, the structured OpenAI-style `tool_calls` array. If the runtime only reads
+# the structured field it treats the raw markup as a final answer and shows
+# garbage to the user. The helpers below detect that markup, turn it into
+# proper tool_call dicts, and strip any residual fragments from final answers.
+#
+# The pipe character DeepSeek uses is the fullwidth U+FF5C ("｜"); we also
+# tolerate a plain ASCII "|" variant and missing/extra pipes. `[｜|]{0,2}`
+# matches either pipe (or none) so partial/garbled markup is still handled.
+
+# Any DSML tag — opening or closing, well-formed or not — used for stripping.
+# Matches from "<" through the next ">" as long as "DSML" appears inside; also
+# matches a dangling "<...DSML..." fragment that never gets a closing ">".
+_DSML_TAG_RE = re.compile(r"<[^<>]*?DSML[^<>]*?(?:>|$)", re.IGNORECASE)
+# A full tool_calls block: <｜｜DSML｜｜tool_calls> ... </｜｜DSML｜｜tool_calls>
+_DSML_TOOLCALLS_RE = re.compile(
+    r"<\s*[｜|]{0,2}\s*DSML\s*[｜|]{0,2}\s*tool_calls\s*>(.*?)"
+    r"<\s*/\s*[｜|]{0,2}\s*DSML\s*[｜|]{0,2}\s*tool_calls\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+# A single invoke block inside a tool_calls block.
+_DSML_INVOKE_RE = re.compile(
+    r"<\s*[｜|]{0,2}\s*DSML\s*[｜|]{0,2}\s*invoke\s+name\s*=\s*[\"']([^\"']+)[\"'][^>]*>"
+    r"(.*?)"
+    r"<\s*/\s*[｜|]{0,2}\s*DSML\s*[｜|]{0,2}\s*invoke\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+# A single parameter inside an invoke block: name + inner text value.
+_DSML_PARAM_RE = re.compile(
+    r"<\s*[｜|]{0,2}\s*DSML\s*[｜|]{0,2}\s*parameter\s+name\s*=\s*[\"']([^\"']+)[\"'][^>]*>"
+    r"(.*?)"
+    r"<\s*/\s*[｜|]{0,2}\s*DSML\s*[｜|]{0,2}\s*parameter\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_dsml(content: str) -> str:
+    """Remove every ``<｜｜DSML｜｜...>`` tag from ``content`` and trim.
+
+    Used as a defensive final-answer scrub so no DSML markup — even partial or
+    garbled fragments that couldn't be parsed into tool calls — ever reaches
+    the user.
+    """
+    if not content or "DSML" not in content:
+        return content or ""
+    cleaned = _DSML_TAG_RE.sub("", content)
+    # Collapse the runs of whitespace left where tags were removed.
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
+def _parse_dsml_tool_calls(content: str) -> tuple[str, list[dict]]:
+    """Extract DeepSeek DSML tool-call markup from ``content``.
+
+    Returns ``(cleaned_content, tool_calls)`` where ``cleaned_content`` is the
+    message text with all DSML markup removed, and ``tool_calls`` is a list of
+    dicts shaped exactly like the structured OpenAI-style field that
+    ``_run_tool_call`` consumes::
+
+        {"id": <generated>, "type": "function",
+         "function": {"name": ..., "arguments": <json string>}}
+
+    If no DSML markup is present, returns ``(content, [])`` unchanged.
+    """
+    if not content or "DSML" not in content:
+        return (content or ""), []
+
+    tool_calls: list[dict] = []
+    counter = 0
+    for block in _DSML_TOOLCALLS_RE.finditer(content):
+        for inv in _DSML_INVOKE_RE.finditer(block.group(1)):
+            tool_name = inv.group(1).strip()
+            if not tool_name:
+                continue
+            args: dict[str, Any] = {}
+            for param in _DSML_PARAM_RE.finditer(inv.group(2)):
+                pname = param.group(1).strip()
+                pvalue = param.group(2).strip()
+                if pname:
+                    args[pname] = pvalue
+            counter += 1
+            tool_calls.append({
+                "id": f"dsml_{counter}",
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": json.dumps(args),
+                },
+            })
+
+    # Strip ALL DSML markup (including any tags outside a well-formed block).
+    cleaned = _strip_dsml(content)
+    return cleaned, tool_calls
+
+
 @dataclass
 class Agent:
     """Declarative agent definition."""
@@ -191,20 +288,35 @@ class Agent:
             assistant_msg = choice.get("message") or {}
 
             tool_calls = assistant_msg.get("tool_calls") or []
+            raw_content = assistant_msg.get("content") or ""
+
+            # DeepSeek sometimes emits the tool call as inline DSML markup in
+            # `content` with an empty structured `tool_calls` field. Recover it.
             if not tool_calls:
-                final_text = assistant_msg.get("content") or ""
-                messages.append({"role": "assistant", "content": final_text})
-                if conversation_id:
-                    from app.core import agent_memory
-                    agent_memory.append_message(conversation_id, "user", user_message)
-                    agent_memory.append_message(conversation_id, "assistant", final_text)
-                return {
-                    "status": "success",
-                    "answer": final_text,
-                    "tool_calls": tool_calls_made,
-                    "iterations": iteration + 1,
-                    "messages": messages,
-                }
+                cleaned_content, dsml_tool_calls = _parse_dsml_tool_calls(raw_content)
+                if dsml_tool_calls:
+                    # Treat this turn as a tool-calling turn.
+                    tool_calls = dsml_tool_calls
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": cleaned_content,
+                        "tool_calls": dsml_tool_calls,
+                    }
+                else:
+                    # Genuine final answer — scrub any partial DSML fragments.
+                    final_text = _strip_dsml(raw_content)
+                    messages.append({"role": "assistant", "content": final_text})
+                    if conversation_id:
+                        from app.core import agent_memory
+                        agent_memory.append_message(conversation_id, "user", user_message)
+                        agent_memory.append_message(conversation_id, "assistant", final_text)
+                    return {
+                        "status": "success",
+                        "answer": final_text,
+                        "tool_calls": tool_calls_made,
+                        "iterations": iteration + 1,
+                        "messages": messages,
+                    }
 
             # Persist the assistant turn that contained the tool calls
             messages.append(assistant_msg)
@@ -237,7 +349,7 @@ class Agent:
                 "messages": messages,
             }
         forced_msg = forced_resp["choice"].get("message") or {}
-        final_text = forced_msg.get("content") or ""
+        final_text = _strip_dsml(forced_msg.get("content") or "")
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -297,19 +409,32 @@ class Agent:
                 return
             assistant_msg = resp["choice"].get("message") or {}
             tool_calls = assistant_msg.get("tool_calls") or []
+            raw_content = assistant_msg.get("content") or ""
 
+            # DeepSeek sometimes emits the tool call as inline DSML markup in
+            # `content` with an empty structured `tool_calls` field. Recover it.
             if not tool_calls:
-                # Final answer — stream it (we have the whole text but emit it in chunks
-                # so the UI feels live without an extra round-trip to the streaming endpoint).
-                final_text = assistant_msg.get("content") or ""
-                for chunk in _chunks(final_text, 80):
-                    yield {"type": "token", "content": chunk}
-                if conversation_id:
-                    from app.core import agent_memory
-                    agent_memory.append_message(conversation_id, "user", user_message)
-                    agent_memory.append_message(conversation_id, "assistant", final_text)
-                yield {"type": "end", "iterations": iteration + 1}
-                return
+                cleaned_content, dsml_tool_calls = _parse_dsml_tool_calls(raw_content)
+                if dsml_tool_calls:
+                    # Treat as a tool-calling turn — do NOT stream the markup.
+                    tool_calls = dsml_tool_calls
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": cleaned_content,
+                        "tool_calls": dsml_tool_calls,
+                    }
+                else:
+                    # Final answer — stream it (we have the whole text but emit it in chunks
+                    # so the UI feels live without an extra round-trip to the streaming endpoint).
+                    final_text = _strip_dsml(raw_content)
+                    for chunk in _chunks(final_text, 80):
+                        yield {"type": "token", "content": chunk}
+                    if conversation_id:
+                        from app.core import agent_memory
+                        agent_memory.append_message(conversation_id, "user", user_message)
+                        agent_memory.append_message(conversation_id, "assistant", final_text)
+                    yield {"type": "end", "iterations": iteration + 1}
+                    return
 
             messages.append(assistant_msg)
             for tc in tool_calls:
@@ -346,7 +471,7 @@ class Agent:
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
             return
         forced_msg = forced_resp["choice"].get("message") or {}
-        final_text = forced_msg.get("content") or ""
+        final_text = _strip_dsml(forced_msg.get("content") or "")
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:

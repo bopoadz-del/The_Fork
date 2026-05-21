@@ -506,3 +506,124 @@ async def test_chat_stream_forces_final_answer_on_cap(tmp_path, monkeypatch):
     msgs = am.get_messages("cv-cap")
     roles_contents = [(m["role"], m["content"]) for m in msgs]
     assert ("assistant", "forced stream answer") in roles_contents
+
+
+# ── 18. DSML tool-call markup parsing (DeepSeek inline tool calls) ────────────
+
+# The exact garbled markup observed live in the bug report.
+_DSML_BUG_CONTENT = (
+    "The procurement list is empty — there's no separate procurement document "
+    "uploaded. Let me check if there are any other project documents. "
+    '<｜｜DSML｜｜tool_calls> <｜｜DSML｜｜invoke name="search_project_documents"> '
+    '<｜｜DSML｜｜parameter name="query" string="true">project document list all files'
+    '</｜｜DSML｜｜parameter> <｜｜DSML｜｜parameter name="top_k" string="false">5'
+    '</｜｜DSML｜｜parameter> </｜｜DSML｜｜invoke> </｜｜DSML｜｜tool_calls>'
+)
+
+
+def test_parse_dsml_tool_calls_extracts_call():
+    import json as _json
+    cleaned, tool_calls = rt._parse_dsml_tool_calls(_DSML_BUG_CONTENT)
+
+    # No DSML markup left behind
+    assert "DSML" not in cleaned
+    assert "<" not in cleaned or "DSML" not in cleaned
+    # Human-readable text survives
+    assert "procurement list is empty" in cleaned
+
+    # One parsed tool call, correct shape
+    assert len(tool_calls) == 1
+    tc = tool_calls[0]
+    assert tc["type"] == "function"
+    assert tc.get("id")
+    assert tc["function"]["name"] == "search_project_documents"
+    args = _json.loads(tc["function"]["arguments"])
+    assert args["query"] == "project document list all files"
+    assert str(args["top_k"]) == "5"
+
+
+def test_parse_dsml_no_markup():
+    text = "Just a normal final answer with no markup at all."
+    cleaned, tool_calls = rt._parse_dsml_tool_calls(text)
+    assert cleaned == text
+    assert tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_chat_handles_dsml_tool_call(tmp_path, monkeypatch):
+    """1st LLM call returns a DSML tool-call block in `content` with empty
+    structured tool_calls; 2nd call returns a plain final answer. chat() must
+    run the tool, continue the loop, and return a DSML-free answer."""
+    am = _isolate(tmp_path, monkeypatch)
+
+    calls = {"n": 0}
+
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {
+                        "content": (
+                            "Let me remember this. "
+                            '<｜｜DSML｜｜tool_calls> <｜｜DSML｜｜invoke name="remember_fact"> '
+                            '<｜｜DSML｜｜parameter name="key">topic</｜｜DSML｜｜parameter> '
+                            '<｜｜DSML｜｜parameter name="value">dsml</｜｜DSML｜｜parameter> '
+                            "</｜｜DSML｜｜invoke> </｜｜DSML｜｜tool_calls>"
+                        ),
+                        "tool_calls": [],
+                    }
+                },
+                "raw": {},
+            }
+        return {
+            "status": "success",
+            "choice": {"message": {"content": "Done — final clean answer."}},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", fake_llm)
+    agent = _make_agent(name="dsml-agent")
+
+    out = await agent.chat("do something", api_key="k")
+
+    assert out["status"] == "success"
+    # The loop continued: answer is the 2nd response
+    assert out["answer"] == "Done — final clean answer."
+    assert "DSML" not in out["answer"]
+    # The DSML tool call actually ran
+    assert calls["n"] == 2
+    assert len(out["tool_calls"]) == 1
+    assert out["tool_calls"][0]["name"] == "remember_fact"
+    # The fact was persisted by the parsed tool call
+    facts = am.list_agent_facts("dsml-agent")
+    assert any(f["key"] == "topic" and f["value"] == "dsml" for f in facts)
+
+
+@pytest.mark.asyncio
+async def test_final_answer_strips_dsml(tmp_path, monkeypatch):
+    """A final answer carrying a stray DSML fragment must be stripped before
+    being returned to the user."""
+    _isolate(tmp_path, monkeypatch)
+
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+        return {
+            "status": "success",
+            "choice": {
+                "message": {
+                    "content": (
+                        "Here is your answer. <｜｜DSML｜｜tool_calls> garbled "
+                        "<｜｜DSML｜｜invoke name="
+                    )
+                }
+            },
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", fake_llm)
+    agent = _make_agent()
+    out = await agent.chat("hi", api_key="k")
+    assert out["status"] == "success"
+    assert "DSML" not in out["answer"]
+    assert "Here is your answer." in out["answer"]
