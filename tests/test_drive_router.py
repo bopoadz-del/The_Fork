@@ -131,8 +131,10 @@ def test_drive_import_adds_project_document(client, monkeypatch):
 
     async def fake_process(self, input_data, params=None):
         assert params.get("operation") == "download"
-        return {"status": "success", "file_id": "f1",
-                "filename": "Spec.pdf",
+        # Matches the REAL GoogleDriveBlock download response shape — no
+        # `filename` key; the route stores the file under the request `name`.
+        return {"status": "success", "operation": "download", "file_id": "f1",
+                "size_bytes": 7,
                 "content_base64": __import__("base64").b64encode(b"PDFDATA").decode()}
 
     monkeypatch.setattr(drive_auth, "get_access_token", fake_token)
@@ -156,5 +158,30 @@ def test_drive_import_adds_project_document(client, monkeypatch):
 def test_drive_import_requires_connection(client):
     proj = client.post("/v1/projects", headers=H, json={"name": "P2"}).json()
     r = client.post(f"/v1/projects/{proj['id']}/drive/import", headers=H,
-                     json={"file_id": "f1"})
+                     json={"file_id": "f1", "name": "x.pdf"})
     assert r.status_code == 409
+
+
+def test_drive_import_rejects_disallowed_extension(client, monkeypatch):
+    proj = client.post("/v1/projects", headers=H, json={"name": "P3"}).json()
+    pid = proj["id"]
+
+    drive_auth.save_token({"access_token": "AT", "refresh_token": "RT",
+                           "expiry": time.time() + 9999})
+
+    async def fake_token():
+        return "AT"
+
+    async def fake_process(self, input_data, params=None):
+        return {"status": "success", "operation": "download", "file_id": "f1",
+                "size_bytes": 4,
+                "content_base64": __import__("base64").b64encode(b"EXE!").decode()}
+
+    monkeypatch.setattr(drive_auth, "get_access_token", fake_token)
+    from app.blocks.google_drive import GoogleDriveBlock
+    monkeypatch.setattr(GoogleDriveBlock, "process", fake_process)
+
+    r = client.post(f"/v1/projects/{pid}/drive/import", headers=H,
+                     json={"file_id": "f1", "name": "evil.exe"})
+    assert r.status_code == 400, r.text
+    assert "not allowed" in r.json()["detail"]

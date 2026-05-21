@@ -9,7 +9,7 @@ import os
 import secrets
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from app.dependencies import require_api_key
 from app.core import audit, drive_auth, file_crypto, projects as store
 from app.routers import projects as projects_router
+from app.routers.projects import ALLOWED_DOC_EXTENSIONS
 
 router = APIRouter()
 
@@ -150,7 +151,7 @@ async def drive_files(q: str = Query(""),
 
 class DriveImportRequest(BaseModel):
     file_id: str
-    name: Optional[str] = None
+    name: str
 
 
 @router.post("/v1/projects/{project_id}/drive/import", status_code=201)
@@ -183,9 +184,14 @@ async def drive_import(project_id: str, req: DriveImportRequest,
         raise HTTPException(502, result.get("error", "Drive download failed."))
 
     raw_bytes = base64.b64decode(result.get("content_base64", ""))
-    original_name = (req.name or result.get("filename")
-                     or f"{req.file_id}.bin")
-    original_name = os.path.basename(str(original_name).replace("\\", "/"))
+    # The Drive block's download response has no `filename` key — the caller
+    # must supply `name` (the frontend always has it from /v1/drive/files).
+    original_name = os.path.basename(str(req.name).replace("\\", "/"))
+    # Same extension allowlist a direct upload enforces (projects.py
+    # add_document) — applied after the name is known, before writing.
+    _, ext = os.path.splitext(original_name.lower())
+    if ext not in ALLOWED_DOC_EXTENSIONS:
+        raise HTTPException(400, f"File type '{ext}' not allowed")
 
     # Reuse the upload storage scheme: UUID-prefixed stored filename, written
     # via file_crypto.write_document (encrypted at rest iff DATA_ENCRYPTION_KEY
