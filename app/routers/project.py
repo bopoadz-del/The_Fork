@@ -8,8 +8,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.dependencies import require_api_key
+from app.dependencies import require_user
 from app.core.session_store import SessionStore, get_session_store
+from app.schemas.project_session import ProjectSession
 
 router = APIRouter()
 
@@ -39,7 +40,7 @@ class ProjectAskRequest(BaseModel):
 
 @router.post("/v1/project/ask")
 async def project_ask(
-    body: ProjectAskRequest, auth: dict = Depends(require_api_key)
+    body: ProjectAskRequest, auth: dict = Depends(require_user)
 ):
     """Answer a project question. Creates the session on first use, persists
     it after the turn so follow-up questions build on prior state."""
@@ -54,7 +55,16 @@ async def project_ask(
             f"activities exceeds the maximum of {_MAX_ACTIVITIES}",
         )
 
-    session = _store.get_or_create(body.session_id)
+    # Session ownership: create on first use tagged with caller's user_id;
+    # reject access if the session exists but was created by a different user.
+    caller_id = auth["user_id"]
+    session = _store.get(body.session_id)
+    if session is None:
+        session = ProjectSession.new(body.session_id, user_id=caller_id)
+        _store.save(session)
+        session = _store.get(body.session_id)
+    elif session.user_id != caller_id:
+        raise HTTPException(404, "Session not found")
     if body.activities is not None:
         session.data["activities"] = body.activities
 

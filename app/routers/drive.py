@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from app.dependencies import require_api_key
+from app.dependencies import require_api_key, require_user
 from app.core import audit, drive_auth, file_crypto, projects as store
 from app.routers import projects as projects_router
 from app.routers.projects import ALLOWED_DOC_EXTENSIONS
@@ -173,7 +173,7 @@ class DriveImportRequest(BaseModel):
 
 @router.post("/v1/projects/{project_id}/drive/import", status_code=201)
 async def drive_import(project_id: str, req: DriveImportRequest,
-                       auth: dict = Depends(require_api_key)):
+                       auth: dict = Depends(require_user)):
     """Import a Google Drive file into a project as a document.
 
     Downloads the file via the Drive block and stores it through the SAME
@@ -181,8 +181,9 @@ async def drive_import(project_id: str, req: DriveImportRequest,
     rest, registered as a project document, no analysis run. A Drive-imported
     file is therefore indistinguishable from an uploaded one.
     """
-    # Project-not-found check — identical to projects.py add_document.
-    proj = store.get_project(project_id)
+    # Ownership check — scoped to the calling user (same 404-not-403 pattern
+    # used in projects.py to avoid leaking project existence to other users).
+    proj = store.get_project(project_id, user_id=auth["user_id"])
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
 

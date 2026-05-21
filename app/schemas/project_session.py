@@ -29,6 +29,10 @@ class ProjectSession(BaseModel):
     id: str
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)
+    # Owner — defaults to "system" so existing serialised sessions (Redis blobs
+    # without this field) deserialise without error, and legacy-key callers
+    # behave as before.
+    user_id: str = "system"
     # free-form computed state: activities, cpm_results, manpower, wbs, ...
     data: Dict[str, Any] = Field(default_factory=dict)
     history: List[Message] = Field(default_factory=list)
@@ -36,8 +40,8 @@ class ProjectSession(BaseModel):
     code_cache: Dict[str, str] = Field(default_factory=dict)
 
     @classmethod
-    def new(cls, session_id: str) -> "ProjectSession":
-        return cls(id=session_id)
+    def new(cls, session_id: str, user_id: str = "system") -> "ProjectSession":
+        return cls(id=session_id, user_id=user_id)
 
     def touch(self) -> None:
         self.updated_at = _now()
