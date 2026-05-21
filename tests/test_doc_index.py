@@ -139,14 +139,18 @@ def test_extract_xlsx_mocked(tmp_path, monkeypatch):
 
 
 def test_extract_unsupported_returns_empty(tmp_path, monkeypatch):
-    """Unsupported extension returns empty string, never raises."""
+    """Unsupported extension returns empty string, never raises.
+
+    Stream F: images (.jpg/.png/...) are now SUPPORTED via OCR, so this uses a
+    genuinely unsupported extension (.dwg) instead.
+    """
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core.doc_index import extract_document_text
 
-    doc_path = str(tmp_path / "photo.jpg")
-    file_crypto.write_document(doc_path, b"\xff\xd8 JPEG data")
+    doc_path = str(tmp_path / "drawing.dwg")
+    file_crypto.write_document(doc_path, b"AutoCAD DWG binary data")
 
-    result = extract_document_text(doc_path, "photo.jpg")
+    result = extract_document_text(doc_path, "drawing.dwg")
     assert result == ""
 
 
@@ -267,7 +271,11 @@ def test_index_project_writes_file_and_returns_summary(fresh_db, tmp_path, monke
 
 
 def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
-    """A .jpg document lands in 'skipped', not 'documents'."""
+    """A genuinely unsupported document lands in 'skipped', not 'documents'.
+
+    Stream F: images are now OCR-able and SUPPORTED, so this uses .dwg — a
+    type that remains unsupported.
+    """
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
     importlib.reload(doc_index)
@@ -275,9 +283,9 @@ def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     proj = projects_mod.create_project("Beta Project")
     pid = proj["id"]
 
-    img_path = str(tmp_path / "photo.jpg")
-    file_crypto.write_document(img_path, b"\xff\xd8 JPEG")
-    projects_mod.add_document(pid, "photo.jpg", file_path=img_path, size=6)
+    img_path = str(tmp_path / "model.dwg")
+    file_crypto.write_document(img_path, b"AutoCAD DWG")
+    projects_mod.add_document(pid, "model.dwg", file_path=img_path, size=6)
 
     result = doc_index.index_project(pid)
 

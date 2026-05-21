@@ -135,7 +135,11 @@ def test_search_401_no_auth(client):
 
 
 def test_search_reports_skipped(client):
-    """A PNG document (allowed to upload, unsupported for indexing) → skipped_unsupported >= 1."""
+    """A .dwg document (allowed to upload, unsupported for indexing) → skipped_unsupported >= 1.
+
+    Note: images (.png/.jpg/...) are now OCR-indexed (Stream F), so they no
+    longer land in 'skipped'. A CAD .dwg file remains genuinely unsupported.
+    """
     tok = _user_token(client, f"search-skipped-{_RUN}@x.com")
     h = _headers(tok)
     pid = _create_project(client, h, "Skipped Unsupported Project")
@@ -144,8 +148,9 @@ def test_search_reports_skipped(client):
     _upload_txt(client, h, pid, "notes.txt",
                 b"Project notes for the skipped unsupported test document content.")
 
-    # Upload an image (.png is in ALLOWED_DOC_EXTENSIONS but not in _SUPPORTED_EXTS)
-    files = {"file": ("photo.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 20, "image/png")}
+    # Upload a .dwg (in ALLOWED_DOC_EXTENSIONS but not in _SUPPORTED_EXTS)
+    files = {"file": ("model.dwg", b"AutoCAD DWG binary" + b"\x00" * 20,
+                      "application/octet-stream")}
     r = client.post(f"/v1/projects/{pid}/documents", files=files, headers=h)
     assert r.status_code == 201, r.text
 

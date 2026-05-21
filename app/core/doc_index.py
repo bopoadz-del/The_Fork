@@ -26,21 +26,88 @@ Public API
     DATA_DIR env at call time, with tempfile fallback.
 """
 
+import asyncio
+import concurrent.futures
 import json
 import os
 import tempfile
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core import file_crypto
 from app.core import projects as _projects
 
+# Image extensions — Stream F runs OCR on these to make scanned drawings /
+# photos searchable. They are SUPPORTED (not "unsupported_type") even when OCR
+# yields no text: a blank photo simply indexes with empty chunks.
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
+
 # Extensions we know how to extract text from.
-_SUPPORTED_EXTS = {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx"}
+_SUPPORTED_EXTS = (
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx"}
+    | _IMAGE_EXTS
+)
+
+# A PDF whose recovered text-layer is shorter than this is treated as a
+# scanned / image-only PDF and re-extracted via OCR.
+_PDF_OCR_THRESHOLD = 30
 
 # Module-level lock guarding all index-file writes.
 _INDEX_LOCK = threading.Lock()
+
+
+# ── sync → async bridge ────────────────────────────────────────────────────────
+
+def _run_sync(coro):
+    """Run an async coroutine to completion from synchronous code.
+
+    ``extract_document_text`` is sync but the OCR block is async. This bridge
+    handles both call contexts:
+
+    * No event loop running (plain sync indexing) → ``asyncio.run``.
+    * A loop IS already running (``search_project_documents`` lazily triggers
+      ``index_project`` → ``extract_document_text`` from inside the running
+      loop) → run the coroutine on a FRESH loop inside a worker thread, so we
+      never hit "asyncio.run() cannot be called from a running event loop".
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop running in this thread — safe to drive one directly.
+        return asyncio.run(coro)
+
+    # A loop is already running here; offload to a worker thread with its own.
+    def _worker():
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_worker).result()
+
+
+def _ocr_extract(file_path: str) -> Tuple[str, bool]:
+    """Run the OCR block on ``file_path``; return ``(text, low_quality)``.
+
+    Never raises — any OCR error / missing text yields ``("", False)``. The
+    OCR block does its own ``open_plaintext`` decryption, so the raw stored
+    path is passed straight through.
+    """
+    try:
+        from app.blocks.ocr import OCRBlock
+
+        result = _run_sync(OCRBlock().process(file_path))
+        if not isinstance(result, dict) or result.get("status") == "error":
+            return "", False
+        text = result.get("text") or ""
+        quality = result.get("quality") or {}
+        low_quality = bool(quality.get("low_quality"))
+        return text, low_quality
+    except Exception:
+        return "", False
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -68,43 +135,64 @@ def _index_path(project_id: str) -> str:
 
 # ── text extraction ───────────────────────────────────────────────────────────
 
-def extract_document_text(file_path: str, filename: str) -> str:
-    """Extract plaintext from a document.
+def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, Any]]:
+    """Extract plaintext from a document, plus a small metadata dict.
 
-    Supports .txt/.md/.csv/.json/.xml (via file_crypto.read_document),
-    .pdf (via fitz / PyMuPDF + open_plaintext), .docx (via python-docx +
-    open_plaintext), and .xlsx (via openpyxl + open_plaintext).
+    Returns ``(text, meta)`` where ``meta`` carries ``{"ocr_low_quality": True}``
+    when the document was OCR'd and the OCR quality verdict flagged it as a poor
+    scan (omitted otherwise). Never raises — returns ``("", {})`` on any error.
 
-    Returns "" for unsupported extensions and on any extraction error —
-    callers treat the empty string as "skipped". Never raises.
+    Supports:
+    * .txt/.md/.csv/.json/.xml — via file_crypto.read_document
+    * .pdf — fitz / PyMuPDF text layer; if that text is effectively empty
+      (a scanned / image-only PDF) it falls back to OCR on the same file
+    * .docx — python-docx; .xlsx — openpyxl
+    * image extensions (.jpg/.png/.webp/...) — OCR via OCRBlock
     """
     try:
         _, ext = os.path.splitext((filename or "").lower())
         if ext not in _SUPPORTED_EXTS:
-            return ""
+            return "", {}
 
         # ── plain-text-like formats ──────────────────────────────────────────
         if ext in {".txt", ".md", ".csv", ".json", ".xml"}:
             raw = file_crypto.read_document(file_path)
-            return raw.decode("utf-8", errors="replace")
+            return raw.decode("utf-8", errors="replace"), {}
+
+        # ── images → OCR ─────────────────────────────────────────────────────
+        if ext in _IMAGE_EXTS:
+            text, low_quality = _ocr_extract(file_path)
+            meta: Dict[str, Any] = {}
+            if low_quality:
+                meta["ocr_low_quality"] = True
+            return text, meta
 
         # ── PDF ──────────────────────────────────────────────────────────────
         if ext == ".pdf":
             import fitz  # PyMuPDF
-            with file_crypto.open_plaintext(file_path) as readable_path:
-                doc = fitz.open(readable_path)
+            text = ""
+            try:
+                with file_crypto.open_plaintext(file_path) as readable_path:
+                    doc = fitz.open(readable_path)
+                    for page in doc:
+                        text += page.get_text()
+                    doc.close()
+            except Exception:
                 text = ""
-                for page in doc:
-                    text += page.get_text()
-                doc.close()
-            return text
+            # Scanned / image-only PDF — no usable text layer → OCR fallback.
+            if len(text.strip()) < _PDF_OCR_THRESHOLD:
+                ocr_text, low_quality = _ocr_extract(file_path)
+                if ocr_text.strip():
+                    meta = {"ocr_low_quality": True} if low_quality else {}
+                    return ocr_text, meta
+            return text, {}
 
         # ── DOCX ─────────────────────────────────────────────────────────────
         if ext == ".docx":
             import docx
             with file_crypto.open_plaintext(file_path) as readable_path:
                 document = docx.Document(readable_path)
-                return "\n".join(p.text for p in document.paragraphs)
+                return "\n".join(p.text for p in document.paragraphs), {}
 
         # ── XLSX ─────────────────────────────────────────────────────────────
         if ext == ".xlsx":
@@ -118,12 +206,28 @@ def extract_document_text(file_path: str, filename: str) -> str:
                         for cell in row:
                             if cell.value is not None and str(cell.value).strip():
                                 parts.append(str(cell.value))
-                return " ".join(parts)
+                return " ".join(parts), {}
 
     except Exception:
-        return ""
+        return "", {}
 
-    return ""
+    return "", {}
+
+
+def extract_document_text(file_path: str, filename: str) -> str:
+    """Extract plaintext from a document.
+
+    Supports .txt/.md/.csv/.json/.xml (via file_crypto.read_document),
+    .pdf (via fitz / PyMuPDF + open_plaintext, with OCR fallback for scanned
+    image-only PDFs), .docx (via python-docx + open_plaintext), .xlsx (via
+    openpyxl + open_plaintext), and image formats (.jpg/.jpeg/.png/.webp/.gif/
+    .bmp/.tif/.tiff) via OCR.
+
+    Returns "" for unsupported extensions and on any extraction error —
+    callers treat the empty string as "skipped". Never raises.
+    """
+    text, _ = _extract_with_meta(file_path, filename)
+    return text
 
 
 # ── chunking ──────────────────────────────────────────────────────────────────
@@ -203,16 +307,19 @@ def index_project(project_id: str) -> Dict[str, Any]:
             continue
 
         file_path = doc.get("file_path") or ""
-        text = extract_document_text(file_path, filename)
+        text, meta = _extract_with_meta(file_path, filename)
         chunks = chunk_text(text)
 
         fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
-        documents.append({
+        entry: Dict[str, Any] = {
             "document_id": doc["id"],
             "filename": filename,
             "fingerprint": fingerprint,
             "chunks": chunks,
-        })
+        }
+        if meta.get("ocr_low_quality"):
+            entry["ocr_low_quality"] = True
+        documents.append(entry)
         total_chunks += len(chunks)
 
     index_data: Dict[str, Any] = {
@@ -280,16 +387,19 @@ def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
         }
 
     file_path = doc.get("file_path") or ""
-    text = extract_document_text(file_path, filename)
+    text, meta = _extract_with_meta(file_path, filename)
     chunks = chunk_text(text)
 
     fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
-    existing["documents"].append({
+    entry: Dict[str, Any] = {
         "document_id": document_id,
         "filename": filename,
         "fingerprint": fingerprint,
         "chunks": chunks,
-    })
+    }
+    if meta.get("ocr_low_quality"):
+        entry["ocr_low_quality"] = True
+    existing["documents"].append(entry)
     existing["built_at"] = _now()
     _write_index(project_id, existing)
 
@@ -377,17 +487,18 @@ async def search_project_documents(
 
     # ── 3. Gather chunks, filtering deleted docs ──────────────────────────────
     all_chunks: List[str] = []
-    chunk_meta: List[tuple] = []  # (document_id, filename)
+    chunk_meta: List[tuple] = []  # (document_id, filename, ocr_low_quality)
 
     for entry in index.get("documents", []):
         did = entry["document_id"]
         # Skip documents that no longer exist in the DB
         if did not in db_by_id:
             continue
+        low_quality = bool(entry.get("ocr_low_quality"))
         for chunk in entry.get("chunks", []):
             if chunk:
                 all_chunks.append(chunk)
-                chunk_meta.append((did, entry["filename"]))
+                chunk_meta.append((did, entry["filename"], low_quality))
 
     # ── 4. No chunks → empty results ─────────────────────────────────────────
     if not all_chunks:
@@ -414,15 +525,16 @@ async def search_project_documents(
     chunk_scores = row0[1:]  # one score per chunk
 
     # ── 6. Best chunk per document, sort, top_k ───────────────────────────────
-    best: Dict[str, dict] = {}  # document_id → {filename, chunk, score}
+    best: Dict[str, dict] = {}  # document_id → {filename, chunk, score, ...}
     for i, score in enumerate(chunk_scores):
-        did, fname = chunk_meta[i]
+        did, fname, low_quality = chunk_meta[i]
         if did not in best or score > best[did]["score"]:
             best[did] = {
                 "document_id": did,
                 "filename": fname,
                 "chunk": all_chunks[i],
                 "score": score,
+                "ocr_low_quality": low_quality,
             }
 
     ranked = sorted(best.values(), key=lambda x: x["score"], reverse=True)
@@ -437,6 +549,7 @@ async def search_project_documents(
             "filename": item["filename"],
             "snippet": snippet,
             "score": round(float(item["score"]), 4),
+            "ocr_low_quality": bool(item.get("ocr_low_quality")),
         })
 
     return results
