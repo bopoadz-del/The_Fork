@@ -7,11 +7,13 @@ import os
 import sys
 from typing import Any, Dict, Optional
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.blocks import BLOCK_REGISTRY
 from app.core.auth import auth as auth_manager
+from app.core import jwt_auth
+from app.core import users as users_store
 
 logger = logging.getLogger(__name__)
 
@@ -171,11 +173,6 @@ async def init_blocks():
         get_monitoring_block()
     if get_auth_block:
         get_auth_block()
-
-
-from fastapi import HTTPException
-from app.core import jwt_auth
-from app.core import users as users_store
 
 
 async def require_user(
