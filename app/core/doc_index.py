@@ -305,3 +305,125 @@ def invalidate_project(project_id: str) -> None:
             os.remove(path)
         except OSError:
             pass
+
+
+# ── search ────────────────────────────────────────────────────────────────────
+
+async def search_project_documents(
+    project_id: str,
+    query: str,
+    top_k: int = 5,
+) -> List[Dict[str, Any]]:
+    """Search indexed documents for ``query``, returning up to ``top_k`` results.
+
+    Each result is a dict: ``{document_id, filename, snippet, score}``.
+
+    Logic
+    -----
+    1. Lazy build — if no index on disk, build it first.
+    2. Self-heal staleness — compare DB documents against the index; re-index
+       any missing or fingerprint-mismatched docs; filter out docs that have
+       been deleted from the DB.
+    3. Flatten all chunks, rank by TF-IDF cosine similarity via ZvecBlock, keep
+       the best chunk per document, return ``top_k`` documents sorted by score.
+    """
+    from app.blocks.zvec import ZvecBlock  # local import avoids circular refs
+
+    # ── 1. Lazy build ─────────────────────────────────────────────────────────
+    index = _load_index(project_id)
+    if index is None:
+        index_project(project_id)
+        index = _load_index(project_id)
+    if index is None:
+        return []
+
+    # ── 2. Self-heal staleness ────────────────────────────────────────────────
+    db_docs = _projects.list_documents(project_id)
+    db_by_id: Dict[str, Any] = {d["id"]: d for d in db_docs}
+
+    # Index map: document_id → index entry
+    idx_by_id: Dict[str, Any] = {
+        d["document_id"]: d for d in index.get("documents", [])
+    }
+
+    needs_reload = False
+
+    # Docs in DB that are missing from index or have stale fingerprint
+    for doc in db_docs:
+        did = doc["id"]
+        expected_fp = f"{doc['uploaded_at']}:{doc['size']}"
+        entry = idx_by_id.get(did)
+        if entry is None or entry.get("fingerprint") != expected_fp:
+            index_document(project_id, did)
+            needs_reload = True
+
+    if needs_reload:
+        fresh = _load_index(project_id)
+        if fresh is not None:
+            index = fresh
+
+    # ── 3. Gather chunks, filtering deleted docs ──────────────────────────────
+    all_chunks: List[str] = []
+    chunk_meta: List[tuple] = []  # (document_id, filename)
+
+    for entry in index.get("documents", []):
+        did = entry["document_id"]
+        # Skip documents that no longer exist in the DB
+        if did not in db_by_id:
+            continue
+        for chunk in entry.get("chunks", []):
+            if chunk:
+                all_chunks.append(chunk)
+                chunk_meta.append((did, entry["filename"]))
+
+    # ── 4. No chunks → empty results ─────────────────────────────────────────
+    if not all_chunks:
+        return []
+
+    # ── 5. Rank via ZvecBlock ─────────────────────────────────────────────────
+    texts = [query] + all_chunks
+    try:
+        zvec_result = await ZvecBlock().process("", {
+            "operation": "similarity",
+            "texts": texts,
+        })
+    except Exception:
+        return []
+
+    if zvec_result.get("status") != "success":
+        return []
+    matrix = zvec_result.get("similarity_matrix")
+    if not matrix:
+        return []
+
+    # Row 0 = query row; columns 1..N are similarities to chunks
+    row0 = matrix[0]
+    chunk_scores = row0[1:]  # one score per chunk
+
+    # ── 6. Best chunk per document, sort, top_k ───────────────────────────────
+    best: Dict[str, dict] = {}  # document_id → {filename, chunk, score}
+    for i, score in enumerate(chunk_scores):
+        did, fname = chunk_meta[i]
+        if did not in best or score > best[did]["score"]:
+            best[did] = {
+                "document_id": did,
+                "filename": fname,
+                "chunk": all_chunks[i],
+                "score": score,
+            }
+
+    ranked = sorted(best.values(), key=lambda x: x["score"], reverse=True)
+    ranked = ranked[:top_k]
+
+    # ── 7. Build output ───────────────────────────────────────────────────────
+    results: List[Dict[str, Any]] = []
+    for item in ranked:
+        snippet = " ".join(item["chunk"].split()[:50])
+        results.append({
+            "document_id": item["document_id"],
+            "filename": item["filename"],
+            "snippet": snippet,
+            "score": round(float(item["score"]), 4),
+        })
+
+    return results

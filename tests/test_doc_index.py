@@ -388,3 +388,186 @@ def test_fingerprint_format(fresh_db, tmp_path, monkeypatch):
     entry = saved["documents"][0]
     expected_fp = f"{doc['uploaded_at']}:{doc['size']}"
     assert entry["fingerprint"] == expected_fp
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# WAVE 4 — Phase C2: search_project_documents
+# ────────────────────────────────────────────────────────────────────────────
+
+CONCRETE_TEXT = (
+    b"Concrete pour and curing schedule: the contractor must ensure the mix "
+    b"reaches the specified compressive strength before formwork is removed. "
+    b"The curing time for standard Portland cement concrete is 28 days. "
+    b"Water-cement ratio must be controlled. Slump tests are performed on site. "
+    b"The concrete curing process requires consistent moisture and temperature."
+)
+
+ELECTRICAL_TEXT = (
+    b"Electrical wiring and conduit inspection: all cable runs shall be "
+    b"installed in rigid conduit per the approved shop drawings. The inspector "
+    b"must verify continuity, grounding, and insulation resistance. "
+    b"Circuit breaker panels must be clearly labelled. "
+    b"Junction boxes require accessible covers for future maintenance."
+)
+
+LANDSCAPING_TEXT = (
+    b"Landscaping and irrigation layout: the planting plan shows trees, "
+    b"shrubs, and ground cover arranged along the building perimeter. "
+    b"Drip irrigation lines are routed to each planted zone. "
+    b"Soil preparation includes aeration and compost amendment. "
+    b"Irrigation controllers are programmed for seasonal watering schedules."
+)
+
+
+@pytest.fixture
+def search_project(tmp_path, monkeypatch):
+    """Shared fixture: isolated DATA_DIR, fresh DB, project with 3 disjoint docs."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr(projects_mod, "_initialized", False)
+    projects_mod.init_db()
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    proj = projects_mod.create_project("Search Test Project")
+    pid = proj["id"]
+
+    def _add(filename, content):
+        p = str(tmp_path / filename)
+        file_crypto.write_document(p, content)
+        return projects_mod.add_document(pid, filename, file_path=p, size=len(content))
+
+    doc_concrete = _add("concrete.txt", CONCRETE_TEXT)
+    doc_elec = _add("electrical.txt", ELECTRICAL_TEXT)
+    doc_landscape = _add("landscaping.txt", LANDSCAPING_TEXT)
+
+    return {
+        "pid": pid,
+        "doc_concrete": doc_concrete,
+        "doc_elec": doc_elec,
+        "doc_landscape": doc_landscape,
+        "tmp_path": tmp_path,
+        "doc_index": doc_index,
+    }
+
+
+@pytest.mark.asyncio
+async def test_search_ranks_relevant_doc_first(search_project):
+    """Query 'concrete curing time' should rank the concrete document first."""
+    doc_index = search_project["doc_index"]
+    pid = search_project["pid"]
+    concrete_id = search_project["doc_concrete"]["id"]
+
+    results = await doc_index.search_project_documents(pid, "concrete curing time")
+
+    assert len(results) >= 1
+    assert results[0]["document_id"] == concrete_id
+
+
+@pytest.mark.asyncio
+async def test_search_returns_shape(search_project):
+    """Each result has document_id, filename, snippet, score; score is a float."""
+    doc_index = search_project["doc_index"]
+    pid = search_project["pid"]
+
+    results = await doc_index.search_project_documents(pid, "concrete curing time")
+
+    assert len(results) >= 1
+    for r in results:
+        assert "document_id" in r
+        assert "filename" in r
+        assert "snippet" in r
+        assert "score" in r
+        assert isinstance(r["score"], float)
+
+
+@pytest.mark.asyncio
+async def test_search_top_k(search_project):
+    """top_k=1 returns exactly 1 result."""
+    doc_index = search_project["doc_index"]
+    pid = search_project["pid"]
+
+    results = await doc_index.search_project_documents(pid, "concrete curing time", top_k=1)
+
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_empty_project(tmp_path, monkeypatch):
+    """A project with no documents returns [] without raising."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr(projects_mod, "_initialized", False)
+    projects_mod.init_db()
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    proj = projects_mod.create_project("Empty Search Project")
+    pid = proj["id"]
+
+    results = await doc_index.search_project_documents(pid, "anything")
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_search_builds_index_lazily(tmp_path, monkeypatch):
+    """Index file must not exist before search; must exist afterwards."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr(projects_mod, "_initialized", False)
+    projects_mod.init_db()
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    proj = projects_mod.create_project("Lazy Build Project")
+    pid = proj["id"]
+
+    p = str(tmp_path / "lazy.txt")
+    file_crypto.write_document(p, b"Lazy build test content about concrete pouring.")
+    projects_mod.add_document(pid, "lazy.txt", file_path=p, size=47)
+
+    # Index must not yet exist
+    assert not os.path.exists(doc_index._index_path(pid))
+
+    results = await doc_index.search_project_documents(pid, "concrete")
+
+    # After search, index exists and results are returned
+    assert os.path.exists(doc_index._index_path(pid))
+    assert isinstance(results, list)
+
+
+@pytest.mark.asyncio
+async def test_search_excludes_deleted_document(tmp_path, monkeypatch):
+    """After deleting a document, its content must not appear in search results."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr(projects_mod, "_initialized", False)
+    projects_mod.init_db()
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    proj = projects_mod.create_project("Delete Test Project")
+    pid = proj["id"]
+
+    p1 = str(tmp_path / "concrete2.txt")
+    file_crypto.write_document(p1, CONCRETE_TEXT)
+    doc_keep = projects_mod.add_document(pid, "concrete2.txt", file_path=p1, size=len(CONCRETE_TEXT))
+
+    p2 = str(tmp_path / "electrical2.txt")
+    file_crypto.write_document(p2, ELECTRICAL_TEXT)
+    doc_del = projects_mod.add_document(pid, "electrical2.txt", file_path=p2, size=len(ELECTRICAL_TEXT))
+
+    # Build the index by searching once
+    await doc_index.search_project_documents(pid, "concrete")
+
+    # Delete the electrical document from the DB
+    projects_mod.delete_document(doc_del["id"])
+
+    # Search again — deleted doc must not appear in results
+    results = await doc_index.search_project_documents(pid, "electrical wiring conduit")
+    returned_ids = [r["document_id"] for r in results]
+    assert doc_del["id"] not in returned_ids
