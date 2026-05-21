@@ -76,7 +76,7 @@ async def create_project(req: CreateProjectRequest, auth: dict = Depends(require
     if not name:
         raise HTTPException(400, "Project name is required")
     proj = store.create_project(name, (req.client or "").strip() or None, user_id=auth["user_id"])
-    audit.record("project.created", project_id=proj["id"], name=name)
+    audit.record("project.created", project_id=proj["id"], name=name, user_id=auth["user_id"])
     return proj
 
 
@@ -108,7 +108,7 @@ async def delete_project(project_id: str, auth: dict = Depends(require_user)):
                 pass
     store.delete_project(project_id)  # cascades documents + facts
     audit.record("project.deleted", project_id=project_id,
-                 files_purged=files_purged)
+                 files_purged=files_purged, user_id=auth["user_id"])
     return {
         "status": "deleted",
         "project_id": project_id,
@@ -130,7 +130,7 @@ async def connect_aconex(
     if not store.set_aconex(project_id, req.connected):
         raise HTTPException(404, f"Project '{project_id}' not found")
     audit.record("connector.aconex", project_id=project_id,
-                 connected=req.connected)
+                 connected=req.connected, user_id=auth["user_id"])
     return {
         "status": "ok",
         "project_id": project_id,
@@ -207,7 +207,7 @@ async def add_document(
         project_id, original_name, stored_as, filepath, size, role=role
     )
     audit.record("document.added", project_id=project_id,
-                 document_id=doc["id"], name=original_name, size=size)
+                 document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
     return {
         "status": "stored",
         "message": (
@@ -333,7 +333,7 @@ async def delete_document(
             pass
     store.delete_document(document_id)
     audit.record("document.deleted", project_id=project_id,
-                 document_id=document_id, file_removed=file_removed)
+                 document_id=document_id, file_removed=file_removed, user_id=auth["user_id"])
     return {
         "status": "deleted",
         "document_id": document_id,
@@ -386,7 +386,7 @@ async def governance_purge(auth: dict = Depends(require_user)):
             except OSError:
                 pass
     audit.record("governance.purge",
-                 documents_purged=len(purged), files_removed=files_removed)
+                 documents_purged=len(purged), files_removed=files_removed, user_id=auth["user_id"])
     return {
         "status": "purged",
         "documents_purged": len(purged),
