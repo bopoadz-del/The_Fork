@@ -107,3 +107,36 @@ async def drive_callback(code: str = Query(""), state: str = Query("")):
         "email": email,
     })
     return RedirectResponse("/", status_code=302)
+
+
+@router.get("/v1/drive/status")
+async def drive_status(auth: dict = Depends(require_api_key)):
+    token = drive_auth.load_token()
+    return {
+        "connected": token is not None,
+        "email": (token or {}).get("email") or None,
+        "configured": _configured(),
+    }
+
+
+@router.post("/v1/drive/disconnect")
+async def drive_disconnect(auth: dict = Depends(require_api_key)):
+    cleared = drive_auth.clear_token()
+    return {"status": "ok", "was_connected": cleared}
+
+
+@router.get("/v1/drive/files")
+async def drive_files(q: str = Query(""),
+                      auth: dict = Depends(require_api_key)):
+    try:
+        access_token = await drive_auth.get_access_token()
+    except drive_auth.DriveNotConnected:
+        raise HTTPException(409, "Google Drive is not connected.")
+    except drive_auth.DriveAuthError as e:
+        raise HTTPException(409, f"{e} Reconnect Google Drive.")
+    from app.blocks.google_drive import GoogleDriveBlock
+    result = await GoogleDriveBlock().process(
+        q, {"operation": "list", "access_token": access_token, "limit": 50})
+    if result.get("status") != "success":
+        raise HTTPException(502, result.get("error", "Drive list failed."))
+    return {"files": result.get("files", [])}
