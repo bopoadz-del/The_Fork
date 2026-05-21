@@ -26,7 +26,7 @@ from app.dependencies import block_instances, _create_block_instance
 
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
-MAX_TOOL_ITERATIONS = 8  # hard cap so a runaway loop can't burn budget
+MAX_TOOL_ITERATIONS = 12  # hard cap so a runaway loop can't burn budget; raised to 12 for complex multi-step tasks
 MAX_HISTORY_TURNS = 20
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -245,12 +245,36 @@ class Agent:
         try:
             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
         except json.JSONDecodeError:
-            return {"name": name, "ok": False, "result": {"status": "error", "error": f"Invalid JSON args: {raw_args[:200]}"}}
+            return {
+                "name": name,
+                "ok": False,
+                "result": {
+                    "status": "error",
+                    "error": f"Invalid JSON args: {raw_args[:200]}",
+                    "hint": "Re-issue the tool call with valid JSON arguments.",
+                },
+            }
 
         if name not in BLOCK_REGISTRY:
-            return {"name": name, "ok": False, "result": {"status": "error", "error": f"Unknown block: {name}"}}
+            return {
+                "name": name,
+                "ok": False,
+                "result": {
+                    "status": "error",
+                    "error": f"Unknown block: {name}",
+                    "hint": "Choose a tool from the provided tool list.",
+                },
+            }
         if name not in self.allowed_blocks:
-            return {"name": name, "ok": False, "result": {"status": "error", "error": f"Block '{name}' not in agent's allowed_blocks."}}
+            return {
+                "name": name,
+                "ok": False,
+                "result": {
+                    "status": "error",
+                    "error": f"Block '{name}' not in agent's allowed_blocks.",
+                    "hint": "This tool is not available to you; choose another.",
+                },
+            }
 
         instance = block_instances.get(name) or _create_block_instance(name)
         block_input = args.get("input")
@@ -259,7 +283,15 @@ class Agent:
             result = await instance.execute(block_input, block_params)
             return {"name": name, "ok": True, "result": result}
         except Exception as e:
-            return {"name": name, "ok": False, "result": {"status": "error", "error": str(e)}}
+            return {
+                "name": name,
+                "ok": False,
+                "result": {
+                    "status": "error",
+                    "error": str(e),
+                    "hint": "The tool failed; retry with different input or proceed without it.",
+                },
+            }
 
 
 # ── Loader ────────────────────────────────────────────────────────────────
