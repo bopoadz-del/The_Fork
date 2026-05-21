@@ -117,3 +117,44 @@ def test_files_lists_when_connected(client, monkeypatch):
 
 def test_files_requires_auth(client):
     assert client.get("/v1/drive/files").status_code == 401
+
+
+def test_drive_import_adds_project_document(client, monkeypatch):
+    proj = client.post("/v1/projects", headers=H, json={"name": "Drive Test"}).json()
+    pid = proj["id"]
+
+    drive_auth.save_token({"access_token": "AT", "refresh_token": "RT",
+                           "expiry": time.time() + 9999})
+
+    async def fake_token():
+        return "AT"
+
+    async def fake_process(self, input_data, params=None):
+        assert params.get("operation") == "download"
+        return {"status": "success", "file_id": "f1",
+                "filename": "Spec.pdf",
+                "content_base64": __import__("base64").b64encode(b"PDFDATA").decode()}
+
+    monkeypatch.setattr(drive_auth, "get_access_token", fake_token)
+    from app.blocks.google_drive import GoogleDriveBlock
+    monkeypatch.setattr(GoogleDriveBlock, "process", fake_process)
+
+    r = client.post(f"/v1/projects/{pid}/drive/import", headers=H,
+                     json={"file_id": "f1", "name": "Spec.pdf"})
+    assert r.status_code in (200, 201), r.text
+    body = r.json()
+    assert body["status"] == "stored"
+    # `add_document` stores the document name under `original_name` (the real
+    # DB column / response key) — not `name`.
+    assert body["document"]["original_name"] == "Spec.pdf"
+    # There is no GET /v1/projects/{id}/documents route; documents are exposed
+    # via the project-detail route, which `get_project` populates.
+    detail = client.get(f"/v1/projects/{pid}", headers=H).json()
+    assert any(d["original_name"] == "Spec.pdf" for d in detail["documents"])
+
+
+def test_drive_import_requires_connection(client):
+    proj = client.post("/v1/projects", headers=H, json={"name": "P2"}).json()
+    r = client.post(f"/v1/projects/{proj['id']}/drive/import", headers=H,
+                     json={"file_id": "f1"})
+    assert r.status_code == 409

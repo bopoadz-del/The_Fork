@@ -4,17 +4,21 @@ All routes require Authorization: Bearer like other /v1/* routes, EXCEPT
 /v1/drive/callback — Google calls that directly and cannot send our header,
 so it is protected by the single-use OAuth `state` value instead.
 """
+import base64
 import os
 import secrets
 import time
+import uuid
 from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from app.dependencies import require_api_key
-from app.core import drive_auth
+from app.core import audit, drive_auth, file_crypto, projects as store
+from app.routers import projects as projects_router
 
 router = APIRouter()
 
@@ -140,3 +144,70 @@ async def drive_files(q: str = Query(""),
     if result.get("status") != "success":
         raise HTTPException(502, result.get("error", "Drive list failed."))
     return {"files": result.get("files", [])}
+
+
+# ── per-project Drive import — store a Drive file as a project document ──────
+
+class DriveImportRequest(BaseModel):
+    file_id: str
+    name: Optional[str] = None
+
+
+@router.post("/v1/projects/{project_id}/drive/import", status_code=201)
+async def drive_import(project_id: str, req: DriveImportRequest,
+                       auth: dict = Depends(require_api_key)):
+    """Import a Google Drive file into a project as a document.
+
+    Downloads the file via the Drive block and stores it through the SAME
+    path an uploaded file takes (`projects.py add_document`): encrypted at
+    rest, registered as a project document, no analysis run. A Drive-imported
+    file is therefore indistinguishable from an uploaded one.
+    """
+    # Project-not-found check — identical to projects.py add_document.
+    proj = store.get_project(project_id)
+    if not proj:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+
+    # Same 409 handling as the /v1/drive/files route (Task 3).
+    try:
+        access_token = await drive_auth.get_access_token()
+    except drive_auth.DriveNotConnected:
+        raise HTTPException(409, "Google Drive is not connected.")
+    except drive_auth.DriveAuthError as e:
+        raise HTTPException(409, f"{e} Reconnect Google Drive.")
+
+    from app.blocks.google_drive import GoogleDriveBlock
+    result = await GoogleDriveBlock().process(
+        req.file_id, {"operation": "download", "access_token": access_token})
+    if result.get("status") != "success":
+        raise HTTPException(502, result.get("error", "Drive download failed."))
+
+    raw_bytes = base64.b64decode(result.get("content_base64", ""))
+    original_name = (req.name or result.get("filename")
+                     or f"{req.file_id}.bin")
+    original_name = os.path.basename(str(original_name).replace("\\", "/"))
+
+    # Reuse the upload storage scheme: UUID-prefixed stored filename, written
+    # via file_crypto.write_document (encrypted at rest iff DATA_ENCRYPTION_KEY
+    # is set) — exactly as projects.py add_document / upload.py do.
+    file_id = str(uuid.uuid4())[:8]
+    stored_as = f"{file_id}_{original_name}"
+    filepath = os.path.join(projects_router.DATA_DIR, stored_as)
+    file_crypto.write_document(filepath, raw_bytes)
+    size = len(raw_bytes)
+
+    # Register the document through the SAME app.core.projects call.
+    doc = store.add_document(
+        project_id, original_name, stored_as, filepath, size)
+    audit.record("document.added", project_id=project_id,
+                 document_id=doc["id"], name=original_name, size=size)
+    return {
+        "status": "stored",
+        "message": (
+            f"Added '{original_name}' — classified as {doc['doc_type']} "
+            f"(role: {doc['doc_role']}). No analysis was run; ask in chat to "
+            f"analyze it."
+        ),
+        "document": doc,
+        "readiness": store.compute_readiness(project_id),
+    }
