@@ -248,13 +248,15 @@ def client():
         yield c
 
 
-def test_connect_redirects_to_google(client):
-    r = client.get("/v1/drive/connect", headers=H, follow_redirects=False)
-    assert r.status_code in (302, 307)
-    loc = r.headers["location"]
-    assert loc.startswith("https://accounts.google.com/o/oauth2/v2/auth")
-    assert "scope=" in loc and "drive.readonly" in loc
-    assert "state=" in loc and "access_type=offline" in loc
+def test_connect_returns_auth_url(client):
+    # /connect returns the consent URL as JSON (NOT a redirect) so the
+    # browser can fetch it with the Bearer header, then navigate client-side.
+    r = client.get("/v1/drive/connect", headers=H)
+    assert r.status_code == 200
+    url = r.json()["auth_url"]
+    assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth")
+    assert "scope=" in url and "drive.readonly" in url
+    assert "state=" in url and "access_type=offline" in url
 
 
 def test_connect_requires_auth(client):
@@ -269,8 +271,8 @@ def test_callback_rejects_bad_state(client):
 
 def test_callback_exchanges_code_and_stores_token(client, monkeypatch):
     # issue a state via /connect
-    r = client.get("/v1/drive/connect", headers=H, follow_redirects=False)
-    state = r.headers["location"].split("state=")[1].split("&")[0]
+    r = client.get("/v1/drive/connect", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
 
     async def fake_exchange(code):
         assert code == "auth-code"
@@ -368,6 +370,11 @@ async def _fetch_email(access_token: str) -> str:
 
 @router.get("/v1/drive/connect")
 async def drive_connect(auth: dict = Depends(require_api_key)):
+    # Returns the Google consent URL as JSON — NOT a redirect. A browser
+    # cannot attach the Bearer header to a top-level navigation, so the
+    # frontend fetches this (header attaches fine on a same-origin fetch),
+    # reads auth_url, and does window.location = auth_url itself. Keeps the
+    # route gated like every other /v1/* and puts no key in any URL.
     if not _configured():
         raise HTTPException(503, "Google Drive not configured — set "
                                  "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.")
@@ -383,7 +390,7 @@ async def drive_connect(auth: dict = Depends(require_api_key)):
         "prompt": "consent",
         "state": state,
     })
-    return RedirectResponse(url, status_code=302)
+    return {"auth_url": url}
 
 
 @router.get("/v1/drive/callback")
@@ -704,18 +711,12 @@ In `app/static/index.html`:
 1. On load and when the Connect Drive modal opens, call
    `GET /v1/drive/status` (with the `Authorization` header). Render one of:
    - `configured === false` → "Google Drive not configured" (disabled).
-   - `connected === false` → a "Connect Google Drive" button whose click does
-     `window.location = API_BASE + '/v1/drive/connect'` — but `/v1/drive/connect`
-     needs the Bearer header, which a plain navigation can't send. So instead
-     fetch `/v1/drive/connect` with `follow`-redirects disabled is not possible
-     cross-origin; the simplest correct approach: the button opens
-     `/v1/drive/connect` in the same tab via a tiny authenticated hop — add a
-     thin **unauthenticated** `GET /v1/drive/login` is NOT wanted. Instead:
-     make the Connect button do `fetch('/v1/drive/connect', {headers, redirect:'manual'})`,
-     read `response.url` / the `Location`, and `window.location` to it. If the
-     browser hides the redirect, fall back: change Task 2's `/v1/drive/connect`
-     to also accept the dev key as a `?key=` query param for this one route.
-     **Decide during implementation; pick the simpler working option and note it.**
+   - `connected === false` → a "Connect Google Drive" button whose click does:
+     `const r = await fetch(API_BASE + '/v1/drive/connect', {headers: {Authorization: 'Bearer ' + API_KEY}});`
+     `const {auth_url} = await r.json(); window.location = auth_url;`
+     `/v1/drive/connect` returns the consent URL as JSON (see Task 2), so this
+     is an ordinary same-origin fetch — the Bearer header attaches fine — and
+     the browser navigation to Google happens client-side. No key in any URL.
    - `connected === true` → "Connected as &lt;email&gt;" + a Disconnect button
      (`POST /v1/drive/disconnect`).
 2. A Drive file browser inside the modal (or the sidebar drive section): a
@@ -765,12 +766,11 @@ git commit -m "feat(drive): wire Connect Drive modal + Drive file browser"
 
 - **No new dependencies.** Everything uses `httpx` (already installed). Do not
   uncomment the `google-*` libraries in `requirements.txt`.
-- **The `/v1/drive/connect` auth-vs-navigation wrinkle** (Task 6, Step 1) is the
-  one genuine unknown. The clean resolution: since `/v1/drive/connect` only
-  *starts* a redirect and leaks nothing, it is acceptable to let it accept the
-  dev key via a `?key=` query param OR to keep it header-gated and have the
-  frontend do the `fetch`-then-`window.location` hop. Pick one, implement it,
-  and note the choice in the commit message.
+- **The `/v1/drive/connect` auth-vs-navigation wrinkle is resolved:**
+  `/v1/drive/connect` returns the consent URL as JSON (`{auth_url}`), stays
+  gated with `Depends(require_api_key)`, and the frontend fetches it with the
+  Bearer header then does `window.location = auth_url`. No `?key=` param, no
+  cross-origin-redirect reading. Build it exactly that way.
 - `GoogleDriveBlock.process` `download` returns `content_base64`; confirm
   whether it also returns a `filename` — if not, the import route must take the
   name from the request body or a prior `list` result.
