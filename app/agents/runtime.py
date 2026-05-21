@@ -28,6 +28,7 @@ from app.dependencies import block_instances, _create_block_instance
 CONFIGS_DIR = Path(__file__).parent / "configs"
 MAX_TOOL_ITERATIONS = 12  # hard cap so a runaway loop can't burn budget; raised to 12 for complex multi-step tasks
 MAX_HISTORY_TURNS = 20
+MAX_DELEGATION_DEPTH = 3  # how deep agent → agent delegation may recurse
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
@@ -45,9 +46,16 @@ class Agent:
     temperature: float = 0.3
     max_tokens: int = 2048
     icon: str = "🤖"
+    can_delegate: bool = False
 
-    def tool_definitions(self) -> List[Dict[str, Any]]:
-        """Build OpenAI/DeepSeek-style tool definitions from allowed_blocks."""
+    def tool_definitions(self, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Build OpenAI/DeepSeek-style tool definitions.
+
+        Includes one tool per allowed block, plus synthetic tools:
+        - ``remember_fact`` — always available.
+        - ``search_project_documents`` — only when ``project_id`` is set.
+        - ``delegate_to_agent`` — only when ``self.can_delegate``.
+        """
         tools = []
         for block_name in self.allowed_blocks:
             block_class = BLOCK_REGISTRY.get(block_name)
@@ -74,6 +82,63 @@ class Agent:
                     },
                 },
             })
+
+        # ── synthetic tool: remember_fact (always available) ─────────────────
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": "remember_fact",
+                "description": "Persist a fact you should remember in future turns.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string", "description": "Short identifier for the fact."},
+                        "value": {"type": "string", "description": "The fact value to remember."},
+                    },
+                    "required": ["key", "value"],
+                },
+            },
+        })
+
+        # ── synthetic tool: search_project_documents (project-scoped) ────────
+        if project_id:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "search_project_documents",
+                    "description": "Search inside this project's documents (including imported Drive files).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "What to search for."},
+                            "top_k": {"type": "integer", "description": "Max number of results (default 5)."},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            })
+
+        # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
+        if self.can_delegate:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "delegate_to_agent",
+                    "description": (
+                        "Hand off a sub-task to a specialist agent and receive its answer. "
+                        "Use when another agent is better suited to part of the request."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_name": {"type": "string", "description": "Name of the specialist agent to delegate to."},
+                            "message": {"type": "string", "description": "The task / question for that agent."},
+                        },
+                        "required": ["agent_name", "message"],
+                    },
+                },
+            })
+
         return tools
 
     # ── Public chat API ───────────────────────────────────────────────────
@@ -82,8 +147,18 @@ class Agent:
         user_message: str,
         history: Optional[List[Dict[str, str]]] = None,
         api_key: Optional[str] = None,
+        project_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        _depth: int = 0,
+        _call_stack: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Single round-trip: returns {answer, tool_calls, history}."""
+        """Single round-trip: returns {answer, tool_calls, history}.
+
+        Optional new params (all default to today's behavior when omitted):
+        - ``project_id`` — inject project facts/docs and expose document search.
+        - ``conversation_id`` — load + persist conversation memory.
+        - ``_depth`` / ``_call_stack`` — internal, for inter-agent delegation.
+        """
         api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
             return {
@@ -91,11 +166,25 @@ class Agent:
                 "error": "No DEEPSEEK_API_KEY configured. Set it in .env or pass via env.",
             }
 
-        messages = self._build_messages(user_message, history or [])
+        _call_stack = _call_stack or [self.name]
+
+        effective_history = list(history or [])
+        if conversation_id:
+            from app.core import agent_memory
+            agent_memory.get_or_create_conversation(conversation_id, self.name, project_id)
+            prior = agent_memory.get_messages(conversation_id)
+            prior_turns = [
+                {"role": m["role"], "content": m["content"]}
+                for m in prior
+                if m.get("role") in ("user", "assistant")
+            ]
+            effective_history = prior_turns + effective_history
+
+        messages = self._build_messages(user_message, effective_history, project_id=project_id)
         tool_calls_made: List[Dict[str, Any]] = []
 
         for iteration in range(MAX_TOOL_ITERATIONS):
-            resp = await self._call_llm(messages, api_key)
+            resp = await self._call_llm(messages, api_key, project_id=project_id)
             if resp.get("status") == "error":
                 return resp
             choice = resp["choice"]
@@ -105,6 +194,10 @@ class Agent:
             if not tool_calls:
                 final_text = assistant_msg.get("content") or ""
                 messages.append({"role": "assistant", "content": final_text})
+                if conversation_id:
+                    from app.core import agent_memory
+                    agent_memory.append_message(conversation_id, "user", user_message)
+                    agent_memory.append_message(conversation_id, "assistant", final_text)
                 return {
                     "status": "success",
                     "answer": final_text,
@@ -116,7 +209,14 @@ class Agent:
             # Persist the assistant turn that contained the tool calls
             messages.append(assistant_msg)
             for tc in tool_calls:
-                tool_result = await self._run_tool_call(tc)
+                tool_result = await self._run_tool_call(
+                    tc,
+                    api_key=api_key,
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    _depth=_depth,
+                    _call_stack=_call_stack,
+                )
                 tool_calls_made.append(tool_result)
                 messages.append({
                     "role": "tool",
@@ -138,6 +238,10 @@ class Agent:
         user_message: str,
         history: Optional[List[Dict[str, str]]] = None,
         api_key: Optional[str] = None,
+        project_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        _depth: int = 0,
+        _call_stack: Optional[List[str]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Generator: yields {type, ...} events. Types: start, tool_call, tool_result, token, end, error.
 
@@ -149,12 +253,26 @@ class Agent:
             yield {"type": "error", "message": "No DEEPSEEK_API_KEY configured."}
             return
 
+        _call_stack = _call_stack or [self.name]
+
         yield {"type": "start", "agent": self.name}
 
-        messages = self._build_messages(user_message, history or [])
+        effective_history = list(history or [])
+        if conversation_id:
+            from app.core import agent_memory
+            agent_memory.get_or_create_conversation(conversation_id, self.name, project_id)
+            prior = agent_memory.get_messages(conversation_id)
+            prior_turns = [
+                {"role": m["role"], "content": m["content"]}
+                for m in prior
+                if m.get("role") in ("user", "assistant")
+            ]
+            effective_history = prior_turns + effective_history
+
+        messages = self._build_messages(user_message, effective_history, project_id=project_id)
 
         for iteration in range(MAX_TOOL_ITERATIONS):
-            resp = await self._call_llm(messages, api_key)
+            resp = await self._call_llm(messages, api_key, project_id=project_id)
             if resp.get("status") == "error":
                 yield {"type": "error", "message": resp.get("error", "LLM call failed")}
                 return
@@ -167,6 +285,10 @@ class Agent:
                 final_text = assistant_msg.get("content") or ""
                 for chunk in _chunks(final_text, 80):
                     yield {"type": "token", "content": chunk}
+                if conversation_id:
+                    from app.core import agent_memory
+                    agent_memory.append_message(conversation_id, "user", user_message)
+                    agent_memory.append_message(conversation_id, "assistant", final_text)
                 yield {"type": "end", "iterations": iteration + 1}
                 return
 
@@ -178,7 +300,14 @@ class Agent:
                     "tool": fn.get("name"),
                     "args_preview": (fn.get("arguments") or "")[:200],
                 }
-                tool_result = await self._run_tool_call(tc)
+                tool_result = await self._run_tool_call(
+                    tc,
+                    api_key=api_key,
+                    project_id=project_id,
+                    conversation_id=conversation_id,
+                    _depth=_depth,
+                    _call_stack=_call_stack,
+                )
                 yield {
                     "type": "tool_result",
                     "tool": tool_result["name"],
@@ -195,8 +324,36 @@ class Agent:
         yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
 
     # ── Internals ─────────────────────────────────────────────────────────
-    def _build_messages(self, user_message: str, history: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    def _build_messages(
+        self,
+        user_message: str,
+        history: List[Dict[str, str]],
+        project_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         msgs: List[Dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
+
+        # Project context — facts + document listing — as a second system message.
+        if project_id:
+            try:
+                from app.core.project_memory import build_project_context
+                ctx = build_project_context(project_id, user_message)
+            except Exception:
+                ctx = ""
+            if ctx:
+                msgs.append({"role": "system", "content": ctx})
+
+        # Remembered agent facts — durable across conversations.
+        try:
+            from app.core import agent_memory
+            facts = agent_memory.list_agent_facts(self.name)
+        except Exception:
+            facts = []
+        if facts:
+            lines = ["Known facts (you remembered):"]
+            for f in facts:
+                lines.append(f"- {f['key']}: {f['value']}")
+            msgs.append({"role": "system", "content": "\n".join(lines)})
+
         for turn in (history or [])[-MAX_HISTORY_TURNS:]:
             role = (turn.get("role") or "user").lower()
             if role not in ("user", "assistant"):
@@ -208,7 +365,12 @@ class Agent:
         msgs.append({"role": "user", "content": user_message})
         return msgs
 
-    async def _call_llm(self, messages: List[Dict[str, Any]], api_key: str) -> Dict[str, Any]:
+    async def _call_llm(
+        self,
+        messages: List[Dict[str, Any]],
+        api_key: str,
+        project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         payload = {
             "model": self.model,
             "messages": messages,
@@ -216,7 +378,7 @@ class Agent:
             "max_tokens": self.max_tokens,
             "stream": False,
         }
-        tools = self.tool_definitions()
+        tools = self.tool_definitions(project_id=project_id)
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -238,7 +400,15 @@ class Agent:
         except Exception as e:
             return {"status": "error", "error": f"LLM call failed: {e}"}
 
-    async def _run_tool_call(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    async def _run_tool_call(
+        self,
+        tool_call: Dict[str, Any],
+        api_key: Optional[str] = None,
+        project_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        _depth: int = 0,
+        _call_stack: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         fn = tool_call.get("function") or {}
         name = fn.get("name") or ""
         raw_args = fn.get("arguments") or "{}"
@@ -252,6 +422,107 @@ class Agent:
                     "status": "error",
                     "error": f"Invalid JSON args: {raw_args[:200]}",
                     "hint": "Re-issue the tool call with valid JSON arguments.",
+                },
+            }
+
+        _call_stack = _call_stack or [self.name]
+
+        # ── synthetic tool: delegate_to_agent ────────────────────────────────
+        if name == "delegate_to_agent":
+            agent_name = args.get("agent_name") or ""
+            message = args.get("message") or ""
+            if _depth + 1 > MAX_DELEGATION_DEPTH:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "delegation depth exceeded",
+                        "hint": f"Maximum delegation depth ({MAX_DELEGATION_DEPTH}) reached; answer directly.",
+                    },
+                }
+            target = get_agent(agent_name)
+            if target is None:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"Unknown agent: {agent_name}",
+                        "hint": f"Valid agents: {', '.join(sorted(AGENT_REGISTRY.keys())) or '(none)'}.",
+                    },
+                }
+            if agent_name in _call_stack:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "delegation loop detected",
+                        "hint": f"Delegation loop detected: agent '{agent_name}' is already in the delegation chain; answer directly.",
+                    },
+                }
+            sub = await target.chat(
+                message,
+                api_key=api_key,
+                _depth=_depth + 1,
+                _call_stack=_call_stack + [agent_name],
+            )
+            return {
+                "name": "delegate_to_agent",
+                "ok": True,
+                "result": {
+                    "agent": agent_name,
+                    "answer": sub.get("answer"),
+                    "status": sub.get("status"),
+                },
+            }
+
+        # ── synthetic tool: search_project_documents ─────────────────────────
+        if name == "search_project_documents":
+            if not project_id:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "no project in scope",
+                        "hint": "This tool requires a project-scoped chat.",
+                    },
+                }
+            try:
+                from app.core.doc_index import search_project_documents
+            except ImportError as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"document search unavailable: {e}",
+                        "hint": "Document search is not available; proceed without it.",
+                    },
+                }
+            query = args.get("query") or ""
+            top_k = args.get("top_k")
+            results = await search_project_documents(project_id, query, top_k or 5)
+            return {
+                "name": "search_project_documents",
+                "ok": True,
+                "result": {"results": results},
+            }
+
+        # ── synthetic tool: remember_fact ────────────────────────────────────
+        if name == "remember_fact":
+            from app.core import agent_memory
+            key = args.get("key") or ""
+            value = args.get("value") or ""
+            agent_memory.set_agent_fact(self.name, key, value, conversation_id)
+            return {
+                "name": "remember_fact",
+                "ok": True,
+                "result": {
+                    "status": "success",
+                    "remembered": {key: value},
                 },
             }
 
@@ -361,6 +632,7 @@ def _parse_agent_file(path: Path) -> Agent:
         temperature=float(config.get("temperature", 0.3)),
         max_tokens=int(config.get("max_tokens", 2048)),
         icon=config.get("icon", "🤖"),
+        can_delegate=str(config.get("can_delegate", "false")).strip().lower() in ("true", "1", "yes"),
     )
 
 
