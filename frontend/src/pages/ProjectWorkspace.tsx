@@ -1,5 +1,6 @@
-/* ProjectWorkspace — placeholder page */
+/* ProjectWorkspace page */
 import { useParams } from 'react-router-dom'
+import AppHeader from '../components/AppHeader'
 import './pages.css'
 
 export default function ProjectWorkspace() {
@@ -7,19 +8,15 @@ export default function ProjectWorkspace() {
 
   return (
     <div className="page-shell">
-      <header className="page-header">
-        <div className="page-header__inner">
-          <div className="page-header__brand">
-            <span className="brand-mark">TF</span>
-            <span className="brand-name">The Fork</span>
-          </div>
-          <nav className="page-header__nav">
+      <AppHeader
+        breadcrumb={
+          <>
             <span className="nav-item">Projects</span>
             <span className="nav-sep">/</span>
             <span className="nav-item nav-item--active mono">{id ?? '—'}</span>
-          </nav>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <main className="page-main">
         <div className="content-header">
@@ -40,7 +37,9 @@ export default function ProjectWorkspace() {
           </div>
           <div className="meta-row">
             <span className="meta-label text-muted">Status</span>
-            <span className="meta-value"><span className="badge badge--scaffold">scaffold</span></span>
+            <span className="meta-value">
+              <span className="badge badge--scaffold">scaffold</span>
+            </span>
           </div>
         </div>
       </main>

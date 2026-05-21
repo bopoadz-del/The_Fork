@@ -1,20 +1,15 @@
-/* Projects — placeholder page */
+/* Projects page */
+import AppHeader from '../components/AppHeader'
 import './pages.css'
 
 export default function Projects() {
   return (
     <div className="page-shell">
-      <header className="page-header">
-        <div className="page-header__inner">
-          <div className="page-header__brand">
-            <span className="brand-mark">TF</span>
-            <span className="brand-name">The Fork</span>
-          </div>
-          <nav className="page-header__nav">
-            <span className="nav-item nav-item--active">Projects</span>
-          </nav>
-        </div>
-      </header>
+      <AppHeader
+        breadcrumb={
+          <span className="nav-item nav-item--active">Projects</span>
+        }
+      />
 
       <main className="page-main">
         <div className="content-header">
