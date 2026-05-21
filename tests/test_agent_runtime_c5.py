@@ -384,3 +384,125 @@ async def test_delegation_propagates_project_id(tmp_path, monkeypatch):
     )
     assert result["ok"] is True
     assert box.get("project_id") == "proj-xyz"
+
+
+# ── 16. forced final answer when tool-iteration cap is hit (chat) ─────────────
+
+@pytest.mark.asyncio
+async def test_chat_forces_final_answer_on_cap(tmp_path, monkeypatch):
+    """When the LLM always returns tool calls and the 12-iteration cap is hit,
+    chat() must make one more tool-free call and return status=='success' with
+    the forced answer — NOT the old 'exceeded iterations' error."""
+    _isolate(tmp_path, monkeypatch)
+
+    calls = {"n": 0, "with_tools_seen": []}
+
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+        calls["n"] += 1
+        calls["with_tools_seen"].append(with_tools)
+        if calls["n"] <= 12:
+            # Always return a tool call so the loop never naturally terminates
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {
+                        "tool_calls": [{
+                            "id": f"tc{calls['n']}",
+                            "function": {
+                                "name": "remember_fact",
+                                "arguments": '{"key": "k", "value": "v"}',
+                            },
+                        }]
+                    }
+                },
+                "raw": {},
+            }
+        # 13th call: forced final answer (no tools)
+        return {
+            "status": "success",
+            "choice": {"message": {"content": "forced final answer"}},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", fake_llm)
+    agent = _make_agent()
+
+    out = await agent.chat("hi", api_key="k")
+
+    # Must succeed — not an error
+    assert out["status"] == "success", f"Expected success, got: {out}"
+    assert out["answer"] == "forced final answer"
+
+    # The 13th call must have been made with tools disabled
+    assert calls["n"] == 13, f"Expected 13 LLM calls, got {calls['n']}"
+    assert calls["with_tools_seen"][-1] is False, (
+        f"Last call should have with_tools=False, got {calls['with_tools_seen'][-1]}"
+    )
+
+
+# ── 17. forced final answer when tool-iteration cap is hit (chat_stream) ──────
+
+@pytest.mark.asyncio
+async def test_chat_stream_forces_final_answer_on_cap(tmp_path, monkeypatch):
+    """When the LLM always returns tool calls and the 12-iteration cap is hit,
+    chat_stream() must yield token event(s) with the forced answer and an end
+    event — NOT an error event."""
+    am = _isolate(tmp_path, monkeypatch)
+
+    calls = {"n": 0, "with_tools_seen": []}
+
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+        calls["n"] += 1
+        calls["with_tools_seen"].append(with_tools)
+        if calls["n"] <= 12:
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {
+                        "tool_calls": [{
+                            "id": f"tc{calls['n']}",
+                            "function": {
+                                "name": "remember_fact",
+                                "arguments": '{"key": "k", "value": "v"}',
+                            },
+                        }]
+                    }
+                },
+                "raw": {},
+            }
+        # 13th call: forced final answer (no tools)
+        return {
+            "status": "success",
+            "choice": {"message": {"content": "forced stream answer"}},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(Agent, "_call_llm", fake_llm)
+    agent = _make_agent()
+
+    events = []
+    async for ev in agent.chat_stream("hello", api_key="k", conversation_id="cv-cap"):
+        events.append(ev)
+
+    types = [ev["type"] for ev in events]
+
+    # Must NOT yield an error event
+    assert "error" not in types, f"Got error event; all events: {events}"
+
+    # Must yield token(s) with the forced answer
+    token_text = "".join(ev["content"] for ev in events if ev["type"] == "token")
+    assert token_text == "forced stream answer", f"Token text was: {token_text!r}"
+
+    # Must end cleanly
+    assert types[-1] == "end", f"Last event type was {types[-1]!r}"
+
+    # The 13th call must have been made with tools disabled
+    assert calls["n"] == 13, f"Expected 13 LLM calls, got {calls['n']}"
+    assert calls["with_tools_seen"][-1] is False, (
+        f"Last call should have with_tools=False, got {calls['with_tools_seen'][-1]}"
+    )
+
+    # Forced answer must be persisted to conversation memory
+    msgs = am.get_messages("cv-cap")
+    roles_contents = [(m["role"], m["content"]) for m in msgs]
+    assert ("assistant", "forced stream answer") in roles_contents

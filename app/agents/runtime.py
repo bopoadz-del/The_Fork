@@ -225,12 +225,31 @@ class Agent:
                     "content": json.dumps(tool_result["result"], default=str)[:8000],
                 })
 
-        # Hit the cap without a final answer
+        # Hit the cap without a final answer — force one more call with tools disabled
+        # so the model is required to emit a plain-text summary.
+        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False)
+        if forced_resp.get("status") == "error":
+            # Even the forced call failed; fall back to the original error shape.
+            return {
+                "status": "error",
+                "error": f"Agent exceeded {MAX_TOOL_ITERATIONS} tool iterations without a final answer.",
+                "tool_calls": tool_calls_made,
+                "messages": messages,
+            }
+        forced_msg = forced_resp["choice"].get("message") or {}
+        final_text = forced_msg.get("content") or ""
+        messages.append({"role": "assistant", "content": final_text})
+        if conversation_id:
+            from app.core import agent_memory
+            agent_memory.append_message(conversation_id, "user", user_message)
+            agent_memory.append_message(conversation_id, "assistant", final_text)
         return {
-            "status": "error",
-            "error": f"Agent exceeded {MAX_TOOL_ITERATIONS} tool iterations without a final answer.",
+            "status": "success",
+            "answer": final_text,
             "tool_calls": tool_calls_made,
+            "iterations": MAX_TOOL_ITERATIONS,
             "messages": messages,
+            "forced_final": True,
         }
 
     async def chat_stream(
@@ -321,7 +340,20 @@ class Agent:
                     "content": json.dumps(tool_result["result"], default=str)[:8000],
                 })
 
-        yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
+        # Hit the cap without a final answer — force one more call with tools disabled.
+        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False)
+        if forced_resp.get("status") == "error":
+            yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
+            return
+        forced_msg = forced_resp["choice"].get("message") or {}
+        final_text = forced_msg.get("content") or ""
+        for chunk in _chunks(final_text, 80):
+            yield {"type": "token", "content": chunk}
+        if conversation_id:
+            from app.core import agent_memory
+            agent_memory.append_message(conversation_id, "user", user_message)
+            agent_memory.append_message(conversation_id, "assistant", final_text)
+        yield {"type": "end", "iterations": MAX_TOOL_ITERATIONS, "forced_final": True}
 
     # ── Internals ─────────────────────────────────────────────────────────
     def _build_messages(
@@ -370,6 +402,7 @@ class Agent:
         messages: List[Dict[str, Any]],
         api_key: str,
         project_id: Optional[str] = None,
+        with_tools: bool = True,
     ) -> Dict[str, Any]:
         payload = {
             "model": self.model,
@@ -379,7 +412,7 @@ class Agent:
             "stream": False,
         }
         tools = self.tool_definitions(project_id=project_id)
-        if tools:
+        if tools and with_tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
