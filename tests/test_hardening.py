@@ -159,3 +159,24 @@ def test_drive_token_is_per_user(tmp_path, monkeypatch):
 
         # User B cannot list the system user's Drive files.
         assert c.get("/v1/drive/files", headers=user_b).status_code == 409
+
+
+# ── agent_facts: durable facts are scoped per project ──────────────────────────
+
+def test_agent_facts_are_project_scoped(tmp_path, monkeypatch):
+    """A fact an agent remembers in one project must not surface in another."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    from app.core import agent_memory
+
+    agent_memory.init_db()
+    agent_memory.set_agent_fact("pm", "site", "Project A address", project_id="proj-A")
+    agent_memory.set_agent_fact("pm", "site", "Project B address", project_id="proj-B")
+
+    a = agent_memory.list_agent_facts("pm", "proj-A")
+    b = agent_memory.list_agent_facts("pm", "proj-B")
+    assert [f["value"] for f in a] == ["Project A address"]
+    assert [f["value"] for f in b] == ["Project B address"]
+
+    # A different project sees nothing.
+    assert agent_memory.list_agent_facts("pm", "proj-C") == []

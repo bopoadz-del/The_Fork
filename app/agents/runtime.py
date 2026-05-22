@@ -535,10 +535,11 @@ class Agent:
             if ctx:
                 msgs.append({"role": "system", "content": ctx})
 
-        # Remembered agent facts — durable across conversations.
+        # Remembered agent facts — durable across conversations, scoped to
+        # this project so one project's facts never leak into another.
         try:
             from app.core import agent_memory
-            facts = agent_memory.list_agent_facts(self.name)
+            facts = agent_memory.list_agent_facts(self.name, project_id)
         except Exception:
             facts = []
         if facts:
@@ -711,7 +712,9 @@ class Agent:
             from app.core import agent_memory
             key = args.get("key") or ""
             value = args.get("value") or ""
-            agent_memory.set_agent_fact(self.name, key, value, conversation_id)
+            agent_memory.set_agent_fact(
+                self.name, key, value, conversation_id, project_id
+            )
             return {
                 "name": "remember_fact",
                 "ok": True,
