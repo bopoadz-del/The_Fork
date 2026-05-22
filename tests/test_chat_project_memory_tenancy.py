@@ -12,6 +12,7 @@ def test_chat_project_memory_is_tenant_scoped(tmp_path, monkeypatch):
     from app.core import projects as projects_store
     from app.routers.chat import _with_project_memory
 
+    projects_store.init_db()  # create the schema in the relocated DATA_DIR
     proj = projects_store.create_project("Tenant A project", user_id="user-A")
     pid = proj["id"]
     projects_store.set_fact(pid, "site_address", "42 Secret Lane")
