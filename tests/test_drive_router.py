@@ -63,7 +63,7 @@ def test_callback_exchanges_code_and_stores_token(client, monkeypatch):
                     follow_redirects=False)
     assert r.status_code in (302, 307)
     assert r.headers["location"] == "http://localhost:5173/?drive=connected"
-    tok = drive_auth.load_token()
+    tok = drive_auth.load_token("system")
     assert tok["access_token"] == "AT" and tok["refresh_token"] == "RT"
     assert tok["email"] == "me@example.com"
     assert tok["expiry"] > time.time()
@@ -80,7 +80,7 @@ def test_callback_consent_denied(client):
                     follow_redirects=False)
     assert r.status_code in (302, 307)
     assert r.headers["location"] == "http://localhost:5173/?drive=error"
-    assert drive_auth.load_token() is None
+    assert drive_auth.load_token("system") is None
 
 
 def test_callback_rejects_expired_state(client):
@@ -88,7 +88,7 @@ def test_callback_rejects_expired_state(client):
     # fails the membership check → 400.
     import app.routers.drive as drive_mod
     stale = "stale-state-value"
-    drive_mod._pending_states[stale] = time.time() - drive_mod._STATE_TTL - 1
+    drive_mod._pending_states[stale] = ("system", time.time() - drive_mod._STATE_TTL - 1)
 
     r = client.get(f"/v1/drive/callback?code=x&state={stale}",
                     follow_redirects=False)
@@ -103,16 +103,16 @@ def test_status_not_connected(client):
 
 
 def test_status_connected_after_token(client):
-    drive_auth.save_token({"access_token": "AT", "refresh_token": "RT",
+    drive_auth.save_token("system", {"access_token": "AT", "refresh_token": "RT",
                            "expiry": time.time() + 9999, "email": "me@x.com"})
     body = client.get("/v1/drive/status", headers=H).json()
     assert body["connected"] is True and body["email"] == "me@x.com"
 
 
 def test_disconnect_clears_token(client):
-    drive_auth.save_token({"access_token": "AT", "expiry": time.time() + 9999})
+    drive_auth.save_token("system", {"access_token": "AT", "expiry": time.time() + 9999})
     assert client.post("/v1/drive/disconnect", headers=H).status_code == 200
-    assert drive_auth.load_token() is None
+    assert drive_auth.load_token("system") is None
 
 
 def test_files_requires_connection(client):
@@ -121,10 +121,10 @@ def test_files_requires_connection(client):
 
 
 def test_files_lists_when_connected(client, monkeypatch):
-    drive_auth.save_token({"access_token": "AT", "refresh_token": "RT",
+    drive_auth.save_token("system", {"access_token": "AT", "refresh_token": "RT",
                            "expiry": time.time() + 9999})
 
-    async def fake_token():
+    async def fake_token(*_a, **_k):
         return "AT"
 
     async def fake_process(self, input_data, params=None):
@@ -150,10 +150,10 @@ def test_drive_import_adds_project_document(client, monkeypatch):
     proj = client.post("/v1/projects", headers=H, json={"name": "Drive Test"}).json()
     pid = proj["id"]
 
-    drive_auth.save_token({"access_token": "AT", "refresh_token": "RT",
+    drive_auth.save_token("system", {"access_token": "AT", "refresh_token": "RT",
                            "expiry": time.time() + 9999})
 
-    async def fake_token():
+    async def fake_token(*_a, **_k):
         return "AT"
 
     async def fake_process(self, input_data, params=None):
@@ -193,10 +193,10 @@ def test_drive_import_rejects_disallowed_extension(client, monkeypatch):
     proj = client.post("/v1/projects", headers=H, json={"name": "P3"}).json()
     pid = proj["id"]
 
-    drive_auth.save_token({"access_token": "AT", "refresh_token": "RT",
+    drive_auth.save_token("system", {"access_token": "AT", "refresh_token": "RT",
                            "expiry": time.time() + 9999})
 
-    async def fake_token():
+    async def fake_token(*_a, **_k):
         return "AT"
 
     async def fake_process(self, input_data, params=None):

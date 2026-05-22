@@ -16,7 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Qu
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from app.dependencies import require_api_key, require_user
+from app.dependencies import require_user
 from app.core import audit, doc_index, drive_auth, file_crypto, projects as store
 from app.routers import projects as projects_router
 from app.routers.projects import ALLOWED_DOC_EXTENSIONS
@@ -28,17 +28,20 @@ _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 _DRIVE_API = "https://www.googleapis.com/drive/v3"
 
-# Single-use OAuth state values issued by /connect, mapping state -> issued_at
-# epoch. NOTE: process-local — a multi-worker deployment would need a shared
-# store (e.g. Redis); this app runs single-worker.
-_pending_states: Dict[str, float] = {}
+# Single-use OAuth state values issued by /connect, mapping state ->
+# (user_id, issued_at). The user_id ties the consent flow to the caller so
+# the callback stores the token for the right user. NOTE: process-local — a
+# multi-worker deployment would need a shared store (e.g. Redis).
+_pending_states: Dict[str, tuple] = {}
 _STATE_TTL = 600  # seconds — pending OAuth states expire after 10 minutes.
 
 
 def _prune_states() -> None:
     """Drop pending OAuth states older than _STATE_TTL."""
     cutoff = time.time() - _STATE_TTL
-    for state in [s for s, issued in _pending_states.items() if issued < cutoff]:
+    for state in [
+        s for s, (_, issued) in _pending_states.items() if issued < cutoff
+    ]:
         del _pending_states[state]
 
 
@@ -86,7 +89,7 @@ async def _fetch_email(access_token: str) -> str:
 
 
 @router.get("/v1/drive/connect")
-async def drive_connect(auth: dict = Depends(require_api_key)):
+async def drive_connect(auth: dict = Depends(require_user)):
     # Returns the Google consent URL as JSON — NOT a redirect. A browser cannot
     # attach the Bearer header to a top-level navigation, so the frontend
     # fetches this (header attaches fine on a same-origin fetch), reads
@@ -97,7 +100,7 @@ async def drive_connect(auth: dict = Depends(require_api_key)):
                                  "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.")
     _prune_states()
     state = secrets.token_urlsafe(24)
-    _pending_states[state] = time.time()
+    _pending_states[state] = (auth["user_id"], time.time())
     from urllib.parse import urlencode
     url = _AUTH_URL + "?" + urlencode({
         "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
@@ -114,11 +117,13 @@ async def drive_connect(auth: dict = Depends(require_api_key)):
 @router.get("/v1/drive/callback")
 async def drive_callback(code: str = Query(""), state: str = Query(""),
                          error: str = Query("")):
-    # No Bearer auth here — Google calls this. The single-use state is the gate.
+    # No Bearer auth here — Google calls this. The single-use state is the
+    # gate, and it carries the user_id this consent flow belongs to.
     _prune_states()
-    if state not in _pending_states:
+    pending = _pending_states.pop(state, None)
+    if pending is None:
         raise HTTPException(400, "Invalid or expired OAuth state.")
-    _pending_states.pop(state, None)
+    user_id, _issued = pending
     # User clicked "Deny" (or consent otherwise failed): Google sends `error`
     # and no `code`. The state was still consumed above; return gracefully.
     if error:
@@ -128,7 +133,7 @@ async def drive_callback(code: str = Query(""), state: str = Query(""),
     data = await _exchange_code(code)
     access_token = data["access_token"]
     email = await _fetch_email(access_token)
-    drive_auth.save_token({
+    drive_auth.save_token(user_id, {
         "access_token": access_token,
         "refresh_token": data.get("refresh_token", ""),
         "expiry": time.time() + int(data.get("expires_in", 3600)),
@@ -138,8 +143,8 @@ async def drive_callback(code: str = Query(""), state: str = Query(""),
 
 
 @router.get("/v1/drive/status")
-async def drive_status(auth: dict = Depends(require_api_key)):
-    token = drive_auth.load_token()
+async def drive_status(auth: dict = Depends(require_user)):
+    token = drive_auth.load_token(auth["user_id"])
     return {
         "connected": token is not None,
         "email": (token or {}).get("email") or None,
@@ -148,16 +153,16 @@ async def drive_status(auth: dict = Depends(require_api_key)):
 
 
 @router.post("/v1/drive/disconnect")
-async def drive_disconnect(auth: dict = Depends(require_api_key)):
-    cleared = drive_auth.clear_token()
+async def drive_disconnect(auth: dict = Depends(require_user)):
+    cleared = drive_auth.clear_token(auth["user_id"])
     return {"status": "ok", "was_connected": cleared}
 
 
 @router.get("/v1/drive/files")
 async def drive_files(q: str = Query(""),
-                      auth: dict = Depends(require_api_key)):
+                      auth: dict = Depends(require_user)):
     try:
-        access_token = await drive_auth.get_access_token()
+        access_token = await drive_auth.get_access_token(auth["user_id"])
     except drive_auth.DriveNotConnected:
         raise HTTPException(409, "Google Drive is not connected.")
     except drive_auth.DriveAuthError as e:
@@ -196,7 +201,7 @@ async def drive_import(project_id: str, req: DriveImportRequest,
 
     # Same 409 handling as the /v1/drive/files route (Task 3).
     try:
-        access_token = await drive_auth.get_access_token()
+        access_token = await drive_auth.get_access_token(auth["user_id"])
     except drive_auth.DriveNotConnected:
         raise HTTPException(409, "Google Drive is not connected.")
     except drive_auth.DriveAuthError as e:

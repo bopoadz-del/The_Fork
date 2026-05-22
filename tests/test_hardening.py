@@ -116,3 +116,46 @@ def test_code_blocks_are_admin_only_via_execute():
                   "params": {"operation": "list_collections"}},
         )
         assert ok.status_code != 403, ok.text
+
+
+# ── Drive: OAuth token is per-user, not process-global ──────────────────────────
+
+def test_drive_token_is_per_user(tmp_path, monkeypatch):
+    """One user connecting Google Drive must not expose it to another user."""
+    import time
+    import uuid
+
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "csecret")
+
+    from app.main import app
+    from app.core import drive_auth
+
+    with TestClient(app) as c:
+        email = f"drv-{uuid.uuid4().hex[:8]}@x.com"
+        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        token = c.post(
+            "/v1/users/login", json={"email": email, "password": "password12"}
+        ).json()["token"]
+        user_b = {"Authorization": f"Bearer {token}"}
+
+        # The 'system' user (legacy cb_dev_key) connects Drive.
+        drive_auth.save_token("system", {
+            "access_token": "AT", "refresh_token": "RT",
+            "expiry": time.time() + 9999, "email": "system@x.com",
+        })
+
+        # System sees it connected; user B must not.
+        sys_status = c.get(
+            "/v1/drive/status", headers={"Authorization": "Bearer cb_dev_key"}
+        ).json()
+        assert sys_status["connected"] is True
+
+        b_status = c.get("/v1/drive/status", headers=user_b).json()
+        assert b_status["connected"] is False
+
+        # User B cannot list the system user's Drive files.
+        assert c.get("/v1/drive/files", headers=user_b).status_code == 409
