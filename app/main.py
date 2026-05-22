@@ -249,7 +249,12 @@ env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
 if env in {"dev", "development", "local", "test", "testing"}:
     app.include_router(debug.router)
 
-# Mount static files
+# Mount static files. The frontend bundle (frontend/dist) is a build artifact
+# that is absent in CI and fresh checkouts; StaticFiles raises RuntimeError at
+# import time if its directory is missing, so mount each frontend path only
+# when it exists. app/static is committed, so it stays unconditional.
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
-app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+if os.path.isdir("frontend/dist"):
+    app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
+if os.path.isdir("frontend/dist/assets"):
+    app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
