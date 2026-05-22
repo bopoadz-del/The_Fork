@@ -54,9 +54,34 @@ from app.routers import (
     workflows,
 )
 from app.agents import load_agents
+def _validate_startup_env() -> None:
+    """Fail fast on missing security config when ENV is explicitly production.
+
+    SECRET_KEY is required: without it the JWT signing secret is generated
+    per-process, so tokens are invalidated on every restart and differ across
+    scaled instances. DATA_ENCRYPTION_KEY only warns — encryption at rest is
+    opt-in.
+    """
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "")).strip().lower()
+    if env not in ("prod", "production"):
+        return
+    if not os.getenv("SECRET_KEY"):
+        raise RuntimeError(
+            "SECRET_KEY is required when ENV=production — without it the JWT "
+            "signing secret is regenerated per process, invalidating all "
+            "tokens on restart. Set SECRET_KEY in the environment."
+        )
+    if not os.getenv("DATA_ENCRYPTION_KEY"):
+        logger.warning(
+            "DATA_ENCRYPTION_KEY is not set — uploaded documents are stored "
+            "UNENCRYPTED at rest."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize all blocks + load runtime agents at startup."""
+    _validate_startup_env()
     await init_blocks()
     from app.core.projects import init_db
     init_db()

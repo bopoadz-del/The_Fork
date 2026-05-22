@@ -32,3 +32,26 @@ def test_legacy_plaintext_still_passes_through(monkeypatch):
 
     monkeypatch.setenv("DATA_ENCRYPTION_KEY", Fernet.generate_key().decode())
     assert file_crypto.decrypt_bytes(b"%PDF-1.4 plain bytes") == b"%PDF-1.4 plain bytes"
+
+
+# ── startup: production requires SECRET_KEY ─────────────────────────────────────
+
+def test_production_startup_requires_secret_key(monkeypatch):
+    from app.main import _validate_startup_env
+
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        _validate_startup_env()
+
+    # With SECRET_KEY set, startup validation passes.
+    monkeypatch.setenv("SECRET_KEY", "a-real-secret")
+    _validate_startup_env()
+
+
+def test_non_production_skips_secret_key_check(monkeypatch):
+    from app.main import _validate_startup_env
+
+    monkeypatch.setenv("ENV", "testing")
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    _validate_startup_env()  # must not raise outside production
