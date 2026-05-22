@@ -135,46 +135,13 @@ app.add_middleware(
 )
 
 
-# File upload security — only intercepts actual upload paths, never chat/chain
-@app.middleware("http")
-async def file_upload_security_middleware(request: Request, call_next):
-    path = request.url.path.lower()
-
-    if "/upload" in path:
-        body = await request.body()
-
-        try:
-            import json
-            data = json.loads(body) if body else {}
-        except Exception:
-            data = {}
-
-        if any(k in str(data) for k in ["file_path", "filename", "file"]):
-            try:
-                if "security" not in block_instances:
-                    block_instances["security"] = _create_block_instance(BLOCK_REGISTRY["security"])
-                security = block_instances.get("security")
-                if security:
-                    validation = await security.validate_file(data, {})
-                    if not validation.get("safe"):
-                        return JSONResponse(
-                            status_code=400,
-                            content={
-                                "status": "error",
-                                "error": "Security validation failed",
-                                "details": validation.get("error"),
-                                "violation": validation.get("violation"),
-                            },
-                        )
-            except Exception:
-                pass
-
-        async def receive():
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        request = Request(request.scope, receive, request._send)
-
-    return await call_next(request)
+# NOTE: a previous "file upload security" middleware was removed here. It
+# called `await request.body()` on every /upload request, which buffered the
+# entire multipart body (including the file) into memory — a memory-DoS that
+# also defeated UploadFile's on-disk spooling. Its security check was dead
+# code: it json.loads()'d a multipart body, always failed, and never ran the
+# validator. Upload validation (size, extension, filename, path traversal)
+# lives in app/routers/upload.py where the file is a proper UploadFile.
 
 
 # ── Unified error envelope ────────────────────────────────────────────────
