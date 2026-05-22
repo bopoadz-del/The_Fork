@@ -43,6 +43,13 @@ _FERNET_VERSION = 0x80
 _ENV_KEY = "DATA_ENCRYPTION_KEY"
 
 
+class DecryptionError(Exception):
+    """A blob that is a real Fernet token could not be decrypted — almost
+    always because DATA_ENCRYPTION_KEY does not match the key it was written
+    with (e.g. the key was rotated). Raised instead of silently returning
+    ciphertext, which would corrupt the document."""
+
+
 def _load_fernet() -> Optional[Fernet]:
     """Build a Fernet instance from the env var, or None if unset/invalid."""
     raw = os.getenv(_ENV_KEY)
@@ -100,11 +107,15 @@ def decrypt_bytes(token: bytes) -> bytes:
         return token
     try:
         return fernet.decrypt(token)
-    except InvalidToken:
-        # Not our token after all (e.g. plaintext that happened to base64-decode
-        # to a 0x80-prefixed blob, or a token from a different key). Treat it as
-        # legacy plaintext rather than failing the read.
-        return token
+    except InvalidToken as exc:
+        # The blob is base64 with a Fernet version byte and the right length —
+        # the odds of legacy plaintext matching that by chance are negligible,
+        # so a decrypt failure here means the key is wrong/rotated. Fail loud
+        # rather than silently handing back ciphertext as if it were plaintext.
+        raise DecryptionError(
+            "A stored document is encrypted but could not be decrypted — "
+            "DATA_ENCRYPTION_KEY does not match the key it was written with."
+        ) from exc
 
 
 def write_document(path: str, data: bytes) -> None:
