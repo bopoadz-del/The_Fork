@@ -25,13 +25,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio
+          pip install pytest pytest-asyncio pytest-cov
 
       - name: Security scan
         run: python scripts/security_scan.py
 
       - name: Run tests (excluding browser suite)
-        run: pytest tests/ -v --tb=short --ignore=tests/browser
+        # --cov-fail-under is a regression floor (current coverage ~28%);
+        # it fails the job if coverage drops below it or if no tests collect.
+        run: >
+          pytest tests/ -v --tb=short --ignore=tests/browser
+          --cov=app --cov-report=term-missing --cov-fail-under=25
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data
