@@ -54,7 +54,7 @@ class MonitoringBlock(LegoBlock):
     
     async def initialize(self):
         """Initialize monitoring"""
-        print("📊 Monitoring Block initialized")
+        print("[monitoring] Monitoring Block initialized")
         print("   Tracking:", list(self.providers.keys()))
         print("   Auto-route thresholds: Degraded <70%, Critical <40%")
         return True

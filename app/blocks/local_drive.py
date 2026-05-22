@@ -38,7 +38,11 @@ class LocalDriveBlock(UniversalBlock):
         """List, read, or write local files"""
         params = params or {}
         operation = params.get("operation", "list")
-        path = input_data if isinstance(input_data, str) else params.get("folder_path", "./")
+        # Accept the target directory from input_data or any of the common
+        # param keys (folder_path / path) — callers use both interchangeably.
+        path = input_data if isinstance(input_data, str) else (
+            params.get("folder_path") or params.get("path") or "./"
+        )
         
         try:
             if operation == "write":
@@ -53,7 +57,14 @@ class LocalDriveBlock(UniversalBlock):
                     content = f.read()
                 return {"status": "success", "operation": "read", "file_path": file_path, "content": content}
             else:
-                files = os.listdir(path) if os.path.isdir(path) else []
+                if not os.path.isdir(path):
+                    return {
+                        "status": "error",
+                        "operation": "list",
+                        "path": path,
+                        "error": f"Not a directory: {path}",
+                    }
+                files = os.listdir(path)
                 return {
                     "status": "success",
                     "operation": "list",
