@@ -264,11 +264,26 @@ def _load_index(project_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _write_index(project_id: str, data: Dict[str, Any]) -> None:
-    """Write ``data`` to the index file, holding the module-level lock."""
+    """Atomically write ``data`` to the index file.
+
+    Writes to a temp file in the same directory and renames it into place, so
+    a crash mid-write cannot leave a truncated/invalid JSON index (which
+    _load_index would silently drop, losing the whole project index).
+    """
     path = _index_path(project_id)
+    directory = os.path.dirname(path) or "."
     with _INDEX_LOCK:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
+        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".idx_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)  # atomic on the same filesystem
+        except BaseException:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
 
 
 def _ext_of(filename: str) -> str:
