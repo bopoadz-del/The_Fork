@@ -53,8 +53,11 @@ _SUPPORTED_EXTS = (
 # scanned / image-only PDF and re-extracted via OCR.
 _PDF_OCR_THRESHOLD = 30
 
-# Module-level lock guarding all index-file writes.
-_INDEX_LOCK = threading.Lock()
+# Guards index load-modify-write sequences. Reentrant so a caller can hold it
+# across a whole read-modify-write while still calling _write_index (which
+# also acquires it). Serialises concurrent index_document calls in-process
+# (e.g. two BackgroundTasks) so they cannot lose each other's entry.
+_INDEX_LOCK = threading.RLock()
 
 
 # ── sync → async bridge ────────────────────────────────────────────────────────
@@ -362,62 +365,68 @@ def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
 
     Returns a summary dict with ``indexed`` count (always 1 on success).
     """
-    existing = _load_index(project_id) or {
-        "project_id": project_id,
-        "built_at": _now(),
-        "documents": [],
-        "skipped": [],
-    }
-
     doc = _projects.get_document(document_id)
     if doc is None:
         return {"project_id": project_id, "indexed": 0, "error": "document not found"}
 
     filename = doc.get("original_name", "")
     ext = _ext_of(filename)
+    fingerprint = f"{doc.get('uploaded_at', '')}:{doc.get('size', 0)}"
 
-    # Remove any existing entry for this document_id from either list
-    existing["documents"] = [
-        d for d in existing["documents"] if d["document_id"] != document_id
-    ]
-    existing["skipped"] = [
-        s for s in existing["skipped"] if s["document_id"] != document_id
-    ]
-
+    # Slow work (text extraction, OCR, chunking) runs OUTSIDE the lock so it
+    # does not serialise all indexing — only the load-modify-write below does.
+    entry: Optional[Dict[str, Any]] = None
+    skipped_entry: Optional[Dict[str, Any]] = None
+    chunks: List[str] = []
     if ext not in _SUPPORTED_EXTS:
-        fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
-        existing["skipped"].append({
+        skipped_entry = {
             "document_id": document_id,
             "filename": filename,
             "reason": "unsupported_type",
             "fingerprint": fingerprint,
-        })
+        }
+    else:
+        file_path = doc.get("file_path") or ""
+        text, meta = _extract_with_meta(file_path, filename)
+        chunks = chunk_text(text)
+        entry = {
+            "document_id": document_id,
+            "filename": filename,
+            "fingerprint": fingerprint,
+            "chunks": chunks,
+        }
+        if meta.get("ocr_low_quality"):
+            entry["ocr_low_quality"] = True
+
+    # Load-modify-write under the lock — a concurrent index_document call for
+    # the same project cannot interleave and drop this entry.
+    with _INDEX_LOCK:
+        existing = _load_index(project_id) or {
+            "project_id": project_id,
+            "built_at": _now(),
+            "documents": [],
+            "skipped": [],
+        }
+        existing["documents"] = [
+            d for d in existing["documents"] if d["document_id"] != document_id
+        ]
+        existing["skipped"] = [
+            s for s in existing["skipped"] if s["document_id"] != document_id
+        ]
+        if entry is not None:
+            existing["documents"].append(entry)
+        else:
+            existing["skipped"].append(skipped_entry)
         existing["built_at"] = _now()
         _write_index(project_id, existing)
+
+    if entry is None:
         return {
             "project_id": project_id,
             "indexed": 0,
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
-
-    file_path = doc.get("file_path") or ""
-    text, meta = _extract_with_meta(file_path, filename)
-    chunks = chunk_text(text)
-
-    fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
-    entry: Dict[str, Any] = {
-        "document_id": document_id,
-        "filename": filename,
-        "fingerprint": fingerprint,
-        "chunks": chunks,
-    }
-    if meta.get("ocr_low_quality"):
-        entry["ocr_low_quality"] = True
-    existing["documents"].append(entry)
-    existing["built_at"] = _now()
-    _write_index(project_id, existing)
-
     return {
         "project_id": project_id,
         "indexed": 1,

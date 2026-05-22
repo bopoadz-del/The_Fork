@@ -284,6 +284,10 @@ class Agent:
                 if m.get("role") in ("user", "assistant")
             ]
             effective_history = prior_turns + effective_history
+            # Persist the user turn up front so it survives even if the LLM
+            # call errors mid-loop — otherwise the conversation history loses
+            # the question and ends up inconsistent.
+            agent_memory.append_message(conversation_id, "user", user_message)
 
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
         tool_calls_made: List[Dict[str, Any]] = []
@@ -330,7 +334,7 @@ class Agent:
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
-                        agent_memory.append_message(conversation_id, "user", user_message)
+                        # User turn was already persisted up front.
                         agent_memory.append_message(conversation_id, "assistant", final_text)
                     return {
                         "status": "success",
@@ -375,7 +379,7 @@ class Agent:
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
-            agent_memory.append_message(conversation_id, "user", user_message)
+            # User turn was already persisted up front.
             agent_memory.append_message(conversation_id, "assistant", final_text)
         return {
             "status": "success",
@@ -421,6 +425,8 @@ class Agent:
                 if m.get("role") in ("user", "assistant")
             ]
             effective_history = prior_turns + effective_history
+            # Persist the user turn up front so it survives a mid-loop error.
+            agent_memory.append_message(conversation_id, "user", user_message)
 
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
 
@@ -467,7 +473,7 @@ class Agent:
                         yield {"type": "token", "content": chunk}
                     if conversation_id:
                         from app.core import agent_memory
-                        agent_memory.append_message(conversation_id, "user", user_message)
+                        # User turn was already persisted up front.
                         agent_memory.append_message(conversation_id, "assistant", final_text)
                     yield {"type": "end", "iterations": iteration + 1}
                     return
@@ -512,7 +518,7 @@ class Agent:
             yield {"type": "token", "content": chunk}
         if conversation_id:
             from app.core import agent_memory
-            agent_memory.append_message(conversation_id, "user", user_message)
+            # User turn was already persisted up front.
             agent_memory.append_message(conversation_id, "assistant", final_text)
         yield {"type": "end", "iterations": MAX_TOOL_ITERATIONS, "forced_final": True}
 
