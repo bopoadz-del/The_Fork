@@ -54,8 +54,10 @@ class BOQProcessorBlock(UniversalBlock):
         data = input_data if isinstance(input_data, dict) else {}
 
         file_path = data.get("file_path") or params.get("file_path") or data.get("text") or data.get("input") or (input_data if isinstance(input_data, str) else "")
-        if not file_path or not os.path.exists(str(file_path)):
-            return self._demo_boq(params)
+        if not file_path:
+            return {"status": "error", "error": "No file_path provided. Requires an .xlsx or .csv BOQ file path."}
+        if not os.path.exists(str(file_path)):
+            return {"status": "error", "error": f"File not found: {file_path}"}
 
         ext = os.path.splitext(file_path)[1].lower()
         try:
@@ -75,44 +77,6 @@ class BOQProcessorBlock(UniversalBlock):
             }
         except Exception as e:
             return {"status": "error", "error": f"Parse error: {e}"}
-
-    def _demo_boq(self, params: Dict) -> Dict:
-        currency = params.get("currency", self.config.get("currency", "USD"))
-        demo_items = [
-            {"item_key": "substructure_excavation", "description": "Bulk Excavation to Formation Level", "quantity": 4500, "unit": "m3", "unit_cost": 18, "total_cost": 81000, "section": "Div 31 — Earthwork", "currency": currency},
-            {"item_key": "concrete_raft_foundation", "description": "Reinforced Concrete Raft Foundation C30/37", "quantity": 380, "unit": "m3", "unit_cost": 420, "total_cost": 159600, "section": "Div 03 — Concrete", "currency": currency},
-            {"item_key": "rebar_foundations", "description": "High-Yield Reinforcement Bar — Foundations", "quantity": 62, "unit": "tonne", "unit_cost": 1250, "total_cost": 77500, "section": "Div 03 — Concrete", "currency": currency},
-            {"item_key": "structural_steel_frame", "description": "Structural Steelwork — Primary Frame", "quantity": 145, "unit": "tonne", "unit_cost": 2800, "total_cost": 406000, "section": "Div 05 — Metals", "currency": currency},
-            {"item_key": "metal_deck_floor", "description": "Composite Metal Deck Floor Slab", "quantity": 2800, "unit": "m2", "unit_cost": 95, "total_cost": 266000, "section": "Div 05 — Metals", "currency": currency},
-            {"item_key": "external_masonry", "description": "External Cavity Masonry Wall", "quantity": 1650, "unit": "m2", "unit_cost": 185, "total_cost": 305250, "section": "Div 04 — Masonry", "currency": currency},
-            {"item_key": "roof_waterproofing", "description": "Single-Ply Membrane Roof Waterproofing", "quantity": 1100, "unit": "m2", "unit_cost": 125, "total_cost": 137500, "section": "Div 07 — Thermal & Moisture", "currency": currency},
-            {"item_key": "curtain_walling", "description": "Aluminium Curtain Walling System", "quantity": 680, "unit": "m2", "unit_cost": 780, "total_cost": 530400, "section": "Div 08 — Openings", "currency": currency},
-            {"item_key": "internal_partitions", "description": "Metal Stud Gypsum Board Partitions", "quantity": 3200, "unit": "m2", "unit_cost": 72, "total_cost": 230400, "section": "Div 09 — Finishes", "currency": currency},
-            {"item_key": "raised_access_floor", "description": "Raised Access Floor System 600×600", "quantity": 2400, "unit": "m2", "unit_cost": 145, "total_cost": 348000, "section": "Div 09 — Finishes", "currency": currency},
-            {"item_key": "hvac_ahu", "description": "Air Handling Units — Supply & Return", "quantity": 6, "unit": "nr", "unit_cost": 32000, "total_cost": 192000, "section": "Div 23 — HVAC", "currency": currency},
-            {"item_key": "electrical_lv_panel", "description": "Low Voltage Distribution Panels", "quantity": 4, "unit": "nr", "unit_cost": 18500, "total_cost": 74000, "section": "Div 26 — Electrical", "currency": currency},
-            {"item_key": "fire_suppression", "description": "Wet Pipe Sprinkler System", "quantity": 2800, "unit": "m2", "unit_cost": 38, "total_cost": 106400, "section": "Div 21 — Fire Suppression", "currency": currency},
-            {"item_key": "external_works_paving", "description": "External Hard Landscaping & Paving", "quantity": 1800, "unit": "m2", "unit_cost": 95, "total_cost": 171000, "section": "Div 32 — Exterior Improvements", "currency": currency},
-        ]
-        total_cost = sum(i["total_cost"] for i in demo_items)
-        section_totals: Dict = {}
-        for item in demo_items:
-            section_totals[item["section"]] = section_totals.get(item["section"], 0) + item["total_cost"]
-        cost_breakdown = {
-            s: {"total": round(v, 2), "percentage": round(v / total_cost * 100, 1)}
-            for s, v in sorted(section_totals.items(), key=lambda x: x[1], reverse=True)
-        }
-        return {
-            "status": "success",
-            "demo_mode": True,
-            "item_count": len(demo_items),
-            "total_cost": round(total_cost, 2),
-            "currency": currency,
-            "line_items": demo_items,
-            "cost_breakdown": cost_breakdown,
-            "sections": list(section_totals.keys()),
-            "columns_detected": {"description": "description", "quantity": "quantity", "unit": "unit", "rate": "unit_cost", "total": "total_cost", "section": "section"},
-        }
 
     async def _parse_csv(self, file_path: str, params: Dict) -> Dict:
         import pandas as pd

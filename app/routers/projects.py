@@ -8,17 +8,16 @@ Roadmap V2 · Part 0:
 """
 
 import os
-import shutil
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core import audit, projects as store
+from app.core import audit, doc_index, file_crypto, projects as store
 from app.blocks import BLOCK_REGISTRY
 from app.dependencies import (
-    require_api_key,
+    require_user,
     block_instances,
     _create_block_instance,
 )
@@ -38,6 +37,14 @@ ALLOWED_DOC_EXTENSIONS = {
     ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
     ".xer", ".mpp", ".ifc", ".dwg",
 }
+
+
+def _owned_or_404(project_id: str, user_id: str):
+    """Load a project the caller owns, or 404 (never leak existence)."""
+    proj = store.get_project(project_id, user_id=user_id)
+    if not proj:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    return proj
 
 
 # ── request models ──────────────────────────────────────────────────────────
@@ -63,37 +70,33 @@ class ProgressRequest(BaseModel):
 # ── projects ────────────────────────────────────────────────────────────────
 
 @router.post("/v1/projects", status_code=201)
-async def create_project(req: CreateProjectRequest, auth: dict = Depends(require_api_key)):
+async def create_project(req: CreateProjectRequest, auth: dict = Depends(require_user)):
     """Create a project. Documents and analytics hang off this entity."""
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(400, "Project name is required")
-    proj = store.create_project(name, (req.client or "").strip() or None)
-    audit.record("project.created", project_id=proj["id"], name=name)
+    proj = store.create_project(name, (req.client or "").strip() or None, user_id=auth["user_id"])
+    audit.record("project.created", project_id=proj["id"], name=name, user_id=auth["user_id"])
     return proj
 
 
 @router.get("/v1/projects")
-async def list_projects(auth: dict = Depends(require_api_key)):
+async def list_projects(auth: dict = Depends(require_user)):
     """List all projects with their readiness state."""
-    return {"projects": store.list_projects()}
+    return {"projects": store.list_projects(user_id=auth["user_id"])}
 
 
 @router.get("/v1/projects/{project_id}")
-async def get_project(project_id: str, auth: dict = Depends(require_api_key)):
+async def get_project(project_id: str, auth: dict = Depends(require_user)):
     """Project detail — documents + the computed readiness gate."""
-    proj = store.get_project(project_id)
-    if not proj:
-        raise HTTPException(404, f"Project '{project_id}' not found")
+    proj = _owned_or_404(project_id, auth["user_id"])
     return proj
 
 
 @router.delete("/v1/projects/{project_id}")
-async def delete_project(project_id: str, auth: dict = Depends(require_api_key)):
+async def delete_project(project_id: str, auth: dict = Depends(require_user)):
     """Delete a project: its document records, facts, AND files on disk."""
-    proj = store.get_project(project_id)
-    if not proj:
-        raise HTTPException(404, f"Project '{project_id}' not found")
+    proj = _owned_or_404(project_id, auth["user_id"])
     files_purged = 0
     for doc in proj.get("documents", []):
         fp = doc.get("file_path")
@@ -105,7 +108,7 @@ async def delete_project(project_id: str, auth: dict = Depends(require_api_key))
                 pass
     store.delete_project(project_id)  # cascades documents + facts
     audit.record("project.deleted", project_id=project_id,
-                 files_purged=files_purged)
+                 files_purged=files_purged, user_id=auth["user_id"])
     return {
         "status": "deleted",
         "project_id": project_id,
@@ -115,7 +118,7 @@ async def delete_project(project_id: str, auth: dict = Depends(require_api_key))
 
 @router.post("/v1/projects/{project_id}/connectors/aconex")
 async def connect_aconex(
-    project_id: str, req: ConnectorRequest, auth: dict = Depends(require_api_key)
+    project_id: str, req: ConnectorRequest, auth: dict = Depends(require_user)
 ):
     """Set the Aconex connection flag for a project.
 
@@ -123,10 +126,11 @@ async def connect_aconex(
     Until the real OAuth/import client lands, this lets the readiness gate be
     satisfied explicitly.
     """
+    _owned_or_404(project_id, auth["user_id"])
     if not store.set_aconex(project_id, req.connected):
         raise HTTPException(404, f"Project '{project_id}' not found")
     audit.record("connector.aconex", project_id=project_id,
-                 connected=req.connected)
+                 connected=req.connected, user_id=auth["user_id"])
     return {
         "status": "ok",
         "project_id": project_id,
@@ -136,7 +140,7 @@ async def connect_aconex(
 
 
 @router.get("/v1/projects/{project_id}/connectors")
-async def list_connectors(project_id: str, auth: dict = Depends(require_api_key)):
+async def list_connectors(project_id: str, auth: dict = Depends(require_user)):
     """Connector status for a project.
 
     Aconex is currently a connection *flag* — the full Oracle Aconex OAuth
@@ -144,9 +148,7 @@ async def list_connectors(project_id: str, auth: dict = Depends(require_api_key)
     flag lets the readiness gate be satisfied for projects whose live Aconex
     feed is managed outside the platform.
     """
-    proj = store.get_project(project_id)
-    if not proj:
-        raise HTTPException(404, f"Project '{project_id}' not found")
+    proj = _owned_or_404(project_id, auth["user_id"])
     return {
         "project_id": project_id,
         "connectors": [
@@ -165,9 +167,10 @@ async def list_connectors(project_id: str, auth: dict = Depends(require_api_key)
 @router.post("/v1/projects/{project_id}/documents", status_code=201)
 async def add_document(
     project_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     role: Optional[str] = Form(None),
-    auth: dict = Depends(require_api_key),
+    auth: dict = Depends(require_user),
 ):
     """Attach a document to a project.
 
@@ -175,9 +178,7 @@ async def add_document(
     analysis. Attaching a file is not the same as asking for analysis; run a
     block explicitly (via /v1/execute) when you actually want results.
     """
-    proj = store.get_project(project_id)
-    if not proj:
-        raise HTTPException(404, f"Project '{project_id}' not found")
+    proj = _owned_or_404(project_id, auth["user_id"])
 
     original_name = (file.filename or "unknown").strip()
     if not original_name or original_name in (".", ".."):
@@ -190,9 +191,13 @@ async def add_document(
     file_id = str(uuid.uuid4())[:8]
     stored_as = f"{file_id}_{original_name}"
     filepath = os.path.join(DATA_DIR, stored_as)
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    size = os.path.getsize(filepath)
+    # Persist the document — encrypted at rest iff DATA_ENCRYPTION_KEY is set
+    # (opt-in; plaintext otherwise — see app/core/file_crypto.py). The recorded
+    # `size` is the original plaintext size, not the (larger) ciphertext size.
+    file.file.seek(0)
+    raw_bytes = file.file.read()
+    file_crypto.write_document(filepath, raw_bytes)
+    size = len(raw_bytes)
 
     if role is not None and role not in store.VALID_ROLES:
         raise HTTPException(
@@ -203,7 +208,8 @@ async def add_document(
         project_id, original_name, stored_as, filepath, size, role=role
     )
     audit.record("document.added", project_id=project_id,
-                 document_id=doc["id"], name=original_name, size=size)
+                 document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
+    background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
     return {
         "status": "stored",
         "message": (
@@ -220,7 +226,7 @@ async def add_document(
 
 @router.post("/v1/projects/{project_id}/progress")
 async def project_progress(
-    project_id: str, req: ProgressRequest, auth: dict = Depends(require_api_key)
+    project_id: str, req: ProgressRequest, auth: dict = Depends(require_user)
 ):
     """Run the progress tracker for a project — but only if the project is ready.
 
@@ -228,9 +234,7 @@ async def project_progress(
     Aconex connected, this returns a structured 'not_ready' response naming
     exactly what is missing — never fabricated all-zero numbers.
     """
-    proj = store.get_project(project_id)
-    if not proj:
-        raise HTTPException(404, f"Project '{project_id}' not found")
+    proj = _owned_or_404(project_id, auth["user_id"])
 
     readiness = proj["readiness"]
     if not readiness["ready"]:
@@ -274,22 +278,20 @@ class FactRequest(BaseModel):
 
 @router.get("/v1/projects/{project_id}/memory")
 async def get_memory(
-    project_id: str, q: Optional[str] = None, auth: dict = Depends(require_api_key)
+    project_id: str, q: Optional[str] = None, auth: dict = Depends(require_user)
 ):
     """List the durable facts known about a project (optionally keyword-filtered)."""
-    if not store.get_project(project_id):
-        raise HTTPException(404, f"Project '{project_id}' not found")
+    _owned_or_404(project_id, auth["user_id"])
     facts = store.search_facts(project_id, q) if q else store.list_facts(project_id)
     return {"project_id": project_id, "facts": facts, "count": len(facts)}
 
 
 @router.post("/v1/projects/{project_id}/memory", status_code=201)
 async def add_memory(
-    project_id: str, req: FactRequest, auth: dict = Depends(require_api_key)
+    project_id: str, req: FactRequest, auth: dict = Depends(require_user)
 ):
     """Add or correct a project fact (manual entry / correction)."""
-    if not store.get_project(project_id):
-        raise HTTPException(404, f"Project '{project_id}' not found")
+    _owned_or_404(project_id, auth["user_id"])
     key = (req.key or "").strip()
     if not key:
         raise HTTPException(400, "Fact key is required")
@@ -301,9 +303,10 @@ async def add_memory(
 
 @router.delete("/v1/projects/{project_id}/memory/{key}")
 async def delete_memory(
-    project_id: str, key: str, auth: dict = Depends(require_api_key)
+    project_id: str, key: str, auth: dict = Depends(require_user)
 ):
     """Forget a single project fact."""
+    _owned_or_404(project_id, auth["user_id"])
     if not store.delete_fact(project_id, key):
         raise HTTPException(404, f"Fact '{key}' not found for project '{project_id}'")
     return {"status": "deleted", "project_id": project_id, "key": key}
@@ -313,9 +316,10 @@ async def delete_memory(
 
 @router.delete("/v1/projects/{project_id}/documents/{document_id}")
 async def delete_document(
-    project_id: str, document_id: str, auth: dict = Depends(require_api_key)
+    project_id: str, document_id: str, auth: dict = Depends(require_user)
 ):
     """Delete a single document — its record and its file on disk."""
+    _owned_or_404(project_id, auth["user_id"])
     doc = store.get_document(document_id)
     if not doc or doc.get("project_id") != project_id:
         raise HTTPException(
@@ -331,7 +335,7 @@ async def delete_document(
             pass
     store.delete_document(document_id)
     audit.record("document.deleted", project_id=project_id,
-                 document_id=document_id, file_removed=file_removed)
+                 document_id=document_id, file_removed=file_removed, user_id=auth["user_id"])
     return {
         "status": "deleted",
         "document_id": document_id,
@@ -341,11 +345,10 @@ async def delete_document(
 
 @router.get("/v1/projects/{project_id}/audit")
 async def project_audit(
-    project_id: str, limit: int = 100, auth: dict = Depends(require_api_key)
+    project_id: str, limit: int = 100, auth: dict = Depends(require_user)
 ):
     """The audit trail for a project — uploads, deletions, purges."""
-    if not store.get_project(project_id):
-        raise HTTPException(404, f"Project '{project_id}' not found")
+    _owned_or_404(project_id, auth["user_id"])
     return {
         "project_id": project_id,
         "entries": audit.read_audit(limit, project_id),
@@ -353,8 +356,10 @@ async def project_audit(
 
 
 @router.get("/v1/governance")
-async def governance_status(auth: dict = Depends(require_api_key)):
+async def governance_status(auth: dict = Depends(require_user)):
     """Where client data lives and how long it is kept (Roadmap V2 · Epic 6)."""
+    if auth["role"] != "admin":
+        raise HTTPException(403, "Admin only")
     retention = int(os.getenv("DATA_RETENTION_DAYS", "0") or "0")
     return {
         "data_directory": os.getenv("DATA_DIR", "./data"),
@@ -366,8 +371,10 @@ async def governance_status(auth: dict = Depends(require_api_key)):
 
 
 @router.post("/v1/governance/purge")
-async def governance_purge(auth: dict = Depends(require_api_key)):
+async def governance_purge(auth: dict = Depends(require_user)):
     """Purge documents older than DATA_RETENTION_DAYS (no-op if unset)."""
+    if auth["role"] != "admin":
+        raise HTTPException(403, "Admin only")
     days = int(os.getenv("DATA_RETENTION_DAYS", "0") or "0")
     if days <= 0:
         return {"status": "skipped",
@@ -383,7 +390,7 @@ async def governance_purge(auth: dict = Depends(require_api_key)):
             except OSError:
                 pass
     audit.record("governance.purge",
-                 documents_purged=len(purged), files_removed=files_removed)
+                 documents_purged=len(purged), files_removed=files_removed, user_id=auth["user_id"])
     return {
         "status": "purged",
         "documents_purged": len(purged),

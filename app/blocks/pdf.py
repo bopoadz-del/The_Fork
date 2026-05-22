@@ -92,20 +92,24 @@ class PDFBlock(TypedBlock):
         
         if not os.path.exists(pdf_path):
             return {"status": "error", "text": "", "pages": 0, "error": f"File not found: {pdf_path}"}
-        
+
         # Extract using PyMuPDF
         try:
             import fitz  # PyMuPDF
-            
-            doc = fitz.open(pdf_path)
-            text = ""
-            
-            for page in doc:
-                text += page.get_text()
-            
-            pages = len(doc)
-            doc.close()
-            
+            from app.core.file_crypto import open_plaintext
+
+            # Decrypt-to-temp if the stored file is encrypted at rest; no-op for
+            # plaintext / legacy files (see app/core/file_crypto.py).
+            with open_plaintext(pdf_path) as readable_path:
+                doc = fitz.open(readable_path)
+                text = ""
+
+                for page in doc:
+                    text += page.get_text()
+
+                pages = len(doc)
+                doc.close()
+
             return {
                 "status": "success",
                 "text": text[:20000],  # Limit output

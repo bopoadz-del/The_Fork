@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.core.typed_block import TypedBlock
 from app.core.schema_registry import TextContent, ConstructionAnalysis
+from app.core.confidence import assess_extraction_confidence
 
 
 @dataclass
@@ -186,12 +187,12 @@ class ConstructionBlockV2(TypedBlock):
         measurements = self._extract_measurements(text)
         quantities = self._calculate_quantities(measurements)
         materials = self._extract_materials(text)
-        
-        return {
+
+        result = {
             "measurements": measurements,
             "quantities": quantities,
             "materials": materials,
-            "confidence": 0.85,
+            "text": text,
             "raw_text": text[:2000] if params.get("include_raw") else "",
             "metadata": {
                 "analysis_type": "drawing",
@@ -200,18 +201,26 @@ class ConstructionBlockV2(TypedBlock):
                 "extracted_at": self._timestamp()
             }
         }
+        conf_report = assess_extraction_confidence(
+            result,
+            expected_fields=["measurements", "quantities", "materials"],
+        )
+        result["confidence"] = conf_report["overall"]
+        result["confidence_report"] = conf_report
+        del result["text"]
+        return result
     
     async def _analyze_specification(self, text: str, params: Dict) -> Dict:
         """Analyze specification document text."""
         materials = self._extract_materials(text)
         methods = self._extract_methods(text)
         qa_qc = self._extract_qaqc(text)
-        
-        return {
+
+        result = {
             "measurements": [],
             "quantities": {},
             "materials": materials + methods + qa_qc,
-            "confidence": 0.80,
+            "text": text,
             "raw_text": text[:2000] if params.get("include_raw") else "",
             "metadata": {
                 "analysis_type": "specification",
@@ -219,18 +228,26 @@ class ConstructionBlockV2(TypedBlock):
                 "extracted_at": self._timestamp()
             }
         }
+        conf_report = assess_extraction_confidence(
+            result,
+            expected_fields=["materials"],
+        )
+        result["confidence"] = conf_report["overall"]
+        result["confidence_report"] = conf_report
+        del result["text"]
+        return result
     
     async def _analyze_contract(self, text: str, params: Dict) -> Dict:
         """Analyze contract document text."""
         clauses = self._extract_clauses(text)
         obligations = self._extract_obligations(text)
         financial = self._extract_financial_terms(text)
-        
-        return {
+
+        result = {
             "measurements": [],
             "quantities": financial,
             "materials": obligations,
-            "confidence": 0.75,
+            "text": text,
             "raw_text": text[:2000] if params.get("include_raw") else "",
             "metadata": {
                 "analysis_type": "contract",
@@ -238,17 +255,25 @@ class ConstructionBlockV2(TypedBlock):
                 "extracted_at": self._timestamp()
             }
         }
+        conf_report = assess_extraction_confidence(
+            result,
+            expected_fields=["quantities", "materials"],
+        )
+        result["confidence"] = conf_report["overall"]
+        result["confidence_report"] = conf_report
+        del result["text"]
+        return result
     
     async def _analyze_schedule(self, text: str, params: Dict) -> Dict:
         """Analyze schedule document text."""
         activities = self._extract_activities(text)
         milestones = self._extract_milestones_from_text(text)
-        
-        return {
+
+        result = {
             "measurements": activities,
             "quantities": {"activities": len(activities), "milestones": len(milestones)},
             "materials": milestones,
-            "confidence": 0.70,
+            "text": text,
             "raw_text": text[:2000] if params.get("include_raw") else "",
             "metadata": {
                 "analysis_type": "schedule",
@@ -256,23 +281,39 @@ class ConstructionBlockV2(TypedBlock):
                 "extracted_at": self._timestamp()
             }
         }
+        conf_report = assess_extraction_confidence(
+            result,
+            expected_fields=["measurements", "quantities", "materials"],
+        )
+        result["confidence"] = conf_report["overall"]
+        result["confidence_report"] = conf_report
+        del result["text"]
+        return result
     
     async def _analyze_generic(self, text: str, params: Dict) -> Dict:
         """Generic analysis for unknown document types."""
         measurements = self._extract_measurements(text)
         materials = self._extract_materials(text)
-        
-        return {
+
+        result = {
             "measurements": measurements,
             "quantities": self._calculate_quantities(measurements),
             "materials": materials,
-            "confidence": 0.60,
+            "text": text,
             "raw_text": text[:2000] if params.get("include_raw") else "",
             "metadata": {
                 "analysis_type": "generic",
                 "extracted_at": self._timestamp()
             }
         }
+        conf_report = assess_extraction_confidence(
+            result,
+            expected_fields=["measurements", "quantities", "materials"],
+        )
+        result["confidence"] = conf_report["overall"]
+        result["confidence_report"] = conf_report
+        del result["text"]
+        return result
     
     # ─────────────────────────────────────────────────────────────────
     # EXTRACTION HELPERS (private)

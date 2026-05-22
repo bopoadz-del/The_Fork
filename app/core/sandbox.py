@@ -41,6 +41,7 @@ from RestrictedPython.PrintCollector import PrintCollector
 ALLOWED_MODULES: frozenset[str] = frozenset(
     {
         "app.lib.pm_computations",
+        "app.schemas.cpm",  # CPMInput/Activity/Dependency — inputs to pm_computations
         "math",
         "statistics",
         "datetime",

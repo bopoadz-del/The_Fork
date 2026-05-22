@@ -125,7 +125,13 @@ async def test_standardized_response_format():
             assert isinstance(result["request_id"], str)
             assert isinstance(result["status"], str)
             assert isinstance(result["result"], dict)
-            assert isinstance(result["confidence"], (int, float))
+            # None means "block reported no measured confidence — see Stream E".
+            # A numeric value must be in the valid 0..1 range.
+            assert result["confidence"] is None or isinstance(result["confidence"], (int, float)), \
+                f"{block.name} confidence must be None or numeric, got {result['confidence']!r}"
+            if isinstance(result["confidence"], (int, float)):
+                assert 0.0 <= result["confidence"] <= 1.0, \
+                    f"{block.name} confidence {result['confidence']} out of 0..1 range"
             assert isinstance(result["metadata"], dict)
             assert isinstance(result["processing_time_ms"], int)
             

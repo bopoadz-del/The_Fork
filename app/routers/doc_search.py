@@ -1,0 +1,65 @@
+"""Document search endpoint — HTTP layer for per-project full-text search.
+
+Roadmap V2 · Stream C — Phase C3.
+
+GET /v1/projects/{project_id}/documents/search
+  q       : str      — search query (required, must not be empty/whitespace)
+  top_k   : int = 5  — max results; clamped to [1, 25]
+
+Authentication: Bearer JWT or API key (require_user dependency).
+Ownership:      same 404-never-leak-existence pattern as projects.py.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.core import doc_index
+from app.core import projects as store
+from app.dependencies import require_user
+
+router = APIRouter()
+
+
+@router.get("/v1/projects/{project_id}/documents/search")
+async def search_documents(
+    project_id: str,
+    q: str = "",
+    top_k: int = 5,
+    auth: dict = Depends(require_user),
+):
+    """Search indexed documents within a project.
+
+    Returns ranked results plus a count of unsupported (skipped) documents.
+    Never leaks project existence to unauthorized callers (404 for both missing
+    and cross-tenant projects).
+    """
+    # Ownership check — scoped to the calling user.
+    proj = store.get_project(project_id, user_id=auth["user_id"])
+    if not proj:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+
+    # Validate query
+    if not q or not q.strip():
+        raise HTTPException(400, "Query parameter 'q' must not be empty")
+
+    # Clamp top_k to valid range
+    top_k = max(1, min(25, top_k))
+
+    # Perform search (lazy-builds index if needed)
+    results = await doc_index.search_project_documents(project_id, q.strip(), top_k)
+
+    # Count skipped/unsupported docs from the index (built by the search above)
+    skipped_count = 0
+    try:
+        index = doc_index._load_index(project_id)
+        if index is not None:
+            skipped_count = len(index.get("skipped", []))
+    except Exception:
+        skipped_count = 0
+
+    return {
+        "project_id": project_id,
+        "query": q,
+        "results": results,
+        "count": len(results),
+        "skipped_unsupported": skipped_count,
+    }

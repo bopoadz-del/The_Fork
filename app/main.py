@@ -37,7 +37,9 @@ from app.routers import (
     chain,
     chat,
     debug,
+    doc_search,
     doc_types,
+    drive,
     execute,
     health,
     memory,
@@ -45,8 +47,10 @@ from app.routers import (
     monitoring,
     project,
     projects,
+    redline,
     static,
     upload,
+    users,
     workflows,
 )
 from app.agents import load_agents
@@ -56,6 +60,10 @@ async def lifespan(app: FastAPI):
     await init_blocks()
     from app.core.projects import init_db
     init_db()
+    from app.core.users import init_db as init_users_db
+    init_users_db()
+    from app.core.agent_memory import init_db as init_agent_memory_db
+    init_agent_memory_db()
     from app.core.session_store import get_session_store
     from app.routers import project as project_router
     app.state.project_store = get_session_store()
@@ -222,11 +230,18 @@ app.include_router(auth.router)
 app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
+app.include_router(doc_search.router)
+app.include_router(redline.router)
 app.include_router(project.router)
+app.include_router(users.router)
 app.include_router(doc_types.router)
 app.include_router(workflows.router)
 app.include_router(health.router)
 app.include_router(mcp.router)
+# Mount the MCP SSE POST endpoint directly on the app — include_router does
+# not propagate Starlette Mount routes (no-op if MCP SSE deps are absent).
+mcp.mount_message_endpoint(app)
+app.include_router(drive.router)
 app.include_router(agents_router.router)
 app.include_router(static.router)
 # Debug routes — only in non-production environments
@@ -234,7 +249,12 @@ env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
 if env in {"dev", "development", "local", "test", "testing"}:
     app.include_router(debug.router)
 
-# Mount static files
+# Mount static files. The frontend bundle (frontend/dist) is a build artifact
+# that is absent in CI and fresh checkouts; StaticFiles raises RuntimeError at
+# import time if its directory is missing, so mount each frontend path only
+# when it exists. app/static is committed, so it stays unconditional.
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
-app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+if os.path.isdir("frontend/dist"):
+    app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
+if os.path.isdir("frontend/dist/assets"):
+    app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
