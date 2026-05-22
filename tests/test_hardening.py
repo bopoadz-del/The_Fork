@@ -84,3 +84,35 @@ def test_doc_types_mutation_is_admin_only():
         ).status_code == 403
         # Reads remain available to any authenticated user.
         assert c.get("/v1/document-types", headers=user).status_code == 200
+
+
+# ── /execute: code-execution blocks are admin-only ──────────────────────────────
+
+def test_code_blocks_are_admin_only_via_execute():
+    """A non-admin user cannot run the arbitrary-code blocks through /execute,
+    but can still run ordinary blocks."""
+    import uuid
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as c:
+        email = f"ex-{uuid.uuid4().hex[:8]}@x.com"
+        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        token = c.post(
+            "/v1/users/login", json={"email": email, "password": "password12"}
+        ).json()["token"]
+        user = {"Authorization": f"Bearer {token}"}
+
+        # `code` runs arbitrary Python — the registered code-execution block.
+        r = c.post("/v1/execute", headers=user, json={"block": "code", "input": "x"})
+        assert r.status_code == 403, (r.status_code, r.text)
+
+        # An ordinary block is still runnable by the same non-admin user.
+        ok = c.post(
+            "/v1/execute", headers=user,
+            json={"block": "vector_search", "input": "x",
+                  "params": {"operation": "list_collections"}},
+        )
+        assert ok.status_code != 403, ok.text
