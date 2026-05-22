@@ -55,3 +55,32 @@ def test_non_production_skips_secret_key_check(monkeypatch):
     monkeypatch.setenv("ENV", "testing")
     monkeypatch.delenv("SECRET_KEY", raising=False)
     _validate_startup_env()  # must not raise outside production
+
+
+# ── doc_types: registry mutation is admin-only ──────────────────────────────────
+
+def test_doc_types_mutation_is_admin_only():
+    """A non-admin user cannot add or delete entries in the global doc-type
+    registry; reads stay open to any authenticated caller."""
+    import uuid
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as c:
+        email = f"dt-{uuid.uuid4().hex[:8]}@x.com"
+        c.post("/v1/users/register", json={"email": email, "password": "password12"})
+        token = c.post(
+            "/v1/users/login", json={"email": email, "password": "password12"}
+        ).json()["token"]
+        user = {"Authorization": f"Bearer {token}"}
+
+        assert c.post(
+            "/v1/document-types", headers=user, json={"name": "Sneaky Type"}
+        ).status_code == 403
+        assert c.delete(
+            "/v1/document-types/whatever", headers=user
+        ).status_code == 403
+        # Reads remain available to any authenticated user.
+        assert c.get("/v1/document-types", headers=user).status_code == 200
