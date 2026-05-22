@@ -80,7 +80,8 @@ class TestCoreBlocks:
     async def test_local_drive_block(self):
         from app.blocks.local_drive import LocalDriveBlock
         b = LocalDriveBlock()
-        r = await b.execute("/tmp", {"action": "list"})
+        # "." lists the configured drive root, which always exists.
+        r = await b.execute(".", {"operation": "list"})
         assert r.get("status") == "success"
 
     @pytest.mark.asyncio
