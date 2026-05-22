@@ -1,41 +1,76 @@
-"""local_drive: the listing directory is honored from the `path` param (not
-only `folder_path` or input_data), and a non-directory yields an honest error
-instead of a silent empty-but-successful result."""
+"""local_drive: paths are honored from the `path`/`folder_path`/`file_path`
+params and confined to the drive root — path traversal is blocked.
+"""
 
 from app.blocks.local_drive import LocalDriveBlock
 
 
-async def test_list_honors_path_param(tmp_path):
+async def test_list_honors_path_and_folder_path_params(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(tmp_path))
     (tmp_path / "a.txt").write_text("x")
-    (tmp_path / "b.txt").write_text("y")
+    sub = tmp_path / "docs"
+    sub.mkdir()
+    (sub / "b.txt").write_text("y")
 
-    result = await LocalDriveBlock().process(
-        None, {"operation": "list", "path": str(tmp_path)}
+    root_listing = await LocalDriveBlock().process(
+        None, {"operation": "list", "path": "."}
     )
+    assert root_listing["status"] == "success", root_listing
+    assert "a.txt" in root_listing["files"]
 
-    assert result["status"] == "success", result
-    assert result["path"] == str(tmp_path)
-    assert set(result["files"]) == {"a.txt", "b.txt"}
-
-
-async def test_list_honors_folder_path_param(tmp_path):
-    (tmp_path / "only.txt").write_text("z")
-
-    result = await LocalDriveBlock().process(
-        None, {"operation": "list", "folder_path": str(tmp_path)}
+    # A subdirectory passed via the `folder_path` param is honored.
+    sub_listing = await LocalDriveBlock().process(
+        None, {"operation": "list", "folder_path": "docs"}
     )
+    assert sub_listing["status"] == "success", sub_listing
+    assert sub_listing["files"] == ["b.txt"]
 
-    assert result["status"] == "success", result
-    assert result["files"] == ["only.txt"]
 
+async def test_read_and_write_within_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(tmp_path))
 
-async def test_list_nonexistent_path_returns_error(tmp_path):
-    missing = str(tmp_path / "does-not-exist")
-
-    result = await LocalDriveBlock().process(
-        None, {"operation": "list", "path": missing}
+    written = await LocalDriveBlock().process(
+        None, {"operation": "write", "file_path": "out/note.txt", "content": "hello"}
     )
+    assert written["status"] == "success", written
 
+    read = await LocalDriveBlock().process(
+        None, {"operation": "read", "file_path": "out/note.txt"}
+    )
+    assert read["status"] == "success", read
+    assert read["content"] == "hello"
+
+
+async def test_path_traversal_is_blocked(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(tmp_path))
+    secret = tmp_path.parent / "secret.txt"
+    secret.write_text("TOP SECRET")
+
+    # Reading outside the root via .. must fail and must not leak the file.
+    escaped = await LocalDriveBlock().process(
+        None, {"operation": "read", "file_path": "../secret.txt"}
+    )
+    assert escaped["status"] == "error", escaped
+    assert "SECRET" not in str(escaped)
+
+    # Writing outside the root via .. must fail.
+    wescaped = await LocalDriveBlock().process(
+        None, {"operation": "write", "file_path": "../pwned.txt", "content": "x"}
+    )
+    assert wescaped["status"] == "error", wescaped
+    assert not (tmp_path.parent / "pwned.txt").exists()
+
+    # Listing the parent directory must fail.
+    listed = await LocalDriveBlock().process(
+        None, {"operation": "list", "path": "../"}
+    )
+    assert listed["status"] == "error", listed
+
+
+async def test_nonexistent_path_returns_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(tmp_path))
+    result = await LocalDriveBlock().process(
+        None, {"operation": "list", "path": "does-not-exist"}
+    )
     assert result["status"] == "error", result
     assert "Not a directory" in result["error"]
-    assert result["path"] == missing
