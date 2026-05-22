@@ -1,10 +1,32 @@
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 
 from app.dependencies import AUTH_AVAILABLE, get_auth_block, require_api_key
 
 router = APIRouter()
+
+
+# ── typed request bodies ───────────────────────────────────────────────────────
+
+class KeyRequest(BaseModel):
+    """Identifies an API key by either field name (callers use both)."""
+    api_key: Optional[str] = None
+    key: Optional[str] = None
+
+    def resolved(self) -> Optional[str]:
+        return self.api_key or self.key
+
+
+class CheckPermissionRequest(KeyRequest):
+    block: Optional[str] = None
+
+
+class CreateKeyRequest(BaseModel):
+    name: Optional[str] = None
+    role: str = "basic"
+    owner: Optional[str] = None
 
 
 def _require_admin(auth_result: dict):
@@ -14,25 +36,27 @@ def _require_admin(auth_result: dict):
 
 
 @router.post("/v1/auth/validate")
-async def validate_key(request: dict, auth: dict = Depends(require_api_key)):
+async def validate_key(request: KeyRequest, auth: dict = Depends(require_api_key)):
     """Validate an API key"""
     if not AUTH_AVAILABLE:
         raise HTTPException(status_code=503, detail="Auth not available")
-    block = get_auth_block()
-    api_key = request.get("api_key") or request.get("key")
+    api_key = request.resolved()
     if not api_key:
         raise HTTPException(status_code=422, detail="api_key or key required")
+    block = get_auth_block()
     return await block.execute({"action": "validate", "api_key": api_key})
 
 
 @router.post("/v1/auth/keys")
-async def create_key(request: dict, auth: dict = Depends(require_api_key)):
+async def create_key(request: CreateKeyRequest, auth: dict = Depends(require_api_key)):
     """Create a new API key (admin only)"""
     _require_admin(auth)
     if not AUTH_AVAILABLE:
         raise HTTPException(status_code=503, detail="Auth not available")
     block = get_auth_block()
-    return await block.execute({"action": "create_key", **request})
+    return await block.execute(
+        {"action": "create_key", **request.model_dump(exclude_none=True)}
+    )
 
 
 @router.delete("/v1/auth/keys/{api_key}")
@@ -56,44 +80,46 @@ async def list_keys(admin_key: Optional[str] = None, auth: dict = Depends(requir
 
 
 @router.post("/v1/auth/keys/revoke")
-async def revoke_key(request: dict, auth: dict = Depends(require_api_key)):
+async def revoke_key(request: KeyRequest, auth: dict = Depends(require_api_key)):
     """Revoke an API key (admin only)"""
     _require_admin(auth)
     if not AUTH_AVAILABLE:
         raise HTTPException(status_code=503, detail="Auth not available")
-    block = get_auth_block()
-    api_key = request.get("api_key") or request.get("key")
+    api_key = request.resolved()
     if not api_key:
         raise HTTPException(status_code=422, detail="api_key or key required")
+    block = get_auth_block()
     return await block.execute({"action": "revoke_key", "api_key": api_key})
 
 
 @router.post("/v1/auth/keys/rotate")
-async def rotate_key(request: dict, auth: dict = Depends(require_api_key)):
+async def rotate_key(request: KeyRequest, auth: dict = Depends(require_api_key)):
     """Rotate an API key (admin only)"""
     _require_admin(auth)
     if not AUTH_AVAILABLE:
         raise HTTPException(status_code=503, detail="Auth not available")
-    block = get_auth_block()
-    api_key = request.get("api_key") or request.get("key")
+    api_key = request.resolved()
     if not api_key:
         raise HTTPException(status_code=422, detail="api_key or key required")
+    block = get_auth_block()
     return await block.execute({"action": "rotate_key", "api_key": api_key})
 
 
 @router.post("/v1/auth/check")
-async def check_permission(request: dict, auth: dict = Depends(require_api_key)):
+async def check_permission(
+    request: CheckPermissionRequest, auth: dict = Depends(require_api_key)
+):
     """Check if key has a permission"""
     if not AUTH_AVAILABLE:
         raise HTTPException(status_code=503, detail="Auth not available")
-    block = get_auth_block()
-    api_key = request.get("api_key") or request.get("key")
+    api_key = request.resolved()
     if not api_key:
         raise HTTPException(status_code=422, detail="api_key or key required")
+    block = get_auth_block()
     return await block.execute({
         "action": "check_permission",
         "api_key": api_key,
-        "block": request.get("block")
+        "block": request.block,
     })
 
 
