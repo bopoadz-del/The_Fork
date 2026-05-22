@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core import doc_types
-from app.dependencies import require_api_key
+from app.dependencies import require_api_key, require_user
 
 router = APIRouter()
 
@@ -41,9 +41,15 @@ async def list_document_types(auth: dict = Depends(require_api_key)):
 
 @router.post("/v1/document-types", status_code=201)
 async def add_document_type(
-    req: DocumentTypeRequest, auth: dict = Depends(require_api_key)
+    req: DocumentTypeRequest, auth: dict = Depends(require_user)
 ):
-    """Register a custom document type — extends the registry, no redeploy."""
+    """Register a custom document type — extends the registry, no redeploy.
+
+    Admin-only: the registry is process-global and affects classification for
+    every tenant, so it must not be mutable by an arbitrary user.
+    """
+    if auth["role"] != "admin":
+        raise HTTPException(403, "Admin only")
     if not req.name.strip():
         raise HTTPException(400, "Document type 'name' is required")
     try:
@@ -58,8 +64,10 @@ async def add_document_type(
 
 
 @router.delete("/v1/document-types/{name}")
-async def delete_document_type(name: str, auth: dict = Depends(require_api_key)):
-    """Remove a custom document type (built-ins cannot be removed)."""
+async def delete_document_type(name: str, auth: dict = Depends(require_user)):
+    """Remove a custom document type (built-ins cannot be removed). Admin-only."""
+    if auth["role"] != "admin":
+        raise HTTPException(403, "Admin only")
     if not doc_types.remove_type(name):
         raise HTTPException(
             404, f"Custom document type '{name}' not found "

@@ -66,14 +66,41 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS agent_facts (
                     id              TEXT PRIMARY KEY,
                     agent_name      TEXT NOT NULL,
+                    project_id      TEXT NOT NULL DEFAULT '',
                     conversation_id TEXT,
                     key             TEXT NOT NULL,
                     value           TEXT NOT NULL,
                     updated_at      TEXT NOT NULL,
-                    UNIQUE(agent_name, key)
+                    UNIQUE(agent_name, project_id, key)
                 );
                 """
             )
+            # Migrate a pre-existing agent_facts table that predates project
+            # scoping (UNIQUE(agent_name, key), no project_id column). The
+            # constraint change needs a table rebuild; legacy rows become
+            # project-less ('').
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(agent_facts)")}
+            if "project_id" not in cols:
+                conn.executescript(
+                    """
+                    ALTER TABLE agent_facts RENAME TO _agent_facts_old;
+                    CREATE TABLE agent_facts (
+                        id              TEXT PRIMARY KEY,
+                        agent_name      TEXT NOT NULL,
+                        project_id      TEXT NOT NULL DEFAULT '',
+                        conversation_id TEXT,
+                        key             TEXT NOT NULL,
+                        value           TEXT NOT NULL,
+                        updated_at      TEXT NOT NULL,
+                        UNIQUE(agent_name, project_id, key)
+                    );
+                    INSERT INTO agent_facts
+                        (id, agent_name, project_id, conversation_id, key, value, updated_at)
+                        SELECT id, agent_name, '', conversation_id, key, value, updated_at
+                        FROM _agent_facts_old;
+                    DROP TABLE _agent_facts_old;
+                    """
+                )
         _initialized = True
 
 
@@ -218,33 +245,46 @@ def set_agent_fact(
     key: str,
     value: str,
     conversation_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Upsert a durable fact for an agent (one row per agent_name + key)."""
+    """Upsert a durable fact for an agent, scoped to a project.
+
+    Facts are keyed by (agent_name, project_id, key) so a fact remembered in
+    one project is not visible to the same agent in another project. A
+    project-less conversation uses the '' scope.
+    """
     _ensure_db()
+    project_id = project_id or ""
     fid = str(uuid.uuid4())
     now = _now()
     with _lock, _connect() as conn:
         conn.execute(
-            "INSERT INTO agent_facts (id, agent_name, conversation_id, key, value, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(agent_name, key) DO UPDATE SET "
+            "INSERT INTO agent_facts "
+            "(id, agent_name, project_id, conversation_id, key, value, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(agent_name, project_id, key) DO UPDATE SET "
             "value=excluded.value, conversation_id=excluded.conversation_id, "
             "updated_at=excluded.updated_at",
-            (fid, agent_name, conversation_id, key, value, now),
+            (fid, agent_name, project_id, conversation_id, key, value, now),
         )
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM agent_facts WHERE agent_name = ? AND key = ?",
-            (agent_name, key),
+            "SELECT * FROM agent_facts "
+            "WHERE agent_name = ? AND project_id = ? AND key = ?",
+            (agent_name, project_id, key),
         ).fetchone()
     return dict(row)
 
 
-def list_agent_facts(agent_name: str) -> List[Dict[str, Any]]:
+def list_agent_facts(
+    agent_name: str, project_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """List an agent's facts for one project scope ('' = project-less)."""
     _ensure_db()
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM agent_facts WHERE agent_name = ? ORDER BY key",
-            (agent_name,),
+            "SELECT * FROM agent_facts "
+            "WHERE agent_name = ? AND project_id = ? ORDER BY key",
+            (agent_name, project_id or ""),
         ).fetchall()
     return [dict(r) for r in rows]
