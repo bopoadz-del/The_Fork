@@ -89,6 +89,8 @@ async def lifespan(app: FastAPI):
     init_users_db()
     from app.core.agent_memory import init_db as init_agent_memory_db
     init_agent_memory_db()
+    from app.core.doc_index import init_db as init_doc_index_db
+    init_doc_index_db()
     from app.core.session_store import get_session_store
     from app.routers import project as project_router
     app.state.project_store = get_session_store()

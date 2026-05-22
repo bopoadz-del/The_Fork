@@ -257,14 +257,9 @@ def test_index_project_writes_file_and_returns_summary(fresh_db, tmp_path, monke
     assert result["skipped_unsupported"] == 0
     assert result["total_chunks"] >= 1
 
-    # JSON file on disk
-    index_path = doc_index._index_path(pid)
-    assert os.path.exists(index_path)
-
-    import json
-    with open(index_path) as f:
-        saved = json.load(f)
-
+    # Persisted index
+    saved = doc_index._load_index(pid)
+    assert saved is not None
     assert saved["project_id"] == pid
     assert len(saved["documents"]) == 1
     assert "subsidence" in saved["documents"][0]["chunks"][0]
@@ -293,7 +288,7 @@ def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     assert result["skipped_unsupported"] == 1
 
     import json
-    saved = json.load(open(doc_index._index_path(pid)))
+    saved = doc_index._load_index(pid)
     assert saved["documents"] == []
     assert len(saved["skipped"]) == 1
     assert saved["skipped"][0]["reason"] == "unsupported_type"
@@ -314,7 +309,7 @@ def test_index_project_empty_project(fresh_db, monkeypatch):
     assert result["total_chunks"] == 0
 
     import json
-    saved = json.load(open(doc_index._index_path(pid)))
+    saved = doc_index._load_index(pid)
     assert saved["documents"] == []
     assert saved["skipped"] == []
 
@@ -345,7 +340,7 @@ def test_index_document_incremental(fresh_db, tmp_path, monkeypatch):
     assert result["indexed"] == 1
 
     import json
-    saved = json.load(open(doc_index._index_path(pid)))
+    saved = doc_index._load_index(pid)
     ids = [d["document_id"] for d in saved["documents"]]
     # Both docs must be present — proves load-modify-write preserved doc A
     assert doc_a["id"] in ids
@@ -362,9 +357,9 @@ def test_invalidate_project_removes_index(fresh_db, tmp_path, monkeypatch):
     pid = proj["id"]
     doc_index.index_project(pid)  # creates the file
 
-    assert os.path.exists(doc_index._index_path(pid))
+    assert doc_index._load_index(pid) is not None
     doc_index.invalidate_project(pid)
-    assert not os.path.exists(doc_index._index_path(pid))
+    assert doc_index._load_index(pid) is None
 
 
 def test_load_index_returns_none_when_absent(fresh_db, monkeypatch):
@@ -392,7 +387,7 @@ def test_fingerprint_format(fresh_db, tmp_path, monkeypatch):
     doc_index.index_project(pid)
 
     import json
-    saved = json.load(open(doc_index._index_path(pid)))
+    saved = doc_index._load_index(pid)
     entry = saved["documents"][0]
     expected_fp = f"{doc['uploaded_at']}:{doc['size']}"
     assert entry["fingerprint"] == expected_fp
@@ -538,12 +533,12 @@ async def test_search_builds_index_lazily(tmp_path, monkeypatch):
     projects_mod.add_document(pid, "lazy.txt", file_path=p, size=47)
 
     # Index must not yet exist
-    assert not os.path.exists(doc_index._index_path(pid))
+    assert doc_index._load_index(pid) is None
 
     results = await doc_index.search_project_documents(pid, "concrete")
 
     # After search, index exists and results are returned
-    assert os.path.exists(doc_index._index_path(pid))
+    assert doc_index._load_index(pid) is not None
     assert isinstance(results, list)
 
 
