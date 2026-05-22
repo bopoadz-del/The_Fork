@@ -29,6 +29,21 @@ def client():
         yield c
 
 
+@pytest.fixture(autouse=True)
+def _stub_llm_key(monkeypatch):
+    """Agent.chat() guards on DEEPSEEK_API_KEY *before* _call_llm is reached.
+
+    These tests monkeypatch _call_llm so no network call ever happens, but the
+    guard still fires when the key is unset (e.g. in CI, where conftest's
+    load_dotenv finds no .env key).  A placeholder satisfies the guard.
+
+    Deliberately a per-file fixture, not in conftest.py: a global key would
+    un-skip the live DEEPSEEK acceptance tests (their skipif is evaluated at
+    collection time) and make them run against the real API with a fake key.
+    """
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+
+
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _register_and_login(client, suffix: str) -> dict:
