@@ -33,7 +33,7 @@ class MemoryBlock(UniversalBlock):
     async def _legacy_initialize(self):
         """Start background cleanup"""
         self.cleanup_task = asyncio.create_task(self._cleanup_expired())
-        print(f"🧠 Memory Block ready (max: {self.max_size}, TTL: {self.default_ttl}s)")
+        print(f"[memory] Memory Block ready (max: {self.max_size}, TTL: {self.default_ttl}s)")
         return True
     
     async def process(self, input_data: Dict, params: Dict = None) -> Dict:
