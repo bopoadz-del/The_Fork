@@ -130,8 +130,10 @@ app.add_middleware(
         *_extra_origins,
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Enumerate methods/headers rather than "*" — a credentialed CORS config
+    # should not reflect arbitrary methods/headers back to the browser.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 
