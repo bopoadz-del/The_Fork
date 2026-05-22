@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.blocks import BLOCK_REGISTRY
-from app.dependencies import require_api_key
+from app.dependencies import require_user
 from app.dependencies import block_instances
 
 router = APIRouter()
@@ -20,15 +20,22 @@ class ChatRequest(BaseModel):
     project_id: Optional[str] = None
 
 
-def _with_project_memory(prompt: str, project_id: Optional[str]) -> str:
+def _with_project_memory(
+    prompt: str, project_id: Optional[str], user_id: Optional[str]
+) -> str:
     """Prepend a project's accumulated facts to the prompt (Roadmap V2 · Epic 3/4).
 
     So a question can be answered from project memory without re-attaching the
-    source document. No-op when the chat is not scoped to a project.
+    source document. No-op when the chat is not scoped to a project, and — for
+    tenant isolation — also a no-op when the caller does not own the project,
+    so a caller cannot read another tenant's project memory by guessing an id.
     """
     if not project_id:
         return prompt
     try:
+        from app.core import projects as projects_store
+        if projects_store.get_project(project_id, user_id=user_id) is None:
+            return prompt  # not the caller's project — do not inject its memory
         from app.core.project_memory import build_memory_context
         ctx = build_memory_context(project_id, prompt)
         if ctx:
@@ -39,7 +46,7 @@ def _with_project_memory(prompt: str, project_id: Optional[str]) -> str:
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest, auth: dict = Depends(require_api_key)):
+async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
     """Simple chat endpoint."""
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
@@ -49,7 +56,9 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_api_key)):
             block_instances["chat"] = BLOCK_REGISTRY["chat"]()
 
         block = block_instances["chat"]
-        message = _with_project_memory(request.message, request.project_id)
+        message = _with_project_memory(
+            request.message, request.project_id, auth["user_id"]
+        )
         result = await block.execute(message, {
             "model": request.model,
             "stream": False,
@@ -60,12 +69,15 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_api_key)):
             "model": request.model,
         }
 
-    except Exception as e:
-        raise HTTPException(500, f"Chat failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        # Do not leak internal exception detail to the client.
+        raise HTTPException(500, "Chat failed")
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest, auth: dict = Depends(require_api_key)):
+async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
     """Streaming chat endpoint."""
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
@@ -115,13 +127,13 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_api_key
 
 
 @router.post("/v1/chat")
-async def chat_v1(request: ChatRequest, auth: dict = Depends(require_api_key)):
+async def chat_v1(request: ChatRequest, auth: dict = Depends(require_user)):
     """Simple chat endpoint (v1 API)."""
-    return await chat(request)
+    return await chat(request, auth)
 
 
 @router.post("/v1/chat/stream")
-async def chat_stream_v1(request: Request, auth: dict = Depends(require_api_key)):
+async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     """Streaming chat endpoint (v1 API) with flexible JSON body."""
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
@@ -154,7 +166,9 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_api_key)
         full_prompt = prompt
 
     # Scope the chat to a project — inject its accumulated memory (Epic 3/4).
-    full_prompt = _with_project_memory(full_prompt, body.get("project_id"))
+    full_prompt = _with_project_memory(
+        full_prompt, body.get("project_id"), auth["user_id"]
+    )
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
