@@ -203,7 +203,8 @@ class OCRBlockV2(TypedBlock):
                     doc.close()
                     return clean
                 pix = doc.load_page(0).get_pixmap(dpi=150)
-                tmp = tempfile.mktemp(suffix="_markup.png")
+                fd, tmp = tempfile.mkstemp(suffix="_markup.png")
+                os.close(fd)
                 pix.save(tmp)
                 doc.close()
                 img = Image.open(tmp)
