@@ -236,5 +236,9 @@ if env in {"dev", "development", "local", "test", "testing"}:
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
-app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+# frontend/dist is the Vite build output — absent on fresh clones until
+# `npm run build` runs. Mount only when it exists so import doesn't crash.
+if os.path.isdir("frontend/dist"):
+    app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
+    if os.path.isdir("frontend/dist/assets"):
+        app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
