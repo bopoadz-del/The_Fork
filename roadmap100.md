@@ -49,8 +49,8 @@ Upload any construction document → get structured intelligence → act on it.
   uploads an Excel/CSV. Should extract a BOQ from a PDF drawing automatically.
 
 #### Priority 2 — File integrations
-- [ ] **Google Drive OAuth** — block exists, needs `GOOGLE_ACCESS_TOKEN` env var on Render
-- [ ] **OneDrive OAuth** — block exists, needs `ONEDRIVE_ACCESS_TOKEN` env var on Render
+- [ ] **Google Drive OAuth** — block exists, needs `GOOGLE_ACCESS_TOKEN` env var
+- [ ] **OneDrive OAuth** — block exists, needs `ONEDRIVE_ACCESS_TOKEN` env var
 
 #### Priority 3 — Specialized file types
 - [ ] **BIM/IFC** — `bim_extractor` registered, not tested with real IFC file

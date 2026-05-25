@@ -92,7 +92,7 @@ class GoogleDriveBlock(UniversalBlock):
                 "instructions": (
                     "Visit auth_url in a browser, approve, then set GOOGLE_ACCESS_TOKEN env var with the returned token."
                     if url and not has_token else
-                    "Set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET in Render env vars to enable OAuth."
+                    "Set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET as env vars to enable OAuth."
                     if not has_creds else
                     "Access token is set. Use operation=list to browse files."
                 ),

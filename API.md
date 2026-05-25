@@ -4,7 +4,7 @@
 
 ```bash
 # Construction AI in one call
-curl -X POST https://ssdppg.onrender.com/chain \
+curl -X POST http://localhost:8000/chain \
   -H "Content-Type: application/json" \
   -d '{
     "steps": [
@@ -293,6 +293,5 @@ Event Bus → Connects all containers (Block 42)
 
 ---
 
-**Deployed:** https://ssdppg.onrender.com  
-**Version:** 2.0.0  
-**Status:** ✅ PRODUCTION READY
+**Local:** http://localhost:8000  
+**Version:** 2.0.0

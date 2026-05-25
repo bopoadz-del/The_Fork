@@ -3,7 +3,7 @@
 import os
 import sys
 
-# Force fresh bytecode on Render deployments (clear stale __pycache__)
+# Force fresh bytecode on deployments (clear stale __pycache__)
 for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
     for d in dirs:
         if d == "__pycache__":
@@ -119,8 +119,6 @@ _extra_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://cerebrum-platform-frontend-fork.onrender.com",
-        "https://cerebrum-platform-api-fork.onrender.com",
         "http://localhost:3000",
         "http://localhost:4173",
         "http://localhost:5173",

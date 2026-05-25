@@ -80,7 +80,7 @@ class OneDriveBlock(UniversalBlock):
                 "instructions": (
                     "Visit auth_url in a browser, approve, then set ONEDRIVE_ACCESS_TOKEN env var."
                     if url and not has_token else
-                    "Set AZURE_CLIENT_ID + AZURE_TENANT_ID in Render env vars to enable OAuth."
+                    "Set AZURE_CLIENT_ID + AZURE_TENANT_ID as env vars to enable OAuth."
                     if not has_creds else
                     "Access token set. Use operation=list to browse files."
                 ),

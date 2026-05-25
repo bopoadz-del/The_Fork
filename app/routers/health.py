@@ -30,7 +30,7 @@ def stats():
 
 @router.get("/v1/health")
 def health_v1():
-    """Health check for Render (v1 API)."""
+    """Health check (v1 API)."""
     return health()
 
 

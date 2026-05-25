@@ -1,16 +1,14 @@
 # Cerebrum Blocks Deployment Configs
 
-Multi-platform deployment configurations for cloud and edge environments.
+Containerized deployment configurations for cloud and edge environments. None of these are wired to an active deploy in this fork — see them as scaffolding for if/when you stand one up.
 
-## 📁 Structure
+## Structure
 
 ```
 deploy/
 ├── cloud/              # Docker configs for cloud deployment
 │   ├── Dockerfile          # Main API container
 │   └── Dockerfile.worker   # Celery worker container
-├── render/             # Render.com deployment
-│   └── render.yaml         # Render blueprint
 ├── gcp/                # Google Cloud Platform
 │   └── cloudbuild.yaml     # Cloud Build + Cloud Run
 ├── edge/               # Edge/Jetson deployment
@@ -18,75 +16,51 @@ deploy/
 └── README.md
 ```
 
-## 🚀 Quick Deploy
+## Quick Deploy
 
-### Render.com (Recommended for Quick Start)
-
-```bash
-# Deploy using Render CLI
-render blueprint apply deploy/render/render.yaml
-
-# Or push to GitHub - Render auto-deploys from main branch
-```
-
-### Docker (Local/Cloud)
+### Docker (local or any cloud)
 
 ```bash
-# Build and run locally
-docker-compose up -d
+# Local
+docker compose up -d
 
-# Or build specific targets
+# Build a specific target
 docker build -f deploy/cloud/Dockerfile -t cerebrum:cloud .
 docker run -p 8000:8000 -e PORT=8000 cerebrum:cloud
+```
+
+A prebuilt image is also published on each push to main:
+
+```bash
+docker pull ghcr.io/bopoadz-del/cerebrum-blocks:latest
 ```
 
 ### Google Cloud Platform
 
 ```bash
-# Submit build
 gcloud builds submit --config deploy/gcp/cloudbuild.yaml
-
-# Deploy to Cloud Run
 gcloud run deploy cerebrum-api --image gcr.io/PROJECT/cerebrum-api:latest
 ```
 
 ### NVIDIA Jetson (Edge)
 
 ```bash
-# Build for ARM64/CUDA
 docker build -f deploy/edge/Dockerfile.jetson -t cerebrum:jetson .
-
-# Run on Jetson
 docker run -p 8000:8000 --runtime nvidia cerebrum:jetson
 ```
 
-## ⚙️ Environment Configs
+## Required Secrets
 
-| File | Environment | Profile |
-|------|-------------|---------|
-| `config/cloud.yaml` | Render/GCP/Cloud | `cloud_render` |
-| `config/edge.yaml` | Jetson/Local | `jetson_orin` |
-
-## 🔑 Required Secrets
-
-Create `.env` file:
+Create a `.env` file in the repo root (see `.env.example` for the full template):
 
 ```bash
-# AI Providers
 DEEPSEEK_API_KEY=sk-...
-GROQ_API_KEY=gsk-...
-OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
 
-# Database
 DATABASE_URL=postgresql://...
 REDIS_URL=redis://...
-
-# Auth
-JWT_SECRET=your-secret-key
 ```
 
-## 🏥 Health Checks
+## Health Check
 
-- **API Health**: `GET /v1/health`
-- **Dashboard**: Static site health via Render
-- **Worker**: Celery worker monitor
+`GET /v1/health` — JSON response. Hook any uptime monitor or container health probe to it.

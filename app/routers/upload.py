@@ -23,7 +23,7 @@ DATA_DIR = os.getenv("DATA_DIR", "./data")
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
 except PermissionError:
-    # Fallback to temp dir if DATA_DIR is not writable (e.g. Render without disk)
+    # Fallback to temp dir if DATA_DIR is not writable
     import tempfile
     DATA_DIR = tempfile.gettempdir()
 
@@ -64,7 +64,7 @@ async def upload_v1(file: UploadFile = File(...), auth: dict = Depends(require_a
         file_crypto.write_document(filepath, file.file.read())
 
         # Return URL and server path for chain processing
-        base_url = os.getenv("API_BASE_URL", "https://cerebrum-platform-api.onrender.com")
+        base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
         return {
             "url": f"{base_url}/static/{filename}",
             "filename": original_name,
