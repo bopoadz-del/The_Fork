@@ -280,7 +280,8 @@ class OCRBlock(TypedBlock):
                     doc.close()
                     return clean
                 pix = doc.load_page(0).get_pixmap(dpi=150)
-                tmp = tempfile.mktemp(suffix="_markup.png")
+                fd, tmp = tempfile.mkstemp(suffix="_markup.png")
+                os.close(fd)
                 pix.save(tmp)
                 doc.close()
                 img = Image.open(tmp)
@@ -318,7 +319,8 @@ class OCRBlock(TypedBlock):
                 for page_num in range(len(doc)):
                     page = doc.load_page(page_num)
                     pix = page.get_pixmap(dpi=200)
-                    img_path = tempfile.mktemp(suffix=f"_page{page_num + 1}.png")
+                    fd, img_path = tempfile.mkstemp(suffix=f"_page{page_num + 1}.png")
+                    os.close(fd)
                     pix.save(img_path)
                     if preprocess:
                         img_path = self._preprocess_image(img_path)

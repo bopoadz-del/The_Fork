@@ -2,8 +2,11 @@ name: tests
 
 on:
   push:
-    branches: [main, fork-export-temp]
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test:
