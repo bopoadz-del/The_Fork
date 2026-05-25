@@ -19,21 +19,28 @@ Public API
 * ``invalidate_project(project_id) -> None``
     Delete the on-disk index so the next call rebuilds from scratch.
 * ``_load_index(project_id) -> dict | None``
-    Read the JSON index file; None if absent.
-* ``_index_path(project_id) -> str``
-    Canonical filesystem path for a project's index file.
+    Read a project's stored index; None if absent.
+* ``init_db() -> None``
+    Ensure the index DB schema exists and import any legacy JSON indexes.
 * ``_data_dir() -> str``
     DATA_DIR env at call time, with tempfile fallback.
+
+The index is persisted in a dedicated SQLite DB (one JSON row per project),
+so the read-modify-write in ``index_document`` runs in a real transaction —
+concurrent updates, including across worker processes, serialise instead of
+overwriting each other.
 """
 
 import asyncio
 import concurrent.futures
 import json
 import os
+import sqlite3
 import tempfile
 import threading
+from contextlib import closing
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.core import file_crypto
 from app.core import projects as _projects
@@ -53,10 +60,9 @@ _SUPPORTED_EXTS = (
 # scanned / image-only PDF and re-extracted via OCR.
 _PDF_OCR_THRESHOLD = 30
 
-# Guards index load-modify-write sequences. Reentrant so a caller can hold it
-# across a whole read-modify-write while still calling _write_index (which
-# also acquires it). Serialises concurrent index_document calls in-process
-# (e.g. two BackgroundTasks) so they cannot lose each other's entry.
+# In-process guard around index writes. Cross-process safety comes from the
+# SQLite BEGIN IMMEDIATE transaction in _update_index; this lock just avoids
+# threads in one process contending on the DB lock unnecessarily.
 _INDEX_LOCK = threading.RLock()
 
 
@@ -129,11 +135,27 @@ def _data_dir() -> str:
     return data_dir
 
 
-def _index_path(project_id: str) -> str:
-    """Return the canonical path for ``project_id``'s index JSON file."""
-    idx_dir = os.path.join(_data_dir(), "doc_index")
-    os.makedirs(idx_dir, exist_ok=True)
-    return os.path.join(idx_dir, f"{project_id}.json")
+def _db_path() -> str:
+    """Path to the SQLite DB holding every project's index."""
+    return os.path.join(_data_dir(), "doc_index.db")
+
+
+def _connect() -> sqlite3.Connection:
+    """Open the index DB, ensuring the schema exists (idempotent, cheap)."""
+    conn = sqlite3.connect(_db_path(), timeout=30.0)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS doc_index ("
+        "project_id TEXT PRIMARY KEY, "
+        "index_json TEXT NOT NULL, "
+        "updated_at TEXT NOT NULL)"
+    )
+    conn.commit()
+    return conn
+
+
+def _legacy_index_dir() -> str:
+    """Pre-SQLite layout: one JSON file per project under data/doc_index/."""
+    return os.path.join(_data_dir(), "doc_index")
 
 
 # ── text extraction ───────────────────────────────────────────────────────────
@@ -254,39 +276,101 @@ def chunk_text(text: str, words_per_chunk: int = 500) -> List[str]:
 
 # ── index persistence ─────────────────────────────────────────────────────────
 
+def init_db() -> None:
+    """Ensure the schema exists and import any legacy on-disk JSON indexes.
+
+    Pre-SQLite deployments stored each index as data/doc_index/<pid>.json.
+    Those are imported once (rows already present are left untouched); the
+    files themselves are left in place, harmless.
+    """
+    with _INDEX_LOCK, closing(_connect()) as conn:
+        legacy = _legacy_index_dir()
+        if os.path.isdir(legacy):
+            for fn in os.listdir(legacy):
+                if not fn.endswith(".json"):
+                    continue
+                pid = fn[:-5]
+                if conn.execute(
+                    "SELECT 1 FROM doc_index WHERE project_id = ?", (pid,)
+                ).fetchone():
+                    continue
+                try:
+                    with open(os.path.join(legacy, fn), "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                except (OSError, json.JSONDecodeError):
+                    continue
+                conn.execute(
+                    "INSERT INTO doc_index (project_id, index_json, updated_at) "
+                    "VALUES (?, ?, ?)",
+                    (pid, json.dumps(data, ensure_ascii=False), _now()),
+                )
+        conn.commit()
+
+
 def _load_index(project_id: str) -> Optional[Dict[str, Any]]:
-    """Read the JSON index for ``project_id``. Returns None if absent."""
-    path = _index_path(project_id)
-    if not os.path.exists(path):
+    """Read the stored index for ``project_id``. Returns None if absent."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT index_json FROM doc_index WHERE project_id = ?", (project_id,)
+        ).fetchone()
+    if row is None:
         return None
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, json.JSONDecodeError):
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
         return None
 
 
 def _write_index(project_id: str, data: Dict[str, Any]) -> None:
-    """Atomically write ``data`` to the index file.
+    """Replace the stored index for ``project_id`` (a full-rebuild write)."""
+    with _INDEX_LOCK, closing(_connect()) as conn:
+        conn.execute(
+            "INSERT INTO doc_index (project_id, index_json, updated_at) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(project_id) DO UPDATE SET "
+            "index_json = excluded.index_json, updated_at = excluded.updated_at",
+            (project_id, json.dumps(data, ensure_ascii=False), _now()),
+        )
+        conn.commit()
 
-    Writes to a temp file in the same directory and renames it into place, so
-    a crash mid-write cannot leave a truncated/invalid JSON index (which
-    _load_index would silently drop, losing the whole project index).
+
+def _update_index(
+    project_id: str,
+    mutate: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Atomic read-modify-write of a project's index.
+
+    Runs ``mutate(current_or_None) -> new_index`` inside a single SQLite write
+    transaction (BEGIN IMMEDIATE), so two concurrent updates — even from
+    separate worker processes — serialise rather than overwrite each other.
     """
-    path = _index_path(project_id)
-    directory = os.path.dirname(path) or "."
-    with _INDEX_LOCK:
-        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".idx_", suffix=".tmp")
+    with _INDEX_LOCK, closing(_connect()) as conn:
+        conn.isolation_level = None  # take manual control of the transaction
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, path)  # atomic on the same filesystem
+            row = conn.execute(
+                "SELECT index_json FROM doc_index WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+            current: Optional[Dict[str, Any]] = None
+            if row is not None:
+                try:
+                    current = json.loads(row[0])
+                except (json.JSONDecodeError, TypeError):
+                    current = None
+            updated = mutate(current)
+            conn.execute(
+                "INSERT INTO doc_index (project_id, index_json, updated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(project_id) DO UPDATE SET "
+                "index_json = excluded.index_json, updated_at = excluded.updated_at",
+                (project_id, json.dumps(updated, ensure_ascii=False), _now()),
+            )
+            conn.execute("COMMIT")
         except BaseException:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+            conn.execute("ROLLBACK")
             raise
+    return updated
 
 
 def _ext_of(filename: str) -> str:
@@ -398,27 +482,32 @@ def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
         if meta.get("ocr_low_quality"):
             entry["ocr_low_quality"] = True
 
-    # Load-modify-write under the lock — a concurrent index_document call for
-    # the same project cannot interleave and drop this entry.
-    with _INDEX_LOCK:
-        existing = _load_index(project_id) or {
+    # Load-modify-write inside one SQLite transaction — a concurrent
+    # index_document call for the same project (another BackgroundTask, or
+    # another worker process) cannot interleave and drop this entry.
+    def _mutate(current: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        current = current or {
             "project_id": project_id,
             "built_at": _now(),
             "documents": [],
             "skipped": [],
         }
-        existing["documents"] = [
-            d for d in existing["documents"] if d["document_id"] != document_id
+        current["documents"] = [
+            d for d in current.get("documents", [])
+            if d["document_id"] != document_id
         ]
-        existing["skipped"] = [
-            s for s in existing["skipped"] if s["document_id"] != document_id
+        current["skipped"] = [
+            s for s in current.get("skipped", [])
+            if s["document_id"] != document_id
         ]
         if entry is not None:
-            existing["documents"].append(entry)
+            current["documents"].append(entry)
         else:
-            existing["skipped"].append(skipped_entry)
-        existing["built_at"] = _now()
-        _write_index(project_id, existing)
+            current["skipped"].append(skipped_entry)
+        current["built_at"] = _now()
+        return current
+
+    _update_index(project_id, _mutate)
 
     if entry is None:
         return {
@@ -436,13 +525,10 @@ def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
 
 
 def invalidate_project(project_id: str) -> None:
-    """Delete the on-disk index for ``project_id`` if it exists."""
-    path = _index_path(project_id)
-    with _INDEX_LOCK:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+    """Delete the stored index for ``project_id`` (next access rebuilds it)."""
+    with _INDEX_LOCK, closing(_connect()) as conn:
+        conn.execute("DELETE FROM doc_index WHERE project_id = ?", (project_id,))
+        conn.commit()
 
 
 # ── search ────────────────────────────────────────────────────────────────────

@@ -1,4 +1,7 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from app.dependencies import (
     MONITORING_AVAILABLE,
@@ -8,6 +11,15 @@ from app.dependencies import (
 from app.routers.health import health_v1
 
 router = APIRouter()
+
+
+class RecordMetricsRequest(BaseModel):
+    """Typed body for a provider-call metric. Only these fields reach the
+    monitoring block — no arbitrary client dict is splatted into execute()."""
+    provider: Optional[str] = None
+    latency_ms: float = 0
+    success: bool = True
+    error_type: Optional[str] = None
 
 
 @router.get("/v1/leaderboard")
@@ -38,9 +50,12 @@ async def predictive_failover(auth: dict = Depends(require_api_key)):
 
 
 @router.post("/v1/metrics/record")
-async def record_metrics(request: dict, auth: dict = Depends(require_api_key)):
+async def record_metrics(
+    request: RecordMetricsRequest, auth: dict = Depends(require_api_key)
+):
     """Record call metrics for tracking"""
     if not MONITORING_AVAILABLE:
         return {"status": "no_op"}
     block = get_monitoring_block()
-    return await block.execute({"action": "record_call", **request})
+    payload = {"action": "record_call", **request.model_dump(exclude_none=True)}
+    return await block.execute(payload)

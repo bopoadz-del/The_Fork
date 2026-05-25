@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.core.doc_index import _index_path
+from app.core.doc_index import _load_index
 
 # Run-unique suffix so parallel test runs don't collide on user emails.
 _RUN = uuid.uuid4().hex[:8]
@@ -187,9 +187,8 @@ def test_upload_eager_indexes(tmp_path, monkeypatch):
                     b"Specification document content for eager indexing test.")
 
     # TestClient runs BackgroundTasks synchronously after the response,
-    # so the index file must exist immediately after the upload returns.
-    index_file = _index_path(pid)
-    assert os.path.exists(index_file), f"Index file not found at {index_file}"
+    # so the index must exist immediately after the upload returns.
+    assert _load_index(pid) is not None, "Index not built after eager indexing"
 
 
 def test_eager_index_disabled(tmp_path, monkeypatch):
@@ -209,6 +208,5 @@ def test_eager_index_disabled(tmp_path, monkeypatch):
         _upload_txt(c, _LEGACY_H, pid, "spec.txt",
                     b"Specification document content for disabled eager indexing test.")
 
-    index_file = _index_path(pid)
-    assert not os.path.exists(index_file), \
-        f"Index file should NOT exist when INDEX_ON_UPLOAD=false, but found {index_file}"
+    assert _load_index(pid) is None, \
+        "Index should NOT exist when INDEX_ON_UPLOAD=false"

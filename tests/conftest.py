@@ -18,6 +18,11 @@ try:
 except ImportError:
     pass
 
+# Disable per-caller rate limiting for the test suite — the full suite makes
+# far more than a minute's quota of requests under one identity (cb_dev_key).
+# The rate limiter's own tests re-enable it explicitly via monkeypatch.
+os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
+
 @pytest.fixture
 def sample_text():
     return "Hello, this is a test document for Cerebrum Blocks."

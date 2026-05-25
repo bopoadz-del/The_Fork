@@ -178,7 +178,7 @@ async def test_image_document_is_indexed_and_searchable(fresh_db, tmp_path, monk
                                     file_path=img_path, size=20)
 
     # No index yet — search must lazily build it (running event loop active).
-    assert not os.path.exists(doc_index._index_path(pid))
+    assert doc_index._load_index(pid) is None
 
     results = await doc_index.search_project_documents(pid, "concrete curing schedule")
 
@@ -210,7 +210,7 @@ def test_image_document_indexed_not_skipped(fresh_db, tmp_path, monkeypatch):
     assert result["indexed"] == 1
     assert result["skipped_unsupported"] == 0
 
-    saved = json.load(open(doc_index._index_path(pid)))
+    saved = doc_index._load_index(pid)
     assert [d["document_id"] for d in saved["documents"]] == [doc["id"]]
     assert saved["skipped"] == []
     assert any("REBAR LAYOUT" in c for c in saved["documents"][0]["chunks"])
@@ -242,7 +242,7 @@ async def test_low_quality_ocr_flag_propagates(fresh_db, tmp_path, monkeypatch):
 
     doc_index.index_project(pid)
 
-    saved = json.load(open(doc_index._index_path(pid)))
+    saved = doc_index._load_index(pid)
     entry = saved["documents"][0]
     assert entry["ocr_low_quality"] is True
 
@@ -272,7 +272,7 @@ async def test_good_quality_ocr_has_no_low_quality_flag(fresh_db, tmp_path, monk
     doc = projects_mod.add_document(pid, "crisp.png", file_path=img_path, size=8)
 
     doc_index.index_project(pid)
-    saved = json.load(open(doc_index._index_path(pid)))
+    saved = doc_index._load_index(pid)
     assert not saved["documents"][0].get("ocr_low_quality", False)
 
     results = await doc_index.search_project_documents(pid, "architectural elevation east facade")
@@ -323,7 +323,7 @@ def test_ocr_error_status_is_graceful(fresh_db, tmp_path, monkeypatch):
     # Indexing still succeeds — the doc indexes with zero chunks, not skipped.
     result = doc_index.index_project(pid)
     assert result["skipped_unsupported"] == 0
-    saved = json.load(open(doc_index._index_path(pid)))
+    saved = doc_index._load_index(pid)
     assert [d["document_id"] for d in saved["documents"]] == [doc["id"]]
     assert saved["documents"][0]["chunks"] == []
 

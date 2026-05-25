@@ -89,6 +89,8 @@ async def lifespan(app: FastAPI):
     init_users_db()
     from app.core.agent_memory import init_db as init_agent_memory_db
     init_agent_memory_db()
+    from app.core.doc_index import init_db as init_doc_index_db
+    init_doc_index_db()
     from app.core.session_store import get_session_store
     from app.routers import project as project_router
     app.state.project_store = get_session_store()
@@ -144,6 +146,54 @@ app.add_middleware(
 # code: it json.loads()'d a multipart body, always failed, and never ran the
 # validator. Upload validation (size, extension, filename, path traversal)
 # lives in app/routers/upload.py where the file is a proper UploadFile.
+
+
+# ── Rate limiting ──────────────────────────────────────────────────────────
+# Per-caller rate limiting on every request — including JWT sessions, which
+# the per-API-key limiter never covered. Controlled by RATE_LIMIT_PER_MINUTE.
+from app.core import rate_limit as _rate_limit
+from app.core import jwt_auth as _jwt_auth
+
+_RATE_LIMIT_EXEMPT_PREFIXES = ("/static", "/dashboard", "/assets")
+_RATE_LIMIT_EXEMPT_EXACT = {
+    "/", "/health", "/v1/health", "/docs", "/redoc", "/openapi.json",
+}
+
+
+def _rate_limit_identity(request: Request) -> str:
+    """Identify the caller for rate-limiting: user id (JWT), hashed API key,
+    or client IP for an unauthenticated request."""
+    authz = request.headers.get("Authorization", "")
+    if authz.startswith("Bearer "):
+        token = authz[7:].strip()
+        try:
+            payload = _jwt_auth.decode_token(token)
+            if payload.get("user_id"):
+                return f"user:{payload['user_id']}"
+        except Exception:
+            pass
+        import hashlib
+        return "key:" + hashlib.sha256(token.encode()).hexdigest()[:24]
+    host = request.client.host if request.client else "unknown"
+    return f"ip:{host}"
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    path = request.url.path
+    if (
+        request.method == "OPTIONS"
+        or path in _RATE_LIMIT_EXEMPT_EXACT
+        or any(path.startswith(p) for p in _RATE_LIMIT_EXEMPT_PREFIXES)
+    ):
+        return await call_next(request)
+    if not _rate_limit.check_and_record(_rate_limit_identity(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"status": "error",
+                     "error": "Rate limit exceeded — too many requests."},
+        )
+    return await call_next(request)
 
 
 # ── Unified error envelope ────────────────────────────────────────────────
