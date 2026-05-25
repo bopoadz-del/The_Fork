@@ -37,7 +37,9 @@ from app.routers import (
     chain,
     chat,
     debug,
+    doc_search,
     doc_types,
+    drive,
     execute,
     health,
     memory,
@@ -45,17 +47,50 @@ from app.routers import (
     monitoring,
     project,
     projects,
+    redline,
     static,
     upload,
+    users,
     workflows,
 )
 from app.agents import load_agents
+def _validate_startup_env() -> None:
+    """Fail fast on missing security config when ENV is explicitly production.
+
+    SECRET_KEY is required: without it the JWT signing secret is generated
+    per-process, so tokens are invalidated on every restart and differ across
+    scaled instances. DATA_ENCRYPTION_KEY only warns — encryption at rest is
+    opt-in.
+    """
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "")).strip().lower()
+    if env not in ("prod", "production"):
+        return
+    if not os.getenv("SECRET_KEY"):
+        raise RuntimeError(
+            "SECRET_KEY is required when ENV=production — without it the JWT "
+            "signing secret is regenerated per process, invalidating all "
+            "tokens on restart. Set SECRET_KEY in the environment."
+        )
+    if not os.getenv("DATA_ENCRYPTION_KEY"):
+        logger.warning(
+            "DATA_ENCRYPTION_KEY is not set — uploaded documents are stored "
+            "UNENCRYPTED at rest."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize all blocks + load runtime agents at startup."""
+    _validate_startup_env()
     await init_blocks()
     from app.core.projects import init_db
     init_db()
+    from app.core.users import init_db as init_users_db
+    init_users_db()
+    from app.core.agent_memory import init_db as init_agent_memory_db
+    init_agent_memory_db()
+    from app.core.doc_index import init_db as init_doc_index_db
+    init_doc_index_db()
     from app.core.session_store import get_session_store
     from app.routers import project as project_router
     app.state.project_store = get_session_store()
@@ -97,50 +132,67 @@ app.add_middleware(
         *_extra_origins,
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Enumerate methods/headers rather than "*" — a credentialed CORS config
+    # should not reflect arbitrary methods/headers back to the browser.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 
-# File upload security — only intercepts actual upload paths, never chat/chain
-@app.middleware("http")
-async def file_upload_security_middleware(request: Request, call_next):
-    path = request.url.path.lower()
+# NOTE: a previous "file upload security" middleware was removed here. It
+# called `await request.body()` on every /upload request, which buffered the
+# entire multipart body (including the file) into memory — a memory-DoS that
+# also defeated UploadFile's on-disk spooling. Its security check was dead
+# code: it json.loads()'d a multipart body, always failed, and never ran the
+# validator. Upload validation (size, extension, filename, path traversal)
+# lives in app/routers/upload.py where the file is a proper UploadFile.
 
-    if "/upload" in path:
-        body = await request.body()
 
+# ── Rate limiting ──────────────────────────────────────────────────────────
+# Per-caller rate limiting on every request — including JWT sessions, which
+# the per-API-key limiter never covered. Controlled by RATE_LIMIT_PER_MINUTE.
+from app.core import rate_limit as _rate_limit
+from app.core import jwt_auth as _jwt_auth
+
+_RATE_LIMIT_EXEMPT_PREFIXES = ("/static", "/dashboard", "/assets")
+_RATE_LIMIT_EXEMPT_EXACT = {
+    "/", "/health", "/v1/health", "/docs", "/redoc", "/openapi.json",
+}
+
+
+def _rate_limit_identity(request: Request) -> str:
+    """Identify the caller for rate-limiting: user id (JWT), hashed API key,
+    or client IP for an unauthenticated request."""
+    authz = request.headers.get("Authorization", "")
+    if authz.startswith("Bearer "):
+        token = authz[7:].strip()
         try:
-            import json
-            data = json.loads(body) if body else {}
+            payload = _jwt_auth.decode_token(token)
+            if payload.get("user_id"):
+                return f"user:{payload['user_id']}"
         except Exception:
-            data = {}
+            pass
+        import hashlib
+        return "key:" + hashlib.sha256(token.encode()).hexdigest()[:24]
+    host = request.client.host if request.client else "unknown"
+    return f"ip:{host}"
 
-        if any(k in str(data) for k in ["file_path", "filename", "file"]):
-            try:
-                if "security" not in block_instances:
-                    block_instances["security"] = _create_block_instance(BLOCK_REGISTRY["security"])
-                security = block_instances.get("security")
-                if security:
-                    validation = await security.validate_file(data, {})
-                    if not validation.get("safe"):
-                        return JSONResponse(
-                            status_code=400,
-                            content={
-                                "status": "error",
-                                "error": "Security validation failed",
-                                "details": validation.get("error"),
-                                "violation": validation.get("violation"),
-                            },
-                        )
-            except Exception:
-                pass
 
-        async def receive():
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        request = Request(request.scope, receive, request._send)
-
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    path = request.url.path
+    if (
+        request.method == "OPTIONS"
+        or path in _RATE_LIMIT_EXEMPT_EXACT
+        or any(path.startswith(p) for p in _RATE_LIMIT_EXEMPT_PREFIXES)
+    ):
+        return await call_next(request)
+    if not _rate_limit.check_and_record(_rate_limit_identity(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"status": "error",
+                     "error": "Rate limit exceeded — too many requests."},
+        )
     return await call_next(request)
 
 
@@ -222,11 +274,18 @@ app.include_router(auth.router)
 app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
+app.include_router(doc_search.router)
+app.include_router(redline.router)
 app.include_router(project.router)
+app.include_router(users.router)
 app.include_router(doc_types.router)
 app.include_router(workflows.router)
 app.include_router(health.router)
 app.include_router(mcp.router)
+# Mount the MCP SSE POST endpoint directly on the app — include_router does
+# not propagate Starlette Mount routes (no-op if MCP SSE deps are absent).
+mcp.mount_message_endpoint(app)
+app.include_router(drive.router)
 app.include_router(agents_router.router)
 app.include_router(static.router)
 # Debug routes — only in non-production environments
@@ -234,11 +293,12 @@ env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
 if env in {"dev", "development", "local", "test", "testing"}:
     app.include_router(debug.router)
 
-# Mount static files
+# Mount static files. The frontend bundle (frontend/dist) is a build artifact
+# that is absent in CI and fresh checkouts; StaticFiles raises RuntimeError at
+# import time if its directory is missing, so mount each frontend path only
+# when it exists. app/static is committed, so it stays unconditional.
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-# frontend/dist is the Vite build output — absent on fresh clones until
-# `npm run build` runs. Mount only when it exists so import doesn't crash.
 if os.path.isdir("frontend/dist"):
     app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
-    if os.path.isdir("frontend/dist/assets"):
-        app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+if os.path.isdir("frontend/dist/assets"):
+    app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")

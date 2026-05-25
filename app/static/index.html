@@ -51,8 +51,14 @@
         button { padding: 8px 16px; background: #8b5cf6; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
         button:hover { background: #7c4ddb; }
         button:disabled { background: #333; cursor: not-allowed; }
-        .outcomes { width: 320px; background: #0a0a0a; border-left: 1px solid #222; padding: 20px; overflow-y: auto; }
-        .outcomes h3 { margin-bottom: 16px; color: #fff; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+        /* Side panel reads as an on-demand artifacts panel (Roadmap V2 · Epic 4),
+           not an always-on dashboard. Hidden until a reply carries an artifact. */
+        .outcomes { width: 340px; background: #0a0a0a; border-left: 1px solid #222; padding: 20px; overflow-y: auto; display: none; }
+        .outcomes.open { display: block; }
+        .outcomes-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .outcomes h3 { color: #fff; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+        .panel-close { background: transparent; border: 1px solid #333; color: #888; border-radius: 6px; padding: 4px 9px; font-size: 13px; cursor: pointer; }
+        .panel-close:hover { border-color: #666; color: #fff; }
         .outcome-item { padding: 12px; background: #1a1a1a; border-radius: 8px; margin-bottom: 12px; border: 1px solid #2a2a2a; }
         .outcome-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 4px; }
         .outcome-value { font-size: 18px; color: #8b5cf6; font-weight: 600; }
@@ -107,11 +113,10 @@
         
         <div class="section">
             <span>Projects</span>
+            <button onclick="createProject()" title="Create a new project">+ New</button>
         </div>
         <div class="projects" id="projectsList">
-            <div class="project active">Diriyah Phase 1</div>
-            <div class="project">Qiddam Tower</div>
-            <div class="project">KAUST Lab</div>
+            <div class="drive-empty">Loading projects…</div>
         </div>
         
         <div class="section" style="margin-top: 16px;">
@@ -152,8 +157,11 @@
         </div>
     </div>
     
-    <div class="outcomes">
-        <h3>Results</h3>
+    <div class="outcomes" id="outcomesPanel">
+        <div class="outcomes-head">
+            <h3 id="outcomesTitle">Artifacts</h3>
+            <button class="panel-close" onclick="closeArtifactPanel()" title="Close panel">✕</button>
+        </div>
         <div id="outcomes"></div>
     </div>
     
@@ -180,11 +188,18 @@
                     <div class="desc">Browse files on the server VM</div>
                 </div>
             </div>
-            <div class="drive-option disabled" style="opacity:0.5;cursor:not-allowed;" title="Configure OAuth in settings first">
-                <span class="icon">📁</span>
-                <div>
-                    <div class="name">Google Drive <span style="color:#888;font-size:10px;">(needs setup)</span></div>
-                    <div class="desc">Requires OAuth credentials</div>
+            <!-- Google Drive — live status + file browser (Task 6) -->
+            <div id="googleDriveSection" style="border:1px solid #2a2a2a;border-radius:8px;padding:12px;margin-bottom:8px;background:#1a1a1a;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <span class="icon">📁</span>
+                    <span class="name">Google Drive</span>
+                </div>
+                <div id="driveStatusBox" style="font-size:12px;color:#888;">Checking…</div>
+                <div id="driveBrowser" style="display:none;margin-top:10px;">
+                    <input type="text" id="driveSearchInput" placeholder="Search Drive files…"
+                           onkeydown="if(event.key==='Enter')searchDriveFiles()"
+                           style="width:100%;box-sizing:border-box;background:#0f0f0f;border:1px solid #2a2a2a;color:#e0e0e0;border-radius:6px;padding:6px 8px;font-size:12px;">
+                    <div id="driveFilesList" style="margin-top:8px;max-height:220px;overflow-y:auto;"></div>
                 </div>
             </div>
             <div class="drive-option disabled" style="opacity:0.5;cursor:not-allowed;" title="Configure OAuth in settings first">
@@ -502,8 +517,6 @@ function addMessage(text, role = 'assistant', { persist = true } = {}) {
     bubble.className = 'bubble';
     if (role === 'assistant') {
         bubble.innerHTML = renderMarkdown(text);
-    } else if (role === 'error' && typeof text === 'string' && text.includes('<div')) {
-        bubble.innerHTML = text;
     } else {
         bubble.textContent = text;
     }
@@ -517,8 +530,30 @@ function addMessage(text, role = 'assistant', { persist = true } = {}) {
     return bubble; // caller can use this to mutate during streaming
 }
 
+// The side panel is an on-demand artifacts surface (Roadmap V2 · Epic 4).
+// setOutcomes only fills its content; it does NOT show the panel — call
+// openArtifactPanel() explicitly when a reply genuinely carries an artifact.
 function setOutcomes(html) {
     document.getElementById('outcomes').innerHTML = html;
+}
+
+function openArtifactPanel(title) {
+    const panel = document.getElementById('outcomesPanel');
+    if (title) document.getElementById('outcomesTitle').textContent = title;
+    panel.classList.add('open');
+}
+
+function closeArtifactPanel() {
+    document.getElementById('outcomesPanel').classList.remove('open');
+}
+
+// Show artifacts in the side panel — only when there is at least one.
+// A plain chat reply with no artifacts leaves the panel closed.
+function showArtifacts(artifacts, title) {
+    if (!artifacts || !artifacts.length) return false;
+    setOutcomes(renderArtifacts(artifacts));
+    openArtifactPanel(title || 'Artifacts');
+    return true;
 }
 
 // ── Unified error surfacing ─────────────────────────────────────────────
@@ -591,6 +626,7 @@ function resetChat() {
         </div>
     `;
     setOutcomes('');
+    closeArtifactPanel();
     clearActiveFileContext();
     chatHistory = [];
     saveHistory();
@@ -620,25 +656,32 @@ function renderDrives() {
         return;
     }
     
-    list.innerHTML = Object.entries(connectedDrives).map(([id, drive]) => `
-        <div class="drive-project">
-            <div class="drive-header" onclick="toggleDrive('${id}')">
-                <span class="icon">${drive.icon}</span>
-                <span>${drive.name}</span>
-                <span class="toggle">▶</span>
+    list.innerHTML = Object.entries(connectedDrives).map(([id, drive]) => {
+        const idEsc = escapeHtml(id);
+        const fileRows = drive.files.map(f => {
+            const name = typeof f === 'string' ? f : (f.name || String(f));
+            return `
+                <div class="drive-file" data-drive-id="${idEsc}" data-file-name="${escapeHtml(name)}">
+                    <span>📄</span>
+                    <span>${escapeHtml(name)}</span>
+                    ${drive.indexed ? '<span class="zvec-badge">Z</span>' : ''}
+                </div>
+            `;
+        }).join('');
+        return `
+            <div class="drive-project">
+                <div class="drive-header" data-drive-toggle="${idEsc}">
+                    <span class="icon">${escapeHtml(drive.icon || '')}</span>
+                    <span>${escapeHtml(drive.name || '')}</span>
+                    <span class="toggle">▶</span>
+                </div>
+                <div class="drive-files" id="drive-files-${idEsc}">
+                    ${drive.files.length === 0 ? '<div class="drive-empty">No files found</div>' : ''}
+                    ${fileRows}
+                </div>
             </div>
-            <div class="drive-files" id="drive-files-${id}">
-                ${drive.files.length === 0 ? '<div class="drive-empty">No files found</div>' : ''}
-                ${drive.files.map((f, i) => `
-                    <div class="drive-file" onclick="selectDriveFile('${id}', '${typeof f === 'string' ? f.replace(/'/g, "\\'") : f.name?.replace(/'/g, "\\'") || ''}')">
-                        <span>📄</span>
-                        <span>${typeof f === 'string' ? f : (f.name || f)}</span>
-                        ${drive.indexed ? '<span class="zvec-badge">Z</span>' : ''}
-                    </div>
-                `).join('')}
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function toggleDrive(id) {
@@ -650,10 +693,141 @@ function toggleDrive(id) {
 
 function showDriveModal() {
     document.getElementById('driveModal').classList.add('active');
+    refreshDriveStatus();
 }
 
 function hideDriveModal() {
     document.getElementById('driveModal').classList.remove('active');
+}
+
+// ── Google Drive connection (Task 6) ───────────────────────────────────────
+// Last GET /v1/drive/files result — kept module-level so onclick handlers
+// reference a row by index instead of interpolating attacker-controlled
+// file names into an inline string.
+let driveFileResults = [];
+
+async function refreshDriveStatus() {
+    const box = document.getElementById('driveStatusBox');
+    const browser = document.getElementById('driveBrowser');
+    if (!box) return;
+    try {
+        const r = await fetch(`${API_BASE}/v1/drive/status`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        const s = await r.json();
+        if (s.configured === false) {
+            box.innerHTML = '<span style="color:#888;">Google Drive not configured</span>';
+            if (browser) browser.style.display = 'none';
+        } else if (s.connected === true) {
+            box.innerHTML =
+                `<span style="color:#22c55e;">Connected as ${escapeHtml(s.email || 'unknown')}</span>`
+                + ` <button onclick="disconnectDrive()" style="margin-left:8px;background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Disconnect</button>`;
+            if (browser) browser.style.display = 'block';
+        } else {
+            box.innerHTML =
+                `<button onclick="connectGoogleDrive()" style="background:#8b5cf6;border:none;color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;">Connect Google Drive</button>`;
+            if (browser) browser.style.display = 'none';
+        }
+    } catch (err) {
+        box.innerHTML = `<span style="color:#ff6666;">Drive status unavailable — ${escapeHtml(err.message || 'error')}</span>`;
+        if (browser) browser.style.display = 'none';
+    }
+}
+
+async function connectGoogleDrive() {
+    try {
+        const r = await fetch(`${API_BASE}/v1/drive/connect`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        const { auth_url } = await r.json();
+        window.location = auth_url;
+    } catch (err) {
+        surfaceError(err, 'Connect Google Drive');
+    }
+}
+
+async function disconnectDrive() {
+    try {
+        const r = await fetch(`${API_BASE}/v1/drive/disconnect`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        addMessage('Google Drive disconnected.', 'system', { persist: false });
+    } catch (err) {
+        surfaceError(err, 'Disconnect Google Drive');
+    }
+    refreshDriveStatus();
+}
+
+async function searchDriveFiles() {
+    const input = document.getElementById('driveSearchInput');
+    const listEl = document.getElementById('driveFilesList');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="drive-empty">Searching…</div>';
+    try {
+        const q = input ? input.value.trim() : '';
+        const r = await fetch(`${API_BASE}/v1/drive/files?q=${encodeURIComponent(q)}`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        const data = await r.json();
+        driveFileResults = data.files || [];
+        renderDriveFiles();
+    } catch (err) {
+        driveFileResults = [];
+        listEl.innerHTML = `<div class="drive-empty" style="color:#ff6666;">${escapeHtml(err.message || 'Search failed')}</div>`;
+    }
+}
+
+function renderDriveFiles() {
+    const listEl = document.getElementById('driveFilesList');
+    if (!listEl) return;
+    if (!driveFileResults.length) {
+        listEl.innerHTML = '<div class="drive-empty">No files found</div>';
+        return;
+    }
+    listEl.innerHTML = driveFileResults.map((f, i) => `
+        <div class="drive-file" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${escapeHtml(f.name || 'untitled')}</span>
+            <button onclick="importDriveFile(${i})"
+                    style="flex:none;background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Add to project</button>
+        </div>
+    `).join('');
+}
+
+async function importDriveFile(index) {
+    const file = driveFileResults[index];
+    if (!file) return;
+    if (!activeProjectId) {
+        addMessage('Select a project first, then add the Drive file to it.', 'system', { persist: false });
+        return;
+    }
+    showIndicator(true);
+    try {
+        const r = await fetch(`${API_BASE}/v1/projects/${activeProjectId}/drive/import`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ file_id: file.id, name: file.name }),
+        });
+        if (!r.ok) throw await readApiError(r);
+        const data = await r.json();
+        addMessage(data.message || `Imported "${file.name}" into the project.`, 'system', { persist: false });
+        const proj = activeProject();
+        if (proj && data.document) {
+            proj.documents = (proj.documents || []).concat(data.document);
+        }
+        // Refresh the active project's document list from the server.
+        await loadProjects();
+    } catch (err) {
+        surfaceError(err, 'Import Drive file');
+    }
+    showIndicator(false);
 }
 
 function browseLocalFiles() {
@@ -818,26 +992,32 @@ function renderDrives() {
         return;
     }
     
-    container.innerHTML = Object.entries(connectedDrives).map(([key, drive]) => `
-        <div class="drive-project">
-            <div class="drive-header" onclick="toggleDrive('${key}')" id="drive-header-${key}">
-                <span class="icon">${drive.icon}</span>
-                <span>${drive.name}</span>
-                <span class="toggle">▶</span>
+    container.innerHTML = Object.entries(connectedDrives).map(([key, drive]) => {
+        const keyEsc = escapeHtml(key);
+        const fileRows = drive.files.map(f => {
+            const name = typeof f === 'string' ? f : (f.name || f.text || JSON.stringify(f));
+            return `
+                <div class="drive-file" data-drive-id="${keyEsc}" data-file-name="${escapeHtml(name)}">
+                    <span>${escapeHtml(name)}</span>
+                    ${drive.indexed ? '<span class="zvec-badge">zvec</span>' : ''}
+                </div>
+            `;
+        }).join('');
+        return `
+            <div class="drive-project">
+                <div class="drive-header" data-drive-toggle="${keyEsc}" id="drive-header-${keyEsc}">
+                    <span class="icon">${escapeHtml(drive.icon || '')}</span>
+                    <span>${escapeHtml(drive.name || '')}</span>
+                    <span class="toggle">▶</span>
+                </div>
+                <div class="drive-files" id="drive-files-${keyEsc}">
+                    ${drive.files.length === 0
+                        ? '<div class="drive-empty">No files found</div>'
+                        : fileRows}
+                </div>
             </div>
-            <div class="drive-files" id="drive-files-${key}">
-                ${drive.files.length === 0 
-                    ? '<div class="drive-empty">No files found</div>' 
-                    : drive.files.map(f => `
-                        <div class="drive-file" onclick="selectDriveFile('${key}', '${typeof f === 'string' ? f.replace(/'/g, "\\'") : JSON.stringify(f).replace(/'/g, "\\'")}')">
-                            <span>${typeof f === 'string' ? f : (f.name || f.text || JSON.stringify(f))}</span>
-                            ${drive.indexed ? '<span class="zvec-badge">zvec</span>' : ''}
-                        </div>
-                    `).join('')
-                }
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function toggleDrive(key) {
@@ -1025,20 +1205,11 @@ function startAgentStream({ agent, prompt, history, bubble, askedAt, userQuestio
             const answer = finalText || '_(no response)_';
             chatHistory.push({ role: 'assistant', content: answer });
             saveHistory();
-            setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">${(toolCalls.length ? '🛠 ' : '💬 ')}Agent: ${escapeHtml(agent)}</div>
-                <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}${toolCalls.length ? ` · ${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''}` : ''}</div>
-                <div style="color:#ccc;font-size:12px;margin-top:8px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
-                <div style="color:#eee;font-size:13px;margin-top:8px;">${renderMarkdown(answer)}</div>
-            </div>`);
+            // Agent reply lives in the chat thread — no auto-opened panel.
         } catch (err) {
             if (err.name !== 'AbortError') {
                 surfaceError(err, `Agent ${agent}`);
                 bubble.innerHTML = `<span style="color:#ff6666;">Error: ${escapeHtml(err.message)}</span>`;
-                setOutcomes(`<div class="outcome-item">
-                    <div class="outcome-label" style="color:#cc6666;">⚠️ Agent failed</div>
-                    <div style="color:#cc8888;font-size:12px;margin-top:6px;">${escapeHtml(err.message)}</div>
-                </div>`);
             }
         } finally {
             activeChatController = null;
@@ -1057,16 +1228,107 @@ function renderToolBadges(toolCalls) {
         `</div>`;
 }
 
+// ── Projects sidebar — real /v1/projects, scopes the chat ─────────
+// Roadmap V2 · Epic 4 Slice B. The sidebar lists real projects; selecting
+// one scopes project-mode chat to it (its id becomes the reasoning session).
+let projects = [];
+let activeProjectId = null;
+const ACTIVE_PROJECT_KEY = 'cerebrum_active_project_v1';
+
+function activeProject() {
+    return projects.find(p => p.id === activeProjectId) || null;
+}
+
+async function loadProjects() {
+    const list = document.getElementById('projectsList');
+    try {
+        const resp = await fetch(`${API_BASE}/v1/projects`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!resp.ok) throw await readApiError(resp);
+        const data = await resp.json();
+        projects = data.projects || [];
+    } catch (err) {
+        surfaceError(err, 'Projects', { toast: false });
+        list.innerHTML = '<div class="drive-empty">Could not load projects</div>';
+        return;
+    }
+    try {
+        const stored = localStorage.getItem(ACTIVE_PROJECT_KEY);
+        if (stored && projects.some(p => p.id === stored)) activeProjectId = stored;
+    } catch (e) {}
+    renderProjects();
+}
+
+function renderProjects() {
+    const list = document.getElementById('projectsList');
+    if (!projects.length) {
+        list.innerHTML = '<div class="drive-empty">No projects yet — click + New</div>';
+        return;
+    }
+    list.innerHTML = projects.map(p => `
+        <div class="project ${p.id === activeProjectId ? 'active' : ''}"
+             onclick="selectProject('${p.id}')" title="${escapeHtml(p.client || '')}">
+            ${escapeHtml(p.name)}
+        </div>
+    `).join('');
+}
+
+function selectProject(id) {
+    const proj = projects.find(p => p.id === id);
+    if (!proj) return;
+    activeProjectId = id;
+    try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
+    renderProjects();
+    // Selecting a project implies project-scoped chat.
+    if (!projectMode) {
+        projectMode = true;
+        const toggle = document.getElementById('projectModeToggle');
+        if (toggle) toggle.checked = true;
+    }
+    const docCount = (proj.documents || []).length;
+    addMessage(
+        `Project "${proj.name}" selected — chat is now scoped to it`
+        + (docCount ? ` (${docCount} document${docCount > 1 ? 's' : ''}).` : '.'),
+        'system', { persist: false }
+    );
+}
+
+async function createProject() {
+    const name = (prompt('New project name:') || '').trim();
+    if (!name) return;
+    try {
+        const resp = await fetch(`${API_BASE}/v1/projects`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${API_KEY}`,
+            },
+            body: JSON.stringify({ name }),
+        });
+        if (!resp.ok) throw await readApiError(resp);
+        const proj = await resp.json();
+        projects.unshift(proj);
+        addMessage(`Project "${proj.name}" created.`, 'system', { persist: false });
+        selectProject(proj.id);
+    } catch (err) {
+        surfaceError(err, 'Create project');
+    }
+}
+
 // ── Project reasoning mode (Reasoning Engine Plan 6) ──────────────
 let projectMode = false;
-// Per-tab session id so follow-up questions build on prior state.
+// Fallback per-tab session id when no real project is selected.
 const projectSessionId = 'proj-' + Math.random().toString(36).slice(2, 11);
 
 function onProjectModeChange(on) {
     projectMode = on;
+    const proj = activeProject();
     addMessage(
         on
-            ? 'Project mode ON — I will reason over your project (CPM, manpower, compression, custom analysis).'
+            ? (proj
+                ? `Project mode ON — scoped to "${proj.name}". I will reason over this project (CPM, manpower, compression, custom analysis).`
+                : 'Project mode ON — I will reason over your project. Pick a project in the sidebar to scope it.')
             : 'Project mode OFF — back to standard chat.',
         'system', { persist: false }
     );
@@ -1076,6 +1338,9 @@ async function askProject(message) {
     setChatBusy(true);
     showIndicator(true);
     try {
+        // Scope to the selected project's id so its reasoning session is
+        // distinct and persistent; fall back to a per-tab session otherwise.
+        const sessionId = activeProjectId || projectSessionId;
         const resp = await fetch(`${API_BASE}/v1/project/ask`, {
             method: 'POST',
             headers: {
@@ -1083,7 +1348,7 @@ async function askProject(message) {
                 'Authorization': `Bearer ${API_KEY}`,
             },
             body: JSON.stringify({
-                session_id: projectSessionId,
+                session_id: sessionId,
                 request: message,
             }),
         });
@@ -1103,17 +1368,12 @@ async function askProject(message) {
             return;
         }
         addMessage(data.answer || '(no answer)', 'assistant');
-        if (data.understanding) {
-            setOutcomes(
-                `<div class="outcome-item">
-                   <div class="outcome-label">Understood as</div>
-                   <div class="outcome-value" style="font-size:13px;">`
-                + escapeHtml(data.understanding) + `</div></div>`);
-        }
-        if (Array.isArray(data.artifacts)) {
-            data.artifacts.forEach(a => addMessage(
-                `📎 Artifact: ${escapeHtml(String(a.name))} (${escapeHtml(String(a.type))})`, 'system',
-                { persist: false }));
+        // Artifacts panel opens ON DEMAND — only when the reply produced
+        // something inspectable. A plain answer leaves the panel closed.
+        if (Array.isArray(data.artifacts) && data.artifacts.length) {
+            showArtifacts(data.artifacts, 'Artifacts');
+        } else {
+            closeArtifactPanel();
         }
     } catch (e) {
         surfaceError(String(e), 'Project reasoning');
@@ -1150,14 +1410,8 @@ async function sendMessage() {
 
     setChatBusy(true);
 
-    // Update right-side outcomes panel
+    // A plain question gets a plain chat reply — no panel (Roadmap V2 · Epic 4).
     const askedAt = new Date().toLocaleTimeString();
-    setOutcomes(`<div class="outcome-item">
-        <div class="outcome-label">💬 Latest answer</div>
-        <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}</div>
-        <div style="color:#ccc;font-size:12px;margin-top:6px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
-        <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Thinking…</div>
-    </div>`);
 
     // Empty assistant bubble we'll mutate as tokens arrive
     const bubble = addMessage('', 'assistant', { persist: false });
@@ -1189,23 +1443,13 @@ async function sendMessage() {
             bubble.innerHTML = renderMarkdown(finalText);
             chatHistory.push({ role: 'assistant', content: finalText });
             saveHistory();
-            setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">💬 Latest answer</div>
-                <div style="color:#888;font-size:11px;margin-top:2px;">${askedAt}${activeFileContext ? ` · about <b>${escapeHtml(activeFileContext.name)}</b>` : ''}</div>
-                <div style="color:#ccc;font-size:12px;margin-top:8px;"><b>Q:</b> ${escapeHtml(userQuestion)}</div>
-                <div style="color:#eee;font-size:13px;margin-top:8px;">${renderMarkdown(finalText)}</div>
-            </div>`);
+            // Plain reply — the answer lives in the chat thread, no panel.
             activeChatController = null;
             setChatBusy(false);
         },
         onError: (err) => {
             surfaceError(err, 'Chat');
             bubble.innerHTML = `<span style="color:#ff6666;">Error: ${escapeHtml(err.message)}</span>`;
-            setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label" style="color:#cc6666;">⚠️ Chat failed</div>
-                <div style="color:#cc8888;font-size:12px;margin-top:6px;">${escapeHtml(err.message)}</div>
-                <div style="color:#888;font-size:11px;margin-top:8px;">Likely cause: DEEPSEEK_API_KEY / ANTHROPIC_API_KEY not set in .env.</div>
-            </div>`);
             activeChatController = null;
             setChatBusy(false);
         },
@@ -1520,10 +1764,11 @@ async function triggerAction(action) {
         const artifacts = data.artifacts || [];
         const panelTitle = action === 'procurement_list_generator' ? 'Procurement List' : action;
         if (artifacts.length) {
-            setOutcomes(renderArtifacts(artifacts));
+            showArtifacts(artifacts, panelTitle);
         } else {
             const panelType = action === 'procurement_list_generator' ? 'procurement' : 'raw';
             setOutcomes(renderPanels([{ type: panelType, title: panelTitle, data: result }], [], activeFileContext.name, ''));
+            openArtifactPanel(panelTitle);
         }
         addMessage(`${panelTitle} ready — see the artifacts panel.`, 'assistant');
     } catch(e) {
@@ -1539,7 +1784,7 @@ async function handleFile(input) {
     addMessage(`📎 ${file.name}`, 'user');
     document.getElementById('sendBtn').disabled = true;
     showIndicator(true);
-    setOutcomes('<p style="color:#666;">Uploading and analysing…</p>');
+    // Attaching a file runs no analysis and opens no panel (Roadmap V2 · Epic 0.3 / 4).
 
     try {
         const form = new FormData();
@@ -1548,6 +1793,30 @@ async function handleFile(input) {
         const kind = getFileKind(file.name);
         const sizeKb = (file.size / 1024).toFixed(1);
         const filePath = uploadData.file_path || uploadData.path || uploadData.filename;
+
+        // If a project is selected, also register the file under it — stores
+        // and classifies only, runs no analysis (Roadmap V2 · Epic 0.3).
+        if (activeProjectId) {
+            try {
+                const docForm = new FormData();
+                docForm.append('file', file);
+                const r = await fetch(`${API_BASE}/v1/projects/${activeProjectId}/documents`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${API_KEY}` },
+                    body: docForm,
+                });
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d.message) addMessage(d.message, 'system', { persist: false });
+                    const proj = activeProject();
+                    if (proj && d.document) {
+                        proj.documents = (proj.documents || []).concat(d.document);
+                    }
+                }
+            } catch (e) {
+                surfaceError(e, 'Attach to project', { toast: false });
+            }
+        }
 
         if (kind === 'text') {
             const fileContent = await readFileContent(file);
@@ -1744,8 +2013,24 @@ async function pollApiHealth() {
 pollApiHealth();
 setInterval(() => { if (!apiHealthOk) pollApiHealth(); }, 5000);
 
+// Delegated click handler for drive headers/files — replaces inline onclick=
+// (inline handlers inject filenames into a JS string literal, which is XSS).
+document.addEventListener('click', (e) => {
+    const toggle = e.target.closest('[data-drive-toggle]');
+    if (toggle) { toggleDrive(toggle.dataset.driveToggle); return; }
+    const file = e.target.closest('.drive-file[data-drive-id]');
+    if (file) { selectDriveFile(file.dataset.driveId, file.dataset.fileName); }
+});
+
 // Initialize drives list
 renderDrives();
+
+// Load the real project list into the sidebar (Roadmap V2 · Epic 4 Slice B).
+loadProjects();
+
+// Probe Google Drive connection state on load (Task 6) — also re-fetched
+// when the Connect Drive modal opens and after the OAuth redirect returns.
+refreshDriveStatus();
 </script>
 </body>
 </html>

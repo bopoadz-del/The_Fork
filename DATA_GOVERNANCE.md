@@ -19,6 +19,32 @@ does not claim controls that are not in the code.
 There is **no external database and no third-party data processor.** Everything
 stays on the host running the app.
 
+## Encryption at rest
+
+Uploaded document files in `DATA_DIR` can be encrypted at rest with symmetric
+encryption (Fernet — AES-128-CBC with an HMAC-SHA256 authentication tag).
+
+- **Opt-in via `DATA_ENCRYPTION_KEY`.** Set this env var to a valid Fernet key
+  to enable encryption. Generate one with:
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+- **When the key is set**, every newly uploaded document (`POST /v1/upload`,
+  `POST /v1/projects/{id}/documents`, `POST /ingest`, `POST /ingest-via-block`)
+  is written to disk as ciphertext. Reads (OCR, PDF text extraction, the
+  document engine) transparently decrypt to a short-lived temp file that is
+  removed immediately after processing.
+- **When the key is unset**, encryption is off and files are stored in the
+  clear — this is the default and matches the platform's original behaviour.
+- **Backward compatible.** Files written before encryption was enabled stay
+  readable: the reader detects whether a file on disk is actually a Fernet
+  token and passes legacy plaintext files through untouched. Enabling the key
+  does **not** retroactively encrypt or break existing files.
+- **Scope.** Encryption covers document *files*. The SQLite metadata DB
+  (`projects.db`), `audit.log`, and `custom_document_types.json` are not
+  encrypted by this feature.
+- **Key custody.** The key is held only in the `DATA_ENCRYPTION_KEY`
+  environment variable. If it is lost, encrypted documents cannot be
+  recovered. Store and rotate it outside the application.
+
 ## Retention
 
 - Default: documents are kept **indefinitely**.
@@ -52,9 +78,6 @@ append-only — entries are never rewritten.
 
 ## Known limitations (not yet implemented)
 
-- **Encryption at rest** is not enabled. Files in `DATA_DIR` are stored in the
-  clear. The `cryptography` dependency is installed; enabling at-rest
-  encryption is tracked as follow-up work.
 - No per-user access control beyond the API key (no row-level ownership).
 - On the Render free tier there is no persistent disk — data placed in a temp
   directory does not survive a redeploy. Use a persistent volume for real data.

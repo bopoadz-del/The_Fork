@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core import workflows as store
-from app.dependencies import require_api_key
+from app.dependencies import require_user
 from app.routers.chain import ChainRequest, ChainStep, chain_execute
 
 router = APIRouter()
@@ -27,7 +27,7 @@ class RunWorkflowRequest(BaseModel):
 
 @router.post("/v1/workflows", status_code=201)
 async def save_workflow(
-    req: SaveWorkflowRequest, auth: dict = Depends(require_api_key)
+    req: SaveWorkflowRequest, auth: dict = Depends(require_user)
 ):
     """Save a chain of block steps as a named, re-runnable workflow."""
     if not req.name.strip():
@@ -37,20 +37,24 @@ async def save_workflow(
     for s in req.steps:
         if "block" not in s:
             raise HTTPException(400, "Every step needs a 'block'")
-    return store.save_workflow(req.name.strip(), req.steps, req.project_id)
+    return store.save_workflow(
+        req.name.strip(), req.steps, req.project_id, owner_id=auth["user_id"]
+    )
 
 
 @router.get("/v1/workflows")
 async def list_workflows(
-    project_id: Optional[str] = None, auth: dict = Depends(require_api_key)
+    project_id: Optional[str] = None, auth: dict = Depends(require_user)
 ):
-    """List saved workflows (optionally filtered to one project)."""
-    return {"workflows": store.list_workflows(project_id)}
+    """List the caller's saved workflows (optionally filtered to one project)."""
+    return {
+        "workflows": store.list_workflows(project_id, owner_id=auth["user_id"])
+    }
 
 
 @router.get("/v1/workflows/{workflow_id}")
-async def get_workflow(workflow_id: str, auth: dict = Depends(require_api_key)):
-    w = store.get_workflow(workflow_id)
+async def get_workflow(workflow_id: str, auth: dict = Depends(require_user)):
+    w = store.get_workflow(workflow_id, owner_id=auth["user_id"])
     if not w:
         raise HTTPException(404, f"Workflow '{workflow_id}' not found")
     return w
@@ -58,9 +62,9 @@ async def get_workflow(workflow_id: str, auth: dict = Depends(require_api_key)):
 
 @router.delete("/v1/workflows/{workflow_id}")
 async def delete_workflow(
-    workflow_id: str, auth: dict = Depends(require_api_key)
+    workflow_id: str, auth: dict = Depends(require_user)
 ):
-    if not store.delete_workflow(workflow_id):
+    if not store.delete_workflow(workflow_id, owner_id=auth["user_id"]):
         raise HTTPException(404, f"Workflow '{workflow_id}' not found")
     return {"status": "deleted", "id": workflow_id}
 
@@ -69,10 +73,10 @@ async def delete_workflow(
 async def run_workflow(
     workflow_id: str,
     req: RunWorkflowRequest,
-    auth: dict = Depends(require_api_key),
+    auth: dict = Depends(require_user),
 ):
     """Re-run a saved workflow through the chain orchestrator."""
-    w = store.get_workflow(workflow_id)
+    w = store.get_workflow(workflow_id, owner_id=auth["user_id"])
     if not w:
         raise HTTPException(404, f"Workflow '{workflow_id}' not found")
     try:

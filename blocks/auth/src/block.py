@@ -53,7 +53,7 @@ class AuthBlock(LegoBlock):
     
     async def initialize(self):
         """Init auth system"""
-        print(f"🔐 Auth Block initialized")
+        print("[auth] Auth Block initialized")
         print(f"   Roles: {list(Role._value2member_map_.keys())}")
         print(f"   Rate limits: PRO={self.rate_limits[Role.PRO]['requests']}/hour")
         

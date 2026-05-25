@@ -125,10 +125,12 @@ def test_memory_api_404_for_missing_project(client):
 def test_chat_injects_project_memory():
     """Roadmap V2 · Epic 4 Slice B — chat scoped to a project sees its memory."""
     from app.routers.chat import _with_project_memory
-    proj = store.create_project("Chat Memory Test")
+    store.init_db()
+    proj = store.create_project("Chat Memory Test")  # owner defaults to "system"
     store.set_fact(proj["id"], "ld_rate", "0.1%/day")
-    out = _with_project_memory("what is the LD rate?", proj["id"])
+    # The project owner sees its memory injected into the prompt.
+    out = _with_project_memory("what is the LD rate?", proj["id"], "system")
     assert "0.1%/day" in out
     assert "what is the LD rate?" in out
     # no project scope → prompt unchanged
-    assert _with_project_memory("hi", None) == "hi"
+    assert _with_project_memory("hi", None, "system") == "hi"

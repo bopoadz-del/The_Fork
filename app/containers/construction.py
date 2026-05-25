@@ -97,33 +97,6 @@ class ConstructionContainer(UniversalContainer):
     }
 
     # ─────────────────────────────────────────────────────────────────
-    # ROUTING TABLE
-    # ─────────────────────────────────────────────────────────────────
-    async def route(self, action: str, input_data: Any, params: Dict) -> Dict:
-        routes = {
-            "process_document": self.process_document,
-            "extract_quantities": self.extract_quantities,
-            "analyze_spec": self.analyze_spec_section,
-            "cost_estimate": self.generate_cost_estimate,
-            "schedule_risk": self.analyze_schedule_risk,
-            "contract_review": self.review_contract_clause,
-            "safety_audit": self.safety_compliance_audit,
-            "carbon_report": self.generate_carbon_report,
-            "procurement": self.procurement_analysis,
-            "status": self._status,
-        }
-        handler = routes.get(action, self._status)
-        return await handler(input_data, params)
-
-    async def _status(self, input_data: Any, params: Dict) -> Dict:
-        return {
-            "status": "success",
-            "container": self.name,
-            "version": self.version,
-            "actions_available": list(self.route.__code__.co_consts[1].keys()) if hasattr(self.route.__code__, 'co_consts') else []
-        }
-
-    # ─────────────────────────────────────────────────────────────────
     # DOCUMENT PROCESSING
     # ─────────────────────────────────────────────────────────────────
     
@@ -388,20 +361,6 @@ class ConstructionContainer(UniversalContainer):
         file_path = data.get("file_path") or p.get("file_path")
         return await self._process_image(file_path, p)
     
-    def _extract_drawing_number(self, filename: str) -> str:
-        """Extract drawing number from filename (e.g., 'A-101-plan.pdf' -> 'A-101')."""
-        import re
-        # Look for patterns like A-101, ARCH-001, C-501, etc.
-        match = re.search(r'([A-Z]+-?\d{3,})', filename.upper())
-        return match.group(1) if match else "Unknown"
-    
-    def _extract_revision(self, filename: str) -> str:
-        """Extract revision from filename (e.g., 'plan-rev-A.pdf' -> 'A')."""
-        import re
-        # Look for rev patterns
-        match = re.search(r'[Rr][Ee][Vv][-_]?(\w)', filename)
-        return match.group(1) if match else "A"
-    
     async def _download_file(self, url: str) -> str:
         import uuid
         import httpx
@@ -453,52 +412,6 @@ class ConstructionContainer(UniversalContainer):
         m = re.search(r'[Rr][Ee]?[Vv]?\s*([A-Z0-9])', filename)
         return m.group(1).upper() if m else ""
 
-    def _extract_measurements_advanced(self, raw_text: str, text_dict: Dict) -> List[Dict]:
-        return []
-
-    def _extract_tables_advanced(self, page) -> List[Dict]:
-        return []
-
-    def _extract_annotations(self, page) -> List[Dict]:
-        return []
-
-    def _extract_specs_advanced(self, raw_text: str) -> List[Dict]:
-        return []
-
-    def _detect_disciplines(self, raw_text: str) -> List[str]:
-        disciplines = []
-        raw = raw_text.lower()
-        if any(k in raw for k in ["structural", "rebar", "concrete", "foundation"]):
-            disciplines.append("Structural")
-        if any(k in raw for k in ["architectural", "elevation", "finish", "floor plan"]):
-            disciplines.append("Architectural")
-        if any(k in raw for k in ["mechanical", "hvac", "duct", "air"]):
-            disciplines.append("Mechanical")
-        if any(k in raw for k in ["electrical", "lighting", "power", "circuit"]):
-            disciplines.append("Electrical")
-        if any(k in raw for k in ["plumbing", "pipe", "drain", "water"]):
-            disciplines.append("Plumbing")
-        if not disciplines:
-            disciplines.append("General")
-        return disciplines
-
-    def _extract_title_block(self, sheet_data: Dict) -> Dict:
-        return {}
-
-    def _extract_scale(self, raw_text: str) -> Optional[str]:
-        import re
-        m = re.search(r'(\d+\s*[:/]\s*\d+)', raw_text)
-        return m.group(1) if m else None
-
-    def _calculate_quantities(self, measurements: List[Dict]) -> Dict:
-        return {}
-
-    def _estimate_costs(self, quantities: Dict) -> Dict:
-        return {}
-
-    def _estimate_carbon(self, quantities: Dict) -> Dict:
-        return {}
-
     def _calculate_confidence(self, result: Dict) -> Dict:
         """Measured extraction confidence (Roadmap V2 · Epic 1).
 
@@ -514,9 +427,6 @@ class ConstructionContainer(UniversalContainer):
             ],
             ocr_quality=result.get("ocr_quality"),
         )
-
-    async def _detect_risks_from_drawing(self, result: Dict) -> List[Dict]:
-        return []
 
     # CONTRACT MANAGEMENT
     async def process_contract(self, input_data: Any, params: Dict) -> Dict:
@@ -689,7 +599,7 @@ class ConstructionContainer(UniversalContainer):
         
         ext = Path(file_path).suffix.lower()
         if ext == '.xer':
-            schedule_data = self._parse_xer_file(file_path)
+            schedule_data = await self._parse_xer_file(file_path)
         elif ext == '.xml':
             schedule_data = self._parse_xml_schedule(file_path)
         else:
@@ -703,7 +613,7 @@ class ConstructionContainer(UniversalContainer):
         delay_analysis = None
         if baseline_file:
             if Path(baseline_file).suffix.lower() == '.xer':
-                baseline_data = self._parse_xer_file(baseline_file)
+                baseline_data = await self._parse_xer_file(baseline_file)
             else:
                 baseline_data = self._parse_xml_schedule(baseline_file)
             if baseline_data.get("status") != "error":
@@ -737,61 +647,90 @@ class ConstructionContainer(UniversalContainer):
             "detailed_activities": schedule_data.get("activities", [])[:50] if p.get("include_details") else None
         }
     
-    def _parse_xer_file(self, file_path: str) -> Dict:
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-            
-            sections = {}
-            current_section = None
-            headers = []
-            
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith('%T'):
-                    current_section = line[2:].strip()
-                    sections[current_section] = []
-                    headers = []
-                elif line.startswith('%F') and current_section:
-                    headers = line[2:].split('\t')
-                elif line.startswith('%R') and current_section and headers:
-                    values = line[2:].split('\t')
-                    record = dict(zip(headers, values))
-                    sections[current_section].append(record)
-            
-            project_info = sections.get('PROJECT', [{}])[0]
-            activities = sections.get('TASK', [])
-            relationships = sections.get('TASKPRED', [])
-            
-            structured_activities = []
-            for act in activities:
-                structured_activities.append({
-                    "id": act.get("task_id", ""),
-                    "name": act.get("task_name", ""),
-                    "start": act.get("act_start_date", act.get("early_start_date", "")),
-                    "finish": act.get("act_end_date", act.get("early_end_date", "")),
-                    "duration": act.get("target_drtn_hr_cnt", 0),
-                    "total_float": float(act.get("total_float_hr_cnt", 0)) / 8,
-                    "free_float": float(act.get("free_float_hr_cnt", 0)) / 8,
-                    "percent_complete": float(act.get("act_work_qty", 0)) / max(1, float(act.get("target_work_qty", 1))) * 100,
-                    "wbs": act.get("wbs_id", ""),
-                    "predecessors": [r.get("pred_task_id") for r in relationships if r.get("task_id") == act.get("task_id")],
-                    "successors": [r.get("task_id") for r in relationships if r.get("pred_task_id") == act.get("task_id")],
-                })
-            
+    def _resolve_block(self, name: str):
+        """Resolve a block by name — dependency injection first, registry fallback.
+
+        Returns the block instance, or None if it is unavailable from both
+        the injected dependencies and the global BLOCK_REGISTRY.
+        """
+        block = self.get_dep(name)
+        if block is None:
+            from app.blocks import BLOCK_REGISTRY
+            block_cls = BLOCK_REGISTRY.get(name)
+            block = block_cls() if block_cls else None
+        return block
+
+    def _get_primavera_parser_block(self):
+        """Resolve the primavera_parser block — dependency injection first, registry fallback."""
+        return self._resolve_block("primavera_parser")
+
+    async def _parse_xer_file(self, file_path: str) -> Dict:
+        """Parse a Primavera P6 .xer schedule by delegating to the primavera_parser block.
+
+        The block returns a nested shape ({schedule_data, critical_path, milestones,
+        activities, wbs, resources}) with per-activity keys like ``total_float_days``
+        and ``original_duration_days``. Downstream container logic (``_calculate_cpm``,
+        ``_analyze_delays``, ``_extract_milestones``) expects a FLAT per-activity shape
+        with keys ``id``/``name``/``start``/``finish``/``duration``/``total_float``/
+        ``percent_complete``. This method runs the block and adapts its output to that
+        flat shape. A missing or bad file propagates the block's error honestly — no
+        fabricated schedule data.
+        """
+        block = self._get_primavera_parser_block()
+        if block is None:
             return {
-                "status": "success",
-                "file_type": "xer",
-                "project_id": project_info.get("proj_id", ""),
-                "project_name": project_info.get("proj_short_name", ""),
-                "data_date": project_info.get("last_recalc_date", ""),
-                "activities": structured_activities
+                "status": "error",
+                "error": "primavera_parser block unavailable — cannot parse .xer schedule",
             }
-            
+
+        try:
+            result = await block.process({"file_path": file_path})
         except Exception as e:
             return {"status": "error", "error": f"XER parse failed: {str(e)}"}
+
+        if not isinstance(result, dict) or result.get("status") == "error":
+            # Propagate the block's error result honestly.
+            return result if isinstance(result, dict) else {
+                "status": "error", "error": "primavera_parser returned no result"
+            }
+
+        # Adapter: block's nested per-activity dicts -> FLAT shape the container needs.
+        # Block keys      -> flat keys
+        #   id             -> id
+        #   name           -> name
+        #   start          -> start
+        #   finish         -> finish
+        #   original_duration_days (days) -> duration (HOURS; *8 to preserve the
+        #       hour-semantics _calculate_cpm assumes when it divides by 8)
+        #   total_float_days -> total_float (already in days)
+        #   percent_complete -> percent_complete
+        flat_activities = []
+        for a in result.get("activities", []):
+            flat_activities.append({
+                "id": a.get("id", ""),
+                "name": a.get("name", ""),
+                "start": a.get("start") or "",
+                "finish": a.get("finish") or "",
+                "duration": (a.get("original_duration_days") or 0) * 8,
+                "total_float": a.get("total_float_days", 999),
+                "free_float": a.get("total_float_days", 0),
+                "percent_complete": a.get("percent_complete", 0),
+                "wbs": a.get("wbs_id", ""),
+                "type": a.get("type", ""),
+                "status": a.get("status", ""),
+            })
+
+        schedule_meta = result.get("schedule_data", {}) or {}
+        project_meta = schedule_meta.get("project", {}) or {}
+
+        return {
+            "status": "success",
+            "file_type": "xer",
+            "project_id": project_meta.get("id", ""),
+            "project_name": project_meta.get("name", ""),
+            "data_date": project_meta.get("planned_start") or "",
+            "activities": flat_activities,
+        }
     
     def _parse_xml_schedule(self, file_path: str) -> Dict:
         try:
@@ -991,113 +930,23 @@ class ConstructionContainer(UniversalContainer):
             return 0
 
     # SPECIFICATIONS (CSI MasterFormat)
-    async def process_specification_full(self, input_data: Any, params: Dict) -> Dict:
-        data = input_data if isinstance(input_data, dict) else {}
-        p = params or {}
-        file_path = data.get("file_path") or p.get("file_path")
-        extracted_text = data.get("extracted_text") or p.get("extracted_text") or ""
-        division_filter = p.get("division")
+    def _get_spec_analyzer_block(self):
+        """Resolve the spec_analyzer block — dependency injection first, registry fallback."""
+        return self._resolve_block("spec_analyzer")
 
-        if not file_path and not extracted_text:
-            return {
-                "status": "success",
-                "demo_mode": True,
-                "action": "specification_analysis",
-                "file_name": "sample_spec.pdf",
-                "divisions_found": [3, 4, 5, 7, 8, 9, 21, 22, 23, 26, 28, 31, 32],
-                "total_sections_analyzed": 13,
-                "spec_items": [
-                    {"category": "Division 03", "key": "Concrete", "value": "CSI Div 03 — Reinforced Concrete: C30/37 mix design, 28-day compressive strength, max w/c ratio 0.50", "section": "structural", "confidence": 0.95},
-                    {"category": "Division 04", "key": "Masonry", "value": "CSI Div 04 — Masonry: External cavity wall, inner leaf dense aggregate block, outer leaf facing brick", "section": "envelope", "confidence": 0.92},
-                    {"category": "Division 05", "key": "Metals", "value": "CSI Div 05 — Structural Steelwork: Grade S355 JR, hot-dip galvanised connections, composite metal deck", "section": "structural", "confidence": 0.94},
-                    {"category": "Division 07", "key": "Thermal & Moisture", "value": "CSI Div 07 — Waterproofing: Single-ply TPO membrane, min 1.5mm thickness, 20-year warranty", "section": "envelope", "confidence": 0.91},
-                    {"category": "Division 08", "key": "Openings", "value": "CSI Div 08 — Curtain Wall: Aluminium unitised system, thermally broken, U-value ≤1.6 W/m²K, CWCT standard", "section": "envelope", "confidence": 0.93},
-                    {"category": "Division 09", "key": "Finishes", "value": "CSI Div 09 — Finishes: Raised access floor 600×600, gypsum board partitions, acoustic ceiling tiles", "section": "interiors", "confidence": 0.90},
-                    {"category": "Division 23", "key": "HVAC", "value": "CSI Div 23 — HVAC: VAV system, fresh air min 10 l/s/person, ASHRAE 90.1 energy compliance", "section": "mep", "confidence": 0.88},
-                    {"category": "Division 26", "key": "Electrical", "value": "CSI Div 26 — Electrical: LV distribution, metered tenant circuits, LED lighting min 400 lux open office", "section": "mep", "confidence": 0.89},
-                ],
-                "materials_referenced": ["concrete", "steel", "glass", "aluminum", "insulation", "membrane"],
-                "methods_specified": ["in-situ concrete", "precast", "site welding", "bolted connections"],
-                "testing_requirements": ["28-day cube test", "weld inspection", "air permeability test", "thermographic survey"],
-                "qa_qc_requirements": ["ITP submission", "material approval", "mock-up panel", "commissioning"],
-                "recommendations": [
-                    "Issue RFI for concrete mix design approval prior to pour",
-                    "Pre-order long-lead curtain wall units — 16-week lead time",
-                    "Schedule mock-up panel inspection at week 4 of construction",
-                ],
-            }
+    @staticmethod
+    def _split_csi_divisions(full_text: str, division_filter=None) -> tuple:
+        """CSI MasterFormat division-splitting (container-only — the block has no equivalent).
 
-        if not file_path:
-            # Parse from extracted_text only
-            return self._process_spec_from_text(extracted_text, division_filter)
-
-        try:
-            import fitz
-            doc = fitz.open(file_path)
-            full_text = ""
-            for page in doc:
-                full_text += page.get_text()
-            doc.close()
-        except Exception as e:
-            return {"status": "error", "error": f"Could not read spec file: {str(e)}"}
-        
+        Groups raw spec text into Divisions 01–49 by leading 2-digit codes.
+        Returns (detected_divisions, division_spec_items).
+        """
         divisions = {i: [] for i in range(1, 50)}
         current_division = None
-        lines = full_text.split('\n')
-        
-        for line in lines:
-            division_match = re.match(r'^(\d{2})\s{3,}', line)
-            if division_match:
-                div_num = int(division_match.group(1))
-                if 1 <= div_num <= 49:
-                    current_division = div_num
-                    divisions[current_division].append(line.strip())
-            elif current_division and line.strip():
-                divisions[current_division].append(line.strip())
-        
-        detected_divisions = [i for i, content in divisions.items() if content]
-        
-        spec_items = []
-        for div_num, content in divisions.items():
-            if not content:
-                continue
-            if division_filter and str(div_num) != str(division_filter):
-                continue
-            full_content = '\n'.join(content)
-            materials = self._extract_materials(full_content)
-            methods = self._extract_methods(full_content)
-            testing = self._extract_testing_requirements(full_content)
-            qa_qc = self._extract_qaqc(full_content)
-            
-            spec_items.append(SpecItem(
-                category=f"Division {div_num:02d}",
-                key="content",
-                value=f"{len(content)} paragraphs",
-                section="general",
-                confidence=0.9
-            ))
-        
-        return {
-            "status": "success",
-            "action": "specification_analysis",
-            "file_name": Path(file_path).name,
-            "divisions_found": detected_divisions,
-            "division_filter_applied": division_filter,
-            "total_sections_analyzed": len(spec_items),
-            "spec_items": [asdict(item) for item in spec_items],
-            "materials_referenced": materials if 'materials' in dir() else [],
-            "methods_specified": methods if 'methods' in dir() else [],
-            "testing_requirements": testing if 'testing' in dir() else [],
-            "qa_qc_requirements": qa_qc if 'qa_qc' in dir() else []
-        }
-    
-    async def analyze_spec_section(self, input_data: Any, params: Dict) -> Dict:
-        return await self.process_specification_full(input_data, params)
-
-    def _process_spec_from_text(self, text: str, division_filter=None) -> Dict:
-        divisions = {i: [] for i in range(1, 50)}
-        current_division = None
-        for line in text.split('\n'):
+        for line in full_text.split('\n'):
+            # \s{2,} is intentional and unified across PDF and extracted-text
+            # inputs: the old file-path-only path used \s{3,}, but \s{2,} is the
+            # more permissive of the two and matches everything \s{3,} would.
             m = re.match(r'^(\d{2})\s{2,}', line)
             if m:
                 div_num = int(m.group(1))
@@ -1106,73 +955,220 @@ class ConstructionContainer(UniversalContainer):
                     divisions[current_division].append(line.strip())
             elif current_division and line.strip():
                 divisions[current_division].append(line.strip())
+
         detected = [i for i, c in divisions.items() if c]
-        spec_items = []
-        full_text_lower = text.lower()
-        materials = self._extract_materials(text)
+        division_items = []
         for div_num, content in divisions.items():
             if not content:
                 continue
             if division_filter and str(div_num) != str(division_filter):
                 continue
-            spec_items.append({"category": f"Division {div_num:02d}", "key": "content", "value": f"{len(content)} paragraphs extracted", "section": "general", "confidence": 0.85})
+            division_items.append({
+                "category": f"Division {div_num:02d}",
+                "key": "content",
+                "value": f"{len(content)} paragraphs",
+                "section": "general",
+                "confidence": 0.9,
+            })
+        return detected, division_items
+
+    @staticmethod
+    def _topup_keyword_matches(full_text: str, keywords: list, existing: list = None) -> list:
+        """Scan full_text for keyword hits and UNION with block-derived results.
+
+        Restores the coverage of the old _extract_testing_requirements /
+        _extract_qaqc helpers, whose bare-word matching was broader than the
+        spec_analyzer block's compliance keyword/pattern sets. For each keyword
+        found (word-boundary, case-insensitive) produces a useful entry: the
+        matched keyword plus a short surrounding-context snippet. Results are
+        merged with `existing` (the block's flags) and deduplicated, preserving
+        the block's entries first.
+        """
+        merged = list(existing or [])
+        seen = {str(e).strip().lower() for e in merged}
+        text = full_text or ""
+        for kw in keywords:
+            # word-boundary, case-insensitive — \b around the literal keyword
+            m = re.search(r'\b' + re.escape(kw) + r'\b', text, re.IGNORECASE)
+            if not m:
+                continue
+            start = max(0, m.start() - 40)
+            end = min(len(text), m.end() + 40)
+            snippet = " ".join(text[start:end].split())
+            entry = f"{kw}: {snippet}" if snippet else kw
+            if entry.strip().lower() not in seen:
+                seen.add(entry.strip().lower())
+                merged.append(entry)
+        return merged
+
+    async def process_specification_full(self, input_data: Any, params: Dict) -> Dict:
+        """Analyse a project specification.
+
+        Delegates genuine grade / material / compliance extraction to the
+        spec_analyzer block — no demo mode, no fabricated divisions. The CSI
+        MasterFormat division-splitting layer (which the block has no equivalent
+        for) stays here in the container.
+        """
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        file_path = data.get("file_path") or p.get("file_path")
+        extracted_text = data.get("extracted_text") or p.get("extracted_text") or ""
+        division_filter = p.get("division")
+
+        if not file_path and not extracted_text:
+            return {
+                "status": "error",
+                "action": "specification_analysis",
+                "error": "No specification provided — pass file_path (PDF) or extracted_text",
+            }
+
+        block = self._get_spec_analyzer_block()
+        if block is None:
+            return {
+                "status": "error",
+                "action": "specification_analysis",
+                "error": "spec_analyzer block unavailable — cannot extract grades/materials/compliance",
+            }
+
+        # Delegate grade/material/compliance extraction to the block.
+        block_input = {"file_path": file_path} if file_path else {"text": extracted_text}
+        result = await block.process(block_input, p)
+        if not isinstance(result, dict) or result.get("status") != "success":
+            err = result.get("error") if isinstance(result, dict) else "spec_analyzer block failed"
+            return {
+                "status": "error",
+                "action": "specification_analysis",
+                "error": err or "spec_analyzer block failed",
+            }
+
+        grade_requirements = result.get("grade_requirements", []) or []
+        material_specs = result.get("material_specs", []) or []
+        compliance_flags = result.get("compliance_flags", []) or []
+
+        # CSI division-splitting — container-only layer, the block has no equivalent.
+        # The block already extracted PDF text; re-read it here only for splitting.
+        full_text = extracted_text
+        if file_path:
+            try:
+                import fitz
+                doc = fitz.open(file_path)
+                full_text = "".join(page.get_text() for page in doc)
+                doc.close()
+            except Exception as e:
+                return {"status": "error", "action": "specification_analysis",
+                        "error": f"Could not read spec file for division-splitting: {str(e)}"}
+
+        detected_divisions, division_items = self._split_csi_divisions(full_text, division_filter)
+
+        # Map the block's output into the spec_items shape callers expect:
+        # one item per CSI division, plus one item per extracted grade / material.
+        spec_items = list(division_items)
+        for g in grade_requirements:
+            spec_items.append({
+                "category": "Grade Requirement",
+                "key": g.get("type", "grade"),
+                "value": g.get("value", ""),
+                "section": g.get("context", ""),
+                "confidence": 0.9,
+            })
+        for m in material_specs:
+            spec_items.append({
+                "category": "Material Spec",
+                "key": m.get("material_type", "material"),
+                "value": m.get("specification", ""),
+                "section": "materials",
+                "confidence": 0.85,
+            })
+
+        # Derive testing / QA-QC response keys from the block's compliance flags
+        # (the block's compliance_flags supersede the old binary sentinel helpers).
+        testing_flags = {"test_certificate"}
+        qaqc_flags = {"shop_drawing", "mockup_required", "submittal", "material_approval", "approval_required"}
+        testing_requirements = [
+            f.get("context", f.get("keyword", "")) for f in compliance_flags
+            if f.get("flag_type") in testing_flags
+        ]
+        qa_qc_requirements = [
+            f.get("context", f.get("keyword", "")) for f in compliance_flags
+            if f.get("flag_type") in qaqc_flags
+        ]
+
+        # Top-up pass over full_text — the block's compliance keyword/pattern sets
+        # are narrower than the old _extract_testing_requirements / _extract_qaqc
+        # helpers, which fired on bare words. Restore that coverage and UNION it
+        # with the block's richer flags (deduplicated, order-preserving).
+        testing_requirements = self._topup_keyword_matches(
+            full_text, ["test", "sample", "lab"], existing=testing_requirements,
+        )
+        qa_qc_requirements = self._topup_keyword_matches(
+            full_text, ["inspection", "witness", "hold point", "hold-point"],
+            existing=qa_qc_requirements,
+        )
+
+        # materials_referenced: UNION the block-derived material types with a
+        # substring pass over the old _extract_materials 10-keyword set, since the
+        # block's material_specs drop brick/block/glass/aluminum/timber. Deduplicated.
+        material_keywords = [
+            "concrete", "steel", "rebar", "brick", "block", "glass",
+            "aluminum", "timber", "insulation", "membrane",
+        ]
+        materials_seen = set()
+        materials_referenced = []
+        for m in material_specs:
+            mt = m.get("material_type", "")
+            if mt and mt.lower() not in materials_seen:
+                materials_seen.add(mt.lower())
+                materials_referenced.append(mt)
+        lowered_text = full_text.lower()
+        for kw in material_keywords:
+            if kw in lowered_text and kw not in materials_seen:
+                materials_seen.add(kw)
+                materials_referenced.append(kw)
+        materials_referenced.sort()
+
         return {
             "status": "success",
             "action": "specification_analysis",
-            "file_name": "extracted_text",
-            "divisions_found": detected or [3, 5, 9],
-            "total_sections_analyzed": len(spec_items) or 1,
-            "spec_items": spec_items or [{"category": "General", "key": "spec_text", "value": text[:200], "section": "general", "confidence": 0.7}],
-            "materials_referenced": materials,
-            "methods_specified": self._extract_methods(text),
-            "testing_requirements": self._extract_testing_requirements(text),
-            "qa_qc_requirements": [],
+            "file_name": Path(file_path).name if file_path else "extracted_text",
+            "divisions_found": detected_divisions,
+            "division_filter_applied": division_filter,
+            "total_sections_analyzed": len(spec_items),
+            "spec_items": spec_items,
+            "grade_requirements": grade_requirements,
+            "material_specs": material_specs,
+            "compliance_flags": compliance_flags,
+            "materials_referenced": materials_referenced,
+            "methods_specified": [],
+            "testing_requirements": testing_requirements,
+            "qa_qc_requirements": qa_qc_requirements,
+            "standards_referenced": result.get("standards_referenced", []),
         }
 
-    def _extract_materials(self, text: str) -> List[str]:
-        materials = []
-        material_keywords = ["concrete", "steel", "rebar", "brick", "block", "glass", "aluminum", "timber", "insulation", "membrane"]
-        for kw in material_keywords:
-            if kw in text.lower():
-                materials.append(kw)
-        return materials
-    
-    def _extract_methods(self, text: str) -> List[str]:
-        return []
-    
-    def _extract_testing_requirements(self, text: str) -> List[str]:
-        requirements = []
-        if re.search(r'\btest\b|\bsample\b|\blab\b', text, re.IGNORECASE):
-            requirements.append("Testing requirements found")
-        return requirements
-    
-    def _extract_qaqc(self, text: str) -> List[str]:
-        qa = []
-        if re.search(r'\binspection\b|\bwitness\b|\bhold point\b', text, re.IGNORECASE):
-            qa.append("Inspection/witness requirements")
-        return qa
+    async def analyze_spec_section(self, input_data: Any, params: Dict) -> Dict:
+        return await self.process_specification_full(input_data, params)
 
-    # COST ESTIMATION (RSMeans-style)
+    # COST ESTIMATION — per-item rates delegated to the historical_benchmark block;
+    # overhead / profit / contingency markup aggregation stays container-only.
     async def generate_cost_estimate(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
-        
+
         quantities = p.get("quantities", data.get("quantities", {}))
         location = p.get("location", "US National Average")
         project_type = p.get("project_type", "general_building")
-        
-        rsmeans_data = self._get_rsmeans_data()
-        loc_factors = rsmeans_data.get("location_factors", {})
-        # case-insensitive location lookup
-        loc_key = next(
-            (k for k in loc_factors if k.lower() == location.lower()),
-            next((k for k in loc_factors if location.lower() in k.lower() or k.lower() in location.lower()), None)
-        )
-        location_factor = loc_factors.get(loc_key, 1.0) if loc_key else 1.0
+
+        block = self._get_historical_benchmark_block()
+        if block is None:
+            return {
+                "status": "error",
+                "action": "cost_estimate",
+                "error": "historical_benchmark block unavailable — cannot benchmark unit rates",
+            }
 
         _UNIT_SUFFIXES = {"_m3": "m3", "_m2": "m2", "_kg": "kg", "_lm": "lm", "_ea": "ea", "_nr": "nr"}
 
         line_items = []
+        unpriced_items = []
         for item_name, qty_data in quantities.items():
             if isinstance(qty_data, dict):
                 quantity = qty_data.get("quantity", 0)
@@ -1186,10 +1182,38 @@ class ConstructionContainer(UniversalContainer):
                         unit = u
                         break
 
-            base_rate = self._lookup_unit_cost(item_name, unit, rsmeans_data)
-            adjusted_rate = base_rate * location_factor
-            total = quantity * adjusted_rate
-            
+            result = await block.process(
+                {},
+                {
+                    "action": "lookup",
+                    "item": item_name,
+                    "unit": unit,
+                    "location": location,
+                    "project_type": project_type,
+                },
+            )
+            if not isinstance(result, dict) or result.get("status") != "success":
+                # No benchmark for this item — record honestly, do not fabricate a rate.
+                unpriced_items.append(item_name)
+                line_items.append({
+                    "item": item_name,
+                    "quantity": quantity,
+                    "unit": unit,
+                    "base_rate": None,
+                    "adjusted_rate": None,
+                    "location_factor": None,
+                    "total": None,
+                    "note": "no benchmark rate found — excluded from totals",
+                })
+                continue
+
+            rates = result.get("rates", {})
+            factors = result.get("factors", {})
+            base_rate = rates.get("base_usd")
+            adjusted_rate = rates.get("adjusted_usd")
+            location_factor = factors.get("location_factor", 1.0)
+            total = (quantity or 0) * (adjusted_rate or 0)
+
             line_items.append({
                 "item": item_name,
                 "quantity": quantity,
@@ -1197,21 +1221,22 @@ class ConstructionContainer(UniversalContainer):
                 "base_rate": base_rate,
                 "adjusted_rate": adjusted_rate,
                 "location_factor": location_factor,
-                "total": round(total, 2)
+                "total": round(total, 2),
             })
-        
-        subtotal = sum(item["total"] for item in line_items)
+
+        subtotal = sum(item["total"] for item in line_items if item["total"] is not None)
         overhead = subtotal * 0.10
         profit = subtotal * 0.08
         contingency = subtotal * 0.05
         total = subtotal + overhead + profit + contingency
-        
+
         return {
             "status": "success",
             "action": "cost_estimate",
             "location": location,
-            "location_factor": location_factor,
+            "project_type": project_type,
             "line_items": line_items,
+            "unpriced_items": unpriced_items,
             "summary": {
                 "subtotal": round(subtotal, 2),
                 "overhead": round(overhead, 2),
@@ -1222,190 +1247,38 @@ class ConstructionContainer(UniversalContainer):
             "confidence": "medium"
         }
     
-    def _get_rsmeans_data(self) -> Dict:
-        return {
-            "unit_costs": {
-                # Structural
-                "concrete_m3": 150.0,
-                "concrete_grade_c30_m3": 165.0,
-                "concrete_grade_c40_m3": 185.0,
-                "rebar_kg": 1.8,
-                "steel_kg": 2.5,
-                "structural_steel_kg": 3.2,
-                "formwork_m2": 45.0,
-                "formwork_soffit_m2": 55.0,
-                # Masonry
-                "block_m2": 35.0,
-                "masonry_m2": 65.0,
-                "brick_m2": 75.0,
-                # Envelope
-                "glazing_m2": 180.0,
-                "curtain_wall_m2": 420.0,
-                "cladding_m2": 210.0,
-                "roofing_m2": 95.0,
-                "waterproofing_m2": 40.0,
-                # Finishes
-                "finishes_m2": 55.0,
-                "tiling_m2": 85.0,
-                "flooring_m2": 70.0,
-                "painting_m2": 18.0,
-                "plaster_m2": 28.0,
-                "drylining_m2": 45.0,
-                "suspended_ceiling_m2": 60.0,
-                # MEP
-                "hvac_m2": 120.0,
-                "electrical_m2": 80.0,
-                "plumbing_m2": 65.0,
-                "fire_protection_m2": 35.0,
-                # Groundworks
-                "excavation_m3": 22.0,
-                "backfill_m3": 18.0,
-                "piling_lm": 280.0,
-                "drainage_lm": 95.0,
-                # Misc
-                "insulation_m2": 30.0,
-                "door_ea": 850.0,
-                "window_ea": 1200.0,
-                "lift_ea": 85000.0,
-                "scaffold_m2": 12.0,
+    def _get_historical_benchmark_block(self):
+        """Resolve the historical_benchmark block — DI first, registry fallback."""
+        return self._resolve_block("historical_benchmark")
+
+    async def _lookup_unit_cost(
+        self, item_name: str, unit: str,
+        location: str = "US National Average",
+        project_type: str = "general_building",
+    ):
+        """Delegate per-item unit-rate lookup to the historical_benchmark block.
+
+        Returns the location/project-adjusted USD rate (rates.adjusted_usd) as a
+        float, or None when the block has no benchmark for the item. No fabricated
+        fallback — an unknown item honestly yields None.
+        """
+        block = self._get_historical_benchmark_block()
+        if block is None:
+            return None
+
+        result = await block.process(
+            {},
+            {
+                "action": "lookup",
+                "item": item_name,
+                "unit": unit,
+                "location": location,
+                "project_type": project_type,
             },
-            "location_factors": {
-                "US National Average": 1.00,
-                "New York City": 1.35,
-                "San Francisco": 1.42,
-                "Los Angeles": 1.28,
-                "Chicago": 1.18,
-                "Houston": 1.05,
-                "Miami": 1.10,
-                "Dubai": 0.95,
-                "Abu Dhabi": 0.92,
-                "Riyadh": 0.88,
-                "Jeddah": 0.90,
-                "Doha": 0.97,
-                "Kuwait City": 0.93,
-                "London": 1.28,
-                "Manchester": 1.12,
-                "Paris": 1.22,
-                "Frankfurt": 1.18,
-                "Amsterdam": 1.20,
-                "Sydney": 1.15,
-                "Melbourne": 1.12,
-                "Singapore": 1.08,
-                "Hong Kong": 1.25,
-                "Tokyo": 1.30,
-                "Toronto": 1.10,
-                "Mumbai": 0.45,
-                "Delhi": 0.42,
-            },
-            "project_type_multipliers": {
-                "residential": 1.00,
-                "commercial": 1.15,
-                "industrial": 0.90,
-                "hospital": 1.45,
-                "education": 1.10,
-                "hotel": 1.25,
-                "general_building": 1.05,
-                "infrastructure": 0.85,
-                "mixed_use": 1.18,
-            },
-        }
-
-    def _lookup_unit_cost(self, item_name: str, unit: str, rsmeans_data: Dict) -> float:
-        uc = rsmeans_data.get("unit_costs", {})
-        n = item_name.lower()
-        u = unit.lower()
-
-        vol_units = {"m3", "cu m", "cubic meter", "m³"}
-        area_units = {"m2", "sq m", "square meter", "m²"}
-        weight_units = {"kg", "kilogram", "tonne", "t"}
-        len_units = {"lm", "m", "linear meter", "rm"}
-        count_units = {"ea", "no", "nr", "each", "item"}
-
-        if "curtain wall" in n or "curtain_wall" in n:
-            return uc.get("curtain_wall_m2", 420.0)
-        if "cladding" in n or "facade" in n:
-            return uc.get("cladding_m2", 210.0)
-        if "glazing" in n or "glass" in n:
-            return uc.get("glazing_m2", 180.0)
-        if "roofing" in n or "roof" in n:
-            return uc.get("roofing_m2", 95.0)
-        if "waterproof" in n:
-            return uc.get("waterproofing_m2", 40.0)
-        if "structural steel" in n:
-            return uc.get("structural_steel_kg", 3.2)
-        if ("steel" in n or "rebar" in n or "reinforcement" in n) and u in weight_units:
-            return uc.get("rebar_kg", 1.8)
-        if "steel" in n and u in weight_units:
-            return uc.get("steel_kg", 2.5)
-        if "c40" in n or "grade 40" in n or "40mpa" in n:
-            return uc.get("concrete_grade_c40_m3", 185.0)
-        if "c30" in n or "grade 30" in n or "30mpa" in n:
-            return uc.get("concrete_grade_c30_m3", 165.0)
-        if "concrete" in n and u in vol_units:
-            return uc.get("concrete_m3", 150.0)
-        if "soffit" in n or "slab formwork" in n:
-            return uc.get("formwork_soffit_m2", 55.0)
-        if "formwork" in n or "shuttering" in n:
-            return uc.get("formwork_m2", 45.0)
-        if "brick" in n:
-            return uc.get("brick_m2", 75.0)
-        if "block" in n and u in area_units:
-            return uc.get("block_m2", 35.0)
-        if "masonry" in n:
-            return uc.get("masonry_m2", 65.0)
-        if "suspended ceiling" in n or "false ceiling" in n:
-            return uc.get("suspended_ceiling_m2", 60.0)
-        if "drylining" in n or "dry lining" in n or "drywall" in n:
-            return uc.get("drylining_m2", 45.0)
-        if "plaster" in n:
-            return uc.get("plaster_m2", 28.0)
-        if "tile" in n or "tiling" in n:
-            return uc.get("tiling_m2", 85.0)
-        if "floor_area" in n or "gfa" in n or "gross_floor" in n:
-            return 1200.0  # composite all-in building rate $/m² (structure + MEP + finishes)
-        if "floor" in n and u in area_units:
-            return uc.get("flooring_m2", 70.0)
-        if "paint" in n:
-            return uc.get("painting_m2", 18.0)
-        if "finish" in n:
-            return uc.get("finishes_m2", 55.0)
-        if "hvac" in n or "air conditioning" in n or "mechanical" in n:
-            return uc.get("hvac_m2", 120.0)
-        if "electrical" in n or "lighting" in n or "power" in n:
-            return uc.get("electrical_m2", 80.0)
-        if "plumbing" in n or "sanitary" in n or "pipe" in n:
-            return uc.get("plumbing_m2", 65.0)
-        if "fire" in n and ("sprinkler" in n or "protection" in n):
-            return uc.get("fire_protection_m2", 35.0)
-        if "excavat" in n and u in vol_units:
-            return uc.get("excavation_m3", 22.0)
-        if "backfill" in n:
-            return uc.get("backfill_m3", 18.0)
-        if "pil" in n and u in len_units:
-            return uc.get("piling_lm", 280.0)
-        if "drain" in n and u in len_units:
-            return uc.get("drainage_lm", 95.0)
-        if "insulation" in n:
-            return uc.get("insulation_m2", 30.0)
-        if "scaffold" in n:
-            return uc.get("scaffold_m2", 12.0)
-        if "door" in n and u in count_units:
-            return uc.get("door_ea", 850.0)
-        if "window" in n and u in count_units:
-            return uc.get("window_ea", 1200.0)
-        if "lift" in n or "elevator" in n:
-            return uc.get("lift_ea", 85000.0)
-
-        # Fallback by unit type
-        if u in vol_units:
-            return 120.0
-        if u in area_units:
-            return 55.0
-        if u in weight_units:
-            return 2.0
-        if u in len_units:
-            return 45.0
-        return 50.0
+        )
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        return result.get("rates", {}).get("adjusted_usd")
 
     async def extract_quantities(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
@@ -1490,10 +1363,14 @@ class ConstructionContainer(UniversalContainer):
                 gross_valuation = round(direct_gross, 2)
                 contract_value = direct_gross
             else:
-                # Demo mode — sample IPC for a $5M project at 35% completion
-                contract_value = 5000000.0
-                work_done_pct = 0.35
-                gross_valuation = round(contract_value * work_done_pct, 2)
+                return {
+                    "status": "error",
+                    "error": (
+                        "No contract value or gross valuation supplied — "
+                        "provide 'contract_value' (with 'work_done_percent') "
+                        "or 'gross_valuation' to issue a payment certificate"
+                    ),
+                }
         else:
             gross_valuation = round(contract_value * work_done_pct, 2)
         retention_held = round(gross_valuation * retention_pct, 2)
@@ -1548,7 +1425,8 @@ class ConstructionContainer(UniversalContainer):
         boq = p.get("boq") or data.get("boq") or data.get("line_items", [])
         budget = float(p.get("budget") or data.get("summary", {}).get("total_estimate", 0))
         schedule_start = p.get("schedule_start_date") or data.get("schedule_start_date")
-        rsmeans = self._get_rsmeans_data()
+        location = p.get("location") or data.get("location") or "US National Average"
+        project_type = p.get("project_type") or data.get("project_type") or "general_building"
 
         procurement_items: List[Dict] = []
 
@@ -1558,8 +1436,8 @@ class ConstructionContainer(UniversalContainer):
                 name = item.get("item", item.get("description", "Unknown"))
                 qty = item.get("quantity", 0)
                 unit = item.get("unit", "ea")
-                unit_cost = item.get("adjusted_rate", item.get("base_rate", 0))
-                total = item.get("total", qty * unit_cost)
+                unit_cost = item.get("adjusted_rate") or item.get("base_rate") or 0
+                total = item.get("total") or (qty * unit_cost)
                 cat, lead, supplier = self._classify_procurement_item(name)
                 procurement_items.append(self._build_procurement_item(
                     name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
@@ -1571,8 +1449,10 @@ class ConstructionContainer(UniversalContainer):
                 name = item.get("description", item.get("item", "Unknown"))
                 qty = item.get("quantity", 0)
                 unit = item.get("unit", "ea")
-                unit_cost = item.get("unit_price", self._lookup_unit_cost(name, unit, rsmeans))
-                total = qty * unit_cost
+                unit_cost = item.get("unit_price")
+                if unit_cost is None:
+                    unit_cost = await self._lookup_unit_cost(name, unit, location, project_type)
+                total = qty * (unit_cost or 0)
                 cat, lead, supplier = self._classify_procurement_item(name)
                 procurement_items.append(self._build_procurement_item(
                     name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
@@ -1595,8 +1475,8 @@ class ConstructionContainer(UniversalContainer):
                 if qty <= 0:
                     continue
                 clean_name = " ".join(str(item_name).split())  # collapse whitespace + newlines
-                unit_cost = self._lookup_unit_cost(clean_name, unit, rsmeans)
-                total = qty * unit_cost
+                unit_cost = await self._lookup_unit_cost(clean_name, unit, location, project_type)
+                total = qty * (unit_cost or 0)
                 cat, lead, supplier = self._classify_procurement_item(clean_name)
                 procurement_items.append(self._build_procurement_item(
                     clean_name, qty, unit, unit_cost, total, cat, lead, supplier, schedule_start
@@ -1633,8 +1513,8 @@ class ConstructionContainer(UniversalContainer):
             "item": name,
             "quantity": qty,
             "unit": unit,
-            "unit_cost": round(unit_cost, 2),
-            "total_cost": round(total, 2),
+            "unit_cost": round(unit_cost or 0, 2),
+            "total_cost": round(total or 0, 2),
             "category": category,
             "lead_time_weeks": lead,
             "supplier_type": supplier,
@@ -1796,30 +1676,13 @@ class ConstructionContainer(UniversalContainer):
             photos = [data.get("file_path")]
         
         if not photos:
-            # Demo mode — return a standard compliance checklist without photo analysis
             return {
-                "status": "success",
-                "action": "safety_compliance_audit",
+                "status": "error",
+                "error": (
+                    "No site photos supplied — provide a 'photos' list or a "
+                    "'file_path' for image-based safety compliance analysis"
+                ),
                 "audit_type": audit_type,
-                "note": "Demo mode — provide 'photos' list or 'file_path' for image-based analysis",
-                "compliance_score": 72,
-                "violations": [
-                    {"category": "PPE", "severity": "medium", "description": "Hard hat compliance not verified — photo required"},
-                    {"category": "Housekeeping", "severity": "low", "description": "Debris clearance status unknown without site photos"},
-                    {"category": "Scaffolding", "severity": "high", "description": "Edge protection status requires visual inspection"},
-                ],
-                "compliant_items": [
-                    "Fire extinguisher placement — OSHA 1926.150",
-                    "First aid kit availability — OSHA 1926.50",
-                    "Emergency exits marked — OSHA 1926.34",
-                ],
-                "recommendations": [
-                    "Upload site photos for AI defect and safety violation detection",
-                    "Conduct daily toolbox talks and log attendance",
-                    "Ensure all workers wear PPE at all times",
-                ],
-                "immediate_actions": ["Verify edge protection on all open floor areas"],
-                "next_audit_date": (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d"),
             }
         
         violations = []
@@ -2434,37 +2297,53 @@ class ConstructionContainer(UniversalContainer):
         }
         return tasks.get(system_type, [("annually", "General inspection and service")])
 
+    def _get_bim_extractor_block(self):
+        """Resolve the bim_extractor block — dependency injection first, registry fallback."""
+        return self._resolve_block("bim_extractor")
+
     async def bim_analysis(self, input_data: Any, params: Dict) -> Dict:
-        """Analyse a BIM / IFC model for element counts, quantities, and issues."""
+        """Analyse a BIM / IFC model for element counts, quantities, and issues.
+
+        Delegates genuine IFC parsing to the bim_extractor block — no demo mode,
+        no fabricated quantities. A missing or bad IFC file returns an error.
+        """
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
 
         ifc_file = data.get("ifc_file") or data.get("file_path") or p.get("ifc_file") or p.get("file_path")
-
         if not ifc_file:
             return {
-                "status": "success",
+                "status": "error",
                 "action": "bim_analysis",
-                "note": "Demo mode — provide ifc_file or file_path pointing to an IFC model for full analysis",
-                "model_summary": {"element_count": 0, "disciplines": ["Architecture", "Structure", "MEP"], "ifc_schema": "IFC4"},
-                "element_counts": {"IfcWall": 0, "IfcSlab": 0, "IfcColumn": 0, "IfcBeam": 0, "IfcDoor": 0, "IfcWindow": 0},
-                "extracted_quantities": {},
-                "model_health": {"missing_properties": [], "unclassified_elements": 0, "geometry_issues": 0},
-                "recommendations": ["Upload an IFC file to extract element counts, quantities, and coordination issues"],
+                "error": "No IFC file provided — pass ifc_file or file_path pointing to an .ifc model",
             }
 
-        model_data = await self._parse_ifc_geometries(ifc_file)
-        element_count = model_data.get("element_count", 0)
-        disciplines = model_data.get("disciplines", [])
+        block = self._get_bim_extractor_block()
+        if block is None:
+            return {"status": "error", "action": "bim_analysis", "error": "bim_extractor block unavailable"}
 
-        extracted_quantities = {
-            "walls_m2": element_count * 2.5,
-            "slabs_m2": element_count * 1.8,
-            "columns_ea": max(1, element_count // 50),
-            "beams_ea": max(1, element_count // 30),
-            "doors_ea": max(1, element_count // 80),
-            "windows_ea": max(1, element_count // 60),
-        }
+        result = await block.process({"file_path": ifc_file}, p)
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return {
+                "status": "error",
+                "action": "bim_analysis",
+                "error": (result or {}).get("error", "bim_extractor failed") if isinstance(result, dict) else "bim_extractor failed",
+            }
+
+        # Real, block-extracted data — remap into the bim_analysis response shape.
+        quantities = result.get("quantities", {})
+        element_count = result.get("element_count", 0)
+        # Per-category counts straight from the block's quantities tally.
+        element_counts = {cat: q.get("count", 0) for cat, q in quantities.items()}
+        # extracted_quantities keeps the block's full per-category breakdown.
+        extracted_quantities = quantities
+        # Disciplines derived from the real categories present, not synthesised.
+        disciplines = sorted(quantities.keys())
+
+        # Floor area from real slab quantities where the IFC exposes areas.
+        floor_area = 0.0
+        for slab in quantities.get("slabs", {}).get("items", []):
+            floor_area += slab.get("netarea") or slab.get("grossarea") or 0
 
         return {
             "status": "success",
@@ -2473,10 +2352,15 @@ class ConstructionContainer(UniversalContainer):
             "model_summary": {
                 "total_elements": element_count,
                 "disciplines": disciplines,
-                "ifc_schema": "IFC4",
+                "ifc_schema": result.get("ifc_schema", ""),
             },
+            "project_info": result.get("project_info", {}),
+            "storeys": result.get("storeys", []),
+            "spaces": result.get("spaces", []),
+            "element_counts": element_counts,
             "extracted_quantities": extracted_quantities,
-            "estimated_floor_area_m2": round(extracted_quantities["slabs_m2"], 0),
+            "estimated_floor_area_m2": round(floor_area, 2),
+            "clash_report": result.get("clash_report", {}),
             "recommendations": [
                 "Run clash detection to identify coordination issues",
                 "Export quantities to BOQ for cost estimation",
@@ -2821,140 +2705,99 @@ class ConstructionContainer(UniversalContainer):
         return risks
 
     async def bim_clash_detection(self, input_data: Any, params: Dict) -> Dict:
-        """Detect hard, soft, and clearance clashes across discipline BIM models."""
+        """Detect clashes in BIM / IFC discipline models.
+
+        Delegates to the bim_extractor block, which runs a real intra-model
+        clash report per IFC file. No demo mode, no fabricated clashes — a
+        missing or bad IFC file returns an error.
+        """
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
 
-        ifc_file = data.get("ifc_file") or p.get("ifc_file")
-        discipline_models = p.get("discipline_models") or data.get("discipline_models", [])
+        ifc_file = data.get("ifc_file") or p.get("ifc_file") or data.get("file_path") or p.get("file_path")
+        discipline_models = list(p.get("discipline_models") or data.get("discipline_models", []))
         if ifc_file and ifc_file not in discipline_models:
             discipline_models = [ifc_file] + discipline_models
-        tolerance = float(p.get("tolerance", 0.05))
-        clash_types = p.get("clash_types", ["hard", "soft", "clearance"])
 
         if not discipline_models:
             return {
-                "status": "success",
+                "status": "error",
                 "action": "bim_clash_detection",
-                "note": "Demo mode — provide ifc_file or discipline_models list for real clash detection",
-                "clash_summary": {"hard_clashes": 0, "soft_clashes": 0, "clearance_violations": 0, "total_issues": 0},
-                "by_discipline": {},
-                "recommendations": ["Upload IFC discipline models (Architecture, Structure, MEP) to run clash detection"],
-                "typical_clash_zones": ["MEP vs Structure at beam penetrations", "Ductwork vs ceiling void conflicts", "Pipe routes through structural walls"],
+                "error": "No IFC file provided — pass ifc_file, file_path, or discipline_models pointing to .ifc models",
             }
 
-        model_data = await self._parse_ifc_geometries(discipline_models[0])
+        block = self._get_bim_extractor_block()
+        if block is None:
+            return {"status": "error", "action": "bim_clash_detection", "error": "bim_extractor block unavailable"}
 
+        # The block runs an intra-model clash report per file; aggregate across
+        # the supplied discipline models. Cross-model clashing is not fabricated.
+        block_params = dict(p)
+        block_params["run_clash_detection"] = True
         clashes: List[Dict] = []
-        if len(discipline_models) >= 2:
-            for i in range(len(discipline_models) - 1):
-                clashes.extend(
-                    self._detect_model_clashes(
-                        discipline_models[i], discipline_models[i + 1], tolerance, clash_types
-                    )
-                )
-        else:
-            clashes = self._detect_internal_clashes(model_data, tolerance)
+        total_elements = 0
+        models_processed: List[str] = []
+        detection_method = "name_duplicate_proxy"
+        for model_file in discipline_models:
+            result = await block.process({"file_path": model_file}, block_params)
+            if not isinstance(result, dict) or result.get("status") != "success":
+                return {
+                    "status": "error",
+                    "action": "bim_clash_detection",
+                    "error": (result or {}).get("error", f"bim_extractor failed for {model_file}") if isinstance(result, dict) else "bim_extractor failed",
+                }
+            models_processed.append(model_file)
+            total_elements += result.get("element_count", 0)
+            clash_report = result.get("clash_report", {})
+            detection_method = clash_report.get("detection_method", detection_method)
+            for c in clash_report.get("clashes", []):
+                clashes.append(self._normalize_block_clash(c, model_file))
 
-        by_severity = self._categorize_clash_severity(clashes)
         by_discipline = self._group_clashes_by_discipline(clashes)
-        resolution_order = self._prioritize_clash_resolution(clashes)
-        total_elements = model_data.get("element_count", 0)
         clash_ratio = len(clashes) / total_elements if total_elements else 0
 
         return {
             "status": "success",
             "action": "clash_detection",
             "model_summary": {
-                "file_analyzed": discipline_models[0],
+                "files_analyzed": models_processed,
                 "total_elements_checked": total_elements,
-                "models_clashed": len(discipline_models),
+                "models_clashed": len(models_processed),
             },
             "clash_summary": {
                 "total_clashes": len(clashes),
-                "hard_clashes": len([c for c in clashes if c["type"] == "hard"]),
-                "soft_clashes": len([c for c in clashes if c["type"] == "soft"]),
-                "clearance_issues": len([c for c in clashes if c["type"] == "clearance"]),
-                "critical": len(by_severity.get("critical", [])),
-                "high": len(by_severity.get("high", [])),
-                "medium": len(by_severity.get("medium", [])),
-                "low": len(by_severity.get("low", [])),
+                "warnings": len([c for c in clashes if c["severity"] == "warning"]),
                 "clash_ratio_percent": round(clash_ratio * 100, 2),
+                "detection_method": detection_method,
             },
             "clashes": clashes[:100] if not p.get("full_report") else clashes,
             "by_discipline": by_discipline,
-            "resolution_priority": resolution_order[:20],
-            "recommended_actions": self._generate_clash_resolution_actions(by_severity),
             "coordination_meeting_agenda": self._generate_coordination_agenda(clashes),
-            "bim_compliance_score": round(max(0.0, 100.0 - (clash_ratio * 1000)), 1),
         }
-    
-    async def _parse_ifc_geometries(self, file_path: str) -> Dict:
+
+    def _normalize_block_clash(self, clash: Dict, model_file: str) -> Dict:
+        """Normalize a bim_extractor clash into the container clash shape so the
+        thin shaping helpers (by-discipline grouping, coordination agenda) work."""
+        category = clash.get("category", "unknown")
         return {
-            "element_count": 1500,
-            "disciplines": ["structural", "architectural", "mep"],
-            "bounding_boxes": [],
-            "elements": []
+            "clash_id": f"CLASH-{abs(hash((model_file, clash.get('element_a'), clash.get('element_b')))) % 100000:05d}",
+            "type": clash.get("type", "name_duplicate"),
+            "description": clash.get("description", ""),
+            "severity": clash.get("severity", "warning"),
+            "involved_disciplines": [category],
+            "category": category,
+            "element_a": clash.get("element_a"),
+            "element_b": clash.get("element_b"),
+            "model_file": model_file,
         }
-    
-    def _detect_model_clashes(self, model_a: str, model_b: str, tolerance: float, clash_types: List[str]) -> List[Dict]:
-        clashes = []
-        clash_scenarios = [
-            {"type": "hard", "desc": "Duct intersecting beam", "severity": "critical", "disciplines": ["mep", "structural"]},
-            {"type": "hard", "desc": "Pipe crossing column", "severity": "critical", "disciplines": ["mep", "structural"]},
-            {"type": "soft", "desc": "Insufficient access space for maintenance", "severity": "medium", "disciplines": ["mep", "architectural"]},
-            {"type": "clearance", "desc": "Cable tray too close to sprinkler", "severity": "low", "disciplines": ["electrical", "fire_protection"]}
-        ]
-        for i, scenario in enumerate(clash_scenarios):
-            clashes.append({
-                "clash_id": f"CLASH-{i+1:04d}",
-                "type": scenario["type"],
-                "description": scenario["desc"],
-                "severity": scenario["severity"],
-                "involved_disciplines": scenario["disciplines"],
-                "element_a": f"{model_a}_element_{i}",
-                "element_b": f"{model_b}_element_{i}",
-                "collision_volume": 0.5,
-                "suggested_resolution": self._suggest_clash_resolution(scenario)
-            })
-        return clashes
-    
-    def _detect_internal_clashes(self, model_data: Dict, tolerance: float) -> List[Dict]:
-        return []
-    
-    def _categorize_clash_severity(self, clashes: List[Dict]) -> Dict:
-        result = {"critical": [], "high": [], "medium": [], "low": []}
-        for clash in clashes:
-            result[clash.get("severity", "medium")].append(clash)
-        return result
-    
+
     def _group_clashes_by_discipline(self, clashes: List[Dict]) -> Dict:
         result = {}
         for clash in clashes:
             for disc in clash.get("involved_disciplines", ["unknown"]):
                 result.setdefault(disc, []).append(clash)
         return result
-    
-    def _prioritize_clash_resolution(self, clashes: List[Dict]) -> List[Dict]:
-        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        return sorted(clashes, key=lambda x: severity_order.get(x.get("severity"), 4))
-    
-    def _suggest_clash_resolution(self, scenario: Dict) -> str:
-        resolutions = {
-            "hard": "Reroute element to avoid collision",
-            "soft": "Verify clearances per maintenance requirements",
-            "clearance": "Adjust routing to meet code clearances"
-        }
-        return resolutions.get(scenario["type"], "Review coordination")
-    
-    def _generate_clash_resolution_actions(self, by_severity: Dict) -> List[str]:
-        actions = []
-        if by_severity.get("critical"):
-            actions.append("Schedule emergency coordination meeting for critical clashes")
-        if by_severity.get("hard"):
-            actions.append("Assign clashes to respective trade contractors for resolution")
-        return actions
-    
+
     def _generate_coordination_agenda(self, clashes: List[Dict]) -> List[str]:
         return [f"Review {c['description']} ({c['clash_id']})" for c in clashes[:10]]
 
@@ -3396,19 +3239,24 @@ class ConstructionContainer(UniversalContainer):
         productivity_curves = data.get("productivity") or p.get("productivity", {})
         trade_breakdown = p.get("trade_breakdown", True)
         
-        activities = []
-        if schedule_file:
-            schedule_data = self._parse_xer_file(schedule_file)
-            activities = schedule_data.get("activities", [])
+        if not schedule_file:
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": "No schedule file provided — pass schedule_file pointing to a .xer schedule",
+            }
 
+        schedule_data = await self._parse_xer_file(schedule_file)
+        if schedule_data.get("status") == "error":
+            return schedule_data
+        activities = schedule_data.get("activities", [])
         if not activities:
-            # Generate synthetic histogram for a typical 52-week commercial project
-            import math
-            activities = []
-            trades = [("Civil", 12), ("Structure", 20), ("MEP", 18), ("Finishes", 14), ("Commissioning", 6)]
-            for trade, duration in trades:
-                for week in range(duration):
-                    activities.append({"name": f"{trade} W{week+1}", "resources": {"labor": int(8 + 4 * math.sin(week / duration * math.pi))}, "trade": trade})
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": "Schedule contains no activities — cannot build a resource histogram",
+            }
+
         histogram_data = self._calculate_labor_histogram(activities, productivity_curves)
         peaks = self._identify_resource_peaks(histogram_data)
         conflicts = self._identify_resource_conflicts(histogram_data)
@@ -3980,34 +3828,22 @@ Total Extension of Time Sought: {total_delay} days
         analysis_method = p.get("method", "time_impact")
         
         if not baseline_file or not updated_file:
-            # Synthesise a realistic delay analysis without schedule files
-            synthetic_delay_days = sum(e.get("delay_days", 14) for e in delay_events) if delay_events else 28
             return {
-                "status": "success",
-                "action": "forensic_delay_analysis",
+                "status": "error",
+                "error": (
+                    "Forensic delay analysis requires both a baseline schedule "
+                    "and an updated/as-built schedule — provide 'baseline_file' "
+                    "and 'updated_file' (XER) for XER-based delay analysis"
+                ),
                 "analysis_method": analysis_method,
-                "note": "Generated from delay events — provide baseline_file and updated_file for full XER-based analysis",
-                "total_delay_days": synthetic_delay_days,
-                "employer_caused_days": int(synthetic_delay_days * 0.6),
-                "contractor_caused_days": int(synthetic_delay_days * 0.2),
-                "neutral_risk_days": int(synthetic_delay_days * 0.2),
-                "concurrent_delays": self._identify_concurrent_delays(delay_events) if delay_events else [],
-                "critical_path_impact": True if synthetic_delay_days > 14 else False,
-                "recommended_eot_days": int(synthetic_delay_days * 0.6),
-                "prolongation_cost_usd": synthetic_delay_days * 4500,
-                "apportionment": {
-                    "employer": "60%",
-                    "contractor": "20%",
-                    "neutral": "20%",
-                },
-                "delay_events_analysed": len(delay_events),
-                "summary": f"Total project delay: {synthetic_delay_days} days. Recommended EOT: {int(synthetic_delay_days * 0.6)} days.",
             }
         
-        baseline = self._parse_xer_file(baseline_file)
-        updated = self._parse_xer_file(updated_file)
+        baseline = await self._parse_xer_file(baseline_file)
+        updated = await self._parse_xer_file(updated_file)
         if baseline.get("status") == "error":
             return baseline
+        if updated.get("status") == "error":
+            return updated
         
         if analysis_method == "time_impact":
             results = self._run_time_impact_analysis(baseline, updated, delay_events)
@@ -4127,7 +3963,9 @@ Total Extension of Time Sought: {total_delay} days
 
         activities = []
         if schedule_file:
-            schedule_data = self._parse_xer_file(schedule_file)
+            schedule_data = await self._parse_xer_file(schedule_file)
+            if schedule_data.get("status") == "error":
+                return schedule_data
             activities = schedule_data.get("activities", [])
 
         project_duration_months = max(6, int(len(activities) / 20)) if activities else int(p.get("duration_months", 18))
@@ -5223,39 +5061,49 @@ Total Extension of Time Sought: {total_delay} days
         cost_result = {}
         if has_quantities:
             try:
-                # Use area-based all-in rate when GFA is available (avoids double-counting
-                # concrete + steel which are already embedded in the composite $/m² rate).
-                # Fall back to elemental pricing only when no floor area is known.
-                gfa = quantities.get("floor_area_m2", 0)
-                if isinstance(gfa, dict):
-                    gfa = gfa.get("quantity", 0)
-                if gfa > 0:
-                    subtotal = gfa * 1200  # $1,200/m² composite (structure+MEP+finishes)
+                # Real cost estimate — delegates per-item unit rates to the
+                # historical_benchmark block. No fabricated composite $/m² rate.
+                cost_result = await self.generate_cost_estimate(
+                    {"quantities": quantities},
+                    {
+                        "quantities": quantities,
+                        "location": p.get("location", "US National Average"),
+                        "project_type": p.get("project_type", "general_building"),
+                    },
+                )
+                if isinstance(cost_result, dict) and cost_result.get("status") == "success":
+                    downstream["cost_estimate"] = cost_result
+                    panels.append({
+                        "type": "cost_estimate",
+                        "title": "Cost Estimate",
+                        "data": cost_result.get("summary", {}),
+                        "line_items": cost_result.get("line_items", []),
+                        "unpriced_items": cost_result.get("unpriced_items", []),
+                    })
                 else:
-                    subtotal = (
-                        quantities.get("concrete_volume_m3", 0) * 150 +
-                        quantities.get("steel_weight_kg", 0) * 1.8
-                    )
-                overhead = round(subtotal * 0.10, 2)
-                contingency = round(subtotal * 0.05, 2)
-                total_estimate = round(subtotal + overhead + contingency, 2)
-                cost_result = {
-                    "summary": {
-                        "subtotal": round(subtotal, 2),
-                        "overhead": overhead,
-                        "contingency": contingency,
-                        "total_estimate": total_estimate,
-                    }
-                }
-                downstream["cost_estimate"] = cost_result
+                    # Estimate failed — surface the reason honestly, no fake number.
+                    downstream["cost_estimate"] = cost_result
+                    panels.append({
+                        "type": "cost_estimate",
+                        "title": "Cost Estimate",
+                        "data": {},
+                        "line_items": [],
+                        "unpriced_items": [],
+                        "error": (cost_result or {}).get(
+                            "error", "Cost estimate unavailable"
+                        ) if isinstance(cost_result, dict) else "Cost estimate unavailable",
+                    })
+            except Exception as e:
+                # Surface the failure honestly rather than silently dropping
+                # the panel — consistent with the else-branch above.
                 panels.append({
                     "type": "cost_estimate",
                     "title": "Cost Estimate",
-                    "data": cost_result["summary"],
-                    "line_items": []
+                    "data": {},
+                    "line_items": [],
+                    "unpriced_items": [],
+                    "error": f"Cost estimate failed: {e}",
                 })
-            except Exception:
-                pass
         # Procurement: if we extracted real quantities, derive the procurement
         # list inline so the user sees it without having to click another button.
         # Otherwise just expose the button for manual triggering.
@@ -5606,33 +5454,28 @@ Total Extension of Time Sought: {total_delay} days
                 }
             return result
         
-        # Fallback: non-file requests
+        # Fallback: non-file requests — extract from PDF text if a PDF block is available
         pdf_block = self.get_dep("pdf")
         if pdf_block and input_data:
             pdf_result = await pdf_block.process(input_data, {"extract_tables": True})
             if pdf_result.get("status") == "success":
+                text = pdf_result.get("result", {}).get("text", "")
+                measurements = self._extract_measurements_advanced(text, {})
                 return {
                     "status": "success",
                     "source": "pdf_extraction",
-                    "quantities": {
-                        "concrete_volume_m3": 45.5,
-                        "steel_weight_kg": 1200,
-                        "floor_area_m2": 111.5
-                    },
-                    "confidence": 0.94,
-                    "extracted_text": pdf_result.get("result", {}).get("text", "")[:500]
+                    "measurements": measurements,
+                    "count": len(measurements),
+                    "extracted_text": text[:500],
                 }
-        
+            return pdf_result
+
         return {
-            "status": "success",
-            "source": "mock",
-            "quantities": {
-                "concrete_volume_m3": 45.5,
-                "steel_weight_kg": 1200,
-                "floor_area_m2": 111.5,
-                "rebar_length_m": 850
-            },
-            "confidence": 0.94
+            "status": "error",
+            "error": (
+                "Nothing to extract — supply a construction drawing/document "
+                "(file path or PDF input) for measurement extraction"
+            ),
         }
 
     async def generate_construction_report(self, input_data: Any, params: Dict) -> Dict:
@@ -5662,99 +5505,87 @@ Total Extension of Time Sought: {total_delay} days
 
     async def boq_process(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to BOQProcessorBlock: parse Excel/CSV BOQs."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("boq_processor")
-        if not block_cls:
-            return {"status": "error", "error": "boq_processor block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("boq_processor")
+        if block is None:
+            return {"status": "error", "error": "boq_processor block unavailable"}
+        return await block.process(input_data, params)
 
     async def spec_analyze(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to SpecAnalyzerBlock: extract grades, materials, compliance."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("spec_analyzer")
-        if not block_cls:
-            return {"status": "error", "error": "spec_analyzer block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("spec_analyzer")
+        if block is None:
+            return {"status": "error", "error": "spec_analyzer block unavailable"}
+        return await block.process(input_data, params)
 
     async def sympy_reason(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to SymPyReasoningBlock: variance analysis + recommendations."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("sympy_reasoning")
-        if not block_cls:
-            return {"status": "error", "error": "sympy_reasoning block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("sympy_reasoning")
+        if block is None:
+            return {"status": "error", "error": "sympy_reasoning block unavailable"}
+        return await block.process(input_data, params)
 
     async def drawing_qto(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to DrawingQTOBlock: DXF quantity take-off."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("drawing_qto")
-        if not block_cls:
-            return {"status": "error", "error": "drawing_qto block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("drawing_qto")
+        if block is None:
+            return {"status": "error", "error": "drawing_qto block unavailable"}
+        return await block.process(input_data, params)
 
     async def primavera_parse(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to PrimaveraParserBlock: parse .xer schedule files."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("primavera_parser")
-        if not block_cls:
-            return {"status": "error", "error": "primavera_parser block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("primavera_parser")
+        if block is None:
+            return {"status": "error", "error": "primavera_parser block unavailable"}
+        return await block.process(input_data, params)
 
     async def orchestrate(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to SmartOrchestratorBlock: keyword → action routing."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("smart_orchestrator")
-        if not block_cls:
-            return {"status": "error", "error": "smart_orchestrator block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("smart_orchestrator")
+        if block is None:
+            return {"status": "error", "error": "smart_orchestrator block unavailable"}
+        return await block.process(input_data, params)
 
     async def jetson_dispatch(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to JetsonGatewayBlock: edge dispatch."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("jetson_gateway")
-        if not block_cls:
-            return {"status": "error", "error": "jetson_gateway block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("jetson_gateway")
+        if block is None:
+            return {"status": "error", "error": "jetson_gateway block unavailable"}
+        return await block.process(input_data, params)
 
     async def formula_execute(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to FormulaExecutorBlock: chat-to-code formula execution."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("formula_executor")
-        if not block_cls:
-            return {"status": "error", "error": "formula_executor block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("formula_executor")
+        if block is None:
+            return {"status": "error", "error": "formula_executor block unavailable"}
+        return await block.process(input_data, params)
 
     async def bim_extract(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to BIMExtractorBlock: IFC element + quantity extraction."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("bim_extractor")
-        if not block_cls:
-            return {"status": "error", "error": "bim_extractor block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("bim_extractor")
+        if block is None:
+            return {"status": "error", "error": "bim_extractor block unavailable"}
+        return await block.process(input_data, params)
 
     async def learn(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to LearningEngineBlock: record corrections + promote tiers."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("learning_engine")
-        if not block_cls:
-            return {"status": "error", "error": "learning_engine block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("learning_engine")
+        if block is None:
+            return {"status": "error", "error": "learning_engine block unavailable"}
+        return await block.process(input_data, params)
 
     async def benchmark_lookup(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to HistoricalBenchmarkBlock: RS Means cost lookup."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("historical_benchmark")
-        if not block_cls:
-            return {"status": "error", "error": "historical_benchmark block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("historical_benchmark")
+        if block is None:
+            return {"status": "error", "error": "historical_benchmark block unavailable"}
+        return await block.process(input_data, params)
 
     async def recommend(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to RecommendationTemplateBlock: rule-based recommendations."""
-        from app.blocks import BLOCK_REGISTRY
-        block_cls = BLOCK_REGISTRY.get("recommendation_template")
-        if not block_cls:
-            return {"status": "error", "error": "recommendation_template block not registered"}
-        return await block_cls().process(input_data, params)
+        block = self._resolve_block("recommendation_template")
+        if block is None:
+            return {"status": "error", "error": "recommendation_template block unavailable"}
+        return await block.process(input_data, params)
 
     # ────────────────────────────────────────────────────────────────────────
 

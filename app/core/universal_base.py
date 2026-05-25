@@ -135,7 +135,7 @@ class UniversalBlock(ABC):
                 confidence = 0.0
             else:
                 status = "success"
-                confidence = result.get("confidence", 0.95) if isinstance(result, dict) else 0.95
+                confidence = result.get("confidence", None) if isinstance(result, dict) else None
         except Exception as e:
             result = {"error": str(e)}
             status = "error"

@@ -73,11 +73,18 @@ class DocumentEngineBlock(UniversalBlock):
         return None
 
     async def _parse_with_platform_ocr(self, file_path: str) -> Optional[str]:
-        """Use platform OCR block for image/scanned PDF fallback (universal connector)."""
+        """Use platform OCR block for image/scanned PDF fallback (universal connector).
+
+        Side effect: captures the OCR markup/redline verdict (Roadmap V2 · Epic 5)
+        on ``self._last_ocr_markup`` so `process()` can surface it — annotated
+        regions are flagged for the user, not presented as clean extracted data.
+        """
         ocr_block = self.get_dep("ocr")
         if ocr_block is None:
             return None
         result = await ocr_block.process({"file_path": file_path})
+        if isinstance(result, dict) and result.get("markup"):
+            self._last_ocr_markup = result.get("markup")
         if result.get("status") == "success":
             return result.get("text", "")
         return None
@@ -86,6 +93,10 @@ class DocumentEngineBlock(UniversalBlock):
         """Main entry point — run the 3-layer pipeline."""
         params = params or {}
         data = input_data if isinstance(input_data, dict) else {}
+
+        # Reset the per-call OCR markup verdict (Roadmap V2 · Epic 5). Populated
+        # by `_parse_with_platform_ocr` when a scanned input carries redlines.
+        self._last_ocr_markup = None
 
         # InputAdapter may wrap bare file path as {"text": "/path/to/file.pdf"} — detect by extension
         raw_path = data.get("text") or data.get("input") or (input_data if isinstance(input_data, str) else "")
@@ -100,6 +111,21 @@ class DocumentEngineBlock(UniversalBlock):
         if not any(file_paths.values()):
             return {"status": "error", "error": "No input files provided (pdf/docx/xlsx). Pass file_path as pdf_path, docx_path, or xlsx_path."}
 
+        # Decrypt-to-temp if the stored files are encrypted at rest. Both the
+        # platform pdf/ocr blocks and the fallback parsers (fitz / python-docx /
+        # openpyxl) read by raw path. open_plaintext is a no-op for plaintext /
+        # legacy files (see app/core/file_crypto.py).
+        from contextlib import ExitStack
+        from app.core.file_crypto import open_plaintext
+        with ExitStack() as _crypto_stack:
+            file_paths = {
+                key: (_crypto_stack.enter_context(open_plaintext(p)) if p else None)
+                for key, p in file_paths.items()
+            }
+            return await self._run_pipeline(file_paths)
+
+    async def _run_pipeline(self, file_paths: Dict) -> Dict:
+        """Run the 3-layer pipeline on already-decrypted plaintext paths."""
         try:
             from blocks.document_engine.main import parse_all
             from blocks.document_engine.reasoner import DocumentReasoner
@@ -167,6 +193,14 @@ class DocumentEngineBlock(UniversalBlock):
             result = structured.to_dict()
             result["status"] = "success"
             result["documents_parsed"] = len(documents)
+
+            # Surface the OCR markup / redline verdict (Roadmap V2 · Epic 5).
+            # If a scanned input carried coloured annotations, flag them rather
+            # than presenting the extracted text as clean data.
+            if self._last_ocr_markup is not None:
+                result["markup"] = self._last_ocr_markup
+                result["has_markup"] = bool(self._last_ocr_markup.get("has_markup"))
+
             result["platform_blocks_used"] = []
             if self.config.get("use_platform_pdf") and self.get_dep("pdf"):
                 result["platform_blocks_used"].append("pdf")

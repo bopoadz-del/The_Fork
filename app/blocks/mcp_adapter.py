@@ -61,17 +61,32 @@ class MCPAdapterBlock(UniversalBlock):
                 continue
             description = getattr(block_class, "description", "") or f"Block: {name}"
             ui = getattr(block_class, "ui_schema", {}) or {}
+
+            # MCP wants JSON Schema; we keep `input`/`params` loose so anything
+            # goes through. For blocks/containers that expose get_actions(), also
+            # advertise the action names as an enum so an MCP client can discover
+            # e.g. that `construction` supports auto_pipeline, procurement_*, etc.
+            properties = {
+                "input": {"description": "Block input — string, dict, or chain output."},
+                "params": {"type": "object", "description": "Optional block-specific parameters."},
+            }
+            try:
+                instance = block_class()
+                if hasattr(instance, "get_actions"):
+                    actions = sorted(instance.get_actions().keys())
+                    if actions:
+                        properties["action"] = {
+                            "type": "string",
+                            "description": f"Action to run on the {name} block",
+                            "enum": actions,
+                        }
+            except Exception:
+                pass  # non-instantiable or no actions — keep the generic schema
+
             tools.append({
                 "name": name,
                 "description": description,
-                # MCP wants JSON Schema; we keep it loose so anything goes through.
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "input": {"description": "Block input — string, dict, or chain output."},
-                        "params": {"type": "object", "description": "Optional block-specific parameters."},
-                    },
-                },
+                "inputSchema": {"type": "object", "properties": properties},
                 "ui_hint": ui,
             })
         return tools

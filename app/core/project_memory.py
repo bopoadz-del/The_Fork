@@ -73,6 +73,32 @@ def remember_from_result(
     return saved
 
 
+def build_project_context(project_id: str, query: str = "", limit: int = 8) -> str:
+    """A combined context block with project facts + document listing.
+
+    Returns a non-empty string when the project has facts or documents.
+    Returns "" when neither exists.
+    """
+    facts_block = build_memory_context(project_id, query, limit)
+    docs = store.list_documents(project_id)
+
+    if not facts_block and not docs:
+        return ""
+
+    parts: List[str] = []
+    if facts_block:
+        parts.append(facts_block)
+    if docs:
+        lines = ["Project documents:"]
+        for doc in docs:
+            lines.append(
+                f"- {doc['original_name']} (type: {doc['doc_type']}, role: {doc['doc_role']})"
+            )
+        parts.append("\n".join(lines))
+
+    return "\n\n".join(parts)
+
+
 def build_memory_context(project_id: str, query: str = "", limit: int = 8) -> str:
     """A compact text block of relevant project facts, for injection into chat.
 

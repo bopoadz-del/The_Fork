@@ -7,6 +7,22 @@ import sys
 # Add app to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Load .env before test collection so env-gated tests (e.g. the live
+# DEEPSEEK_API_KEY acceptance tests) see keys placed in .env. The app loads
+# .env itself; conftest does it too so `skipif`s evaluated at collection time
+# pick the key up without needing it exported in the shell.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+except ImportError:
+    pass
+
+# Disable per-caller rate limiting for the test suite — the full suite makes
+# far more than a minute's quota of requests under one identity (cb_dev_key).
+# The rate limiter's own tests re-enable it explicitly via monkeypatch.
+os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
+
 @pytest.fixture
 def sample_text():
     return "Hello, this is a test document for Cerebrum Blocks."

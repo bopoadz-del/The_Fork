@@ -35,7 +35,7 @@ async def test_local_drive_block_execute_structure(local_drive_block):
 async def test_local_drive_block_metadata(local_drive_block):
     """Test Local Drive block metadata."""
     assert local_drive_block.name == "local_drive"
-    assert local_drive_block.version == "1.0"
+    assert local_drive_block.version == "1.1"
     # assert "file_path" in local_drive_block.config.supported_outputs  # legacy config field — n/a in current API
     # assert "metadata" in local_drive_block.config.supported_outputs  # legacy config field — n/a in current API
     # assert local_drive_block.config.requires_api_key == False  # legacy config field — n/a in current API
@@ -57,8 +57,8 @@ async def test_local_drive_block_list(local_drive_block):
 @pytest.mark.asyncio
 async def test_local_drive_block_write_and_read(local_drive_block):
     """Test Local Drive block write and read operations."""
-    # Write a file (OS-portable temp path — no hardcoded POSIX /tmp)
-    test_path = os.path.join(tempfile.gettempdir(), "test_write.txt")
+    # The block is sandboxed to its drive root — use a path relative to it.
+    test_path = "test_write.txt"
     write_result = await local_drive_block.execute(
         None,
         {
@@ -67,16 +67,17 @@ async def test_local_drive_block_write_and_read(local_drive_block):
             "content": "Hello from test!"
         }
     )
-    
+
     assert write_result["block"] == "local_drive"
+    assert write_result["result"]["status"] == "success"
     assert write_result["result"]["operation"] == "write"
-    
+
     # Read the file
     read_result = await local_drive_block.execute(
         None,
         {"operation": "read", "file_path": test_path}
     )
-    
+
     assert read_result["block"] == "local_drive"
     assert read_result["result"]["operation"] == "read"
-    assert "content" in read_result["result"]
+    assert read_result["result"]["content"] == "Hello from test!"

@@ -49,6 +49,11 @@ scikit-learn>=1.4.0
 # Reasoning Engine — sandboxed code execution (Plan 3)
 RestrictedPython>=7.0
 
+# Encryption at rest for uploaded documents (Roadmap V2 · Epic 6)
+cryptography>=42.0.0
+# JWT session tokens — Stream A (User Accounts & Multi-Tenancy)
+PyJWT>=2.8.0
+
 # Optional - domain libraries (install as needed)
 # CoolProp>=6.6.0        # thermodynamics / HVAC
 # QuantLib-Python>=1.32  # quantitative finance

@@ -13,7 +13,7 @@ services:
       - key: ENV
         value: production
       - key: DEEPSEEK_API_KEY
-        value: sk-62229915230e448b82ea08550d11fa86
+        sync: false
       - key: CEREBRUM_API_KEY_FRONTEND
         sync: false
     disk:

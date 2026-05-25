@@ -4,11 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.blocks import BLOCK_REGISTRY
-from app.dependencies import require_api_key
+from app.dependencies import require_user
 from app.dependencies import block_instances, _create_block_instance
 from app.core.input_adapter import adapt_input
 
 router = APIRouter()
+
+# Blocks that execute arbitrary code (subprocess / exec) — restricted to admin
+# callers so an ordinary authenticated user cannot get remote code execution
+# through the generic /execute endpoint.
+_PRIVILEGED_BLOCKS = {"code", "sandbox"}
 
 
 class ExecuteRequest(BaseModel):
@@ -18,7 +23,7 @@ class ExecuteRequest(BaseModel):
 
 
 @router.post("/execute")
-async def execute(request: ExecuteRequest, auth: dict = Depends(require_api_key)):
+async def execute(request: ExecuteRequest, auth: dict = Depends(require_user)):
     """Execute a single block."""
     block_name = request.block
 
@@ -28,6 +33,12 @@ async def execute(request: ExecuteRequest, auth: dict = Depends(require_api_key)
     # Skip containers - they belong to Block Store
     if block_name.startswith("container_"):
         raise HTTPException(400, f"Container '{block_name}' cannot be executed directly. Use Block Store.")
+
+    # Code-execution blocks are admin-only.
+    if block_name in _PRIVILEGED_BLOCKS and auth.get("role") != "admin":
+        raise HTTPException(
+            403, f"Block '{block_name}' executes arbitrary code and is admin-only."
+        )
 
     try:
         if block_name not in block_instances:
@@ -53,11 +64,14 @@ async def execute(request: ExecuteRequest, auth: dict = Depends(require_api_key)
 
         return result
 
-    except Exception as e:
-        raise HTTPException(500, f"Execution failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        # Do not leak internal exception detail to the client.
+        raise HTTPException(500, "Execution failed")
 
 
 @router.post("/v1/execute")
-async def execute_v1(request: ExecuteRequest, auth: dict = Depends(require_api_key)):
+async def execute_v1(request: ExecuteRequest, auth: dict = Depends(require_user)):
     """Execute a single block (v1 API)."""
-    return await execute(request)
+    return await execute(request, auth)

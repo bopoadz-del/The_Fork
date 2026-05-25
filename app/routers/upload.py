@@ -1,5 +1,4 @@
 import os
-import shutil
 import uuid
 from typing import List, Optional
 
@@ -8,6 +7,7 @@ from pydantic import BaseModel
 
 from app.dependencies import require_api_key, block_instances, _create_block_instance
 from app.blocks import BLOCK_REGISTRY
+from app.core import file_crypto
 
 router = APIRouter()
 
@@ -58,9 +58,10 @@ async def upload_v1(file: UploadFile = File(...), auth: dict = Depends(require_a
         filename = f"{file_id}_{original_name}"
         filepath = os.path.join(DATA_DIR, filename)
 
-        # Save uploaded file
-        with open(filepath, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # Save uploaded file — encrypted at rest iff DATA_ENCRYPTION_KEY is set
+        # (opt-in; plaintext otherwise — see app/core/file_crypto.py).
+        file.file.seek(0)
+        file_crypto.write_document(filepath, file.file.read())
 
         # Return URL and server path for chain processing
         base_url = os.getenv("API_BASE_URL", "https://cerebrum-platform-api.onrender.com")
@@ -116,8 +117,10 @@ async def ingest(
 
     Returns structured JSON/YAML consumable by downstream blocks.
     """
+    from contextlib import ExitStack
     saved_paths = {}
     temp_files = []
+    _stack = ExitStack()
 
     try:
         # --- Layer 0: Accept & persist uploads ---
@@ -131,19 +134,28 @@ async def ingest(
             if ext not in (".pdf", ".docx", ".xlsx", ".doc", ".xls"):
                 raise HTTPException(400, f"File type '{ext}' not supported for ingest")
 
-            # Save to temp
+            # Save to temp — encrypted at rest iff DATA_ENCRYPTION_KEY is set.
             file_id = str(uuid.uuid4())[:8]
             filename = f"{file_id}_{original_name}"
             filepath = os.path.join(DATA_DIR, filename)
 
-            with open(filepath, "wb") as buffer:
-                shutil.copyfileobj(file_obj.file, buffer)
+            file_obj.file.seek(0)
+            file_crypto.write_document(filepath, file_obj.file.read())
 
             saved_paths[key] = filepath
             temp_files.append(filepath)
 
         if not saved_paths:
             raise HTTPException(400, "No valid files provided. Upload at least one PDF/DOCX/XLSX")
+
+        # The document_engine parsers (fitz / python-docx / openpyxl) read files
+        # by raw path, so decrypt the stored files to plaintext temp paths for
+        # the duration of the pipeline. open_plaintext is a no-op for plaintext
+        # files (encryption disabled, or legacy files).
+        saved_paths = {
+            key: _stack.enter_context(file_crypto.open_plaintext(p))
+            for key, p in saved_paths.items()
+        }
 
         # --- Layer 1-3: Run pipeline ---
         from blocks.document_engine.main import parse_all
@@ -203,6 +215,11 @@ async def ingest(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingest pipeline failed: {str(e)}")
     finally:
+        # Close any decrypt-to-temp copies created by open_plaintext.
+        try:
+            _stack.close()
+        except Exception:
+            pass
         # Cleanup temp files
         for tmp in temp_files:
             try:
@@ -225,8 +242,10 @@ async def ingest_via_block(
     Same pipeline as /ingest but routes through BLOCK_REGISTRY so platform
     blocks (pdf, ocr) are resolved and injected automatically.
     """
+    from contextlib import ExitStack
     saved_paths = {}
     temp_files = []
+    _stack = ExitStack()
 
     try:
         for file_obj, key in [(pdf, "pdf"), (docx, "docx"), (xlsx, "xlsx")]:
@@ -239,13 +258,22 @@ async def ingest_via_block(
             file_id = str(uuid.uuid4())[:8]
             filename = f"{file_id}_{original_name}"
             filepath = os.path.join(DATA_DIR, filename)
-            with open(filepath, "wb") as buffer:
-                shutil.copyfileobj(file_obj.file, buffer)
+            # Encrypted at rest iff DATA_ENCRYPTION_KEY is set (opt-in).
+            file_obj.file.seek(0)
+            file_crypto.write_document(filepath, file_obj.file.read())
             saved_paths[key] = filepath
             temp_files.append(filepath)
 
         if not saved_paths:
             raise HTTPException(400, "No valid files provided")
+
+        # The document_engine block + its fallback parsers read files by raw
+        # path; decrypt the stored files to plaintext temp paths for the run.
+        # open_plaintext is a no-op when files are plaintext.
+        saved_paths = {
+            key: _stack.enter_context(file_crypto.open_plaintext(p))
+            for key, p in saved_paths.items()
+        }
 
         # Resolve or create the document_engine block instance
         if "document_engine" not in block_instances:
@@ -281,6 +309,10 @@ async def ingest_via_block(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingest via block failed: {str(e)}")
     finally:
+        try:
+            _stack.close()
+        except Exception:
+            pass
         for tmp in temp_files:
             try:
                 if os.path.exists(tmp):

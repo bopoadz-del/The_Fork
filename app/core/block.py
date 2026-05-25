@@ -56,7 +56,7 @@ class BaseBlock(ABC):
         try:
             result = await self.process(input_data, params)
             status = "success"
-            confidence = result.get("confidence", 0.95)
+            confidence = result.get("confidence", None)
         except Exception as e:
             result = {"error": str(e)}
             status = "error"

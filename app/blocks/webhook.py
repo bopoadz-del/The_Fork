@@ -1,5 +1,6 @@
 """Webhook Block - Outgoing webhooks"""
 from app.core.universal_base import UniversalBlock
+from app.core.url_guard import UnsafeURLError, validate_public_url
 from typing import Dict, Any, List
 import asyncio
 import hmac
@@ -68,7 +69,13 @@ class WebhookBlock(UniversalBlock):
         payload = data.get("payload", {})
         secret = data.get("secret", self.secret)
         headers = data.get("headers", {})
-        
+
+        # SSRF guard — only POST to a public host (not loopback / internal).
+        try:
+            url = await asyncio.to_thread(validate_public_url, url)
+        except UnsafeURLError as e:
+            return {"error": f"Unsafe webhook URL: {e}", "url": url}
+
         # Add signature
         payload_str = str(payload)
         signature = hmac.new(
@@ -93,7 +100,8 @@ class WebhookBlock(UniversalBlock):
                         url,
                         json=payload,
                         headers=headers,
-                        timeout=self.timeout
+                        timeout=self.timeout,
+                        allow_redirects=False,
                     ) as resp:
                         if resp.status < 400:
                             return {
@@ -121,7 +129,10 @@ class WebhookBlock(UniversalBlock):
                     "error": f"Failed after {self.max_retries} attempts: {str(e)}",
                     "url": url
                 }
-    
+
+        # Reached only if the retry loop never ran (max_retries <= 0).
+        return {"error": "Webhook not sent — max_retries must be >= 1", "url": url}
+
     async def _trigger_event(self, data: Dict) -> Dict:
         """Trigger event to all registered webhooks"""
         event = data.get("event")  # e.g., "user.created"

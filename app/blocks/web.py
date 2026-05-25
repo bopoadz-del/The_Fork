@@ -1,5 +1,6 @@
 """Web Block - Real HTTP scraping via httpx + BeautifulSoup"""
 
+import asyncio
 import re
 from typing import Any, Dict
 from urllib.parse import urljoin, urlparse
@@ -8,6 +9,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.core.universal_base import UniversalBlock
+from app.core.url_guard import UnsafeURLError, validate_public_url
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -87,17 +89,33 @@ class WebBlock(UniversalBlock):
 
         operation = params.get("operation", "fetch")  # fetch | extract_links | extract_text | html_parse
 
-        if not url or not url.startswith("http"):
-            return {"status": "error", "error": "Valid http/https URL required"}
+        # SSRF guard: reject non-http(s) schemes and hosts that resolve to
+        # private / loopback / link-local addresses before making any request.
+        try:
+            url = await asyncio.to_thread(validate_public_url, url)
+        except UnsafeURLError as e:
+            return {"status": "error", "error": str(e)}
 
         try:
             async with httpx.AsyncClient(
                 headers=_HEADERS,
                 timeout=_TIMEOUT,
-                follow_redirects=True,
-                max_redirects=5,
+                follow_redirects=False,
             ) as client:
                 resp = await client.get(url)
+                # Follow redirects manually so every hop is SSRF-validated —
+                # a public URL must not bounce the request to an internal host.
+                for _ in range(5):
+                    if not resp.is_redirect or not resp.headers.get("location"):
+                        break
+                    nxt = urljoin(str(resp.url), resp.headers["location"])
+                    try:
+                        nxt = await asyncio.to_thread(validate_public_url, nxt)
+                    except UnsafeURLError as e:
+                        return {"status": "error", "error": f"Unsafe redirect: {e}"}
+                    resp = await client.get(nxt)
+                if resp.is_redirect:
+                    return {"status": "error", "error": f"Too many redirects: {url}"}
                 resp.raise_for_status()
                 content_type = resp.headers.get("content-type", "")
 

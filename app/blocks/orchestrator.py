@@ -7,6 +7,40 @@ from app.core.data_transformer import DataTransformer, transform as _transform_d
 from app.core.input_adapter import adapt_input
 
 
+# Input types (case-insensitive) that are satisfied by a plain text string.
+_TEXT_LIKE_INPUT_TYPES = {"text", "textcontent", "chatmessage"}
+
+# Field names — priority order — used to pull the human-readable text out of a
+# block's JSON output when the next block in a chain expects plain text.
+# Ordered most-specific first: a translate block's text is under "translated",
+# an LLM block's under "answer"/"text", etc. Extend this list as blocks with
+# new output shapes are added to the platform.
+_TEXT_OUTPUT_FIELDS = (
+    "text", "translated", "translated_text", "translation",
+    "answer", "response", "content", "message",
+    "result", "output", "summary", "body",
+)
+
+
+def _coerce_dict_to_text(data: Dict) -> Optional[str]:
+    """Extract the primary human-readable string from a block's JSON output.
+
+    Used to unwrap a step's dict output (e.g. translate's
+    ``{"translated": "...", ...}``) before it reaches a text-expecting block.
+    Returns ``None`` when no obvious text field is present, so the caller can
+    fall back to its normal type handling rather than guess wrongly.
+    """
+    for key in _TEXT_OUTPUT_FIELDS:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    # No known field — if exactly one string value exists it is unambiguous.
+    string_values = [v for v in data.values() if isinstance(v, str) and v.strip()]
+    if len(string_values) == 1:
+        return string_values[0]
+    return None
+
+
 @dataclass
 class ChainStep:
     """Validated chain step with type information"""
@@ -350,7 +384,30 @@ class OrchestratorBlock(UniversalBlock):
 
             # Transform input if needed (type conversion + field mapping)
             current_type = DataTransformer.detect_type(context)
-            
+
+            # Output-unwrapping: a JSON dict produced by a previous step is
+            # coerced to its primary text value when the next block expects
+            # text (e.g. translate -> chat). Without this the chain is
+            # rejected as a JSON/Text mismatch even though the dict carries
+            # exactly the text the next block needs.
+            if (
+                step.index > 0
+                and current_type == DataTransformer.JSON
+                and isinstance(context, dict)
+                and str(step.input_type).lower() in _TEXT_LIKE_INPUT_TYPES
+            ):
+                unwrapped = _coerce_dict_to_text(context)
+                if unwrapped is not None:
+                    type_conversions.append({
+                        "step": step.index,
+                        "block": step.block_name,
+                        "from": current_type,
+                        "to": step.input_type,
+                        "operation": "json_to_text_unwrap",
+                    })
+                    context = unwrapped
+                    current_type = DataTransformer.TEXT
+
             # Auto-adapt input to block's expected format
             context = adapt_input(context, step.block)
             

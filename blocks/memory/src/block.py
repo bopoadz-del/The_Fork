@@ -33,7 +33,7 @@ class MemoryBlock(LegoBlock):
     async def initialize(self):
         """Start background cleanup"""
         self.cleanup_task = asyncio.create_task(self._cleanup_expired())
-        print(f"🧠 Memory Block ready (max: {self.max_size}, TTL: {self.default_ttl}s)")
+        print(f"[memory] Memory Block ready (max: {self.max_size}, TTL: {self.default_ttl}s)")
         return True
     
     async def execute(self, input_data: Dict) -> Dict:
