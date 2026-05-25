@@ -517,8 +517,6 @@ function addMessage(text, role = 'assistant', { persist = true } = {}) {
     bubble.className = 'bubble';
     if (role === 'assistant') {
         bubble.innerHTML = renderMarkdown(text);
-    } else if (role === 'error' && typeof text === 'string' && text.includes('<div')) {
-        bubble.innerHTML = text;
     } else {
         bubble.textContent = text;
     }
@@ -658,25 +656,32 @@ function renderDrives() {
         return;
     }
     
-    list.innerHTML = Object.entries(connectedDrives).map(([id, drive]) => `
-        <div class="drive-project">
-            <div class="drive-header" onclick="toggleDrive('${id}')">
-                <span class="icon">${drive.icon}</span>
-                <span>${drive.name}</span>
-                <span class="toggle">▶</span>
+    list.innerHTML = Object.entries(connectedDrives).map(([id, drive]) => {
+        const idEsc = escapeHtml(id);
+        const fileRows = drive.files.map(f => {
+            const name = typeof f === 'string' ? f : (f.name || String(f));
+            return `
+                <div class="drive-file" data-drive-id="${idEsc}" data-file-name="${escapeHtml(name)}">
+                    <span>📄</span>
+                    <span>${escapeHtml(name)}</span>
+                    ${drive.indexed ? '<span class="zvec-badge">Z</span>' : ''}
+                </div>
+            `;
+        }).join('');
+        return `
+            <div class="drive-project">
+                <div class="drive-header" data-drive-toggle="${idEsc}">
+                    <span class="icon">${escapeHtml(drive.icon || '')}</span>
+                    <span>${escapeHtml(drive.name || '')}</span>
+                    <span class="toggle">▶</span>
+                </div>
+                <div class="drive-files" id="drive-files-${idEsc}">
+                    ${drive.files.length === 0 ? '<div class="drive-empty">No files found</div>' : ''}
+                    ${fileRows}
+                </div>
             </div>
-            <div class="drive-files" id="drive-files-${id}">
-                ${drive.files.length === 0 ? '<div class="drive-empty">No files found</div>' : ''}
-                ${drive.files.map((f, i) => `
-                    <div class="drive-file" onclick="selectDriveFile('${id}', '${typeof f === 'string' ? f.replace(/'/g, "\\'") : f.name?.replace(/'/g, "\\'") || ''}')">
-                        <span>📄</span>
-                        <span>${typeof f === 'string' ? f : (f.name || f)}</span>
-                        ${drive.indexed ? '<span class="zvec-badge">Z</span>' : ''}
-                    </div>
-                `).join('')}
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function toggleDrive(id) {
@@ -987,26 +992,32 @@ function renderDrives() {
         return;
     }
     
-    container.innerHTML = Object.entries(connectedDrives).map(([key, drive]) => `
-        <div class="drive-project">
-            <div class="drive-header" onclick="toggleDrive('${key}')" id="drive-header-${key}">
-                <span class="icon">${drive.icon}</span>
-                <span>${drive.name}</span>
-                <span class="toggle">▶</span>
+    container.innerHTML = Object.entries(connectedDrives).map(([key, drive]) => {
+        const keyEsc = escapeHtml(key);
+        const fileRows = drive.files.map(f => {
+            const name = typeof f === 'string' ? f : (f.name || f.text || JSON.stringify(f));
+            return `
+                <div class="drive-file" data-drive-id="${keyEsc}" data-file-name="${escapeHtml(name)}">
+                    <span>${escapeHtml(name)}</span>
+                    ${drive.indexed ? '<span class="zvec-badge">zvec</span>' : ''}
+                </div>
+            `;
+        }).join('');
+        return `
+            <div class="drive-project">
+                <div class="drive-header" data-drive-toggle="${keyEsc}" id="drive-header-${keyEsc}">
+                    <span class="icon">${escapeHtml(drive.icon || '')}</span>
+                    <span>${escapeHtml(drive.name || '')}</span>
+                    <span class="toggle">▶</span>
+                </div>
+                <div class="drive-files" id="drive-files-${keyEsc}">
+                    ${drive.files.length === 0
+                        ? '<div class="drive-empty">No files found</div>'
+                        : fileRows}
+                </div>
             </div>
-            <div class="drive-files" id="drive-files-${key}">
-                ${drive.files.length === 0 
-                    ? '<div class="drive-empty">No files found</div>' 
-                    : drive.files.map(f => `
-                        <div class="drive-file" onclick="selectDriveFile('${key}', '${typeof f === 'string' ? f.replace(/'/g, "\\'") : JSON.stringify(f).replace(/'/g, "\\'")}')">
-                            <span>${typeof f === 'string' ? f : (f.name || f.text || JSON.stringify(f))}</span>
-                            ${drive.indexed ? '<span class="zvec-badge">zvec</span>' : ''}
-                        </div>
-                    `).join('')
-                }
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function toggleDrive(key) {
@@ -2001,6 +2012,15 @@ async function pollApiHealth() {
 // Initial probe + periodic re-probe (cheap; only fires while down or on first load).
 pollApiHealth();
 setInterval(() => { if (!apiHealthOk) pollApiHealth(); }, 5000);
+
+// Delegated click handler for drive headers/files — replaces inline onclick=
+// (inline handlers inject filenames into a JS string literal, which is XSS).
+document.addEventListener('click', (e) => {
+    const toggle = e.target.closest('[data-drive-toggle]');
+    if (toggle) { toggleDrive(toggle.dataset.driveToggle); return; }
+    const file = e.target.closest('.drive-file[data-drive-id]');
+    if (file) { selectDriveFile(file.dataset.driveId, file.dataset.fileName); }
+});
 
 // Initialize drives list
 renderDrives();
