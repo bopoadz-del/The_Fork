@@ -44,13 +44,20 @@ class SpecAnalyzerBlock(UniversalBlock):
         (r"\b(?:grade|class|type)\s*[:\-]?\s*([A-Z0-9\-]+)", "grade"),
         (r"\bfc['\"]?\s*=\s*([\d,]+)\s*(?:psi|MPa|kPa)", "concrete_strength"),
         (r"\bfy\s*=\s*([\d,]+)\s*(?:psi|MPa)", "rebar_yield"),
-        (r"\bASTM\s+([A-Z]\d+(?:\/[A-Z]\d+)?)", "astm_standard"),
+        # ASTM: allow trailing year suffix like A615-22 and slash-grade variants.
+        (r"\bASTM\s+([A-Z]\d+(?:[/-][A-Z]?\d*)*)", "astm_standard"),
         (r"\bACI\s+(\d+\w*)", "aci_standard"),
         (r"\bAISC\s+(\d+\w*)", "aisc_standard"),
         (r"\bISO\s+(\d+(?:[-:]\d+)?)", "iso_standard"),
+        # BS EN must come before BS alone so "BS EN 1992" matches the EN variant.
+        (r"\bBS\s+EN\s+(\d+(?:[-:]\d+)?)", "bs_en_standard"),
         (r"\bBS\s+(\d+(?:[-:]\d+)?)", "bs_standard"),
         (r"\bEN\s+(\d+(?:[-:]\d+)?)", "en_standard"),
         (r"\bSASO\s+(\d+(?:[-:]\d+)?)", "saso_standard"),
+        # AS (Australian Standard), e.g. "AS 3600", "AS 1170.4", "AS 1170-2002".
+        (r"\bAS\s+(\d+(?:\.\d+)?(?:-\d+)?)", "as_standard"),
+        # IBC year code, e.g. "IBC 2021".
+        (r"\bIBC\s+(\d{4})", "ibc_standard"),
         (r"\b(\d+)\s*MPa\s*(?:concrete|compressive)", "concrete_strength_mpa"),
         (r"\b(\d+)\s*N/mm[²2]", "strength_nmm2"),
     ]
@@ -116,9 +123,19 @@ class SpecAnalyzerBlock(UniversalBlock):
         compliance_flags = self._extract_compliance(text)
         sections = self._extract_sections(text)
 
-        referenced_standards = list(
-            {g["type"] for g in grade_requirements if "standard" in g["type"]}
-        )
+        # Emit standards as {type, value} dicts so callers see the actual matched
+        # standard code (e.g. "A615") rather than just the generic label
+        # ("astm_standard"). Deduplicate on (type, value).
+        _seen_std = set()
+        referenced_standards: List[Dict] = []
+        for g in grade_requirements:
+            if "standard" not in g["type"]:
+                continue
+            key = (g["type"], g["value"])
+            if key in _seen_std:
+                continue
+            _seen_std.add(key)
+            referenced_standards.append({"type": g["type"], "value": g["value"]})
 
         return {
             "status": "success",
@@ -142,8 +159,16 @@ class SpecAnalyzerBlock(UniversalBlock):
 
     # Post-filter stopwords for the loose grade/class/type pattern. The pattern is
     # compiled IGNORECASE so the capture group can match lowercase tokens like
-    # "of" in "type of concrete" — drop these.
-    _GRADE_STOPWORDS = {"of", "as", "be", "is", "to", "in", "on", "or", "at", "by"}
+    # "of" in "type of concrete" — drop these. We also drop common ALL-CAPS
+    # English words ("CONCRETE", "INSTALL", ...) that the loose pattern picks
+    # up from headings and instructional text.
+    _GRADE_STOPWORDS = {
+        # short prepositions/articles
+        "of", "as", "be", "is", "to", "in", "on", "or", "at", "by",
+        # ALL-CAPS common words that leak through the loose grade regex
+        "CONCRETE", "STEEL", "INSTALL", "APPROVAL", "REQUIREMENT",
+        "PROVIDE", "FURNISH", "PERFORM", "VERIFY",
+    }
 
     def _extract_grades(self, text: str) -> List[Dict]:
         found: Dict[str, Dict] = {}
@@ -156,7 +181,19 @@ class SpecAnalyzerBlock(UniversalBlock):
                         continue
                     if val.islower():
                         continue
+                    # Compare against stopword set in both raw and uppercased
+                    # forms (set already contains both short lowercase tokens
+                    # and ALL-CAPS English common words).
+                    if val in self._GRADE_STOPWORDS:
+                        continue
                     if val.lower() in self._GRADE_STOPWORDS:
+                        continue
+                    if val.upper() in self._GRADE_STOPWORDS:
+                        continue
+                    # Real grade strings (C30, B500B, M25, Grade-60) always
+                    # contain at least one digit or a hyphen. ALL-CAPS English
+                    # words ("CONCRETE", "FURNISH") do not — drop them.
+                    if not any(c.isdigit() for c in val) and "-" not in val:
                         continue
                 key = f"{ptype}:{val}"
                 if key not in found:

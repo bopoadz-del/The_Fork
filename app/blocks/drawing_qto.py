@@ -108,15 +108,15 @@ class DrawingQTOBlock(UniversalBlock):
         unit_factor = scale * to_metres_factor
 
         msp = doc.modelspace()
-        measurements = self._extract_measurements(msp, unit_factor)
-        areas = self._extract_areas(msp, unit_factor, layer_filter, min_area)
+        measurements, bulge_segments_count = self._extract_measurements(msp, unit_factor)
+        areas, hatch_hole_fallback = self._extract_areas(msp, unit_factor, layer_filter, min_area)
         volumes = self._estimate_volumes(areas, params)
         layers = list({e.dxf.layer for e in msp if hasattr(e.dxf, "layer")})
 
         total_area = sum(a["area_m2"] for a in areas)
         total_length = sum(m["length_m"] for m in measurements)
 
-        return {
+        response = {
             "status": "success",
             "measurements": measurements,
             "areas": areas,
@@ -128,11 +128,29 @@ class DrawingQTOBlock(UniversalBlock):
             "drawing_units": str(doc.units),
             "input_units": doc.units,
             "to_metres_factor": to_metres_factor,
+            "bulge_segments_count": bulge_segments_count,
+            "polyline_area_note": (
+                "Arc-bounded polygon area approximated as chord polygon area; "
+                "difference < 5% for typical bulges"
+            ),
         }
+        if hatch_hole_fallback:
+            response["hatch_hole_handling"] = "may include holes as positive area"
+        return response
 
-    def _extract_measurements(self, msp, unit_factor: float) -> List[Dict]:
-        """``unit_factor`` converts raw drawing units straight to metres."""
+    def _extract_measurements(self, msp, unit_factor: float) -> Tuple[List[Dict], int]:
+        """``unit_factor`` converts raw drawing units straight to metres.
+
+        Returns (measurements, bulge_segments_count) so the caller can know
+        how many LWPOLYLINE segments were arc-faced vs straight chords.
+        """
         results = []
+        bulge_segments_count = 0
+        # Import bulge_to_arc lazily; only LWPOLYLINE with non-zero bulge needs it.
+        try:
+            from ezdxf.math import bulge_to_arc
+        except Exception:
+            bulge_to_arc = None
         for entity in msp:
             etype = entity.dxftype()
             try:
@@ -174,25 +192,89 @@ class DrawingQTOBlock(UniversalBlock):
                         "length_m": round(arc_length, 4),
                         "layer": entity.dxf.layer,
                     })
-                elif etype in ("LWPOLYLINE", "POLYLINE"):
-                    pts = list(entity.get_points() if etype == "LWPOLYLINE" else entity.points())
+                elif etype == "LWPOLYLINE":
+                    # get_points() returns (x, y, start_w, end_w, bulge) tuples.
+                    pts = list(entity.get_points())
                     length = 0.0
+                    entity_bulge_segs = 0
+
+                    def seg_len(p_a, p_b):
+                        # p_a is the start vertex (carries the bulge to p_b).
+                        nonlocal entity_bulge_segs
+                        bulge = p_a[4] if len(p_a) >= 5 else 0.0
+                        if bulge_to_arc is not None and abs(bulge) >= 1e-9:
+                            try:
+                                _center, _start_a, _end_a, radius = bulge_to_arc(
+                                    (p_a[0], p_a[1]), (p_b[0], p_b[1]), bulge
+                                )
+                                entity_bulge_segs += 1
+                                return radius * abs(_end_a - _start_a)
+                            except Exception:
+                                pass
+                        return math.dist((p_a[0], p_a[1]), (p_b[0], p_b[1]))
+
                     for i in range(len(pts) - 1):
-                        length += math.dist(
-                            (pts[i][0], pts[i][1]),
-                            (pts[i + 1][0], pts[i + 1][1])
-                        )
+                        length += seg_len(pts[i], pts[i + 1])
                     if entity.is_closed and len(pts) > 1:
-                        length += math.dist(
-                            (pts[-1][0], pts[-1][1]),
-                            (pts[0][0], pts[0][1])
-                        )
+                        length += seg_len(pts[-1], pts[0])
                     length = length * unit_factor
+                    bulge_segments_count += entity_bulge_segs
                     results.append({
                         "type": "polyline",
                         "length_m": round(length, 4),
                         "closed": entity.is_closed,
                         "vertex_count": len(pts),
+                        "bulge_segments": entity_bulge_segs,
+                        "layer": entity.dxf.layer,
+                    })
+                elif etype == "POLYLINE":
+                    pts = list(entity.points())
+                    # POLYLINE flag bit 8 = is_3d_polyline (also exposed as
+                    # `is_3d_polyline` attribute on ezdxf objects).
+                    is_3d = bool(getattr(entity, "is_3d_polyline", False))
+                    if not is_3d:
+                        try:
+                            is_3d = bool(int(getattr(entity.dxf, "flags", 0)) & 8)
+                        except Exception:
+                            is_3d = False
+
+                    def _pt_xyz(p):
+                        # Vertex coords may be Vec3 or tuple — be defensive.
+                        x = getattr(p, "x", None)
+                        if x is None:
+                            x = p[0]
+                            y = p[1]
+                            z = p[2] if len(p) > 2 else 0.0
+                        else:
+                            y = p.y
+                            z = getattr(p, "z", 0.0)
+                        return (x, y, z)
+
+                    length = 0.0
+                    if is_3d:
+                        coords = [_pt_xyz(p) for p in pts]
+                        for i in range(len(coords) - 1):
+                            length += math.dist(coords[i], coords[i + 1])
+                        if entity.is_closed and len(coords) > 1:
+                            length += math.dist(coords[-1], coords[0])
+                    else:
+                        for i in range(len(pts) - 1):
+                            length += math.dist(
+                                (pts[i][0], pts[i][1]),
+                                (pts[i + 1][0], pts[i + 1][1])
+                            )
+                        if entity.is_closed and len(pts) > 1:
+                            length += math.dist(
+                                (pts[-1][0], pts[-1][1]),
+                                (pts[0][0], pts[0][1])
+                            )
+                    length = length * unit_factor
+                    results.append({
+                        "type": "polyline_3d" if is_3d else "polyline",
+                        "length_m": round(length, 4),
+                        "closed": entity.is_closed,
+                        "vertex_count": len(pts),
+                        "is_3d": is_3d,
                         "layer": entity.dxf.layer,
                     })
                 elif etype == "DIMENSION":
@@ -206,13 +288,19 @@ class DrawingQTOBlock(UniversalBlock):
                         })
             except Exception:
                 continue
-        return results
+        return results, bulge_segments_count
 
     def _extract_areas(
         self, msp, unit_factor: float, layer_filter: List[str], min_area: float
-    ) -> List[Dict]:
-        """``unit_factor`` converts raw drawing units straight to metres."""
+    ) -> Tuple[List[Dict], bool]:
+        """``unit_factor`` converts raw drawing units straight to metres.
+
+        Returns (areas, hatch_hole_fallback). hatch_hole_fallback is True if
+        any HATCH path lacked readable path_type_flags so the caller is
+        warned that holes may have been added as positive area.
+        """
         results = []
+        hatch_hole_fallback = False
         try:
             from shapely.geometry import Polygon
             use_shapely = True
@@ -258,22 +346,61 @@ class DrawingQTOBlock(UniversalBlock):
                         })
                 elif etype == "HATCH":
                     if hasattr(entity, "paths"):
+                        # Aggregate one entry per HATCH entity: external/outermost
+                        # boundary paths add area, internal islands subtract it.
+                        # If we can't read path_type_flags, fall back to summing
+                        # |shoelace| per path (legacy behaviour) and flag it.
+                        net_area = 0.0
+                        per_path_legacy_area = 0.0
+                        flags_readable = True
+                        path_count = 0
                         for path in entity.paths:
-                            if hasattr(path, "vertices") and len(path.vertices) >= 3:
-                                coords = [
-                                    (v[0] * unit_factor, v[1] * unit_factor)
-                                    for v in path.vertices
-                                ]
-                                area = abs(_shoelace(coords))
-                                if area >= min_area:
-                                    results.append({
-                                        "type": "hatch_area",
-                                        "area_m2": round(area, 4),
-                                        "layer": layer,
-                                    })
+                            if not (hasattr(path, "vertices") and len(path.vertices) >= 3):
+                                continue
+                            path_count += 1
+                            coords = [
+                                (v[0] * unit_factor, v[1] * unit_factor)
+                                for v in path.vertices
+                            ]
+                            a = abs(_shoelace(coords))
+                            per_path_legacy_area += a
+                            ptf = getattr(path, "path_type_flags", None)
+                            if ptf is None:
+                                flags_readable = False
+                                continue
+                            try:
+                                ptf_int = int(ptf)
+                            except Exception:
+                                flags_readable = False
+                                continue
+                            # Bit 1 = external boundary, Bit 4 = outermost.
+                            # Either marks an outer (additive) contour; otherwise
+                            # treat as a hole/island to subtract.
+                            if ptf_int & 1 or ptf_int & 4:
+                                net_area += a
+                            else:
+                                net_area -= a
+                        if path_count == 0:
+                            continue
+                        if flags_readable:
+                            area_value = max(net_area, 0.0)
+                        else:
+                            hatch_hole_fallback = True
+                            area_value = per_path_legacy_area
+                        if area_value >= min_area:
+                            results.append({
+                                "type": "hatch_area",
+                                "area_m2": round(area_value, 4),
+                                "path_count": path_count,
+                                "hole_handling": (
+                                    "outer_minus_holes" if flags_readable
+                                    else "may_include_holes_as_positive_area"
+                                ),
+                                "layer": layer,
+                            })
             except Exception:
                 continue
-        return sorted(results, key=lambda x: x["area_m2"], reverse=True)
+        return sorted(results, key=lambda x: x["area_m2"], reverse=True), hatch_hole_fallback
 
     def _estimate_volumes(self, areas: List[Dict], params: Dict) -> List[Dict]:
         height = float(params.get("height_m", 3.0))  # default floor height 3m

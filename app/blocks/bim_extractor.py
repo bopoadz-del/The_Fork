@@ -102,7 +102,7 @@ class BIMExtractorBlock(UniversalBlock):
         extract_props = params.get("extract_properties", self.config.get("extract_properties", True))
         run_clash = params.get("run_clash_detection", self.config.get("run_clash_detection", True))
 
-        building_elements, quantities = self._extract_elements(
+        building_elements, quantities, duplicate_subtypes_skipped = self._extract_elements(
             model, ifc_util, max_el, extract_props
         )
         project_info = self._extract_project_info(model)
@@ -130,17 +130,24 @@ class BIMExtractorBlock(UniversalBlock):
             "spaces": spaces_capped,
             "element_count": len(building_elements),
             "element_count_returned": len(building_elements_capped),
+            "duplicate_subtypes_skipped": duplicate_subtypes_skipped,
             "ifc_schema": model.schema,
         }
 
     def _extract_elements(
         self, model, ifc_util, max_el: int, extract_props: bool
-    ) -> Tuple[List[Dict], Dict]:
+    ) -> Tuple[List[Dict], Dict, int]:
         elements: List[Dict] = []
         quantities: Dict[str, Any] = {
             cat: {"count": 0, "items": []}
             for cat in set(IFC_CATEGORY_MAP.values())
         }
+        # `ifcopenshell.model.by_type(t)` returns subtypes by default, so
+        # IFC_CATEGORY_MAP entries like IfcWall + IfcWallStandardCase would
+        # otherwise double-count every IfcWallStandardCase. Track GlobalId
+        # (preferred) or step-id fallback to dedupe.
+        seen_guids: set = set()
+        duplicate_subtypes_skipped = 0
 
         for ifc_type, category in IFC_CATEGORY_MAP.items():
             try:
@@ -150,6 +157,11 @@ class BIMExtractorBlock(UniversalBlock):
             for el in items:
                 if len(elements) >= max_el:
                     break
+                key = getattr(el, "GlobalId", None) or el.id()
+                if key in seen_guids:
+                    duplicate_subtypes_skipped += 1
+                    continue
+                seen_guids.add(key)
                 el_data = self._element_to_dict(el, category, ifc_util, extract_props)
                 elements.append(el_data)
                 quantities[category]["count"] += 1
@@ -157,7 +169,7 @@ class BIMExtractorBlock(UniversalBlock):
                     quantities[category]["items"].append(el_data)
 
         quantities = {k: v for k, v in quantities.items() if v["count"] > 0}
-        return elements, quantities
+        return elements, quantities, duplicate_subtypes_skipped
 
     def _element_to_dict(self, el, category: str, ifc_util, extract_props: bool) -> Dict:
         el_dict: Dict = {
@@ -319,10 +331,12 @@ class BIMExtractorBlock(UniversalBlock):
                 if len(clashes) >= pair_cap:
                     break
                 elb, bb = boxes[j]
-                # AABB overlap test with tolerance margin.
-                if (ba[0] - tol_m <= bb[3] and bb[0] - tol_m <= ba[3]
-                        and ba[1] - tol_m <= bb[4] and bb[1] - tol_m <= ba[4]
-                        and ba[2] - tol_m <= bb[5] and bb[2] - tol_m <= ba[5]):
+                # AABB overlap test: tol_m is the MINIMUM required interpenetration
+                # (shrink each box inward by tol_m so glancing contacts within tol
+                # don't count as clashes — increasing tolerance reduces clash count).
+                if (ba[0] + tol_m <= bb[3] and bb[0] + tol_m <= ba[3]
+                        and ba[1] + tol_m <= bb[4] and bb[1] + tol_m <= ba[4]
+                        and ba[2] + tol_m <= bb[5] and bb[2] + tol_m <= ba[5]):
                     # Same-category collocation is usually expected (walls
                     # touching at corners, slabs stacked). Skip it; cross-
                     # discipline overlaps are the real clashes.

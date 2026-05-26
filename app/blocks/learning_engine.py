@@ -148,6 +148,7 @@ class LearningEngineBlock(UniversalBlock):
             "promotion_flag": promoted,
             "sample_count": len(formula["samples"]),
             "auto_tuned": tuned,
+            "tier_gated_by": formula.get("tier_gated_by"),
         }
 
     async def _tune_coefficients(self, data: Dict, params: Dict) -> Dict:
@@ -176,6 +177,7 @@ class LearningEngineBlock(UniversalBlock):
                 "mae": mae,
                 "tier_level": formula["tier"],
                 "promotion_flag": promoted,
+                "tier_gated_by": formula.get("tier_gated_by"),
             }
 
         self._save_state()
@@ -207,6 +209,7 @@ class LearningEngineBlock(UniversalBlock):
                 "promoted": promoted,
                 "executions": formula["executions"],
                 "sample_count": len(formula["samples"]),
+                "tier_gated_by": formula.get("tier_gated_by"),
             }
 
         self._save_state()
@@ -276,14 +279,51 @@ class LearningEngineBlock(UniversalBlock):
             return {"scale": round(scale, 6), "bias": 0.0}, round(mae, 5)
 
     def _compute_tier(self, formula: Dict) -> tuple:
+        """Determine a formula's tier from both exec count AND last MAE.
+
+        A formula must satisfy BOTH gates to be promoted:
+          - n_exec  >= the tier's exec-count threshold (from _TIER_RULES)
+          - last_mae < the configured promotion_mae_threshold
+
+        A model with 200 runs but 40% error has no business reaching platinum,
+        so a poor MAE caps the tier at the previous level. The returned dict
+        carries `tier_gated_by` so the caller can see which gate kept a
+        formula from advancing.
+        """
         n_exec = formula["executions"]
         current_tier = formula["tier"]
         tier_order = ["bronze", "silver", "gold", "platinum"]
 
-        new_tier = "bronze"
+        mae_threshold = float(self.config.get("promotion_mae_threshold", 0.05))
+        last_mae = formula.get("last_mae")
+
+        # Compute the tier the exec count alone would justify.
+        exec_tier = "bronze"
         for threshold, tier in _TIER_RULES:
             if n_exec >= threshold:
-                new_tier = tier
+                exec_tier = tier
+
+        # MAE gate: only allow advancement past bronze when MAE is known and
+        # below the threshold. Unknown MAE means we have no signal yet — keep
+        # the formula at bronze until tuning has produced an MAE.
+        mae_passes = last_mae is not None and last_mae < mae_threshold
+
+        if mae_passes:
+            new_tier = exec_tier
+            tier_gated_by = "exec_count"
+        else:
+            new_tier = "bronze"
+            tier_gated_by = "mae_threshold"
+
+        # Never demote: if the formula is already higher than what the gates
+        # justify (e.g. MAE just regressed), keep its existing tier.
+        if tier_order.index(new_tier) < tier_order.index(current_tier):
+            new_tier = current_tier
 
         promoted = tier_order.index(new_tier) > tier_order.index(current_tier)
+
+        # Stash the gating reason on the formula so callers can debug stalled
+        # promotions without re-deriving it.
+        formula["tier_gated_by"] = tier_gated_by
+
         return new_tier, promoted

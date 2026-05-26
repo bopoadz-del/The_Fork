@@ -1,5 +1,6 @@
 """LLM Enhancer Block - AI text extraction and structuring using chat block."""
 
+import json
 import os
 from typing import Any, Dict, List, Optional
 from app.core.universal_base import UniversalBlock
@@ -119,12 +120,27 @@ class LLMEnhancerBlock(UniversalBlock):
                 "temperature": params.get("temperature", self.config.get("temperature", 0.3)),
                 "stream": False
             })
-            text = result.get("result", {}).get("text", "")
-            return {
-                "status": "success",
-                "structured_data": text,
-                "model_used": params.get("model", self.config.get("default_provider", "deepseek-chat"))
-            }
+            raw_text = result.get("result", {}).get("text", "")
+            model_used = params.get("model", self.config.get("default_provider", "deepseek-chat"))
+            # The extract prompt says "Return ONLY valid JSON". Try to parse it
+            # so callers get a real dict/list, not a JSON-shaped string. Fall
+            # back to raw text with a warning on parse failure.
+            try:
+                structured = json.loads(raw_text)
+                return {
+                    "status": "success",
+                    "structured_data": structured,
+                    "raw_text": raw_text,
+                    "model_used": model_used,
+                }
+            except (json.JSONDecodeError, TypeError):
+                return {
+                    "status": "success",
+                    "structured_data": None,
+                    "raw_text": raw_text,
+                    "warning": "LLM returned non-JSON; structured_data is None",
+                    "model_used": model_used,
+                }
         except Exception as e:
             return {"status": "error", "error": f"LLM enhancement failed: {str(e)}"}
 

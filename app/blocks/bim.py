@@ -66,7 +66,7 @@ class BIMBlock(UniversalBlock):
         elif action == "parse_ifc":
             return await self._parse_ifc_real(input_data)
         elif action == "extract_dwg_metadata":
-            return await self._extract_dwg_real(input_data)
+            return await self._extract_dwg_metadata(input_data)
         elif action == "process_pdf":
             return await self._process_pdf_real(input_data)
         elif action == "get_elements":

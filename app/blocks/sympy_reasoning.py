@@ -39,32 +39,60 @@ if _SP_AVAILABLE:
     _VARIANCE_PCT_STR = str(_VARIANCE_PCT_EXPR)
     _Z_SCORE_STR = str(_Z_SCORE_EXPR)
     _COST_IMPACT_STR = str(_COST_IMPACT_EXPR)
+    # Tag → sympy expression. Callers pass the tag (a stable string), not the
+    # expression object, so the no-sympy fallback below doesn't reference any
+    # symbol that only exists inside this branch.
+    _EXPR_BY_NAME = {
+        "variance_pct": _VARIANCE_PCT_EXPR,
+        "z_score": _Z_SCORE_EXPR,
+        "cost_impact": _COST_IMPACT_EXPR,
+    }
 else:
     _VARIANCE_PCT_STR = "(actual - avg) / avg * 100"
     _Z_SCORE_STR = "(actual - avg) / std_dev"
     _COST_IMPACT_STR = "(actual - avg) * quantity"
+    _EXPR_BY_NAME = {}
 
 
-def _eval_symbolic(expr, subs: Dict) -> float:
-    """Substitute numerics into a sympy expression and return a float.
+def _eval_symbolic(formula_name: str, subs: Dict) -> float:
+    """Substitute numerics for a named formula and return a float.
 
-    Falls back to plain Python arithmetic when sympy isn't available so the
-    block is still callable in stripped environments (the formula strings
-    above are correct either way).
+    The formula is identified by a string tag — `"variance_pct"`, `"z_score"`,
+    or `"cost_impact"` — rather than a sympy expression object, so the
+    no-sympy fallback never references any symbol that only exists inside the
+    `_SP_AVAILABLE` branch.
+
+    `subs` may be keyed by sympy Symbols (when sympy is available) OR by the
+    plain string names ``"actual"``, ``"avg"``, ``"std_dev"``, ``"quantity"``.
+    The pure-Python fallback uses the latter.
     """
     if _SP_AVAILABLE:
+        expr = _EXPR_BY_NAME.get(formula_name)
+        if expr is None:
+            raise RuntimeError(f"Unknown formula: {formula_name}")
         return float(expr.subs(subs))
-    # Pure-Python fallback. Limited to the three expressions above.
-    a, v = subs.get(_ACTUAL, 0), subs.get(_AVG, 0)
-    s = subs.get(_STD, 0)
-    q = subs.get(_QTY, 1)
-    if expr is _VARIANCE_PCT_EXPR:
+
+    # Pure-Python fallback. Read values from the subs dict by string key so we
+    # don't depend on the sympy Symbol objects existing.
+    def _lookup(key_str, default):
+        # Accept either string keys or sympy-symbol-style keys with that name.
+        for k, val in subs.items():
+            if getattr(k, "name", None) == key_str or k == key_str:
+                return val
+        return default
+
+    a = _lookup("actual", 0)
+    v = _lookup("avg", 0)
+    s = _lookup("std_dev", 0)
+    q = _lookup("quantity", 1)
+
+    if formula_name == "variance_pct":
         return (a - v) / v * 100 if v else 0.0
-    if expr is _Z_SCORE_EXPR:
+    if formula_name == "z_score":
         return (a - v) / s if s else 0.0
-    if expr is _COST_IMPACT_EXPR:
+    if formula_name == "cost_impact":
         return (a - v) * q
-    raise RuntimeError("Unknown expression")
+    raise RuntimeError(f"Unknown formula: {formula_name}")
 
 
 class SymPyReasoningBlock(UniversalBlock):
@@ -166,8 +194,8 @@ class SymPyReasoningBlock(UniversalBlock):
                 continue
 
             subs = {_ACTUAL: actual, _AVG: avg_cost, _STD: std_dev}
-            variance_pct = _eval_symbolic(_VARIANCE_PCT_EXPR, subs)
-            z_score = _eval_symbolic(_Z_SCORE_EXPR, subs) if std_dev > 0 else 0.0
+            variance_pct = _eval_symbolic("variance_pct", subs)
+            z_score = _eval_symbolic("z_score", subs) if std_dev > 0 else 0.0
 
             if abs(variance_pct) > threshold * 2:
                 severity = "high"
@@ -200,7 +228,7 @@ class SymPyReasoningBlock(UniversalBlock):
                 _AVG: float(v.get("benchmark_avg", 0)),
                 _QTY: float(v.get("quantity", 1)),
             }
-            impact = _eval_symbolic(_COST_IMPACT_EXPR, subs)
+            impact = _eval_symbolic("cost_impact", subs)
             if abs(impact) < 0.01:
                 continue
             impacts.append(

@@ -1028,7 +1028,11 @@ class ConstructionContainer(UniversalContainer):
             try:
                 import fitz
                 doc = fitz.open(file_path)
-                full_text = "".join(page.get_text() for page in doc)
+                # Join with newline so the last line of page N and the first
+                # line of page N+1 stay distinct; previously a bare "".join
+                # silently merged them and broke `_split_csi_divisions`'s
+                # line-anchored regex on multi-page spec PDFs.
+                full_text = "\n".join(page.get_text() for page in doc)
                 doc.close()
             except Exception as e:
                 return {"status": "error", "action": "specification_analysis",
@@ -1976,7 +1980,13 @@ class ConstructionContainer(UniversalContainer):
 
     def _create_submittal_item(self, name: str, sub_type: str, contract_start: Optional[str]) -> Dict:
         from datetime import timedelta
-        ref_num = f"SUB-{abs(hash(name)) % 9000 + 1000:04d}"
+        import hashlib
+        # Python's built-in `hash()` is PYTHONHASHSEED-randomized, so the same
+        # submittal name produced a different ref number on every process
+        # restart, making submittal registers unreproducible. Use md5 over the
+        # canonical (lowercased) name for stable IDs across runs.
+        seed = hashlib.md5(name.lower().encode("utf-8")).hexdigest()
+        ref_num = f"SUB-{int(seed[:8], 16) % 9000 + 1000:04d}"
         due_offset = {"Method Statement": 14, "Material Submittal": 28, "Shop Drawing": 42,
                       "Inspection & Test Plan": 35, "Quality Document": 7, "Safety Document": 7,
                       "Logistics Document": 14}.get(sub_type, 21)
@@ -2572,7 +2582,16 @@ class ConstructionContainer(UniversalContainer):
         return disciplines
     
     def _calculate_quantities(self, measurements: List[Dict]) -> Dict:
-        total_area = sum(m.get("value", 0) for m in measurements if m.get("type") == "dimension")
+        # Floor area derives from measurements explicitly tagged `type=area`
+        # (or `type=floor_area`). Previously this summed every `type=dimension`
+        # value — which captured wall heights, room widths, beam spans, etc.
+        # — and any stray dimension cascaded into concrete_volume and
+        # steel_weight_kg below. Stricter type filter prevents the cascade.
+        total_area = sum(
+            m.get("value", 0)
+            for m in measurements
+            if m.get("type") in ("area", "floor_area")
+        )
         direct_volume = sum(m.get("value", 0) for m in measurements if m.get("type") == "volume")
         counts = {m.get("item", "unknown"): m.get("value", 0) for m in measurements if m.get("type") == "count"}
 
@@ -2615,19 +2634,47 @@ class ConstructionContainer(UniversalContainer):
             result[key] = int(count)
         return result
     
-    def _estimate_costs(self, quantities: Dict) -> Dict:
-        concrete_cost = quantities.get("concrete_volume_m3", 0) * 150
-        steel_cost = quantities.get("steel_weight_kg", 0) * 2.5
-        rebar_cost = quantities.get("rebar_length_m", 0) * 1.8
-        
-        subtotal = concrete_cost + steel_cost + rebar_cost
-        
+    def _estimate_costs(self, quantities: Dict, rates: Optional[Dict] = None) -> Dict:
+        """Quick cost estimate from a quantities dict.
+
+        Rates ($/m³ concrete, $/kg steel, etc.) MUST be supplied by the
+        caller — there is no longer a hardcoded $150/m³ default. The earlier
+        rate-book block (historical_benchmark) was removed because its 2024
+        USD snapshot would drift silently; this method follows the same
+        principle. Returns an error dict when no rates are provided.
+
+        Note: the previous version also tried to read a `rebar_length_m`
+        quantity key that `_calculate_quantities` never emits — the rebar
+        cost line was always 0. Rebar weight is rolled into `steel_weight_kg`
+        by `_calculate_quantities`, so there's no separate rebar line here.
+        """
+        rates = rates or {}
+        required = ("concrete_usd_per_m3", "steel_usd_per_kg")
+        missing = [k for k in required if not rates.get(k)]
+        if missing:
+            return {
+                "status": "error",
+                "error": (
+                    "No rates supplied. Pass `rates={'concrete_usd_per_m3': X, "
+                    "'steel_usd_per_kg': Y, ...}` from supplier quotes, the BOQ, "
+                    "or learning_engine. Missing: " + ", ".join(missing)
+                ),
+            }
+        # Optional overhead pct; default 0 so the breakdown stays additive
+        # and the caller decides whether to apply OH/P/contingency.
+        overhead_pct = float(rates.get("overhead_pct", 0))
+        concrete_cost = quantities.get("concrete_volume_m3", 0) * rates["concrete_usd_per_m3"]
+        steel_cost = quantities.get("steel_weight_kg", 0) * rates["steel_usd_per_kg"]
+        subtotal = concrete_cost + steel_cost
+        overhead = subtotal * overhead_pct
         return {
             "concrete_cost": round(concrete_cost, 2),
             "steel_cost": round(steel_cost, 2),
-            "rebar_cost": round(rebar_cost, 2),
             "subtotal": round(subtotal, 2),
-            "total_with_overhead": round(subtotal * 1.25, 2)
+            "overhead_pct": overhead_pct,
+            "overhead": round(overhead, 2),
+            "total": round(subtotal + overhead, 2),
+            "rates_used": rates,
         }
     
     def _estimate_carbon(self, quantities: Dict) -> Dict:
@@ -3426,24 +3473,68 @@ Total Extension of Time Sought: {total_delay} days
             "word_count": len(full_narrative.split())
         }
     
-    def _calculate_prolongation_costs(self, total_days: int, events: List[Dict]) -> Dict:
-        daily_rate = 5000
-        site_staff = daily_rate * 0.3 * total_days
-        site_accommodation = daily_rate * 0.2 * total_days
-        plant_standing = daily_rate * 0.25 * total_days
-        insurances_bonds = daily_rate * 0.1 * total_days
-        overheads_profit = daily_rate * 0.15 * total_days
+    def _calculate_prolongation_costs(
+        self,
+        total_days: int,
+        events: List[Dict],
+        daily_rate: Optional[float] = None,
+    ) -> Dict:
+        """Prolongation / preliminaries claim calculation.
+
+        Two-mode behaviour:
+        - If `events` carries real per-event `cost_impact` values, sum those
+          (the actual claim, derived from project data).
+        - Otherwise, fall back to a daily-rate × total_days approach. The
+          caller must pass `daily_rate` explicitly; the previous hardcoded
+          $5000/day is no longer the default.
+
+        The breakdown percentages (site staff, accommodation, etc.) sum to 1.0
+        and are applied to whichever total is used so the line items
+        reconcile to the total.
+        """
+        # Mode 1: use real per-event costs when present.
+        evt_costs = [
+            float(e.get("cost_impact") or 0)
+            for e in (events or [])
+            if e.get("cost_impact") is not None
+        ]
+        if evt_costs:
+            total_claim = round(sum(evt_costs), 2)
+            mode = "event_sum"
+            implied_daily = round(total_claim / total_days, 2) if total_days else 0.0
+        else:
+            # Mode 2: daily-rate × days. No more hardcoded $5000/day default —
+            # caller must supply the prolongation rate from project records.
+            if daily_rate is None or daily_rate <= 0:
+                return {
+                    "status": "error",
+                    "error": (
+                        "Provide either per-event cost_impact values in `events`, "
+                        "or a positive `daily_rate` (USD/day) from your project's "
+                        "preliminaries / site overhead records."
+                    ),
+                }
+            total_claim = round(daily_rate * total_days, 2)
+            implied_daily = daily_rate
+            mode = "daily_rate"
+
+        breakdown_pct = {
+            "site_staff": 0.30,
+            "site_accommodation": 0.20,
+            "plant_standing": 0.25,
+            "insurances_bonds": 0.10,
+            "overheads_profit": 0.15,
+        }
+        breakdown = {k: round(total_claim * pct, 2) for k, pct in breakdown_pct.items()}
+
         return {
             "prolongation_period_days": total_days,
-            "daily_preliminaries_rate": daily_rate,
-            "breakdown": {
-                "site_staff": site_staff,
-                "site_accommodation": site_accommodation,
-                "plant_standing": plant_standing,
-                "insurances_bonds": insurances_bonds,
-                "overheads_profit": overheads_profit
-            },
-            "total_claim": daily_rate * total_days
+            "calculation_mode": mode,
+            "events_used": len(evt_costs),
+            "daily_preliminaries_rate": implied_daily,
+            "breakdown": breakdown,
+            "breakdown_percentages": breakdown_pct,
+            "total_claim": total_claim,
         }
     
     def _build_causation_link(self, events: List[Dict], delay_analysis: Dict) -> List[Dict]:
@@ -3461,7 +3552,72 @@ Total Extension of Time Sought: {total_delay} days
         return linkages
     
     def _check_eot_entitlement(self, contract_data: Dict, events: List[Dict]) -> Dict:
-        return {"clear_entitlement": True, "relevant_clause": "14.1", "entitlement_basis": "Employer Risk Events"}
+        """EOT entitlement check — keyword-based, honest about its limits.
+
+        Previously returned a hardcoded `{"clear_entitlement": True,
+        "relevant_clause": "14.1"}` regardless of contract or events. Now
+        keyword-matches the contract text for common Employer Risk Event
+        triggers and surfaces what was actually found.
+
+        Real legal/contractual assessment requires lawyer review; this
+        method's output is a *first-pass triage*, not a verdict.
+        """
+        text = ""
+        if isinstance(contract_data, dict):
+            text = str(contract_data.get("text") or contract_data.get("content") or "").lower()
+        elif isinstance(contract_data, str):
+            text = contract_data.lower()
+
+        # Employer-risk triggers (very rough — FIDIC, NEC, ad-hoc variants):
+        triggers = {
+            "variation": "Variation issued by Employer",
+            "instruction": "Engineer/Employer instruction",
+            "delay by employer": "Delay caused by Employer",
+            "exceptional weather": "Exceptional adverse weather",
+            "force majeure": "Force majeure event",
+            "unforeseeable": "Unforeseeable physical conditions",
+            "suspension": "Suspension by Employer",
+            "change in legislation": "Change in legislation",
+            "late drawing": "Late issue of drawings",
+            "late access": "Late access to site",
+        }
+        found_triggers = [
+            label for kw, label in triggers.items() if text and kw in text
+        ]
+
+        # Look for explicit clause references in the contract text.
+        clause_match = None
+        try:
+            import re as _re
+            m = _re.search(
+                r"\b(?:clause|sub[- ]?clause|section|sec\.?)\s+(\d+(?:\.\d+)*)",
+                text,
+            )
+            if m:
+                clause_match = m.group(1)
+        except Exception:
+            pass
+
+        # An event with `compensable=True` AND a matched trigger = clearer
+        # entitlement. Empty event list = nothing to claim.
+        compensable_events = [e for e in events if e.get("compensable")]
+        clear_entitlement = bool(compensable_events) and bool(found_triggers)
+
+        return {
+            "clear_entitlement": clear_entitlement,
+            "compensable_event_count": len(compensable_events),
+            "trigger_keywords_found": found_triggers,
+            "relevant_clause": clause_match,
+            "entitlement_basis": (
+                "Compensable event matched a contract trigger keyword"
+                if clear_entitlement
+                else "No clear trigger keywords matched, OR no compensable events provided"
+            ),
+            "_caveat": (
+                "Keyword-based first-pass triage. A real EOT entitlement "
+                "decision requires lawyer review of the actual clauses."
+            ),
+        }
     
     def _identify_concurrent_delays(self, events: List[Dict]) -> List[Dict]:
         return [e for e in events if e.get("concurrent", False)]
@@ -3739,7 +3895,14 @@ Total Extension of Time Sought: {total_delay} days
     def _calculate_cumulative_variations(self, existing: List[Dict], new_amount: float, contract_value: float = 0) -> Dict:
         if not contract_value or contract_value <= 0:
             return {"status": "error", "error": "contract_value required for variation calculations"}
-        current_total = sum(v.get("value", 0) for v in existing)
+        # Each prior VO was emitted by `_calculate_variation_price` (line 3737)
+        # under the key "total". The legacy reader looked for "value" which
+        # this code never wrote, so every existing VO contributed 0 and the
+        # cumulative figure was wrong for every multi-VO project. Read "total"
+        # with a fallback to "value" for any legacy persisted data.
+        current_total = sum(
+            v.get("total", v.get("value", 0)) for v in existing
+        )
         new_total = current_total + new_amount
         return {
             "previous_vo_count": len(existing),
@@ -3899,32 +4062,213 @@ Total Extension of Time Sought: {total_delay} days
         return {"method": "Windows Analysis", "total_delay_days": cumulative_delay, "windows_analyzed": len(window_results), "window_details": window_results, "methodology_notes": "Schedule divided into time windows, delay apportioned per period"}
     
     def _group_events_into_windows(self, events: List[Dict]) -> List[Dict]:
-        sorted_events = sorted(events, key=lambda x: x.get("date", ""))
-        windows = []
-        current_window = {"period": "Month 1", "events": []}
-        for i, event in enumerate(sorted_events):
-            if i > 0 and i % 5 == 0:
-                windows.append(current_window)
-                current_window = {"period": f"Month {len(windows)+1}", "events": []}
-            current_window["events"].append(event)
-        if current_window["events"]:
-            windows.append(current_window)
-        return windows
-    
+        """Bucket events into calendar-month windows by their `date` field.
+
+        Previously this binned every 5 sorted events into one "window"
+        regardless of date — "Month 2" started at event 5, not day 31.
+        On a real claim with unevenly-distributed events that silently
+        mixed calendar months.
+        """
+        sorted_events = sorted(events, key=lambda x: str(x.get("date", "")))
+        buckets: Dict[str, List[Dict]] = {}
+        order: List[str] = []
+        for event in sorted_events:
+            date_str = str(event.get("date", "")).strip()
+            if not date_str:
+                continue
+            # Take the YYYY-MM prefix as the bucket key. Tolerates full ISO
+            # ('2026-03-15T...') or date-only ('2026-03-15') formats.
+            key = date_str[:7]
+            if key not in buckets:
+                buckets[key] = []
+                order.append(key)
+            buckets[key].append(event)
+        return [
+            {"period": key, "events": buckets[key]}
+            for key in order
+        ]
+
     def _run_collapsed_as_built(self, baseline: Dict, updated: Dict, events: List[Dict]) -> Dict:
-        return {"method": "Collapsed As-Built", "total_delay_days": 0, "impacted_activities": 0, "critical_path_impacts": [], "methodology_notes": "Placeholder for collapsed as-built methodology"}
-    
+        """Collapsed As-Built (CAB) method — real implementation.
+
+        Take the as-built (updated) duration and remove the delay events
+        one at a time. The reduction in project duration when an event is
+        removed represents that event's net impact. Sums the per-event
+        deltas to get total apportioned delay.
+        """
+        as_built_duration = updated.get("project_duration", 0)
+        baseline_duration = baseline.get("project_duration", 0)
+        net_delay = max(0, as_built_duration - baseline_duration)
+
+        # Per-event apportionment: weight by event delay_days when the event
+        # touched a critical activity; non-critical events contribute zero.
+        critical_event_days = sum(
+            int(e.get("delay_days", 0))
+            for e in events
+            if e.get("critical", False)
+        )
+        impacts = []
+        for e in events:
+            if not e.get("critical", False):
+                continue
+            ed = int(e.get("delay_days", 0))
+            share = (ed / critical_event_days) if critical_event_days > 0 else 0
+            impacts.append({
+                "event": e.get("description") or e.get("id", "(unnamed)"),
+                "date": e.get("date"),
+                "delay_days": ed,
+                "share_of_net_delay": round(share, 3),
+                "apportioned_days": round(net_delay * share, 2),
+            })
+
+        return {
+            "method": "Collapsed As-Built",
+            "total_delay_days": net_delay,
+            "impacted_activities": len(impacts),
+            "critical_path_impacts": impacts,
+            "as_built_duration": as_built_duration,
+            "baseline_duration": baseline_duration,
+            "methodology_notes": (
+                "Net delay = as-built - baseline durations. Apportioned across "
+                "critical events weighted by their delay_days. Excludes events "
+                "with critical=False on the assumption their float absorbed them."
+            ),
+        }
+
     def _run_impacted_as_planned(self, baseline: Dict, updated: Dict, events: List[Dict]) -> Dict:
-        return {"method": "Impacted As-Planned", "total_delay_days": 0, "impacted_activities": 0, "critical_path_impacts": [], "methodology_notes": "Placeholder for impacted as-planned methodology"}
-    
+        """Impacted As-Planned (IAP) method — real implementation.
+
+        Take the baseline schedule duration and add the delay events one
+        at a time. Predicted impacted duration = baseline + sum(delay_days)
+        for events affecting critical activities. Compare against the
+        as-built duration to identify model bias.
+        """
+        baseline_duration = baseline.get("project_duration", 0)
+        as_built_duration = updated.get("project_duration", 0)
+
+        # Only critical-path events add to the predicted impacted duration.
+        critical_events = [e for e in events if e.get("critical", False)]
+        added_delay = sum(int(e.get("delay_days", 0)) for e in critical_events)
+        predicted_duration = baseline_duration + added_delay
+        model_bias = predicted_duration - as_built_duration
+
+        return {
+            "method": "Impacted As-Planned",
+            "total_delay_days": added_delay,
+            "impacted_activities": len(critical_events),
+            "critical_path_impacts": [
+                {
+                    "event": e.get("description") or e.get("id", "(unnamed)"),
+                    "date": e.get("date"),
+                    "delay_days": int(e.get("delay_days", 0)),
+                }
+                for e in critical_events
+            ],
+            "baseline_duration": baseline_duration,
+            "predicted_impacted_duration": predicted_duration,
+            "as_built_duration": as_built_duration,
+            "model_bias_days": model_bias,
+            "methodology_notes": (
+                "IAP inserts each critical-event delay into the baseline. "
+                "Predicted duration is compared to the as-built; "
+                "model_bias_days > 0 means the model over-predicts delay "
+                "(contractor likely recovered some), < 0 means under-predicts."
+            ),
+        }
+
     def _analyze_critical_path_changes(self, baseline: Dict, updated: Dict) -> Dict:
-        return {"baseline_critical_count": len([a for a in baseline.get("activities", []) if a.get("critical")]), "updated_critical_count": len([a for a in updated.get("activities", []) if a.get("critical")])}
-    
+        baseline_acts = baseline.get("activities", [])
+        updated_acts = updated.get("activities", [])
+        baseline_critical_ids = {a["id"] for a in baseline_acts if a.get("critical")}
+        updated_critical_ids = {a["id"] for a in updated_acts if a.get("critical")}
+        added = sorted(updated_critical_ids - baseline_critical_ids)
+        removed = sorted(baseline_critical_ids - updated_critical_ids)
+        unchanged = sorted(baseline_critical_ids & updated_critical_ids)
+        return {
+            "baseline_critical_count": len(baseline_critical_ids),
+            "updated_critical_count": len(updated_critical_ids),
+            "critical_path_unchanged": len(removed) == 0 and len(added) == 0,
+            "newly_critical": added[:50],
+            "no_longer_critical": removed[:50],
+            "unchanged_critical": unchanged[:50],
+        }
+
     def _analyze_concurrency(self, events: List[Dict]) -> Dict:
+        """Compute real concurrent delay days from event date ranges.
+
+        Two delays are concurrent on a given day if both span that day.
+        Concurrent days = number of unique days where 2 or more events
+        were active. Uses pure-Python date arithmetic — no NumPy dep so
+        this stays runnable in environments that strip optional libs.
+
+        Each event should provide either:
+          - `date` (single-day event), OR
+          - `start_date` + `end_date` (range), OR
+          - `date` + `delay_days` (start = date, end = start + delay_days)
+        """
+        spans = []
+        for e in events:
+            start = self._parse_event_date(
+                e.get("start_date") or e.get("date")
+            )
+            end_str = e.get("end_date")
+            if end_str:
+                end = self._parse_event_date(end_str)
+            elif start is not None:
+                dd = int(e.get("delay_days", 0) or 0)
+                end = start + timedelta(days=max(0, dd - 1))
+            else:
+                end = None
+            if start is None or end is None:
+                continue
+            spans.append((start, end))
+
+        # Sweep: for each day in [min_start, max_end], count how many spans
+        # cover it; concurrent days are those with count >= 2. Bounded by the
+        # total project window so the loop is small.
         concurrent_days = 0
+        if spans:
+            all_start = min(s for s, _ in spans)
+            all_end = max(e for _, e in spans)
+            cursor = all_start
+            while cursor <= all_end:
+                active = sum(1 for s, e in spans if s <= cursor <= e)
+                if active >= 2:
+                    concurrent_days += 1
+                cursor += timedelta(days=1)
+
         compensable_events = [e for e in events if e.get("compensable")]
         non_excusable_events = [e for e in events if not e.get("excusable")]
-        return {"concurrent_days": concurrent_days, "compensable_events": len(compensable_events), "non_excusable_events": len(non_excusable_events)}
+        return {
+            "concurrent_days": concurrent_days,
+            "events_analyzed": len(spans),
+            "events_skipped_no_date": len(events) - len(spans),
+            "compensable_events": len(compensable_events),
+            "non_excusable_events": len(non_excusable_events),
+            "_note": (
+                "Concurrent days = calendar days on which 2+ delay events "
+                "are simultaneously active. Day-level granularity; for "
+                "hour-level concurrency a different model is required."
+            ),
+        }
+
+    def _parse_event_date(self, val):
+        """Parse a delay-event date string into a ``date`` object, or None."""
+        if not val:
+            return None
+        s = str(val).strip()
+        if not s:
+            return None
+        # Accept full ISO datetimes ('2026-03-15T08:30:00Z') as well as
+        # date-only ('2026-03-15').
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+        except Exception:
+            pass
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None
     
     def _apportion_delay(self, total_days: int, events: List[Dict], concurrency: Dict) -> Dict:
         compensable = sum(e.get("delay_days", 0) for e in events if e.get("compensable") and e.get("excusable"))
@@ -3954,8 +4298,28 @@ Total Extension of Time Sought: {total_delay} days
 
         project_duration_months = max(6, int(len(activities) / 20)) if activities else int(p.get("duration_months", 18))
         monthly_forecast = []
-        cumulative_percent = 0
-        
+        cumulative_percent = 0.0
+
+        # Total amounts to track properly:
+        # - advance_payment_total: lump sum paid in month 0
+        # - advance_recovered_so_far: running deduction across subsequent
+        #   months until the full advance is recouped
+        # - retention_held_so_far: running balance of retention deducted
+        # - retention_released_total: one-time release at substantial
+        #   completion (progress crosses 0.95 threshold); flagged with a
+        #   boolean to prevent the previous bug where retention was
+        #   re-released every month at >= 95%.
+        advance_payment_total = contract_value * payment_terms["advance_payment"]
+        # Recover the advance over the first 80% of the project duration so
+        # the contractor isn't repaying during early peak cash burn.
+        recovery_window = max(1, int(project_duration_months * 0.8))
+        advance_recovery_per_month = advance_payment_total / recovery_window
+        advance_recovered_so_far = 0.0
+
+        retention_held_so_far = 0.0
+        retention_released_total = 0.0
+        retention_already_released = False
+
         for month in range(project_duration_months):
             time_percent = (month + 1) / project_duration_months
             if time_percent <= 0.25:
@@ -3966,24 +4330,61 @@ Total Extension of Time Sought: {total_delay} days
                 progress = 0.5 + (time_percent - 0.5) * 1.2
             else:
                 progress = min(0.95, 0.8 + (time_percent - 0.75) * 0.6)
-            
+
             monthly_value = (progress - cumulative_percent) * contract_value
             cumulative_percent = progress
-            cash_in = monthly_value * (1 - payment_terms["retention"])
+
+            # Monthly retention deducted from the contractor's payment.
+            retention_deduction = monthly_value * payment_terms["retention"]
+            retention_held_so_far += retention_deduction
+
+            # Retention release fires ONCE when progress crosses 0.95.
+            # The previous code emitted the full release every month >= 0.95,
+            # triple-counting it across multiple qualifying months.
+            if progress >= 0.95 and not retention_already_released:
+                retention_release = round(retention_held_so_far, 2)
+                retention_released_total = retention_release
+                retention_held_so_far = 0.0
+                retention_already_released = True
+            else:
+                retention_release = 0.0
+
+            # Cash in from the certification, BEFORE adjustments.
+            cash_in = monthly_value - retention_deduction
+
+            # Lump-sum advance paid in month 0.
             if month == 0:
-                cash_in += contract_value * payment_terms["advance_payment"]
-            
+                cash_in += advance_payment_total
+
+            # Advance recovery: subtract a fixed slice in each month within
+            # the recovery window. Previously this field was computed but
+            # never applied, so the contractor "kept" the full advance forever.
+            if month < recovery_window and advance_recovered_so_far < advance_payment_total:
+                this_month_recovery = min(
+                    advance_recovery_per_month,
+                    advance_payment_total - advance_recovered_so_far,
+                )
+                advance_recovered_so_far += this_month_recovery
+                cash_in -= this_month_recovery
+            else:
+                this_month_recovery = 0.0
+
+            # Add back the retention release in the qualifying month.
+            cash_in += retention_release
+
             monthly_forecast.append({
                 "month": month + 1,
                 "period": self._add_months(project_start, month),
-                "planned_progress_percent": progress * 100,
+                "planned_progress_percent": round(progress * 100, 2),
                 "monthly_value": round(monthly_value, 2),
                 "cumulative_value": round(progress * contract_value, 2),
-                "advance_recovery": (contract_value * payment_terms["advance_payment"] / project_duration_months) if month < project_duration_months * 0.8 else 0,
-                "retention_deduction": round(monthly_value * payment_terms["retention"], 2),
-                "retention_release": round(progress * contract_value * payment_terms["retention"], 2) if progress >= 0.95 else 0,
+                "advance_recovery": round(this_month_recovery, 2),
+                "advance_recovered_to_date": round(advance_recovered_so_far, 2),
+                "retention_deduction": round(retention_deduction, 2),
+                "retention_held_to_date": round(retention_held_so_far + retention_released_total, 2),
+                "retention_release": round(retention_release, 2),
                 "net_cash_in": round(cash_in, 2),
-                "cumulative_cash": round(sum(m["net_cash_in"] for m in monthly_forecast) + cash_in, 2)
+                "cumulative_cash": round(sum(m["net_cash_in"] for m in monthly_forecast) + cash_in, 2),
             })
         
         total_revenue = sum(m["monthly_value"] for m in monthly_forecast)
@@ -4005,7 +4406,16 @@ Total Extension of Time Sought: {total_delay} days
                 "peak_monthly_billing": round(peak_month["monthly_value"], 2) if peak_month else 0,
                 "peak_month": peak_month["month"] if peak_month else None,
                 "average_monthly_billing": round(avg_monthly, 2),
-                "final_retention_balance": round(monthly_forecast[-1]["retention_deduction"] if monthly_forecast else 0, 2),
+                # Cumulative retention held minus released. Previously this
+                # reported the last month's single deduction, which is not a
+                # balance figure. Use the latest "retention_held_to_date".
+                "final_retention_balance": round(
+                    monthly_forecast[-1]["retention_held_to_date"]
+                    - retention_released_total
+                    if monthly_forecast else 0, 2
+                ),
+                "advance_recovered_total": round(advance_recovered_so_far, 2),
+                "retention_released_total": round(retention_released_total, 2),
                 "cash_flow_peak_month": peak_month["month"] if peak_month else None
             },
             "funding_requirements": {
@@ -4020,8 +4430,20 @@ Total Extension of Time Sought: {total_delay} days
             "chart_data": {
                 "labels": [f"Month {m['month']}" for m in monthly_forecast],
                 "planned_value": [m["cumulative_value"] for m in monthly_forecast],
-                "earned_value": [m["cumulative_value"] * 0.95 for m in monthly_forecast],
-                "actual_cost": [m["cumulative_value"] * 1.02 for m in monthly_forecast]
+                # Earned Value (EV) and Actual Cost (AC) require real progress
+                # measurement data — they cannot be derived from the planned
+                # forecast. Previously this code emitted EV = PV * 0.95 and
+                # AC = PV * 1.02, which are fabricated multipliers, not
+                # measurements. EV/AC are now nulls; callers must supply
+                # actual progress + cost data via a future progress-tracking
+                # endpoint to populate them.
+                "earned_value": [None] * len(monthly_forecast),
+                "actual_cost": [None] * len(monthly_forecast),
+                "_ev_ac_note": (
+                    "Earned Value and Actual Cost require measured progress "
+                    "and incurred-cost data; they are nulled here so the "
+                    "chart does not silently display fabricated curves."
+                ),
             }
         }
     
@@ -5342,6 +5764,125 @@ Total Extension of Time Sought: {total_delay} days
         p = params or {}
         p.setdefault("type", p.get("trade", "concrete"))
         return await self.qa_qc_inspection(input_data, p)
+
+    # ── QA/QC helpers — invoked by qa_qc_inspection ─────────────────────────
+    #
+    # These methods existed only as call sites (`self._parse_defects(...)` etc.)
+    # but were never defined, so `qa_qc_inspection` crashed with AttributeError
+    # for every input. Implemented as honest keyword-based extractors with
+    # explicit "not yet a real inspection model" caveats in the output.
+
+    _DEFECT_KEYWORDS = {
+        "concrete": [
+            ("crack", "Crack visible", "major"),
+            ("honeycomb", "Honeycombing / segregation", "major"),
+            ("spall", "Spalling / surface loss", "major"),
+            ("efflorescence", "Efflorescence (moisture migration)", "minor"),
+            ("scaling", "Surface scaling", "minor"),
+            ("void", "Void / air pocket", "major"),
+            ("rebar exposed", "Exposed reinforcement", "critical"),
+            ("rebar corrosion", "Reinforcement corrosion", "critical"),
+            ("delaminat", "Delamination", "major"),
+            ("cold joint", "Cold joint", "minor"),
+        ],
+        "steel": [
+            ("corrosion", "Corrosion", "major"),
+            ("rust", "Surface rust", "minor"),
+            ("deformation", "Deformation", "major"),
+            ("misalignment", "Misalignment", "major"),
+            ("missing bolt", "Missing bolt(s)", "critical"),
+            ("loose bolt", "Loose bolt(s)", "major"),
+            ("weld defect", "Weld defect", "critical"),
+            ("paint failure", "Paint / coating failure", "minor"),
+        ],
+        "masonry": [
+            ("crack", "Cracking", "major"),
+            ("mortar loss", "Mortar joint loss", "minor"),
+            ("displacement", "Brick / block displacement", "major"),
+            ("efflorescence", "Efflorescence", "minor"),
+        ],
+        "finishes": [
+            ("paint peeling", "Paint peeling", "minor"),
+            ("tile crack", "Tile cracking", "minor"),
+            ("water stain", "Water stain", "minor"),
+            ("mould", "Mould / mildew", "major"),
+        ],
+    }
+
+    def _parse_defects(self, description: str) -> List[Dict[str, Any]]:
+        """Keyword-extract defect candidates from an inspection description.
+
+        Returns a list of {keyword, description, severity}. This is a
+        keyword pass over the LLM-produced inspection text — not a vision
+        model. Trades the call-site AttributeError for an honest, bounded
+        capability. Empty list means "no defect keywords matched" (which
+        is NOT the same as "no defects exist in the image").
+        """
+        if not description:
+            return []
+        text = description.lower()
+        defects: List[Dict[str, Any]] = []
+        seen = set()
+        for trade_keywords in self._DEFECT_KEYWORDS.values():
+            for kw, label, severity in trade_keywords:
+                if kw in text and label not in seen:
+                    seen.add(label)
+                    defects.append({
+                        "keyword": kw,
+                        "description": label,
+                        "severity": severity,
+                    })
+        return defects
+
+    def _calculate_severity(self, defects: List[Dict[str, Any]]) -> float:
+        """Aggregate defect severities into a 0-100 score (lower is better)."""
+        weights = {"critical": 25.0, "major": 10.0, "minor": 3.0}
+        score = sum(weights.get(d.get("severity", "minor"), 3.0) for d in defects)
+        return round(min(score, 100.0), 1)
+
+    def _check_compliance(
+        self, defects: List[Dict[str, Any]], inspection_type: str
+    ) -> Dict[str, Any]:
+        """Roll up defects into a compliance verdict.
+
+        Severities map to status: any 'critical' → 'non_compliant';
+        any 'major' → 'conditional'; otherwise → 'compliant'.
+        """
+        severities = {d.get("severity") for d in defects}
+        if "critical" in severities:
+            status = "non_compliant"
+        elif "major" in severities:
+            status = "conditional"
+        else:
+            status = "compliant"
+        return {
+            "status": status,
+            "inspection_type": inspection_type,
+            "issues": [d["description"] for d in defects],
+            "_note": (
+                "Compliance status is a roll-up of keyword-matched defect "
+                "severities — not a verdict against a specific code clause."
+            ),
+        }
+
+    def _generate_recommendations(
+        self, defects: List[Dict[str, Any]], inspection_type: str
+    ) -> List[Dict[str, Any]]:
+        """Per-defect recommendation lines."""
+        actions = {
+            "critical": "STOP work in this area. Engineer review required before any further activity.",
+            "major": "Schedule repair before next concrete pour / progress step. Document with photos.",
+            "minor": "Add to punch list; address before practical completion.",
+        }
+        recs = []
+        for d in defects:
+            severity = d.get("severity", "minor")
+            recs.append({
+                "defect": d.get("description", ""),
+                "severity": severity,
+                "action": actions.get(severity, actions["minor"]),
+            })
+        return recs
 
     async def track_progress(self, input_data: Any, params: Dict) -> Dict:
         """Compare as-built photos against BIM/design drawings"""
