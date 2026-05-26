@@ -733,6 +733,10 @@ async function refreshDriveStatus() {
                 files: [],
             };
             renderDrives();
+            // Now load the actual file list so the sidebar shows real content,
+            // not an empty drive. Fire-and-forget — drive listing is slow
+            // enough we don't want refreshDriveStatus to block on it.
+            loadDriveFilesIntoSidebar().catch(() => {});
         } else {
             box.innerHTML =
                 `<button onclick="connectGoogleDrive()" style="background:#8b5cf6;border:none;color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;">Connect Google Drive</button>`;
@@ -741,6 +745,34 @@ async function refreshDriveStatus() {
     } catch (err) {
         box.innerHTML = `<span style="color:#ff6666;">Drive status unavailable — ${escapeHtml(err.message || 'error')}</span>`;
         if (browser) browser.style.display = 'none';
+    }
+}
+
+async function loadDriveFilesIntoSidebar() {
+    // Hit /v1/drive/files and populate the sidebar's google_drive entry so
+    // the user actually sees files when they expand the drive — previously
+    // the sidebar showed the drive but with zero files because nothing
+    // ever populated the files array post-OAuth.
+    try {
+        const r = await fetch(`${API_BASE}/v1/drive/files`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        const files = (data.files || []).map(f => ({
+            id: f.id,
+            name: f.name || f.title || f.id,
+            mimeType: f.mimeType || f.mime_type || '',
+            modifiedTime: f.modifiedTime || f.modified_time || '',
+        }));
+        if (!connectedDrives['google_drive']) return;
+        connectedDrives['google_drive'].files = files;
+        connectedDrives['google_drive'].file_count = files.length;
+        renderDrives();
+    } catch (e) {
+        // Silent — sidebar will just show the drive with no files. The
+        // dedicated drive modal already surfaces errors loudly when the
+        // user explicitly tries to browse there.
     }
 }
 
@@ -1277,10 +1309,36 @@ function renderProjects() {
     }
     list.innerHTML = projects.map(p => `
         <div class="project ${p.id === activeProjectId ? 'active' : ''}"
-             onclick="selectProject('${p.id}')" title="${escapeHtml(p.client || '')}">
-            ${escapeHtml(p.name)}
+             style="display:flex;align-items:center;justify-content:space-between;gap:6px;"
+             title="${escapeHtml(p.client || '')}">
+            <span onclick="selectProject('${p.id}')" style="flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.name)}</span>
+            <span onclick="deleteProject('${p.id}', '${escapeHtml(p.name).replace(/'/g, "&#39;")}')"
+                  title="Delete project"
+                  style="cursor:pointer;color:#666;padding:2px 6px;font-size:14px;line-height:1;">×</span>
         </div>
     `).join('');
+}
+
+async function deleteProject(id, name) {
+    if (!confirm(`Delete project "${name}"? This removes the project, all its documents, and its memory facts. Cannot be undone.`)) return;
+    try {
+        const r = await fetch(`${API_BASE}/v1/projects/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        // Remove from local list + re-render.
+        const idx = projects.findIndex(p => p.id === id);
+        if (idx >= 0) projects.splice(idx, 1);
+        if (activeProjectId === id) {
+            activeProjectId = null;
+            try { localStorage.removeItem(ACTIVE_PROJECT_KEY); } catch (e) {}
+        }
+        renderProjects();
+        addMessage(`Deleted project "${name}".`, 'system', { persist: false });
+    } catch (err) {
+        surfaceError(err, 'Delete project');
+    }
 }
 
 function selectProject(id) {
