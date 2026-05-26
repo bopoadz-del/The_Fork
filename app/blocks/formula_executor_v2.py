@@ -216,9 +216,20 @@ class FormulaExecutorV2Block(UniversalBlock):
             try:
                 raw = await self._call_llm(prompt)
             except Exception as e:
+                # Transient LLM/network failure: record and retry until
+                # ``max_attempts`` is exhausted, then surface the last error.
+                last_error = f"Code generation failed: {e}"
+                last_error_type = type(e).__name__
+                prior_error = str(e)
+                if attempt < max_attempts:
+                    continue
                 return _error(
-                    f"Code generation failed: {e}",
-                    attempts=attempt, task=task,
+                    last_error,
+                    generated_code=last_code,
+                    traceback=last_error,
+                    error_type=last_error_type,
+                    attempts=attempt,
+                    task=task,
                 )
 
             code = _strip_fences(raw)

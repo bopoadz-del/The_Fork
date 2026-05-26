@@ -177,9 +177,25 @@ class BIMBlock(UniversalBlock):
                 if count > 0:
                     element_counts[ifc_class.replace("Ifc", "")] = count
             
-            # Store in cache for later queries
-            self._ifc_cache[file_info["path"]] = ifc_file
-            
+            # Cache the parsed summary (dict) — NOT the live ifcopenshell.file
+            # object, whose backing temp file we're about to delete on the next
+            # line. Holding a live file ref after `os.unlink` led to opaque
+            # failures on later lookups; the dict is enough for queries we
+            # actually answer (counts, schema, project metadata).
+            cache_entry = {
+                "schema": ifc_file.schema,
+                "project_name": project.Name if project else None,
+                "site": site.Name if site else None,
+                "building": building.Name if building else None,
+                "element_counts": dict(element_counts),
+            }
+            # Bound the cache so it can't grow unbounded across many uploads.
+            _IFC_CACHE_CAP = 32
+            if len(self._ifc_cache) >= _IFC_CACHE_CAP:
+                # Drop oldest entry (insertion order on Py3.7+ dicts).
+                self._ifc_cache.pop(next(iter(self._ifc_cache)))
+            self._ifc_cache[file_info["path"]] = cache_entry
+
             import os
             os.unlink(temp_path)
             
@@ -267,68 +283,29 @@ class BIMBlock(UniversalBlock):
             return {"error": f"IFC parse failed: {str(e)}"}
     
     async def _extract_dwg_metadata(self, file_info: Dict) -> Dict:
-        """Extract DWG metadata using ODA File Converter or ezdxf"""
-        try:
-            import ezdxf
-            
-            result = await self.storage_block.execute({
-                "action": "retrieve",
-                "file_id": file_info["path"]
-            })
-            
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix=".dwg", delete=False) as f:
-                f.write(result["content"])
-                temp_path = f.name
-            
-            # Try to read DWG
-            try:
-                doc = ezdxf.readfile(temp_path)
-                msp = doc.modelspace()
-                
-                # Count entities
-                entity_count = len(msp)
-                
-                # Get layers
-                layers = [layer.dxf.name for layer in doc.layers]
-                
-                # Get extents if available
-                extents = None
-                if msp:
-                    try:
-                        bbox = msp.extents()
-                        extents = {
-                            "min": [bbox.extmin[0], bbox.extmin[1]],
-                            "max": [bbox.extmax[0], bbox.extmax[1]]
-                        }
-                    except:
-                        pass
-                
-                import os
-                os.unlink(temp_path)
-                
-                return {
-                    "description": f"AutoCAD Drawing: {len(layers)} layers, {entity_count} entities",
-                    "version": doc.dxfversion,
-                    "layers": layers[:20],  # Limit
-                    "entity_count": entity_count,
-                    "extents": extents,
-                    "extracted": True
-                }
-                
-            except Exception as e:
-                import os
-                os.unlink(temp_path)
-                return {
-                    "description": f"AutoCAD Drawing (ezdxf fallback: {str(e)})",
-                    "extracted": False
-                }
-                
-        except ImportError:
-            return {
-                "description": "AutoCAD Drawing (ezdxf not installed)",
-                "extracted": False
-            }
+        """DWG is binary AutoCAD — ezdxf only parses DXF (the text format).
+
+        Previously this method tried to feed DWG bytes to `ezdxf.readfile()`,
+        which always raises, falls into the silent exception handler, and
+        returns `{"extracted": False}` with a misleading "ezdxf fallback"
+        message. Every real DWG upload silently dropped its content.
+
+        Honest behavior: tell the caller DWG needs to be converted to DXF
+        first (via ODA File Converter, AutoCAD, or a similar tool). No
+        silent failure.
+        """
+        return {
+            "status": "error",
+            "error": (
+                "DWG is binary AutoCAD format — extraction not supported. "
+                "Convert to DXF first (ODA File Converter is free) and "
+                "re-upload, then drawing_qto / bim will process it."
+            ),
+            "description": "AutoCAD DWG (conversion required)",
+            "extracted": False,
+            "format": "dwg",
+            "requires_conversion_to": "dxf",
+        }
     
     async def _process_pdf_real(self, data: Dict) -> Dict:
         """Actually process PDF drawings with OCR"""
@@ -421,9 +398,84 @@ class BIMBlock(UniversalBlock):
         })
     
     async def _spatial_query(self, data: Dict) -> Dict:
-        """Find elements in spatial bounding box"""
-        # Requires ifcopenshell geom module
-        return {"error": "Spatial queries require ifcopenshell[geom]"}
+        """Find IFC elements whose AABB intersects a query bounding box.
+
+        Uses ifcopenshell.geom to compute world-coord AABBs per element, then
+        keeps those whose box overlaps the query box. Returns elements grouped
+        by ifc_type with counts and IDs. Requires the `geom` extension; the
+        method returns an honest error when it's not installed.
+        """
+        file_path = data.get("file_path")
+        if not file_path:
+            return {"status": "error", "error": "file_path is required"}
+        bbox = data.get("bbox") or data.get("bounding_box")
+        if not bbox or len(bbox) != 6:
+            return {
+                "status": "error",
+                "error": "Provide bbox = [xmin, ymin, zmin, xmax, ymax, zmax] (world coords, metres).",
+            }
+        # Default to the major IFC types if none specified.
+        element_types = data.get("element_types") or [
+            "IfcWall", "IfcSlab", "IfcBeam", "IfcColumn",
+            "IfcDoor", "IfcWindow", "IfcPipeSegment",
+            "IfcDuctSegment", "IfcCableSegment",
+        ]
+
+        try:
+            import ifcopenshell
+            import ifcopenshell.geom
+        except Exception:
+            return {
+                "status": "error",
+                "error": "ifcopenshell.geom not available. Install ifcopenshell[all] for spatial queries.",
+            }
+
+        try:
+            model = ifcopenshell.open(file_path)
+        except Exception as e:
+            return {"status": "error", "error": f"IFC open failed: {e}"}
+
+        settings = ifcopenshell.geom.settings()
+        try:
+            settings.set(settings.USE_WORLD_COORDS, True)
+        except Exception:
+            pass
+
+        qmin = (float(bbox[0]), float(bbox[1]), float(bbox[2]))
+        qmax = (float(bbox[3]), float(bbox[4]), float(bbox[5]))
+
+        hits: Dict[str, List[str]] = {}
+        considered = 0
+        for ifc_type in element_types:
+            try:
+                items = model.by_type(ifc_type)
+            except Exception:
+                continue
+            for el in items:
+                considered += 1
+                try:
+                    shape = ifcopenshell.geom.create_shape(settings, el)
+                    verts = shape.geometry.verts
+                except Exception:
+                    continue
+                if not verts:
+                    continue
+                xs = verts[0::3]; ys = verts[1::3]; zs = verts[2::3]
+                emin = (min(xs), min(ys), min(zs))
+                emax = (max(xs), max(ys), max(zs))
+                if (emin[0] <= qmax[0] and emax[0] >= qmin[0]
+                        and emin[1] <= qmax[1] and emax[1] >= qmin[1]
+                        and emin[2] <= qmax[2] and emax[2] >= qmin[2]):
+                    hits.setdefault(ifc_type, []).append(getattr(el, "GlobalId", str(el.id())))
+
+        total = sum(len(v) for v in hits.values())
+        return {
+            "status": "success",
+            "bbox": bbox,
+            "elements_considered": considered,
+            "match_count": total,
+            "matches_by_type": {k: {"count": len(v), "ids": v[:50]} for k, v in hits.items()},
+        }
     
     async def _compare_versions_real(self, data: Dict) -> Dict:
         """Compare two versions of same file"""

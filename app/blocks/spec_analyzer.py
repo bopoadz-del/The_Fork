@@ -12,7 +12,6 @@ class SpecAnalyzerBlock(UniversalBlock):
     description = "Extract grade requirements, material specs, and compliance flags from specification PDFs"
     layer = 3
     tags = ["domain", "construction", "specs", "pdf", "compliance", "materials"]
-    requires = ["pdf"]
 
     default_config = {
         "max_pages": 100,
@@ -141,11 +140,24 @@ class SpecAnalyzerBlock(UniversalBlock):
         doc.close()
         return text, pages
 
+    # Post-filter stopwords for the loose grade/class/type pattern. The pattern is
+    # compiled IGNORECASE so the capture group can match lowercase tokens like
+    # "of" in "type of concrete" — drop these.
+    _GRADE_STOPWORDS = {"of", "as", "be", "is", "to", "in", "on", "or", "at", "by"}
+
     def _extract_grades(self, text: str) -> List[Dict]:
         found: Dict[str, Dict] = {}
         for pattern, ptype in self._GRADE_PATTERNS:
             for m in re.finditer(pattern, text, re.IGNORECASE):
                 val = m.group(1).strip()
+                # Drop spurious matches for the loose grade/class/type pattern.
+                if ptype == "grade":
+                    if len(val) < 2:
+                        continue
+                    if val.islower():
+                        continue
+                    if val.lower() in self._GRADE_STOPWORDS:
+                        continue
                 key = f"{ptype}:{val}"
                 if key not in found:
                     ctx_start = max(0, m.start() - 80)

@@ -112,15 +112,24 @@ class BIMExtractorBlock(UniversalBlock):
         if run_clash:
             clash_report = self._basic_clash_report(model, building_elements)
 
+        # Cap the returned `building_elements` list for response-size sanity,
+        # but expose enough metadata for callers to detect the truncation.
+        _ELEM_CAP = 500
+        _SPACE_CAP = 50
+        building_elements_capped = building_elements[:_ELEM_CAP]
+        spaces_capped = spaces[:_SPACE_CAP]
         return {
             "status": "success",
-            "building_elements": building_elements[:500],
+            "building_elements": building_elements_capped,
+            "building_elements_truncated": len(building_elements) > _ELEM_CAP,
+            "spaces_truncated": len(spaces) > _SPACE_CAP,
             "quantities": quantities,
             "clash_report": clash_report,
             "project_info": project_info,
             "storeys": storeys,
-            "spaces": spaces[:50],
+            "spaces": spaces_capped,
             "element_count": len(building_elements),
+            "element_count_returned": len(building_elements_capped),
             "ifc_schema": model.schema,
         }
 
@@ -241,18 +250,147 @@ class BIMExtractorBlock(UniversalBlock):
             return []
 
     def _basic_clash_report(self, model, elements: List[Dict]) -> Dict:
+        """Clash detection: AABB intersection via ifcopenshell.geom when available.
+
+        Builds an axis-aligned bounding box per element in world coordinates,
+        then pairwise-tests them with a small tolerance. Pairs that overlap
+        across DIFFERENT categories (e.g. pipe-vs-wall, beam-vs-duct) are
+        flagged. Same-category overlaps are skipped because adjacent walls,
+        stacked slabs, and side-by-side columns are routine and not clashes.
+
+        Falls back to the legacy name-duplicate heuristic if `ifcopenshell.geom`
+        isn't importable (some installs ship without the geometry extension).
         """
-        Basic clash detection: flag elements in same category with identical coordinates
-        (placeholder for a full OBB/AABB spatial index approach).
+        try:
+            import ifcopenshell.geom  # noqa: F401  (probe only)
+        except Exception:
+            return self._name_duplicate_clash_fallback(elements)
+        return self._geometric_clash_report(model, elements)
+
+    def _geometric_clash_report(self, model, elements: List[Dict]) -> Dict:
+        """Real AABB clash pass. Returns method='aabb_intersection'."""
+        import ifcopenshell.geom
+
+        settings = ifcopenshell.geom.settings()
+        try:
+            settings.set(settings.USE_WORLD_COORDS, True)
+        except Exception:
+            pass  # older ifcopenshell builds don't expose the attribute
+        try:
+            settings.set(settings.WELD_VERTICES, True)
+        except Exception:
+            pass
+
+        tol_m = float(self.config.get("clash_tolerance_mm", 10.0)) / 1000.0
+        pair_cap = int(self.config.get("clash_pair_cap", 200))
+        # Bound the geometry pass — generating shapes is the expensive step.
+        elem_cap = int(self.config.get("clash_elem_cap", 2000))
+
+        boxes: List[Tuple[Dict, Tuple[float, float, float, float, float, float]]] = []
+        skipped_no_geom = 0
+        for el in elements[:elem_cap]:
+            ifc_el = self._lookup_ifc_element(model, el)
+            if ifc_el is None:
+                skipped_no_geom += 1
+                continue
+            try:
+                shape = ifcopenshell.geom.create_shape(settings, ifc_el)
+                verts = shape.geometry.verts  # flat [x0,y0,z0,x1,y1,z1,...]
+            except Exception:
+                # Element has no representable geometry (IfcSpace, IfcZone, etc.)
+                skipped_no_geom += 1
+                continue
+            if not verts:
+                skipped_no_geom += 1
+                continue
+            xs = verts[0::3]
+            ys = verts[1::3]
+            zs = verts[2::3]
+            aabb = (min(xs), min(ys), min(zs), max(xs), max(ys), max(zs))
+            boxes.append((el, aabb))
+
+        clashes: List[Dict] = []
+        clash_count = 0
+        for i in range(len(boxes)):
+            if len(clashes) >= pair_cap:
+                break
+            ela, ba = boxes[i]
+            for j in range(i + 1, len(boxes)):
+                if len(clashes) >= pair_cap:
+                    break
+                elb, bb = boxes[j]
+                # AABB overlap test with tolerance margin.
+                if (ba[0] - tol_m <= bb[3] and bb[0] - tol_m <= ba[3]
+                        and ba[1] - tol_m <= bb[4] and bb[1] - tol_m <= ba[4]
+                        and ba[2] - tol_m <= bb[5] and bb[2] - tol_m <= ba[5]):
+                    # Same-category collocation is usually expected (walls
+                    # touching at corners, slabs stacked). Skip it; cross-
+                    # discipline overlaps are the real clashes.
+                    if ela["category"] == elb["category"]:
+                        continue
+                    clash_count += 1
+                    clashes.append({
+                        "type": "aabb_overlap",
+                        "element_a": ela["id"],
+                        "element_b": elb["id"],
+                        "category_a": ela["category"],
+                        "category_b": elb["category"],
+                        "ifc_type_a": ela.get("ifc_type"),
+                        "ifc_type_b": elb.get("ifc_type"),
+                        "name_a": ela.get("name") or "",
+                        "name_b": elb.get("name") or "",
+                        "severity": "warning",
+                    })
+
+        return {
+            "clash_count": clash_count,
+            "clashes": clashes,
+            "detection_method": "aabb_intersection",
+            "tolerance_mm": float(self.config.get("clash_tolerance_mm", 10.0)),
+            "elements_analyzed": len(boxes),
+            "elements_without_geometry": skipped_no_geom,
+            "pair_cap_reached": len(clashes) >= pair_cap,
+            "note": (
+                "AABB overlap is a coarse-pass: it catches every real clash "
+                "but may flag false positives for adjacent elements that touch "
+                "but don't intersect. Precise OBB/mesh intersection still "
+                "needs a dedicated tool (Navisworks, Solibri)."
+            ),
+        }
+
+    def _lookup_ifc_element(self, model, el_dict: Dict):
+        """Look up the live ifcopenshell entity from the element dict.
+
+        The dict's `id` field is the IFC GlobalId string (an IfcGuid). Falls
+        back to the entity step-id if GlobalId lookup fails (legacy data).
+        """
+        key = el_dict.get("id")
+        if not key:
+            return None
+        try:
+            return model.by_guid(key)
+        except Exception:
+            pass
+        try:
+            return model.by_id(int(key)) if str(key).isdigit() else None
+        except Exception:
+            return None
+
+    def _name_duplicate_clash_fallback(self, elements: List[Dict]) -> Dict:
+        """Legacy fallback: flag elements that share a name+type string.
+
+        Used only when `ifcopenshell.geom` is unavailable. Real clashes
+        between differently-named elements are invisible to this method —
+        the result is named accordingly so callers don't mistake it for
+        geometric clash detection.
         """
         clash_count = 0
         clashes: List[Dict] = []
         seen_positions: Dict[str, List[str]] = {}
 
         for el in elements:
-            # Use name+type as a proxy position key (real detection needs geometry)
             key = f"{el.get('object_type', '')}:{el.get('name', '')}"
-            if key:
+            if key and key.strip(":"):
                 if key in seen_positions:
                     clash_count += 1
                     if len(clashes) < 20:
@@ -270,9 +408,11 @@ class BIMExtractorBlock(UniversalBlock):
         return {
             "clash_count": clash_count,
             "clashes": clashes,
-            "detection_method": "name_duplicate_proxy",
+            "detection_method": "name_duplicate_fallback",
             "note": (
-                "Full geometric clash detection requires ifcopenshell.geom. "
-                "Install ifcopenshell[all] for precise OBB intersection tests."
+                "ifcopenshell.geom not available — using name-duplicate heuristic. "
+                "This catches mis-labelled duplicates but NOT real geometric clashes. "
+                "Install ifcopenshell[all] (or a build that includes the geometry "
+                "extension) for real AABB intersection."
             ),
         }

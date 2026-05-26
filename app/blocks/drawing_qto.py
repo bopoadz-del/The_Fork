@@ -6,6 +6,27 @@ from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
 
 
+def _to_metres_factor(doc_units: int) -> float:
+    """Map ezdxf unit codes (INSUNITS) to a multiplier that converts to metres.
+
+    Reference ezdxf.units constants:
+        0 = Unitless, 1 = Inches, 2 = Feet, 4 = Millimeters,
+        5 = Centimeters, 6 = Meters
+    Anything else falls back to 0.001 (assume mm), preserving prior behaviour.
+    """
+    mapping = {
+        1: 0.0254,   # inches  -> m
+        2: 0.3048,   # feet    -> m
+        4: 0.001,    # mm      -> m
+        5: 0.01,     # cm      -> m
+        6: 1.0,      # m       -> m
+    }
+    try:
+        return mapping.get(int(doc_units), 0.001)
+    except (TypeError, ValueError):
+        return 0.001
+
+
 class DrawingQTOBlock(UniversalBlock):
     name = "drawing_qto"
     version = "1.0.0"
@@ -31,7 +52,7 @@ class DrawingQTOBlock(UniversalBlock):
             "fields": [
                 {"name": "measurements", "type": "list", "label": "Linear Measurements"},
                 {"name": "areas", "type": "list", "unit": "m²", "label": "Areas"},
-                {"name": "volumes", "type": "list", "unit": "m³", "label": "Volumes"},
+                {"name": "estimated_volumes", "type": "list", "unit": "m³", "label": "Estimated Volumes (area × assumed height)"},
                 {"name": "total_area_m2", "type": "number", "unit": "m²", "label": "Total Area"},
             ],
         },
@@ -82,9 +103,13 @@ class DrawingQTOBlock(UniversalBlock):
         layer_filter = params.get("area_layer_filter", self.config.get("area_layer_filter", []))
         min_area = float(params.get("min_area_m2", self.config.get("min_area_m2", 0.01)))
 
+        # Honour the DXF's declared units instead of assuming millimetres.
+        to_metres_factor = _to_metres_factor(doc.units)
+        unit_factor = scale * to_metres_factor
+
         msp = doc.modelspace()
-        measurements = self._extract_measurements(msp, scale)
-        areas = self._extract_areas(msp, scale, layer_filter, min_area)
+        measurements = self._extract_measurements(msp, unit_factor)
+        areas = self._extract_areas(msp, unit_factor, layer_filter, min_area)
         volumes = self._estimate_volumes(areas, params)
         layers = list({e.dxf.layer for e in msp if hasattr(e.dxf, "layer")})
 
@@ -95,15 +120,18 @@ class DrawingQTOBlock(UniversalBlock):
             "status": "success",
             "measurements": measurements,
             "areas": areas,
-            "volumes": volumes,
+            "estimated_volumes": volumes,
             "total_area_m2": round(total_area, 3),
             "total_length_m": round(total_length, 3),
             "entity_count": len(list(msp)),
             "layers": layers[:50],
             "drawing_units": str(doc.units),
+            "input_units": doc.units,
+            "to_metres_factor": to_metres_factor,
         }
 
-    def _extract_measurements(self, msp, scale: float) -> List[Dict]:
+    def _extract_measurements(self, msp, unit_factor: float) -> List[Dict]:
+        """``unit_factor`` converts raw drawing units straight to metres."""
         results = []
         for entity in msp:
             etype = entity.dxftype()
@@ -114,16 +142,16 @@ class DrawingQTOBlock(UniversalBlock):
                     length = math.dist(
                         (start.x, start.y, start.z),
                         (end.x, end.y, end.z)
-                    ) * scale / 1000  # mm → m
+                    ) * unit_factor
                     results.append({
                         "type": "line",
                         "length_m": round(length, 4),
                         "layer": entity.dxf.layer,
-                        "start": [round(start.x * scale / 1000, 3), round(start.y * scale / 1000, 3)],
-                        "end": [round(end.x * scale / 1000, 3), round(end.y * scale / 1000, 3)],
+                        "start": [round(start.x * unit_factor, 3), round(start.y * unit_factor, 3)],
+                        "end": [round(end.x * unit_factor, 3), round(end.y * unit_factor, 3)],
                     })
                 elif etype == "CIRCLE":
-                    radius = entity.dxf.radius * scale / 1000
+                    radius = entity.dxf.radius * unit_factor
                     circumference = 2 * math.pi * radius
                     results.append({
                         "type": "circle",
@@ -133,7 +161,7 @@ class DrawingQTOBlock(UniversalBlock):
                         "layer": entity.dxf.layer,
                     })
                 elif etype == "ARC":
-                    radius = entity.dxf.radius * scale / 1000
+                    radius = entity.dxf.radius * unit_factor
                     start_angle = math.radians(entity.dxf.start_angle)
                     end_angle = math.radians(entity.dxf.end_angle)
                     if end_angle < start_angle:
@@ -159,7 +187,7 @@ class DrawingQTOBlock(UniversalBlock):
                             (pts[-1][0], pts[-1][1]),
                             (pts[0][0], pts[0][1])
                         )
-                    length = length * scale / 1000
+                    length = length * unit_factor
                     results.append({
                         "type": "polyline",
                         "length_m": round(length, 4),
@@ -169,7 +197,7 @@ class DrawingQTOBlock(UniversalBlock):
                     })
                 elif etype == "DIMENSION":
                     if hasattr(entity.dxf, "actual_measurement"):
-                        val = entity.dxf.actual_measurement * scale / 1000
+                        val = entity.dxf.actual_measurement * unit_factor
                         results.append({
                             "type": "dimension",
                             "length_m": round(val, 4),
@@ -181,8 +209,9 @@ class DrawingQTOBlock(UniversalBlock):
         return results
 
     def _extract_areas(
-        self, msp, scale: float, layer_filter: List[str], min_area: float
+        self, msp, unit_factor: float, layer_filter: List[str], min_area: float
     ) -> List[Dict]:
+        """``unit_factor`` converts raw drawing units straight to metres."""
         results = []
         try:
             from shapely.geometry import Polygon
@@ -197,7 +226,7 @@ class DrawingQTOBlock(UniversalBlock):
                 continue
             try:
                 if etype == "CIRCLE":
-                    r = entity.dxf.radius * scale / 1000
+                    r = entity.dxf.radius * unit_factor
                     area = math.pi * r * r
                     if area >= min_area:
                         results.append({
@@ -208,7 +237,7 @@ class DrawingQTOBlock(UniversalBlock):
                         })
                 elif etype in ("LWPOLYLINE", "POLYLINE") and entity.is_closed:
                     pts = list(entity.get_points() if etype == "LWPOLYLINE" else entity.points())
-                    coords = [(p[0] * scale / 1000, p[1] * scale / 1000) for p in pts]
+                    coords = [(p[0] * unit_factor, p[1] * unit_factor) for p in pts]
                     if use_shapely and len(coords) >= 3:
                         poly = Polygon(coords)
                         area = poly.area
@@ -232,7 +261,7 @@ class DrawingQTOBlock(UniversalBlock):
                         for path in entity.paths:
                             if hasattr(path, "vertices") and len(path.vertices) >= 3:
                                 coords = [
-                                    (v[0] * scale / 1000, v[1] * scale / 1000)
+                                    (v[0] * unit_factor, v[1] * unit_factor)
                                     for v in path.vertices
                                 ]
                                 area = abs(_shoelace(coords))
@@ -255,6 +284,8 @@ class DrawingQTOBlock(UniversalBlock):
                     "type": f"{a['type']}_volume",
                     "area_m2": a["area_m2"],
                     "height_m": height,
+                    "assumed_height_m": height,
+                    "method": "area_x_height_assumption",
                     "volume_m3": round(a["area_m2"] * height, 4),
                     "layer": a.get("layer", ""),
                 })

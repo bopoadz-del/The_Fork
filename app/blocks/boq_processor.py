@@ -42,7 +42,7 @@ class BOQProcessorBlock(UniversalBlock):
     # Common BOQ column name aliases
     _COL_MAP = {
         "description": ["description", "item_description", "work_item", "item", "activity", "desc", "name"],
-        "quantity": ["quantity", "qty", "amount", "no", "number", "count"],
+        "quantity": ["quantity", "qty", "no", "number", "count"],
         "unit": ["unit", "uom", "u/m", "unit_of_measure", "measure"],
         "rate": ["rate", "unit_cost", "unit_price", "price", "unit_rate", "cost_per_unit", "cost/unit"],
         "total": ["total", "total_cost", "amount", "line_total", "extended_price", "cost", "value"],
@@ -109,18 +109,31 @@ class BOQProcessorBlock(UniversalBlock):
 
         line_items: List[Dict] = []
         section_totals: Dict[str, float] = {}
+        warnings: List[str] = []
+        skipped_items: List[Dict] = []
+
+        quantity_col_resolved = "quantity" in resolved
+        if not quantity_col_resolved:
+            warnings.append(
+                "No quantity column detected; zero-quantity filter disabled and all rows retained."
+            )
 
         for _, row in df.iterrows():
             description = str(row.get(resolved.get("description", ""), "")).strip()
             if not description or description.lower() == "nan":
                 continue
 
-            qty = _to_float(row.get(resolved.get("quantity", ""), 0))
-            if not include_zero and qty == 0:
+            raw_qty = row.get(resolved.get("quantity", ""), 0)
+            try:
+                qty = _to_float(raw_qty)
+            except ValueError:
+                skipped_items.append({"description": description, "raw_value": raw_qty})
+                continue
+            if quantity_col_resolved and not include_zero and qty == 0:
                 continue
 
-            rate = _to_float(row.get(resolved.get("rate", ""), 0))
-            total = _to_float(row.get(resolved.get("total", ""), 0))
+            rate = _to_float_safe(row.get(resolved.get("rate", ""), 0))
+            total = _to_float_safe(row.get(resolved.get("total", ""), 0))
             if total == 0 and qty > 0 and rate > 0:
                 total = qty * rate
 
@@ -154,7 +167,7 @@ class BOQProcessorBlock(UniversalBlock):
             for section, v in sorted(section_totals.items(), key=lambda x: x[1], reverse=True)
         }
 
-        return {
+        result = {
             "status": "success",
             "item_count": len(line_items),
             "total_cost": round(total_cost, 2),
@@ -164,10 +177,31 @@ class BOQProcessorBlock(UniversalBlock):
             "sections": list(section_totals.keys()),
             "columns_detected": resolved,
         }
+        if warnings:
+            result["warnings"] = warnings
+        if skipped_items:
+            result["skipped_items"] = skipped_items
+        return result
 
 
 def _to_float(val) -> float:
+    """Coerce ``val`` to float. Raises ``ValueError`` for non-empty non-numeric
+    strings so callers can distinguish a true zero from an unparseable value
+    like ``"Lot"`` or ``"Provisional Sum"``."""
+    if val is None:
+        return 0.0
+    s = str(val).replace(",", "").strip()
+    if s == "" or s.lower() == "nan":
+        return 0.0
     try:
-        return float(str(val).replace(",", "").strip())
+        return float(s)
+    except TypeError:
+        return 0.0
+
+
+def _to_float_safe(val) -> float:
+    """Best-effort coercion to float; returns 0.0 on any failure."""
+    try:
+        return _to_float(val)
     except (ValueError, TypeError):
         return 0.0

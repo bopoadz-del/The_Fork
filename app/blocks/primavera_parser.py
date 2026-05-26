@@ -10,7 +10,7 @@ from app.core.universal_base import UniversalBlock
 class PrimaveraParserBlock(UniversalBlock):
     name = "primavera_parser"
     version = "1.0.0"
-    description = "Parse Primavera P6 .xer schedule files: critical path, milestones, resource loading"
+    description = "Parse Primavera P6 .xer schedule files: low-float activities, milestones, resource definitions"
     layer = 3
     tags = ["domain", "construction", "schedule", "primavera", "xer", "cpm"]
     requires = []
@@ -30,15 +30,15 @@ class PrimaveraParserBlock(UniversalBlock):
             "type": "table",
             "fields": [
                 {"name": "activity_count", "type": "number", "label": "Activities"},
-                {"name": "critical_path", "type": "list", "label": "Critical Path"},
+                {"name": "low_float_activities", "type": "list", "label": "Low-Float Activities"},
                 {"name": "milestones", "type": "list", "label": "Milestones"},
                 {"name": "schedule_data", "type": "json", "label": "Schedule Summary"},
             ],
         },
         "quick_actions": [
-            {"icon": "🗓️", "label": "Critical Path", "prompt": "Show the critical path activities"},
+            {"icon": "🗓️", "label": "Low-Float Activities", "prompt": "Show activities with total float at or below the threshold"},
             {"icon": "🏁", "label": "Milestones", "prompt": "List all project milestones"},
-            {"icon": "📊", "label": "Resource Loading", "prompt": "Show resource loading by period"},
+            {"icon": "📊", "label": "Resource Definitions", "prompt": "Show resource definitions from the RSRC table"},
         ],
     }
 
@@ -68,10 +68,12 @@ class PrimaveraParserBlock(UniversalBlock):
 
         activities = self._extract_activities(tables)
         wbs = self._extract_wbs(tables)
-        resources = self._extract_resources(tables) if include_resources else []
+        resource_definitions = self._extract_resources(tables) if include_resources else []
         project_meta = self._extract_project(tables)
 
-        critical_path = [
+        # NOTE: This is a low-float filter, not a true CPM driving-path analysis.
+        # Real CPM critical-path identification requires logic-network traversal.
+        low_float_activities = [
             a for a in activities
             if a.get("total_float_days", 999) <= float_threshold
         ]
@@ -90,21 +92,22 @@ class PrimaveraParserBlock(UniversalBlock):
             "project": project_meta,
             "activity_count": len(activities),
             "wbs_count": len(wbs),
-            "resource_count": len(resources),
+            "resource_definition_count": len(resource_definitions),
             "project_start": project_start,
             "project_finish": project_finish,
-            "critical_activity_count": len(critical_path),
+            "low_float_activity_count": len(low_float_activities),
             "milestone_count": len(milestones),
         }
 
         return {
             "status": "success",
             "schedule_data": schedule_data,
-            "critical_path": critical_path[:100],
+            "low_float_activities": low_float_activities[:100],
+            "_note": "low_float_activities is a total_float filter, not a CPM driving-path analysis",
             "milestones": milestones[:50],
             "activities": activities[:200],
             "wbs": wbs[:100],
-            "resources": resources[:50],
+            "resource_definitions": resource_definitions[:50],
             "activity_count": len(activities),
         }
 
@@ -114,7 +117,8 @@ class PrimaveraParserBlock(UniversalBlock):
         current_table: Optional[str] = None
         headers: List[str] = []
 
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        # Primavera P6 exports XER files in Windows-1252 by default; UTF-8 mangles Arabic / European chars.
+        with open(file_path, "r", encoding="cp1252", errors="replace") as f:
             for line in f:
                 line = line.rstrip("\r\n")
                 if not line:
@@ -149,7 +153,7 @@ class PrimaveraParserBlock(UniversalBlock):
                 "status": r.get("status_code", ""),
                 "start": _parse_date(r.get("act_start_date") or r.get("early_start_date", "")),
                 "finish": _parse_date(r.get("act_end_date") or r.get("early_end_date", "")),
-                "original_duration_days": _to_float(r.get("orig_dur", "0")) / 8,
+                "original_duration_days": _orig_dur_days(r),
                 "remaining_duration_days": _to_float(r.get("remain_drtn_hr_cnt", "0")) / 8,
                 "total_float_days": round(float_days, 1),
                 "percent_complete": _to_float(r.get("phys_complete_pct", "0")),
@@ -211,5 +215,20 @@ def _parse_date(val: str) -> Optional[str]:
 def _to_float(val: str) -> float:
     try:
         return float(str(val).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _orig_dur_days(row: Dict) -> float:
+    """Original duration in days from P6 row.
+
+    Real P6 column is ``target_drtn_hr_cnt`` (hours). Fall back to legacy ``orig_dur``
+    for backward compat.
+    """
+    raw = row.get("target_drtn_hr_cnt")
+    if raw is None or str(raw).strip() == "":
+        raw = row.get("orig_dur", "0")
+    try:
+        return float(str(raw).replace(",", "").strip()) / 8.0
     except (ValueError, TypeError):
         return 0.0

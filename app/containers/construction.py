@@ -347,13 +347,15 @@ class ConstructionContainer(UniversalContainer):
         }
     
     async def _process_bill_of_materials(self, input_data: Any, params: Dict) -> Dict:
-        return {"status": "success", "doc_type": "bom", "items": []}
-    
+        return {"status": "error", "doc_type": "bom", "error": "bill_of_materials processing not implemented yet"}
+
     async def _process_report(self, input_data: Any, params: Dict) -> Dict:
-        return {"status": "success", "doc_type": "report", "findings": []}
-    
+        return {"status": "error", "doc_type": "report", "error": "report processing not implemented yet"}
+
     async def _process_ifc(self, input_data: Any, params: Dict) -> Dict:
-        return {"status": "success", "doc_type": "bim", "elements": {}}
+        # Route to the real BIM analysis pipeline. The dispatcher in process_document
+        # places the file path on params["file_path"], which bim_analysis honours.
+        return await self.bim_analysis(input_data, params)
     
     async def _process_site_photo(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
@@ -2390,7 +2392,7 @@ class ConstructionContainer(UniversalContainer):
 
     # PROCUREMENT & SUBCONTRACTOR
     async def procurement_analysis(self, input_data: Any, params: Dict) -> Dict:
-        return {"status": "success", "action": "procurement_analysis", "recommendations": []}
+        return {"status": "error", "action": "procurement_analysis", "error": "procurement_analysis not implemented yet"}
 
     # CHANGE ORDER / VARIATION
     async def change_order_impact(self, input_data: Any, params: Dict) -> Dict:
@@ -2549,9 +2551,13 @@ class ConstructionContainer(UniversalContainer):
         return measurements[:50]
     
     def _extract_tables_advanced(self, page) -> List[Dict]:
+        """Not yet implemented; returns empty list — callers should check."""
+        # TODO: integrate a real PDF table extractor (e.g. pdfplumber / camelot).
         return []
-    
+
     def _extract_annotations(self, page) -> List[Dict]:
+        """Not yet implemented; returns empty list — callers should check."""
+        # TODO: walk page annotations (PyMuPDF `page.annots()`) and normalise.
         return []
     
     def _extract_specs_advanced(self, text: str) -> List[Dict]:
@@ -3666,29 +3672,25 @@ Total Extension of Time Sought: {total_delay} days
         vo_data = data.get("variation_data") or p.get("variation_data", {})
         existing_vos = data.get("existing_vos") or p.get("existing_vos", [])
         contract_file = data.get("contract_file") or p.get("contract_file")
-        
+        contract_value = data.get("contract_value") or p.get("contract_value") or 0
+
         if not vo_data:
-            vo_data = {
-                "vo_number": f"VO-{len(existing_vos)+1:03d}",
-                "description": "Additional scope — client-requested design change to lobby finishes",
-                "type": "addition",
-                "items": [{"description": "Premium marble flooring instead of standard tile", "unit": "m2", "quantity": 450, "rate": 280}],
-                "schedule_impact_days": 7,
-                "submitted_by": "Main Contractor",
-            }
-        
+            return {"status": "error", "error": "Provide vo_data with at least one variation"}
+
         vo_number = vo_data.get("vo_number", f"VO-{len(existing_vos)+1:03d}")
         vo_description = vo_data.get("description", "")
         vo_type = vo_data.get("type", "addition")
-        
+
         contract_terms = {}
         if contract_file:
             contract_data = await self.process_contract({"file_path": contract_file}, {})
             contract_terms = self._extract_variation_clauses(contract_data)
-        
+
         category = self._categorize_variation(vo_description)
         pricing = self._calculate_variation_price(vo_data, vo_type)
-        cumulative = self._calculate_cumulative_variations(existing_vos, pricing["total"])
+        cumulative = self._calculate_cumulative_variations(existing_vos, pricing["total"], contract_value)
+        if isinstance(cumulative, dict) and cumulative.get("status") == "error":
+            return cumulative
         workflow = self._determine_approval_workflow(pricing["total"], cumulative["percent_of_contract"], vo_type)
         schedule_impact = vo_data.get("schedule_impact_days", 0)
         vo_document = self._generate_vo_document(vo_number, vo_description, pricing, vo_type)
@@ -3755,16 +3757,17 @@ Total Extension of Time Sought: {total_delay} days
         total = direct + indirect + overhead + profit
         return {"direct": round(direct, 2), "indirect": round(indirect, 2), "overhead": round(overhead, 2), "profit": round(profit, 2), "total": round(total, 2), "breakdown": vo_data.get("resource_breakdown", {})}
     
-    def _calculate_cumulative_variations(self, existing: List[Dict], new_amount: float) -> Dict:
+    def _calculate_cumulative_variations(self, existing: List[Dict], new_amount: float, contract_value: float = 0) -> Dict:
+        if not contract_value or contract_value <= 0:
+            return {"status": "error", "error": "contract_value required for variation calculations"}
         current_total = sum(v.get("value", 0) for v in existing)
         new_total = current_total + new_amount
-        contract_value = 1000000
         return {
             "previous_vo_count": len(existing),
             "previous_vo_value": current_total,
             "this_vo_value": new_amount,
             "cumulative_value": new_total,
-            "percent_of_contract": (new_total / contract_value * 100) if contract_value else 0,
+            "percent_of_contract": (new_total / contract_value * 100),
             "approaching_cap": new_total > contract_value * 0.2
         }
     
@@ -3786,7 +3789,10 @@ Total Extension of Time Sought: {total_delay} days
         return {"level": level, "required_approvers": approvers, "estimated_approval_days": len(approvers) * 2}
     
     def _extract_variation_clauses(self, contract_data: Dict) -> Dict:
-        return {"clause_reference": "14.1", "clear_entitlement": True, "pricing_method": "Dayworks/Rates"}
+        return {
+            "clause_reference": None,
+            "note": "Variation clause extraction not implemented; provide clause_reference manually.",
+        }
     
     def _check_time_bar(self, existing: List[Dict], new_vo: Dict) -> Dict:
         event_date = new_vo.get("event_date")
@@ -3956,10 +3962,9 @@ Total Extension of Time Sought: {total_delay} days
         contract_value = data.get("contract_value") or p.get("contract_value", 0)
         payment_terms = p.get("payment_terms", {"advance_payment": 0.10, "retention": 0.10, "payment_delay_days": 30, "mobilization_duration": 2})
         project_start = p.get("project_start_date", datetime.now(timezone.utc).isoformat())
-        
-        # Use sample contract value when nothing provided
-        if not contract_value:
-            contract_value = float(p.get("contract_value") or data.get("contract_value") or 5000000)
+
+        if not contract_value or contract_value <= 0:
+            return {"status": "error", "error": "contract_value required for cash flow forecast"}
 
         activities = []
         if schedule_file:
@@ -4253,21 +4258,26 @@ Total Extension of Time Sought: {total_delay} days
         }
     
     def _calculate_social_metrics(self, manpower: Dict, safety: List) -> Dict:
-        total_workers = manpower.get("total", 0)
-        incidents = len([s for s in safety if s.get("severity") in ["major", "lost_time"]])
         return {
-            "total_workers": total_workers,
-            "local_percent": 80,
-            "incidents": incidents,
-            "ltifr": (incidents / total_workers * 1000) if total_workers else 0,
-            "training_hours": total_workers * 8,
-            "community_spend": total_workers * 50,
-            "gender_diversity": 15,
-            "local_procurement": 60
+            "total_workers": "not_assessed",
+            "local_percent": "not_assessed",
+            "incidents": "not_assessed",
+            "ltifr": "not_assessed",
+            "training_hours": "not_assessed",
+            "community_spend": "not_assessed",
+            "gender_diversity": "not_assessed",
+            "local_procurement": "not_assessed",
+            "note": "Field requires project-specific data; not auto-computed.",
         }
-    
+
     def _calculate_governance_metrics(self, project: Dict) -> Dict:
-        return {"ethics_training": 95, "anti_corruption": True, "supplier_audits": 30, "transparency": 75}
+        return {
+            "ethics_training": "not_assessed",
+            "anti_corruption": "not_assessed",
+            "supplier_audits": "not_assessed",
+            "transparency": "not_assessed",
+            "note": "Field requires project-specific data; not auto-computed.",
+        }
     
     def _score_environmental(self, metrics: Dict) -> float:
         score = 50
@@ -5289,10 +5299,16 @@ Total Extension of Time Sought: {total_delay} days
         }
 
     async def _process_specification(self, file_path: str, params: Dict) -> Dict:
-        return {"status": "success", "doc_type": "specification", "file_name": Path(file_path).name, "specifications": []}
+        # Route to the real specification pipeline.
+        p = dict(params or {})
+        p["file_path"] = file_path
+        return await self.process_specification_full({"file_path": file_path}, p)
 
     async def _process_schedule(self, file_path: str, params: Dict) -> Dict:
-        return {"status": "success", "doc_type": "schedule", "file_name": Path(file_path).name, "entries": []}
+        # Route to the real schedule parser (Primavera P6 / XER).
+        p = dict(params or {})
+        p["file_path"] = file_path
+        return await self.parse_primavera_schedule({"file_path": file_path}, p)
 
     async def qa_qc_inspection(self, input_data: Any, params: Dict) -> Dict:
         """Quality control inspection from photos or drawings"""
@@ -5379,17 +5395,10 @@ Total Extension of Time Sought: {total_delay} days
         }
 
     async def progress_tracking(self, input_data: Any, params: Dict) -> Dict:
-        """Legacy progress tracking"""
+        """Legacy progress tracking — superseded by progress_tracker."""
         return {
-            "status": "success",
-            "project_id": params.get("project_id", "demo_project"),
-            "progress_pct": 78.3,
-            "scheduled_pct": 80.0,
-            "variance": -1.7,
-            "on_schedule": False,
-            "critical_path_items": [
-                {"task": "steel_erection", "status": "in_progress", "completion": 0.65}
-            ]
+            "status": "error",
+            "error": "Use progress_tracker (line 1791) for live progress data; this legacy method is no longer maintained.",
         }
 
     async def _compare_photo_to_bim(self, photo_path: str, bim_file: str, location: str) -> Dict:
@@ -5431,14 +5440,27 @@ Total Extension of Time Sought: {total_delay} days
         }
 
     async def _query_bim_location(self, bim_file: str, location: str) -> List[Dict]:
-        """Query IFC for elements at specific location"""
-        if "level" in location.lower() or "floor" in location.lower():
-            return [
-                {"type": "wall", "count": 12},
-                {"type": "column", "count": 8},
-                {"type": "slab", "count": 1}
-            ]
-        return []
+        """Query IFC for elements at a specific location via the bim_extractor block.
+
+        Returns an error dict (not a list) when the BIM extractor is unavailable
+        or cannot answer a spatial query — callers must handle this contract drift.
+        """
+        block = self._resolve_block("bim_extractor")
+        if block is None:
+            return {"status": "error", "error": "BIM extractor not configured for spatial queries"}
+        try:
+            result = await block.process(
+                {"file_path": bim_file},
+                {"action": "query_location", "location": location},
+            )
+        except Exception as exc:
+            return {"status": "error", "error": f"BIM extractor query failed: {exc}"}
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return {"status": "error", "error": "BIM extractor not configured for spatial queries"}
+        elements = result.get("elements")
+        if isinstance(elements, list):
+            return elements
+        return {"status": "error", "error": "BIM extractor not configured for spatial queries"}
 
     async def extract_measurements(self, input_data: Any, params: Dict) -> Dict:
         """Extract measurements from construction drawings"""
