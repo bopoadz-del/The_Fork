@@ -160,7 +160,17 @@ async def drive_disconnect(auth: dict = Depends(require_user)):
 
 @router.get("/v1/drive/files")
 async def drive_files(q: str = Query(""),
+                      folder_id: str = Query("", description="Drive folder id; empty = root"),
                       auth: dict = Depends(require_user)):
+    """List Drive files/folders.
+
+    When ``folder_id`` is empty, returns items at the root of the user's Drive
+    (root-level folders + loose files). When ``folder_id`` is set, returns
+    that folder's children — letting the UI drill into subfolders. A free-text
+    ``q`` query is a name-contains search that ignores folder_id (search is
+    Drive-wide). Response items carry ``mime_type`` so the UI can distinguish
+    folders (``application/vnd.google-apps.folder``) from files.
+    """
     try:
         access_token = await drive_auth.get_access_token(auth["user_id"])
     except drive_auth.DriveNotConnected:
@@ -169,10 +179,17 @@ async def drive_files(q: str = Query(""),
         raise HTTPException(409, f"{e} Reconnect Google Drive.")
     from app.blocks.google_drive import GoogleDriveBlock
     result = await GoogleDriveBlock().process(
-        q, {"operation": "list", "access_token": access_token, "limit": 50})
+        q,
+        {
+            "operation": "list",
+            "access_token": access_token,
+            "limit": 100,
+            "folder_id": folder_id or None,
+        },
+    )
     if result.get("status") != "success":
         raise HTTPException(502, result.get("error", "Drive list failed."))
-    return {"files": result.get("files", [])}
+    return {"files": result.get("files", []), "folder_id": folder_id or "root"}
 
 
 # ── per-project Drive import — store a Drive file as a project document ──────

@@ -12,12 +12,14 @@ added with a small adapter — left as a follow-up.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Union
 
 import httpx
 
@@ -223,6 +225,50 @@ class Agent:
                 },
             })
 
+        # ── synthetic tool: generate_wbs (when construction is allowed) ──────
+        # Exposed as a top-level tool with an explicit param schema so the
+        # agent never has to guess the params shape. The generic `construction`
+        # tool stayed advertised with "input/params" only, and the agent kept
+        # emitting empty `action` fields, retrying, and eventually escaping to
+        # delegate_to_agent (which hit the iteration cap). This direct tool
+        # eliminates that ambiguity.
+        if "construction" in self.allowed_blocks:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "generate_wbs",
+                    "description": (
+                        "Generate a CPM-validated Work Breakdown Structure / schedule. "
+                        "Returns an activity list with ES/EF/LS/LF/total_float per activity, "
+                        "phase tree, and assumptions. CALL ONCE — the tool is deterministic "
+                        "and re-calling with the same params returns the same large result."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "brief": {
+                                "type": "string",
+                                "description": "Project brief / scope description (from RFP, BOD, conversation)."
+                            },
+                            "target_count": {
+                                "type": "integer",
+                                "description": "Target number of activities (default 200, clamped to [20, 1000]).",
+                            },
+                            "project_type": {
+                                "type": "string",
+                                "enum": ["data_center", "solar_plant", "wind_farm", "building", "infrastructure"],
+                                "description": "Project type — determines the WBS template scaffold.",
+                            },
+                            "start_date": {
+                                "type": "string",
+                                "description": "Schedule start date in ISO format (YYYY-MM-DD). Optional — defaults to today.",
+                            },
+                        },
+                        "required": ["brief"],
+                    },
+                },
+            })
+
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
             tools.append({
@@ -254,6 +300,7 @@ class Agent:
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
+        on_event: Optional[Callable[[str, Dict[str, Any]], Union[None, Awaitable[None]]]] = None,
         _depth: int = 0,
         _call_stack: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
@@ -262,8 +309,31 @@ class Agent:
         Optional new params (all default to today's behavior when omitted):
         - ``project_id`` — inject project facts/docs and expose document search.
         - ``conversation_id`` — load + persist conversation memory.
+        - ``on_event`` — async/sync callback fired during the tool-call loop.
+          Receives ``(event_name, payload)`` where event_name is one of:
+            * ``"iteration"`` — ``{"n": int}`` at the top of each loop turn.
+            * ``"tool_call"`` — ``{"name": str, "args": dict, "id": str}``
+              fired immediately BEFORE the tool runs.
+            * ``"tool_result"`` — ``{"name": str, "id": str, "ok": bool,
+              "duration_ms": int, "error": str?}`` fired AFTER the tool runs.
+            * ``"final"`` — ``{"answer": str}`` fired once when the agent
+              produces a non-tool-call assistant message.
+          The chat router uses this to emit SSE events to the browser so
+          the user sees a live reasoning trace instead of a 10-second
+          spinner. Callback errors are swallowed; the loop never breaks
+          because of an event handler.
         - ``_depth`` / ``_call_stack`` — internal, for inter-agent delegation.
         """
+        async def _emit(name: str, payload: Dict[str, Any]) -> None:
+            if on_event is None:
+                return
+            try:
+                res = on_event(name, payload)
+                if inspect.isawaitable(res):
+                    await res
+            except Exception:
+                # Event handler must never break the agent loop.
+                pass
         api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
             return {
@@ -293,6 +363,7 @@ class Agent:
         tool_calls_made: List[Dict[str, Any]] = []
 
         for iteration in range(MAX_TOOL_ITERATIONS):
+            await _emit("iteration", {"n": iteration + 1})
             resp = await self._call_llm(messages, api_key, project_id=project_id)
             if resp.get("status") == "error":
                 return resp
@@ -336,6 +407,7 @@ class Agent:
                         from app.core import agent_memory
                         # User turn was already persisted up front.
                         agent_memory.append_message(conversation_id, "assistant", final_text)
+                    await _emit("final", {"answer": final_text})
                     return {
                         "status": "success",
                         "answer": final_text,
@@ -347,6 +419,21 @@ class Agent:
             # Persist the assistant turn that contained the tool calls
             messages.append(assistant_msg)
             for tc in tool_calls:
+                # Surface the tool call to the event stream BEFORE running it
+                # so the UI can show "⚙️ tool_name — running…" live.
+                fn = tc.get("function") or {}
+                tc_name = fn.get("name") or tc.get("name") or "unknown"
+                tc_args_raw = fn.get("arguments") or tc.get("arguments") or "{}"
+                try:
+                    tc_args = json.loads(tc_args_raw) if isinstance(tc_args_raw, str) else dict(tc_args_raw)
+                except Exception:
+                    tc_args = {"_raw": str(tc_args_raw)[:200]}
+                await _emit("tool_call", {
+                    "name": tc_name,
+                    "args": tc_args,
+                    "id": tc.get("id") or "",
+                })
+                _t0 = time.monotonic()
                 tool_result = await self._run_tool_call(
                     tc,
                     api_key=api_key,
@@ -355,7 +442,22 @@ class Agent:
                     _depth=_depth,
                     _call_stack=_call_stack,
                 )
+                duration_ms = int((time.monotonic() - _t0) * 1000)
                 tool_calls_made.append(tool_result)
+                # Determine ok/error by introspecting the tool's result payload.
+                _inner = tool_result.get("result") if isinstance(tool_result, dict) else None
+                ok = True
+                err = None
+                if isinstance(_inner, dict) and _inner.get("status") == "error":
+                    ok = False
+                    err = str(_inner.get("error") or "")[:200]
+                await _emit("tool_result", {
+                    "name": tool_result.get("name", tc_name),
+                    "id": tc.get("id") or "",
+                    "ok": ok,
+                    "duration_ms": duration_ms,
+                    **({"error": err} if err else {}),
+                })
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
@@ -711,6 +813,64 @@ class Agent:
                 "name": "search_project_documents",
                 "ok": True,
                 "result": {"results": results},
+            }
+
+        # ── synthetic tool: generate_wbs (direct construction shortcut) ──────
+        # Bypasses the generic "construction" tool's input/params ambiguity by
+        # giving the model a typed call: brief, target_count, project_type,
+        # start_date. Maps straight to ConstructionContainer.generate_wbs().
+        if name == "generate_wbs":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            params = {
+                "brief": args.get("brief") or "",
+                "target_count": args.get("target_count", 200),
+                "project_type": args.get("project_type"),
+                "start_date": args.get("start_date"),
+            }
+            try:
+                result = await container.generate_wbs({}, params)
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {"status": "error", "error": f"generate_wbs failed: {e}"},
+                }
+            # Strip the activities array down before returning to the model —
+            # 300+ rows × ~30 chars each = ~10 kB which the model doesn't need
+            # to re-read into its context. The full list stays in the result
+            # for any caller that does (the chat router's "end" event carries
+            # tool_calls metadata; the activities themselves are reachable via
+            # the /v1/execute API). The model just needs: counts, summary,
+            # phase tree, assumptions, and a sample of activities to cite.
+            if isinstance(result, dict) and isinstance(result.get("activities"), list):
+                acts = result["activities"]
+                compact = dict(result)
+                compact["activities_total"] = len(acts)
+                compact["activities_sample"] = acts[:15]  # first 15 for reference
+                # Drop the full activities array from what the model sees.
+                compact.pop("activities", None)
+                result = compact
+            return {
+                "name": "generate_wbs",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
             }
 
         # ── synthetic tool: remember_fact ────────────────────────────────────

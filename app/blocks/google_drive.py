@@ -109,24 +109,39 @@ class GoogleDriveBlock(UniversalBlock):
                 }
             try:
                 import httpx
-                q = f"name contains '{query}'" if query else "trashed=false"
+                # Build the Drive-API q filter. Search wins if present (name
+                # contains, no folder filter); otherwise list children of a
+                # specific folder (defaults to root so the user sees their
+                # actual top-level Drive, not the 50 newest files at any
+                # depth which was the prior behaviour).
+                folder_id = params.get("folder_id")
+                if query:
+                    q = f"name contains '{query}' and trashed=false"
+                elif folder_id:
+                    q = f"'{folder_id}' in parents and trashed=false"
+                else:
+                    q = "'root' in parents and trashed=false"
                 async with httpx.AsyncClient(timeout=20) as client:
                     resp = await client.get(
                         f"{_DRIVE_API}/files",
                         headers={"Authorization": f"Bearer {access_token}"},
                         params={
                             "q": q,
-                            "pageSize": params.get("limit", 20),
-                            "fields": "files(id,name,mimeType,size,modifiedTime,webViewLink)",
+                            "pageSize": params.get("limit", 100),
+                            "orderBy": "folder,name",  # folders first, then alpha
+                            "fields": "files(id,name,mimeType,size,modifiedTime,webViewLink,parents)",
                         },
                     )
                     resp.raise_for_status()
                     data = resp.json()
 
+                FOLDER_MT = "application/vnd.google-apps.folder"
                 files = [
                     {
                         "id": f.get("id"),
                         "name": f.get("name"),
+                        "mime_type": f.get("mimeType", ""),
+                        "is_folder": f.get("mimeType") == FOLDER_MT,
                         "type": f.get("mimeType", "").split("/")[-1],
                         "size_bytes": int(f.get("size", 0)),
                         "modified": f.get("modifiedTime", "")[:10],

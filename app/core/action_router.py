@@ -176,6 +176,91 @@ ACTION_HINTS: dict[str, str] = {
 HINT_CONFIDENCE_THRESHOLD = 0.4
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Intent-based routing: chat → heavy-reasoning agent
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Some user intents need *multi-step* generative reasoning, not a single LLM
+# turn over the prompt. "Create a 200-activity schedule", "Generate a
+# procurement list", "Run the forensic delay analysis" — these are NOT
+# answerable by prepending file content to a chat block. They need:
+#   - tool calls (search_project_documents, construction.generate_wbs,
+#     formula_executor_v2)
+#   - iterative refinement
+#   - validation
+#
+# The runtime `heavy-reasoning` agent already supports all of this. When the
+# orchestrator classifies a message into one of the GENERATIVE_INTENTS below
+# at sufficient confidence, the chat router routes the message there instead
+# of the fast single-shot ChatBlock path.
+#
+# Fast-path intents (everything else) stay on the chat block — single LLM
+# call, sub-2s latency, fine for Q&A like "what is the total cost".
+
+# Confidence threshold for routing.
+#
+# Originally 0.5 (stricter than the 0.4 hint threshold) on the theory that
+# routing is more invasive (5-15s vs sub-2s) and should require firmer
+# evidence. In practice the orchestrator's keyword matcher gives the real-
+# world phrasing "Create a 200 activities schedule" exactly 0.4 — so 0.5
+# made routing unreachable for the canonical use case we built it for.
+#
+# At 0.4 the whitelist (GENERATIVE_INTENTS) does the safety work: a 0.4
+# match against a non-generative action (e.g. "process_document") still
+# stays on the fast path because the action isn't whitelisted. Only
+# genuinely generative intents with at least one multi-word OR two single-
+# word keyword matches reach the heavy-reasoning path.
+ROUTING_CONFIDENCE_THRESHOLD = 0.4
+
+# Generative intents — the ones that require multi-step reasoning or
+# synthesis. Keep this list short and only include actions whose answer
+# legitimately needs tool calls, NOT every action that has a hint.
+GENERATIVE_INTENTS = frozenset({
+    # Multi-step / programmatic generation
+    "generate_wbs",                # create a WBS / schedule activity list
+    "intelligent_workflow",        # generic multi-step workflow
+    "sympy_reason",                # symbolic / variance analysis pipeline
+    # Schedule analysis (real CPM, not just prose answer)
+    "parse_primavera_schedule",
+    "forensic_delay_analysis",
+    "resource_histogram",
+    # Cost/financial workflows
+    "cash_flow_forecast",
+    "estimate_costs",
+    "procurement_list_generator",
+    "procurement_optimizer",
+    "payment_certificate",
+    # Specs / standards full pipeline
+    "process_specification_full",
+    # BIM full pipeline
+    "bim_analysis",
+    "bim_clash_detection",
+    "bim_extractor",
+    # Contracts / Claims (real document synthesis)
+    "claims_builder",
+    "rfi_generator",
+    "value_engineering",
+    "change_order_impact",
+    "variation_order_manager",
+})
+
+
+def needs_planning(action: Optional[str], confidence: float) -> bool:
+    """True iff this orchestrator classification warrants the heavy-reasoning
+    agent path instead of the fast single-shot chat block.
+
+    Both gates must clear: confidence above ROUTING_CONFIDENCE_THRESHOLD AND
+    action in the GENERATIVE_INTENTS whitelist. Ambiguous classifications
+    fall through to the fast path with a domain hint — better to be fast and
+    decent than to spend 10 seconds on what was actually small talk.
+    """
+    if not action:
+        return False
+    if confidence < ROUTING_CONFIDENCE_THRESHOLD:
+        return False
+    return action in GENERATIVE_INTENTS
+
+
 def hint_for_action(action: str) -> Optional[str]:
     """Return the LLM system-prompt hint for a routed action, or None."""
     return ACTION_HINTS.get(action)

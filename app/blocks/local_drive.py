@@ -116,12 +116,40 @@ class LocalDriveBlock(UniversalBlock):
                 if not os.path.isdir(target):
                     return {"status": "error", "operation": "list",
                             "path": path, "error": f"Not a directory: {path}"}
-                files = os.listdir(target)
+                # Caller-tunable cap (default 500). The old hardcoded 20-cap
+                # silently truncated every directory listing, so the sidebar
+                # only ever showed the first ~20 entries alphabetically and
+                # the user reported "doesn't show all the documents".
+                try:
+                    limit = int(params.get("limit", 500))
+                except (TypeError, ValueError):
+                    limit = 500
+                limit = max(1, min(limit, 10000))
+
+                entries = []
+                with os.scandir(target) as it:
+                    for entry in it:
+                        try:
+                            stat = entry.stat()
+                            entries.append({
+                                "name": entry.name,
+                                "is_folder": entry.is_dir(),
+                                "size_bytes": stat.st_size if entry.is_file() else 0,
+                                "modified": int(stat.st_mtime),
+                            })
+                        except OSError:
+                            continue
+                # Folders first, then alpha (matches the Google Drive ordering).
+                entries.sort(key=lambda e: (not e["is_folder"], e["name"].lower()))
+                truncated = len(entries) > limit
+                entries = entries[:limit]
                 return {
                     "status": "success",
                     "operation": "list",
                     "path": path,
-                    "files": files[:20]  # Limit results
+                    "files": entries,
+                    "total": len(entries),
+                    "truncated": truncated,
                 }
         except Exception as e:
             return {"status": "error", "error": str(e)}

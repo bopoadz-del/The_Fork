@@ -1,15 +1,22 @@
 import asyncio
 import json
-from typing import Optional
+import logging
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.blocks import BLOCK_REGISTRY
-from app.core.action_router import hint_for_orchestrator_result
+from app.core.action_router import (
+    best_action,
+    hint_for_orchestrator_result,
+    needs_planning,
+)
 from app.dependencies import require_user
 from app.dependencies import block_instances
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -19,6 +26,119 @@ class ChatRequest(BaseModel):
     model: str = "deepseek-chat"
     stream: bool = False
     project_id: Optional[str] = None
+
+
+async def _classify_intent(prompt: str) -> tuple[Optional[str], float]:
+    """Run the smart_orchestrator over the user's message and return the top
+    (action, confidence) classification, or (None, 0.0) on any error.
+
+    Used by the chat router to decide whether to take the multi-step
+    heavy-reasoning agent path (action is generative + confidence ≥ 0.5)
+    or stay on the fast single-shot chat block path.
+    """
+    if not prompt or not prompt.strip():
+        return None, 0.0
+    try:
+        if "smart_orchestrator" not in block_instances:
+            block_instances["smart_orchestrator"] = (
+                BLOCK_REGISTRY["smart_orchestrator"]()
+            )
+        orchestrator = block_instances["smart_orchestrator"]
+        result = await orchestrator.process({"user_message": prompt})
+        return best_action(result)
+    except Exception:
+        return None, 0.0
+
+
+async def _stream_from_heavy_reasoning(
+    user_message: str,
+    project_id: Optional[str],
+    user_id: Optional[str],
+    history: List[Dict[str, Any]],
+    session_id: str,
+):
+    """Run the heavy-reasoning runtime agent and yield SSE events.
+
+    This is the multi-step generative path. The agent's tool-call loop emits
+    iteration / tool_call / tool_result events via the new on_event callback
+    on Agent.chat() so the UI can render a live reasoning trace. The final
+    answer is then streamed to the browser in word-sized chunks so the
+    existing chat UI continues to update progressively.
+
+    On any agent error: emit one error SSE event and stop — the caller will
+    see the error and can decide whether to retry the fast path.
+    """
+    yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'mode': 'heavy_reasoning'})}\n\n"
+
+    # Pipe agent events into an asyncio queue so we can yield SSE chunks as
+    # they arrive instead of buffering everything until the agent returns.
+    queue: asyncio.Queue = asyncio.Queue()
+    SENTINEL = object()
+
+    async def on_event(name: str, payload: Dict[str, Any]) -> None:
+        await queue.put((name, payload))
+
+    async def run_agent() -> Dict[str, Any]:
+        try:
+            from app.agents import get_agent
+            agent = get_agent("heavy-reasoning")
+            if agent is None:
+                return {"status": "error", "error": "heavy-reasoning agent not loaded"}
+            result = await agent.chat(
+                user_message=user_message,
+                history=history,
+                project_id=project_id,
+                conversation_id=f"hr-{session_id}" if session_id else None,
+                on_event=on_event,
+            )
+            return result
+        except Exception as e:
+            logger.exception("heavy-reasoning agent crashed")
+            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+        finally:
+            await queue.put((SENTINEL, None))
+
+    agent_task = asyncio.create_task(run_agent())
+
+    # Drain events as they arrive, emitting SSE for each.
+    while True:
+        name, payload = await queue.get()
+        if name is SENTINEL:
+            break
+        # Forward only the events the UI knows how to render.
+        if name in ("iteration", "tool_call", "tool_result", "final"):
+            yield f"data: {json.dumps({'type': name, **payload})}\n\n"
+
+    result = await agent_task
+
+    if result.get("status") == "error":
+        err = result.get("error") or "Heavy reasoning failed"
+        yield f"data: {json.dumps({'type': 'error', 'message': err})}\n\n"
+        return
+
+    # Stream the final answer in word chunks so the UI's existing
+    # progressive renderer continues to work. The 'final' event has
+    # already been emitted by the agent loop above with the same answer,
+    # but the UI's main bubble re-uses 'token' events to accumulate text.
+    answer = result.get("answer") or ""
+    if not answer.strip():
+        answer = "(no answer produced)"
+    for word in answer.split(" "):
+        yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
+        await asyncio.sleep(0.01)
+
+    tools_used = sorted({
+        (tc.get("name") or "unknown")
+        for tc in (result.get("tool_calls") or [])
+    })
+    end_event = {
+        "type": "end",
+        "complete": True,
+        "mode": "heavy_reasoning",
+        "iterations": result.get("iterations", 0),
+        "tools_used": tools_used,
+    }
+    yield f"data: {json.dumps(end_event)}\n\n"
 
 
 async def _with_domain_hint(prompt: str) -> str:
@@ -231,6 +351,44 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     model = body.get("model", body.get("provider", "deepseek-chat"))
     session_id = body.get("session_id", "default")
     history = body.get("history", []) or []
+    project_id = body.get("project_id")
+
+    # ── Intent classification: route generative multi-step intents to the
+    # heavy-reasoning agent; everything else stays on the fast chat path.
+    # The classifier reads the RAW prompt (no history flatten, no prepends)
+    # so the orchestrator's keyword matcher sees the user's actual words.
+    #
+    # Routing does NOT require a project — "create a 300-activity schedule"
+    # needs the agent's tools (construction.generate_wbs, formula_executor_v2)
+    # whether or not there's a project_id. Gating on project_id meant the
+    # most common generative requests fell through to the fast single-shot
+    # path, where the LLM invented manpower histograms and refused to build
+    # schedules. File context still reaches the agent via the prompt itself
+    # (the frontend prepends sessionFileContexts), and the agent's own RAG
+    # tool gracefully no-ops when project_id is None.
+    action, confidence = await _classify_intent(prompt)
+    if needs_planning(action, confidence):
+        # Heavy-reasoning path. Returns its own StreamingResponse from the
+        # event generator and bypasses the fast pipeline entirely.
+        logger.info(
+            "chat → heavy-reasoning: action=%s confidence=%.2f project=%s",
+            action, confidence, project_id or "<none>"
+        )
+        return StreamingResponse(
+            _stream_from_heavy_reasoning(
+                user_message=prompt,
+                project_id=project_id,
+                user_id=auth.get("user_id"),
+                history=history,
+                session_id=session_id,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     # Flatten conversation history into a single prompt (the chat block doesn't
     # yet accept structured messages). Cap to last 10 turns to stay under token
@@ -251,14 +409,15 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
 
     # Scope the chat to a project — inject its accumulated memory (Epic 3/4).
     full_prompt = _with_project_memory(
-        full_prompt, body.get("project_id"), auth["user_id"]
+        full_prompt, project_id, auth["user_id"]
     )
     # Search the project's zvec doc index for relevant uploaded content,
     # so the chat answers from the actual files — not just memory facts.
     full_prompt = await _with_doc_search(
-        full_prompt, body.get("project_id"), auth["user_id"]
+        full_prompt, project_id, auth["user_id"]
     )
-    # Smart-orchestrator domain hint, when the message matches a known intent.
+    # Smart-orchestrator domain hint, when the message matches a known intent
+    # but below the routing threshold (≥0.4 hint, ≥0.5 routes to agent).
     full_prompt = await _with_domain_hint(full_prompt)
 
     async def event_stream():

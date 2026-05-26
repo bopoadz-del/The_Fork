@@ -10,7 +10,11 @@ class WebhookBlock(UniversalBlock):
     """Outgoing webhooks with retries and signatures"""
     name = "webhook"
     version = "1.0.0"
-    requires = ["config", "queue"]
+    # `requires = ["config", "queue"]` previously named two blocks that
+    # don't exist in BLOCK_REGISTRY — `config` was never built, and there
+    # is no queue block (async_processor exists but uses a different
+    # interface). Drop both: webhooks send synchronously inline.
+    requires = []
     layer = 5  # Integration layer
     tags = ["webhook", "http", "integration"]
     default_config = {
@@ -18,16 +22,21 @@ class WebhookBlock(UniversalBlock):
         "retries": 3,
         "verify_ssl": True
     }
-    
+
     def __init__(self, hal_block, config: Dict[str, Any]):
         super().__init__(hal_block, config)
         self.secret = config.get("secret", "")
         self.timeout = config.get("timeout", 30)
         self.max_retries = config.get("max_retries", 3)
-        self.queue_block = None
-        
         # Registered webhooks
         self.endpoints = {}  # name -> {url, events, secret}
+
+    @property
+    def queue_block(self):
+        # The platform's async_processor block is the closest analogue if
+        # we ever want fire-and-forget delivery; today it stays None and
+        # `_trigger_event` falls through to its synchronous-send branch.
+        return self.get_dep("async_processor")
         
     async def process(self, input_data: Dict, params: Dict = None) -> Dict:
         action = (params or {}).get("action") or (input_data.get("action") if isinstance(input_data, dict) else None)
