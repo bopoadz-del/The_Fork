@@ -2597,10 +2597,22 @@ class ConstructionContainer(UniversalContainer):
 
         # Sanity cap — largest buildings in the world are ~500k m²
         total_area = min(total_area, 500_000)
-        concrete_volume = direct_volume if direct_volume > 0 else total_area * 0.15
+        # Default slab thickness and rebar-per-m³ ratio come from the central
+        # construction constants module — see app/core/construction_constants.py
+        # for the values and a discussion of when they're appropriate.
+        from app.core.construction_constants import (
+            DEFAULT_SLAB_THICKNESS_M,
+            DEFAULT_REBAR_RATIO_KG_PER_M3,
+        )
+        concrete_volume = (
+            direct_volume if direct_volume > 0
+            else total_area * DEFAULT_SLAB_THICKNESS_M
+        )
         concrete_volume = min(concrete_volume, 750_000)
-        # Only keep steel weight — rebar_length is redundant (same material, causes double-counting)
-        steel_weight_kg = round(concrete_volume * 120, 2)
+        # Only keep steel weight — rebar_length is redundant (same material,
+        # causes double-counting). This is a quantity ROUGH estimate; a real
+        # rebar takeoff comes from bar schedules or BIM, not concrete volume.
+        steel_weight_kg = round(concrete_volume * DEFAULT_REBAR_RATIO_KG_PER_M3, 2)
 
         result = {
             "floor_area_m2": round(total_area, 2),
@@ -2678,8 +2690,16 @@ class ConstructionContainer(UniversalContainer):
         }
     
     def _estimate_carbon(self, quantities: Dict) -> Dict:
-        concrete_carbon = quantities.get("concrete_volume_m3", 0) * 250
-        steel_carbon = quantities.get("steel_weight_kg", 0) * 2.3
+        # Default kgCO2e factors live in the central construction_constants
+        # module. These are rule-of-thumb values and vary substantially by
+        # mix design / steel manufacturing route — production work should
+        # override with project-specific EPDs.
+        from app.core.construction_constants import (
+            DEFAULT_CONCRETE_KGCO2_PER_M3,
+            DEFAULT_STEEL_KGCO2_PER_KG,
+        )
+        concrete_carbon = quantities.get("concrete_volume_m3", 0) * DEFAULT_CONCRETE_KGCO2_PER_M3
+        steel_carbon = quantities.get("steel_weight_kg", 0) * DEFAULT_STEEL_KGCO2_PER_KG
         
         return {
             "concrete_co2_kg": round(concrete_carbon, 2),

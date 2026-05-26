@@ -403,7 +403,11 @@ class DrawingQTOBlock(UniversalBlock):
         return sorted(results, key=lambda x: x["area_m2"], reverse=True), hatch_hole_fallback
 
     def _estimate_volumes(self, areas: List[Dict], params: Dict) -> List[Dict]:
-        height = float(params.get("height_m", 3.0))  # default floor height 3m
+        # Default ceiling height comes from app.core.construction_constants
+        # so all blocks share the same domain assumption. Caller overrides
+        # via params["height_m"] for project-specific data.
+        from app.core.construction_constants import DEFAULT_CEILING_HEIGHT_M
+        height = float(params.get("height_m", DEFAULT_CEILING_HEIGHT_M))
         volumes = []
         for a in areas:
             if a["area_m2"] > 1.0:

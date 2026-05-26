@@ -7,13 +7,16 @@ CPM math runs in working-day offsets (integers). See the plan header for the
 offset conventions.
 """
 
-from datetime import timedelta
-from typing import Dict, List, Optional, Tuple
+import logging
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.schemas.cpm import (
     Activity, CPMInput, CPMOutput, CPMResult, Dependency, DependencyType,
     GanttBar, HistogramPeriod, ResourceHistogram,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class CircularDependencyError(ValueError):
@@ -197,6 +200,9 @@ def compute_cpm(data: CPMInput) -> CPMOutput:
 
 
 _PERIOD_LENGTH = {"week": 5, "month": 21}
+#: Fallback hours-per-day when the P6 CALENDAR table is unavailable. The real
+#: value is read from each activity's CALENDAR row via :func:`parse_xer_full`;
+#: this constant only survives as the safety net for synthetic networks.
 _HOURS_PER_DAY = 8
 
 
@@ -204,9 +210,23 @@ def resource_histogram(
     results: List[CPMResult],
     activities: List[Activity],
     period_unit: str = "week",
+    task_resources: Optional[List[Dict[str, Any]]] = None,
 ) -> ResourceHistogram:
     """Time-phased manpower. An activity contributes its crew to every period
-    its early-date span overlaps (concurrent headcount, not man-days)."""
+    its early-date span overlaps (concurrent headcount, not man-days).
+
+    When ``task_resources`` is provided (a list of TASKRSRC-shaped dicts from
+    :func:`parse_xer_full`), prefer the real per-task assignments and skip the
+    synthetic ``Activity.resources`` distribution. The TASKRSRC path is the
+    *only* one that reflects what P6 actually exported; the synthetic path is
+    a best-effort substitute for activities authored in code/tests without a
+    resource model.
+    """
+    if task_resources:
+        return histogram_from_taskrsrc(
+            task_resources, period_unit=period_unit,
+            results=results, activities=activities,
+        )
     if period_unit not in _PERIOD_LENGTH:
         raise ValueError(f"period_unit must be one of {list(_PERIOD_LENGTH)}, got {period_unit!r}")
     length = _PERIOD_LENGTH[period_unit]
@@ -321,18 +341,26 @@ def _xer_hours(value) -> float:
         return 0.0
 
 
-def parse_xer(text: str) -> List[Activity]:
-    """Parse Primavera P6 `.xer` text into Activity objects.
+def _parse_xer_date(value: Any) -> Optional[date]:
+    """Best-effort parse of an .xer date cell. Returns None on miss."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d", "%d-%b-%y %H:%M", "%d-%b-%y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
 
-    Pure parsing — the caller is responsible for reading the file. Reads the
-    TASK table (activities) and TASKPRED table (relationships). Durations come
-    from `target_drtn_hr_cnt` converted to working days at 8 h/day; lag from
-    `lag_hr_cnt` likewise. Unknown columns are ignored.
-    """
-    tables: Dict[str, Dict] = {}
+
+def _tokenize_xer_tables(text: str) -> Dict[str, Dict[str, list]]:
+    """Tokenise an .xer text blob into ``{table: {"fields": [...], "rows": [...]}}``."""
+    tables: Dict[str, Dict[str, list]] = {}
     current: str = ""
     fields: List[str] = []
-
     for line in text.splitlines():
         if not line:
             continue
@@ -351,15 +379,70 @@ def parse_xer(text: str) -> List[Activity]:
                 tables[current]["rows"].append(row)
         elif tag == "%E":
             break
+    return tables
+
+
+def parse_xer_full(text: str) -> Dict[str, Any]:
+    """Parse a Primavera P6 ``.xer`` text blob into the full result bundle.
+
+    Returns a dict with:
+
+    * ``activities`` — ``List[Activity]`` (same shape as :func:`parse_xer`).
+    * ``calendars_parsed`` — ``{clndr_id: {"name": str, "hours_per_day": float}}``
+      from the CALENDAR table. Standard US/EU calendars are 8 h/day; 10-h-shift
+      sites export 10. Used to convert ``*_hr_cnt`` cells to working days
+      *per activity* rather than via a single hardcoded constant.
+    * ``task_resources`` — ``List[Dict]`` of TASKRSRC rows shaped as
+      ``{task_id, rsrc_id, target_qty, remain_qty, start_date, end_date}``.
+      Time-phased loading driven by these reflects what P6 actually planned;
+      see :func:`histogram_from_taskrsrc`.
+
+    Lag values still convert at 8 h/day (TASKPRED rows do not carry a calendar
+    reference, so the per-activity calendar trick does not apply).
+    """
+    tables = _tokenize_xer_tables(text)
+
+    # --- CALENDAR: clndr_id -> {name, hours_per_day} --------------------
+    calendars: Dict[str, Dict[str, Any]] = {}
+    for r in tables.get("CALENDAR", {}).get("rows", []):
+        cid = r.get("clndr_id")
+        if not cid:
+            continue
+        hpd = _xer_hours(r.get("day_hr_cnt"))
+        calendars[cid] = {
+            "name": r.get("clndr_name") or "",
+            "hours_per_day": hpd if hpd > 0 else float(_HOURS_PER_DAY),
+        }
 
     task_rows = tables.get("TASK", {}).get("rows", [])
     pred_rows = tables.get("TASKPRED", {}).get("rows", [])
-    if not task_rows:
-        return []
+    taskrsrc_rows = tables.get("TASKRSRC", {}).get("rows", [])
 
-    # task_id -> task_code (the human id used as Activity.id)
+    # --- helper: hours-per-day for a given activity ---------------------
+    fallback_logged = {"flag": False}
+
+    def _hpd_for(clndr_id: Optional[str]) -> float:
+        if clndr_id and clndr_id in calendars:
+            return calendars[clndr_id]["hours_per_day"]
+        if not fallback_logged["flag"]:
+            _logger.warning(
+                "parse_xer_full: missing/unknown calendar id; falling back to "
+                "%s h/day for affected activities", _HOURS_PER_DAY,
+            )
+            fallback_logged["flag"] = True
+        return float(_HOURS_PER_DAY)
+
+    if not task_rows:
+        return {
+            "activities": [],
+            "calendars_parsed": calendars,
+            "task_resources": [],
+        }
+
+    # task_id -> task_code (human-readable id used as Activity.id)
     code_by_tid = {r.get("task_id"): r.get("task_code") or r.get("task_id")
                    for r in task_rows}
+    clndr_by_tid = {r.get("task_id"): r.get("clndr_id") for r in task_rows}
 
     preds_by_tid: Dict[str, List[Dependency]] = {}
     for r in pred_rows:
@@ -370,6 +453,8 @@ def parse_xer(text: str) -> List[Activity]:
             continue
         ptype = _XER_PRED_TYPE.get(r.get("pred_type", "PR_FS"),
                                    DependencyType.FS)
+        # Lag stays at 8 h/day: TASKPRED has no clndr_id, and lag is a logical
+        # offset between activities (potentially on different calendars).
         lag_days = round(_xer_hours(r.get("lag_hr_cnt")) / _HOURS_PER_DAY)
         preds_by_tid.setdefault(tid, []).append(Dependency(
             predecessor_id=pred_code, type=ptype, lag=int(lag_days),
@@ -378,16 +463,147 @@ def parse_xer(text: str) -> List[Activity]:
     activities: List[Activity] = []
     for r in task_rows:
         tid = r.get("task_id")
-        dur_days = round(
-            _xer_hours(r.get("target_drtn_hr_cnt")) / _HOURS_PER_DAY
-        )
+        hpd = _hpd_for(clndr_by_tid.get(tid))
+        dur_days = round(_xer_hours(r.get("target_drtn_hr_cnt")) / hpd)
         activities.append(Activity(
             id=code_by_tid.get(tid) or tid,
             name=r.get("task_name") or "",
             duration=max(0, int(dur_days)),
             predecessors=preds_by_tid.get(tid, []),
         ))
-    return activities
+
+    # --- TASKRSRC: per-task resource assignments ------------------------
+    task_resources: List[Dict[str, Any]] = []
+    for r in taskrsrc_rows:
+        tid = r.get("task_id")
+        if not tid:
+            continue
+        task_resources.append({
+            # Expose the human task_code as well so callers can join against
+            # CPM output (which keys by Activity.id == task_code).
+            "task_id": tid,
+            "task_code": code_by_tid.get(tid),
+            "rsrc_id": r.get("rsrc_id") or "",
+            "target_qty": _xer_hours(r.get("target_qty")),
+            "remain_qty": _xer_hours(r.get("remain_qty")),
+            "start_date": _parse_xer_date(
+                r.get("target_start_date") or r.get("act_start_date")
+            ),
+            "end_date": _parse_xer_date(
+                r.get("target_end_date") or r.get("act_end_date")
+            ),
+        })
+
+    return {
+        "activities": activities,
+        "calendars_parsed": calendars,
+        "task_resources": task_resources,
+    }
+
+
+def parse_xer(text: str) -> List[Activity]:
+    """Parse Primavera P6 ``.xer`` text into Activity objects.
+
+    Backwards-compatible thin wrapper around :func:`parse_xer_full`; existing
+    callers that only need activities keep working. Durations are converted
+    using the per-activity CALENDAR ``day_hr_cnt`` when available, falling
+    back to 8 h/day. Lag from ``lag_hr_cnt`` still uses 8 h/day.
+    """
+    return parse_xer_full(text)["activities"]
+
+
+def histogram_from_taskrsrc(
+    task_resources: List[Dict[str, Any]],
+    period_unit: str = "week",
+    results: Optional[List[CPMResult]] = None,
+    activities: Optional[List[Activity]] = None,
+) -> ResourceHistogram:
+    """Time-phase real P6 ``TASKRSRC`` rows into a :class:`ResourceHistogram`.
+
+    Each row contributes ``target_qty`` man-hours spread uniformly across its
+    [start_date, end_date] span, bucketed into periods. When a row has no
+    dates (P6 sometimes omits them for unstarted activities), the helper
+    falls back to the matching CPM ``early_start_day..early_finish_day`` span
+    from ``results`` — this is the only reason ``results``/``activities`` are
+    optional inputs. ``rsrc_id`` doubles as the trade label since TASKRSRC
+    does not name a discipline directly.
+    """
+    if period_unit not in _PERIOD_LENGTH:
+        raise ValueError(
+            f"period_unit must be one of {list(_PERIOD_LENGTH)}, "
+            f"got {period_unit!r}"
+        )
+    length_days = _PERIOD_LENGTH[period_unit]
+
+    es_ef = {r.id: (r.early_start_day, r.early_finish_day)
+             for r in (results or [])}
+    # Cross-walk task_code (Activity.id) <-> task_id so TASKRSRC rows keyed
+    # on the numeric task_id can be matched against CPM results keyed on the
+    # code.
+    code_by_tid: Dict[str, str] = {}
+    for tr in task_resources:
+        if tr.get("task_id") and tr.get("task_code"):
+            code_by_tid[tr["task_id"]] = tr["task_code"]
+
+    # Determine the calendar window (in working days) so we can build periods.
+    span_max = 0
+    for tr in task_resources:
+        code = tr.get("task_code") or code_by_tid.get(tr.get("task_id"))
+        if code and code in es_ef:
+            span_max = max(span_max, es_ef[code][1])
+    if span_max == 0 and es_ef:
+        span_max = max(ef for (_es, ef) in es_ef.values())
+    n_periods = max(1, -(-span_max // length_days)) if span_max else 0
+
+    periods: List[HistogramPeriod] = []
+    by_trade_totals: Dict[str, float] = {}
+    total_manhours = 0.0
+
+    # Build per-period buckets in working-day offsets.
+    period_loading: List[Dict[str, float]] = [
+        {} for _ in range(n_periods)
+    ]
+    for tr in task_resources:
+        code = tr.get("task_code") or code_by_tid.get(tr.get("task_id"))
+        qty = float(tr.get("target_qty") or 0.0)
+        if qty <= 0:
+            continue
+        if code in es_ef:
+            es, ef = es_ef[code]
+        else:
+            # No CPM cross-reference — skip (can't place on the timeline).
+            continue
+        span = max(1, ef - es)
+        per_day = qty / span
+        rsrc = tr.get("rsrc_id") or "unassigned"
+        by_trade_totals[rsrc] = by_trade_totals.get(rsrc, 0.0) + qty
+        total_manhours += qty
+        for p in range(n_periods):
+            p_start, p_end = p * length_days, (p + 1) * length_days
+            overlap = max(0, min(ef, p_end) - max(es, p_start))
+            if overlap <= 0:
+                continue
+            period_loading[p][rsrc] = (
+                period_loading[p].get(rsrc, 0.0) + per_day * overlap
+            )
+
+    for p in range(n_periods):
+        by_trade = period_loading[p]
+        periods.append(HistogramPeriod(
+            index=p, label=f"{period_unit[0].upper()}{p + 1}",
+            total=round(sum(by_trade.values()), 2),
+            by_trade={k: round(v, 2) for k, v in by_trade.items()},
+        ))
+
+    peak = max(periods, key=lambda hp: hp.total, default=None)
+    return ResourceHistogram(
+        period_unit=period_unit,
+        periods=periods,
+        peak_total=peak.total if peak else 0.0,
+        peak_period=peak.label if peak else "",
+        by_trade_totals={k: round(v, 2) for k, v in by_trade_totals.items()},
+        total_manhours=round(total_manhours, 2),
+    )
 
 
 def write_schedule_excel(

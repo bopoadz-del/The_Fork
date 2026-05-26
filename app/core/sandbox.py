@@ -38,6 +38,12 @@ from RestrictedPython.PrintCollector import PrintCollector
 # --------------------------------------------------------------------------
 
 #: Modules sandboxed code is allowed to ``import``. Everything else is denied.
+#: ``numpy``/``sympy``/``pint`` are whitelisted because LLM-generated formulas
+#: routinely reach for them (vectorised math, symbolic algebra, unit-aware
+#: arithmetic); without the whitelist the sandbox would silently force retries.
+#: Note: numpy exposes a handful of file-touching helpers (``loadtxt``,
+#: ``savetxt``, ``fromfile``) — RestrictedPython's attribute guard is the
+#: backstop, but treat this as a deliberate widening of the attack surface.
 ALLOWED_MODULES: frozenset[str] = frozenset(
     {
         "app.lib.pm_computations",
@@ -46,6 +52,9 @@ ALLOWED_MODULES: frozenset[str] = frozenset(
         "statistics",
         "datetime",
         "json",
+        "numpy",
+        "sympy",
+        "pint",
     }
 )
 

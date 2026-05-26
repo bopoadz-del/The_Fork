@@ -123,9 +123,20 @@ class SpecAnalyzerBlock(UniversalBlock):
         compliance_flags = self._extract_compliance(text)
         sections = self._extract_sections(text)
 
-        # Emit standards as {type, value} dicts so callers see the actual matched
-        # standard code (e.g. "A615") rather than just the generic label
-        # ("astm_standard"). Deduplicate on (type, value).
+        # Resolve each extracted grade against the central grade table.
+        # Adds {"resolved": {...kind/system/fck_mpa or fy_mpa.../strength info...}}
+        # to entries where the label matches a known concrete/rebar/steel grade.
+        from app.core.construction_constants import lookup_grade, lookup_standard
+        for g in grade_requirements:
+            if g.get("type") in ("grade", "concrete_grade", "rebar_grade",
+                                  "steel_grade"):
+                info = lookup_grade(g.get("value", ""))
+                if info:
+                    g["resolved"] = info
+
+        # Emit standards as {type, value, resolved} dicts so callers see the
+        # actual matched standard code (e.g. "A615") AND its domain meaning
+        # ("Deformed carbon-steel rebar"). Deduplicate on (type, value).
         _seen_std = set()
         referenced_standards: List[Dict] = []
         for g in grade_requirements:
@@ -135,7 +146,25 @@ class SpecAnalyzerBlock(UniversalBlock):
             if key in _seen_std:
                 continue
             _seen_std.add(key)
-            referenced_standards.append({"type": g["type"], "value": g["value"]})
+            # Resolve against STANDARDS_PURPOSE. The matched value is the
+            # code (e.g. "A615"); the type label tells us the system
+            # (astm_standard, aci_standard, etc). Try the most likely
+            # prefixed form first; lookup_standard handles fallback.
+            type_to_prefix = {
+                "astm_standard": "ASTM",
+                "aci_standard": "ACI",
+                "bs_standard": "BS",
+                "bs_en_standard": "BS EN",
+                "as_standard": "AS",
+                "ibc_standard": "IBC",
+            }
+            prefix = type_to_prefix.get(g["type"], "")
+            full_ref = f"{prefix} {g['value']}".strip() if prefix else g["value"]
+            resolved = lookup_standard(full_ref)
+            entry = {"type": g["type"], "value": g["value"]}
+            if resolved:
+                entry["resolved"] = resolved
+            referenced_standards.append(entry)
 
         return {
             "status": "success",

@@ -1,10 +1,13 @@
 """Primavera Parser Block - Parse Oracle Primavera P6 XER schedule files"""
 
+import logging
 import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from app.core.universal_base import UniversalBlock
+
+_logger = logging.getLogger(__name__)
 
 
 class PrimaveraParserBlock(UniversalBlock):
@@ -55,7 +58,10 @@ class PrimaveraParserBlock(UniversalBlock):
             return {"status": "error", "error": "File must be a .xer Primavera export"}
 
         try:
-            tables = self._parse_xer(file_path)
+            # Primavera P6 exports XER files in Windows-1252; UTF-8 mangles Arabic / European chars.
+            with open(file_path, "r", encoding="cp1252", errors="replace") as f:
+                xer_text = f.read()
+            tables = self._parse_xer_text(xer_text)
         except Exception as e:
             return {"status": "error", "error": f"XER parse error: {e}"}
 
@@ -71,8 +77,9 @@ class PrimaveraParserBlock(UniversalBlock):
         resource_definitions = self._extract_resources(tables) if include_resources else []
         project_meta = self._extract_project(tables)
 
-        # NOTE: This is a low-float filter, not a true CPM driving-path analysis.
-        # Real CPM critical-path identification requires logic-network traversal.
+        # Low-float filter remains a useful display field, but it is not the
+        # CPM critical path. The real driving-path analysis below runs the
+        # forward+backward pass via app.lib.pm_computations.
         low_float_activities = [
             a for a in activities
             if a.get("total_float_days", 999) <= float_threshold
@@ -99,11 +106,11 @@ class PrimaveraParserBlock(UniversalBlock):
             "milestone_count": len(milestones),
         }
 
-        return {
+        response: Dict[str, Any] = {
             "status": "success",
             "schedule_data": schedule_data,
             "low_float_activities": low_float_activities[:100],
-            "_note": "low_float_activities is a total_float filter, not a CPM driving-path analysis",
+            "_note": "computed via real CPM forward+backward pass",
             "milestones": milestones[:50],
             "activities": activities[:200],
             "wbs": wbs[:100],
@@ -111,28 +118,90 @@ class PrimaveraParserBlock(UniversalBlock):
             "activity_count": len(activities),
         }
 
+        # ── Real CPM via app.lib.pm_computations ─────────────────────────
+        # The block's "activities" list keys by task_id (numeric P6 row id);
+        # the CPM library keys by task_code (the human "A1010"-style id).
+        # The CPM output below therefore references task_codes — callers can
+        # join via the "code" field on each activity dict.
+        try:
+            from app.lib.pm_computations import compute_cpm, parse_xer_full
+            from app.schemas.cpm import CPMInput
+
+            parsed = parse_xer_full(xer_text)
+            cpm_activities = parsed.get("activities") or []
+            if cpm_activities:
+                cpm_input = CPMInput(activities=cpm_activities)
+                cpm_out = compute_cpm(cpm_input)
+                per_activity_float = {
+                    r.id: r.total_float for r in cpm_out.results
+                }
+                near_critical_ids = [
+                    r.id for r in cpm_out.results
+                    if not r.is_critical and 0 < r.total_float <= 5
+                ]
+                response["cpm"] = {
+                    "total_duration_days": cpm_out.project_duration,
+                    "critical_path_activity_ids": list(cpm_out.critical_path),
+                    "near_critical_activity_ids": near_critical_ids,
+                    "per_activity_float": per_activity_float,
+                    "id_space": "task_code (matches activities[].code)",
+                }
+            else:
+                response["cpm"] = {
+                    "total_duration_days": 0,
+                    "critical_path_activity_ids": [],
+                    "near_critical_activity_ids": [],
+                    "per_activity_float": {},
+                }
+            # Surface calendar + TASKRSRC parse results for downstream callers.
+            response["calendars_parsed"] = parsed.get("calendars_parsed", {})
+            response["task_resources_count"] = len(parsed.get("task_resources") or [])
+        except Exception as cpm_exc:  # noqa: BLE001 — never crash the parser
+            _logger.warning(
+                "primavera_parser: CPM computation failed (%s); "
+                "falling back to low-float filter only",
+                cpm_exc,
+            )
+            response["cpm_error"] = f"{type(cpm_exc).__name__}: {cpm_exc}"
+            # Preserve the original semantic of the legacy field for the fallback.
+            response["_note"] = (
+                "low_float_activities is a total_float filter, "
+                "not a CPM driving-path analysis (CPM failed; see cpm_error)"
+            )
+
+        return response
+
     def _parse_xer(self, file_path: str) -> Dict[str, List[Dict]]:
-        """Parse XER tab-delimited table format into dict of table_name → rows."""
+        """Parse XER tab-delimited table format into dict of table_name → rows.
+
+        Retained as a convenience for callers that pass a path directly; the
+        new ``process()`` flow reads the text once and uses
+        :meth:`_parse_xer_text` to avoid a second file open.
+        """
+        # Primavera P6 exports XER files in Windows-1252 by default; UTF-8 mangles Arabic / European chars.
+        with open(file_path, "r", encoding="cp1252", errors="replace") as f:
+            return self._parse_xer_text(f.read())
+
+    def _parse_xer_text(self, text: str) -> Dict[str, List[Dict]]:
+        """Parse XER tab-delimited table text into dict of table_name → rows."""
         tables: Dict[str, List[Dict]] = {}
         current_table: Optional[str] = None
         headers: List[str] = []
 
-        # Primavera P6 exports XER files in Windows-1252 by default; UTF-8 mangles Arabic / European chars.
-        with open(file_path, "r", encoding="cp1252", errors="replace") as f:
-            for line in f:
-                line = line.rstrip("\r\n")
-                if not line:
-                    continue
-                if line.startswith("%T"):
-                    current_table = line[3:].strip()
-                    tables[current_table] = []
-                    headers = []
-                elif line.startswith("%F"):
-                    headers = line[3:].split("\t")
-                elif line.startswith("%R") and current_table and headers:
-                    values = line[3:].split("\t")
-                    row = dict(zip(headers, values + [""] * max(0, len(headers) - len(values))))
-                    tables[current_table].append(row)
+        for line in text.splitlines():
+            line = line.rstrip("\r\n")
+            if not line:
+                continue
+            if line.startswith("%T"):
+                current_table = line[3:].strip()
+                tables[current_table] = []
+                headers = []
+            elif line.startswith("%F"):
+                headers = line[3:].split("\t")
+            elif line.startswith("%R") and current_table and headers:
+                values = line[3:].split("\t")
+                row = dict(zip(headers, values + [""] * max(0, len(headers) - len(values))))
+                tables[current_table].append(row)
         return tables
 
     def _extract_activities(self, tables: Dict) -> List[Dict]:
