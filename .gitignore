@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Local agent / subagent worktrees (created at runtime by Claude Code agents).
+.claude/worktrees/
+
 # C extensions
 *.so
 
