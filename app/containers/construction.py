@@ -10,36 +10,9 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 
 from app.core.universal_base import UniversalContainer
-
-
-@dataclass
-class Measurement:
-    value: float
-    unit: str
-    type: str
-    raw_text: str
-    confidence: float
-    context: str
-
-
-@dataclass
-class SpecItem:
-    category: str
-    key: str
-    value: str
-    section: str
-    confidence: float
-
-
-@dataclass
-class RiskItem:
-    id: str
-    category: str
-    description: str
-    probability: str
-    impact: str
-    mitigation: str
-    source: str
+# Shared dataclasses live in app.core.construction_types so app/blocks/
+# construction_v2.py uses the same definitions — see that module for docs.
+from app.core.construction_types import Measurement, SpecItem, RiskItem
 
 
 class ConstructionContainer(UniversalContainer):

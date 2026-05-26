@@ -20,36 +20,9 @@ from datetime import datetime, timedelta, timezone
 from app.core.typed_block import TypedBlock
 from app.core.schema_registry import TextContent, ConstructionAnalysis
 from app.core.confidence import assess_extraction_confidence
-
-
-@dataclass
-class Measurement:
-    value: float
-    unit: str
-    type: str
-    raw_text: str
-    confidence: float
-    context: str
-
-
-@dataclass
-class SpecItem:
-    category: str
-    key: str
-    value: str
-    section: str
-    confidence: float
-
-
-@dataclass
-class RiskItem:
-    id: str
-    category: str
-    description: str
-    probability: str
-    impact: str
-    mitigation: str
-    source: str
+# Shared dataclasses live in app.core.construction_types — see that module
+# for the canonical definitions (same shape was duplicated here historically).
+from app.core.construction_types import Measurement, SpecItem, RiskItem
 
 
 class ConstructionBlockV2(TypedBlock):
