@@ -83,11 +83,8 @@ async def test_domain_containers():
         ("construction", "app.containers.construction", "ConstructionContainer", {"action": "extract_measurements"}),
     ]
     
-    # Optional containers from block_store or legacy paths
+    # Optional containers from legacy paths
     optional_containers = [
-        ("medical", "block_store.containers.medical", "MedicalContainer", {"action": "process_dicom"}),
-        ("legal", "block_store.containers.legal", "LegalContainer", {"action": "process_contract"}),
-        ("finance", "block_store.containers.finance", "FinanceContainer", {"action": "process_trades"}),
         ("security", "blocks.container_security.src.block", "SecurityContainer", {"action": "create_key", "owner": "test"}),
         ("ai_core", "blocks.container_ai_core.src.block", "AICoreContainer", {"action": "leaderboard"}),
         ("store", "blocks.container_store.src.block", "StoreContainer", {"action": "platform_stats"}),
