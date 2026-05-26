@@ -71,6 +71,58 @@ def _with_project_memory(
     return prompt
 
 
+async def _with_doc_search(
+    prompt: str, project_id: Optional[str], user_id: Optional[str], top_k: int = 5,
+) -> str:
+    """Prepend top-k relevant document snippets from the project's zvec index.
+
+    This is the upload→index→chat connection: when the user has a project
+    selected, every uploaded file goes into doc_index (via the project
+    documents endpoint, which schedules zvec indexing). Here we query that
+    index with the user's question and prepend the matching snippets so the
+    LLM can answer FROM the actual file content — not just from memory of
+    the last upload.
+
+    Same shape as project_reasoner.process() uses for its RELEVANT DOCUMENT
+    EXCERPTS section — kept consistent so both paths reason from the same
+    grounded data.
+
+    No-op when project_id missing, when caller doesn't own the project, or
+    when the project has no indexed documents yet.
+    """
+    if not project_id or not prompt.strip():
+        return prompt
+    try:
+        from app.core import projects as projects_store
+        if projects_store.get_project(project_id, user_id=user_id) is None:
+            return prompt  # tenant isolation: don't search another user's docs
+        from app.core.doc_index import search_project_documents
+        snippets = await search_project_documents(project_id, prompt, top_k=top_k)
+        if not snippets:
+            return prompt
+        # Cap each snippet to keep the prompt bounded. The reasoner uses 800.
+        MAX_SNIPPET_CHARS = 800
+        lines = []
+        for i, s in enumerate(snippets, start=1):
+            filename = s.get("filename") or s.get("document_id") or f"doc-{i}"
+            text = (s.get("snippet") or "").strip()
+            if not text:
+                continue
+            if len(text) > MAX_SNIPPET_CHARS:
+                text = text[:MAX_SNIPPET_CHARS].rstrip() + "..."
+            lines.append(f"[{i}] {filename}\n{text}")
+        if not lines:
+            return prompt
+        excerpts_block = (
+            "RELEVANT DOCUMENT EXCERPTS (from this project's indexed files; "
+            "use as evidence when answering):\n" + "\n\n".join(lines)
+        )
+        return f"{excerpts_block}\n\n---\n\n{prompt}"
+    except Exception:
+        # Degrade silently — chat must never break because indexing has a hiccup.
+        return prompt
+
+
 @router.post("/chat")
 async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
     """Simple chat endpoint."""
@@ -84,6 +136,11 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
         block = block_instances["chat"]
         message = _with_project_memory(
             request.message, request.project_id, auth["user_id"]
+        )
+        # Search the project's zvec index for snippets relevant to the user's
+        # question — uploaded files become reachable here.
+        message = await _with_doc_search(
+            message, request.project_id, auth["user_id"]
         )
         message = await _with_domain_hint(message)
         result = await block.execute(message, {
@@ -194,6 +251,11 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
 
     # Scope the chat to a project — inject its accumulated memory (Epic 3/4).
     full_prompt = _with_project_memory(
+        full_prompt, body.get("project_id"), auth["user_id"]
+    )
+    # Search the project's zvec doc index for relevant uploaded content,
+    # so the chat answers from the actual files — not just memory facts.
+    full_prompt = await _with_doc_search(
         full_prompt, body.get("project_id"), auth["user_id"]
     )
     # Smart-orchestrator domain hint, when the message matches a known intent.

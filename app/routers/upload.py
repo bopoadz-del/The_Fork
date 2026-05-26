@@ -1,14 +1,16 @@
 import os
 import uuid
+import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.dependencies import require_api_key, block_instances, _create_block_instance
 from app.blocks import BLOCK_REGISTRY
 from app.core import file_crypto
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", "10485760"))  # 10MB
@@ -29,10 +31,23 @@ except PermissionError:
 
 
 @router.post("/upload")
-async def upload_v1(file: UploadFile = File(...), auth: dict = Depends(require_api_key)):
+async def upload_v1(
+    file: UploadFile = File(...),
+    project_id: Optional[str] = Form(None),
+    background_tasks: BackgroundTasks = None,
+    auth: dict = Depends(require_api_key),
+):
     """File upload endpoint (v1 API).
 
     Accepts validated files and stores them. Returns URL for processing.
+
+    When ``project_id`` is provided, ALSO:
+    - Registers the file as a document in the project (so it survives across
+      chat sessions and is reachable via /v1/projects/<id>/documents).
+    - Schedules zvec indexing via doc_index.maybe_eager_index in the
+      background so the chat can search the file content without the user
+      having to re-upload it. This is what the previous "uploaded but not
+      indexed" gap was — zvec is the engine, we just weren't calling it.
     """
     try:
         # Validate file size
@@ -63,25 +78,75 @@ async def upload_v1(file: UploadFile = File(...), auth: dict = Depends(require_a
         file.file.seek(0)
         file_crypto.write_document(filepath, file.file.read())
 
-        # Return URL and server path for chain processing
         base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
-        return {
+        response = {
             "url": f"{base_url}/static/{filename}",
             "filename": original_name,
             "stored_as": filename,
             "file_path": filepath,
-            "size": file_size
+            "size": file_size,
         }
+
+        # If a project_id was supplied, persist + index the file so future
+        # questions can search it via doc_index (zvec-backed TF-IDF). The
+        # actual indexing runs as a FastAPI BackgroundTask so the upload
+        # request returns immediately.
+        if project_id and project_id.strip():
+            try:
+                from app.core import projects as projects_store
+                from app.core import doc_index
+                proj = projects_store.get_project(project_id, user_id=auth.get("user_id"))
+                if proj is not None:
+                    # Persist the file as a project document. Reuses the same
+                    # storage path the upload already wrote to, so no copy.
+                    doc = projects_store.add_document(
+                        project_id=project_id,
+                        original_name=original_name,
+                        stored_as=filename,
+                        file_path=filepath,
+                        size=file_size,
+                        role="user_upload",
+                    )
+                    response["project_id"] = project_id
+                    response["document_id"] = doc.get("id") if isinstance(doc, dict) else None
+                    response["indexed"] = True
+                    response["indexing_status"] = "scheduled"
+                    if background_tasks is not None and response["document_id"]:
+                        background_tasks.add_task(
+                            doc_index.maybe_eager_index,
+                            project_id,
+                            response["document_id"],
+                        )
+                else:
+                    response["indexed"] = False
+                    response["indexing_status"] = "skipped_project_not_found"
+            except Exception as e:
+                # Don't fail the upload if indexing scheduling fails —
+                # the file is already stored. Surface the reason.
+                logger.warning("Upload indexing failed: %s", e, exc_info=True)
+                response["indexed"] = False
+                response["indexing_status"] = f"error: {type(e).__name__}"
+        else:
+            response["indexed"] = False
+            response["indexing_status"] = "no_project_id"
+
+        return response
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Upload failed")
         raise HTTPException(status_code=500, detail="Upload failed")
 
 
 @router.post("/v1/upload")
-async def upload_v1_endpoint(file: UploadFile = File(...), auth: dict = Depends(require_api_key)):
+async def upload_v1_endpoint(
+    file: UploadFile = File(...),
+    project_id: Optional[str] = Form(None),
+    background_tasks: BackgroundTasks = None,
+    auth: dict = Depends(require_api_key),
+):
     """File upload endpoint (v1 API alias)."""
-    return await upload_v1(file, auth)
+    return await upload_v1(file, project_id, background_tasks, auth)
 
 
 # ---------------------------------------------------------------------------

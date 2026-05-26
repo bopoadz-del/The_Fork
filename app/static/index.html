@@ -275,11 +275,15 @@ class CerebrumClient {
      * onToken(text) called for each token. onDone(fullText) at end.
      * Returns AbortController so caller can cancel.
      */
-    chatStream({ prompt, history = [], model = 'deepseek-chat', sessionId = 'default', onToken, onDone, onError }) {
+    chatStream({ prompt, history = [], model = 'deepseek-chat', sessionId = 'default', projectId = null, onToken, onDone, onError }) {
         const controller = new AbortController();
         (async () => {
             let full = '';
             try {
+                const body = { prompt, history, model, session_id: sessionId };
+                // Pass project_id so the backend can search the project's
+                // zvec doc index and inject relevant snippets (RAG).
+                if (projectId) body.project_id = projectId;
                 const resp = await fetch(`${this.base}/v1/chat/stream`, {
                     method: 'POST',
                     headers: {
@@ -287,7 +291,7 @@ class CerebrumClient {
                         'Content-Type': 'application/json',
                         'Accept': 'text/event-stream',
                     },
-                    body: JSON.stringify({ prompt, history, model, session_id: sessionId }),
+                    body: JSON.stringify(body),
                     signal: controller.signal,
                 });
                 if (!resp.ok) {
@@ -711,11 +715,24 @@ async function refreshDriveStatus() {
         if (s.configured === false) {
             box.innerHTML = '<span style="color:#888;">Google Drive not configured</span>';
             if (browser) browser.style.display = 'none';
+            delete connectedDrives['google_drive'];
+            renderDrives();
         } else if (s.connected === true) {
             box.innerHTML =
                 `<span style="color:#22c55e;">Connected as ${escapeHtml(s.email || 'unknown')}</span>`
                 + ` <button onclick="disconnectDrive()" style="margin-left:8px;background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Disconnect</button>`;
             if (browser) browser.style.display = 'block';
+            // Surface the real drive in the sidebar's Connected Drives list
+            // — the sidebar's local `connectedDrives` object never knew about
+            // OAuth-completed drives because it only mutated when the user
+            // explicitly imported files. Sync from the live /v1/drive/status.
+            connectedDrives['google_drive'] = {
+                name: `Google Drive (${s.email || 'connected'})`,
+                icon: '📁',
+                indexed: true,
+                files: [],
+            };
+            renderDrives();
         } else {
             box.innerHTML =
                 `<button onclick="connectGoogleDrive()" style="background:#8b5cf6;border:none;color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;">Connect Google Drive</button>`;
@@ -1420,6 +1437,7 @@ async function sendMessage() {
     activeChatController = client.chatStream({
         prompt,
         history,
+        projectId: activeProjectId || null,
         onToken: (_chunk, full) => {
             finalText = full;
             bubble.innerHTML = renderMarkdown(full);
