@@ -5,11 +5,38 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 
 
+# Word-boundary keyword cache. Substring `kw in text` is unsafe — 2-char keys
+# like "co" / "vo" match inside "concrete", "construction", "voltage", and so
+# every chat message gets routed to change-order / variation-order actions.
+# Use a regex with negative-alphanumeric lookarounds so a keyword matches only
+# at a word boundary (yet still matches when wrapped in punctuation or spaces).
+_KW_REGEX_CACHE: Dict[str, "re.Pattern[str]"] = {}
+
+
+def _kw_pattern(kw: str) -> "re.Pattern[str]":
+    pat = _KW_REGEX_CACHE.get(kw)
+    if pat is None:
+        # `(?<![a-z0-9])` / `(?![a-z0-9])` reject neighbours that are letters
+        # or digits but allow punctuation (so ".xlsx" still matches in ".xlsx file").
+        pat = re.compile(
+            r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])",
+            flags=re.IGNORECASE,
+        )
+        _KW_REGEX_CACHE[kw] = pat
+    return pat
+
+
+def _matches_keyword(kw: str, text: str) -> bool:
+    return bool(_kw_pattern(kw).search(text))
+
+
 # ── Action → keyword patterns ─────────────────────────────────────────────────
 ACTION_PATTERNS: List[Tuple[str, List[str]]] = [
     # BOQ / Cost
     ("boq_process",           ["boq", "bill of quantities", "bill of quantity", "quantities sheet", "cost sheet", "price list", ".xlsx", ".csv"]),
-    ("extract_quantities",    ["extract quantities", "take off", "qto", "quantity take", "measure", "count items"]),
+    # Combined "extract_quantities" entry — there used to be two; the dedupe
+    # guard in _match_actions silently dropped the second list. Merged here.
+    ("extract_quantities",    ["extract quantities", "take off", "qto", "quantity take", "measure", "count items", "area calculation", "room area", "floor area", "calculate area"]),
     ("estimate_costs",        ["estimate cost", "cost estimate", "budget", "pricing", "price estimate", "how much"]),
     ("tender_bid_analysis",   ["tender", "bid", "proposal", "quote comparison", "contractor bid"]),
     ("procurement_list_generator", ["procurement", "material list", "purchase list", "buy list", "vendor list"]),
@@ -21,7 +48,6 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = [
     ("process_specification_full", ["full specification", "spec section", "csi division", "masterformat"]),
     # Drawings
     ("drawing_qto",           ["drawing", "dxf", "dwg", "floor plan", "blueprint", "autocad", "measure drawing"]),
-    ("extract_quantities",    ["area calculation", "room area", "floor area", "calculate area"]),
     # Schedule
     ("parse_primavera_schedule", ["primavera", "xer", "p6", "schedule", "gantt", "programme", "baseline"]),
     ("progress_tracker",      ["progress", "completion", "percent complete", "actual vs planned", "delay"]),
@@ -37,8 +63,12 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = [
     ("commissioning_checklist", ["commissioning", "handover", "pre-commissioning", "startup checklist"]),
     # Contracts / Claims
     ("process_contract",      ["contract", "subcontract", "agreement", "terms", "clause", "fidic", "nec"]),
-    ("change_order_impact",   ["change order", "co", "variation", "scope change", "amendment"]),
-    ("variation_order_manager", ["variation order", "vo", "variation management", "change log"]),
+    # Note: 2-char abbreviations "co" / "vo" removed — they were substrings of
+    # "concrete", "construction", "cost", "compliance", "voltage", so every
+    # construction message used to route here. The multi-word forms cover
+    # the same intent without false positives.
+    ("change_order_impact",   ["change order", "variation", "scope change", "amendment"]),
+    ("variation_order_manager", ["variation order", "variation management", "change log"]),
     ("claims_builder",        ["claim", "dispute", "loss and expense", "damages", "extension of time"]),
     ("rfi_generator",         ["rfi", "request for information", "query", "clarification", "design query"]),
     # Safety
@@ -174,7 +204,6 @@ class SmartOrchestratorBlock(UniversalBlock):
         }
 
     def _match_actions(self, message: str, file_type: Optional[str]) -> List[Dict]:
-        lower = message.lower()
         scores: Dict[str, float] = {}
 
         # File type gives strong signal
@@ -182,13 +211,15 @@ class SmartOrchestratorBlock(UniversalBlock):
             action = FILE_TYPE_MAP[file_type]
             scores[action] = scores.get(action, 0.0) + 0.8
 
-        # Keyword matching
+        # Keyword matching — uses word-boundary regex (see _matches_keyword).
+        # Pure substring matching was unsafe: 2-char keys like "co" matched
+        # "concrete", "compliance", "cost"; "qa" matched "quantity"; etc.
         seen_actions = set()
         for action, keywords in ACTION_PATTERNS:
             if action in seen_actions:
                 continue
             for kw in keywords:
-                if kw in lower:
+                if _matches_keyword(kw, message):
                     weight = len(kw.split()) * 0.2  # multi-word keywords score higher
                     scores[action] = scores.get(action, 0.0) + weight
             seen_actions.add(action)
@@ -202,7 +233,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                     kw for kw in next(
                         (kws for a, kws in ACTION_PATTERNS if a == action), []
                     )
-                    if kw in lower
+                    if _matches_keyword(kw, message)
                 ],
             }
             for action, score in sorted(scores.items(), key=lambda x: x[1], reverse=True)

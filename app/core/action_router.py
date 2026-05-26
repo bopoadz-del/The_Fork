@@ -167,7 +167,13 @@ ACTION_HINTS: dict[str, str] = {
 
 # Minimum orchestrator confidence score before we apply a hint. Below this,
 # the match is too speculative — fall through to plain chat.
-HINT_CONFIDENCE_THRESHOLD = 0.6
+#
+# Sized for the orchestrator's word-boundary matcher: 0.4 means "at least one
+# multi-word match (e.g. 'bill of quantities' → 3 * 0.2 = 0.6, well over)" OR
+# "two independent single-word matches (e.g. 'aci' + 'specification' → 0.4)".
+# The previous 0.6 was tuned against the old substring matcher whose scores
+# were inflated by spurious substring hits ('spec' inside 'specification', etc.).
+HINT_CONFIDENCE_THRESHOLD = 0.4
 
 
 def hint_for_action(action: str) -> Optional[str]:
