@@ -1,7 +1,6 @@
 """Cerebrum client for interacting with blocks."""
 
 from typing import Any, Dict, Optional
-import httpx
 import aiohttp
 
 

@@ -3,7 +3,6 @@
 from .block import BaseBlock, BlockConfig
 from .chain import Chain, chain
 from .client import CerebrumClient
-from .response import StandardResponse
 from .universal_base import UniversalBlock, UniversalContainer, ConfigAccessor
 from .typed_block import TypedBlock
 from .schema_registry import (
@@ -24,7 +23,6 @@ __all__ = [
     "Chain",
     "chain",
     "CerebrumClient",
-    "StandardResponse",
     # Universal
     "UniversalBlock",
     "UniversalContainer",
