@@ -4,6 +4,8 @@ Pure string building. The prompt is rebuilt every turn so it reflects what the
 session already knows — a follow-up question then builds on prior state.
 """
 
+from typing import Iterable, Mapping, Optional
+
 from app.schemas.project_session import ProjectSession
 
 _PHASES = """\
@@ -50,10 +52,58 @@ def _state_summary(session: ProjectSession) -> str:
     return "\n".join(lines)
 
 
-def build_reasoner_prompt(session: ProjectSession, request: str) -> str:
-    """Assemble the reasoner system prompt for the current turn."""
+# Per-snippet hard cap so a single big document can't blow out the prompt.
+_MAX_SNIPPET_CHARS = 800
+
+
+def _format_document_excerpts(
+    excerpts: Optional[Iterable[Mapping]] = None,
+) -> str:
+    """Render top-k document snippets as a labelled prompt section.
+
+    ``excerpts`` is the shape produced by ``doc_index.search_project_documents``:
+    a list of {document_id, filename, snippet, score} dicts. Returns the empty
+    string when no excerpts are available, so the reasoner sees the section
+    only when there is real content.
+    """
+    if not excerpts:
+        return ""
+    rendered = []
+    for i, e in enumerate(excerpts, start=1):
+        filename = e.get("filename") or e.get("document_id") or f"doc-{i}"
+        snippet = str(e.get("snippet") or "").strip()
+        if not snippet:
+            continue
+        if len(snippet) > _MAX_SNIPPET_CHARS:
+            snippet = snippet[:_MAX_SNIPPET_CHARS].rstrip() + "..."
+        rendered.append(f"[{i}] {filename}\n{snippet}")
+    if not rendered:
+        return ""
+    return (
+        "\n\nRELEVANT DOCUMENT EXCERPTS (extracted from project documents — "
+        "use as evidence when answering):\n"
+        + "\n\n".join(rendered)
+    )
+
+
+def build_reasoner_prompt(
+    session: ProjectSession,
+    request: str,
+    document_excerpts: Optional[Iterable[Mapping]] = None,
+) -> str:
+    """Assemble the reasoner system prompt for the current turn.
+
+    ``document_excerpts`` (optional) is the result of
+    ``doc_index.search_project_documents(project_id, request)``: a list of
+    {document_id, filename, snippet, score} dicts. When provided, the
+    snippets are folded into the prompt so the reasoner can ground its plan
+    in the actual uploaded files instead of only the session's structured
+    state (activities, CPM results, etc.).
+    """
+    excerpts_block = _format_document_excerpts(document_excerpts)
     return (
         f"{_PHASES}\n\n"
-        f"CURRENT SESSION STATE:\n{_state_summary(session)}\n\n"
+        f"CURRENT SESSION STATE:\n{_state_summary(session)}"
+        f"{excerpts_block}\n\n"
         f"USER REQUEST:\n{request}"
     )

@@ -36,6 +36,10 @@ class ProjectAskRequest(BaseModel):
     request: str
     # optional: load/replace the session's activity list on this turn
     activities: Optional[List[Dict[str, Any]]] = None
+    # optional: the project whose indexed documents the reasoner should
+    # consult for evidence. Defaults to session_id for back-compat with the
+    # UI convention where the project id IS the session id.
+    project_id: Optional[str] = None
 
 
 @router.post("/v1/project/ask")
@@ -68,8 +72,12 @@ async def project_ask(
         session.data["activities"] = body.activities
 
     reasoner = _reasoner_factory()
+    # Use the explicit project_id when given; otherwise fall back to the
+    # session_id (UI convention: activeProjectId IS the session id).
+    project_id = body.project_id or body.session_id
     result = await reasoner.process({"request": body.request,
-                                     "session": session})
+                                     "session": session,
+                                     "project_id": project_id})
 
     _store.save(session)   # persist the turn — history, computed state, cache
 

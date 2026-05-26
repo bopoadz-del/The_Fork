@@ -125,6 +125,7 @@ class ProjectReasonerBlock(UniversalBlock):
             or params.get("request") \
             or (str(input_data) if not isinstance(input_data, dict) else "")
         session: ProjectSession = data.get("session") or params.get("session")
+        project_id = data.get("project_id") or params.get("project_id")
 
         request = request or ""
         if not request.strip():
@@ -134,10 +135,25 @@ class ProjectReasonerBlock(UniversalBlock):
 
         session.add_message("user", request)
 
+        # Look up top-k relevant snippets from this project's indexed
+        # documents so the planner can ground its steps in the actual
+        # uploaded files. Silent no-op when no project_id is given or the
+        # project has nothing indexed yet — the reasoner falls back to
+        # session-state-only planning, matching the old behavior.
+        excerpts: list = []
+        if project_id:
+            try:
+                from app.core.doc_index import search_project_documents
+                excerpts = await search_project_documents(
+                    project_id, request, top_k=5
+                )
+            except Exception:
+                excerpts = []
+
         # ── UNDERSTAND + PLAN ────────────────────────────────────────────
         try:
             plan_reply = await self._call_llm(
-                build_reasoner_prompt(session, request)
+                build_reasoner_prompt(session, request, excerpts)
             )
             plan = ExecutionPlan.model_validate(_extract_json(plan_reply))
         except Exception as e:                              # noqa: BLE001
