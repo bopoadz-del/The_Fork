@@ -1831,10 +1831,21 @@ async function handleFile(input) {
                     extractedText = r.result?.text || r.result?.extracted_text || '';
                 } else if (kind === 'docx') {
                     const r = await client.execute('document_engine', {}, { docx_path: filePath });
-                    extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
+                    // Prefer the raw extracted text over the mapper's
+                    // structured output. The mapper layer is tuned for
+                    // construction QTO/scheduling and discards source content
+                    // in favour of ontology defaults — useless for chatting
+                    // about a non-construction docx (e.g. a meeting note).
+                    const res = r.result || {};
+                    extractedText = (res.raw_text || JSON.stringify(res, null, 2)).substring(0, 8000);
                 } else if (kind === 'xlsx') {
                     const r = await client.execute('document_engine', {}, { xlsx_path: filePath });
-                    extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
+                    // Same as docx: prefer raw_text. The mapper used to emit
+                    // 4 kB of generic equipment lead-time defaults with zero
+                    // rows from the actual sheet, so the LLM saw boilerplate
+                    // and correctly answered "No Cost Data Available".
+                    const res = r.result || {};
+                    extractedText = (res.raw_text || JSON.stringify(res, null, 2)).substring(0, 8000);
                 }
             } catch(e) { /* extraction optional */ }
 
