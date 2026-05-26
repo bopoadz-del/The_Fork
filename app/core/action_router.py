@@ -1,0 +1,202 @@
+"""Action → domain hint translation for the chat router.
+
+The `smart_orchestrator` block returns action strings like `boq_process` or
+`spec_analyze` based on keyword matches. The chat router uses this module to
+turn those action strings into a short domain-aware system prompt that biases
+the LLM toward the right kind of answer.
+
+Why a hint, not a block dispatch:
+  - Most actions returned by the orchestrator (`tender_bid_analysis`,
+    `claims_builder`, `safety_compliance_audit`, ...) don't have a 1:1 block
+    in BLOCK_REGISTRY — only ~9 of 39 do.
+  - The blocks that exist (`boq_processor`, `spec_analyzer`, `bim`, ...)
+    expect structured input (file paths, parameters), not a freeform chat
+    message. Dispatching a raw user message to them would fail in ways the
+    user can't recover from.
+  - The chat block (DeepSeek) is already the right thing to answer freeform
+    questions about uploaded files — it just needs a nudge about *which*
+    domain the user is asking inside of.
+
+So this module returns a one-sentence system-prompt fragment per action.
+Unknown / weak matches return None, and the chat router falls through to
+plain chat unchanged.
+"""
+
+from typing import Optional
+
+
+# Per-action system-prompt hint. Each value tells the LLM what domain frame to
+# answer inside. Kept short so it never overwhelms the user's question.
+ACTION_HINTS: dict[str, str] = {
+    # BOQ / Cost
+    "boq_process":
+        "The user is asking about a Bill of Quantities. Focus on line items, "
+        "quantities, unit rates, totals, and any cost structure visible in the file.",
+    "extract_quantities":
+        "The user wants quantity takeoff data — areas, counts, volumes. "
+        "Extract concrete numbers with units; flag any missing measurements.",
+    "estimate_costs":
+        "The user wants a cost estimate. Use any uploaded BOQ / pricing data "
+        "to give specific figures (with currency) and a clear total.",
+    "tender_bid_analysis":
+        "The user is analysing tender/bid documents. Focus on price comparisons, "
+        "scope coverage, conditions, and discrepancies between bids.",
+    "procurement_list_generator":
+        "The user wants a procurement / material list. Group by trade or "
+        "material category, give quantities + unit, leave price columns blank "
+        "if no rate data is present.",
+    "procurement_optimizer":
+        "The user wants procurement optimisation. Compare suppliers, identify "
+        "cheapest viable options, flag any quality/lead-time tradeoffs.",
+    "payment_certificate":
+        "The user is dealing with a payment certificate / valuation. Focus on "
+        "work done to date, retention, materials on site, and net amount due.",
+    "cash_flow_forecast":
+        "The user wants a cash flow / S-curve projection. Walk through phasing, "
+        "monthly drawdowns, and the timing of payments.",
+    # Specifications
+    "spec_analyze":
+        "The user is asking about a technical specification. Identify "
+        "applicable standards (ASTM, ACI, SASO, etc.), grade requirements, "
+        "and compliance checks.",
+    "process_specification_full":
+        "The user wants a structured walk-through of a full specification "
+        "section. Organise by clause/sub-clause and call out compliance items.",
+    # Drawings
+    "drawing_qto":
+        "The user is taking off quantities from drawings (DXF/DWG/floor plan). "
+        "Focus on areas, lengths, counts, and call out measurement assumptions.",
+    # Schedule
+    "parse_primavera_schedule":
+        "The user is reviewing a Primavera P6 / .xer schedule. Focus on "
+        "activities, durations, critical path, and milestones.",
+    "progress_tracker":
+        "The user wants a progress / actual-vs-planned analysis. Identify "
+        "completion %, slippages, and recovery options.",
+    "resource_histogram":
+        "The user wants a resource histogram (manpower / crew loading). "
+        "Time-phase by week or month and flag peaks/troughs.",
+    "forensic_delay_analysis":
+        "The user is building a forensic delay / EOT analysis. Focus on "
+        "as-planned vs as-built, concurrent delays, and entitlement basis.",
+    # BIM / IFC
+    "bim_analysis":
+        "The user is reviewing a BIM / IFC model. Focus on building elements, "
+        "quantities by type, and any model-data quality issues.",
+    "bim_clash_detection":
+        "The user is asking about BIM clashes. Focus on hard/soft clashes by "
+        "discipline (MEP/structure/architecture) and priority.",
+    "bim_extractor":
+        "The user wants quantities extracted from a BIM model. Group by "
+        "element type with totals; include units.",
+    "digital_twin_sync":
+        "The user is asking about digital-twin / as-built model sync. Focus on "
+        "deltas between design and built state.",
+    # QA/QC
+    "qa_qc_inspection":
+        "The user is dealing with QA/QC, inspections, NCRs, or punch lists. "
+        "Focus on defects, root cause if known, and required corrective actions.",
+    "commissioning_checklist":
+        "The user wants a commissioning / handover checklist. Organise by "
+        "system (HVAC, electrical, plumbing, ...) with pre/post tests.",
+    # Contracts / Claims
+    "process_contract":
+        "The user is reviewing a contract. Focus on parties, scope, "
+        "key clauses (FIDIC / NEC where applicable), and risk allocation.",
+    "change_order_impact":
+        "The user wants change-order / variation impact analysis. Walk through "
+        "cost impact, time impact, and contract basis.",
+    "variation_order_manager":
+        "The user is managing variation orders. Track status, value, and "
+        "approval state per VO.",
+    "claims_builder":
+        "The user is building a construction claim. Identify the event, basis "
+        "in contract, loss/expense quantum, and time entitlement.",
+    "rfi_generator":
+        "The user wants help drafting an RFI. State the issue clearly, the "
+        "drawings/specs involved, and the question to designer.",
+    # Safety
+    "safety_compliance_audit":
+        "The user is doing a safety / HSE compliance check. Reference OSHA "
+        "or local regs where applicable; focus on hazards and PPE.",
+    "risk_register_auto_populate":
+        "The user is populating a risk register. Each risk: likelihood, "
+        "impact, owner, mitigation, residual rating.",
+    # Sustainability
+    "carbon_footprint_calculator":
+        "The user wants embodied / operational carbon calculations. Use "
+        "EPDs where available; output in tCO2e with assumptions stated.",
+    "esg_sustainability_report":
+        "The user is preparing an ESG / sustainability report. Use LEED / "
+        "BREEAM categories if appropriate.",
+    # Reports
+    "daily_site_report":
+        "The user wants a daily site report. Include manpower, weather, "
+        "work done, materials received, incidents, photos referenced.",
+    "submittal_log_generator":
+        "The user is managing a submittal log. Track item, spec section, "
+        "submitted-on, approved-on, status.",
+    "as_built_deviation_report":
+        "The user wants an as-built deviation report. Compare to design, "
+        "list deviations with rationale and approval refs.",
+    "warranty_maintenance_schedule":
+        "The user wants a warranty / planned maintenance schedule. Organise "
+        "by asset/system with frequency.",
+    "om_manual_generator":
+        "The user wants an O&M manual outline. Standard sections: "
+        "operation, maintenance, spares, contacts.",
+    # Value / Analysis
+    "value_engineering":
+        "The user wants value-engineering options. List alternatives with "
+        "cost/quality tradeoffs and lifecycle implications.",
+    "sympy_reason":
+        "The user wants symbolic / variance analysis. Show formulas, "
+        "substitutions, and the final numeric result.",
+    # Documents
+    "process_document":
+        "The user wants help analysing the uploaded document. Be specific "
+        "about what's in it; don't ask for clarification if the content is clear.",
+    # Reasoning / AI
+    "intelligent_workflow":
+        "The user wants a multi-step workflow. Lay out the plan, then "
+        "execute step-by-step.",
+    "health_check":
+        "The user is asking about system status. Be brief and factual.",
+}
+
+
+# Minimum orchestrator confidence score before we apply a hint. Below this,
+# the match is too speculative — fall through to plain chat.
+HINT_CONFIDENCE_THRESHOLD = 0.6
+
+
+def hint_for_action(action: str) -> Optional[str]:
+    """Return the LLM system-prompt hint for a routed action, or None."""
+    return ACTION_HINTS.get(action)
+
+
+def best_action(orchestrator_result: dict) -> tuple[Optional[str], float]:
+    """Pull the highest-confidence action out of a SmartOrchestratorBlock result.
+
+    Returns (action_name, confidence). When the orchestrator returns nothing
+    routable, returns (None, 0.0). SmartOrchestratorBlock emits matches as
+    {"action": str, "confidence": float, "keywords_matched": [str]} ordered
+    by descending confidence.
+    """
+    matched = orchestrator_result.get("matched_actions") or []
+    if not matched:
+        return None, 0.0
+    top = matched[0]
+    return top.get("action"), float(top.get("confidence") or 0.0)
+
+
+def hint_for_orchestrator_result(orchestrator_result: dict) -> Optional[str]:
+    """End-to-end: orchestrator result → hint sentence (or None).
+
+    Returns None when the top match is below the confidence threshold or when
+    the matched action has no registered hint.
+    """
+    action, score = best_action(orchestrator_result)
+    if not action or score < HINT_CONFIDENCE_THRESHOLD:
+        return None
+    return hint_for_action(action)

@@ -9,9 +9,29 @@ _HTML = Path("app/static/index.html").read_text(encoding="utf-8")
 
 
 # ── Plan 6 — project reasoning wiring ───────────────────────────────────────
+#
+# The project-mode toggle and agent picker were intentionally removed from the
+# UI (the header now shows only the title). Reason: a returning user who had
+# left "Project mode" on, or who selected a sidebar project, would be quietly
+# routed to /v1/project/ask, which only knows about loaded schedules — not
+# just-uploaded files. The fix was to remove the path entirely and route every
+# message through the default chat (which sees activeFileContext).
+#
+# The `askProject`, `projectMode`, `projectSessionId` and `/v1/project/ask`
+# symbols still exist in the JS for backward-compat — they're just not wired
+# to any UI control anymore. The tests below assert that scaffold is still
+# present so a future re-introduction of project-mode routing has something to
+# hook into.
 
-def test_ui_has_a_project_mode_toggle():
-    assert 'id="projectModeToggle"' in _HTML
+
+def test_ui_no_longer_has_a_visible_project_mode_toggle():
+    """The header-level toggle must be gone — see file header comment."""
+    assert 'id="projectModeToggle"' not in _HTML
+
+
+def test_ui_no_longer_has_a_visible_agent_picker():
+    """The agent dropdown must be gone — auto-routing replaces it."""
+    assert 'id="agentPicker"' not in _HTML
 
 
 def test_ui_has_an_askProject_function():
@@ -26,8 +46,9 @@ def test_ui_generates_a_project_session_id():
     assert "projectSessionId" in _HTML
 
 
-def test_sendMessage_routes_to_project_mode():
-    # sendMessage must branch to askProject when project mode is on.
+def test_sendMessage_still_has_project_mode_branch():
+    # The branch in sendMessage is now dead code (projectMode never flips true
+    # without the UI control), but the scaffold remains for future re-wiring.
     assert "askProject" in _HTML and "projectMode" in _HTML
 
 

@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.blocks import BLOCK_REGISTRY
+from app.core.action_router import hint_for_orchestrator_result
 from app.dependencies import require_user
 from app.dependencies import block_instances
 
@@ -18,6 +19,31 @@ class ChatRequest(BaseModel):
     model: str = "deepseek-chat"
     stream: bool = False
     project_id: Optional[str] = None
+
+
+async def _with_domain_hint(prompt: str) -> str:
+    """Prepend a smart-orchestrator domain hint when the user's message matches
+    a known intent above the confidence threshold.
+
+    The chat block doesn't expose a system-message channel, so the hint piggy-
+    backs on the user message as a leading bracketed instruction. The LLM
+    treats it as scope-setting context.
+
+    No-ops on any orchestrator error so the chat path stays robust.
+    """
+    try:
+        if "smart_orchestrator" not in block_instances:
+            block_instances["smart_orchestrator"] = (
+                BLOCK_REGISTRY["smart_orchestrator"]()
+            )
+        orchestrator = block_instances["smart_orchestrator"]
+        result = await orchestrator.process({"user_message": prompt})
+        hint = hint_for_orchestrator_result(result)
+        if hint:
+            return f"[Context for your answer: {hint}]\n\n{prompt}"
+    except Exception:
+        pass
+    return prompt
 
 
 def _with_project_memory(
@@ -59,6 +85,7 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
         message = _with_project_memory(
             request.message, request.project_id, auth["user_id"]
         )
+        message = await _with_domain_hint(message)
         result = await block.execute(message, {
             "model": request.model,
             "stream": False,
@@ -169,6 +196,8 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     full_prompt = _with_project_memory(
         full_prompt, body.get("project_id"), auth["user_id"]
     )
+    # Smart-orchestrator domain hint, when the message matches a known intent.
+    full_prompt = await _with_domain_hint(full_prompt)
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
