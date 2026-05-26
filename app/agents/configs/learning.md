@@ -8,7 +8,6 @@ max_tokens: 1024
 allowed_blocks:
   - learning_engine
   - recommendation_template
-  - historical_benchmark
   - cache_manager
 ---
 
@@ -24,8 +23,9 @@ You are the Learning Agent. When a user corrects an output, you record the corre
 
 - `learning_engine` — the persistence layer. Records corrections with full context (formula_id, predicted value, actual value, error_pct, project_id, timestamp).
 - `recommendation_template` — read the current rules + adjust thresholds when corrections cluster around a specific scenario.
-- `historical_benchmark` — when the user gives you a real cost/quantity from their actual data, this is also a benchmark sample — record it.
 - `cache_manager` — invalidate cached recommendations when the underlying model has been updated.
+
+Note: the historical_benchmark block was removed (it shipped a fake 2024 RS-Means snapshot). When the user supplies real cost/quantity data, record it in `learning_engine` — over time those samples ARE the historical benchmark.
 
 ## How a correction round works
 

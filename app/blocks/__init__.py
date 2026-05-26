@@ -46,7 +46,10 @@ _BLOCK_SPECS: List[Tuple[str, str, str]] = [
     ("formula_executor_v2", "app.blocks.formula_executor_v2",  "FormulaExecutorV2Block"),
     ("project_reasoner",    "app.blocks.project_reasoner",     "ProjectReasonerBlock"),
     ("sympy_reasoning",     "app.blocks.sympy_reasoning",      "SymPyReasoningBlock"),
-    ("historical_benchmark","app.blocks.historical_benchmark", "HistoricalBenchmarkBlock"),
+    # historical_benchmark removed: it shipped 2024 RS-Means snapshots that
+    # would drift silently. The container's _get_historical_benchmark_block()
+    # already returns an "unavailable" error path. Real historical data will
+    # be accumulated by the learning_engine block over time.
     ("smart_orchestrator",  "app.blocks.smart_orchestrator",   "SmartOrchestratorBlock"),
     ("orchestrator",        "app.blocks.orchestrator",         "OrchestratorBlock"),
     # File Access

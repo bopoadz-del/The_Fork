@@ -88,15 +88,17 @@ def main():
         checks.append(("GET /v1/blocks", st == 200 and len(blocks) > 0,
                        f"{len(blocks)} blocks"))
 
+        # Smoke test of /v1/execute — uses `translate` (deterministic, no LLM,
+        # no historical-benchmark dependency since that block was removed).
         st, body = _req("POST", "/v1/execute",
-                        {"block": "historical_benchmark",
-                         "input": {"item": "concrete", "unit": "m3"},
-                         "params": {"action": "lookup"}}, auth=True)
+                        {"block": "translate",
+                         "input": {"text": "hello"},
+                         "params": {"target": "es"}}, auth=True)
         d = json.loads(body)
         ok = (st == 200 and d.get("status") == "success"
               and d.get("result", {}).get("status") == "success")
-        rate = d.get("result", {}).get("rates", {}).get("adjusted_usd")
-        checks.append(("POST /v1/execute", ok, f"historical_benchmark -> ${rate}"))
+        translated = d.get("result", {}).get("translated", "")
+        checks.append(("POST /v1/execute", ok, f"translate -> {translated!r}"))
 
         print()
         passed = sum(1 for _n, ok, _d in checks if ok)

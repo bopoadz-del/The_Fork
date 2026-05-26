@@ -62,7 +62,8 @@ class ConstructionContainer(UniversalContainer):
         # Week 3
         "jetson_gateway", "formula_executor", "bim_extractor",
         # Week 4
-        "learning_engine", "historical_benchmark", "recommendation_template",
+        "learning_engine", "recommendation_template",
+        # historical_benchmark removed — learning_engine accumulates real data
     ]
     
     default_config = {
@@ -1164,7 +1165,12 @@ class ConstructionContainer(UniversalContainer):
             return {
                 "status": "error",
                 "action": "cost_estimate",
-                "error": "historical_benchmark block unavailable — cannot benchmark unit rates",
+                "error": (
+                    "No historical benchmark source configured. The hardcoded "
+                    "2024 USD rate book was removed; the system will accumulate "
+                    "real rates via learning_engine over time. Provide unit "
+                    "rates directly in the BOQ, or request supplier quotes."
+                ),
             }
 
         _UNIT_SUFFIXES = {"_m3": "m3", "_m2": "m2", "_kg": "kg", "_lm": "lm", "_ea": "ea", "_nr": "nr"}
@@ -5596,11 +5602,23 @@ Total Extension of Time Sought: {total_delay} days
         return await block.process(input_data, params)
 
     async def benchmark_lookup(self, input_data: Any, params: Dict) -> Dict:
-        """Delegate to HistoricalBenchmarkBlock: RS Means cost lookup."""
-        block = self._resolve_block("historical_benchmark")
-        if block is None:
-            return {"status": "error", "error": "historical_benchmark block unavailable"}
-        return await block.process(input_data, params)
+        """Historical benchmark lookup — block removed, returns an honest no-data error.
+
+        Previously routed to HistoricalBenchmarkBlock, which shipped a 2024
+        RS-Means snapshot that would drift silently. The block was deleted
+        to stop pretending we have a maintained rate database. Real rates
+        will be accumulated by learning_engine from actual user data over
+        time — this method is kept as a stable interface for that future
+        wiring.
+        """
+        return {
+            "status": "error",
+            "error": (
+                "No historical benchmark source configured. Use supplier "
+                "quotes or rates from the BOQ; learning_engine will record "
+                "real samples as they're seen."
+            ),
+        }
 
     async def recommend(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to RecommendationTemplateBlock: rule-based recommendations."""

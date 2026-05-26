@@ -101,7 +101,7 @@ Each block returns a `ui_schema` so the UI auto-renders inputs.
 
 - **Documents & content** — `pdf`, `pdf_v2`, `ocr`, `ocr_v2`, `image`, `document_engine`, `web`
 - **Language & AI** — `chat`, `translate`, `voice`, `vector_search`, `zvec`
-- **Construction domain** — `construction_v2`, `boq_processor`, `bim`, `bim_extractor`, `drawing_qto`, `primavera_parser`, `spec_analyzer`, `formula_executor`, `sympy_reasoning`, `historical_benchmark`, `smart_orchestrator`
+- **Construction domain** — `construction_v2`, `boq_processor`, `bim`, `bim_extractor`, `drawing_qto`, `primavera_parser`, `spec_analyzer`, `formula_executor`, `sympy_reasoning`, `smart_orchestrator`
 - **Drives & infrastructure** — `local_drive`, `google_drive`, `onedrive`, `cache_manager`
 
 Live list with descriptions:

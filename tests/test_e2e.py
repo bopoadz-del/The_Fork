@@ -232,33 +232,31 @@ class TestConstructionBlocks:
         r = await b.execute({}, {})
         assert "status" in r
 
-    @pytest.mark.asyncio
-    async def test_historical_benchmark_lookup(self):
-        """Block does keyword matching on an item description (field 'item'),
-        and returns a flat rate result — not a nested {items, packages} map."""
-        from app.blocks.historical_benchmark import HistoricalBenchmarkBlock
-        b = HistoricalBenchmarkBlock()
-        r = await b.execute({"item": "Concrete C40", "unit": "m3"}, {})
-        assert r["status"] == "success"
-        inner = _r(r)
-        assert inner["status"] == "success"
-        assert "concrete" in inner["matched_key"]
-        assert inner["rates"]["adjusted_usd"] > 0
-        assert inner["rates"]["low_usd"] <= inner["rates"]["high_usd"]
-        assert inner["unit"]
+    def test_historical_benchmark_block_is_removed(self):
+        """historical_benchmark was deleted — it shipped a hardcoded 2024 RS-Means
+        snapshot that would drift silently. The container's benchmark_lookup()
+        now returns an honest no-data error; learning_engine will accumulate
+        real rates from user-supplied data over time. This test guards against
+        the block being re-introduced as canned data."""
+        from app.blocks import BLOCK_REGISTRY
+        assert "historical_benchmark" not in BLOCK_REGISTRY, (
+            "historical_benchmark must stay deleted; if a real (not canned) "
+            "rate source is added, name it differently and update this test."
+        )
+        # Importing the deleted module must fail.
+        with pytest.raises(ImportError):
+            import app.blocks.historical_benchmark  # noqa: F401
 
     @pytest.mark.asyncio
-    async def test_historical_benchmark_catalogue(self):
-        """The 'catalogue' action lists every benchmarked item with its base rate."""
-        from app.blocks.historical_benchmark import HistoricalBenchmarkBlock
-        b = HistoricalBenchmarkBlock()
-        r = await b.execute({}, {"action": "catalogue"})
-        assert r["status"] == "success"
-        inner = _r(r)
-        assert inner["total_items"] > 0
-        assert len(inner["items"]) == inner["total_items"]
-        first = inner["items"][0]
-        assert "key" in first and "base_rate_usd" in first and "trade" in first
+    async def test_container_benchmark_lookup_returns_honest_error(self):
+        """ConstructionContainer.benchmark_lookup() keeps its method signature
+        for forward-compat with a future learning-based benchmark, but for now
+        always returns a structured error pointing callers at supplier quotes."""
+        from app.containers.construction import ConstructionContainer
+        c = ConstructionContainer()
+        r = await c.benchmark_lookup({"item": "Concrete C40", "unit": "m3"}, {})
+        assert r["status"] == "error"
+        assert "historical benchmark" in r["error"].lower()
 
     @pytest.mark.asyncio
     async def test_formula_executor(self):
@@ -504,9 +502,10 @@ class TestAPIEndpoints:
             os.unlink(f.name)
 
     @pytest.mark.asyncio
-    async def test_execute_endpoint_historical_benchmark(self, client):
-        """POST /execute drives historical_benchmark — it does keyword matching on a
-        single {item, unit} input and returns a flat rate result."""
+    async def test_execute_endpoint_rejects_removed_historical_benchmark(self, client):
+        """historical_benchmark was deleted from BLOCK_REGISTRY. POST /execute
+        targeting it must surface an error rather than silently succeeding —
+        this test exists to catch accidental re-introduction of the block."""
         async with client as c:
             r = await c.post(
                 "/execute",
@@ -515,21 +514,25 @@ class TestAPIEndpoints:
                       "params": {}},
                 headers={"Authorization": f"Bearer {self.API_KEY}"},
             )
-        assert r.status_code == 200
-        body = r.json()
-        assert body["status"] == "success", body
-        result = body["result"]
-        assert "concrete" in result["matched_key"]
-        assert result["rates"]["adjusted_usd"] > 0
-        assert result["rates"]["low_usd"] <= result["rates"]["high_usd"]
+        # Whatever the exact status, the response must not pretend this block
+        # exists. Accept either an HTTP error or a JSON body with status="error".
+        if r.status_code == 200:
+            body = r.json()
+            assert body.get("status") == "error" or body.get("result", {}).get("status") == "error", (
+                f"Removed block silently returned success: {body}"
+            )
+        else:
+            assert r.status_code in (400, 404, 422, 500), r.status_code
 
     @pytest.mark.asyncio
     async def test_execute_endpoint_requires_auth(self, client):
-        """The /execute route is auth-protected — a missing key must be rejected."""
+        """The /execute route is auth-protected — a missing key must be rejected.
+        Uses `translate` because it's a stable, side-effect-free block; the
+        auth guard fires before any block lookup."""
         async with client as c:
             r = await c.post(
                 "/execute",
-                json={"block": "historical_benchmark",
-                      "input": {"item": "Concrete C40"}, "params": {}},
+                json={"block": "translate",
+                      "input": {"text": "hello"}, "params": {"target": "es"}},
             )
         assert r.status_code in (401, 403), r.status_code

@@ -37,10 +37,10 @@ Expected output (exit code 0 when all pass):
 
 ```
 [driver] launching uvicorn on :8000 ...
-  [PASS] GET /v1/health  (36 blocks loaded)
+  [PASS] GET /v1/health  (35 blocks loaded)
   [PASS] GET /  (landing page)  (HTTP 200, 93301 bytes)
-  [PASS] GET /v1/blocks  (35 blocks)
-  [PASS] POST /v1/execute  (historical_benchmark -> $136.5)
+  [PASS] GET /v1/blocks  (34 blocks)
+  [PASS] POST /v1/execute  (translate -> 'hola')
 [driver] 4/4 checks passed
 ```
 
@@ -93,11 +93,11 @@ Direct invocation without the server (for block/internal changes):
 - **README is stale on the frontend.** It lists a React dashboard at
   `/dashboard/`; that frontend was deleted. The only UI is the static page
   at `/`.
-- The app loads **36 blocks** at startup; `GET /v1/blocks` lists **35**
+- The app loads **35 blocks** at startup; `GET /v1/blocks` lists **34**
   (the `construction` container is registered but not surfaced in that list).
 - `formula_executor` / `project_reasoner` / `/v1/project/ask` need a funded
   `DEEPSEEK_API_KEY` in `.env` — the driver deliberately smoke-tests
-  `historical_benchmark` instead (pure compute, no LLM).
+  `translate` instead (pure compute, no LLM, no historical-benchmark dep).
 
 ## Troubleshooting
 
