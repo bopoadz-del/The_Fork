@@ -1851,12 +1851,20 @@ async function handleFile(input) {
 
             setActiveFileContext(file.name, extractedText || `File: ${file.name} (${kind})`, 'Upload');
             activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
+            const ready = !!extractedText && extractedText.length > 50;
             setOutcomes(`<div class="outcome-item">
                 <div class="outcome-label">📎 ${file.name}</div>
-                <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · stored, not analysed</div>
+                <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · ${ready ? `read (${extractedText.length.toLocaleString()} chars in context)` : 'stored, content not extractable'}</div>
                 <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Ask in chat to analyse it.</div>
             </div>`);
-            addMessage(`"${file.name}" attached and stored — I haven't run any analysis. Ask me what you need (e.g. "summarise this", "extract the BOQ") and I'll answer here.`, 'assistant');
+            // Be honest about what happened. If we successfully extracted text,
+            // SAY SO — the LLM is already primed with the content. We don't
+            // volunteer an analysis (per owner: "the app does not share
+            // unless asked"), but we also don't lie about doing nothing.
+            const greeting = ready
+                ? `Got it — I've read "${file.name}" (${extractedText.length.toLocaleString()} characters). Ask me anything about it.`
+                : `"${file.name}" attached — couldn't extract readable content from this format. Ask me what you'd like to try.`;
+            addMessage(greeting, 'assistant');
 
         } else {
             setActiveFileContext(file.name, `[Binary file — ${kind}]`, 'Upload');
