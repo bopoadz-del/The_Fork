@@ -131,14 +131,6 @@
     <div class="main">
         <header style="display:flex;align-items:center;justify-content:center;gap:12px;">
             <span>Cerebrum Platform</span>
-            <select id="agentPicker" onchange="onAgentChange(this.value)" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#e0e0e0;border-radius:6px;padding:4px 8px;font-size:13px;">
-                <option value="">— Default chat —</option>
-            </select>
-            <span id="agentToolsHint" style="color:#666;font-size:11px;"></span>
-            <label style="display:flex;align-items:center;gap:6px;color:#888;font-size:12px;cursor:pointer;">
-                <input type="checkbox" id="projectModeToggle" onchange="onProjectModeChange(this.checked)">
-                Project mode
-            </label>
         </header>
         <div class="messages" id="messages">
             <div class="msg assistant">
@@ -1280,12 +1272,8 @@ function selectProject(id) {
     activeProjectId = id;
     try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
     renderProjects();
-    // Selecting a project implies project-scoped chat.
-    if (!projectMode) {
-        projectMode = true;
-        const toggle = document.getElementById('projectModeToggle');
-        if (toggle) toggle.checked = true;
-    }
+    // (Project mode auto-enable removed — the chat path always reads the
+    // active file context, regardless of whether a project is selected.)
     const docCount = (proj.documents || []).length;
     addMessage(
         `Project "${proj.name}" selected — chat is now scoped to it`
@@ -1889,8 +1877,12 @@ loadHistory();
 rehydrateMessagesFromHistory();
 
 // ── Runtime agents ───────────────────────────────────────────────────────
+// The agent picker UI was removed; the chat always uses the default path
+// (which reads activeFileContext). The state vars + functions below are kept
+// only because other code references them.
 const AGENT_KEY = 'cerebrum_active_agent_v1';
 let activeAgent = null;
+try { localStorage.removeItem(AGENT_KEY); } catch (e) {}
 
 function onAgentChange(name) {
     activeAgent = name || null;
