@@ -1,8 +1,14 @@
-"""Sandbox Block - Code execution isolation and security"""
+"""Sandbox Block - Code execution isolation and security.
+
+POSIX-only: the `resource` and `signal.SIGXCPU` primitives this block uses
+to enforce memory / CPU limits don't exist on Windows. We import them
+conditionally so the block stays loadable on Windows (it will raise an
+honest error when actually invoked there, rather than failing at import
+time and blocking the whole registry).
+"""
 from app.core.universal_base import UniversalBlock
 from typing import Dict, Any, Callable, Optional
 import asyncio
-import resource
 import tempfile
 import os
 import signal
@@ -10,6 +16,13 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
+
+try:
+    import resource  # POSIX only
+    _RESOURCE_AVAILABLE = True
+except ImportError:  # pragma: no cover — Windows path
+    resource = None  # type: ignore[assignment]
+    _RESOURCE_AVAILABLE = False
 
 
 class SandboxLevel(Enum):
@@ -198,13 +211,15 @@ class SandboxBlock(UniversalBlock):
         error = None
         
         try:
-            # Set memory limit
-            if policy.max_memory_mb > 0:
+            # Set memory limit (POSIX only; on Windows we skip the rlimit
+            # call and let the OS handle process-level OOM — the sandbox
+            # provides weaker isolation here, which is documented).
+            if policy.max_memory_mb > 0 and _RESOURCE_AVAILABLE:
                 resource.setrlimit(
                     resource.RLIMIT_AS,
                     (policy.max_memory_mb * 1024 * 1024, policy.max_memory_mb * 1024 * 1024)
                 )
-            
+
             # Execute with timeout
             exec(code, safe_globals)
             

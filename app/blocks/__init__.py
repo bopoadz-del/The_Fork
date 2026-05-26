@@ -67,6 +67,20 @@ _BLOCK_SPECS: List[Tuple[str, str, str]] = [
     ("code",                "app.blocks.code",                 "CodeBlock"),
     ("search",              "app.blocks.search",               "SearchBlock"),
     ("android_drive",       "app.blocks.android_drive",        "AndroidDriveBlock"),
+    # Construction container support blocks — these were on disk but
+    # unregistered. Container methods that called BLOCK_REGISTRY.get(...)
+    # against them silently received None and hit error paths instead of
+    # the real implementations. Registering them so the calls actually
+    # resolve.
+    ("async_processor",     "app.blocks.async_processor",      "AsyncProcessorBlock"),
+    ("file_hasher",         "app.blocks.file_hasher",          "FileHasherBlock"),
+    ("jetson_gateway",      "app.blocks.jetson_gateway",       "JetsonGatewayBlock"),
+    ("learning_engine",     "app.blocks.learning_engine",      "LearningEngineBlock"),
+    ("llm_enhancer",        "app.blocks.llm_enhancer",         "LLMEnhancerBlock"),
+    ("recommendation_template", "app.blocks.recommendation_template", "RecommendationTemplateBlock"),
+    ("sandbox",             "app.blocks.sandbox",              "SandboxBlock"),
+    ("traffic_manager",     "app.blocks.traffic_manager",      "TrafficManagerBlock"),
+    ("webhook",             "app.blocks.webhook",              "WebhookBlock"),
 ]
 
 
