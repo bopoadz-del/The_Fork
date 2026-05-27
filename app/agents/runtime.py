@@ -5,8 +5,8 @@ markdown body for the system prompt). Each agent can call any block in its
 `allowed_blocks` list as a tool. The runtime handles the back-and-forth with the
 LLM: turn → optional tool call(s) → run blocks → return results → continue.
 
-Provider: DeepSeek (OpenAI-compatible /v1/chat/completions). Anthropic can be
-added with a small adapter — left as a follow-up.
+Provider: DeepSeek (`/v1/chat/completions` JSON protocol). A local-inference
+adapter is wired into the chat block as a fallback; see ``app/blocks/chat.py``.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 # ── DeepSeek DSML tool-call markup handling ─────────────────────────────────
 # deepseek-chat sometimes emits a tool call as inline text markup inside the
 # message `content` (its own "DSML" token format) instead of, or in addition
-# to, the structured OpenAI-style `tool_calls` array. If the runtime only reads
+# to, the structured `tool_calls` array. If the runtime only reads
 # the structured field it treats the raw markup as a final answer and shows
 # garbage to the user. The helpers below detect that markup, turn it into
 # proper tool_call dicts, and strip any residual fragments from final answers.
@@ -102,7 +102,7 @@ def _parse_dsml_tool_calls(content: str) -> tuple[str, list[dict]]:
 
     Returns ``(cleaned_content, tool_calls)`` where ``cleaned_content`` is the
     message text with all DSML markup removed, and ``tool_calls`` is a list of
-    dicts shaped exactly like the structured OpenAI-style field that
+    dicts shaped exactly like the structured ``tool_calls`` field that
     ``_run_tool_call`` consumes::
 
         {"id": <generated>, "type": "function",
@@ -156,7 +156,7 @@ class Agent:
     can_delegate: bool = False
 
     def tool_definitions(self, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Build OpenAI/DeepSeek-style tool definitions.
+        """Build DeepSeek-style tool definitions.
 
         Includes one tool per allowed block, plus synthetic tools:
         - ``remember_fact`` — always available.

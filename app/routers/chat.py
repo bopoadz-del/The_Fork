@@ -457,7 +457,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             else:
                 text = inner.get("text", "")
                 if not text:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'No response from chat provider — check that DEEPSEEK_API_KEY or ANTHROPIC_API_KEY is set in .env'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'No response from chat — set DEEPSEEK_API_KEY, or run a local model (Ollama / llama.cpp) so the offline fallback can serve a reply.'})}\n\n"
                     return
                 words = text.split()
                 for word in words:
