@@ -653,6 +653,128 @@ def test_gdrive_list_error_is_non_fatal(monkeypatch, isolated_data_dir):
     assert any("403" in e for e in errors)
 
 
+# ── Arbitrary local folders (LOCAL_PROJECT_FOLDERS) ────────────────────────
+
+
+def test_local_folders_env_parsing(monkeypatch):
+    """First-colon split keeps Windows-style paths intact; whitespace and
+    empties are ignored; relative paths get resolved (warning logged)."""
+    from app.blocks.hydration import _parse_local_project_folders
+
+    monkeypatch.setenv(
+        "LOCAL_PROJECT_FOLDERS",
+        " p1:/tmp/a, p2:/tmp/b , , p3:relative/path, malformed-entry",
+    )
+    m = _parse_local_project_folders()
+    assert m["p1"] == "/tmp/a"
+    assert m["p2"] == "/tmp/b"
+    # Relative resolved to absolute
+    assert os.path.isabs(m["p3"]) and m["p3"].endswith("relative/path")
+    assert "malformed-entry" not in m
+
+
+def test_local_folders_attaches_recursively(tmp_path, monkeypatch, isolated_data_dir):
+    """A configured folder gets walked recursively; allowed files attach,
+    disallowed extensions and hidden files are skipped."""
+    from app.blocks.hydration import _discover_arbitrary_local_folders
+    from app.core import projects as projects_store
+
+    laptop = tmp_path / "MyProject"
+    (laptop / "subdir").mkdir(parents=True)
+    (laptop / "spec.pdf").write_bytes(b"%PDF-1.4")
+    (laptop / "subdir" / "plan.dwg").write_bytes(b"\x00\x00")
+    (laptop / "secret.exe").write_bytes(b"x")        # disallowed
+    (laptop / ".hidden.pdf").write_bytes(b"x")        # dotfile
+    (laptop / "subdir" / ".cache").mkdir()             # hidden subdir
+    (laptop / "subdir" / ".cache" / "x.pdf").write_bytes(b"x")  # under hidden subdir
+
+    pid = _make_project("L")
+    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{laptop}")
+
+    count, errors = _discover_arbitrary_local_folders(pid)
+    assert count == 2, f"expected 2, got {count} (errors: {errors})"
+
+    docs = projects_store.list_documents(pid)
+    names = sorted(d["original_name"] for d in docs)
+    assert names == ["plan.dwg", "spec.pdf"]
+
+
+def test_local_folders_idempotent(tmp_path, monkeypatch, isolated_data_dir):
+    """Second pass attaches zero — realpath compare against documents.file_path
+    catches the dupes without any sidecar state."""
+    from app.blocks.hydration import _discover_arbitrary_local_folders
+
+    laptop = tmp_path / "ProjectI"
+    laptop.mkdir()
+    (laptop / "spec.pdf").write_bytes(b"%PDF-1.4")
+
+    pid = _make_project("I2")
+    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{laptop}")
+
+    first, _ = _discover_arbitrary_local_folders(pid)
+    second, _ = _discover_arbitrary_local_folders(pid)
+    assert first == 1 and second == 0
+
+
+def test_local_folders_missing_folder_reports_error(tmp_path, monkeypatch, isolated_data_dir):
+    from app.blocks.hydration import _discover_arbitrary_local_folders
+
+    pid = _make_project("M")
+    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{tmp_path}/does-not-exist")
+    count, errors = _discover_arbitrary_local_folders(pid)
+    assert count == 0
+    assert any("not found" in e for e in errors)
+
+
+def test_local_folders_unconfigured_is_silent(monkeypatch, isolated_data_dir):
+    from app.blocks.hydration import _discover_arbitrary_local_folders
+
+    monkeypatch.delenv("LOCAL_PROJECT_FOLDERS", raising=False)
+    pid = _make_project("N")
+    count, errors = _discover_arbitrary_local_folders(pid)
+    assert count == 0 and errors == []
+
+
+def test_local_folders_symlink_escape_blocked(tmp_path, monkeypatch, isolated_data_dir):
+    """A symlink inside the configured folder that resolves outside it must
+    NOT be attached — protects against `~/Documents/Project/leak -> /etc`."""
+    from app.blocks.hydration import _discover_arbitrary_local_folders
+
+    laptop = tmp_path / "ProjectS"
+    laptop.mkdir()
+    # A normal file (should be attached) plus a symlink to an outside file
+    # with an allowed extension (must NOT be attached).
+    (laptop / "ok.pdf").write_bytes(b"%PDF-1.4")
+    outside = tmp_path / "secrets.pdf"
+    outside.write_bytes(b"%PDF-secret")
+    os.symlink(str(outside), str(laptop / "leak.pdf"))
+
+    pid = _make_project("S")
+    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{laptop}")
+    count, _errors = _discover_arbitrary_local_folders(pid)
+    # Only the in-folder file should be attached; the symlink escape is dropped.
+    assert count == 1
+    from app.core import projects as projects_store
+    names = [d["original_name"] for d in projects_store.list_documents(pid)]
+    assert names == ["ok.pdf"]
+
+
+def test_local_folders_oversize_recorded(tmp_path, monkeypatch, isolated_data_dir):
+    from app.blocks.hydration import _discover_arbitrary_local_folders
+
+    laptop = tmp_path / "ProjectB"
+    laptop.mkdir()
+    (laptop / "big.pdf").write_bytes(b"x" * 500)
+
+    pid = _make_project("B")
+    monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{laptop}")
+    monkeypatch.setenv("HYDRATION_MAX_ATTACH_SIZE", "100")
+
+    count, errors = _discover_arbitrary_local_folders(pid)
+    assert count == 0
+    assert any("oversize" in e for e in errors)
+
+
 def test_gdrive_load_service_account_info_handles_inline_and_file(tmp_path, monkeypatch):
     """The key env var may be a path OR inline JSON. Malformed → returns None."""
     from app.core import gdrive_service

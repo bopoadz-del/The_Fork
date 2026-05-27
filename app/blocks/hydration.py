@@ -219,7 +219,15 @@ class HydrationBlock(UniversalBlock):
         # subsequent reindex loop will pick them up.
         new_files_attached, attach_errors = _discover_local_drive_files(project_id)
 
-        # Step 1b: same idea for Google Drive — when GDRIVE_PROJECT_FOLDERS
+        # Step 1b: arbitrary local folders the operator pointed us at via
+        # LOCAL_PROJECT_FOLDERS. Useful when the project's files live on a
+        # mounted volume / synced folder that isn't under LOCAL_DRIVE_ROOT —
+        # e.g. ~/Documents/ProjectX on a workstation running the platform.
+        local_attached, local_errors = _discover_arbitrary_local_folders(project_id)
+        new_files_attached += local_attached
+        attach_errors.extend(local_errors)
+
+        # Step 1c: same idea for Google Drive — when GDRIVE_PROJECT_FOLDERS
         # has a mapping for this project, list the configured folder via the
         # service account and attach anything we haven't seen before.
         gdrive_attached, gdrive_errors = _discover_gdrive_files(project_id)
@@ -519,6 +527,123 @@ def _discover_local_drive_files(project_id: str) -> Tuple[int, List[str]]:
                 )
             except Exception as exc:  # noqa: BLE001 — never abort the walk
                 errors.append(f"{name}: {type(exc).__name__}: {exc}")
+    return attached, errors
+
+
+# ── Arbitrary local folders (LOCAL_PROJECT_FOLDERS) ───────────────────────
+
+
+def _parse_local_project_folders() -> Dict[str, str]:
+    """Parse ``LOCAL_PROJECT_FOLDERS`` into ``{project_id: absolute_path}``.
+
+    Format: ``proj_id:/abs/path[,proj_id2:/another/path,...]``. Only the
+    first colon is split on so Windows paths like ``proj:C:\\Users\\me\\X``
+    survive. Relative paths are resolved against the process CWD and a
+    warning is logged so the operator notices."""
+    raw = (os.getenv("LOCAL_PROJECT_FOLDERS") or "").strip()
+    if not raw:
+        return {}
+    out: Dict[str, str] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if ":" not in chunk:
+            logger.warning("LOCAL_PROJECT_FOLDERS: ignoring malformed entry %r", chunk)
+            continue
+        pid, path = chunk.split(":", 1)
+        pid, path = pid.strip(), path.strip()
+        if not pid or not path:
+            continue
+        if not os.path.isabs(path):
+            logger.warning(
+                "LOCAL_PROJECT_FOLDERS: %r is not absolute; resolving against cwd",
+                path,
+            )
+            path = os.path.abspath(path)
+        out[pid] = path
+    return out
+
+
+def _discover_arbitrary_local_folders(project_id: str) -> Tuple[int, List[str]]:
+    """Walk the folder mapped to ``project_id`` in ``LOCAL_PROJECT_FOLDERS``
+    and attach any file not already registered. Returns (count, errors).
+
+    Differences from ``_discover_local_drive_files``:
+    * No sandbox check — the operator pointed us at this path on purpose.
+      They opt into the full filesystem read, but only inside the configured
+      folder (the walker doesn't follow symlinks out of it).
+    * Recursive, dotfile-skipping, allowlist-filtered, size-capped — same
+      as the dropbox path so behavior is consistent across sources.
+    * Idempotent against the documents table: a file whose realpath already
+      appears in ``documents.file_path`` for this project is skipped on
+      every subsequent pass.
+    """
+    from app.core import projects as projects_store
+
+    mapping = _parse_local_project_folders()
+    folder = mapping.get(project_id)
+    if not folder:
+        return 0, []
+    if not os.path.isdir(folder):
+        return 0, [f"local: folder not found or not a directory: {folder}"]
+
+    try:
+        max_bytes = int(os.getenv("HYDRATION_MAX_ATTACH_SIZE", "52428800"))
+    except ValueError:
+        max_bytes = 52428800
+
+    existing = projects_store.list_documents(project_id)
+    existing_paths = {
+        os.path.realpath(d.get("file_path"))
+        for d in existing
+        if d.get("file_path")
+    }
+
+    folder_real = os.path.realpath(folder)
+    attached = 0
+    errors: List[str] = []
+
+    for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            full = os.path.join(dirpath, name)
+            try:
+                real = os.path.realpath(full)
+                # Defensive: a symlink inside the folder could point OUT of it.
+                # We chose followlinks=False on walk, so we'd never recurse
+                # outward, but a symlinked file (not directory) still resolves.
+                # Confine the attach to paths that stay under the configured
+                # folder's realpath so we never grab `/etc/shadow` via a
+                # cleverly-named symlink.
+                if not (real == folder_real or real.startswith(folder_real + os.sep)):
+                    continue
+                _, ext = os.path.splitext(name.lower())
+                if ext not in _ATTACH_ALLOWED_EXTS:
+                    continue
+                if real in existing_paths:
+                    continue
+                size = os.path.getsize(real)
+                if size > max_bytes:
+                    errors.append(f"local {name}: oversize ({size} > {max_bytes})")
+                    continue
+                doc = projects_store.add_document(
+                    project_id=project_id,
+                    original_name=name,
+                    stored_as=os.path.basename(real),
+                    file_path=real,
+                    size=size,
+                )
+                attached += 1
+                existing_paths.add(real)
+                logger.info(
+                    "hydration: attached local file %s to project %s as %s",
+                    name, project_id, doc.get("id"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"local {name}: {type(exc).__name__}: {exc}")
     return attached, errors
 
 
