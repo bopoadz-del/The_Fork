@@ -1233,7 +1233,7 @@ function renderDrives() {
             const name = f.name || f.text || f.id || '(unnamed)';
             const safeName = escapeHtml(name);
             if (f.is_folder) {
-                return `<div class="drive-file is-folder" onclick="driveOpenFolder('${keyEsc}', '${escapeHtml(f.id)}', null, '${safeName.replace(/'/g, "\\'")}')">
+                return `<div class="drive-file is-folder" onclick="driveOpenFolder('${keyEsc}', '${escapeHtml(f.id)}', null, '${safeName.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}')">
                             <span class="folder-icon">📁</span>
                             <span>${safeName}</span>
                             <span class="chev">›</span>
