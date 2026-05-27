@@ -150,8 +150,12 @@ class GoogleDriveBlock(UniversalBlock):
                     for f in data.get("files", [])
                 ]
                 return {"status": "success", "operation": "list", "files": files, "total": len(files)}
-            except Exception as e:
-                return {"status": "error", "error": str(e), "operation": "list"}
+            except Exception:
+                return {
+                    "status": "error",
+                    "error": "Unable to list Google Drive files at this time.",
+                    "operation": "list",
+                }
 
         # ── Download / read file ──────────────────────────────────────────────
         if operation == "download":
@@ -178,7 +182,11 @@ class GoogleDriveBlock(UniversalBlock):
                     "size_bytes": len(content),
                     "content_base64": __import__("base64").b64encode(content).decode(),
                 }
-            except Exception as e:
-                return {"status": "error", "error": str(e), "operation": "download"}
+            except Exception:
+                return {
+                    "status": "error",
+                    "error": "Unable to download Google Drive file at this time.",
+                    "operation": "download",
+                }
 
         return {"status": "error", "error": f"Unknown operation: {operation}. Use: auth, list, download"}
