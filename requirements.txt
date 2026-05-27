@@ -94,7 +94,11 @@ deep-translator>=1.11.0
 # msal>=1.25.0
 
 # Google Drive - Optional (uncomment if needed)
-# google-auth>=2.23.0
+# google-auth is enabled so the nightly hydration job's service-account
+# Drive discovery (app/core/gdrive_service.py) can mint access tokens.
+# The others stay commented because hydration talks to Drive over plain
+# httpx — the SDK client + user-OAuth helpers aren't needed for this path.
+google-auth>=2.23.0
 # google-auth-oauthlib>=1.1.0
 # google-auth-httplib2>=0.2.0
 # google-api-python-client>=2.108.0
