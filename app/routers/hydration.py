@@ -63,14 +63,19 @@ async def hydration_run(
     auth: dict = Depends(require_api_key),
 ):
     """Manually trigger a hydration pass. Useful for one-off backfills and
-    end-to-end smoke tests; the nightly scheduler runs the same path."""
+    end-to-end smoke tests; the nightly scheduler runs the same path.
+
+    The standalone hydration block was retired — hydration is now an
+    operation on ``learning_engine``. This route stays at ``/v1/hydration/*``
+    for operator familiarity but dispatches into the merged surface.
+    """
     from app.blocks import BLOCK_REGISTRY
 
-    cls = BLOCK_REGISTRY.get("hydration")
+    cls = BLOCK_REGISTRY.get("learning_engine")
     if cls is None:
-        raise HTTPException(status_code=503, detail="Hydration block not loaded")
+        raise HTTPException(status_code=503, detail="learning_engine block not loaded")
     block = cls()
-    payload: Dict[str, Any] = {"operation": "run"}
+    payload: Dict[str, Any] = {"operation": "hydrate"}
     if request.target_date:
         payload["target_date"] = request.target_date
     if request.project_ids:

@@ -84,21 +84,24 @@ def _seconds_until_next(hour: int, tz: Optional[tzinfo] = None) -> float:
 
 
 async def _run_one_pass() -> None:
-    """Invoke the hydration block once. Imported lazily so the scheduler
-    module can be imported even if the block failed to register."""
+    """Invoke the learning_engine's ``hydrate`` operation. Imported lazily
+    so the scheduler module can be imported even if the block failed to
+    register, and so the test suite can stub the registry."""
     from app.blocks import BLOCK_REGISTRY
 
-    cls = BLOCK_REGISTRY.get("hydration")
+    cls = BLOCK_REGISTRY.get("learning_engine")
     if cls is None:
-        logger.warning("hydration scheduler: hydration block not registered, skipping")
+        logger.warning("hydration scheduler: learning_engine block not registered, skipping")
         return
     block = cls()
     try:
-        result = await block.execute({"operation": "run"}, {})
+        envelope = await block.execute({"operation": "hydrate"}, {})
+        # The execute() wrapper nests the operation's return in `result`.
+        inner = envelope.get("result") if isinstance(envelope, dict) else {}
         logger.info(
             "hydration pass complete: projects=%s files_indexed=%s",
-            result.get("projects_processed"),
-            result.get("files_indexed"),
+            (inner or {}).get("projects_processed"),
+            (inner or {}).get("files_indexed"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("hydration pass failed: %s", exc)
