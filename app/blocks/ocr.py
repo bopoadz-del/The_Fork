@@ -121,7 +121,7 @@ class OCRBlock(TypedBlock):
         if not page_images:
             return {"status": "error", "text": "", "confidence": 0, "error": "Could not process input file"}
         
-        # Try pytesseract first, fallback to Claude Vision, then PyMuPDF
+        # Try pytesseract first, then fall back to PyMuPDF text-layer extraction.
         all_texts = []
         all_confs = []
         engine_used = None
@@ -164,47 +164,8 @@ class OCRBlock(TypedBlock):
                 tesseract_available = False
 
         if not tesseract_available:
-            # Claude Vision OCR fallback (works for images, no system deps)
-            anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-            vision_error = None
-            if anthropic_key and not image_path.lower().endswith(".pdf"):
-                try:
-                    import base64, anthropic, mimetypes
-                    with open(image_path, "rb") as f:
-                        img_bytes = f.read()
-                    b64 = base64.standard_b64encode(img_bytes).decode()
-                    mime = mimetypes.guess_type(image_path)[0] or "image/jpeg"
-                    client = anthropic.Anthropic(api_key=anthropic_key)
-                    response = client.messages.create(
-                        model="claude-haiku-4-5-20251001",
-                        max_tokens=4096,
-                        messages=[{"role": "user", "content": [
-                            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
-                            {"type": "text", "text": "Extract ALL text from this image. Return only the extracted text, nothing else."}
-                        ]}],
-                    )
-                    text = response.content[0].text.strip()
-                    if text:
-                        return {
-                            "status": "success",
-                            "text": text,
-                            "confidence": 0.92,
-                            "has_markup": markup["has_markup"],
-                            "markup": markup,
-                            "word_count": len(text.split()),
-                            "engine": "claude_vision",
-                            "preprocessed": False,
-                            "pages": len(page_images),
-                            "note": "Tesseract not installed; used Claude Vision OCR"
-                        }
-                except Exception as e:
-                    vision_error = str(e)
-            elif not anthropic_key:
-                vision_error = "ANTHROPIC_API_KEY not set"
-            else:
-                vision_error = "PDF files not supported for Vision OCR"
-
-            # Final fallback: PyMuPDF text extraction (text-layer PDFs only)
+            # Local-only fallback: PyMuPDF text extraction (text-layer PDFs only).
+            # No cloud vision dependency — the OCR block stays fully on-prem.
             pdf_text = self._extract_pdf_text(image_path)
             if pdf_text:
                 return {
@@ -217,9 +178,14 @@ class OCRBlock(TypedBlock):
                     "engine": "pymupdf_fallback",
                     "preprocessed": False,
                     "pages": 1,
-                    "note": "Tesseract not installed; used PyMuPDF text extraction"
+                    "note": "Tesseract not installed; used PyMuPDF text extraction",
                 }
-            return {"status": "error", "text": "", "confidence": 0, "error": f"Tesseract not installed; Vision OCR failed: {vision_error}"}
+            return {
+                "status": "error",
+                "text": "",
+                "confidence": 0,
+                "error": "Tesseract not installed and no PDF text layer found. Install tesseract-ocr to enable local OCR.",
+            }
 
         from app.core.image_quality import summarize_ocr_quality
         quality = summarize_ocr_quality(word_confidences)

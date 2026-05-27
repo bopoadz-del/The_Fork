@@ -31,7 +31,7 @@ class ConfigAccessor(dict):
         "android_drive": ["uri", "metadata"],
     }
     
-    _REQUIRES_API_KEY = {"chat", "google_drive", "image", "onedrive", "search"}
+    _REQUIRES_API_KEY = {"chat", "google_drive", "onedrive", "search"}
     
     def __init__(self, block, user_config):
         super().__init__(user_config)
