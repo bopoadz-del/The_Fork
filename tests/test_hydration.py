@@ -513,3 +513,166 @@ def test_seconds_until_next_uses_local_clock(monkeypatch):
     # The two should not be equal (within a few seconds) — Dubai is +04:00,
     # so its "1 AM local" is a different wall-clock moment than 1 AM UTC.
     assert abs(utc_delay - dubai_delay) > 60
+
+
+# ── Google Drive service-account discovery ─────────────────────────────────
+
+
+def test_gdrive_parse_project_folder_map(monkeypatch):
+    from app.core import gdrive_service
+
+    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", "p1:folder1, p2:folder2,, bad-entry, : ,p3:f3")
+    m = gdrive_service.parse_project_folder_map()
+    assert m == {"p1": "folder1", "p2": "folder2", "p3": "f3"}
+
+
+def test_gdrive_not_configured_is_silent(monkeypatch, isolated_data_dir):
+    """No env vars set → discover returns (0, []) and makes no API calls."""
+    from app.blocks.hydration import _discover_gdrive_files
+
+    monkeypatch.delenv("GDRIVE_PROJECT_FOLDERS", raising=False)
+    monkeypatch.delenv("GDRIVE_SERVICE_ACCOUNT_JSON", raising=False)
+    pid = _make_project("Q")
+    count, errors = _discover_gdrive_files(pid)
+    assert count == 0
+    assert errors == []
+
+
+def test_gdrive_mapping_without_key_reports_error(monkeypatch, isolated_data_dir):
+    """Folder mapping set but key missing → recorded as a non-fatal error."""
+    from app.blocks.hydration import _discover_gdrive_files
+
+    pid = _make_project("K")
+    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:abc123")
+    monkeypatch.delenv("GDRIVE_SERVICE_ACCOUNT_JSON", raising=False)
+    count, errors = _discover_gdrive_files(pid)
+    assert count == 0
+    assert any("GDRIVE_SERVICE_ACCOUNT_JSON" in e for e in errors)
+
+
+def test_gdrive_happy_path_attaches_and_dedupes(monkeypatch, isolated_data_dir):
+    """With list/download stubbed, two new files get attached on the first
+    pass; a second pass attaches zero (sidecar dedup)."""
+    from app.blocks import hydration as hydration_module
+    from app.core import gdrive_service, projects as projects_store
+
+    pid = _make_project("D")
+    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:driveFolderId")
+    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", "{}")  # any truthy value; gdrive_service.is_configured checks env, not content
+
+    # Stub the gdrive_service surface so the test doesn't need a real key.
+    monkeypatch.setattr(gdrive_service, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        gdrive_service,
+        "list_folder_files",
+        lambda folder_id, page_size=100: (
+            [
+                {"id": "f1", "name": "spec.pdf", "mimeType": "application/pdf", "size": "12"},
+                {"id": "f2", "name": "plan.dwg", "mimeType": "application/octet-stream", "size": "5"},
+                {"id": "f3", "name": "design.gdoc", "mimeType": "application/vnd.google-apps.document"},
+            ],
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        gdrive_service,
+        "download_file_bytes",
+        lambda fid: (b"%PDF-1.4\nhello" if fid == "f1" else b"binary", None),
+    )
+
+    # Avoid double-encrypting in the test
+    monkeypatch.setattr("app.core.file_crypto.write_document",
+                        lambda path, data: open(path, "wb").write(data))
+
+    count1, errors1 = hydration_module._discover_gdrive_files(pid)
+    assert count1 == 2, f"expected 2 attached, got {count1} (errors: {errors1})"
+    # The Google-native doc must be silently skipped (it's not a real download target)
+    assert all("design.gdoc" not in e for e in errors1)
+
+    docs = projects_store.list_documents(pid)
+    names = sorted(d["original_name"] for d in docs)
+    assert names == ["plan.dwg", "spec.pdf"]
+
+    # Second pass: same listing, but sidecar now remembers f1+f2+f3 → zero new
+    count2, errors2 = hydration_module._discover_gdrive_files(pid)
+    assert count2 == 0
+    assert errors2 == []
+
+
+def test_gdrive_oversize_advertised_is_skipped(monkeypatch, isolated_data_dir):
+    """Files whose Drive metadata advertises a size above the cap never get
+    downloaded — the size check happens before the download call."""
+    from app.blocks import hydration as hydration_module
+    from app.core import gdrive_service
+
+    pid = _make_project("OS")
+    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:driveFolderId")
+    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", "{}")
+    monkeypatch.setenv("HYDRATION_MAX_ATTACH_SIZE", "100")
+    monkeypatch.setattr(gdrive_service, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        gdrive_service,
+        "list_folder_files",
+        lambda folder_id, page_size=100: (
+            [{"id": "fbig", "name": "huge.pdf", "mimeType": "application/pdf", "size": "9999999"}],
+            None,
+        ),
+    )
+    downloads = []
+    monkeypatch.setattr(
+        gdrive_service,
+        "download_file_bytes",
+        lambda fid: (downloads.append(fid), (b"x", None))[1],
+    )
+
+    count, errors = hydration_module._discover_gdrive_files(pid)
+    assert count == 0
+    assert any("oversize" in e for e in errors)
+    assert downloads == [], "oversize file must be skipped before download is called"
+
+
+def test_gdrive_list_error_is_non_fatal(monkeypatch, isolated_data_dir):
+    """A Drive API failure during list must surface as an error string, not
+    raise — hydration's per-project loop catches but the inner helper should
+    return cleanly anyway."""
+    from app.blocks import hydration as hydration_module
+    from app.core import gdrive_service
+
+    pid = _make_project("L")
+    monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:driveFolderId")
+    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", "{}")
+    monkeypatch.setattr(gdrive_service, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        gdrive_service,
+        "list_folder_files",
+        lambda folder_id, page_size=100: ([], "403: insufficient permissions"),
+    )
+
+    count, errors = hydration_module._discover_gdrive_files(pid)
+    assert count == 0
+    assert any("403" in e for e in errors)
+
+
+def test_gdrive_load_service_account_info_handles_inline_and_file(tmp_path, monkeypatch):
+    """The key env var may be a path OR inline JSON. Malformed → returns None."""
+    from app.core import gdrive_service
+
+    # Inline JSON
+    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", '{"type": "service_account", "client_email": "x@y.iam"}')
+    info = gdrive_service._load_service_account_info()
+    assert info and info["client_email"] == "x@y.iam"
+
+    # File path
+    keyfile = tmp_path / "key.json"
+    keyfile.write_text('{"type": "service_account", "client_email": "f@g.iam"}')
+    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", str(keyfile))
+    info = gdrive_service._load_service_account_info()
+    assert info and info["client_email"] == "f@g.iam"
+
+    # Malformed → None (warning logged, no crash)
+    monkeypatch.setenv("GDRIVE_SERVICE_ACCOUNT_JSON", "not-json-and-not-a-path")
+    assert gdrive_service._load_service_account_info() is None
+
+    # Unset → None
+    monkeypatch.delenv("GDRIVE_SERVICE_ACCOUNT_JSON", raising=False)
+    assert gdrive_service._load_service_account_info() is None

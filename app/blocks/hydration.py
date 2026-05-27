@@ -219,6 +219,13 @@ class HydrationBlock(UniversalBlock):
         # subsequent reindex loop will pick them up.
         new_files_attached, attach_errors = _discover_local_drive_files(project_id)
 
+        # Step 1b: same idea for Google Drive — when GDRIVE_PROJECT_FOLDERS
+        # has a mapping for this project, list the configured folder via the
+        # service account and attach anything we haven't seen before.
+        gdrive_attached, gdrive_errors = _discover_gdrive_files(project_id)
+        new_files_attached += gdrive_attached
+        attach_errors.extend(gdrive_errors)
+
         # Step 2: refresh every known document's index (cheap when unchanged
         # thanks to the doc indexer's fingerprint check).
         files_indexed, files_skipped, file_errors = await _reindex_project_drives(project_id)
@@ -512,6 +519,167 @@ def _discover_local_drive_files(project_id: str) -> Tuple[int, List[str]]:
                 )
             except Exception as exc:  # noqa: BLE001 — never abort the walk
                 errors.append(f"{name}: {type(exc).__name__}: {exc}")
+    return attached, errors
+
+
+# ── Google Drive discovery (service-account path) ─────────────────────────
+
+
+def _gdrive_seen_path() -> str:
+    """Sidecar JSON tracking which Drive file IDs we've already attached
+    per project. Lives next to hydration.db. A sidecar is enough — adding
+    a column to the documents table would force a migration just to record
+    one external identifier."""
+    return os.path.join(os.getenv("DATA_DIR", "./data"), "hydration_gdrive_seen.json")
+
+
+def _load_gdrive_seen() -> Dict[str, List[str]]:
+    path = _gdrive_seen_path()
+    if not os.path.isfile(path):
+        return {}
+    try:
+        import json as _json
+        with open(path, "r") as f:
+            data = _json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        # Coerce values to list[str] defensively
+        out: Dict[str, List[str]] = {}
+        for k, v in data.items():
+            if isinstance(v, list):
+                out[str(k)] = [str(x) for x in v]
+        return out
+    except Exception:  # noqa: BLE001 — corrupt sidecar shouldn't kill hydration
+        return {}
+
+
+def _save_gdrive_seen(seen: Dict[str, List[str]]) -> None:
+    import json as _json
+    path = _gdrive_seen_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        _json.dump(seen, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _discover_gdrive_files(project_id: str) -> Tuple[int, List[str]]:
+    """Walk the configured Drive folder for ``project_id`` and attach any
+    file we haven't seen before. Returns (attached_count, errors).
+
+    Behavior matches the local-drive discovery as closely as possible:
+    same extension allowlist, same per-file size cap, same idempotency
+    guarantee (a re-run attaches zero). Google-native Docs/Sheets are
+    skipped — those need an ``export`` call rather than a binary download,
+    which is a separate piece of plumbing.
+
+    The path stays cleanly disabled when nothing is configured: no key →
+    no mapping → no calls → no errors. The function returns ``(0, [])``
+    in that case so hydration doesn't even log noise.
+    """
+    from app.core import gdrive_service, projects as projects_store
+
+    mapping = gdrive_service.parse_project_folder_map()
+    folder_id = mapping.get(project_id)
+    if not folder_id:
+        return 0, []  # not configured for this project — fine
+
+    if not gdrive_service.is_configured():
+        return 0, [
+            "gdrive: GDRIVE_PROJECT_FOLDERS set but GDRIVE_SERVICE_ACCOUNT_JSON is missing"
+        ]
+
+    files, list_err = gdrive_service.list_folder_files(folder_id)
+    if list_err:
+        return 0, [f"gdrive list({folder_id}): {list_err}"]
+
+    seen_all = _load_gdrive_seen()
+    seen_for_project = set(seen_all.get(project_id, []))
+
+    try:
+        max_bytes = int(os.getenv("HYDRATION_MAX_ATTACH_SIZE", "52428800"))
+    except ValueError:
+        max_bytes = 52428800
+
+    attached = 0
+    errors: List[str] = []
+    data_dir = os.getenv("DATA_DIR", "./data")
+    os.makedirs(data_dir, exist_ok=True)
+
+    # file_crypto is the same module the upload router uses — write through
+    # it so encryption-at-rest (when DATA_ENCRYPTION_KEY is set) applies to
+    # Drive-pulled files identically to uploaded ones.
+    try:
+        from app.core import file_crypto
+    except ImportError:
+        file_crypto = None  # type: ignore[assignment]
+
+    for f_meta in files:
+        fid = f_meta.get("id")
+        name = (f_meta.get("name") or "").strip()
+        if not fid or not name:
+            continue
+        if fid in seen_for_project:
+            continue
+        if not gdrive_service.is_downloadable(f_meta):
+            # Google-native doc — skip (would need export endpoint)
+            seen_for_project.add(fid)
+            continue
+        _, ext = os.path.splitext(name.lower())
+        if ext not in _ATTACH_ALLOWED_EXTS:
+            errors.append(f"gdrive {name}: disallowed extension {ext}")
+            seen_for_project.add(fid)
+            continue
+        # Drive returns size as a string in the JSON metadata
+        try:
+            advertised_size = int(f_meta.get("size") or "0")
+        except (TypeError, ValueError):
+            advertised_size = 0
+        if advertised_size and advertised_size > max_bytes:
+            errors.append(f"gdrive {name}: oversize ({advertised_size} > {max_bytes})")
+            seen_for_project.add(fid)
+            continue
+
+        blob, dl_err = gdrive_service.download_file_bytes(fid)
+        if blob is None:
+            errors.append(f"gdrive {name}: {dl_err}")
+            continue
+        if len(blob) > max_bytes:
+            errors.append(f"gdrive {name}: post-download oversize ({len(blob)} > {max_bytes})")
+            seen_for_project.add(fid)
+            continue
+
+        try:
+            import uuid as _uuid
+            stored_as = f"{_uuid.uuid4().hex[:8]}_{name}"
+            filepath = os.path.join(data_dir, stored_as)
+            if file_crypto is not None:
+                file_crypto.write_document(filepath, blob)
+            else:
+                with open(filepath, "wb") as out:
+                    out.write(blob)
+            doc = projects_store.add_document(
+                project_id=project_id,
+                original_name=name,
+                stored_as=stored_as,
+                file_path=filepath,
+                size=len(blob),
+            )
+            attached += 1
+            seen_for_project.add(fid)
+            logger.info(
+                "hydration: attached Drive file %s (%s) to project %s as %s",
+                name, fid, project_id, doc.get("id"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"gdrive {name}: attach failed: {type(exc).__name__}: {exc}")
+
+    seen_all[project_id] = sorted(seen_for_project)
+    try:
+        _save_gdrive_seen(seen_all)
+    except Exception as exc:  # noqa: BLE001 — sidecar write failure is recoverable
+        errors.append(f"gdrive: sidecar save failed: {exc}")
+
     return attached, errors
 
 
