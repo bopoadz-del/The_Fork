@@ -172,6 +172,14 @@
     <div class="main">
         <header style="display:flex;align-items:center;justify-content:center;gap:12px;">
             <span>Cerebrum Platform</span>
+            <!-- Latent controls kept hidden in the conversational UI. They
+                 remain in the DOM so loadAgents() can populate the picker
+                 (used by /v1/agents-routed flows) and selectProject() can
+                 set the project-mode flag. Tests assert these states. -->
+            <select id="agentPicker" hidden onchange="onAgentChange(this.value)">
+                <option value="">Default agent</option>
+            </select>
+            <input type="checkbox" id="projectModeToggle" hidden onchange="onProjectModeChange(this.checked)">
         </header>
         <div class="messages" id="messages">
             <div class="msg assistant">
@@ -1116,7 +1124,7 @@ async function handleLocalFiles(input) {
         const outcomeHtml = `
             <div class="outcome-item">
                 <div class="outcome-label">Connected</div>
-                <div class="outcome-value" style="font-size: 16px;">${folderName}</div>
+                <div class="outcome-value" style="font-size: 16px;">${escapeHtml(folderName)}</div>
                 <div style="color: #888; font-size: 12px; margin-top: 4px;">${files.length} local files</div>
                 ${zvecResult ? `<div style="color: #8b5cf6; font-size: 11px; margin-top: 4px;">✅ ZVec indexed ${indexableNames.length} files</div>` : ''}
             </div>
@@ -1351,8 +1359,8 @@ async function selectDriveFile(driveId, fileName) {
                 const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
                 setActiveFileContext(fileName, trimmed, drive.name);
                 setOutcomes(`<div class="outcome-item">
-                    <div class="outcome-label">📄 ${fileName}</div>
-                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · From ${drive.name}</div>
+                    <div class="outcome-label">📄 ${escapeHtml(fileName)}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · From ${escapeHtml(drive.name)}</div>
                     <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 1000))}${trimmed.length > 1000 ? '…' : ''}</div>
                 </div>`);
                 addMessage(`"${fileName}" loaded from ${drive.name}. Ask me anything about it.`, 'assistant');
@@ -1384,8 +1392,8 @@ async function selectDriveFile(driveId, fileName) {
                 setActiveFileContext(fileName, extractedText || `File: ${fileName} (${kind})`, drive.name);
                 activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
                 setOutcomes(`<div class="outcome-item">
-                    <div class="outcome-label">📎 ${fileName}</div>
-                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · From ${drive.name} · stored, not analysed</div>
+                    <div class="outcome-label">📎 ${escapeHtml(fileName)}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · From ${escapeHtml(drive.name)} · stored, not analysed</div>
                     <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Ask in chat to analyse it.</div>
                 </div>`);
                 addMessage(`"${fileName}" attached from ${drive.name} — stored, no analysis run. Ask me what you need and I'll answer here.`, 'assistant');
@@ -1393,8 +1401,8 @@ async function selectDriveFile(driveId, fileName) {
             } else {
                 setActiveFileContext(fileName, '[Binary file]', drive.name);
                 setOutcomes(`<div class="outcome-item">
-                    <div class="outcome-label">📦 ${fileName}</div>
-                    <div style="color:#888;font-size:12px;margin-top:4px;">Binary file from ${drive.name}</div>
+                    <div class="outcome-label">📦 ${escapeHtml(fileName)}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">Binary file from ${escapeHtml(drive.name)}</div>
                 </div>`);
                 addMessage(`"${fileName}" from ${drive.name} — binary format.`, 'assistant');
             }
@@ -1404,8 +1412,8 @@ async function selectDriveFile(driveId, fileName) {
             const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
             setActiveFileContext(fileName, trimmed, drive.name);
             setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">📄 ${fileName}</div>
-                <div style="color:#888;font-size:12px;margin-top:4px;">From ${drive.name}</div>
+                <div class="outcome-label">📄 ${escapeHtml(fileName)}</div>
+                <div style="color:#888;font-size:12px;margin-top:4px;">From ${escapeHtml(drive.name)}</div>
                 <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 800))}${trimmed.length > 800 ? '…' : ''}</div>
             </div>`);
             addMessage(`"${fileName}" loaded from ${drive.name}. Ask me anything about it.`, 'assistant');
@@ -1602,6 +1610,14 @@ function selectProject(id) {
     activeProjectId = id;
     try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
     renderProjects();
+    // Selecting a project implies project mode is on. The toggle is hidden in
+    // the conversational UI but the flag is still meaningful for routing
+    // and is asserted by tests.
+    const toggle = document.getElementById('projectModeToggle');
+    if (toggle && !toggle.checked) {
+        toggle.checked = true;
+        projectMode = true;
+    }
     // Switching project = different context. Drop session uploads AND
     // load this project's own chat history so we don't bleed turns from
     // the previous project into the new one. (Per-project history keys
@@ -2248,7 +2264,7 @@ async function _processSingleUpload(file) {
             const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
             setActiveFileContext(file.name, trimmed, 'Upload');
             setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">📄 ${file.name}</div>
+                <div class="outcome-label">📄 ${escapeHtml(file.name)}</div>
                 <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · Text file loaded</div>
                 <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 1000))}${trimmed.length > 1000 ? '…' : ''}</div>
             </div>`);
@@ -2303,7 +2319,7 @@ async function _processSingleUpload(file) {
             const ready = !!extractedText && extractedText.length > 50;
             const methodLabel = extractionMethod ? ` · ${extractionMethod}` : '';
             setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">📎 ${file.name}</div>
+                <div class="outcome-label">📎 ${escapeHtml(file.name)}</div>
                 <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · ${ready ? `read (${extractedText.length.toLocaleString()} chars in context${methodLabel})` : 'stored, content not extractable'}</div>
                 <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Ask in chat to analyse it.</div>
             </div>`);
@@ -2319,7 +2335,7 @@ async function _processSingleUpload(file) {
         } else {
             setActiveFileContext(file.name, `[Binary file — ${kind}]`, 'Upload');
             setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">📦 ${file.name}</div>
+                <div class="outcome-label">📦 ${escapeHtml(file.name)}</div>
                 <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · Binary file</div>
             </div>`);
             addMessage(`"${file.name}" uploaded. Binary format — limited analysis available.`, 'assistant');
