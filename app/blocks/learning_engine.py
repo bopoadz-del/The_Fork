@@ -94,8 +94,107 @@ class LearningEngineBlock(UniversalBlock):
         elif operation == "reset":
             formula_id = data.get("formula_id") or params.get("formula_id")
             return self._reset_formula(formula_id)
+        elif operation == "hydrate":
+            # Nightly "sleep on it" pass — see app/core/learning/hydration.py.
+            # Reads the day's conversations and files, indexes new docs,
+            # writes recurring topics/friction back to the project_facts +
+            # agent_facts the chat path consults, and records each friction
+            # signal here as a pattern (durable across runs).
+            from app.core.learning import hydration as _hydration
+
+            return await _hydration.run(
+                target_date=data.get("target_date") or params.get("target_date"),
+                project_ids=data.get("project_ids") or params.get("project_ids"),
+            )
+        elif operation == "hydration_latest":
+            from app.core.learning import hydration as _hydration
+
+            return _hydration.get_latest(
+                scope=data.get("scope") or params.get("scope") or "global",
+                project_id=data.get("project_id") or params.get("project_id"),
+            )
+        elif operation == "hydration_history":
+            from app.core.learning import hydration as _hydration
+
+            return _hydration.list_history(
+                scope=data.get("scope") or params.get("scope"),
+                project_id=data.get("project_id") or params.get("project_id"),
+                limit=int(data.get("limit") or params.get("limit") or 20),
+            )
+        elif operation == "record_pattern":
+            return self._record_pattern(data, params)
+        elif operation == "list_patterns":
+            return self._list_patterns(data, params)
         else:
-            return {"status": "error", "error": f"Unknown operation: {operation}. Use: record_correction, tune, promote, status, reset"}
+            return {
+                "status": "error",
+                "error": (
+                    f"Unknown operation: {operation}. Use: record_correction, tune, "
+                    "promote, status, reset, hydrate, hydration_latest, hydration_history, "
+                    "record_pattern, list_patterns"
+                ),
+            }
+
+    # ── Non-numeric observations (the hydration writeback target) ─────────
+    #
+    # `_record_correction` above is strictly for predicted-vs-actual numeric
+    # tuning. The hydration pass produces a different kind of signal — "user
+    # asked about rebar three times this week", "this project's chats keep
+    # surfacing complaint language". These are categorical observations,
+    # not regression samples, so they live in their own state slot.
+
+    def _record_pattern(self, data: Dict, params: Dict) -> Dict:
+        """Append one observation to the patterns corpus.
+
+        Schema: ``_state["patterns"][project_id][category]`` is a list of
+        ``{observation, source, run_date, ts}`` dicts. The corpus stays
+        unbounded for now — hydration only adds a handful per run; if it
+        ever grows beyond practical limits we can age it out by run_date.
+        """
+        project_id = data.get("project_id") or params.get("project_id")
+        category = data.get("category") or params.get("category") or "general"
+        observation = data.get("observation") or params.get("observation")
+        if not project_id or not observation:
+            return {"status": "error", "error": "project_id and observation required"}
+
+        # Defensive init for state loaded from disk before this slot existed
+        if "patterns" not in self._state:
+            self._state["patterns"] = {}
+        bucket = self._state["patterns"].setdefault(project_id, {}).setdefault(category, [])
+        bucket.append({
+            "observation": str(observation),
+            "source": data.get("source") or params.get("source") or "manual",
+            "run_date": data.get("run_date") or params.get("run_date"),
+            "ts": time.time(),
+        })
+        self._save_state()
+        return {
+            "status": "success",
+            "project_id": project_id,
+            "category": category,
+            "total_observations": len(bucket),
+        }
+
+    def _list_patterns(self, data: Dict, params: Dict) -> Dict:
+        """Read the patterns corpus. Filter by project_id and/or category."""
+        if "patterns" not in self._state:
+            return {"status": "success", "patterns": {}, "count": 0}
+        project_id = data.get("project_id") or params.get("project_id")
+        category = data.get("category") or params.get("category")
+        patterns = self._state["patterns"]
+        if project_id:
+            patterns = {project_id: patterns.get(project_id, {})}
+        if category:
+            patterns = {
+                pid: {category: bucket.get(category, [])}
+                for pid, bucket in patterns.items()
+            }
+        count = sum(
+            len(items)
+            for buckets in patterns.values()
+            for items in buckets.values()
+        )
+        return {"status": "success", "patterns": patterns, "count": count}
 
     async def _record_correction(self, data: Dict, params: Dict) -> Dict:
         correction = data.get("correction_data", {})

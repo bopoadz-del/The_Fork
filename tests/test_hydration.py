@@ -24,8 +24,22 @@ import pytest
 
 @pytest.fixture
 def isolated_data_dir(tmp_path, monkeypatch):
-    """Each test gets its own clean DATA_DIR so SQLite files don't bleed."""
+    """Each test gets its own clean DATA_DIR so SQLite files don't bleed.
+
+    Also forces agent_memory and projects re-init: both modules cache an
+    ``_initialized`` flag at the module level, which stays True across tests
+    even when DATA_DIR points at a fresh dir. Without resetting that flag,
+    ``_ensure_db`` skips schema creation and queries fail with
+    "no such table". This is a workaround for a real pre-existing bug;
+    the right fix would be path-aware caching in those modules."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    # Reset module-level init flags so the fresh DATA_DIR actually gets a schema
+    from app.core import agent_memory as _am
+    from app.core import projects as _proj
+    if hasattr(_am, "_initialized"):
+        _am._initialized = False
+    if hasattr(_proj, "_initialized"):
+        _proj._initialized = False
     yield tmp_path
 
 
@@ -122,8 +136,7 @@ def test_store_history_ordering(isolated_data_dir):
 async def test_run_with_no_activity(isolated_data_dir, monkeypatch):
     """An empty day still produces a global row (with empty per-project list),
     and the per-project loop runs zero times."""
-    from app.blocks.hydration import HydrationBlock
-    from app.blocks import hydration as hydration_module
+    from app.core.learning import hydration as hydration_module
     from app.core import hydration_store
 
     # No conversations seeded; force a fixed target_date.
@@ -132,10 +145,8 @@ async def test_run_with_no_activity(isolated_data_dir, monkeypatch):
 
     monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
 
-    block = HydrationBlock()
-    envelope = await block.execute(
-        {"operation": "run", "target_date": "2026-05-26"}, {}
-    )
+    envelope = await hydration_module.run(target_date="2026-05-26")
+    envelope = {"status": "success", "result": envelope}
     assert envelope["status"] == "success"
     result = envelope["result"]
     assert result["projects_processed"] == 0
@@ -151,8 +162,7 @@ async def test_run_with_no_activity(isolated_data_dir, monkeypatch):
 async def test_run_summarizes_per_project_and_global(isolated_data_dir, monkeypatch):
     """Seed two projects with activity in the window; confirm one per-project
     row each + one global row, and that summary text reaches the store."""
-    from app.blocks.hydration import HydrationBlock
-    from app.blocks import hydration as hydration_module
+    from app.core.learning import hydration as hydration_module
     from app.core import hydration_store
 
     target = "2026-05-26"
@@ -172,10 +182,8 @@ async def test_run_summarizes_per_project_and_global(isolated_data_dir, monkeypa
 
     monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
 
-    block = HydrationBlock()
-    envelope = await block.execute(
-        {"operation": "run", "target_date": target}, {}
-    )
+    envelope = await hydration_module.run(target_date=target)
+    envelope = {"status": "success", "result": envelope}
     assert envelope["status"] == "success"
     result = envelope["result"]
     assert result["projects_processed"] == 2
@@ -197,8 +205,7 @@ async def test_run_summarizes_per_project_and_global(isolated_data_dir, monkeypa
 @pytest.mark.asyncio
 async def test_run_isolates_project_failures(isolated_data_dir, monkeypatch):
     """A failure in one project must not abort the global pass."""
-    from app.blocks.hydration import HydrationBlock
-    from app.blocks import hydration as hydration_module
+    from app.core.learning import hydration as hydration_module
 
     target = "2026-05-26"
     in_window_ts = "2026-05-26T10:00:00Z"
@@ -212,8 +219,8 @@ async def test_run_isolates_project_failures(isolated_data_dir, monkeypatch):
 
     monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
 
-    block = HydrationBlock()
-    envelope = await block.execute({"operation": "run", "target_date": target}, {})
+    envelope = await hydration_module.run(target_date=target)
+    envelope = {"status": "success", "result": envelope}
     assert envelope["status"] == "success"
     result = envelope["result"]
     # 'bad' raises, so only 1 project succeeded; global must still record
@@ -223,32 +230,25 @@ async def test_run_isolates_project_failures(isolated_data_dir, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_latest_operation_via_block(isolated_data_dir, monkeypatch):
-    """The block's 'latest' op is the same path the router uses."""
-    from app.blocks.hydration import HydrationBlock
+    """The module's get_latest() — same path the router uses."""
     from app.core import hydration_store
+    from app.core.learning import hydration as hydration_module
 
     hydration_store.record_run(
         run_date="2026-05-26", scope="global", project_id=None,
         summary_md="g", facts={"x": 1}, provider="local_ollama",
     )
-    block = HydrationBlock()
-    envelope = await block.execute({"operation": "latest", "scope": "global"}, {})
-    assert envelope["status"] == "success"
-    result = envelope["result"]
+    result = hydration_module.get_latest(scope="global")
     assert result["status"] == "success"
     assert result["facts"]["x"] == 1
 
 
 @pytest.mark.asyncio
 async def test_latest_returns_empty_when_no_runs(isolated_data_dir):
-    from app.blocks.hydration import HydrationBlock
+    from app.core.learning import hydration as hydration_module
 
-    block = HydrationBlock()
-    envelope = await block.execute({"operation": "latest", "scope": "global"}, {})
-    # The outer envelope always reports success (process did not raise),
-    # but the inner status carries the semantic "no data yet" signal.
-    assert envelope["status"] == "success"
-    assert envelope["result"]["status"] == "empty"
+    result = hydration_module.get_latest(scope="global")
+    assert result["status"] == "empty"
 
 
 # ── Scheduler tests ────────────────────────────────────────────────────────
@@ -287,15 +287,42 @@ def test_scheduler_hour_clamped_to_valid_range(monkeypatch):
     assert hydration_scheduler._hour_utc() == 1  # default
 
 
-# ── Registry sanity ────────────────────────────────────────────────────────
+# ── Registry sanity (post-merge) ───────────────────────────────────────────
 
 
-def test_block_is_registered():
+def test_standalone_hydration_block_is_retired():
+    """After the merge into learning_engine, there is no `hydration` block —
+    only the `hydrate` operation on learning_engine."""
     from app.blocks import BLOCK_REGISTRY
 
-    assert "hydration" in BLOCK_REGISTRY, (
-        "HydrationBlock should be in BLOCK_REGISTRY — check app/blocks/__init__.py"
+    assert "hydration" not in BLOCK_REGISTRY, (
+        "Standalone hydration block was supposed to be retired in the merge"
     )
+    assert "learning_engine" in BLOCK_REGISTRY, (
+        "learning_engine block must be present — it now owns hydrate"
+    )
+
+
+@pytest.mark.asyncio
+async def test_hydrate_operation_on_learning_engine(isolated_data_dir, monkeypatch):
+    """The merged path: call the public learning_engine block with operation=hydrate."""
+    from app.blocks import BLOCK_REGISTRY
+    from app.core.learning import hydration as hydration_module
+
+    async def fake_chat(prompt, max_tokens=600):
+        return ("## stub", "offline_template")
+    monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
+
+    cls = BLOCK_REGISTRY["learning_engine"]
+    le = cls()
+    envelope = await le.execute(
+        {"operation": "hydrate", "target_date": "2026-05-26"}, {}
+    )
+    # learning_engine's execute() wraps process() in the standard envelope
+    assert envelope["status"] == "success", f"envelope: {envelope}"
+    inner = envelope["result"]
+    assert inner["status"] == "success", f"inner: {inner}"
+    assert inner["run_date"] == "2026-05-26"
 
 
 # ── Gap closure: drop-folder discovery ─────────────────────────────────────
@@ -325,7 +352,7 @@ def _make_project(name: str = "test-project") -> str:
 def test_discover_attaches_new_files(isolated_data_dir, monkeypatch):
     """Files dropped under the convention path get auto-attached to the project."""
     from app.core import projects as projects_store
-    from app.blocks.hydration import _discover_local_drive_files
+    from app.core.learning.hydration import _discover_local_drive_files
 
     monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
     pid = _make_project("X")
@@ -346,7 +373,7 @@ def test_discover_attaches_new_files(isolated_data_dir, monkeypatch):
 
 def test_discover_is_idempotent(isolated_data_dir, monkeypatch):
     """Running discovery twice in a row does not re-attach the same files."""
-    from app.blocks.hydration import _discover_local_drive_files
+    from app.core.learning.hydration import _discover_local_drive_files
 
     monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
     pid = _make_project("I")
@@ -359,7 +386,7 @@ def test_discover_is_idempotent(isolated_data_dir, monkeypatch):
 
 
 def test_discover_skips_when_dropbox_missing(isolated_data_dir, monkeypatch):
-    from app.blocks.hydration import _discover_local_drive_files
+    from app.core.learning.hydration import _discover_local_drive_files
 
     monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
     count, errors = _discover_local_drive_files("nope")
@@ -368,7 +395,7 @@ def test_discover_skips_when_dropbox_missing(isolated_data_dir, monkeypatch):
 
 
 def test_discover_oversize_file_recorded_as_error(isolated_data_dir, monkeypatch):
-    from app.blocks.hydration import _discover_local_drive_files
+    from app.core.learning.hydration import _discover_local_drive_files
 
     monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
     monkeypatch.setenv("HYDRATION_MAX_ATTACH_SIZE", "100")
@@ -387,8 +414,7 @@ def test_discover_oversize_file_recorded_as_error(isolated_data_dir, monkeypatch
 async def test_offline_fallback_produces_heuristic_summary(isolated_data_dir, monkeypatch):
     """When ChatBlock returns offline_template, the row must contain a
     structured heuristic summary — not just the offline placeholder."""
-    from app.blocks.hydration import HydrationBlock
-    from app.blocks import hydration as hydration_module
+    from app.core.learning import hydration as hydration_module
     from app.core import hydration_store
 
     target = "2026-05-26"
@@ -401,8 +427,7 @@ async def test_offline_fallback_produces_heuristic_summary(isolated_data_dir, mo
 
     monkeypatch.setattr(hydration_module, "_call_chat", offline_chat)
 
-    block = HydrationBlock()
-    await block.execute({"operation": "run", "target_date": target}, {})
+    await hydration_module.run(target_date=target)
 
     row = hydration_store.get_latest("project", "proj-h")
     assert row is not None
@@ -425,8 +450,7 @@ async def test_offline_fallback_produces_heuristic_summary(isolated_data_dir, mo
 async def test_llm_path_uses_llm_summary_not_heuristic(isolated_data_dir, monkeypatch):
     """If ChatBlock returns a real provider (deepseek/local_*), the LLM output
     is preserved — the heuristic must NOT clobber it."""
-    from app.blocks.hydration import HydrationBlock
-    from app.blocks import hydration as hydration_module
+    from app.core.learning import hydration as hydration_module
     from app.core import hydration_store
 
     target = "2026-05-26"
@@ -437,8 +461,7 @@ async def test_llm_path_uses_llm_summary_not_heuristic(isolated_data_dir, monkey
         return ("## LLM-AUTHORED SUMMARY\n- one\n", "deepseek")
 
     monkeypatch.setattr(hydration_module, "_call_chat", real_chat)
-    block = HydrationBlock()
-    await block.execute({"operation": "run", "target_date": target}, {})
+    await hydration_module.run(target_date=target)
 
     row = hydration_store.get_latest("project", "proj-l")
     assert "LLM-AUTHORED SUMMARY" in row["summary_md"]
@@ -447,7 +470,7 @@ async def test_llm_path_uses_llm_summary_not_heuristic(isolated_data_dir, monkey
 
 def test_heuristic_friction_detection():
     """The friction-signal heuristic flags complaint language and repeats."""
-    from app.blocks.hydration import _user_friction_signals
+    from app.core.learning.hydration import _user_friction_signals
 
     msgs = [
         {"role": "user", "content": "Why is this broken?"},
@@ -460,7 +483,7 @@ def test_heuristic_friction_detection():
 
 
 def test_heuristic_top_keywords_skips_stopwords():
-    from app.blocks.hydration import _top_keywords
+    from app.core.learning.hydration import _top_keywords
 
     msgs = [
         {"role": "user", "content": "the rebar and the concrete should be fine"},
@@ -528,7 +551,7 @@ def test_gdrive_parse_project_folder_map(monkeypatch):
 
 def test_gdrive_not_configured_is_silent(monkeypatch, isolated_data_dir):
     """No env vars set → discover returns (0, []) and makes no API calls."""
-    from app.blocks.hydration import _discover_gdrive_files
+    from app.core.learning.hydration import _discover_gdrive_files
 
     monkeypatch.delenv("GDRIVE_PROJECT_FOLDERS", raising=False)
     monkeypatch.delenv("GDRIVE_SERVICE_ACCOUNT_JSON", raising=False)
@@ -540,7 +563,7 @@ def test_gdrive_not_configured_is_silent(monkeypatch, isolated_data_dir):
 
 def test_gdrive_mapping_without_key_reports_error(monkeypatch, isolated_data_dir):
     """Folder mapping set but key missing → recorded as a non-fatal error."""
-    from app.blocks.hydration import _discover_gdrive_files
+    from app.core.learning.hydration import _discover_gdrive_files
 
     pid = _make_project("K")
     monkeypatch.setenv("GDRIVE_PROJECT_FOLDERS", f"{pid}:abc123")
@@ -553,7 +576,7 @@ def test_gdrive_mapping_without_key_reports_error(monkeypatch, isolated_data_dir
 def test_gdrive_happy_path_attaches_and_dedupes(monkeypatch, isolated_data_dir):
     """With list/download stubbed, two new files get attached on the first
     pass; a second pass attaches zero (sidecar dedup)."""
-    from app.blocks import hydration as hydration_module
+    from app.core.learning import hydration as hydration_module
     from app.core import gdrive_service, projects as projects_store
 
     pid = _make_project("D")
@@ -602,7 +625,7 @@ def test_gdrive_happy_path_attaches_and_dedupes(monkeypatch, isolated_data_dir):
 def test_gdrive_oversize_advertised_is_skipped(monkeypatch, isolated_data_dir):
     """Files whose Drive metadata advertises a size above the cap never get
     downloaded — the size check happens before the download call."""
-    from app.blocks import hydration as hydration_module
+    from app.core.learning import hydration as hydration_module
     from app.core import gdrive_service
 
     pid = _make_project("OS")
@@ -635,7 +658,7 @@ def test_gdrive_list_error_is_non_fatal(monkeypatch, isolated_data_dir):
     """A Drive API failure during list must surface as an error string, not
     raise — hydration's per-project loop catches but the inner helper should
     return cleanly anyway."""
-    from app.blocks import hydration as hydration_module
+    from app.core.learning import hydration as hydration_module
     from app.core import gdrive_service
 
     pid = _make_project("L")
@@ -659,7 +682,7 @@ def test_gdrive_list_error_is_non_fatal(monkeypatch, isolated_data_dir):
 def test_local_folders_env_parsing(monkeypatch):
     """First-colon split keeps Windows-style paths intact; whitespace and
     empties are ignored; relative paths get resolved (warning logged)."""
-    from app.blocks.hydration import _parse_local_project_folders
+    from app.core.learning.hydration import _parse_local_project_folders
 
     monkeypatch.setenv(
         "LOCAL_PROJECT_FOLDERS",
@@ -676,7 +699,7 @@ def test_local_folders_env_parsing(monkeypatch):
 def test_local_folders_attaches_recursively(tmp_path, monkeypatch, isolated_data_dir):
     """A configured folder gets walked recursively; allowed files attach,
     disallowed extensions and hidden files are skipped."""
-    from app.blocks.hydration import _discover_arbitrary_local_folders
+    from app.core.learning.hydration import _discover_arbitrary_local_folders
     from app.core import projects as projects_store
 
     laptop = tmp_path / "MyProject"
@@ -702,7 +725,7 @@ def test_local_folders_attaches_recursively(tmp_path, monkeypatch, isolated_data
 def test_local_folders_idempotent(tmp_path, monkeypatch, isolated_data_dir):
     """Second pass attaches zero — realpath compare against documents.file_path
     catches the dupes without any sidecar state."""
-    from app.blocks.hydration import _discover_arbitrary_local_folders
+    from app.core.learning.hydration import _discover_arbitrary_local_folders
 
     laptop = tmp_path / "ProjectI"
     laptop.mkdir()
@@ -717,7 +740,7 @@ def test_local_folders_idempotent(tmp_path, monkeypatch, isolated_data_dir):
 
 
 def test_local_folders_missing_folder_reports_error(tmp_path, monkeypatch, isolated_data_dir):
-    from app.blocks.hydration import _discover_arbitrary_local_folders
+    from app.core.learning.hydration import _discover_arbitrary_local_folders
 
     pid = _make_project("M")
     monkeypatch.setenv("LOCAL_PROJECT_FOLDERS", f"{pid}:{tmp_path}/does-not-exist")
@@ -727,7 +750,7 @@ def test_local_folders_missing_folder_reports_error(tmp_path, monkeypatch, isola
 
 
 def test_local_folders_unconfigured_is_silent(monkeypatch, isolated_data_dir):
-    from app.blocks.hydration import _discover_arbitrary_local_folders
+    from app.core.learning.hydration import _discover_arbitrary_local_folders
 
     monkeypatch.delenv("LOCAL_PROJECT_FOLDERS", raising=False)
     pid = _make_project("N")
@@ -738,7 +761,7 @@ def test_local_folders_unconfigured_is_silent(monkeypatch, isolated_data_dir):
 def test_local_folders_symlink_escape_blocked(tmp_path, monkeypatch, isolated_data_dir):
     """A symlink inside the configured folder that resolves outside it must
     NOT be attached — protects against `~/Documents/Project/leak -> /etc`."""
-    from app.blocks.hydration import _discover_arbitrary_local_folders
+    from app.core.learning.hydration import _discover_arbitrary_local_folders
 
     laptop = tmp_path / "ProjectS"
     laptop.mkdir()
@@ -760,7 +783,7 @@ def test_local_folders_symlink_escape_blocked(tmp_path, monkeypatch, isolated_da
 
 
 def test_local_folders_oversize_recorded(tmp_path, monkeypatch, isolated_data_dir):
-    from app.blocks.hydration import _discover_arbitrary_local_folders
+    from app.core.learning.hydration import _discover_arbitrary_local_folders
 
     laptop = tmp_path / "ProjectB"
     laptop.mkdir()
@@ -798,3 +821,134 @@ def test_gdrive_load_service_account_info_handles_inline_and_file(tmp_path, monk
     # Unset → None
     monkeypatch.delenv("GDRIVE_SERVICE_ACCOUNT_JSON", raising=False)
     assert gdrive_service._load_service_account_info() is None
+
+
+# ── The feedback loop — proves hydration actually changes tomorrow's chat ──
+
+
+@pytest.mark.asyncio
+async def test_hydration_writes_back_to_project_facts(isolated_data_dir, monkeypatch):
+    """After a hydration pass, the project's project_facts table contains
+    hydration:topics / friction / last_run rows — which the chat router
+    surfaces via project_memory.build_memory_context."""
+    from app.core import projects as projects_store, agent_memory
+    from app.core.learning import hydration as hydration_module
+
+    async def fake_chat(prompt, max_tokens=600):
+        return ("## ok", "offline_template")
+    monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
+
+    pid = _make_project("WB-P")
+    in_window = "2026-05-26T10:00:00Z"
+    # Two complaint-style asks plus a topic-rich ask. With the friction regex
+    # ("why|broken|empty|...") this should produce at least one friction signal.
+    _seed_conversation_with_project(pid, in_window, "why is BOQ empty?", "looking")
+    _seed_conversation_with_project(pid, in_window, "rebar quantities for level 3?", "120 kg/m3")
+
+    await hydration_module.run(target_date="2026-05-26")
+
+    facts = {f["key"]: f["value"] for f in projects_store.list_facts(pid)}
+    assert "hydration:last_run" in facts
+    assert facts["hydration:last_run"] == "2026-05-26"
+    assert "hydration:topics" in facts  # at least one user-message keyword survived stopword filtering
+    # 'why' / 'empty' should fire the friction regex on at least one msg
+    assert "hydration:friction" in facts
+
+
+@pytest.mark.asyncio
+async def test_hydration_writes_back_to_agent_facts(isolated_data_dir, monkeypatch):
+    """The runtime agent path (app/agents/runtime.py:548) reads
+    agent_memory.list_agent_facts('chat', project_id). Hydration must
+    populate that store so the runtime agent benefits next session."""
+    import json
+    from app.core import agent_memory
+    from app.core.learning import hydration as hydration_module
+
+    async def fake_chat(prompt, max_tokens=600):
+        return ("## ok", "offline_template")
+    monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
+
+    pid = _make_project("WB-A")
+    in_window = "2026-05-26T10:00:00Z"
+    _seed_conversation_with_project(pid, in_window, "concrete pour schedule for foundation?", "tomorrow at 8")
+
+    await hydration_module.run(target_date="2026-05-26")
+
+    facts = agent_memory.list_agent_facts("chat", pid)
+    keys = {f["key"] for f in facts}
+    assert "hydration:last_brief" in keys, (
+        "Expected hydration:last_brief in agent_facts so runtime.py's "
+        "fact-loading loop picks it up next session"
+    )
+    blob_value = next(f["value"] for f in facts if f["key"] == "hydration:last_brief")
+    payload = json.loads(blob_value)
+    assert payload["run_date"] == "2026-05-26"
+    assert "topics" in payload
+    assert "asks" in payload
+    # the user message should appear in the asks
+    assert any("concrete" in a.lower() for a in payload["asks"])
+
+
+@pytest.mark.asyncio
+async def test_hydration_records_friction_patterns_on_learning_engine(
+    isolated_data_dir, monkeypatch, tmp_path
+):
+    """Each friction signal becomes a row in learning_engine's patterns
+    corpus, durable across hydration runs."""
+    from app.blocks import BLOCK_REGISTRY
+    from app.core.learning import hydration as hydration_module
+
+    # Isolate learning_engine state per test
+    monkeypatch.setenv("LEARNING_ENGINE_STORAGE", str(tmp_path / "le_state.json"))
+
+    async def fake_chat(prompt, max_tokens=600):
+        return ("## ok", "offline_template")
+    monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
+
+    pid = _make_project("WB-L")
+    in_window = "2026-05-26T10:00:00Z"
+    _seed_conversation_with_project(pid, in_window, "why is the export broken?", "investigating")
+    _seed_conversation_with_project(pid, in_window, "why is the export broken?", "still")  # repeat → friction
+
+    await hydration_module.run(target_date="2026-05-26")
+
+    cls = BLOCK_REGISTRY["learning_engine"]
+    le = cls()
+    envelope = await le.execute(
+        {"operation": "list_patterns", "project_id": pid, "category": "friction"}, {}
+    )
+    inner = envelope["result"]
+    assert inner["status"] == "success"
+    assert inner["count"] >= 1, "Expected at least one friction pattern recorded"
+
+
+@pytest.mark.asyncio
+async def test_writeback_failures_are_non_fatal(isolated_data_dir, monkeypatch):
+    """If any writeback target raises, the per-project row still gets written
+    and the writeback errors are recorded in facts.writeback.skipped."""
+    from app.core import projects as projects_store, hydration_store
+    from app.core.learning import hydration as hydration_module
+
+    async def fake_chat(prompt, max_tokens=600):
+        return ("## ok", "offline_template")
+    monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
+
+    # Break project_facts writeback by pointing set_fact at a raiser
+    def boom(*a, **k):
+        raise RuntimeError("simulated writeback failure")
+    monkeypatch.setattr(projects_store, "set_fact", boom)
+
+    pid = _make_project("WB-F")
+    _seed_conversation_with_project(pid, "2026-05-26T10:00:00Z", "ask?", "answer")
+    await hydration_module.run(target_date="2026-05-26")
+
+    row = hydration_store.get_latest("project", pid)
+    assert row is not None
+    skipped = row["facts"].get("writeback", {}).get("skipped", [])
+    assert any("simulated writeback failure" in s for s in skipped)
+
+
+def _seed_conversation_with_project(project_id: str, ts: str, user_msg: str, assistant_msg: str) -> str:
+    """Like _seed_conversation but assumes the project row already exists.
+    Used by the writeback tests which create real projects via _make_project."""
+    return _seed_conversation(project_id, ts, user_msg, assistant_msg)

@@ -81,9 +81,8 @@ _BLOCK_SPECS: List[Tuple[str, str, str]] = [
     ("sandbox",             "app.blocks.sandbox",              "SandboxBlock"),
     ("traffic_manager",     "app.blocks.traffic_manager",      "TrafficManagerBlock"),
     ("webhook",             "app.blocks.webhook",              "WebhookBlock"),
-    # Nightly hydration — distills lessons learned from the day's chats and
-    # refreshes the document index from connected drives.
-    ("hydration",           "app.blocks.hydration",            "HydrationBlock"),
+    # Hydration was retired as a standalone block — it is now the `hydrate`
+    # operation on learning_engine (see app/core/learning/hydration.py).
 ]
 
 

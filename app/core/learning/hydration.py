@@ -1,24 +1,31 @@
-"""Hydration Block — nightly "sleep on it" pass.
+"""Nightly hydration — the learning engine's "sleep on it" pass.
 
-Runs once a day (intended schedule: 01:00 UTC, see ``app/core/hydration_scheduler.py``)
-and does two things for the previous calendar day:
+Lives under ``app/core/learning/`` because hydration IS learning: it reads
+the day's conversations + files and writes back into the surfaces tomorrow's
+chat actually consults. Exposed publicly as the ``hydrate`` operation on
+:class:`app.blocks.learning_engine.LearningEngineBlock`; the routes under
+``/v1/hydration/*`` and the nightly scheduler both call into this module
+through that block.
 
-1. **Lessons learned from users**. Reads every conversation that had activity
-   in the window, groups by project, asks the ChatBlock to distill the user's
-   actual asks, friction points, and recurring patterns into a short markdown
-   brief. One brief per project that had activity, plus one global rollup
-   across the whole tenant.
+What one pass does, per project that had activity yesterday (UTC by default):
 
-2. **Get familiar with the files**. Walks each configured drive connector
-   (``local_drive`` always; ``google_drive``/``onedrive`` when their tokens
-   are present), and for every file under a project asks the document
-   indexer to incrementally index it. The indexer's existing fingerprint
-   check makes this cheap for unchanged files.
-
-Output rows go to ``app/core/hydration_store.py`` (SQLite at
-``$DATA_DIR/hydration.db``) and are served via ``GET /v1/hydration/latest``.
-Nothing is auto-surfaced to end users in chat — these are operator/admin
-lessons learned, not user-facing morning briefs.
+1. Read every conversation message in the window from ``agent_memory.db``.
+2. Discover new files from three sources — dropbox convention, arbitrary
+   ``LOCAL_PROJECT_FOLDERS``, Google Drive via service account — and attach
+   them via ``store.add_document`` so the upload-path flow applies.
+3. Re-run ``doc_index.index_document`` for every known document so the index
+   stays current (cheap when fingerprints are unchanged).
+4. Summarize the day with ChatBlock, four-section markdown. If no LLM is
+   reachable, ``_heuristic_project_summary`` produces the same shape from
+   real signals (top keywords, friction patterns).
+5. **Close the loop**: write recurring topics + friction signals back to
+   ``projects.set_fact`` (read by the chat router via
+   ``project_memory.build_memory_context``) AND ``agent_memory.set_agent_fact``
+   (read by the runtime agent path at ``app/agents/runtime.py:548``), and
+   record each friction signal as a pattern on the learning engine so it
+   accumulates a corpus over time. This is what makes hydration "learning"
+   instead of just an operator daily report.
+6. Persist the row to ``hydration.db`` for the operator-facing endpoints.
 
 Failures inside one project must not abort the whole run — each project is
 isolated, errors are captured per-project in the row's ``facts`` payload.
@@ -33,266 +40,308 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.core.universal_base import UniversalBlock
-
 
 logger = logging.getLogger(__name__)
 
 
-class HydrationBlock(UniversalBlock):
-    name = "hydration"
-    version = "1.0.0"
-    description = (
-        "Nightly hydration: distill user-driven lessons learned from the day's "
-        "conversations and freshen the document index from connected drives."
+_MAX_MESSAGES_PER_PROJECT = 400
+_SUMMARY_MAX_TOKENS = 600
+
+
+# ── Public entry points ───────────────────────────────────────────────────
+
+
+async def run(
+    target_date: Optional[str] = None,
+    project_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Execute one full hydration pass. ``target_date`` (YYYY-MM-DD) overrides
+    the default of "yesterday UTC". ``project_ids`` overrides auto-detection
+    from the conversation store — useful for forced re-runs."""
+    from app.core import hydration_store
+
+    target_date = target_date or _yesterday_utc_iso()
+    window_start, window_end = _utc_day_bounds(target_date)
+
+    if project_ids:
+        pids: List[str] = [str(p) for p in project_ids if p]
+    else:
+        pids = _projects_active_in_window(window_start, window_end)
+
+    results_per_project: List[Dict[str, Any]] = []
+    total_files_indexed = 0
+    global_errors: List[str] = []
+
+    for pid in pids:
+        try:
+            row = await _hydrate_project(pid, target_date, window_start, window_end)
+            results_per_project.append(row)
+            total_files_indexed += row.get("files_indexed", 0)
+        except Exception as exc:  # noqa: BLE001 — never abort the whole pass
+            logger.exception("hydration: project %s failed", pid)
+            global_errors.append(f"{pid}: {type(exc).__name__}: {exc}")
+
+    global_facts = {
+        "projects_processed": len(results_per_project),
+        "total_files_indexed": total_files_indexed,
+        "project_ids": [r["project_id"] for r in results_per_project],
+        "per_project_message_counts": {
+            r["project_id"]: r.get("messages_seen", 0)
+            for r in results_per_project
+        },
+        "errors": global_errors,
+    }
+    global_summary_md, global_provider = await _summarize_global(
+        results_per_project, target_date
     )
-    layer = 4  # runs over other blocks (chat, drives, doc_index)
-    tags = ["ops", "scheduled", "summarization", "indexing", "memory"]
-    requires = []  # talks to chat/drive blocks via BLOCK_REGISTRY at call time
+    if global_provider in ("offline_template", "unavailable", "error"):
+        global_summary_md = _heuristic_global_summary(
+            target_date, results_per_project, total_files_indexed, global_errors
+        )
+    hydration_store.record_run(
+        run_date=target_date,
+        scope="global",
+        project_id=None,
+        summary_md=global_summary_md,
+        facts=global_facts,
+        provider=global_provider,
+    )
 
-    default_config = {
-        "max_messages_per_project": 400,  # cap LLM input size
-        "summary_max_tokens": 600,
+    return {
+        "status": "success",
+        "run_date": target_date,
+        "projects_processed": len(results_per_project),
+        "files_indexed": total_files_indexed,
+        "errors": global_errors,
+        "summary_md": global_summary_md,
     }
 
-    ui_schema = {
-        "input": {
-            "type": "json",
-            "placeholder": (
-                '{"operation": "run"}  '
-                '// or {"operation": "latest", "scope": "global"}  '
-                '// or {"operation": "latest", "scope": "project", "project_id": "p1"}'
-            ),
-            "multiline": True,
-        },
-        "output": {
-            "type": "json",
-            "fields": [
-                {"name": "status", "type": "text", "label": "Status"},
-                {"name": "run_date", "type": "text", "label": "Date"},
-                {"name": "projects_processed", "type": "number", "label": "Projects"},
-                {"name": "files_indexed", "type": "number", "label": "Files indexed"},
-                {"name": "summary_md", "type": "markdown", "label": "Summary"},
-            ],
-        },
-        "quick_actions": [
-            {"icon": "🌙", "label": "Run now", "prompt": '{"operation":"run"}'},
-            {"icon": "📅", "label": "Latest global",
-             "prompt": '{"operation":"latest","scope":"global"}'},
-        ],
+
+def get_latest(scope: str, project_id: Optional[str] = None) -> Dict[str, Any]:
+    """Latest run for the given scope/project. ``{status: 'empty'}`` when none."""
+    from app.core import hydration_store
+
+    if scope not in ("global", "project"):
+        return {"status": "error", "error": f"invalid scope: {scope!r}"}
+    if scope == "project" and not project_id:
+        return {"status": "error", "error": "project scope requires project_id"}
+    row = hydration_store.get_latest(scope, project_id)
+    if not row:
+        return {"status": "empty", "scope": scope, "project_id": project_id}
+    return {"status": "success", **row}
+
+
+def list_history(
+    scope: Optional[str] = None,
+    project_id: Optional[str] = None,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    from app.core import hydration_store
+
+    rows = hydration_store.list_history(scope=scope, project_id=project_id, limit=limit)
+    return {"status": "success", "count": len(rows), "runs": rows}
+
+
+# ── per-project work ──────────────────────────────────────────────────────
+
+
+async def _hydrate_project(
+    project_id: str,
+    run_date: str,
+    window_start: str,
+    window_end: str,
+) -> Dict[str, Any]:
+    from app.core import hydration_store
+
+    messages = _collect_project_messages(project_id, window_start, window_end)
+    if len(messages) > _MAX_MESSAGES_PER_PROJECT:
+        messages = messages[-_MAX_MESSAGES_PER_PROJECT:]
+
+    new_files_attached, attach_errors = _discover_local_drive_files(project_id)
+    local_attached, local_errors = _discover_arbitrary_local_folders(project_id)
+    new_files_attached += local_attached
+    attach_errors.extend(local_errors)
+    gdrive_attached, gdrive_errors = _discover_gdrive_files(project_id)
+    new_files_attached += gdrive_attached
+    attach_errors.extend(gdrive_errors)
+
+    files_indexed, files_skipped, file_errors = await _reindex_project_drives(project_id)
+
+    summary_md, provider = await _summarize_project(
+        project_id, messages, run_date, files_indexed
+    )
+    if provider in ("offline_template", "unavailable", "error"):
+        summary_md = _heuristic_project_summary(
+            project_id, run_date, messages, files_indexed, new_files_attached
+        )
+
+    # ── Close the loop: write back to surfaces the next chat will read.
+    # Failures here are non-fatal — the operator-facing row is still useful
+    # even if e.g. the learning_engine's storage is read-only.
+    writeback_summary: Dict[str, Any] = {}
+    try:
+        writeback_summary = _writeback_for_next_chat(
+            project_id, messages, run_date
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hydration writeback for project %s failed: %s", project_id, exc)
+        writeback_summary = {"writeback_error": f"{type(exc).__name__}: {exc}"}
+
+    facts = {
+        "messages_seen": len(messages),
+        "files_indexed": files_indexed,
+        "files_skipped": files_skipped,
+        "file_errors": file_errors,
+        "new_files_attached": new_files_attached,
+        "attach_errors": attach_errors,
+        "writeback": writeback_summary,
+    }
+    hydration_store.record_run(
+        run_date=run_date,
+        scope="project",
+        project_id=project_id,
+        summary_md=summary_md,
+        facts=facts,
+        provider=provider,
+    )
+    return {
+        "project_id": project_id,
+        "messages_seen": len(messages),
+        "files_indexed": files_indexed,
+        "new_files_attached": new_files_attached,
+        "summary_md": summary_md,
     }
 
-    # ── operation dispatch ────────────────────────────────────────────────
 
-    async def process(self, input_data: Any, params: Dict = None) -> Dict:
-        params = params or {}
-        # Accept the operation from either input_data (JSON body) or params.
-        op = None
-        if isinstance(input_data, dict):
-            op = input_data.get("operation")
-            params = {**input_data, **params}
-        op = op or params.get("operation") or "run"
+# ── The actual learning step: writeback to surfaces chat consults ─────────
 
-        if op == "run":
-            return await self._op_run(params)
-        if op == "latest":
-            return self._op_latest(params)
-        if op == "history":
-            return self._op_history(params)
-        return {"status": "error", "error": f"unknown operation: {op!r}"}
 
-    # ── operations ────────────────────────────────────────────────────────
+def _writeback_for_next_chat(
+    project_id: str,
+    messages: List[Dict[str, Any]],
+    run_date: str,
+) -> Dict[str, Any]:
+    """Persist what we learned into stores tomorrow's chat will pull as
+    priors. Two parallel surfaces, kept in lockstep so both code paths benefit:
 
-    async def _op_run(self, params: Dict) -> Dict:
-        """Execute one hydration pass.
+    * ``projects.set_fact`` — keyed facts on the project itself, picked up by
+      ``project_memory.build_memory_context`` which the chat router injects
+      as a system message at conversation start.
+    * ``agent_memory.set_agent_fact`` — agent-scoped facts, picked up by
+      ``app/agents/runtime.py``'s message-building loop for any agent
+      answering on this project.
 
-        ``target_date`` (YYYY-MM-DD) overrides the default of "yesterday UTC".
-        ``project_ids`` (list) overrides auto-detection from the conversation
-        store — useful for forced re-runs of a single project.
-        """
-        from app.core import hydration_store
+    Also records each friction signal as a pattern via the learning engine
+    so observations accumulate across runs — future work (tier promotion of
+    chat-routing decisions, etc.) can mine this corpus.
+    """
+    import json as _json
 
-        target_date = params.get("target_date") or _yesterday_utc_iso()
-        window_start, window_end = _utc_day_bounds(target_date)
+    topics = [w for w, _c in _top_keywords(messages, n=8)]
+    friction = _user_friction_signals(messages)
+    asks = _top_user_asks(messages, n=5)
 
-        # 1. Detect which projects had activity in the window
-        forced = params.get("project_ids")
-        if forced:
-            project_ids: List[str] = [str(p) for p in forced if p]
-        else:
-            project_ids = _projects_active_in_window(window_start, window_end)
+    written: Dict[str, Any] = {
+        "project_facts": 0,
+        "agent_facts": 0,
+        "patterns_recorded": 0,
+        "skipped": [],
+    }
 
-        results_per_project: List[Dict[str, Any]] = []
-        total_files_indexed = 0
-        global_errors: List[str] = []
+    payload = {"topics": topics, "friction": friction, "asks": asks, "run_date": run_date}
 
-        for pid in project_ids:
-            try:
-                row = await self._hydrate_project(
-                    pid, target_date, window_start, window_end, params
-                )
-                results_per_project.append(row)
-                total_files_indexed += row.get("files_indexed", 0)
-            except Exception as exc:  # noqa: BLE001 — never abort the whole pass
-                logger.exception("hydration: project %s failed", pid)
-                global_errors.append(f"{pid}: {type(exc).__name__}: {exc}")
+    try:
+        from app.core import projects as projects_store
 
-        # 2. Global rollup across all projects
-        global_facts = {
-            "projects_processed": len(results_per_project),
-            "total_files_indexed": total_files_indexed,
-            "project_ids": [r["project_id"] for r in results_per_project],
-            "per_project_message_counts": {
-                r["project_id"]: r.get("messages_seen", 0)
-                for r in results_per_project
-            },
-            "errors": global_errors,
-        }
-        global_summary_md, global_provider = await self._summarize_global(
-            results_per_project, target_date, params
-        )
-        if global_provider in ("offline_template", "unavailable", "error"):
-            global_summary_md = _heuristic_global_summary(
-                target_date, results_per_project, total_files_indexed, global_errors
+        if topics:
+            projects_store.set_fact(
+                project_id, "hydration:topics", ", ".join(topics),
+                source_document="hydration", confidence=0.5,
             )
-        hydration_store.record_run(
-            run_date=target_date,
-            scope="global",
-            project_id=None,
-            summary_md=global_summary_md,
-            facts=global_facts,
-            provider=global_provider,
-        )
-
-        return {
-            "status": "success",
-            "run_date": target_date,
-            "projects_processed": len(results_per_project),
-            "files_indexed": total_files_indexed,
-            "errors": global_errors,
-            "summary_md": global_summary_md,
-        }
-
-    def _op_latest(self, params: Dict) -> Dict:
-        from app.core import hydration_store
-
-        scope = params.get("scope") or "global"
-        if scope not in ("global", "project"):
-            return {"status": "error", "error": f"invalid scope: {scope!r}"}
-        project_id = params.get("project_id") if scope == "project" else None
-        if scope == "project" and not project_id:
-            return {"status": "error", "error": "project scope requires project_id"}
-        row = hydration_store.get_latest(scope, project_id)
-        if not row:
-            return {"status": "empty", "scope": scope, "project_id": project_id}
-        return {"status": "success", **row}
-
-    def _op_history(self, params: Dict) -> Dict:
-        from app.core import hydration_store
-
-        rows = hydration_store.list_history(
-            scope=params.get("scope"),
-            project_id=params.get("project_id"),
-            limit=int(params.get("limit") or 20),
-        )
-        return {"status": "success", "count": len(rows), "runs": rows}
-
-    # ── per-project work ──────────────────────────────────────────────────
-
-    async def _hydrate_project(
-        self,
-        project_id: str,
-        run_date: str,
-        window_start: str,
-        window_end: str,
-        params: Dict,
-    ) -> Dict[str, Any]:
-        from app.core import hydration_store
-
-        messages = _collect_project_messages(project_id, window_start, window_end)
-        cap = int(self.config.get("max_messages_per_project") or 400)
-        if len(messages) > cap:
-            messages = messages[-cap:]  # keep most recent within cap
-
-        # Step 1: discover net-new files that appeared on the local drive's
-        # per-project drop folder since last hydration, and attach them so the
-        # subsequent reindex loop will pick them up.
-        new_files_attached, attach_errors = _discover_local_drive_files(project_id)
-
-        # Step 1b: arbitrary local folders the operator pointed us at via
-        # LOCAL_PROJECT_FOLDERS. Useful when the project's files live on a
-        # mounted volume / synced folder that isn't under LOCAL_DRIVE_ROOT —
-        # e.g. ~/Documents/ProjectX on a workstation running the platform.
-        local_attached, local_errors = _discover_arbitrary_local_folders(project_id)
-        new_files_attached += local_attached
-        attach_errors.extend(local_errors)
-
-        # Step 1c: same idea for Google Drive — when GDRIVE_PROJECT_FOLDERS
-        # has a mapping for this project, list the configured folder via the
-        # service account and attach anything we haven't seen before.
-        gdrive_attached, gdrive_errors = _discover_gdrive_files(project_id)
-        new_files_attached += gdrive_attached
-        attach_errors.extend(gdrive_errors)
-
-        # Step 2: refresh every known document's index (cheap when unchanged
-        # thanks to the doc indexer's fingerprint check).
-        files_indexed, files_skipped, file_errors = await _reindex_project_drives(project_id)
-
-        summary_md, provider = await self._summarize_project(
-            project_id, messages, run_date, files_indexed, params
-        )
-        # When the LLM is unreachable, enrich the offline summary with a
-        # heuristic so the row is informative instead of a placeholder.
-        if provider in ("offline_template", "unavailable", "error"):
-            summary_md = _heuristic_project_summary(
-                project_id, run_date, messages, files_indexed, new_files_attached
+            written["project_facts"] += 1
+        if friction:
+            projects_store.set_fact(
+                project_id, "hydration:friction", "; ".join(friction),
+                source_document="hydration", confidence=0.5,
             )
+            written["project_facts"] += 1
+        projects_store.set_fact(
+            project_id, "hydration:last_run", run_date,
+            source_document="hydration", confidence=1.0,
+        )
+        written["project_facts"] += 1
+    except Exception as exc:  # noqa: BLE001
+        written["skipped"].append(f"project_facts: {type(exc).__name__}: {exc}")
 
-        facts = {
-            "messages_seen": len(messages),
-            "files_indexed": files_indexed,
-            "files_skipped": files_skipped,
-            "file_errors": file_errors,
-            "new_files_attached": new_files_attached,
-            "attach_errors": attach_errors,
-        }
-        hydration_store.record_run(
-            run_date=run_date,
-            scope="project",
+    try:
+        from app.core import agent_memory
+
+        agent_memory.set_agent_fact(
+            agent_name="chat",
             project_id=project_id,
-            summary_md=summary_md,
-            facts=facts,
-            provider=provider,
+            key="hydration:last_brief",
+            value=_json.dumps(payload, ensure_ascii=False),
         )
-        return {
-            "project_id": project_id,
-            "messages_seen": len(messages),
-            "files_indexed": files_indexed,
-            "new_files_attached": new_files_attached,
-            "summary_md": summary_md,
-        }
+        written["agent_facts"] += 1
+    except Exception as exc:  # noqa: BLE001
+        written["skipped"].append(f"agent_facts: {type(exc).__name__}: {exc}")
 
-    # ── summarization (delegates to ChatBlock) ────────────────────────────
+    try:
+        from app.blocks import BLOCK_REGISTRY
 
-    async def _summarize_project(
-        self,
-        project_id: str,
-        messages: List[Dict[str, Any]],
-        run_date: str,
-        files_indexed: int,
-        params: Dict,
-    ) -> tuple[str, str]:
-        prompt = _build_project_summary_prompt(project_id, run_date, messages, files_indexed)
-        return await _call_chat(prompt, max_tokens=int(self.config.get("summary_max_tokens") or 600))
+        cls = BLOCK_REGISTRY.get("learning_engine")
+        if cls is not None and friction:
+            le = cls()
+            for signal in friction:
+                result = le._record_pattern(  # type: ignore[attr-defined]
+                    {"project_id": project_id, "category": "friction",
+                     "observation": signal, "source": "hydration",
+                     "run_date": run_date}, {},
+                )
+                if isinstance(result, dict) and result.get("status") == "success":
+                    written["patterns_recorded"] += 1
+    except Exception as exc:  # noqa: BLE001
+        written["skipped"].append(f"learning_engine: {type(exc).__name__}: {exc}")
 
-    async def _summarize_global(
-        self,
-        per_project: List[Dict[str, Any]],
-        run_date: str,
-        params: Dict,
-    ) -> tuple[str, str]:
-        prompt = _build_global_summary_prompt(run_date, per_project)
-        return await _call_chat(prompt, max_tokens=int(self.config.get("summary_max_tokens") or 600))
+    return written
+
+
+def _top_user_asks(messages: List[Dict[str, Any]], n: int = 5) -> List[str]:
+    """First line of each unique user message, trimmed. Stable across runs."""
+    seen: set = set()
+    out: List[str] = []
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        text = (m.get("content") or "").strip().replace("\n", " ")
+        key = text[:60].lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text[:160] + ("…" if len(text) > 160 else ""))
+        if len(out) >= n:
+            break
+    return out
+
+
+# ── Summarization (delegates to ChatBlock) ────────────────────────────────
+
+async def _summarize_project(
+    project_id: str,
+    messages: List[Dict[str, Any]],
+    run_date: str,
+    files_indexed: int,
+) -> tuple[str, str]:
+    prompt = _build_project_summary_prompt(project_id, run_date, messages, files_indexed)
+    return await _call_chat(prompt, max_tokens=_SUMMARY_MAX_TOKENS)
+
+
+async def _summarize_global(
+    per_project: List[Dict[str, Any]],
+    run_date: str,
+) -> tuple[str, str]:
+    prompt = _build_global_summary_prompt(run_date, per_project)
+    return await _call_chat(prompt, max_tokens=_SUMMARY_MAX_TOKENS)
 
 
 # ── helpers (module-level so tests can monkey-patch them) ─────────────────
