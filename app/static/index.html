@@ -172,14 +172,6 @@
     <div class="main">
         <header style="display:flex;align-items:center;justify-content:center;gap:12px;">
             <span>Cerebrum Platform</span>
-            <!-- Latent controls kept hidden in the conversational UI. They
-                 remain in the DOM so loadAgents() can populate the picker
-                 (used by /v1/agents-routed flows) and selectProject() can
-                 set the project-mode flag. Tests assert these states. -->
-            <select id="agentPicker" hidden onchange="onAgentChange(this.value)">
-                <option value="">Default agent</option>
-            </select>
-            <input type="checkbox" id="projectModeToggle" hidden onchange="onProjectModeChange(this.checked)">
         </header>
         <div class="messages" id="messages">
             <div class="msg assistant">
@@ -1610,14 +1602,6 @@ function selectProject(id) {
     activeProjectId = id;
     try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
     renderProjects();
-    // Selecting a project implies project mode is on. The toggle is hidden in
-    // the conversational UI but the flag is still meaningful for routing
-    // and is asserted by tests.
-    const toggle = document.getElementById('projectModeToggle');
-    if (toggle && !toggle.checked) {
-        toggle.checked = true;
-        projectMode = true;
-    }
     // Switching project = different context. Drop session uploads AND
     // load this project's own chat history so we don't bleed turns from
     // the previous project into the new one. (Per-project history keys
