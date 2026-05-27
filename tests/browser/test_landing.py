@@ -20,16 +20,18 @@ def test_dashboard_mount(app_page, app_server):
     assert r.status_code in (200, 404), f"unexpected status {r.status_code}"
 
 
-def test_agent_picker_populates(app_page):
-    """The agent dropdown is hydrated from /v1/agents on load."""
-    app_page.wait_for_function(
-        "document.getElementById('agentPicker') && document.getElementById('agentPicker').options.length > 1",
-        timeout=5000,
-    )
-    options = app_page.locator("#agentPicker option").all_text_contents()
-    # Default placeholder + at least a couple of agents
-    assert len(options) > 2
-    assert any("construction" in o.lower() or "document" in o.lower() for o in options)
+def test_agents_endpoint_fetched_on_load(app_page, app_server, browser_network):
+    """On load, the page fetches /v1/agents so the routing layer knows the
+    available runtime agents. The conversational UI removed the visible
+    agent dropdown (see tests/test_project_ui.test_ui_no_longer_has_a_visible_agent_picker)
+    so this test asserts the network behaviour rather than a DOM widget."""
+    # loadAgents() is an IIFE on page load; give it a moment to fire.
+    app_page.wait_for_timeout(500)
+    agents_calls = [
+        r for r in browser_network
+        if r["url"].endswith("/v1/agents") and r["method"] == "GET"
+    ]
+    assert agents_calls, "no GET /v1/agents request observed on load"
 
 
 def test_chat_textarea_has_placeholder(app_page):

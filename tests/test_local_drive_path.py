@@ -16,14 +16,22 @@ async def test_list_honors_path_and_folder_path_params(tmp_path, monkeypatch):
         None, {"operation": "list", "path": "."}
     )
     assert root_listing["status"] == "success", root_listing
-    assert "a.txt" in root_listing["files"]
+    # Listing now returns dicts with name/is_folder/size_bytes/modified so
+    # the UI can distinguish folders from files (the old shape was a list
+    # of bare strings, which made every entry look like a flat file).
+    names = [e["name"] for e in root_listing["files"]]
+    assert "a.txt" in names
+    assert "docs" in names
+    docs_entry = next(e for e in root_listing["files"] if e["name"] == "docs")
+    assert docs_entry["is_folder"] is True
 
     # A subdirectory passed via the `folder_path` param is honored.
     sub_listing = await LocalDriveBlock().process(
         None, {"operation": "list", "folder_path": "docs"}
     )
     assert sub_listing["status"] == "success", sub_listing
-    assert sub_listing["files"] == ["b.txt"]
+    sub_names = [e["name"] for e in sub_listing["files"]]
+    assert sub_names == ["b.txt"]
 
 
 async def test_read_and_write_within_root(tmp_path, monkeypatch):

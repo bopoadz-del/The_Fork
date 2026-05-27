@@ -18,12 +18,17 @@ class PDFBlockV2(TypedBlock):
     description = "Extract text from PDF files with typed output"
     layer = 3
     tags = ["domain", "documents", "pdf", "v2"]
-    requires = []
-    
+    # OCR is wired so image-only / scanned PDFs (CAD drawings, photocopied
+    # specs) still produce real text instead of silently returning "". Same
+    # pattern as document_engine — fall back when the PyMuPDF text layer is
+    # below `ocr_fallback_min_chars`.
+    requires = ["ocr"]
+
     default_config = {
         "extract_tables": True,
         "max_pages": 100,
-        "text_limit": 20000
+        "text_limit": 20000,
+        "ocr_fallback_min_chars": 200,
     }
     
     # Input: file path or dict with file info
@@ -92,23 +97,44 @@ class PDFBlockV2(TypedBlock):
         # Extract using PyMuPDF
         try:
             import fitz  # PyMuPDF
-            
+
             doc = fitz.open(pdf_path)
             text = ""
-            
+
             max_pages = params.get("max_pages", self.config.get("max_pages", 100))
             for i, page in enumerate(doc):
                 if i >= max_pages:
                     break
                 text += page.get_text()
-            
+
             pages = len(doc)
             doc.close()
-            
+
+            # OCR fallback for image-only / scanned PDFs (zero text layer).
+            # When the text layer is below threshold, render → OCR → use that
+            # text. Mirrors document_engine. Without this, drawings come out
+            # as empty `text` and any downstream block (LLM, spec_analyzer,
+            # boq_processor) gets nothing.
+            source = "pdf"
+            min_chars = int(self.config.get("ocr_fallback_min_chars", 200))
+            if len(text.strip()) < min_chars:
+                ocr_block = self.get_dep("ocr")
+                if ocr_block is not None:
+                    try:
+                        ocr_result = await ocr_block.process({"file_path": pdf_path})
+                        ocr_text = (ocr_result.get("text") or "").strip()
+                        if len(ocr_text) > len(text.strip()):
+                            text = ocr_text
+                            source = "pdf+ocr"
+                    except Exception:
+                        # OCR is best-effort — if it fails, return whatever
+                        # PyMuPDF gave us (may be empty).
+                        pass
+
             # Return TextContent format
             return {
                 "text": text[:self.config.get("text_limit", 20000)],
-                "source": "pdf",
+                "source": source,
                 "pages": pages,
                 "metadata": {
                     "filename": os.path.basename(pdf_path),

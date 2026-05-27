@@ -12,10 +12,18 @@ class SpecAnalyzerBlock(UniversalBlock):
     description = "Extract grade requirements, material specs, and compliance flags from specification PDFs"
     layer = 3
     tags = ["domain", "construction", "specs", "pdf", "compliance", "materials"]
+    # Require the ocr block so scanned/image-only spec PDFs (no text layer)
+    # still extract real content instead of silently returning empty lists.
+    # When the text layer comes back below the threshold, _extract_text falls
+    # back to OCR via the wired dep — mirroring document_engine.
+    requires = ["ocr"]
 
     default_config = {
         "max_pages": 100,
         "compliance_standards": ["astm", "aci", "aisc", "iso", "bs", "en", "saso"],
+        # If PyMuPDF's text layer yields fewer than this many chars across
+        # the whole sampled range, treat the PDF as image-only and OCR it.
+        "ocr_fallback_min_chars": 200,
     }
 
     ui_schema = {
@@ -112,6 +120,27 @@ class SpecAnalyzerBlock(UniversalBlock):
                 return {"status": "error", "error": "pymupdf not installed. Run: pip install pymupdf"}
             except Exception as e:
                 return {"status": "error", "error": f"PDF extraction failed: {e}"}
+
+            # OCR fallback for image-only / scanned specs (no text layer).
+            # Without this, _extract_grades / _extract_materials all return
+            # empty lists with status: success — the LLM gets "no specs
+            # found" for a perfectly valid scanned PDF.
+            min_chars = int(self.config.get("ocr_fallback_min_chars", 200))
+            if len(text.strip()) < min_chars:
+                ocr_block = self.get_dep("ocr")
+                if ocr_block is not None:
+                    try:
+                        ocr_result = await ocr_block.process({"file_path": file_path})
+                        ocr_text = (ocr_result.get("text") or "").strip()
+                        if len(ocr_text) > len(text.strip()):
+                            text = ocr_text
+                            # Page count from OCR if available (PDF → N images).
+                            page_count = ocr_result.get("pages") or page_count
+                    except Exception:
+                        # OCR is best-effort — if it fails, fall through with
+                        # whatever the text layer gave us (may still be empty
+                        # but at least we don't crash the spec analysis).
+                        pass
         elif raw_text:
             text = raw_text
             page_count = 0

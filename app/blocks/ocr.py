@@ -164,10 +164,56 @@ class OCRBlock(TypedBlock):
                 tesseract_available = False
 
         if not tesseract_available:
-            # Claude Vision OCR fallback (works for images, no system deps)
+            # Vision-API fallbacks for users without Tesseract installed. We
+            # iterate every page image through whichever Vision API has a key
+            # configured. Order: Gemini (cheapest, large free tier, supports
+            # both images AND PDFs natively) → Claude (paid, image-only) →
+            # final PyMuPDF text-layer extraction (no help on real drawings).
+            #
+            # Gemini accepts inline_data for any image MIME and the SDK also
+            # accepts a PIL Image directly — we pass per-page PNGs that
+            # _prepare_images already rendered from the PDF at 200 DPI.
+            vision_errors = []
+            page_texts = []
+            engine_used_v = None
+
+            gemini_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            if gemini_key:
+                try:
+                    from google import genai as google_genai
+                    from google.genai import types as genai_types
+                    client_g = google_genai.Client(api_key=gemini_key)
+                    prompt_text = (
+                        "Extract ALL text visible in this image — including title block, "
+                        "annotations, schedules, dimensions, notes, callouts, and any "
+                        "tabular data. Preserve layout where it carries meaning. Return "
+                        "only the extracted text."
+                    )
+                    for pg in page_images:
+                        try:
+                            with open(pg, "rb") as _f:
+                                img_bytes_g = _f.read()
+                            resp = client_g.models.generate_content(
+                                model="gemini-2.5-flash",
+                                contents=[
+                                    genai_types.Part.from_bytes(data=img_bytes_g, mime_type="image/png"),
+                                    prompt_text,
+                                ],
+                            )
+                            page_text = (resp.text or "").strip()
+                            if page_text:
+                                page_texts.append(page_text)
+                        except Exception as e:
+                            vision_errors.append(f"gemini page error: {e}")
+                    if page_texts:
+                        engine_used_v = "gemini_vision"
+                except ImportError:
+                    vision_errors.append("google-genai not installed (pip install google-genai)")
+                except Exception as e:
+                    vision_errors.append(f"gemini: {e}")
+
             anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-            vision_error = None
-            if anthropic_key and not image_path.lower().endswith(".pdf"):
+            if not page_texts and anthropic_key and not image_path.lower().endswith(".pdf"):
                 try:
                     import base64, anthropic, mimetypes
                     with open(image_path, "rb") as f:
@@ -185,26 +231,31 @@ class OCRBlock(TypedBlock):
                     )
                     text = response.content[0].text.strip()
                     if text:
-                        return {
-                            "status": "success",
-                            "text": text,
-                            "confidence": 0.92,
-                            "has_markup": markup["has_markup"],
-                            "markup": markup,
-                            "word_count": len(text.split()),
-                            "engine": "claude_vision",
-                            "preprocessed": False,
-                            "pages": len(page_images),
-                            "note": "Tesseract not installed; used Claude Vision OCR"
-                        }
+                        page_texts = [text]
+                        engine_used_v = "claude_vision"
                 except Exception as e:
-                    vision_error = str(e)
-            elif not anthropic_key:
-                vision_error = "ANTHROPIC_API_KEY not set"
-            else:
-                vision_error = "PDF files not supported for Vision OCR"
+                    vision_errors.append(f"claude: {e}")
+            elif not anthropic_key and not gemini_key:
+                vision_errors.append("no Vision API key set (GOOGLE_API_KEY or ANTHROPIC_API_KEY)")
 
-            # Final fallback: PyMuPDF text extraction (text-layer PDFs only)
+            if page_texts:
+                full_text = "\n\n".join(page_texts)
+                return {
+                    "status": "success",
+                    "text": full_text,
+                    "confidence": 0.90,
+                    "has_markup": markup["has_markup"],
+                    "markup": markup,
+                    "word_count": len(full_text.split()),
+                    "engine": engine_used_v,
+                    "preprocessed": False,
+                    "pages": len(page_images),
+                    "note": f"Tesseract not installed; used {engine_used_v}",
+                }
+
+            # Final fallback: PyMuPDF text extraction (text-layer PDFs only).
+            # Useless on real drawings (they have no text layer) but kept so
+            # text-PDFs don't regress.
             pdf_text = self._extract_pdf_text(image_path)
             if pdf_text:
                 return {
@@ -219,7 +270,12 @@ class OCRBlock(TypedBlock):
                     "pages": 1,
                     "note": "Tesseract not installed; used PyMuPDF text extraction"
                 }
-            return {"status": "error", "text": "", "confidence": 0, "error": f"Tesseract not installed; Vision OCR failed: {vision_error}"}
+            return {
+                "status": "error",
+                "text": "",
+                "confidence": 0,
+                "error": "No OCR engine available: " + "; ".join(vision_errors or ["install Tesseract or set GOOGLE_API_KEY/ANTHROPIC_API_KEY"]),
+            }
 
         from app.core.image_quality import summarize_ocr_quality
         quality = summarize_ocr_quality(word_confidences)
