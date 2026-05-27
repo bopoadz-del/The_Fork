@@ -42,6 +42,7 @@ from app.routers import (
     drive,
     execute,
     health,
+    hydration as hydration_router,
     memory,
     mcp,
     monitoring,
@@ -91,6 +92,8 @@ async def lifespan(app: FastAPI):
     init_agent_memory_db()
     from app.core.doc_index import init_db as init_doc_index_db
     init_doc_index_db()
+    from app.core.hydration_store import init_db as init_hydration_db
+    init_hydration_db()
     from app.core.session_store import get_session_store
     from app.routers import project as project_router
     app.state.project_store = get_session_store()
@@ -99,7 +102,12 @@ async def lifespan(app: FastAPI):
                 type(app.state.project_store).__name__)
     loaded = load_agents()
     logger.info("Loaded %d runtime agents: %s", len(loaded), ", ".join(sorted(loaded.keys())))
-    yield
+    from app.core import hydration_scheduler
+    hydration_scheduler.start()
+    try:
+        yield
+    finally:
+        await hydration_scheduler.stop()
 
 
 app = FastAPI(
@@ -285,6 +293,7 @@ app.include_router(mcp.router)
 mcp.mount_message_endpoint(app)
 app.include_router(drive.router)
 app.include_router(agents_router.router)
+app.include_router(hydration_router.router)
 app.include_router(static.router)
 # Debug routes — only in non-production environments
 env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
