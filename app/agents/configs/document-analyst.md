@@ -3,7 +3,7 @@ name: document-analyst
 description: Generic document analyst — parses any uploaded file (PDF, Word, Excel, image) and answers questions about it.
 icon: 📄
 model: deepseek-chat
-temperature: 0.3
+temperature: 0.7
 max_tokens: 2048
 allowed_blocks:
   - document_engine
