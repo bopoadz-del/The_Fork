@@ -31,7 +31,12 @@ def _make_agent(allowed_blocks=None):
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run isolates each call in its own loop, so this stays robust
+    # even when pytest-asyncio has already closed the main-thread loop
+    # while running async tests earlier in the suite. The previous
+    # get_event_loop() form raised "no current event loop" under
+    # pytest-asyncio >= 1.x after that teardown.
+    return asyncio.run(coro)
 
 
 # ── malformed JSON args ───────────────────────────────────────────────────────
