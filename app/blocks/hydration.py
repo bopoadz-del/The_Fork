@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.universal_base import UniversalBlock
 
@@ -149,6 +151,10 @@ class HydrationBlock(UniversalBlock):
         global_summary_md, global_provider = await self._summarize_global(
             results_per_project, target_date, params
         )
+        if global_provider in ("offline_template", "unavailable", "error"):
+            global_summary_md = _heuristic_global_summary(
+                target_date, results_per_project, total_files_indexed, global_errors
+            )
         hydration_store.record_run(
             run_date=target_date,
             scope="global",
@@ -208,17 +214,32 @@ class HydrationBlock(UniversalBlock):
         if len(messages) > cap:
             messages = messages[-cap:]  # keep most recent within cap
 
+        # Step 1: discover net-new files that appeared on the local drive's
+        # per-project drop folder since last hydration, and attach them so the
+        # subsequent reindex loop will pick them up.
+        new_files_attached, attach_errors = _discover_local_drive_files(project_id)
+
+        # Step 2: refresh every known document's index (cheap when unchanged
+        # thanks to the doc indexer's fingerprint check).
         files_indexed, files_skipped, file_errors = await _reindex_project_drives(project_id)
 
         summary_md, provider = await self._summarize_project(
             project_id, messages, run_date, files_indexed, params
         )
+        # When the LLM is unreachable, enrich the offline summary with a
+        # heuristic so the row is informative instead of a placeholder.
+        if provider in ("offline_template", "unavailable", "error"):
+            summary_md = _heuristic_project_summary(
+                project_id, run_date, messages, files_indexed, new_files_attached
+            )
 
         facts = {
             "messages_seen": len(messages),
             "files_indexed": files_indexed,
             "files_skipped": files_skipped,
             "file_errors": file_errors,
+            "new_files_attached": new_files_attached,
+            "attach_errors": attach_errors,
         }
         hydration_store.record_run(
             run_date=run_date,
@@ -232,6 +253,7 @@ class HydrationBlock(UniversalBlock):
             "project_id": project_id,
             "messages_seen": len(messages),
             "files_indexed": files_indexed,
+            "new_files_attached": new_files_attached,
             "summary_md": summary_md,
         }
 
@@ -394,6 +416,266 @@ def _build_global_summary_prompt(
         "look for the cross-cutting signal.\n\n"
         "PER-PROJECT SUMMARIES:\n"
         f"{rollup}\n"
+    )
+
+
+def _local_drive_root() -> str:
+    """Same convention as ``app/blocks/local_drive.py``: confined drive root."""
+    root = os.path.realpath(
+        os.getenv("LOCAL_DRIVE_ROOT") or os.getenv("DATA_DIR", "./data")
+    )
+    return root
+
+
+def _project_dropbox(project_id: str) -> str:
+    """Per-project drop folder. Files placed here outside of the upload flow
+    get auto-attached overnight. Kept under the same root LocalDriveBlock
+    sandboxes to, so path-escape rules already apply."""
+    return os.path.join(_local_drive_root(), "projects", project_id, "dropbox")
+
+
+# Same allowlist the upload router enforces — keep them in lockstep so a file
+# the hydration job auto-attaches would also have been accepted by the UI.
+_ATTACH_ALLOWED_EXTS = {
+    ".pdf", ".docx", ".xlsx", ".csv", ".txt", ".md",
+    ".jpg", ".jpeg", ".png", ".tif", ".tiff",
+    ".dwg", ".dxf", ".ifc", ".xer", ".mpp",
+}
+
+
+def _discover_local_drive_files(project_id: str) -> Tuple[int, List[str]]:
+    """Walk the project's drop folder and attach any file that isn't already
+    a registered document. Returns (attached_count, errors).
+
+    The walk is bounded by the LocalDriveBlock's sandbox root — anything that
+    would escape it (a symlink pointing out, etc.) is silently skipped. Files
+    with disallowed extensions are skipped. Hidden files (dotfiles) are
+    skipped. Files larger than ``HYDRATION_MAX_ATTACH_SIZE`` (default 50 MB)
+    are skipped to avoid pulling in giant artifacts unintentionally.
+    """
+    from app.core import projects as projects_store
+
+    dropbox = _project_dropbox(project_id)
+    if not os.path.isdir(dropbox):
+        return 0, []
+
+    drive_root = _local_drive_root()
+    try:
+        max_bytes = int(os.getenv("HYDRATION_MAX_ATTACH_SIZE", "52428800"))
+    except ValueError:
+        max_bytes = 52428800  # 50 MB
+
+    # Build a set of paths already attached to this project so we don't
+    # re-register a file. Compare by realpath to handle symlink shenanigans.
+    existing = projects_store.list_documents(project_id)
+    existing_paths = {
+        os.path.realpath(d.get("file_path"))
+        for d in existing
+        if d.get("file_path")
+    }
+
+    attached = 0
+    errors: List[str] = []
+    for dirpath, dirnames, filenames in os.walk(dropbox, followlinks=False):
+        # Skip hidden subdirs in-place so os.walk doesn't descend into them.
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            full = os.path.join(dirpath, name)
+            try:
+                real = os.path.realpath(full)
+                # Sandbox check: the realpath must stay under the drive root.
+                if not (real == drive_root or real.startswith(drive_root + os.sep)):
+                    continue
+                _, ext = os.path.splitext(name.lower())
+                if ext not in _ATTACH_ALLOWED_EXTS:
+                    continue
+                if real in existing_paths:
+                    continue
+                size = os.path.getsize(real)
+                if size > max_bytes:
+                    errors.append(f"{name}: oversize ({size} > {max_bytes})")
+                    continue
+                doc = projects_store.add_document(
+                    project_id=project_id,
+                    original_name=name,
+                    stored_as=os.path.relpath(real, drive_root),
+                    file_path=real,
+                    size=size,
+                )
+                attached += 1
+                existing_paths.add(real)
+                logger.info(
+                    "hydration: attached %s to project %s as %s",
+                    name, project_id, doc.get("id"),
+                )
+            except Exception as exc:  # noqa: BLE001 — never abort the walk
+                errors.append(f"{name}: {type(exc).__name__}: {exc}")
+    return attached, errors
+
+
+# ── Heuristic summaries (used when ChatBlock has no model to call) ─────────
+
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "if", "of", "to", "for", "in", "on",
+    "at", "by", "with", "from", "as", "is", "are", "was", "were", "be", "been",
+    "being", "have", "has", "had", "do", "does", "did", "this", "that", "these",
+    "those", "it", "its", "i", "you", "we", "they", "he", "she", "them", "us",
+    "my", "your", "our", "their", "his", "her", "what", "when", "where", "why",
+    "how", "which", "who", "whom", "can", "could", "should", "would", "will",
+    "shall", "may", "might", "must", "not", "no", "yes", "so", "than", "then",
+    "also", "just", "very", "any", "some", "all", "each", "more", "most", "less",
+    "least", "out", "up", "down", "into", "about", "over", "under",
+}
+
+_WORD_RX = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
+
+
+def _top_keywords(messages: List[Dict[str, Any]], n: int = 8) -> List[Tuple[str, int]]:
+    counter: Counter[str] = Counter()
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        for tok in _WORD_RX.findall(m.get("content") or ""):
+            t = tok.lower()
+            if t in _STOPWORDS:
+                continue
+            counter[t] += 1
+    return counter.most_common(n)
+
+
+def _user_friction_signals(messages: List[Dict[str, Any]]) -> List[str]:
+    """Cheap heuristics that flag likely friction: repeated questions, short
+    user messages followed by long retries, explicit complaint markers."""
+    signals: List[str] = []
+    complaint_rx = re.compile(
+        r"\b(error|broken|doesn'?t work|not working|wrong|fail(ed|s)?|"
+        r"missing|empty|why|stuck|help)\b",
+        re.IGNORECASE,
+    )
+    user_msgs = [m for m in messages if m.get("role") == "user"]
+    complaints = sum(1 for m in user_msgs if complaint_rx.search(m.get("content") or ""))
+    if complaints:
+        signals.append(f"{complaints} user message(s) used complaint/error language")
+
+    # Repeated near-duplicate questions (same first 40 chars) — a sign the
+    # user asked twice because the first answer didn't land.
+    prefixes = [
+        (m.get("content") or "")[:40].strip().lower()
+        for m in user_msgs
+        if (m.get("content") or "").strip()
+    ]
+    dup_count = sum(c - 1 for c in Counter(prefixes).values() if c > 1)
+    if dup_count:
+        signals.append(f"{dup_count} user message(s) appear to repeat earlier asks")
+    return signals
+
+
+def _heuristic_project_summary(
+    project_id: str,
+    run_date: str,
+    messages: List[Dict[str, Any]],
+    files_indexed: int,
+    new_files_attached: int,
+) -> str:
+    """Structured non-LLM summary. Reads real signals from the day's data so
+    the row is useful even when no model was reachable."""
+    user_msgs = [m for m in messages if m.get("role") == "user"]
+    asst_msgs = [m for m in messages if m.get("role") == "assistant"]
+
+    asks_section = "_No user activity in window._"
+    if user_msgs:
+        # First 5 unique user asks, trimmed
+        seen = set()
+        lines = []
+        for m in user_msgs:
+            t = (m.get("content") or "").strip().replace("\n", " ")
+            key = t[:60].lower()
+            if not t or key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"- {t[:160]}{'…' if len(t) > 160 else ''}")
+            if len(lines) >= 5:
+                break
+        asks_section = "\n".join(lines)
+
+    keywords = _top_keywords(messages)
+    themes_section = (
+        "\n".join(f"- `{w}` × {c}" for w, c in keywords)
+        if keywords else "_No content to analyze._"
+    )
+
+    friction = _user_friction_signals(messages)
+    friction_section = (
+        "\n".join(f"- {s}" for s in friction)
+        if friction else "_No obvious friction signals._"
+    )
+
+    lessons: List[str] = []
+    if not messages:
+        lessons.append("Project was idle today — nothing to learn.")
+    if new_files_attached:
+        lessons.append(
+            f"{new_files_attached} new file(s) appeared on the drive without going "
+            f"through the upload flow — operators are using the drop folder."
+        )
+    if files_indexed and files_indexed > 0:
+        lessons.append(f"{files_indexed} document(s) re-indexed; index is current.")
+    if friction:
+        lessons.append("Friction signals detected — review the asks above for retry patterns.")
+    if not lessons:
+        lessons.append("No notable lessons for the platform today.")
+
+    return (
+        f"# {project_id} — {run_date} (heuristic; no LLM reached)\n\n"
+        f"_Stats: {len(user_msgs)} user msg, {len(asst_msgs)} assistant msg, "
+        f"{files_indexed} files re-indexed, {new_files_attached} new files attached._\n\n"
+        f"## What users asked for\n{asks_section}\n\n"
+        f"## Where they hit friction\n{friction_section}\n\n"
+        f"## Recurring patterns or themes\n{themes_section}\n\n"
+        f"## Lessons learned for the platform\n"
+        + "\n".join(f"- {l}" for l in lessons)
+        + "\n"
+    )
+
+
+def _heuristic_global_summary(
+    run_date: str,
+    per_project: List[Dict[str, Any]],
+    total_files_indexed: int,
+    errors: List[str],
+) -> str:
+    if not per_project:
+        return (
+            f"# Global hydration — {run_date} (heuristic; no LLM reached)\n\n"
+            "## Activity at a glance\n- No projects had user activity today.\n\n"
+            "## Cross-project lessons learned\n- N/A.\n\n"
+            "## Platform-level action items\n- None.\n"
+        )
+    # Sort projects by message volume for "busiest"
+    busiest = sorted(
+        per_project, key=lambda p: p.get("messages_seen", 0), reverse=True
+    )[:5]
+    activity_lines = [
+        f"- **{p['project_id']}**: {p.get('messages_seen', 0)} msg, "
+        f"{p.get('files_indexed', 0)} files re-indexed, "
+        f"{p.get('new_files_attached', 0)} new files attached"
+        for p in busiest
+    ]
+    err_section = (
+        "\n".join(f"- `{e}`" for e in errors[:10])
+        if errors else "- No project-level failures.\n"
+    )
+    return (
+        f"# Global hydration — {run_date} (heuristic; no LLM reached)\n\n"
+        f"_Totals: {len(per_project)} projects active, "
+        f"{total_files_indexed} files re-indexed, {len(errors)} project errors._\n\n"
+        f"## Activity at a glance\n" + "\n".join(activity_lines) + "\n\n"
+        f"## Cross-project lessons learned\n"
+        f"- Per-project detail lives in the project-scoped rows; this rollup is "
+        f"heuristic and surfaces volume + error signal only.\n\n"
+        f"## Platform-level action items\n{err_section}\n"
     )
 
 

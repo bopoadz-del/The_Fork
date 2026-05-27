@@ -296,3 +296,220 @@ def test_block_is_registered():
     assert "hydration" in BLOCK_REGISTRY, (
         "HydrationBlock should be in BLOCK_REGISTRY — check app/blocks/__init__.py"
     )
+
+
+# ── Gap closure: drop-folder discovery ─────────────────────────────────────
+
+
+def _make_dropbox_file(tmp_path, project_id: str, filename: str, content: bytes = b"x"):
+    """Create a file under the convention path the discovery helper walks."""
+    import os
+
+    dropbox = os.path.join(str(tmp_path), "projects", project_id, "dropbox")
+    os.makedirs(dropbox, exist_ok=True)
+    p = os.path.join(dropbox, filename)
+    with open(p, "wb") as f:
+        f.write(content)
+    return p
+
+
+def _make_project(name: str = "test-project") -> str:
+    """Create a real project row and return its generated id."""
+    from app.core import projects as projects_store
+
+    projects_store.init_db()
+    p = projects_store.create_project(name=name, user_id="u1")
+    return p["id"]
+
+
+def test_discover_attaches_new_files(isolated_data_dir, monkeypatch):
+    """Files dropped under the convention path get auto-attached to the project."""
+    from app.core import projects as projects_store
+    from app.blocks.hydration import _discover_local_drive_files
+
+    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
+    pid = _make_project("X")
+
+    _make_dropbox_file(isolated_data_dir, pid, "spec.pdf", b"%PDF-1.4\n")
+    _make_dropbox_file(isolated_data_dir, pid, "plan.dwg", b"x")
+    _make_dropbox_file(isolated_data_dir, pid, "ignored.exe", b"x")  # disallowed
+    _make_dropbox_file(isolated_data_dir, pid, ".hidden", b"x")      # dotfile
+
+    count, errors = _discover_local_drive_files(pid)
+    assert count == 2, f"expected 2 attached, got {count} (errors: {errors})"
+    assert errors == []
+
+    docs = projects_store.list_documents(pid)
+    names = sorted(d["original_name"] for d in docs)
+    assert names == ["plan.dwg", "spec.pdf"]
+
+
+def test_discover_is_idempotent(isolated_data_dir, monkeypatch):
+    """Running discovery twice in a row does not re-attach the same files."""
+    from app.blocks.hydration import _discover_local_drive_files
+
+    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
+    pid = _make_project("I")
+    _make_dropbox_file(isolated_data_dir, pid, "a.pdf", b"%PDF\n")
+
+    first, _ = _discover_local_drive_files(pid)
+    second, _ = _discover_local_drive_files(pid)
+    assert first == 1
+    assert second == 0
+
+
+def test_discover_skips_when_dropbox_missing(isolated_data_dir, monkeypatch):
+    from app.blocks.hydration import _discover_local_drive_files
+
+    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
+    count, errors = _discover_local_drive_files("nope")
+    assert count == 0
+    assert errors == []
+
+
+def test_discover_oversize_file_recorded_as_error(isolated_data_dir, monkeypatch):
+    from app.blocks.hydration import _discover_local_drive_files
+
+    monkeypatch.setenv("LOCAL_DRIVE_ROOT", str(isolated_data_dir))
+    monkeypatch.setenv("HYDRATION_MAX_ATTACH_SIZE", "100")
+    pid = _make_project("O")
+    _make_dropbox_file(isolated_data_dir, pid, "big.pdf", b"x" * 500)
+
+    count, errors = _discover_local_drive_files(pid)
+    assert count == 0
+    assert any("oversize" in e for e in errors)
+
+
+# ── Gap closure: heuristic summary fallback ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_offline_fallback_produces_heuristic_summary(isolated_data_dir, monkeypatch):
+    """When ChatBlock returns offline_template, the row must contain a
+    structured heuristic summary — not just the offline placeholder."""
+    from app.blocks.hydration import HydrationBlock
+    from app.blocks import hydration as hydration_module
+    from app.core import hydration_store
+
+    target = "2026-05-26"
+    in_window = "2026-05-26T10:00:00Z"
+    _seed_conversation("proj-h", in_window, "Why is my BOQ empty?", "Looking now")
+    _seed_conversation("proj-h", in_window, "rebar quantity for level 3", "120 kg")
+
+    async def offline_chat(prompt, max_tokens=600):
+        return ("_offline placeholder_", "offline_template")
+
+    monkeypatch.setattr(hydration_module, "_call_chat", offline_chat)
+
+    block = HydrationBlock()
+    await block.execute({"operation": "run", "target_date": target}, {})
+
+    row = hydration_store.get_latest("project", "proj-h")
+    assert row is not None
+    md = row["summary_md"]
+    # Heuristic markers
+    assert "heuristic" in md.lower()
+    assert "## What users asked for" in md
+    assert "## Where they hit friction" in md
+    assert "## Recurring patterns or themes" in md
+    # Real signal extracted (one of the user messages used the word 'empty',
+    # which the friction-signal regex flags as complaint language)
+    assert "complaint" in md.lower()
+    # Keyword frequencies must show domain words (rebar, boq, etc.) not stopwords
+    assert "rebar" in md.lower() or "boq" in md.lower()
+    # The original placeholder is replaced, not concatenated.
+    assert "_offline placeholder_" not in md
+
+
+@pytest.mark.asyncio
+async def test_llm_path_uses_llm_summary_not_heuristic(isolated_data_dir, monkeypatch):
+    """If ChatBlock returns a real provider (deepseek/local_*), the LLM output
+    is preserved — the heuristic must NOT clobber it."""
+    from app.blocks.hydration import HydrationBlock
+    from app.blocks import hydration as hydration_module
+    from app.core import hydration_store
+
+    target = "2026-05-26"
+    in_window = "2026-05-26T10:00:00Z"
+    _seed_conversation("proj-l", in_window, "q", "a")
+
+    async def real_chat(prompt, max_tokens=600):
+        return ("## LLM-AUTHORED SUMMARY\n- one\n", "deepseek")
+
+    monkeypatch.setattr(hydration_module, "_call_chat", real_chat)
+    block = HydrationBlock()
+    await block.execute({"operation": "run", "target_date": target}, {})
+
+    row = hydration_store.get_latest("project", "proj-l")
+    assert "LLM-AUTHORED SUMMARY" in row["summary_md"]
+    assert "heuristic" not in row["summary_md"].lower()
+
+
+def test_heuristic_friction_detection():
+    """The friction-signal heuristic flags complaint language and repeats."""
+    from app.blocks.hydration import _user_friction_signals
+
+    msgs = [
+        {"role": "user", "content": "Why is this broken?"},
+        {"role": "assistant", "content": "Looking now"},
+        {"role": "user", "content": "Why is this broken?"},  # repeat of the prefix
+    ]
+    signals = _user_friction_signals(msgs)
+    assert any("complaint" in s.lower() for s in signals)
+    assert any("repeat" in s.lower() for s in signals)
+
+
+def test_heuristic_top_keywords_skips_stopwords():
+    from app.blocks.hydration import _top_keywords
+
+    msgs = [
+        {"role": "user", "content": "the rebar and the concrete should be fine"},
+        {"role": "user", "content": "rebar quantities for the concrete pour"},
+    ]
+    words = dict(_top_keywords(msgs))
+    assert "the" not in words
+    assert "and" not in words
+    assert "rebar" in words
+    assert "concrete" in words
+
+
+# ── Gap closure: timezone support ──────────────────────────────────────────
+
+
+def test_scheduler_tz_defaults_to_utc(monkeypatch):
+    from datetime import timezone as dt_timezone
+    from app.core import hydration_scheduler
+
+    monkeypatch.delenv("HYDRATION_TZ", raising=False)
+    assert hydration_scheduler._tz() is dt_timezone.utc
+
+
+def test_scheduler_tz_accepts_iana_zone(monkeypatch):
+    from app.core import hydration_scheduler
+
+    monkeypatch.setenv("HYDRATION_TZ", "Asia/Dubai")
+    tz = hydration_scheduler._tz()
+    # ZoneInfo objects carry a `.key`; UTC fallback would not.
+    assert getattr(tz, "key", None) == "Asia/Dubai"
+
+
+def test_scheduler_tz_falls_back_on_invalid(monkeypatch):
+    from datetime import timezone as dt_timezone
+    from app.core import hydration_scheduler
+
+    monkeypatch.setenv("HYDRATION_TZ", "Not/A_Zone")
+    assert hydration_scheduler._tz() is dt_timezone.utc
+
+
+def test_seconds_until_next_uses_local_clock(monkeypatch):
+    """1 AM in Asia/Dubai is a different absolute moment than 1 AM UTC. The
+    delay computation must respect the chosen zone, not silently use UTC."""
+    from app.core import hydration_scheduler
+
+    monkeypatch.setenv("HYDRATION_TZ", "Asia/Dubai")
+    dubai_tz = hydration_scheduler._tz()
+    utc_delay = hydration_scheduler._seconds_until_next(1, None)
+    dubai_delay = hydration_scheduler._seconds_until_next(1, dubai_tz)
+    # The two should not be equal (within a few seconds) — Dubai is +04:00,
+    # so its "1 AM local" is a different wall-clock moment than 1 AM UTC.
+    assert abs(utc_delay - dubai_delay) > 60

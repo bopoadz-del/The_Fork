@@ -15,8 +15,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Optional
+
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:  # pragma: no cover — zoneinfo is stdlib from 3.9
+    ZoneInfo = None  # type: ignore[assignment]
+    ZoneInfoNotFoundError = Exception  # type: ignore[assignment, misc]
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +35,9 @@ def _enabled() -> bool:
 
 
 def _hour_utc() -> int:
+    """Read the configured hour. The env var name still mentions UTC for
+    backwards compatibility, but the hour is interpreted in ``_tz()``'s
+    timezone — UTC by default, an IANA zone when ``HYDRATION_TZ`` is set."""
     try:
         h = int(os.getenv("HYDRATION_HOUR_UTC", "1"))
     except ValueError:
@@ -36,12 +45,42 @@ def _hour_utc() -> int:
     return max(0, min(h, 23))
 
 
-def _seconds_until_next(hour_utc: int) -> float:
-    now = datetime.now(timezone.utc)
-    target = now.replace(hour=hour_utc, minute=0, second=0, microsecond=0)
-    if target <= now:
-        target = target + timedelta(days=1)
-    return max(1.0, (target - now).total_seconds())
+def _tz() -> tzinfo:
+    """Resolve the timezone the hydration hour is interpreted in.
+
+    Set ``HYDRATION_TZ`` to an IANA zone name (e.g. ``Asia/Dubai``,
+    ``America/New_York``) to run the nightly pass during the local quiet
+    window for a construction site. Defaults to UTC. An invalid zone name
+    logs a warning and falls back to UTC rather than crashing the loop.
+    """
+    name = (os.getenv("HYDRATION_TZ") or "").strip()
+    if not name or name.upper() == "UTC":
+        return timezone.utc
+    if ZoneInfo is None:
+        logger.warning("HYDRATION_TZ=%s requested but zoneinfo unavailable; using UTC", name)
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        logger.warning("HYDRATION_TZ=%s is not a valid IANA zone; using UTC", name)
+        return timezone.utc
+
+
+def _seconds_until_next(hour: int, tz: Optional[tzinfo] = None) -> float:
+    """Seconds from now until the next ``hour:00`` in ``tz`` (default UTC).
+
+    Computing the target in the destination timezone (not UTC) is what makes
+    "1 AM Dubai" actually fire at 1 AM Dubai across DST transitions and
+    UTC-offset zones — converting once at fire-time is wrong because the next
+    occurrence in local time may be more or less than 24h away in UTC.
+    """
+    tz = tz or timezone.utc
+    now_local = datetime.now(tz)
+    target_local = now_local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target_local <= now_local:
+        target_local = target_local + timedelta(days=1)
+    delta = target_local - now_local
+    return max(1.0, delta.total_seconds())
 
 
 async def _run_one_pass() -> None:
@@ -67,10 +106,12 @@ async def _run_one_pass() -> None:
 
 async def _loop() -> None:
     hour = _hour_utc()
-    logger.info("hydration scheduler started, target hour = %02d:00 UTC", hour)
+    tz = _tz()
+    tz_label = getattr(tz, "key", None) or str(tz)
+    logger.info("hydration scheduler started, target = %02d:00 %s", hour, tz_label)
     while True:
         try:
-            delay = _seconds_until_next(hour)
+            delay = _seconds_until_next(hour, tz)
             logger.info("hydration: next run in %d seconds", int(delay))
             await asyncio.sleep(delay)
             await _run_one_pass()
