@@ -54,6 +54,15 @@
         .msg.assistant .bubble { background: #1a1a1a; color: #d0d0d0; border: 1px solid #2a2a2a; }
         .msg.error .bubble { background: #3a1a1a; color: #ff6666; border: 1px solid #5a2a2a; }
         .msg.system .bubble { background: #1a2a1a; color: #66ff66; border: 1px solid #2a5a2a; font-size: 13px; }
+        /* Routing-feedback footer (W4). Appears under each assistant bubble
+           once the answer is fully streamed in. Clicking "Wrong action"
+           reveals an inline input the user can type the correct action into. */
+        .feedback-footer { margin-top: 8px; font-size: 12px; color: #666; }
+        .feedback-footer button { background: transparent; color: #888; border: 1px solid #2a2a2a; border-radius: 6px; padding: 3px 8px; margin-right: 6px; cursor: pointer; font-size: 12px; }
+        .feedback-footer button:hover { color: #d0d0d0; border-color: #4a4a4a; }
+        .feedback-footer button.thanks { color: #66cc66; border-color: #2a4a2a; cursor: default; }
+        .feedback-correct-input { display: inline-flex; gap: 6px; margin-left: 4px; vertical-align: middle; }
+        .feedback-correct-input input { background: #1a1a1a; color: #d0d0d0; border: 1px solid #2a2a2a; border-radius: 6px; padding: 3px 8px; font-size: 12px; width: 180px; }
         .input-area { padding: 20px; border-top: 1px solid #1a1a1a; }
         .input-box { display: flex; gap: 12px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 12px; }
         input, textarea { flex: 1; background: transparent; border: none; color: #fff; font-size: 15px; outline: none; resize: none; min-height: 24px; }
@@ -699,6 +708,108 @@ function addMessage(text, role = 'assistant', { persist = true } = {}) {
     }
     return bubble; // caller can use this to mutate during streaming
 }
+
+// ── Routing-feedback footer (W4) ──────────────────────────────────────
+// POSTs corrections to /v1/feedback/route so the next train_router run
+// can consume them. The user types the correct action name into a free
+// text field — the backend accepts any string (smart_orchestrator
+// dispatches by action name, and unknown ones flow to the
+// intelligent_workflow fallback). Free text rather than a 40-item
+// dropdown keeps the UI light; future work can autocomplete from the
+// known action list.
+function addFeedbackFooter(bubble, userMessage, projectId) {
+    if (!bubble || !userMessage) return;
+    // Don't show feedback on the offline-template or error bubbles
+    if (bubble.querySelector('.feedback-footer')) return; // idempotent
+    const footer = document.createElement('div');
+    footer.className = 'feedback-footer';
+    footer.innerHTML = `
+        <span style="opacity:0.7;">Was the routing right?</span>
+        <button class="thumbs-up" title="Routing was correct">✓</button>
+        <button class="thumbs-down" title="Routing was wrong — tell us what it should be">✗ Wrong action</button>
+    `;
+    bubble.appendChild(footer);
+
+    footer.querySelector('.thumbs-up').onclick = () => {
+        // No backend write needed — every dispatch is already logged.
+        // Just acknowledge inline so the user knows the click registered.
+        footer.innerHTML = '<button class="thanks">✓ Thanks</button>';
+    };
+
+    footer.querySelector('.thumbs-down').onclick = () => {
+        const wrap = document.createElement('span');
+        wrap.className = 'feedback-correct-input';
+        wrap.innerHTML = `
+            <input type="text" placeholder="correct action (e.g. estimate_costs)" autofocus>
+            <button class="submit">Send</button>
+            <button class="cancel">×</button>
+        `;
+        // Replace the buttons with the input form
+        footer.innerHTML = '<span style="opacity:0.7;">What should it have done?</span>';
+        footer.appendChild(wrap);
+        const input = wrap.querySelector('input');
+        input.focus();
+
+        const submit = async () => {
+            const correctAction = input.value.trim();
+            if (!correctAction) { input.focus(); return; }
+            try {
+                const resp = await fetch(`${API_BASE}/v1/feedback/route`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${API_KEY}`,
+                    },
+                    body: JSON.stringify({
+                        message: userMessage,
+                        correct_action: correctAction,
+                        project_id: projectId || 'default',
+                    }),
+                });
+                if (!resp.ok) {
+                    throw new Error(`HTTP ${resp.status}`);
+                }
+                footer.innerHTML = `<button class="thanks">✓ Thanks — '${escapeHtml(correctAction)}' recorded</button>`;
+            } catch (err) {
+                footer.innerHTML = `<span style="color:#ff6666;">Failed to record: ${escapeHtml(err.message)}</span>`;
+            }
+        };
+
+        wrap.querySelector('.submit').onclick = submit;
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') submit();
+            else if (e.key === 'Escape') wrap.querySelector('.cancel').click();
+        });
+        wrap.querySelector('.cancel').onclick = () => {
+            // Restore the original prompt — user changed their mind
+            footer.innerHTML = `
+                <span style="opacity:0.7;">Was the routing right?</span>
+                <button class="thumbs-up" title="Routing was correct">✓</button>
+                <button class="thumbs-down" title="Routing was wrong — tell us what it should be">✗ Wrong action</button>
+            `;
+            // Re-bind handlers — recursive call is the simplest way
+            addFeedbackFooter._rebind(footer, userMessage, projectId);
+        };
+    };
+}
+
+// Internal helper for the cancel path — reattaches handlers without
+// recreating the DOM nodes. Pulled out so the onclick chain doesn't
+// capture stale closures.
+addFeedbackFooter._rebind = function(footer, userMessage, projectId) {
+    const up = footer.querySelector('.thumbs-up');
+    const down = footer.querySelector('.thumbs-down');
+    if (up) up.onclick = () => { footer.innerHTML = '<button class="thanks">✓ Thanks</button>'; };
+    if (down) down.onclick = () => {
+        // Re-dispatch through the main entry — bubble/userMessage/projectId
+        // are already in the lexical scope of the original call
+        footer.remove();
+        const newFooter = document.createElement('div');
+        newFooter.className = 'feedback-footer';
+        footer.parentElement?.appendChild(newFooter);
+        addFeedbackFooter(footer.parentElement, userMessage, projectId);
+    };
+};
 
 // The side panel is an on-demand artifacts surface (Roadmap V2 · Epic 4).
 // setOutcomes only fills its content; it does NOT show the panel — call
@@ -1802,6 +1913,10 @@ async function sendMessage() {
                 reasoningEl.classList.add('collapsed');
                 bubble.insertBefore(reasoningEl, bubble.firstChild);
             }
+            // Routing-feedback footer (W4) — only on successful answers so
+            // we don't ask for corrections on offline-template fallbacks.
+            // prompt + activeProjectId captured in closure from sendMessage.
+            try { addFeedbackFooter(bubble, prompt, activeProjectId); } catch (_) {}
             chatHistory.push({ role: 'assistant', content: finalText });
             saveHistory();
             // Plain reply — the answer lives in the chat thread, no panel.
