@@ -4,7 +4,7 @@ description: Project-aware conversational assistant — answers questions about 
 can_delegate: true
 icon: 🏗️
 model: deepseek-chat
-temperature: 0.2
+temperature: 0.7
 max_tokens: 1500
 allowed_blocks:
   - sympy_reasoning

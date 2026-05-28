@@ -31,4 +31,4 @@ def test_v1_block_detail_route_uses_block_info_handler():
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "chat"
-    assert data["config"]["version"] == "2.0.0"
+    assert data["config"]["version"] == "3.0.0"

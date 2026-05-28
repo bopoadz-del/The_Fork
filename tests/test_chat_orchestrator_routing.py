@@ -59,3 +59,82 @@ async def test_domain_hint_failure_does_not_break_chat(monkeypatch):
         assert out == msg  # unchanged
     finally:
         block_instances.pop("smart_orchestrator", None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Intent classification → heavy-reasoning routing
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The chat router's selective routing branch sends generative-intent requests
+# (≥0.5 confidence, action in GENERATIVE_INTENTS) to the heavy-reasoning agent
+# instead of the single-shot chat block. Q&A / smalltalk stays on the fast
+# path. These tests pin both behaviors so a future orchestrator-tuning pass
+# can't silently route "what is the total cost" through the slow agent loop.
+
+from app.core.action_router import (
+    GENERATIVE_INTENTS,
+    ROUTING_CONFIDENCE_THRESHOLD,
+    needs_planning,
+)
+from app.routers.chat import _classify_intent
+
+
+def test_needs_planning_requires_action():
+    assert needs_planning(None, 0.9) is False
+
+
+def test_needs_planning_requires_confidence_above_threshold():
+    # generate_wbs is in the whitelist but the score is too low.
+    assert needs_planning("generate_wbs", ROUTING_CONFIDENCE_THRESHOLD - 0.01) is False
+    assert needs_planning("generate_wbs", ROUTING_CONFIDENCE_THRESHOLD) is True
+
+
+def test_needs_planning_requires_generative_action():
+    # 'health_check' has a hint but is NOT a generative intent — must not route.
+    assert needs_planning("health_check", 0.99) is False
+
+
+def test_generative_intents_includes_wbs_and_workflow():
+    # Spec-anchored: these are the keystone generative intents that the plan
+    # explicitly approved. Lock them in so a typo can't quietly disable WBS.
+    assert "generate_wbs" in GENERATIVE_INTENTS
+    assert "intelligent_workflow" in GENERATIVE_INTENTS
+
+
+@pytest.mark.asyncio
+async def test_classify_wbs_message_routes_to_heavy_reasoning():
+    """The user's 'create a 200 activities schedule' should classify as a
+    generative intent above the routing threshold — i.e. heavy reasoning."""
+    action, confidence = await _classify_intent(
+        "Create a 200 activities schedule for this RFP."
+    )
+    # Orchestrator should pick generate_wbs (or another generative action) and
+    # score it ≥ ROUTING_CONFIDENCE_THRESHOLD.
+    assert action is not None
+    assert needs_planning(action, confidence), (
+        f"expected routing path for WBS phrasing, got action={action} confidence={confidence}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_classify_total_cost_stays_on_fast_path():
+    """Plain Q&A like 'what is the total cost' should NOT route to the agent
+    — either no classification or below threshold."""
+    action, confidence = await _classify_intent("What is the total cost?")
+    assert not needs_planning(action, confidence), (
+        f"plain Q&A unexpectedly routed: action={action} confidence={confidence}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_classify_smalltalk_stays_on_fast_path():
+    action, confidence = await _classify_intent("Hello, how are you today?")
+    assert not needs_planning(action, confidence)
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_robust_to_empty_prompt():
+    action, confidence = await _classify_intent("")
+    assert action is None
+    assert confidence == 0.0
+    assert not needs_planning(action, confidence)

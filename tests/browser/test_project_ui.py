@@ -51,8 +51,10 @@ def test_create_project_from_ui(app_page):
     )
     active = app_page.locator("#projectsList .project.active").inner_text()
     assert name in active
-    # Selecting a project flips on project mode.
-    assert app_page.locator("#projectModeToggle").is_checked()
+    # The pre-conversational UI used a `#projectModeToggle` checkbox to indicate
+    # project mode was on; the toggle was removed (see test_project_ui.py
+    # test_ui_no_longer_has_a_visible_project_mode_toggle). Project scoping is
+    # now implicit via the `active` class above.
 
 
 def test_attaching_a_file_opens_no_panel(app_page, tmp_path):

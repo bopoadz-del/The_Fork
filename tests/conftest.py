@@ -23,6 +23,22 @@ except ImportError:
 # The rate limiter's own tests re-enable it explicitly via monkeypatch.
 os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
 
+# Isolate the suite's DATA_DIR so tests never write to the live ./data/ — the
+# projects store, doc index, agent memory, and upload dir all derive their
+# location from $DATA_DIR. Without this, every test that creates a project
+# landed a row in the user's live projects.db (we found 2089 leaked rows
+# from prior runs and 1806 synthetic `{hex}_name.pdf` fixture files). The
+# override happens at collection time, BEFORE app modules import, so the
+# resolved path on first read is the temp directory.
+import tempfile as _tempfile
+_TEST_DATA_DIR = _tempfile.mkdtemp(prefix="thefork-tests-")
+# Force the override — start-local.sh sets DATA_DIR=$PWD/data so a developer
+# running pytest in the same shell after the server would otherwise inherit
+# the live data dir.
+_existing = os.environ.get("DATA_DIR", "")
+if not _existing or os.path.abspath(_existing) == os.path.abspath("./data"):
+    os.environ["DATA_DIR"] = _TEST_DATA_DIR
+
 @pytest.fixture
 def sample_text():
     return "Hello, this is a test document for Cerebrum Blocks."

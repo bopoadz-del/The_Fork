@@ -34,6 +34,31 @@ def _matches_keyword(kw: str, text: str) -> bool:
 ACTION_PATTERNS: List[Tuple[str, List[str]]] = [
     # BOQ / Cost
     ("boq_process",           ["boq", "bill of quantities", "bill of quantity", "quantities sheet", "cost sheet", "price list", ".xlsx", ".csv"]),
+    # WBS / schedule generation — matched ahead of extract_quantities so
+    # "200 activities" / "schedule" requests don't fall through to QTO.
+    # Keywords cover the real-world phrasings: "L2 schedule", "level 2 schedule",
+    # "300 activities" (any 3-digit count), "draft schedule", etc. Previously
+    # narrow patterns missed "create L2 schedule with around 300 activities"
+    # which scored 0 and went to the single-shot fast path — where the LLM
+    # invents manpower histograms because it can't call generate_wbs.
+    ("generate_wbs",          [
+        "wbs", "work breakdown",
+        # Activity-count phrasings — any "N activities" / "N tasks".
+        "activities schedule", "activity schedule",
+        "200 activities", "300 activities", "400 activities", "500 activities",
+        "100 activities", "150 activities", "250 activities", "350 activities",
+        "schedule activities",
+        # Action verbs + schedule
+        "create schedule", "generate schedule", "build schedule", "draft schedule",
+        "produce schedule", "make schedule", "develop schedule", "prepare schedule",
+        "schedule template", "activity list",
+        # Schedule levels (L1/L2/L3/L4)
+        "l1 schedule", "l2 schedule", "l3 schedule", "l4 schedule",
+        "level 1 schedule", "level 2 schedule", "level 3 schedule", "level 4 schedule",
+        # Construction-specific
+        "construction schedule", "project schedule", "master schedule",
+        "baseline schedule", "epc schedule",
+    ]),
     # Combined "extract_quantities" entry — there used to be two; the dedupe
     # guard in _match_actions silently dropped the second list. Merged here.
     ("extract_quantities",    ["extract quantities", "take off", "qto", "quantity take", "measure", "count items", "area calculation", "room area", "floor area", "calculate area"]),

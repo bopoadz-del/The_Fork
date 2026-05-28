@@ -321,10 +321,51 @@ class ConstructionContainer(UniversalContainer):
         }
     
     async def _process_bill_of_materials(self, input_data: Any, params: Dict) -> Dict:
-        return {"status": "error", "doc_type": "bom", "error": "bill_of_materials processing not implemented yet"}
+        """A BOM is a BOQ in everything but name — same shape (line items,
+        quantities, units, rates). Delegate to boq_processor, which already
+        knows how to parse Excel/CSV/PDF bills."""
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        file_path = (
+            data.get("file_path") if isinstance(data, dict) else None
+        ) or p.get("file_path") or (input_data if isinstance(input_data, str) else None)
+        block = self._resolve_block("boq_processor")
+        if block is None:
+            return {"status": "error", "doc_type": "bom", "error": "boq_processor block unavailable"}
+        result = await block.process({"file_path": file_path} if file_path else data, p)
+        if isinstance(result, dict):
+            result.setdefault("doc_type", "bom")
+        return result
 
     async def _process_report(self, input_data: Any, params: Dict) -> Dict:
-        return {"status": "error", "doc_type": "report", "error": "report processing not implemented yet"}
+        """Parse the report through document_engine so its raw text reaches
+        the LLM (the report classifier covers RFI logs, daily/weekly reports,
+        progress reports — free-form prose, no specific schema to extract).
+        """
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        file_path = (
+            data.get("file_path") if isinstance(data, dict) else None
+        ) or p.get("file_path") or (input_data if isinstance(input_data, str) else None)
+        if not file_path:
+            return {"status": "error", "doc_type": "report", "error": "No file_path provided"}
+        block = self._resolve_block("document_engine")
+        if block is None:
+            return {"status": "error", "doc_type": "report", "error": "document_engine block unavailable"}
+        ext = os.path.splitext(file_path)[1].lower()
+        engine_params = dict(p)
+        if ext == ".pdf":
+            engine_params["pdf_path"] = file_path
+        elif ext in (".docx", ".doc"):
+            engine_params["docx_path"] = file_path
+        elif ext in (".xlsx", ".xls"):
+            engine_params["xlsx_path"] = file_path
+        else:
+            engine_params["pdf_path"] = file_path  # best-guess fallback
+        result = await block.process({}, engine_params)
+        if isinstance(result, dict):
+            result.setdefault("doc_type", "report")
+        return result
 
     async def _process_ifc(self, input_data: Any, params: Dict) -> Dict:
         # Route to the real BIM analysis pipeline. The dispatcher in process_document
@@ -624,17 +665,32 @@ class ConstructionContainer(UniversalContainer):
         }
     
     def _resolve_block(self, name: str):
-        """Resolve a block by name — dependency injection first, registry fallback.
+        """Resolve a block by name — dependency injection first, then the
+        platform singleton (pre-wired with its own deps), then a bare
+        class-instantiation as last resort.
 
-        Returns the block instance, or None if it is unavailable from both
-        the injected dependencies and the global BLOCK_REGISTRY.
+        Returning bare class-instantiations is what broke delegation chains
+        like construction._process_report → document_engine: the fresh
+        document_engine had no `pdf`/`ocr` wired and silently returned
+        empty content. Going through `get_block_instance` reuses the
+        singleton that the dependency container has already wired with its
+        own `requires`.
         """
         block = self.get_dep(name)
-        if block is None:
-            from app.blocks import BLOCK_REGISTRY
-            block_cls = BLOCK_REGISTRY.get(name)
-            block = block_cls() if block_cls else None
-        return block
+        if block is not None:
+            return block
+        # Prefer the platform's wired singleton.
+        try:
+            from app.dependencies import get_block_instance
+            return get_block_instance(name)
+        except KeyError:
+            pass
+        except Exception:
+            pass
+        # Last resort — bare class, no deps wired.
+        from app.blocks import BLOCK_REGISTRY
+        block_cls = BLOCK_REGISTRY.get(name)
+        return block_cls() if block_cls else None
 
     def _get_primavera_parser_block(self):
         """Resolve the primavera_parser block — dependency injection first, registry fallback."""
@@ -2381,7 +2437,39 @@ class ConstructionContainer(UniversalContainer):
 
     # PROCUREMENT & SUBCONTRACTOR
     async def procurement_analysis(self, input_data: Any, params: Dict) -> Dict:
-        return {"status": "error", "action": "procurement_analysis", "error": "procurement_analysis not implemented yet"}
+        """Procurement analysis = generate the procurement list + run the
+        supplier optimiser on top. Both methods exist on this container — wire
+        them in sequence so 'procurement_analysis' delivers a real artefact
+        (grouped material list + supplier comparison) instead of a stub error.
+        """
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+
+        # Step 1 — build the procurement list from the quantities / line items
+        # in input_data (procurement_list_generator handles the grouping).
+        list_result = await self.procurement_list_generator(data, p)
+        if isinstance(list_result, dict) and list_result.get("status") == "error":
+            return {
+                "status": "error",
+                "action": "procurement_analysis",
+                "stage": "list_generation",
+                "error": list_result.get("error", "procurement list generation failed"),
+            }
+
+        # Step 2 — optimisation. The optimiser reads procurement_list / items
+        # off input_data, so merge the list result back in before calling.
+        opt_input = dict(data)
+        if isinstance(list_result, dict):
+            opt_input.setdefault("procurement_list", list_result.get("procurement_list") or list_result.get("items"))
+            opt_input.setdefault("items", list_result.get("items"))
+        opt_result = await self.procurement_optimizer(opt_input, p)
+
+        return {
+            "status": "success",
+            "action": "procurement_analysis",
+            "procurement_list": list_result if isinstance(list_result, dict) else {"raw": list_result},
+            "optimization": opt_result if isinstance(opt_result, dict) else {"raw": opt_result},
+        }
 
     # CHANGE ORDER / VARIATION
     async def change_order_impact(self, input_data: Any, params: Dict) -> Dict:
@@ -5980,27 +6068,38 @@ Total Extension of Time Sought: {total_delay} days
         }
 
     async def _query_bim_location(self, bim_file: str, location: str) -> List[Dict]:
-        """Query IFC for elements at a specific location via the bim_extractor block.
+        """Query IFC for elements at a specific location via the bim_extractor.
 
-        Returns an error dict (not a list) when the BIM extractor is unavailable
-        or cannot answer a spatial query — callers must handle this contract drift.
+        Always returns a list (possibly empty) to keep the contract honest
+        with the `-> List[Dict]` annotation. The caller `_compare_photo_to_bim`
+        iterates this and divides by `len(...)` — a dict return would have
+        iterated key names and miscounted match confidence.
+
+        The most recent error message (if any) is stashed on
+        `self._last_bim_query_error` so callers that care can surface it
+        without polluting the return value.
         """
+        self._last_bim_query_error: Optional[str] = None
         block = self._resolve_block("bim_extractor")
         if block is None:
-            return {"status": "error", "error": "BIM extractor not configured for spatial queries"}
+            self._last_bim_query_error = "BIM extractor not configured for spatial queries"
+            return []
         try:
             result = await block.process(
                 {"file_path": bim_file},
                 {"action": "query_location", "location": location},
             )
         except Exception as exc:
-            return {"status": "error", "error": f"BIM extractor query failed: {exc}"}
+            self._last_bim_query_error = f"BIM extractor query failed: {exc}"
+            return []
         if not isinstance(result, dict) or result.get("status") != "success":
-            return {"status": "error", "error": "BIM extractor not configured for spatial queries"}
+            self._last_bim_query_error = (
+                (result or {}).get("error") if isinstance(result, dict)
+                else "BIM extractor returned malformed response"
+            )
+            return []
         elements = result.get("elements")
-        if isinstance(elements, list):
-            return elements
-        return {"status": "error", "error": "BIM extractor not configured for spatial queries"}
+        return elements if isinstance(elements, list) else []
 
     async def extract_measurements(self, input_data: Any, params: Dict) -> Dict:
         """Extract measurements from construction drawings"""
@@ -6162,6 +6261,895 @@ Total Extension of Time Sought: {total_delay} days
         return await block.process(input_data, params)
 
     # ────────────────────────────────────────────────────────────────────────
+    # WBS GENERATION — deterministic templates + CPM
+    # ────────────────────────────────────────────────────────────────────────
+
+    # WBS templates. Each project_type maps to a list of phases:
+    #   [(phase_name, [(subphase_name, [(activity_name, duration_days,
+    #                                    resources_list, zoneable_bool), ...]), ...]), ...]
+    # - duration_days: rule-of-thumb working-day duration (replace with
+    #   project-specific data when available).
+    # - resources_list: list of trade tags (strings).
+    # - zoneable_bool: if True, the activity is repeated across zones until
+    #   the network reaches the requested target_count.
+    _WBS_TEMPLATES: Dict[str, List[Tuple[str, List[Tuple[str, List[Tuple[str, int, List[str], bool]]]]]]] = {
+        "data_center": [
+            ("Site Preparation", [
+                ("Survey & Permits", [
+                    ("Site survey & topographic mapping", 14, ["surveyor", "drone_team"], False),
+                    ("Geotechnical investigation", 21, ["geotech"], False),
+                    ("Environmental impact assessment", 14, ["env_consultant"], False),
+                    ("Permit application submission", 7, ["pm"], False),
+                    ("Permit approval & sign-off", 30, ["pm"], False),
+                ]),
+                ("Earthworks", [
+                    ("Site clearance & demolition", 14, ["excavator", "labor"], True),
+                    ("Bulk excavation", 21, ["excavator", "trucks"], True),
+                    ("Cut & fill grading", 14, ["dozer", "compactor"], True),
+                    ("Soil stabilization", 10, ["compactor", "labor"], True),
+                ]),
+                ("Utilities Diversion", [
+                    ("Existing utilities survey", 7, ["surveyor"], False),
+                    ("Power line diversion", 14, ["electrician", "labor"], False),
+                    ("Water main relocation", 10, ["plumber", "labor"], False),
+                    ("Telecoms duct rerouting", 7, ["telecoms", "labor"], False),
+                ]),
+                ("Access Roads", [
+                    ("Haul road formation", 14, ["dozer", "labor"], True),
+                    ("Sub-base & base course", 10, ["paver", "compactor"], True),
+                    ("Site fencing & gates", 7, ["fencing_crew"], False),
+                ]),
+                ("Site Security", [
+                    ("Security cabin install", 5, ["labor"], False),
+                    ("CCTV & access control deployment", 10, ["security_tech"], False),
+                ]),
+            ]),
+            ("Foundations", [
+                ("Piling", [
+                    ("Pile setting-out", 5, ["surveyor"], True),
+                    ("Pile boring", 28, ["piling_rig", "labor"], True),
+                    ("Pile reinforcement cage install", 14, ["steel_fixer"], True),
+                    ("Pile concrete pour", 14, ["concrete_crew"], True),
+                    ("Pile integrity testing", 7, ["qa_inspector"], True),
+                ]),
+                ("Pile Caps", [
+                    ("Pile cap excavation & formwork", 10, ["formwork_crew"], True),
+                    ("Pile cap reinforcement", 10, ["steel_fixer"], True),
+                    ("Pile cap concrete pour & cure", 14, ["concrete_crew"], True),
+                ]),
+                ("Ground Floor Slab", [
+                    ("Slab base preparation", 7, ["labor"], True),
+                    ("Slab reinforcement", 14, ["steel_fixer"], True),
+                    ("Slab concrete pour", 14, ["concrete_crew"], True),
+                    ("Slab curing & sealing", 14, ["labor"], True),
+                ]),
+                ("Equipment Pads", [
+                    ("Generator pad formwork & pour", 10, ["concrete_crew"], True),
+                    ("Chiller pad formwork & pour", 10, ["concrete_crew"], True),
+                    ("Transformer pad formwork & pour", 10, ["concrete_crew"], True),
+                ]),
+                ("Cable Trenches", [
+                    ("Trench excavation", 10, ["excavator"], True),
+                    ("Trench lining & ducts", 7, ["labor"], True),
+                    ("Trench backfill", 5, ["labor"], True),
+                ]),
+            ]),
+            ("Structure", [
+                ("Steel Frame", [
+                    ("Steel column erection", 21, ["steel_erector", "crane"], True),
+                    ("Primary beam install", 21, ["steel_erector", "crane"], True),
+                    ("Secondary beam & bracing", 14, ["steel_erector"], True),
+                    ("Steel connections & bolt-up", 10, ["steel_erector"], True),
+                ]),
+                ("Roof Decking", [
+                    ("Roof deck install", 14, ["roofing_crew"], True),
+                    ("Roof deck welding & fixing", 7, ["welder"], True),
+                ]),
+                ("Floor Slabs", [
+                    ("Composite deck install", 10, ["labor"], True),
+                    ("Floor slab reinforcement", 10, ["steel_fixer"], True),
+                    ("Floor slab concrete pour", 10, ["concrete_crew"], True),
+                ]),
+                ("Stair Cores", [
+                    ("Stair core formwork", 14, ["formwork_crew"], False),
+                    ("Stair core reinforcement & pour", 14, ["concrete_crew"], False),
+                    ("Stair install", 10, ["labor"], False),
+                ]),
+                ("Wall Panels", [
+                    ("Precast wall panel install", 14, ["crane", "labor"], True),
+                    ("Wall panel sealing & jointing", 7, ["labor"], True),
+                ]),
+            ]),
+            ("Building Envelope", [
+                ("Cladding", [
+                    ("Cladding rail install", 10, ["cladding_crew"], True),
+                    ("Cladding panel install", 21, ["cladding_crew"], True),
+                    ("Cladding sealant & flashings", 7, ["cladding_crew"], True),
+                ]),
+                ("Roofing", [
+                    ("Roof insulation install", 7, ["roofing_crew"], True),
+                    ("Roof membrane install", 14, ["roofing_crew"], True),
+                    ("Roof drainage install", 7, ["plumber"], True),
+                ]),
+                ("Glazing", [
+                    ("Window frame install", 10, ["glazier"], True),
+                    ("Glazing install & sealing", 10, ["glazier"], True),
+                ]),
+                ("Insulation", [
+                    ("Wall insulation install", 10, ["labor"], True),
+                ]),
+                ("Weatherproofing", [
+                    ("Building envelope air-tightness test", 5, ["qa_inspector"], False),
+                ]),
+            ]),
+            ("Mechanical", [
+                ("HVAC Plant", [
+                    ("Chiller install", 14, ["mech_crew", "crane"], True),
+                    ("AHU install", 10, ["mech_crew"], True),
+                    ("Pump skid install", 7, ["mech_crew"], True),
+                ]),
+                ("Chilled Water", [
+                    ("Chilled water pipe install", 21, ["pipefitter"], True),
+                    ("Chilled water pipe insulation", 10, ["insulator"], True),
+                    ("Chilled water pressure test", 5, ["qa_inspector"], True),
+                ]),
+                ("CRAC Units", [
+                    ("CRAC unit positioning", 7, ["mech_crew"], True),
+                    ("CRAC unit connection & test", 7, ["mech_crew"], True),
+                ]),
+                ("Ductwork", [
+                    ("Ductwork install", 21, ["mech_crew"], True),
+                    ("Duct insulation", 10, ["insulator"], True),
+                    ("Duct leakage test", 5, ["qa_inspector"], True),
+                ]),
+                ("BMS Integration", [
+                    ("BMS device install", 14, ["controls_tech"], True),
+                    ("BMS programming & commissioning", 14, ["controls_tech"], False),
+                ]),
+            ]),
+            ("Electrical", [
+                ("MV Switchgear", [
+                    ("MV switchgear positioning", 7, ["elec_crew", "crane"], True),
+                    ("MV switchgear cable termination", 10, ["elec_crew"], True),
+                    ("MV switchgear testing", 7, ["elec_test_eng"], True),
+                ]),
+                ("Transformers", [
+                    ("Transformer positioning", 5, ["elec_crew", "crane"], True),
+                    ("Transformer connection", 7, ["elec_crew"], True),
+                    ("Transformer oil & testing", 7, ["elec_test_eng"], True),
+                ]),
+                ("UPS Systems", [
+                    ("UPS module install", 10, ["elec_crew"], True),
+                    ("UPS battery install", 7, ["elec_crew"], True),
+                    ("UPS commissioning", 7, ["elec_test_eng"], True),
+                ]),
+                ("PDUs", [
+                    ("PDU positioning", 5, ["elec_crew"], True),
+                    ("PDU cable termination", 7, ["elec_crew"], True),
+                ]),
+                ("Cable Containment", [
+                    ("Cable tray install", 14, ["elec_crew"], True),
+                    ("Cable basket install", 10, ["elec_crew"], True),
+                ]),
+                ("Lighting", [
+                    ("Lighting fixture install", 14, ["elec_crew"], True),
+                    ("Emergency lighting install", 7, ["elec_crew"], True),
+                ]),
+            ]),
+            ("Fire & Life Safety", [
+                ("Detection", [
+                    ("Smoke detector install", 7, ["fire_tech"], True),
+                    ("VESDA system install", 10, ["fire_tech"], True),
+                ]),
+                ("Suppression", [
+                    ("Suppression pipework install", 14, ["fire_tech"], True),
+                    ("Suppression nozzle install", 7, ["fire_tech"], True),
+                    ("Suppression discharge test", 5, ["qa_inspector"], True),
+                ]),
+                ("Emergency Lighting", [
+                    ("Emergency lighting test", 5, ["elec_test_eng"], True),
+                ]),
+                ("Egress Signage", [
+                    ("Egress signage install", 5, ["labor"], False),
+                ]),
+            ]),
+            ("White Space Fit-out", [
+                ("Raised Floor", [
+                    ("Raised floor pedestal install", 14, ["fit_out_crew"], True),
+                    ("Raised floor tile install", 14, ["fit_out_crew"], True),
+                ]),
+                ("Cable Trays", [
+                    ("Underfloor cable tray install", 10, ["elec_crew"], True),
+                    ("Overhead cable tray install", 10, ["elec_crew"], True),
+                ]),
+                ("Server Cabinets", [
+                    ("Cabinet positioning", 7, ["fit_out_crew"], True),
+                    ("Cabinet anchoring & alignment", 7, ["fit_out_crew"], True),
+                ]),
+                ("Hot/Cold Aisle Containment", [
+                    ("Containment frame install", 7, ["fit_out_crew"], True),
+                    ("Containment panel & roof install", 7, ["fit_out_crew"], True),
+                ]),
+                ("Power Distribution", [
+                    ("In-row PDU install", 7, ["elec_crew"], True),
+                    ("Whip & receptacle install", 7, ["elec_crew"], True),
+                ]),
+            ]),
+            ("IT Infrastructure", [
+                ("Structured Cabling", [
+                    ("Copper backbone install", 14, ["it_cabling"], True),
+                    ("Patch lead install & label", 10, ["it_cabling"], True),
+                ]),
+                ("Fibre Backbone", [
+                    ("Fibre cable pull", 14, ["it_cabling"], True),
+                    ("Fibre splicing & termination", 14, ["it_cabling"], True),
+                    ("Fibre OTDR test", 5, ["it_cabling"], True),
+                ]),
+                ("Patch Panels", [
+                    ("Patch panel install", 7, ["it_cabling"], True),
+                ]),
+                ("Network Hardware", [
+                    ("Top-of-rack switch install", 7, ["it_cabling"], True),
+                    ("Core switch install", 7, ["it_cabling"], False),
+                ]),
+            ]),
+            ("Commissioning", [
+                ("L1 Equipment", [
+                    ("L1 mechanical equipment verification", 10, ["cx_agent"], True),
+                    ("L1 electrical equipment verification", 10, ["cx_agent"], True),
+                ]),
+                ("L2 System", [
+                    ("L2 mechanical system test", 10, ["cx_agent"], True),
+                    ("L2 electrical system test", 10, ["cx_agent"], True),
+                ]),
+                ("L3 Integrated", [
+                    ("L3 integrated systems test", 14, ["cx_agent"], False),
+                ]),
+                ("L4 IST", [
+                    ("L4 integrated systems testing", 14, ["cx_agent"], False),
+                ]),
+                ("L5 Pull-the-plug", [
+                    ("L5 pull-the-plug test", 7, ["cx_agent"], False),
+                ]),
+            ]),
+            ("Handover & Close-out", [
+                ("Snagging", [
+                    ("Snag list compilation", 10, ["qa_inspector"], False),
+                    ("Snag rectification", 14, ["labor"], False),
+                ]),
+                ("As-builts", [
+                    ("As-built drawing production", 14, ["draughtsman"], False),
+                ]),
+                ("O&M Manuals", [
+                    ("O&M manual compilation", 14, ["pm"], False),
+                ]),
+                ("Training", [
+                    ("Operations team training", 7, ["pm"], False),
+                ]),
+                ("Final Account", [
+                    ("Final account agreement", 14, ["qs"], False),
+                    ("Project handover certificate", 5, ["pm"], False),
+                ]),
+            ]),
+        ],
+        "solar_plant": [
+            ("Site Preparation", [
+                ("Survey & Permits", [
+                    ("Solar resource assessment", 14, ["solar_eng"], False),
+                    ("Topographic survey", 10, ["surveyor"], False),
+                    ("Grid connection permit", 30, ["pm"], False),
+                    ("Environmental permit", 21, ["env_consultant"], False),
+                ]),
+                ("Earthworks", [
+                    ("Site clearance", 14, ["excavator"], True),
+                    ("Site grading", 14, ["dozer"], True),
+                    ("Access road construction", 14, ["paver"], True),
+                ]),
+            ]),
+            ("Tracker Foundations", [
+                ("Pile Layout", [
+                    ("Pile setting-out", 7, ["surveyor"], True),
+                    ("Pile driving", 21, ["piling_rig"], True),
+                    ("Pile pull-out test", 5, ["qa_inspector"], True),
+                ]),
+            ]),
+            ("Tracker Install", [
+                ("Mechanical", [
+                    ("Tracker torque tube install", 21, ["mech_crew"], True),
+                    ("Tracker motor & gearbox install", 14, ["mech_crew"], True),
+                    ("Tracker controller install", 10, ["controls_tech"], True),
+                ]),
+            ]),
+            ("PV Modules", [
+                ("Module Mounting", [
+                    ("Module clamp install", 21, ["pv_crew"], True),
+                    ("Module install & torque", 28, ["pv_crew"], True),
+                ]),
+            ]),
+            ("DC Electrical", [
+                ("String Wiring", [
+                    ("DC string cable install", 21, ["elec_crew"], True),
+                    ("String box install", 14, ["elec_crew"], True),
+                    ("DC combiner install", 10, ["elec_crew"], True),
+                ]),
+            ]),
+            ("Inverters", [
+                ("Inverter Install", [
+                    ("Inverter pad & install", 14, ["elec_crew", "crane"], True),
+                    ("Inverter cable termination", 7, ["elec_crew"], True),
+                    ("Inverter commissioning", 7, ["elec_test_eng"], True),
+                ]),
+            ]),
+            ("AC Collection", [
+                ("MV Reticulation", [
+                    ("AC collector cable trenching", 21, ["excavator"], True),
+                    ("MV cable pull", 14, ["elec_crew"], True),
+                    ("MV cable termination", 10, ["elec_crew"], True),
+                ]),
+            ]),
+            ("Substation", [
+                ("Substation Build", [
+                    ("Substation foundation", 21, ["concrete_crew"], False),
+                    ("Substation transformer install", 14, ["elec_crew", "crane"], False),
+                    ("Substation switchgear install", 14, ["elec_crew"], False),
+                    ("Substation tie-in to grid", 14, ["elec_crew"], False),
+                ]),
+            ]),
+            ("Commissioning", [
+                ("System Test", [
+                    ("Performance ratio testing", 14, ["cx_agent"], False),
+                    ("SCADA integration test", 7, ["controls_tech"], False),
+                    ("Grid compliance test", 7, ["elec_test_eng"], False),
+                ]),
+            ]),
+            ("Handover", [
+                ("Close-out", [
+                    ("Snag rectification", 10, ["labor"], False),
+                    ("As-built documentation", 10, ["draughtsman"], False),
+                    ("Final handover certificate", 5, ["pm"], False),
+                ]),
+            ]),
+        ],
+        "wind_farm": [
+            ("Site Preparation", [
+                ("Survey & Permits", [
+                    ("Wind resource assessment", 30, ["wind_eng"], False),
+                    ("Site topographic survey", 14, ["surveyor"], False),
+                    ("Grid connection permit", 30, ["pm"], False),
+                ]),
+                ("Access Roads & Crane Pads", [
+                    ("Access road construction", 21, ["paver"], True),
+                    ("Crane pad construction", 14, ["concrete_crew"], True),
+                ]),
+            ]),
+            ("Turbine Foundations", [
+                ("Foundation Build", [
+                    ("Foundation excavation", 14, ["excavator"], True),
+                    ("Foundation reinforcement", 14, ["steel_fixer"], True),
+                    ("Foundation concrete pour", 14, ["concrete_crew"], True),
+                    ("Foundation curing", 21, ["labor"], True),
+                ]),
+            ]),
+            ("Tower Erection", [
+                ("Tower Sections", [
+                    ("Tower section delivery", 7, ["logistics"], True),
+                    ("Tower section bottom install", 7, ["crane", "mech_crew"], True),
+                    ("Tower section mid install", 7, ["crane", "mech_crew"], True),
+                    ("Tower section top install", 7, ["crane", "mech_crew"], True),
+                ]),
+            ]),
+            ("Nacelle & Rotor", [
+                ("Nacelle Install", [
+                    ("Nacelle lift & install", 7, ["crane", "mech_crew"], True),
+                    ("Nacelle internal hookup", 7, ["mech_crew"], True),
+                ]),
+                ("Rotor Install", [
+                    ("Hub assembly", 7, ["mech_crew"], True),
+                    ("Blade attachment", 7, ["crane", "mech_crew"], True),
+                    ("Rotor lift & install", 5, ["crane", "mech_crew"], True),
+                ]),
+            ]),
+            ("Electrical & Collection", [
+                ("Inter-array Cabling", [
+                    ("Inter-array cable trenching", 21, ["excavator"], True),
+                    ("Inter-array cable pull & termination", 14, ["elec_crew"], True),
+                ]),
+                ("Substation", [
+                    ("Substation foundation & build", 28, ["concrete_crew"], False),
+                    ("Substation transformer install", 14, ["elec_crew", "crane"], False),
+                    ("Substation tie-in", 14, ["elec_crew"], False),
+                ]),
+            ]),
+            ("Commissioning", [
+                ("Turbine Commissioning", [
+                    ("Turbine cold commissioning", 7, ["cx_agent"], True),
+                    ("Turbine hot commissioning", 7, ["cx_agent"], True),
+                    ("Grid compliance test", 5, ["elec_test_eng"], True),
+                ]),
+            ]),
+            ("Handover", [
+                ("Close-out", [
+                    ("Snag rectification", 10, ["labor"], False),
+                    ("As-built documentation", 14, ["draughtsman"], False),
+                    ("Final handover", 5, ["pm"], False),
+                ]),
+            ]),
+        ],
+        "building": [
+            ("Site Preparation", [
+                ("Survey & Permits", [
+                    ("Topographic survey", 7, ["surveyor"], False),
+                    ("Geotechnical investigation", 14, ["geotech"], False),
+                    ("Building permit", 30, ["pm"], False),
+                ]),
+                ("Earthworks", [
+                    ("Site clearance", 7, ["excavator"], True),
+                    ("Bulk excavation", 14, ["excavator"], True),
+                    ("Compaction & grading", 7, ["compactor"], True),
+                ]),
+            ]),
+            ("Substructure", [
+                ("Foundations", [
+                    ("Foundation excavation", 10, ["excavator"], True),
+                    ("Foundation reinforcement", 10, ["steel_fixer"], True),
+                    ("Foundation concrete pour", 10, ["concrete_crew"], True),
+                ]),
+                ("Basement Slab", [
+                    ("Basement waterproofing", 7, ["labor"], False),
+                    ("Basement slab reinforcement", 10, ["steel_fixer"], False),
+                    ("Basement slab pour", 10, ["concrete_crew"], False),
+                ]),
+            ]),
+            ("Superstructure", [
+                ("Frame", [
+                    ("Column reinforcement & formwork", 14, ["formwork_crew"], True),
+                    ("Column concrete pour", 7, ["concrete_crew"], True),
+                    ("Beam & slab reinforcement", 14, ["steel_fixer"], True),
+                    ("Beam & slab concrete pour", 10, ["concrete_crew"], True),
+                ]),
+                ("Stairs & Core", [
+                    ("Core wall formwork & pour", 14, ["concrete_crew"], True),
+                    ("Stair install", 7, ["labor"], True),
+                ]),
+            ]),
+            ("Envelope", [
+                ("Exterior Walls", [
+                    ("Blockwork", 21, ["mason"], True),
+                    ("External plaster", 14, ["plasterer"], True),
+                    ("External paint", 10, ["painter"], True),
+                ]),
+                ("Roof", [
+                    ("Roof waterproofing", 10, ["roofing_crew"], True),
+                    ("Roof finish & insulation", 10, ["roofing_crew"], True),
+                ]),
+                ("Windows & Doors", [
+                    ("Window frame install", 10, ["glazier"], True),
+                    ("Door frame install", 7, ["carpenter"], True),
+                ]),
+            ]),
+            ("MEP", [
+                ("HVAC", [
+                    ("HVAC ductwork install", 21, ["mech_crew"], True),
+                    ("HVAC equipment install", 14, ["mech_crew"], True),
+                ]),
+                ("Plumbing", [
+                    ("Plumbing rough-in", 14, ["plumber"], True),
+                    ("Sanitary ware install", 10, ["plumber"], True),
+                ]),
+                ("Electrical", [
+                    ("Electrical rough-in", 14, ["elec_crew"], True),
+                    ("Lighting & accessories", 10, ["elec_crew"], True),
+                ]),
+                ("Fire Services", [
+                    ("Fire detection install", 10, ["fire_tech"], True),
+                    ("Sprinkler install", 14, ["fire_tech"], True),
+                ]),
+            ]),
+            ("Internal Fit-out", [
+                ("Partitions & Ceilings", [
+                    ("Internal partitions", 21, ["partition_crew"], True),
+                    ("Suspended ceilings", 14, ["ceiling_crew"], True),
+                ]),
+                ("Finishes", [
+                    ("Floor finishes", 14, ["finishing_crew"], True),
+                    ("Wall finishes & paint", 14, ["painter"], True),
+                    ("Joinery & millwork", 14, ["carpenter"], True),
+                ]),
+            ]),
+            ("Commissioning", [
+                ("Testing", [
+                    ("MEP testing & commissioning", 14, ["cx_agent"], False),
+                    ("Integrated systems test", 7, ["cx_agent"], False),
+                ]),
+            ]),
+            ("Handover", [
+                ("Close-out", [
+                    ("Snagging & rectification", 14, ["qa_inspector"], False),
+                    ("As-built drawings", 10, ["draughtsman"], False),
+                    ("O&M manuals", 10, ["pm"], False),
+                    ("Final handover", 5, ["pm"], False),
+                ]),
+            ]),
+        ],
+        "infrastructure": [
+            ("Site Preparation", [
+                ("Survey & Permits", [
+                    ("Route topographic survey", 14, ["surveyor"], False),
+                    ("Geotechnical investigation", 21, ["geotech"], False),
+                    ("Environmental permit", 30, ["env_consultant"], False),
+                    ("Land acquisition & wayleaves", 60, ["pm"], False),
+                ]),
+                ("Site Establishment", [
+                    ("Site offices & welfare", 14, ["labor"], False),
+                    ("Site fencing & security", 7, ["fencing_crew"], False),
+                ]),
+            ]),
+            ("Earthworks", [
+                ("Bulk Earthworks", [
+                    ("Site clearance", 14, ["excavator"], True),
+                    ("Bulk excavation", 28, ["excavator", "trucks"], True),
+                    ("Embankment fill", 21, ["dozer", "compactor"], True),
+                    ("Cut & fill grading", 14, ["dozer"], True),
+                ]),
+            ]),
+            ("Drainage", [
+                ("Drainage Systems", [
+                    ("Drainage excavation", 14, ["excavator"], True),
+                    ("Culvert install", 14, ["concrete_crew"], True),
+                    ("Drainage pipe install", 14, ["labor"], True),
+                    ("Drainage backfill", 7, ["labor"], True),
+                ]),
+            ]),
+            ("Structures", [
+                ("Bridges", [
+                    ("Bridge piling", 21, ["piling_rig"], True),
+                    ("Bridge abutment & piers", 28, ["concrete_crew"], True),
+                    ("Bridge beam install", 14, ["crane", "mech_crew"], True),
+                    ("Bridge deck pour", 14, ["concrete_crew"], True),
+                ]),
+                ("Retaining Walls", [
+                    ("Retaining wall foundation", 14, ["concrete_crew"], True),
+                    ("Retaining wall stem", 21, ["concrete_crew"], True),
+                ]),
+            ]),
+            ("Pavement", [
+                ("Pavement Layers", [
+                    ("Sub-base layer", 14, ["paver", "compactor"], True),
+                    ("Base course", 14, ["paver", "compactor"], True),
+                    ("Binder course", 10, ["paver"], True),
+                    ("Surface course", 10, ["paver"], True),
+                ]),
+            ]),
+            ("Utilities", [
+                ("Wet Utilities", [
+                    ("Water main install", 21, ["plumber"], True),
+                    ("Sewer main install", 21, ["plumber"], True),
+                ]),
+                ("Dry Utilities", [
+                    ("Power duct install", 14, ["elec_crew"], True),
+                    ("Telecoms duct install", 14, ["telecoms"], True),
+                ]),
+            ]),
+            ("Finishes", [
+                ("Roadway Finishes", [
+                    ("Line marking", 7, ["labor"], True),
+                    ("Signage install", 7, ["labor"], True),
+                    ("Crash barrier install", 10, ["labor"], True),
+                ]),
+                ("Landscaping", [
+                    ("Top-soil & seeding", 10, ["landscaper"], True),
+                ]),
+            ]),
+            ("Commissioning", [
+                ("Testing", [
+                    ("Pavement load test", 5, ["qa_inspector"], False),
+                    ("Drainage flow test", 5, ["qa_inspector"], False),
+                    ("Lighting & signage check", 5, ["qa_inspector"], False),
+                ]),
+            ]),
+            ("Handover", [
+                ("Close-out", [
+                    ("Snag rectification", 14, ["labor"], False),
+                    ("As-built drawings", 14, ["draughtsman"], False),
+                    ("Final account & handover", 14, ["pm"], False),
+                ]),
+            ]),
+        ],
+    }
+
+    @staticmethod
+    def _detect_project_type_from_brief(brief: str) -> str:
+        """Keyword heuristic to infer project_type from a free-text brief."""
+        text = (brief or "").lower()
+        if any(k in text for k in ("data center", "datacenter", "data hall")):
+            return "data_center"
+        if any(k in text for k in ("solar", "photovoltaic", " pv ", "pv plant", "pv farm")):
+            return "solar_plant"
+        if "wind" in text:
+            return "wind_farm"
+        if any(k in text for k in ("office", "residential", "hospital", "school", "tower")):
+            return "building"
+        if any(k in text for k in ("road", "bridge", "highway", "rail", "tunnel", "utility corridor")):
+            return "infrastructure"
+        return "data_center"
+
+    def _build_wbs_activities(
+        self,
+        template: List[Tuple[str, List[Tuple[str, List[Tuple[str, int, List[str], bool]]]]]],
+        target_count: int,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+        """Build the activity list and the wbs_tree dict from a template.
+
+        Strategy: pass 1 builds one instance of every activity. If the total
+        is below ``target_count``, zone-multiplier passes repeat zoneable
+        activities across N zones (Hall A, Hall B, …) until the count meets
+        or exceeds the target. Predecessors are FS-only:
+          * within a sub-phase, zoneable activities form per-zone threads —
+            zone-A of activity X depends on zone-A of activity X-1 (so each
+            zone has its own dependency chain rather than all zones gating
+            on each other);
+          * a non-zoneable activity following zoneable activities depends on
+            ALL zones of the previous activity (a join point);
+          * the first zoneable activity in a sub-phase fans out from the
+            previous tail (the join from the previous activity / sub-phase);
+          * Zone-N activities get a small per-zone duration bump
+            (``dur + zone_idx``) so one zone naturally becomes the longest
+            chain — without this, identical parallel paths tie and every
+            activity has zero float (degenerate critical path).
+        """
+        zone_labels = [f"Hall {chr(ord('A') + i)}" for i in range(26)]
+        # Decide zone multiplier: start with 1 zone, then escalate until target hit.
+        # We do this by simulating activity counts cheaply.
+        def _count_for_zones(n_zones: int) -> int:
+            n = 0
+            for _phase_name, subs in template:
+                for _sub_name, acts in subs:
+                    for (_a_name, _dur, _res, zoneable) in acts:
+                        n += n_zones if zoneable else 1
+            return n
+
+        n_zones = 1
+        while n_zones < len(zone_labels) and _count_for_zones(n_zones) < target_count:
+            n_zones += 1
+
+        activities: List[Dict[str, Any]] = []
+        wbs_tree: Dict[str, str] = {}
+        # The "exit" of the previous sub-phase — every activity in this list
+        # is a predecessor of the first activity of the next sub-phase. When
+        # the previous sub-phase ended in zoneable parallel work it carries
+        # all N zone ids; when it ended in non-zoneable serial work it carries
+        # a single id.
+        prev_subphase_tail: List[str] = []
+        # The tail per-zone within the *current* sub-phase. Index 0 is the
+        # serial / aggregated tail used by non-zoneable activities.
+        # zone_tails[z] is the predecessor of the next zoneable activity in
+        # zone z. Reset at every sub-phase boundary.
+
+        for phase_idx, (phase_name, subs) in enumerate(template, start=1):
+            phase_code = f"{phase_idx}"
+            wbs_tree[phase_code] = phase_name
+            phase_key = phase_name.lower().replace(" ", "_").replace("&", "and")
+
+            for sub_idx, (sub_name, acts) in enumerate(subs, start=1):
+                sub_code = f"{phase_idx}.{sub_idx}"
+                wbs_tree[sub_code] = sub_name
+
+                # Sub-phase-local state. At entry, every zone's predecessor is
+                # the join from the previous sub-phase (every zone gates on
+                # the same set of incoming activities). After the first
+                # zoneable activity, each zone advances on its own thread.
+                zone_tails: List[List[str]] = [
+                    list(prev_subphase_tail) for _ in range(n_zones)
+                ]
+                # The serial tail (single id) used by non-zoneable activities.
+                # Initially the join from the previous sub-phase.
+                serial_tail: List[str] = list(prev_subphase_tail)
+
+                for act_idx, (a_name, dur, res, zoneable) in enumerate(acts, start=1):
+                    if zoneable and n_zones > 1:
+                        new_zone_tails: List[List[str]] = []
+                        for z in range(n_zones):
+                            zoned_name = f"{a_name} — {zone_labels[z]}"
+                            aid = f"{phase_idx}.{sub_idx}.{act_idx}.{z + 1}"
+                            # Per-zone duration bump (zone A unchanged,
+                            # zone B +1, zone C +2, …) so one zone naturally
+                            # owns the critical path.
+                            zoned_dur = int(dur) + z
+                            activities.append({
+                                "id": aid,
+                                "code": aid,
+                                "name": zoned_name,
+                                "duration_days": zoned_dur,
+                                "predecessors": list(zone_tails[z]),
+                                "resources": list(res),
+                                "wbs_phase": phase_key,
+                            })
+                            new_zone_tails.append([aid])
+                        zone_tails = new_zone_tails
+                        # The non-zoneable serial tail must join all zones
+                        # of the most recent zoneable activity.
+                        serial_tail = [zt[0] for zt in zone_tails]
+                    else:
+                        aid = f"{phase_idx}.{sub_idx}.{act_idx}"
+                        # Non-zoneable activity: predecessor is the current
+                        # serial tail (which joins any previous zones).
+                        activities.append({
+                            "id": aid,
+                            "code": aid,
+                            "name": a_name,
+                            "duration_days": int(dur),
+                            "predecessors": list(serial_tail),
+                            "resources": list(res),
+                            "wbs_phase": phase_key,
+                        })
+                        serial_tail = [aid]
+                        # Reset zone tails so the next zoneable activity
+                        # fans out from this serial join (otherwise zone
+                        # threads would skip a serial gate).
+                        zone_tails = [[aid] for _ in range(n_zones)]
+
+                # End of sub-phase: the join into the NEXT sub-phase is
+                # whatever the serial tail currently is. If the sub-phase
+                # ended on zoneable activities, serial_tail already contains
+                # the per-zone ids; if it ended on a non-zoneable activity,
+                # serial_tail is the single serial id.
+                prev_subphase_tail = serial_tail
+
+        return activities, wbs_tree
+
+    def _attach_cpm_to_activities(
+        self,
+        activities: List[Dict[str, Any]],
+        start_date: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Optional[str]]:
+        """Run CPM over the WBS activities and attach ES/EF/LS/LF/TF to each.
+
+        Returns (activities_with_cpm, summary_dict, error_or_None). On CPM
+        failure, returns the activities unchanged and an error string; the
+        summary dict will have zeros / empty lists.
+        """
+        from app.lib.pm_computations import (
+            compute_cpm, CircularDependencyError,
+        )
+        from app.schemas.cpm import (
+            Activity as CPMActivity, CPMInput, Dependency,
+            ResourceAssignment, WorkCalendar,
+        )
+
+        project_start = None
+        if start_date:
+            try:
+                project_start = datetime.fromisoformat(start_date).date()
+            except (ValueError, TypeError):
+                project_start = None
+
+        cpm_acts: List["CPMActivity"] = []
+        for a in activities:
+            cpm_acts.append(CPMActivity(
+                id=a["id"],
+                name=a["name"],
+                duration=int(a["duration_days"]),
+                predecessors=[
+                    Dependency(predecessor_id=p) for p in a["predecessors"]
+                ],
+                wbs_code=a.get("wbs_phase", ""),
+                resources=[
+                    ResourceAssignment(trade=t, count=1.0) for t in a["resources"]
+                ],
+            ))
+
+        try:
+            cpm_input = CPMInput(
+                activities=cpm_acts,
+                project_start=project_start,
+                calendar=WorkCalendar(),
+            )
+            cpm_out = compute_cpm(cpm_input)
+        except (CircularDependencyError, ValueError) as exc:
+            summary = {
+                "total_duration_days": 0,
+                "critical_path_activity_ids": [],
+                "critical_count": 0,
+            }
+            return activities, summary, str(exc)
+
+        # Map results back to the activities list.
+        by_id = {r.id: r for r in cpm_out.results}
+        enriched: List[Dict[str, Any]] = []
+        critical_ids: List[str] = []
+        for a in activities:
+            r = by_id.get(a["id"])
+            new = dict(a)
+            if r is not None:
+                new.update({
+                    "early_start_day": r.early_start_day,
+                    "early_finish_day": r.early_finish_day,
+                    "late_start_day": r.late_start_day,
+                    "late_finish_day": r.late_finish_day,
+                    "total_float_days": r.total_float,
+                    "critical": r.is_critical,
+                })
+                if r.is_critical:
+                    critical_ids.append(r.id)
+            enriched.append(new)
+
+        summary = {
+            "total_duration_days": cpm_out.project_duration,
+            "critical_path_activity_ids": list(cpm_out.critical_path),
+            "critical_count": len(cpm_out.critical_path),
+        }
+        return enriched, summary, None
+
+    async def generate_wbs(self, input_data: Any, params: Dict) -> Dict:
+        """Generate a CPM-ready Work Breakdown Structure from a project brief.
+
+        Deterministic template-based: no LLM. Templates per project_type
+        define a phase / sub-phase / activity scaffold; zone multipliers
+        scale the activity count toward ``target_count``. Output activities
+        carry CPM ES/EF/LS/LF/total_float + critical flag, computed via
+        :func:`app.lib.pm_computations.compute_cpm`.
+
+        Durations are rule-of-thumb working-day defaults; replace with
+        project-specific data when available.
+        """
+        import uuid
+
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+
+        brief: str = (
+            data.get("brief")
+            or p.get("brief")
+            or "Generic data-center construction project."
+        )
+        # Clamp target_count to [20, 1000] BEFORE template scaling.
+        try:
+            target_count = int(p.get("target_count", data.get("target_count", 200)))
+        except (TypeError, ValueError):
+            target_count = 200
+        target_count = max(20, min(1000, target_count))
+
+        project_type = (
+            p.get("project_type")
+            or data.get("project_type")
+            or self._detect_project_type_from_brief(brief)
+        )
+        if project_type not in self._WBS_TEMPLATES:
+            project_type = "data_center"
+
+        start_date = p.get("start_date") or data.get("start_date")
+        if not start_date:
+            start_date = datetime.now(timezone.utc).date().isoformat()
+
+        template = self._WBS_TEMPLATES[project_type]
+        activities, wbs_tree = self._build_wbs_activities(template, target_count)
+
+        enriched, summary, cpm_error = self._attach_cpm_to_activities(
+            activities, start_date
+        )
+
+        result: Dict[str, Any] = {
+            "status": "success",
+            "wbs_id": f"wbs-{uuid.uuid4().hex[:8]}",
+            "project_type": project_type,
+            "brief": brief,
+            "target_count": target_count,
+            "actual_count": len(enriched),
+            "start_date": start_date,
+            "activities": enriched,
+            "wbs_tree": wbs_tree,
+            "summary": summary,
+            "assumptions": [
+                "Rule-of-thumb activity durations; replace with project-specific data when available.",
+                "FS-only predecessors; no SS/FF/SF; zero lag.",
+                "Zone-multiplier scales repeatable activities to reach target_count.",
+            ],
+        }
+        if cpm_error:
+            result["cpm_error"] = cpm_error
+        return result
+
+    # ────────────────────────────────────────────────────────────────────────
 
     async def route(self, action: str, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
@@ -6202,12 +7190,15 @@ Total Extension of Time Sought: {total_delay} days
             "forensic_delay_analysis": self.forensic_delay_analysis,
             "cash_flow_forecast": self.cash_flow_forecast,
             "procurement_optimizer": self.procurement_optimizer,
+            "procurement_analysis": self.procurement_analysis,
             "esg_sustainability_report": self.esg_sustainability_report,
             "om_manual_generator": self.om_manual_generator,
             "digital_twin_sync": self.digital_twin_sync,
             "intelligent_workflow": self.intelligent_workflow,
             "auto_pipeline": self.auto_pipeline,
             "health_check": self.health_check,
+            # Generative scheduling
+            "generate_wbs": self.generate_wbs,
             # Week-1 Intelligence Blocks
             "boq_process": self.boq_process,
             "spec_analyze": self.spec_analyze,
@@ -6264,12 +7255,15 @@ Total Extension of Time Sought: {total_delay} days
             "forensic_delay_analysis": self.forensic_delay_analysis,
             "cash_flow_forecast": self.cash_flow_forecast,
             "procurement_optimizer": self.procurement_optimizer,
+            "procurement_analysis": self.procurement_analysis,
             "esg_sustainability_report": self.esg_sustainability_report,
             "om_manual_generator": self.om_manual_generator,
             "digital_twin_sync": self.digital_twin_sync,
             "intelligent_workflow": self.intelligent_workflow,
             "auto_pipeline": self.auto_pipeline,
             "health_check": self.health_check,
+            # Generative scheduling
+            "generate_wbs": self.generate_wbs,
             # Week-1 Intelligence Blocks
             "boq_process": self.boq_process,
             "spec_analyze": self.spec_analyze,

@@ -32,8 +32,17 @@
         .drive-files.expanded { display: block; }
         .drive-file { padding: 6px 10px; border-radius: 4px; cursor: pointer; color: #888; font-size: 13px; display: flex; align-items: center; gap: 6px; }
         .drive-file:hover { background: #151515; color: #fff; }
+        .drive-file.is-folder { color: #ccc; }
+        .drive-file.is-folder:hover { background: #1a1530; color: #fff; }
+        .drive-file.is-folder .folder-icon { font-size: 12px; }
+        .drive-file.is-folder .chev { margin-left: auto; color: #666; font-size: 14px; }
         .drive-file .zvec-badge { margin-left: auto; font-size: 10px; background: #8b5cf620; color: #8b5cf6; padding: 2px 6px; border-radius: 4px; }
         .drive-empty { padding: 8px 10px; color: #555; font-size: 12px; font-style: italic; }
+        .drive-breadcrumb { padding: 6px 10px; font-size: 11px; color: #888; border-bottom: 1px solid #1a1a1a; margin-bottom: 4px; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+        .drive-breadcrumb a { color: #8b5cf6; text-decoration: none; }
+        .drive-breadcrumb a:hover { text-decoration: underline; color: #cbb6ff; }
+        .drive-breadcrumb .drive-up { margin-left: auto; background: transparent; border: 1px solid #333; color: #888; border-radius: 4px; padding: 1px 6px; font-size: 11px; cursor: pointer; }
+        .drive-breadcrumb .drive-up:hover { color: #fff; border-color: #555; }
         .main { flex: 1; display: flex; flex-direction: column; max-width: 800px; margin: 0 auto; width: 100%; }
         header { padding: 16px; border-bottom: 1px solid #1a1a1a; text-align: center; color: #666; }
         .messages { flex: 1; overflow-y: auto; padding: 40px 20px; }
@@ -102,6 +111,38 @@
         .type-badge.pdf { background: #8b5cf620; color: #8b5cf6; }
         .type-badge.text { background: #22c55e20; color: #22c55e; }
         .type-badge.image { background: #f59e0b20; color: #f59e0b; }
+        /* Drag-and-drop overlay — shown while files are over the window */
+        body.dragging::after {
+            content: "Drop files to upload";
+            position: fixed; inset: 0;
+            background: rgba(139, 92, 246, 0.15);
+            border: 3px dashed #8b5cf6;
+            color: #fff; font-size: 28px; font-weight: 600;
+            display: flex; align-items: center; justify-content: center;
+            z-index: 9999;
+            pointer-events: none;  /* let drop events through to body */
+        }
+        /* Session files strip above the composer */
+        .session-files { display: none; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px 4px; }
+        .session-files.has-files { display: flex; }
+        .session-file-chip { display: inline-flex; align-items: center; gap: 6px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 14px; padding: 4px 10px; font-size: 12px; color: #ccc; }
+        .session-file-chip .kind { color: #8b5cf6; font-size: 10px; text-transform: uppercase; }
+        .session-file-chip .size { color: #666; font-size: 10px; }
+        .session-file-chip .remove { background: transparent; border: none; color: #666; cursor: pointer; padding: 0 0 0 2px; font-size: 13px; line-height: 1; }
+        .session-file-chip .remove:hover { color: #ef4444; }
+        /* Reasoning trace — collapsible sub-bubble shown above the assistant's
+           final answer while the heavy-reasoning agent is iterating. */
+        .reasoning-trace { background: #11091e; border: 1px solid #2d1d4a; border-radius: 8px; margin-bottom: 8px; font-size: 12px; color: #bba6ee; }
+        .reasoning-trace.collapsed .reasoning-body { display: none; }
+        .reasoning-head { padding: 6px 10px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; }
+        .reasoning-head .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #8b5cf6; }
+        .reasoning-head .toggle { color: #555; font-size: 11px; }
+        .reasoning-body { padding: 0 10px 8px 10px; }
+        .reasoning-step { padding: 3px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: #cbb6ff; line-height: 1.5; }
+        .reasoning-step .ok { color: #22c55e; }
+        .reasoning-step .err { color: #ef4444; }
+        .reasoning-step .dur { color: #666; }
+        .reasoning-step .args { color: #888; }
         .type-badge.converted { background: #3b82f620; color: #3b82f6; }
     </style>
 </head>
@@ -138,9 +179,12 @@
             </div>
         </div>
         <div class="input-area">
+            <!-- Session files chip strip — shows every file in the active turn
+                 with a × to remove individual ones. Hidden when empty. -->
+            <div class="session-files" id="sessionFiles"></div>
             <div class="input-box">
-                <input type="file" id="fileInput" style="display: none" onchange="handleFile(this)" accept=".pdf,.doc,.docx,.txt,.md,.csv,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp">
-                <button onclick="document.getElementById('fileInput').click()" title="Upload file (PDF, Word, Excel, image, text)">📎</button>
+                <input type="file" id="fileInput" multiple style="display: none" onchange="handleFile(this)" accept=".pdf,.doc,.docx,.txt,.md,.csv,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp">
+                <button onclick="document.getElementById('fileInput').click()" title="Upload one or more files (Shift-click / Ctrl-click in picker)">📎</button>
                 <textarea id="textInput" rows="1" placeholder="Ask anything…  (Shift+Enter for newline)" onkeydown="handleTextareaKeydown(event)"></textarea>
                 <button onclick="sendMessage()" id="sendBtn" title="Send (Enter)">➤</button>
                 <button onclick="abortChat()" id="stopBtn" style="display:none;background:#3a1a1a;color:#ff6666;" title="Stop generating">■</button>
@@ -275,11 +319,15 @@ class CerebrumClient {
      * onToken(text) called for each token. onDone(fullText) at end.
      * Returns AbortController so caller can cancel.
      */
-    chatStream({ prompt, history = [], model = 'deepseek-chat', sessionId = 'default', onToken, onDone, onError }) {
+    chatStream({ prompt, history = [], model = 'deepseek-chat', sessionId = 'default', projectId = null, onToken, onDone, onError, onReasoning, onMode }) {
         const controller = new AbortController();
         (async () => {
             let full = '';
             try {
+                const body = { prompt, history, model, session_id: sessionId };
+                // Pass project_id so the backend can search the project's
+                // zvec doc index and inject relevant snippets (RAG).
+                if (projectId) body.project_id = projectId;
                 const resp = await fetch(`${this.base}/v1/chat/stream`, {
                     method: 'POST',
                     headers: {
@@ -287,7 +335,7 @@ class CerebrumClient {
                         'Content-Type': 'application/json',
                         'Accept': 'text/event-stream',
                     },
-                    body: JSON.stringify({ prompt, history, model, session_id: sessionId }),
+                    body: JSON.stringify(body),
                     signal: controller.signal,
                 });
                 if (!resp.ok) {
@@ -316,8 +364,16 @@ class CerebrumClient {
                                 onToken && onToken(obj.content, full);
                             } else if (obj.type === 'error') {
                                 throw new Error(obj.message || 'Stream error');
-                            } else if (obj.type === 'end') {
-                                // handled below
+                            } else if (obj.type === 'iteration' || obj.type === 'tool_call' || obj.type === 'tool_result') {
+                                // Heavy-reasoning trace — emit verbatim so the
+                                // UI can render an inline activity log.
+                                onReasoning && onReasoning(obj);
+                            } else if (obj.type === 'start' || obj.type === 'end' || obj.type === 'mode') {
+                                // `start` carries mode='heavy_reasoning' when the
+                                // backend routed to the agent path — that's the
+                                // earliest signal to mount the reasoning bubble.
+                                // `end` also carries mode/iterations/tools_used.
+                                if (obj.mode) onMode && onMode(obj.mode);
                             }
                         } catch (parseErr) {
                             // Non-JSON event lines are ignored
@@ -457,17 +513,56 @@ function formatTypeConversions(conversions) {
 }
 
 const connectedDrives = {};
+// Multi-file conversation context — each upload appends, so the LLM sees
+// all loaded files at once. Previously this was a single `activeFileContext`
+// object overwritten on every upload, which silently discarded prior files
+// (e.g. PDF + DOCX + XLSX → only the XLSX reached the prompt).
+//
+// Shape: [{name, content, driveName, kind, sizeBytes, pipelineResult?, ...}]
+let sessionFileContexts = [];
+// Legacy alias: most call sites still reference `activeFileContext` meaning
+// "the most-recently-attached file". Keep it as a *view* over the array so
+// existing helpers (panel rendering, file-specific actions) continue to work
+// without a wholesale rewrite. Updated by setActiveFileContext / clear.
 let activeFileContext = null;
 let chatHistory = [];          // [{role:'user'|'assistant', content:'...'}]
 let activeChatController = null; // AbortController for the in-flight stream
 
-const HISTORY_KEY = 'cerebrum_chat_history_v1';
+// Chat history is now SCOPED by project. Before this, a single global key
+// pooled every conversation — so a "Kenya project" assistant turn from
+// yesterday would be sent as `history` to today's totally unrelated chat,
+// and the LLM would reference the old file name as if it were in context.
+//
+// The key includes the active project_id (or '_no_project' when no project
+// is selected). Switching projects loads that project's history; the prior
+// project's turns stay on disk but are not in scope. New Chat / 🗑 clears
+// only the *currently scoped* key, not every project.
+const HISTORY_KEY_PREFIX = 'cerebrum_chat_history_v2:';
+const HISTORY_LEGACY_KEY = 'cerebrum_chat_history_v1';  // for one-shot wipe
 const HISTORY_MAX_TURNS = 40;
+// Per-file content cap (chars). The full file content is stored in the
+// extraction step; this is the budget injected into a single chat prompt.
+const PER_FILE_PROMPT_CHARS = 8000;
+// Total budget across all files in one prompt — keeps us inside DeepSeek's
+// context window even with 5+ uploads. Excess files are listed by name only.
+const TOTAL_FILES_PROMPT_CHARS = 30000;
+
+function _historyKey() {
+    // activeProjectId is declared later in the file but global at runtime.
+    const scope = (typeof activeProjectId !== 'undefined' && activeProjectId)
+        ? activeProjectId
+        : '_no_project';
+    return HISTORY_KEY_PREFIX + scope;
+}
 
 function loadHistory() {
+    // One-time migration: nuke the legacy global history. It mixed every
+    // conversation across every project — exactly the leak that caused
+    // "Kenya" answers in unrelated chats.
+    try { localStorage.removeItem(HISTORY_LEGACY_KEY); } catch (e) {}
     try {
-        const raw = localStorage.getItem(HISTORY_KEY);
-        if (raw) chatHistory = JSON.parse(raw) || [];
+        const raw = localStorage.getItem(_historyKey());
+        chatHistory = raw ? (JSON.parse(raw) || []) : [];
     } catch (e) { chatHistory = []; }
 }
 
@@ -475,16 +570,99 @@ function saveHistory() {
     try {
         const trimmed = chatHistory.slice(-HISTORY_MAX_TURNS);
         chatHistory = trimmed;
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+        localStorage.setItem(_historyKey(), JSON.stringify(trimmed));
     } catch (e) {}
 }
 
-function setActiveFileContext(name, content, driveName) {
-    activeFileContext = { name, content, driveName };
+function setActiveFileContext(name, content, driveName, extra = {}) {
+    // Append to the session array; refresh the `activeFileContext` view to
+    // point at the newest entry so legacy callers keep working.
+    const entry = {
+        name,
+        content,
+        driveName,
+        kind: extra.kind || (typeof getFileKind === 'function' ? getFileKind(name) : ''),
+        sizeBytes: extra.sizeBytes || (content ? content.length : 0),
+        addedAt: Date.now(),
+        ...extra,
+    };
+    // De-dupe by name (re-uploading replaces the prior entry).
+    const existingIdx = sessionFileContexts.findIndex(f => f.name === name);
+    if (existingIdx >= 0) sessionFileContexts[existingIdx] = entry;
+    else sessionFileContexts.push(entry);
+    activeFileContext = entry;
+    if (typeof renderSessionFiles === 'function') renderSessionFiles();
 }
 
 function clearActiveFileContext() {
+    sessionFileContexts = [];
     activeFileContext = null;
+    if (typeof renderSessionFiles === 'function') renderSessionFiles();
+}
+
+function removeSessionFile(name) {
+    const idx = sessionFileContexts.findIndex(f => f.name === name);
+    if (idx < 0) return;
+    sessionFileContexts.splice(idx, 1);
+    activeFileContext = sessionFileContexts[sessionFileContexts.length - 1] || null;
+    if (typeof renderSessionFiles === 'function') renderSessionFiles();
+}
+
+function renderSessionFiles() {
+    // Paint the chip strip above the composer. Hidden when empty.
+    const el = document.getElementById('sessionFiles');
+    if (!el) return;
+    if (!sessionFileContexts.length) {
+        el.classList.remove('has-files');
+        el.innerHTML = '';
+        return;
+    }
+    el.classList.add('has-files');
+    el.innerHTML = sessionFileContexts.map(f => {
+        const sz = f.sizeBytes ? `${(f.sizeBytes / 1024).toFixed(1)} kB` : '';
+        const kind = (f.kind || '').toUpperCase();
+        // Escape on the way out — name & driveName come from disk/Drive listings.
+        const safeName = (typeof escapeHtml === 'function') ? escapeHtml(f.name) : String(f.name);
+        // Additional escaping for inline JS single-quoted string context in onclick.
+        const safeNameJs = safeName.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+        return `<span class="session-file-chip" title="${safeName}">
+            ${kind ? `<span class="kind">${escapeHtml(kind)}</span>` : ''}
+            <span class="name">${safeName}</span>
+            ${sz ? `<span class="size">${sz}</span>` : ''}
+            <button class="remove" title="Remove from this chat" onclick="removeSessionFile('${safeNameJs}')">×</button>
+        </span>`;
+    }).join('');
+}
+
+function buildSessionFilesPromptBlock() {
+    // Render all session files as a labelled, capped block to prepend to the
+    // user's question. Smallest-first packing so a 50 kB PDF doesn't crowd
+    // out a 2 kB DOCX that's also relevant.
+    if (!sessionFileContexts.length) return '';
+    const sorted = [...sessionFileContexts]
+        .filter(f => f.content && f.content.length > 0)
+        .sort((a, b) => (a.content?.length || 0) - (b.content?.length || 0));
+    if (!sorted.length) return '';
+
+    const header = `You have the following ${sorted.length} file${sorted.length > 1 ? 's' : ''} in this conversation:\n` +
+        sorted.map((f, i) => `[${i + 1}] ${f.name} — ${(f.content || '').length.toLocaleString()} chars${f.kind ? ' (' + f.kind.toUpperCase() + ')' : ''}`).join('\n');
+
+    let used = header.length + 100; // budget headroom for separators
+    const sections = [];
+    for (let i = 0; i < sorted.length; i++) {
+        const f = sorted[i];
+        const cap = Math.min(PER_FILE_PROMPT_CHARS, f.content.length);
+        const remaining = TOTAL_FILES_PROMPT_CHARS - used;
+        if (remaining < 200) {
+            sections.push(`--- FILE ${i + 1}: ${f.name} ---\n(content omitted; total budget exceeded — ${f.content.length} chars available; ask specifically about this file to retrieve content)`);
+            continue;
+        }
+        const allow = Math.min(cap, remaining - 100);
+        const slice = f.content.slice(0, allow);
+        sections.push(`--- FILE ${i + 1}: ${f.name} ---\n${slice}${f.content.length > allow ? '\n... [truncated]' : ''}`);
+        used += slice.length + 80;
+    }
+    return header + '\n\n' + sections.join('\n\n');
 }
 
 // Render assistant text as markdown when marked.js is available; fall back to plain text otherwise.
@@ -711,11 +889,28 @@ async function refreshDriveStatus() {
         if (s.configured === false) {
             box.innerHTML = '<span style="color:#888;">Google Drive not configured</span>';
             if (browser) browser.style.display = 'none';
+            delete connectedDrives['google_drive'];
+            renderDrives();
         } else if (s.connected === true) {
             box.innerHTML =
                 `<span style="color:#22c55e;">Connected as ${escapeHtml(s.email || 'unknown')}</span>`
                 + ` <button onclick="disconnectDrive()" style="margin-left:8px;background:#2a2a2a;border:1px solid #3a3a3a;color:#ccc;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Disconnect</button>`;
             if (browser) browser.style.display = 'block';
+            // Surface the real drive in the sidebar's Connected Drives list
+            // — the sidebar's local `connectedDrives` object never knew about
+            // OAuth-completed drives because it only mutated when the user
+            // explicitly imported files. Sync from the live /v1/drive/status.
+            connectedDrives['google_drive'] = {
+                name: `Google Drive (${s.email || 'connected'})`,
+                icon: '📁',
+                indexed: true,
+                files: [],
+            };
+            renderDrives();
+            // Now load the actual file list so the sidebar shows real content,
+            // not an empty drive. Fire-and-forget — drive listing is slow
+            // enough we don't want refreshDriveStatus to block on it.
+            loadDriveFilesIntoSidebar().catch(() => {});
         } else {
             box.innerHTML =
                 `<button onclick="connectGoogleDrive()" style="background:#8b5cf6;border:none;color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;">Connect Google Drive</button>`;
@@ -724,6 +919,36 @@ async function refreshDriveStatus() {
     } catch (err) {
         box.innerHTML = `<span style="color:#ff6666;">Drive status unavailable — ${escapeHtml(err.message || 'error')}</span>`;
         if (browser) browser.style.display = 'none';
+    }
+}
+
+async function loadDriveFilesIntoSidebar() {
+    // Hit /v1/drive/files (root listing) and populate the sidebar's
+    // google_drive entry. The endpoint now returns top-level items only
+    // (folders + loose files at the root of the user's Drive). Drilling
+    // into folders re-fetches with ?folder_id=… via driveOpenFolder().
+    try {
+        const r = await fetch(`${API_BASE}/v1/drive/files`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        const files = (data.files || []).map(f => ({
+            id: f.id,
+            name: f.name || f.title || f.id,
+            mime_type: f.mime_type || f.mimeType || '',
+            is_folder: !!f.is_folder,
+            modifiedTime: f.modifiedTime || f.modified_time || f.modified || '',
+        }));
+        if (!connectedDrives['google_drive']) return;
+        connectedDrives['google_drive'].files = files;
+        connectedDrives['google_drive'].file_count = files.length;
+        connectedDrives['google_drive'].path = [];  // we're at root
+        renderDrives();
+    } catch (e) {
+        // Silent — sidebar will just show the drive with no files. The
+        // dedicated drive modal already surfaces errors loudly when the
+        // user explicitly tries to browse there.
     }
 }
 
@@ -891,7 +1116,7 @@ async function handleLocalFiles(input) {
         const outcomeHtml = `
             <div class="outcome-item">
                 <div class="outcome-label">Connected</div>
-                <div class="outcome-value" style="font-size: 16px;">${folderName}</div>
+                <div class="outcome-value" style="font-size: 16px;">${escapeHtml(folderName)}</div>
                 <div style="color: #888; font-size: 12px; margin-top: 4px;">${files.length} local files</div>
                 ${zvecResult ? `<div style="color: #8b5cf6; font-size: 11px; margin-top: 4px;">✅ ZVec indexed ${indexableNames.length} files</div>` : ''}
             </div>
@@ -983,14 +1208,42 @@ function renderDrives() {
         container.innerHTML = '<div class="drive-empty">No drives connected yet</div>';
         return;
     }
-    
+
     container.innerHTML = Object.entries(connectedDrives).map(([key, drive]) => {
         const keyEsc = escapeHtml(key);
-        const fileRows = drive.files.map(f => {
-            const name = typeof f === 'string' ? f : (f.name || f.text || JSON.stringify(f));
+        // Breadcrumb path so the user knows where they are after drilling
+        // into a folder. drive.path is an array of {id, name} hops; root
+        // shows "/".
+        const path = Array.isArray(drive.path) ? drive.path : [];
+        const breadcrumb = path.length
+            ? `<div class="drive-breadcrumb">
+                  <a href="#" onclick="event.stopPropagation(); driveOpenFolder('${keyEsc}', '', []); return false;">/</a>
+                  ${path.map((hop, i) => {
+                      const prefix = path.slice(0, i + 1);
+                      const prefixJson = escapeHtml(JSON.stringify(prefix));
+                      return ` › <a href="#" onclick="event.stopPropagation(); driveOpenFolder('${keyEsc}', '${escapeHtml(hop.id)}', ${prefixJson}); return false;">${escapeHtml(hop.name)}</a>`;
+                  }).join('')}
+                  ${path.length ? ` <button class="drive-up" title="Up one level" onclick="event.stopPropagation(); driveOpenFolderUp('${keyEsc}'); return false;">↑</button>` : ''}
+              </div>`
+            : '';
+        const fileRows = drive.files.map((f, i) => {
+            // Old code path supported string names. Real Drive payload is
+            // always {id, name, is_folder, mime_type, ...}.
+            if (typeof f === 'string') {
+                return `<div class="drive-file" data-drive-id="${keyEsc}" data-file-name="${escapeHtml(f)}"><span>${escapeHtml(f)}</span>${drive.indexed ? '<span class="zvec-badge">zvec</span>' : ''}</div>`;
+            }
+            const name = f.name || f.text || f.id || '(unnamed)';
+            const safeName = escapeHtml(name);
+            if (f.is_folder) {
+                return `<div class="drive-file is-folder" onclick="driveOpenFolder('${keyEsc}', '${escapeHtml(f.id)}', null, '${safeName.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}')">
+                            <span class="folder-icon">📁</span>
+                            <span>${safeName}</span>
+                            <span class="chev">›</span>
+                        </div>`;
+            }
             return `
-                <div class="drive-file" data-drive-id="${keyEsc}" data-file-name="${escapeHtml(name)}">
-                    <span>${escapeHtml(name)}</span>
+                <div class="drive-file" data-drive-id="${keyEsc}" data-file-name="${safeName}">
+                    <span>${safeName}</span>
                     ${drive.indexed ? '<span class="zvec-badge">zvec</span>' : ''}
                 </div>
             `;
@@ -1003,6 +1256,7 @@ function renderDrives() {
                     <span class="toggle">▶</span>
                 </div>
                 <div class="drive-files" id="drive-files-${keyEsc}">
+                    ${breadcrumb}
                     ${drive.files.length === 0
                         ? '<div class="drive-empty">No files found</div>'
                         : fileRows}
@@ -1010,6 +1264,55 @@ function renderDrives() {
             </div>
         `;
     }).join('');
+}
+
+// Drill into a Drive folder, replacing the visible file list with the
+// folder's children. `pathOverride` is used by breadcrumb hops; `nameForHop`
+// is used by row clicks to extend the current path with that folder's name.
+async function driveOpenFolder(driveKey, folderId, pathOverride, nameForHop) {
+    const drive = connectedDrives[driveKey];
+    if (!drive) return;
+    try {
+        const url = folderId
+            ? `${API_BASE}/v1/drive/files?folder_id=${encodeURIComponent(folderId)}`
+            : `${API_BASE}/v1/drive/files`;
+        const r = await fetch(url, { headers: { 'Authorization': `Bearer ${API_KEY}` } });
+        if (!r.ok) throw await readApiError(r);
+        const data = await r.json();
+        drive.files = (data.files || []).map(f => ({
+            id: f.id, name: f.name, mime_type: f.mime_type || f.mimeType || '',
+            is_folder: !!f.is_folder, modifiedTime: f.modified || '',
+        }));
+        drive.file_count = drive.files.length;
+        if (Array.isArray(pathOverride)) {
+            drive.path = pathOverride;
+        } else if (folderId) {
+            const cur = Array.isArray(drive.path) ? drive.path.slice() : [];
+            cur.push({ id: folderId, name: nameForHop || folderId });
+            drive.path = cur;
+        } else {
+            drive.path = [];
+        }
+        renderDrives();
+        // Keep the folder expanded after re-render.
+        const filesEl = document.getElementById(`drive-files-${driveKey}`);
+        const headerEl = document.getElementById(`drive-header-${driveKey}`);
+        if (filesEl) filesEl.classList.add('expanded');
+        if (headerEl) headerEl.classList.add('expanded');
+    } catch (err) {
+        surfaceError(err, 'Open Drive folder');
+    }
+}
+
+function driveOpenFolderUp(driveKey) {
+    const drive = connectedDrives[driveKey];
+    if (!drive || !Array.isArray(drive.path) || !drive.path.length) {
+        // Already at root — re-list root for good measure.
+        return driveOpenFolder(driveKey, '', []);
+    }
+    const newPath = drive.path.slice(0, -1);
+    const parent = newPath[newPath.length - 1];
+    return driveOpenFolder(driveKey, parent ? parent.id : '', newPath);
 }
 
 function toggleDrive(key) {
@@ -1048,8 +1351,8 @@ async function selectDriveFile(driveId, fileName) {
                 const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
                 setActiveFileContext(fileName, trimmed, drive.name);
                 setOutcomes(`<div class="outcome-item">
-                    <div class="outcome-label">📄 ${fileName}</div>
-                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · From ${drive.name}</div>
+                    <div class="outcome-label">📄 ${escapeHtml(fileName)}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · From ${escapeHtml(drive.name)}</div>
                     <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 1000))}${trimmed.length > 1000 ? '…' : ''}</div>
                 </div>`);
                 addMessage(`"${fileName}" loaded from ${drive.name}. Ask me anything about it.`, 'assistant');
@@ -1081,8 +1384,8 @@ async function selectDriveFile(driveId, fileName) {
                 setActiveFileContext(fileName, extractedText || `File: ${fileName} (${kind})`, drive.name);
                 activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
                 setOutcomes(`<div class="outcome-item">
-                    <div class="outcome-label">📎 ${fileName}</div>
-                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · From ${drive.name} · stored, not analysed</div>
+                    <div class="outcome-label">📎 ${escapeHtml(fileName)}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · From ${escapeHtml(drive.name)} · stored, not analysed</div>
                     <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Ask in chat to analyse it.</div>
                 </div>`);
                 addMessage(`"${fileName}" attached from ${drive.name} — stored, no analysis run. Ask me what you need and I'll answer here.`, 'assistant');
@@ -1090,8 +1393,8 @@ async function selectDriveFile(driveId, fileName) {
             } else {
                 setActiveFileContext(fileName, '[Binary file]', drive.name);
                 setOutcomes(`<div class="outcome-item">
-                    <div class="outcome-label">📦 ${fileName}</div>
-                    <div style="color:#888;font-size:12px;margin-top:4px;">Binary file from ${drive.name}</div>
+                    <div class="outcome-label">📦 ${escapeHtml(fileName)}</div>
+                    <div style="color:#888;font-size:12px;margin-top:4px;">Binary file from ${escapeHtml(drive.name)}</div>
                 </div>`);
                 addMessage(`"${fileName}" from ${drive.name} — binary format.`, 'assistant');
             }
@@ -1101,8 +1404,8 @@ async function selectDriveFile(driveId, fileName) {
             const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
             setActiveFileContext(fileName, trimmed, drive.name);
             setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">📄 ${fileName}</div>
-                <div style="color:#888;font-size:12px;margin-top:4px;">From ${drive.name}</div>
+                <div class="outcome-label">📄 ${escapeHtml(fileName)}</div>
+                <div style="color:#888;font-size:12px;margin-top:4px;">From ${escapeHtml(drive.name)}</div>
                 <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 800))}${trimmed.length > 800 ? '…' : ''}</div>
             </div>`);
             addMessage(`"${fileName}" loaded from ${drive.name}. Ask me anything about it.`, 'assistant');
@@ -1260,20 +1563,55 @@ function renderProjects() {
     }
     list.innerHTML = projects.map(p => `
         <div class="project ${p.id === activeProjectId ? 'active' : ''}"
-             onclick="selectProject('${p.id}')" title="${escapeHtml(p.client || '')}">
-            ${escapeHtml(p.name)}
+             style="display:flex;align-items:center;justify-content:space-between;gap:6px;"
+             title="${escapeHtml(p.client || '')}">
+            <span onclick="selectProject('${p.id}')" style="flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.name)}</span>
+            <span onclick="deleteProject('${p.id}', '${escapeHtml(p.name).replace(/'/g, "&#39;")}')"
+                  title="Delete project"
+                  style="cursor:pointer;color:#666;padding:2px 6px;font-size:14px;line-height:1;">×</span>
         </div>
     `).join('');
+}
+
+async function deleteProject(id, name) {
+    if (!confirm(`Delete project "${name}"? This removes the project, all its documents, and its memory facts. Cannot be undone.`)) return;
+    try {
+        const r = await fetch(`${API_BASE}/v1/projects/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
+        });
+        if (!r.ok) throw await readApiError(r);
+        // Remove from local list + re-render.
+        const idx = projects.findIndex(p => p.id === id);
+        if (idx >= 0) projects.splice(idx, 1);
+        if (activeProjectId === id) {
+            activeProjectId = null;
+            try { localStorage.removeItem(ACTIVE_PROJECT_KEY); } catch (e) {}
+        }
+        renderProjects();
+        addMessage(`Deleted project "${name}".`, 'system', { persist: false });
+    } catch (err) {
+        surfaceError(err, 'Delete project');
+    }
 }
 
 function selectProject(id) {
     const proj = projects.find(p => p.id === id);
     if (!proj) return;
+    const switching = activeProjectId && activeProjectId !== id;
     activeProjectId = id;
     try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
     renderProjects();
-    // (Project mode auto-enable removed — the chat path always reads the
-    // active file context, regardless of whether a project is selected.)
+    // Switching project = different context. Drop session uploads AND
+    // load this project's own chat history so we don't bleed turns from
+    // the previous project into the new one. (Per-project history keys
+    // mean each project's conversation stays isolated.)
+    if (switching) {
+        clearActiveFileContext();
+        loadHistory();
+        document.getElementById('messages').innerHTML = '';
+        rehydrateMessagesFromHistory();
+    }
     const docCount = (proj.documents || []).length;
     addMessage(
         `Project "${proj.name}" selected — chat is now scoped to it`
@@ -1380,9 +1718,16 @@ async function sendMessage() {
 
     // Build the prompt that goes to the model — file context only goes into the
     // *current* turn, not into history (so it's not duplicated each turn).
+    //
+    // All session-loaded files are injected (PER_FILE_PROMPT_CHARS cap each,
+    // TOTAL_FILES_PROMPT_CHARS overall budget). This is the fix for the
+    // single-file overwrite bug: previously only the most-recent upload
+    // reached the model, so "summarise these three RFP docs" silently saw
+    // just one of them.
     let prompt = userQuestion;
-    if (activeFileContext && activeFileContext.content) {
-        prompt = `I am asking about the file "${activeFileContext.name}" from ${activeFileContext.driveName}.\n\nHere is the file content:\n---\n${activeFileContext.content}\n---\n\nMy question: ${userQuestion}`;
+    const filesBlock = buildSessionFilesPromptBlock();
+    if (filesBlock) {
+        prompt = `${filesBlock}\n\nMy question: ${userQuestion}`;
     }
 
     // Render user turn + persist
@@ -1417,18 +1762,46 @@ async function sendMessage() {
         activeChatController = startAgentStream({ agent: activeAgent, prompt, history, bubble, askedAt, userQuestion });
         return;
     }
+    // Reasoning sub-bubble — mounted lazily on the first trace event.
+    // The heavy-reasoning path emits iteration / tool_call / tool_result
+    // events; the fast path emits none, so this stays null.
+    let reasoningEl = null;
+    let reasoningSteps = [];
+
     activeChatController = client.chatStream({
         prompt,
         history,
+        projectId: activeProjectId || null,
+        onMode: (mode) => {
+            // mode === 'heavy_reasoning' from the backend means we routed
+            // through the runtime agent — show a placeholder so the user
+            // knows the longer-running path is engaged.
+            if (mode === 'heavy_reasoning' && !reasoningEl) {
+                reasoningEl = ensureReasoningTrace(bubble);
+                bubble.innerHTML = '<span style="color:#666;">Reasoning…</span>';
+            }
+        },
+        onReasoning: (event) => {
+            if (!reasoningEl) reasoningEl = ensureReasoningTrace(bubble);
+            reasoningSteps = appendReasoningStep(reasoningEl, reasoningSteps, event);
+        },
         onToken: (_chunk, full) => {
             finalText = full;
             bubble.innerHTML = renderMarkdown(full);
+            // Re-attach the reasoning trace (renderMarkdown wipes the DOM).
+            if (reasoningEl) bubble.insertBefore(reasoningEl, bubble.firstChild);
             const messages = document.getElementById('messages');
             messages.scrollTop = messages.scrollHeight;
         },
         onDone: (full) => {
             finalText = full || finalText || '_(no response)_';
             bubble.innerHTML = renderMarkdown(finalText);
+            if (reasoningEl) {
+                // Final answer arrived — collapse the trace by default but
+                // leave it expandable so the user can audit what happened.
+                reasoningEl.classList.add('collapsed');
+                bubble.insertBefore(reasoningEl, bubble.firstChild);
+            }
             chatHistory.push({ role: 'assistant', content: finalText });
             saveHistory();
             // Plain reply — the answer lives in the chat thread, no panel.
@@ -1442,6 +1815,47 @@ async function sendMessage() {
             setChatBusy(false);
         },
     });
+}
+
+// ── Reasoning trace UI ────────────────────────────────────────
+// Mounts a collapsible sub-bubble inside the assistant's message that
+// streams each iteration / tool_call / tool_result event as a one-line
+// step. Default-open while iterating, auto-collapsed on done.
+function ensureReasoningTrace(parentBubble) {
+    if (!parentBubble) return null;
+    const wrap = document.createElement('div');
+    wrap.className = 'reasoning-trace';
+    wrap.innerHTML = `
+        <div class="reasoning-head" onclick="this.parentElement.classList.toggle('collapsed')">
+            <span class="label">⚙ Reasoning</span>
+            <span class="toggle">[click to toggle]</span>
+        </div>
+        <div class="reasoning-body"></div>
+    `;
+    parentBubble.insertBefore(wrap, parentBubble.firstChild);
+    return wrap;
+}
+
+function appendReasoningStep(traceEl, prevSteps, event) {
+    const body = traceEl.querySelector('.reasoning-body');
+    if (!body) return prevSteps;
+    let html = '';
+    if (event.type === 'iteration') {
+        html = `<div class="reasoning-step"><span class="dur">— iteration ${escapeHtml(String(event.n || ''))} —</span></div>`;
+    } else if (event.type === 'tool_call') {
+        const argsRaw = event.args ? JSON.stringify(event.args) : '';
+        const argsTrunc = argsRaw.length > 120 ? argsRaw.slice(0, 117) + '…' : argsRaw;
+        html = `<div class="reasoning-step">⚙ ${escapeHtml(event.name || 'tool')}${argsTrunc ? ` <span class="args">${escapeHtml(argsTrunc)}</span>` : ''}</div>`;
+    } else if (event.type === 'tool_result') {
+        const dur = event.duration_ms != null ? ` <span class="dur">(${event.duration_ms} ms)</span>` : '';
+        const status = event.ok === false
+            ? `<span class="err">✗ ${escapeHtml(event.error || 'failed')}</span>`
+            : `<span class="ok">✓</span>`;
+        html = `<div class="reasoning-step">${status} ${escapeHtml(event.name || 'tool')}${dur}</div>`;
+    }
+    if (html) body.insertAdjacentHTML('beforeend', html);
+    prevSteps.push(event);
+    return prevSteps;
 }
 
 function renderPanels(panels, nextActions, fileName, sizeKb) {
@@ -1765,14 +2179,37 @@ async function triggerAction(action) {
     showIndicator(false);
 }
 
-async function handleFile(input) {
-    const file = input.files[0];
-    if (!file) return;
+// Accepts either an <input type="file"> element OR a FileList / array of File
+// (the drag-and-drop handler passes the latter). Iterates and processes each
+// file through the same pipeline so multi-select / drop work identically to
+// single-file selection.
+async function handleFile(inputOrFiles) {
+    const fileList = inputOrFiles && inputOrFiles.files
+        ? Array.from(inputOrFiles.files)
+        : Array.from(inputOrFiles || []);
+    if (!fileList.length) return;
 
-    addMessage(`📎 ${file.name}`, 'user');
     document.getElementById('sendBtn').disabled = true;
     showIndicator(true);
-    // Attaching a file runs no analysis and opens no panel (Roadmap V2 · Epic 0.3 / 4).
+    if (fileList.length > 1) {
+        addMessage(`📎 Uploading ${fileList.length} files…`, 'system', { persist: false });
+    }
+
+    for (const file of fileList) {
+        await _processSingleUpload(file);
+    }
+
+    document.getElementById('sendBtn').disabled = false;
+    showIndicator(false);
+    // Reset the <input> so re-selecting the same file fires onchange again.
+    if (inputOrFiles && 'value' in inputOrFiles) inputOrFiles.value = '';
+}
+
+// Process a single File: upload, extract, append to sessionFileContexts.
+// Splitting handleFile into a loop + this per-file worker makes drag-drop and
+// multi-select work without duplicating the extraction logic.
+async function _processSingleUpload(file) {
+    addMessage(`📎 ${file.name}`, 'user');
 
     try {
         const form = new FormData();
@@ -1811,7 +2248,7 @@ async function handleFile(input) {
             const trimmed = fileContent.length > 5000 ? fileContent.substring(0, 5000) + '\n\n... [truncated] ...' : fileContent;
             setActiveFileContext(file.name, trimmed, 'Upload');
             setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">📄 ${file.name}</div>
+                <div class="outcome-label">📄 ${escapeHtml(file.name)}</div>
                 <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · Text file loaded</div>
                 <div class="raw-output" style="max-height:200px;margin-top:8px;">${escapeHtml(trimmed.substring(0, 1000))}${trimmed.length > 1000 ? '…' : ''}</div>
             </div>`);
@@ -1822,35 +2259,67 @@ async function handleFile(input) {
             // the chat can read it. It no longer auto-runs the analysis pipeline;
             // the panel-generating commands run only when you ask in chat.
             let extractedText = '';
+            let extractionMethod = '';
             try {
                 if (kind === 'pdf') {
-                    const r = await client.execute('pdf', { action: 'extract_text', file_path: filePath }, {});
-                    extractedText = r.result?.text || r.result?.extracted_text || '';
+                    // Route PDFs through document_engine like DOCX/XLSX —
+                    // that block already wires pdf+ocr together and falls
+                    // back to OCR when the text layer is empty (which is
+                    // the case for every CAD drawing / scanned PDF). Going
+                    // directly to the `pdf` block here would skip the OCR
+                    // fallback and the LLM would only see the filename.
+                    const r = await client.execute('document_engine', {}, { pdf_path: filePath });
+                    const res = r.result || {};
+                    extractedText = (res.raw_text || '').substring(0, 8000);
+                    extractionMethod = (res.platform_blocks_used || []).includes('ocr')
+                        ? 'pdf+ocr fallback'
+                        : 'pdf text-layer';
                 } else if (kind === 'image') {
                     const r = await client.execute('ocr', { action: 'extract_text', file_path: filePath }, {});
                     extractedText = r.result?.text || r.result?.extracted_text || '';
+                    extractionMethod = 'OCR';
                 } else if (kind === 'docx') {
                     const r = await client.execute('document_engine', {}, { docx_path: filePath });
-                    extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
+                    // Prefer the raw extracted text over the mapper's
+                    // structured output. The mapper layer is tuned for
+                    // construction QTO/scheduling and discards source content
+                    // in favour of ontology defaults — useless for chatting
+                    // about a non-construction docx (e.g. a meeting note).
+                    const res = r.result || {};
+                    extractedText = (res.raw_text || JSON.stringify(res, null, 2)).substring(0, 8000);
                 } else if (kind === 'xlsx') {
                     const r = await client.execute('document_engine', {}, { xlsx_path: filePath });
-                    extractedText = JSON.stringify(r.result || {}, null, 2).substring(0, 8000);
+                    // Same as docx: prefer raw_text. The mapper used to emit
+                    // 4 kB of generic equipment lead-time defaults with zero
+                    // rows from the actual sheet, so the LLM saw boilerplate
+                    // and correctly answered "No Cost Data Available".
+                    const res = r.result || {};
+                    extractedText = (res.raw_text || JSON.stringify(res, null, 2)).substring(0, 8000);
                 }
             } catch(e) { /* extraction optional */ }
 
             setActiveFileContext(file.name, extractedText || `File: ${file.name} (${kind})`, 'Upload');
             activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
+            const ready = !!extractedText && extractedText.length > 50;
+            const methodLabel = extractionMethod ? ` · ${extractionMethod}` : '';
             setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">📎 ${file.name}</div>
-                <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · stored, not analysed</div>
+                <div class="outcome-label">📎 ${escapeHtml(file.name)}</div>
+                <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · ${ready ? `read (${extractedText.length.toLocaleString()} chars in context${methodLabel})` : 'stored, content not extractable'}</div>
                 <div style="color:#8b5cf6;font-size:12px;margin-top:8px;">Ask in chat to analyse it.</div>
             </div>`);
-            addMessage(`"${file.name}" attached and stored — I haven't run any analysis. Ask me what you need (e.g. "summarise this", "extract the BOQ") and I'll answer here.`, 'assistant');
+            // Be honest about what happened. If we successfully extracted text,
+            // SAY SO — the LLM is already primed with the content. If we had
+            // to fall back to OCR (drawing/scan), tell the user that too so
+            // they can read low-confidence text with appropriate scepticism.
+            const greeting = ready
+                ? `Got it — I've read "${file.name}" (${extractedText.length.toLocaleString()} characters${extractionMethod === 'text-layer' ? '' : extractionMethod.startsWith('OCR') ? ` via ${extractionMethod}` : ''}). Ask me anything about it.`
+                : `"${file.name}" attached — couldn't extract readable content${kind === 'pdf' ? ' (no text layer, OCR also failed)' : ''}. Ask me what you'd like to try.`;
+            addMessage(greeting, 'assistant');
 
         } else {
             setActiveFileContext(file.name, `[Binary file — ${kind}]`, 'Upload');
             setOutcomes(`<div class="outcome-item">
-                <div class="outcome-label">📦 ${file.name}</div>
+                <div class="outcome-label">📦 ${escapeHtml(file.name)}</div>
                 <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · Binary file</div>
             </div>`);
             addMessage(`"${file.name}" uploaded. Binary format — limited analysis available.`, 'assistant');
@@ -1860,10 +2329,6 @@ async function handleFile(input) {
         surfaceError(err, 'File analysis');
         addMessage(`Error analysing file: ${err.message}`, 'error');
     }
-
-    document.getElementById('sendBtn').disabled = false;
-    showIndicator(false);
-    input.value = '';
 }
 
 // Auto-resize textarea
@@ -1871,6 +2336,48 @@ document.getElementById('textInput').addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 200) + 'px';
 });
+
+// ── Drag-and-drop upload ────────────────────────────────────────────────
+// Drop one or many files anywhere on the page → flow through handleFile()
+// just like the 📎 picker. Two visual cues: a body-level `.dragging` class
+// when files are over the window, and an overlay shown via the same class.
+(function () {
+    const drop = document.body;
+    let dragDepth = 0;  // dragenter/leave fires per descendant; count to detect real leave
+
+    function hasFiles(e) {
+        if (!e.dataTransfer) return false;
+        const t = e.dataTransfer.types;
+        if (!t) return false;
+        // Chrome: includes 'Files'. Firefox: includes 'application/x-moz-file'.
+        return Array.from(t).includes('Files') || Array.from(t).includes('application/x-moz-file');
+    }
+
+    drop.addEventListener('dragenter', (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        dragDepth++;
+        document.body.classList.add('dragging');
+    });
+    drop.addEventListener('dragover', (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    });
+    drop.addEventListener('dragleave', (e) => {
+        if (!hasFiles(e)) return;
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) document.body.classList.remove('dragging');
+    });
+    drop.addEventListener('drop', (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        dragDepth = 0;
+        document.body.classList.remove('dragging');
+        const files = Array.from(e.dataTransfer.files || []);
+        if (files.length) handleFile(files);
+    });
+})();
 
 // Restore chat history (multi-turn memory persists across reloads)
 loadHistory();

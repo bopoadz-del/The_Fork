@@ -154,11 +154,33 @@ class DocumentEngineBlock(UniversalBlock):
             # ------------------------------------------------------------------
             documents = []
 
-            # PDF → platform pdf block → fallback to own PDFParser
+            # PDF → platform pdf block → OCR fallback when text layer is empty
+            # → final fallback to own PDFParser. The OCR fallback is what
+            # makes CAD drawings (vector / rasterised, zero text layer)
+            # actually readable — without it `pdf_text` comes back as "" and
+            # the LLM ends up guessing from the filename.
+            #
+            # Threshold: 200 chars is the "is this a real text PDF" tripwire.
+            # A 3-page drawing with empty pages produces a few whitespace
+            # chars at most; a real text PDF reliably clears this on page 1.
             if file_paths.get("pdf"):
                 pdf_text = None
                 if self.config.get("use_platform_pdf", True):
                     pdf_text = await self._parse_with_platform_pdf(file_paths["pdf"])
+
+                # OCR fallback for empty-text-layer PDFs (drawings, scans).
+                # _parse_with_platform_ocr renders each page → image → reads
+                # text via the OCR block (Tesseract or Vision API). Only
+                # invoke when the existing text really is empty so we don't
+                # pay OCR latency on every text PDF.
+                if (
+                    self.config.get("use_platform_ocr", True)
+                    and self.get_dep("ocr") is not None
+                    and (pdf_text is None or len(pdf_text.strip()) < 200)
+                ):
+                    ocr_text = await self._parse_with_platform_ocr(file_paths["pdf"])
+                    if ocr_text and len(ocr_text.strip()) > len((pdf_text or "").strip()):
+                        pdf_text = ocr_text
 
                 if pdf_text is not None:
                     from blocks.document_engine.parsers.pdf_parser import PDFDocument
@@ -193,6 +215,43 @@ class DocumentEngineBlock(UniversalBlock):
             result = structured.to_dict()
             result["status"] = "success"
             result["documents_parsed"] = len(documents)
+
+            # Surface the RAW extracted text alongside the mapper's structured
+            # output. The reasoner+mapper layers throw away the source content
+            # in favour of construction-ontology defaults (equipment lead
+            # times, WBS placeholders) — which is fine for QTO/schedule
+            # documents but a disaster for cost spreadsheets. Without this,
+            # a BOQ-style xlsx upload reaches the LLM as 4 kB of generic
+            # equipment defaults with zero rows from the actual file, and the
+            # LLM correctly says "No Cost Data Available" because that is
+            # literally what it was given.
+            raw_chunks: list = []
+            for doc in documents:
+                src = getattr(doc, "source", "") or ""
+                # PDF / DOCX: `.text` attribute
+                txt = getattr(doc, "text", None)
+                if txt:
+                    raw_chunks.append(f"--- {os.path.basename(src)} ---\n{txt}")
+                    continue
+                # XLSX: `.sheets` attribute → dict of sheet_name → list[list[str]]
+                sheets = getattr(doc, "sheets", None)
+                if isinstance(sheets, dict):
+                    for sheet_name, rows in sheets.items():
+                        if not rows:
+                            continue
+                        # Render as TSV-ish text so the LLM sees columns aligned.
+                        lines = ["\t".join(str(c) for c in row) for row in rows]
+                        raw_chunks.append(
+                            f"--- {os.path.basename(src)} :: {sheet_name} ---\n"
+                            + "\n".join(lines)
+                        )
+            if raw_chunks:
+                # Cap to ~50 kB so an enormous workbook can't blow up the
+                # response. The frontend further truncates to 8 kB before
+                # putting it in the chat prompt.
+                joined = "\n\n".join(raw_chunks)
+                result["raw_text"] = joined[:50000]
+                result["raw_text_truncated"] = len(joined) > 50000
 
             # Surface the OCR markup / redline verdict (Roadmap V2 · Epic 5).
             # If a scanned input carried coloured annotations, flag them rather

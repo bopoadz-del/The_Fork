@@ -109,24 +109,39 @@ class GoogleDriveBlock(UniversalBlock):
                 }
             try:
                 import httpx
-                q = f"name contains '{query}'" if query else "trashed=false"
+                # Build the Drive-API q filter. Search wins if present (name
+                # contains, no folder filter); otherwise list children of a
+                # specific folder (defaults to root so the user sees their
+                # actual top-level Drive, not the 50 newest files at any
+                # depth which was the prior behaviour).
+                folder_id = params.get("folder_id")
+                if query:
+                    q = f"name contains '{query}' and trashed=false"
+                elif folder_id:
+                    q = f"'{folder_id}' in parents and trashed=false"
+                else:
+                    q = "'root' in parents and trashed=false"
                 async with httpx.AsyncClient(timeout=20) as client:
                     resp = await client.get(
                         f"{_DRIVE_API}/files",
                         headers={"Authorization": f"Bearer {access_token}"},
                         params={
                             "q": q,
-                            "pageSize": params.get("limit", 20),
-                            "fields": "files(id,name,mimeType,size,modifiedTime,webViewLink)",
+                            "pageSize": params.get("limit", 100),
+                            "orderBy": "folder,name",  # folders first, then alpha
+                            "fields": "files(id,name,mimeType,size,modifiedTime,webViewLink,parents)",
                         },
                     )
                     resp.raise_for_status()
                     data = resp.json()
 
+                FOLDER_MT = "application/vnd.google-apps.folder"
                 files = [
                     {
                         "id": f.get("id"),
                         "name": f.get("name"),
+                        "mime_type": f.get("mimeType", ""),
+                        "is_folder": f.get("mimeType") == FOLDER_MT,
                         "type": f.get("mimeType", "").split("/")[-1],
                         "size_bytes": int(f.get("size", 0)),
                         "modified": f.get("modifiedTime", "")[:10],
@@ -135,8 +150,12 @@ class GoogleDriveBlock(UniversalBlock):
                     for f in data.get("files", [])
                 ]
                 return {"status": "success", "operation": "list", "files": files, "total": len(files)}
-            except Exception as e:
-                return {"status": "error", "error": str(e), "operation": "list"}
+            except Exception:
+                return {
+                    "status": "error",
+                    "error": "Unable to list Google Drive files at this time.",
+                    "operation": "list",
+                }
 
         # ── Download / read file ──────────────────────────────────────────────
         if operation == "download":
@@ -163,7 +182,11 @@ class GoogleDriveBlock(UniversalBlock):
                     "size_bytes": len(content),
                     "content_base64": __import__("base64").b64encode(content).decode(),
                 }
-            except Exception as e:
-                return {"status": "error", "error": str(e), "operation": "download"}
+            except Exception:
+                return {
+                    "status": "error",
+                    "error": "Unable to download Google Drive file at this time.",
+                    "operation": "download",
+                }
 
         return {"status": "error", "error": f"Unknown operation: {operation}. Use: auth, list, download"}

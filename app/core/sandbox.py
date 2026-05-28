@@ -127,10 +127,18 @@ def _make_guarded_import() -> Any:
         if level != 0:
             raise ImportError("Relative imports are not permitted in the sandbox.")
         if name not in ALLOWED_MODULES:
-            raise ImportError(
-                f"Import of '{name}' is blocked by the sandbox. "
-                f"Allowed modules: {', '.join(sorted(ALLOWED_MODULES))}."
-            )
+            # Numpy/sympy/pint load internal submodules (`numpy._core._methods`,
+            # `sympy.core.numbers`, …) at first import. A strict-equality
+            # whitelist would block them, defeating the entry. Allow any
+            # submodule whose dotted-path root is whitelisted; for leaf
+            # entries (``math``, ``json``, ``app.lib.pm_computations``) this
+            # is a no-op because they don't import siblings via `__import__`.
+            root = name.split(".", 1)[0]
+            if root not in ALLOWED_MODULES:
+                raise ImportError(
+                    f"Import of '{name}' is blocked by the sandbox. "
+                    f"Allowed modules: {', '.join(sorted(ALLOWED_MODULES))}."
+                )
         return __import__(name, globals, locals, fromlist, level)
 
     return _guarded_import
