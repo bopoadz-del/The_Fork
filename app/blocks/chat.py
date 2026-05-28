@@ -99,6 +99,38 @@ class ChatBlock(TypedBlock):
         stream = params.get("stream", False)
         model = params.get("model", "deepseek-chat")
 
+        # ── RAG (PR 2) — strictly opt-in. Defaults preserve existing behavior.
+        # When use_rag=True AND project_id is provided AND the embedding
+        # stack is installed, retrieve top-k chunks and prepend them as
+        # context. Failures here never abort the chat call — retrieval is
+        # best-effort enrichment, not a hard dependency.
+        use_rag = bool(
+            params.get("use_rag")
+            or (isinstance(input_data, dict) and input_data.get("use_rag"))
+        )
+        rag_project_id = (
+            params.get("project_id")
+            or (isinstance(input_data, dict) and input_data.get("project_id"))
+        )
+        if use_rag and rag_project_id:
+            try:
+                from app.core.rag.retriever import retrieve as _retrieve
+                rag_k = int(params.get("rag_k", 5))
+                chunks = _retrieve(message, str(rag_project_id), k=rag_k)
+                if chunks:
+                    context = "\n\n".join(
+                        f"[{c.doc_id}#{c.chunk_index}] {c.text}" for c in chunks
+                    )
+                    message = (
+                        f"Relevant project context:\n{context}\n\n"
+                        f"---\n\nUser question: {message}"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "RAG retrieval failed for project %s: %s", rag_project_id, exc
+                )
+
         deepseek_key = os.getenv("DEEPSEEK_API_KEY")
         primary_error = None
 

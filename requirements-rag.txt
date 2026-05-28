@@ -1,0 +1,15 @@
+# Optional dependencies for the RAG layer (PR 2 of the ML roadmap).
+#
+# Install only when you want persistent retrieval against indexed project
+# documents:
+#
+#     pip install -r requirements-rag.txt
+#
+# When these are NOT installed, the platform behaves exactly as before:
+# chat works, the /v1/rag/search route returns 503, and doc_index quietly
+# skips its embedding step. No code paths break.
+#
+# Disk cost: the MiniLM model is ~100 MB once cached to ~/.cache/huggingface/.
+
+sentence-transformers>=2.6.0
+sqlite-vec>=0.1.0

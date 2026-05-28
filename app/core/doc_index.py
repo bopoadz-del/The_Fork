@@ -482,6 +482,23 @@ def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
         if meta.get("ocr_low_quality"):
             entry["ocr_low_quality"] = True
 
+        # ── RAG hook (PR 2) — best-effort embedding into the vector store.
+        # Lazy import + try/except keep doc_index importable even when
+        # sentence-transformers isn't installed. Idempotent via
+        # upsert_chunks: re-indexing the same doc replaces its chunks.
+        try:
+            from app.core.rag import retriever as _rag
+            if _rag.available() and chunks:
+                indexed = _rag.index_chunks(project_id, document_id, chunks)
+                if indexed:
+                    entry["rag_indexed"] = indexed
+        except Exception as exc:  # noqa: BLE001
+            # Never let a RAG failure abort the primary doc-index path
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "RAG indexing skipped for %s: %s", document_id, exc
+            )
+
     # Load-modify-write inside one SQLite transaction — a concurrent
     # index_document call for the same project (another BackgroundTask, or
     # another worker process) cannot interleave and drop this entry.
