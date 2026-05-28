@@ -6,7 +6,16 @@ import time
 from typing import Any, Dict, List, Optional
 from app.core.universal_base import UniversalBlock
 
-_STORAGE_PATH = os.environ.get("LEARNING_ENGINE_STORAGE", "/tmp/cerebrum_learning_engine.json")
+def _storage_path() -> str:
+    """Read LEARNING_ENGINE_STORAGE at call time so tests can swap DATA_DIR
+    via monkeypatch.setenv. Reading once at module import means production
+    is fine but tests share /tmp state across the suite."""
+    return os.environ.get("LEARNING_ENGINE_STORAGE", "/tmp/cerebrum_learning_engine.json")
+
+
+# Kept for backwards-compat in default_config below; callers should now go
+# through _storage_path() directly so env overrides take effect.
+_STORAGE_PATH = _storage_path()
 
 # Tier thresholds: (min_executions, max_mae_pct) → tier label
 _TIER_RULES = [
@@ -28,7 +37,10 @@ class LearningEngineBlock(UniversalBlock):
     default_config = {
         "promotion_mae_threshold": 0.05,   # 5% MAE to promote
         "min_samples_for_training": 5,
-        "storage_path": _STORAGE_PATH,
+        # Keep storage_path absent from default_config so _load_state /
+        # _save_state fall through to _storage_path() which reads the env
+        # at call time. Setting it here would freeze the path at class
+        # definition and break LEARNING_ENGINE_STORAGE overrides in tests.
     }
 
     ui_schema = {
@@ -57,7 +69,10 @@ class LearningEngineBlock(UniversalBlock):
         self._state: Dict = self._load_state()
 
     def _load_state(self) -> Dict:
-        path = self.config.get("storage_path", _STORAGE_PATH) if hasattr(self, "config") else _STORAGE_PATH
+        # Read env at call time so tests using monkeypatch.setenv get
+        # isolated state. Production unaffected (env set once at startup).
+        default = _storage_path()
+        path = self.config.get("storage_path", default) if hasattr(self, "config") else default
         try:
             if os.path.exists(path):
                 with open(path, "r") as f:
@@ -67,7 +82,7 @@ class LearningEngineBlock(UniversalBlock):
         return {"formulas": {}, "history": []}
 
     def _save_state(self):
-        path = self.config.get("storage_path", _STORAGE_PATH)
+        path = self.config.get("storage_path", _storage_path())
         try:
             with open(path, "w") as f:
                 json.dump(self._state, f, indent=2)
@@ -125,13 +140,19 @@ class LearningEngineBlock(UniversalBlock):
             return self._record_pattern(data, params)
         elif operation == "list_patterns":
             return self._list_patterns(data, params)
+        elif operation == "train_router":
+            return self._train_router(data, params)
+        elif operation == "predict_route":
+            return self._predict_route(data, params)
+        elif operation == "route_metrics":
+            return self._route_metrics(data, params)
         else:
             return {
                 "status": "error",
                 "error": (
                     f"Unknown operation: {operation}. Use: record_correction, tune, "
                     "promote, status, reset, hydrate, hydration_latest, hydration_history, "
-                    "record_pattern, list_patterns"
+                    "record_pattern, list_patterns, train_router, predict_route, route_metrics"
                 ),
             }
 
@@ -174,6 +195,52 @@ class LearningEngineBlock(UniversalBlock):
             "category": category,
             "total_observations": len(bucket),
         }
+
+    # ── Learned chat router (PR 1 — Applied ML) ───────────────────────────
+    #
+    # See app/core/learning/router.py for the heavy logic. The block keeps
+    # only the dispatch layer and the metadata-in-state plumbing — same
+    # pattern as the hydrate / hydration_latest / hydration_history ops.
+
+    def _train_router(self, data: Dict, params: Dict) -> Dict:
+        from app.core.learning import router as _router
+
+        prefer_corrected = bool(data.get("prefer_corrected") or params.get("prefer_corrected"))
+        min_samples = int(data.get("min_samples") or params.get("min_samples") or _router._MIN_TOTAL_SAMPLES)
+        result = _router.train(prefer_corrected=prefer_corrected, min_samples=min_samples)
+
+        # Persist metadata on the block's state so predict_route can do
+        # integrity checks (sha256 + label set) without re-reading the file.
+        if result.get("status") == "success":
+            if "models" not in self._state:
+                self._state["models"] = {}
+            # Strip per_class_metrics from the persisted snapshot to keep the
+            # state JSON readable; route_metrics returns them fresh from the
+            # full result on the response.
+            persisted = {k: v for k, v in result.items() if k not in ("status", "per_class_metrics")}
+            persisted["per_class_metrics"] = result.get("per_class_metrics", {})
+            self._state["models"]["router"] = persisted
+            self._save_state()
+        return result
+
+    def _predict_route(self, data: Dict, params: Dict) -> Dict:
+        from app.core.learning import router as _router
+
+        text = data.get("text") or data.get("message") or data.get("input") or params.get("text") or ""
+        threshold = float(
+            data.get("confidence_threshold")
+            or params.get("confidence_threshold")
+            or _router.DEFAULT_CONFIDENCE_THRESHOLD
+        )
+        metadata = self._state.get("models", {}).get("router")
+        result = _router.predict(text, metadata=metadata, confidence_threshold=threshold)
+        return {"status": "success", **result}
+
+    def _route_metrics(self, data: Dict, params: Dict) -> Dict:
+        from app.core.learning import router as _router
+
+        metadata = self._state.get("models", {}).get("router")
+        return _router.evaluate(metadata=metadata)
 
     def _list_patterns(self, data: Dict, params: Dict) -> Dict:
         """Read the patterns corpus. Filter by project_id and/or category."""

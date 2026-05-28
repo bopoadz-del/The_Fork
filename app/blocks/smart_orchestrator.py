@@ -205,6 +205,56 @@ class SmartOrchestratorBlock(UniversalBlock):
         if user_message.strip().lower() in ("list actions", "help", "what can you do"):
             return self._list_actions()
 
+        # ── Learned routing (PR 1) — opt-in via routing_mode="learned" ──
+        # The learned classifier predicts ONE action with a calibrated
+        # confidence. Below the threshold (or when the model isn't loaded),
+        # we fall back to the keyword regex so we never regress on what
+        # already worked. Every learned dispatch is recorded as a
+        # routing_decisions pattern on learning_engine so the next retrain
+        # has live data, not just seed keywords.
+        routing_mode = data.get("routing_mode") or params.get("routing_mode") or self.config.get("routing_mode", "keyword")
+        learned_prediction: Optional[Dict[str, Any]] = None
+        if routing_mode == "learned":
+            learned_prediction = self._predict_learned(user_message)
+            if learned_prediction and not learned_prediction.get("fallback_recommended"):
+                action = learned_prediction["action"]
+                action_queue = [action]
+                max_actions = int(params.get("max_actions", self.config.get("max_actions", 5)))
+                # Keep keyword secondary matches as supporting context but
+                # surface the learned pick as primary.
+                matched_secondary = self._match_actions(user_message, file_type)
+                secondary = [m for m in matched_secondary if m["action"] != action][:max_actions - 1]
+                action_queue.extend(m["action"] for m in secondary)
+
+                parallel_group = self._detect_parallel_group(action_queue)
+                parallel_flag = parallel_group is not None or len(action_queue) > 1
+                fallback = self.config.get("fallback_agent", "intelligent_workflow")
+
+                self._record_routing_decision(
+                    user_message, action, learned_prediction["confidence"],
+                    source="learned", session_context=session_context,
+                )
+
+                return {
+                    "status": "success",
+                    "action_queue": action_queue,
+                    "parallel_flag": parallel_flag,
+                    "parallel_group": parallel_group,
+                    "fallback_agent": fallback,
+                    "matched_actions": [{
+                        "action": action,
+                        "score": learned_prediction["confidence"],
+                        "source": "learned",
+                    }] + secondary,
+                    "file_type_hint": file_type,
+                    "session_context": session_context,
+                    "routing_mode": "learned",
+                    "model_confidence": learned_prediction["confidence"],
+                    "fallback_used": False,
+                    "top_k": learned_prediction.get("top_k", []),
+                }
+            # else: model not loaded OR low confidence → fall through to keyword
+
         matched = self._match_actions(user_message, file_type)
         max_actions = int(params.get("max_actions", self.config.get("max_actions", 5)))
         action_queue = [m["action"] for m in matched[:max_actions]]
@@ -217,6 +267,17 @@ class SmartOrchestratorBlock(UniversalBlock):
             action_queue = [fallback]
             parallel_flag = False
 
+        # Record keyword-mode dispatches too so the classifier has training
+        # data even before anyone opts into learned mode. Skip the empty /
+        # fallback case (nothing useful to learn from). Note _match_actions
+        # returns dicts with key "confidence", not "score".
+        if routing_mode == "learned" and action_queue and action_queue[0] != fallback:
+            self._record_routing_decision(
+                user_message, action_queue[0],
+                (matched[0].get("confidence", 0.0) if matched else 0.0),
+                source="keyword_fallback", session_context=session_context,
+            )
+
         return {
             "status": "success",
             "action_queue": action_queue,
@@ -226,7 +287,58 @@ class SmartOrchestratorBlock(UniversalBlock):
             "matched_actions": matched[:max_actions],
             "file_type_hint": file_type,
             "session_context": session_context,
+            "routing_mode": routing_mode,
+            **({"fallback_used": True, "model_confidence": (learned_prediction or {}).get("confidence", 0.0),
+                "fallback_reason": (learned_prediction or {}).get("reason")}
+               if routing_mode == "learned" else {}),
         }
+
+    def _predict_learned(self, message: str) -> Optional[Dict[str, Any]]:
+        """Consult learning_engine's predict_route op. Returns None on any error
+        (caller treats that as "fall back to keyword router")."""
+        from app.blocks import BLOCK_REGISTRY
+
+        cls = BLOCK_REGISTRY.get("learning_engine")
+        if cls is None:
+            return None
+        le = cls()
+        try:
+            # We bypass execute() and call the op directly to avoid the
+            # envelope wrap; this is a hot path, ms matter.
+            return le._predict_route({"text": message}, {})
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _record_routing_decision(
+        self, message: str, action: str, score: float,
+        source: str, session_context: Dict,
+    ) -> None:
+        """Log the dispatch as a routing_decisions pattern on learning_engine
+        so the next train_router has live data. Best-effort — failures here
+        never break the dispatch."""
+        import json
+        from app.blocks import BLOCK_REGISTRY
+
+        try:
+            cls = BLOCK_REGISTRY.get("learning_engine")
+            if cls is None:
+                return
+            le = cls()
+            project_id = (session_context or {}).get("project_id") or "default"
+            le._record_pattern({
+                "project_id": project_id,
+                "category": "routing_decisions",
+                "observation": json.dumps({
+                    "text": message[:500],
+                    "action": action,
+                    "score": float(score),
+                    "source": source,
+                    "corrected": False,
+                }, ensure_ascii=False),
+                "source": "smart_orchestrator",
+            }, {})
+        except Exception:  # noqa: BLE001
+            pass
 
     def _match_actions(self, message: str, file_type: Optional[str]) -> List[Dict]:
         scores: Dict[str, float] = {}
