@@ -457,6 +457,107 @@ async def test_learned_mode_records_routing_decisions(isolated_data_dir):
     assert "source" in obs
 
 
+# ── PR 2.5 — embeddings feature mode ──────────────────────────────────────
+
+
+def test_train_default_mode_is_tfidf(isolated_data_dir):
+    """No behavior change: omitting feature_mode trains the PR 1 baseline.
+    Critical for not regressing existing deploys that have no RAG deps."""
+    from app.core.learning.router import train
+
+    r = train()
+    assert r["status"] == "success"
+    assert r["feature_mode"] == "tfidf"
+
+
+def test_train_embeddings_mode_with_fake_embedder(isolated_data_dir, monkeypatch):
+    """Embeddings mode trains end-to-end when fake embedder is active —
+    proves the EmbeddingVectorizer integrates cleanly with the Pipeline +
+    CalibratedClassifierCV + joblib round-trip."""
+    from app.core.learning.router import train, predict, invalidate_model_cache
+
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    # Reset the cached embedder so the env change takes effect
+    from app.core.rag import embeddings as _emb
+    _emb.reset_embedder_cache()
+
+    r = train(feature_mode="embeddings")
+    assert r["status"] == "success"
+    assert r["feature_mode"] == "embeddings"
+    assert r["accuracy"] is not None
+
+    # Round-trip: invalidate cache, reload from disk, predict
+    invalidate_model_cache()
+    metadata = {k: v for k, v in r.items() if k != "status"}
+    pred = predict("extract BOQ totals", metadata=metadata)
+    assert pred["model_loaded"] is True
+
+
+def test_train_embeddings_persists_feature_mode_in_metadata(isolated_data_dir, monkeypatch):
+    """route_metrics + learning_engine state JSON must carry feature_mode
+    so callers can tell which classifier they're actually consulting."""
+    from app.core.learning.router import train
+
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core.rag import embeddings as _emb
+    _emb.reset_embedder_cache()
+
+    r_tfidf = train(feature_mode="tfidf")
+    assert r_tfidf["feature_mode"] == "tfidf"
+    r_emb = train(feature_mode="embeddings")
+    assert r_emb["feature_mode"] == "embeddings"
+
+
+def test_train_invalid_feature_mode_raises(isolated_data_dir):
+    from app.core.learning.router import train
+
+    with pytest.raises(ValueError, match="unknown feature_mode"):
+        train(feature_mode="bogus_method")
+
+
+@pytest.mark.asyncio
+async def test_learning_engine_block_accepts_feature_mode(isolated_data_dir, monkeypatch):
+    """The block-level dispatcher must forward feature_mode through the
+    train_router op. Same opt-in surface for HTTP callers."""
+    from app.blocks import BLOCK_REGISTRY
+
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core.rag import embeddings as _emb
+    _emb.reset_embedder_cache()
+
+    le = BLOCK_REGISTRY["learning_engine"]()
+    envelope = await le.execute(
+        {"operation": "train_router", "feature_mode": "embeddings"}, {}
+    )
+    assert envelope["status"] == "success", f"envelope: {envelope}"
+    inner = envelope["result"]
+    assert inner["status"] == "success"
+    assert inner["feature_mode"] == "embeddings"
+    # State JSON reflects what we trained
+    assert le._state["models"]["router"]["feature_mode"] == "embeddings"
+
+
+def test_embedding_vectorizer_is_stateless(isolated_data_dir, monkeypatch):
+    """Joblib artifact must NOT bundle model weights — the EmbeddingVectorizer
+    is stateless by design (calls get_embedder() at transform time). Critical
+    for keeping the joblib artifact small (~700KB instead of ~25MB)."""
+    import joblib
+    import os
+    from app.core.learning.router import train
+
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core.rag import embeddings as _emb
+    _emb.reset_embedder_cache()
+
+    r = train(feature_mode="embeddings")
+    size = os.path.getsize(r["model_path"])
+    # 5MB is a generous ceiling for the calibrated LR's 5×(40×384) coefficients;
+    # if anyone accidentally pickles the embedder in, this would balloon to 25MB+.
+    assert size < 5 * 1024 * 1024, (
+        f"Joblib artifact too large ({size:,} bytes) — embedder may have leaked into pickle"
+    )
+
+
 @pytest.mark.asyncio
 async def test_keyword_mode_does_not_record(isolated_data_dir):
     """When routing_mode is the default (keyword), we don't pollute the
