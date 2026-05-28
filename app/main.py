@@ -41,6 +41,7 @@ from app.routers import (
     doc_types,
     drive,
     execute,
+    feedback as feedback_router,
     health,
     hydration as hydration_router,
     memory,
@@ -274,6 +275,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # Include all routers
 app.include_router(blocks.router)
 app.include_router(execute.router)
+app.include_router(feedback_router.router)
 app.include_router(chain.router)
 app.include_router(chat.router)
 app.include_router(upload.router)

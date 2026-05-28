@@ -453,6 +453,22 @@ def train(
     y_train = [r.label for r in train_rows]
     w_train = np.array([r.weight for r in train_rows])
 
+    # LogisticRegression needs at least two classes. Without this guard,
+    # sklearn raises a long traceback that masks the real problem (e.g.
+    # prefer_corrected=True with corrections for only one action). The
+    # graceful return tells the caller what to do.
+    if len(set(y_train)) < 2:
+        return {
+            "status": "insufficient_classes",
+            "samples_used": len(rows),
+            "single_class": next(iter(set(y_train)), None),
+            "remediation": (
+                "Training requires labeled examples for at least 2 classes. "
+                "If prefer_corrected=True, accumulate corrections for additional "
+                "actions before retraining."
+            ),
+        }
+
     # CalibratedClassifierCV needs cv ≤ min_class_count. With 40 actions and
     # 3-10 keywords per class plus paraphrases, min_class_count is typically 6+.
     # We compute it defensively.
