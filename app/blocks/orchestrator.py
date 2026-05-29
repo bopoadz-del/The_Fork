@@ -22,19 +22,41 @@ _TEXT_OUTPUT_FIELDS = (
 )
 
 
-def _coerce_dict_to_text(data: Dict) -> Optional[str]:
+def _coerce_dict_to_text(data: Dict, source_block: Optional[Any] = None) -> Optional[str]:
     """Extract the primary human-readable string from a block's JSON output.
 
-    Used to unwrap a step's dict output (e.g. translate's
-    ``{"translated": "...", ...}``) before it reaches a text-expecting block.
-    Returns ``None`` when no obvious text field is present, so the caller can
-    fall back to its normal type handling rather than guess wrongly.
+    Resolution order:
+
+    1. If ``source_block`` declares ``text_output_field`` (a class attribute
+       set by the producing block — see ``UniversalBlock``), use that key
+       first. This is the per-block contract: a block whose canonical text
+       lives under a non-standard key opts in by declaring the field name.
+
+    2. Otherwise, scan the global priority-ordered ``_TEXT_OUTPUT_FIELDS``.
+       Works for most existing blocks because their canonical key is
+       already in the list (``text``, ``response``, ``answer``, ...).
+
+    3. As a last resort, if exactly one string value exists in the dict
+       it's unambiguous; return it.
+
+    Returns ``None`` when no obvious text field is present, so the caller
+    can fall back to its normal type handling rather than guess wrongly.
     """
+    # 1. Per-block override — the producing block declared its canonical key
+    if source_block is not None:
+        override_key = getattr(source_block, "text_output_field", None)
+        if override_key:
+            value = data.get(override_key)
+            if isinstance(value, str) and value.strip():
+                return value
+
+    # 2. Global fallback list
     for key in _TEXT_OUTPUT_FIELDS:
         value = data.get(key)
         if isinstance(value, str) and value.strip():
             return value
-    # No known field — if exactly one string value exists it is unambiguous.
+
+    # 3. Single-string-value heuristic
     string_values = [v for v in data.values() if isinstance(v, str) and v.strip()]
     if len(string_values) == 1:
         return string_values[0]
@@ -396,7 +418,15 @@ class OrchestratorBlock(UniversalBlock):
                 and isinstance(context, dict)
                 and str(step.input_type).lower() in _TEXT_LIKE_INPUT_TYPES
             ):
-                unwrapped = _coerce_dict_to_text(context)
+                # Pass the producing block (the previous step's instance)
+                # so _coerce_dict_to_text can consult its text_output_field
+                # before falling back to the global priority list.
+                prev_block = (
+                    validated_steps[step.index - 1].block
+                    if step.index - 1 < len(validated_steps)
+                    else None
+                )
+                unwrapped = _coerce_dict_to_text(context, source_block=prev_block)
                 if unwrapped is not None:
                     type_conversions.append({
                         "step": step.index,

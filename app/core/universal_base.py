@@ -79,6 +79,22 @@ class UniversalBlock(ABC):
     # Optional
     default_config: Dict = {}
     author: str = ""
+
+    # Canonical text field for chain unwrapping.
+    #
+    # When this block produces a dict (e.g. ``{"status": "success",
+    # "translated": "..."}``) and the next block in a chain expects plain
+    # text, ``OrchestratorBlock._coerce_dict_to_text`` looks here FIRST
+    # before falling back to its priority-ordered global list. Set this
+    # in subclasses whose canonical text lives under a non-standard key
+    # — e.g. ``text_output_field = "translated"`` on TranslateBlock.
+    #
+    # ``None`` (default) keeps the legacy behaviour: the global field
+    # list is the only signal, which works for most blocks because they
+    # already use ``text`` / ``response`` / ``answer`` / etc.
+    #
+    # See CONTRIBUTING.md ("Block output contracts") for the rule.
+    text_output_field: Optional[str] = None
     
     # UI Schema - Auto-configures Universal UI Shell (frontend)
     # Blocks self-describe: what inputs they need, what outputs they produce
