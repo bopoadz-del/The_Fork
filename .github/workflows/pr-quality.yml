@@ -1,0 +1,61 @@
+name: pr-quality
+
+# Pre-merge gate that catches two patterns from this repo's history:
+#
+#   1. Empty-body PRs (#1, #2, #9) — 18k+ LOC merged with zero description.
+#      Permanently opaque to future audits.
+#   2. Zero-diff PRs (#9 — literally "+0/-0 (0 files)" merged with title
+#      "Merge"). Adds noise to PR history.
+#
+# The job runs on PR open / edit / sync. It does NOT block PRs that hold
+# the "trivial" label, so single-line typo fixes don't need the template.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check-body-and-size:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject empty body and zero-diff PRs
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_ADDITIONS: ${{ github.event.pull_request.additions }}
+          PR_DELETIONS: ${{ github.event.pull_request.deletions }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          # Trivial PRs may skip the template (single-typo fixes etc.)
+          if printf '%s' "$PR_LABELS" | tr ',' '\n' | grep -qx 'trivial'; then
+            echo "::notice::'trivial' label set — skipping PR-quality gate"
+            exit 0
+          fi
+
+          fail=0
+
+          # Strip whitespace + HTML comments to detect "empty template body"
+          stripped=$(printf '%s' "$PR_BODY" \
+            | sed 's/<!--.*-->//g' \
+            | tr -d '[:space:]')
+          if [ -z "$stripped" ]; then
+            echo "::error::PR body is empty (or contains only the template HTML comments)."
+            echo "Fill out the Summary / Why / Test plan sections from .github/pull_request_template.md."
+            echo "Or add the 'trivial' label if this PR genuinely needs no description."
+            fail=1
+          fi
+
+          # Zero-diff PRs (PR #9 class).
+          if [ "${PR_ADDITIONS:-0}" -eq 0 ] && [ "${PR_DELETIONS:-0}" -eq 0 ]; then
+            echo "::error::PR has zero additions and zero deletions — nothing to merge."
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "PR-quality checks passed."
