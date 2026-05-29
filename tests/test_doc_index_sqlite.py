@@ -155,10 +155,27 @@ def test_cross_process_concurrent_writes_serialise(tmp_path, monkeypatch):
         # of 8 sleep-padded transactions, plus generous slack.
         p.join(timeout=60)
 
-    # Surface any subprocess failure with its exit code in the message.
+    # Terminate any subprocess still alive (timeout exceeded). Without
+    # this, ``p.exitcode is None`` and the assert below would fire while
+    # the subprocess keeps running — pytest then waits on the non-daemon
+    # child at shutdown, turning the intended bounded failure into a
+    # CI hang. Codex P2 fix on PR #33.
+    stragglers = [i for i, p in enumerate(procs) if p.is_alive()]
+    for p in procs:
+        if p.is_alive():
+            p.terminate()
+            p.join(timeout=5)
+            if p.is_alive():  # terminate failed (rare) — escalate to kill
+                p.kill()
+                p.join(timeout=5)
+
+    # Surface any subprocess failure (post-cleanup exitcode is always set:
+    # negative SIGTERM on POSIX, 1 on Windows, or the worker's own
+    # exit code if it returned normally).
     failed = [(i, p.exitcode) for i, p in enumerate(procs) if p.exitcode != 0]
     assert not failed, (
         f"cross-process writers failed (exit codes): {failed}. "
+        f"Stragglers (terminated for timeout): {stragglers}. "
         f"If this is a SQLite lock error, the bug is real — investigate."
     )
 
