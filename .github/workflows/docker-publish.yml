@@ -22,13 +22,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          # arm/v7 (32-bit ARM) excluded: ifcopenshell, numpy/scipy and the
-          # OCR stack publish no wheels for it, so the image can't build there.
-          platforms: linux/amd64,linux/arm64
-
+      # arm64 builds via QEMU emulation on free GHA runners take ~5-10x
+      # the native build time. Combined with the multi-stage Python +
+      # heavy native deps (pymupdf, ifcopenshell, numpy/scipy), the
+      # arm64 leg alone runs 18-22 minutes — pushing the total build
+      # past the ~10-minute validity window of the Azure SAS tokens the
+      # `type=gha` cache backend uses, producing the "Signature not
+      # valid in the specified time frame" 403s the build dies on.
+      #
+      # Single-arch (amd64) builds complete in ~3-4 minutes, well under
+      # any cache-token lifetime. The deferred edge plan already says
+      # arm64 belongs on a native arm64 runner (when the Orin arrives);
+      # QEMU emulation here was paying CI time for an artefact nobody
+      # uses yet.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -59,12 +65,22 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          # Single-arch (amd64) only. arm64 returns when there is a
+          # native arm64 runner OR an Orin actually in hand. See note
+          # above the buildx step.
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # `ignore-error: true` on cache-to is defense in depth. Even
+          # with the short amd64-only build, a cache-write SAS could
+          # theoretically expire if a runner is slow. With this flag,
+          # cache push failures become warnings instead of failing the
+          # whole build — we still get the image; the cache misses
+          # next time but that's a cost-of-cache problem, not a
+          # correctness problem.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Print image digest
         run: echo "Image digest - ${{ steps.build-and-push.outputs.digest }}"
