@@ -108,4 +108,10 @@ pytest>=7.4.0
 pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
 pytest-json-report>=1.5.0
+# diff-cover gates the % of PR-changed lines that have coverage — runs as a
+# CI step against coverage.xml (see .github/workflows/test.yml). Pure-Python,
+# no external services. The global --cov-fail-under stays as a floor;
+# diff-cover catches "added 200 lines, tested 5" PRs that the global gate
+# would silently let through.
+diff-cover>=8.0.0
 python-magic>=0.4.27

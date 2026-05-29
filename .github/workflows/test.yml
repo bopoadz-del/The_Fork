@@ -13,6 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # diff-cover (per-PR coverage gate below) does a three-dot
+          # diff (origin/<base>...HEAD) which needs the merge base.
+          # The default depth-1 checkout has no ancestry, so diff-cover
+          # dies with "fatal: ... no merge base" before producing any
+          # report (silently, because the step is marked
+          # continue-on-error during initial rollout). fetch-depth: 0
+          # gets full history. Codex P2 fix on PR #31.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -34,14 +43,52 @@ jobs:
         run: python scripts/security_scan.py
 
       - name: Run tests (excluding browser suite)
-        # --cov-fail-under is a regression floor (current coverage ~28%);
-        # it fails the job if coverage drops below it or if no tests collect.
+        # --cov-fail-under is a regression FLOOR (current coverage ~28%);
+        # the global gate fails the job if coverage drops below it or if no
+        # tests collect. The diff-cover step below catches the orthogonal
+        # case: "PR adds 200 lines, tests 5" can stay above 25% global
+        # coverage while ratcheting NEW code toward zero coverage.
+        # --cov-report=xml emits coverage.xml for diff-cover to read.
         run: >
           pytest tests/ -v --tb=short --ignore=tests/browser
-          --cov=app --cov-report=term-missing --cov-fail-under=25
+          --cov=app --cov-report=term-missing --cov-report=xml
+          --cov-fail-under=25
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data
+
+      - name: Diff coverage (per-PR gate on lines changed)
+        # Runs only on pull_request events. Compares coverage.xml against
+        # origin/<base>; fails the PR if <50% of newly-changed lines are
+        # covered. Needs the merge-base so diff-cover's three-dot diff
+        # (origin/<base>...HEAD) resolves — fetch-depth: 0 on the checkout
+        # step above provides it.
+        #
+        # `continue-on-error: true` for the initial rollout: until we have
+        # a few data points on what real PRs hit, this surfaces the % as a
+        # warning instead of blocking. Flip to false once we've seen the
+        # baseline on 1-2 actual PRs (Step 4 of the audit-followups plan).
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          diff-cover coverage.xml \
+            --compare-branch="origin/${{ github.base_ref }}" \
+            --fail-under=50 \
+            --html-report=diff-cover.html \
+            --markdown-report=diff-cover.md
+          echo "::group::diff-cover summary"
+          cat diff-cover.md
+          echo "::endgroup::"
+
+      - name: Upload diff-cover report
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-cover-report
+          path: |
+            diff-cover.html
+            diff-cover.md
+          retention-days: 14
 
   browser-tests:
     runs-on: ubuntu-latest
