@@ -311,7 +311,7 @@ async def test_generate_for_chunk_parses_jsonl(isolated_data_dir, monkeypatch):
                 "result": {"response": response, "provider": "deepseek"},
             }
 
-    BLOCK_REGISTRY["chat"] = lambda: _FakeChat()
+    monkeypatch.setitem(BLOCK_REGISTRY, "chat", lambda: _FakeChat())
 
     chunk = {"text": "some excerpt about concrete cover and cement types", "source": "spec.pdf"}
     pairs = await _gen._generate_for_chunk(chunk, questions_per_chunk=2, provider_hint="any")
@@ -339,7 +339,7 @@ async def test_generate_for_chunk_rejects_offline_template(isolated_data_dir, mo
                     "provider": "offline_template",  # ← this is the rejection signal
                 },
             }
-    BLOCK_REGISTRY["chat"] = lambda: _OfflineChat()
+    monkeypatch.setitem(BLOCK_REGISTRY, "chat", lambda: _OfflineChat())
 
     pairs = await _gen._generate_for_chunk(
         {"text": "x", "source": "f"}, questions_per_chunk=1, provider_hint="any",
@@ -368,7 +368,7 @@ async def test_generate_for_chunk_filters_refusals(isolated_data_dir, monkeypatc
                     "provider": "deepseek",
                 },
             }
-    BLOCK_REGISTRY["chat"] = lambda: _PartialChat()
+    monkeypatch.setitem(BLOCK_REGISTRY, "chat", lambda: _PartialChat())
 
     pairs = await _gen._generate_for_chunk(
         {"text": "x", "source": "f"}, questions_per_chunk=2, provider_hint="any",
@@ -398,7 +398,7 @@ async def test_generate_for_chunk_strips_code_fences(isolated_data_dir, monkeypa
                     "provider": "deepseek",
                 },
             }
-    BLOCK_REGISTRY["chat"] = lambda: _FencedChat()
+    monkeypatch.setitem(BLOCK_REGISTRY, "chat", lambda: _FencedChat())
 
     pairs = await _gen._generate_for_chunk(
         {"text": "x", "source": "f"}, questions_per_chunk=1, provider_hint="any",
@@ -424,7 +424,7 @@ async def test_generate_provider_hint_filters(isolated_data_dir, monkeypatch):
                     "provider": "local_ollama",
                 },
             }
-    BLOCK_REGISTRY["chat"] = lambda: _LocalChat()
+    monkeypatch.setitem(BLOCK_REGISTRY, "chat", lambda: _LocalChat())
 
     pairs = await _gen._generate_for_chunk(
         {"text": "x", "source": "f"}, questions_per_chunk=1, provider_hint="deepseek",
