@@ -763,9 +763,15 @@ def _discover_gdrive_files(project_id: str) -> Tuple[int, List[str]]:
             "gdrive: GDRIVE_PROJECT_FOLDERS set but GDRIVE_SERVICE_ACCOUNT_JSON is missing"
         ]
 
-    files, list_err = gdrive_service.list_folder_files(folder_id)
-    if list_err:
-        return 0, [f"gdrive list({folder_id}): {list_err}"]
+    # walk_folder traverses subfolders (SOP-style structures like
+    # 100-Master / 200-Project Controls / ... have several levels of
+    # nesting). The annotation `_drive_path` on each file lets downstream
+    # consumers attribute documents to their location in the tree. The
+    # previous single-level list_folder_files silently ignored everything
+    # below the root, missing the bulk of operator corpora.
+    files, walk_errors = gdrive_service.walk_folder(folder_id)
+    if walk_errors and not files:
+        return 0, [f"gdrive walk({folder_id}): {e}" for e in walk_errors]
 
     seen_all = _load_gdrive_seen()
     seen_for_project = set(seen_all.get(project_id, []))
@@ -853,6 +859,13 @@ def _discover_gdrive_files(project_id: str) -> Tuple[int, List[str]]:
         _save_gdrive_seen(seen_all)
     except Exception as exc:  # noqa: BLE001 — sidecar write failure is recoverable
         errors.append(f"gdrive: sidecar save failed: {exc}")
+
+    # Surface subtree walk errors alongside per-file errors. A 403 on one
+    # subtree shouldn't make the whole run look clean. The walker already
+    # prefixes each error with "gdrive walk(...)" — pass through verbatim
+    # rather than double-prefixing (PR #25 review #1).
+    if walk_errors:
+        errors.extend(walk_errors)
 
     return attached, errors
 
