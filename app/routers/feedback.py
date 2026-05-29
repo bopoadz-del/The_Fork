@@ -75,7 +75,11 @@ async def submit_routing_correction(
     cls = BLOCK_REGISTRY.get("learning_engine")
     if cls is None:
         raise HTTPException(status_code=503, detail="learning_engine block not loaded")
-    le = cls()
+    # shared_instance() so concurrent /v1/feedback/route POSTs share one
+    # learning_engine instance with the lock around _record_pattern's
+    # read-modify-write — without it, simultaneous corrections raced and
+    # silently lost rows. Reviewer fix from PRs #19-#23 retro.
+    le = cls.shared_instance()
     try:
         result = le._record_pattern(
             {

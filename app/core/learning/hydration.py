@@ -291,7 +291,10 @@ def _writeback_for_next_chat(
 
         cls = BLOCK_REGISTRY.get("learning_engine")
         if cls is not None and friction:
-            le = cls()
+            # shared_instance() — hydration friction writeback runs alongside
+            # smart_orchestrator._record_routing_decision, both touching
+            # _record_pattern. The per-instance state lock keeps them coherent.
+            le = cls.shared_instance()
             for signal in friction:
                 result = le._record_pattern(  # type: ignore[attr-defined]
                     {"project_id": project_id, "category": "friction",

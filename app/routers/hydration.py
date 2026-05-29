@@ -74,7 +74,10 @@ async def hydration_run(
     cls = BLOCK_REGISTRY.get("learning_engine")
     if cls is None:
         raise HTTPException(status_code=503, detail="learning_engine block not loaded")
-    block = cls()
+    # shared_instance() for consistency with the singleton everywhere else.
+    # Hydration POST is not a hot path, but using cls() here would re-load
+    # state from disk on every operator-triggered run.
+    block = cls.shared_instance()
     payload: Dict[str, Any] = {"operation": "hydrate"}
     if request.target_date:
         payload["target_date"] = request.target_date
