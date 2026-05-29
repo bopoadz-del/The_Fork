@@ -137,6 +137,8 @@ ENV=development
 CORS_EXTRA_ORIGINS=http://localhost:9000   # comma-separated
 ```
 
+**Note on secret safety.** PR #14 stopped committing `.env` and `render.yaml` going forward, but **keys that were ever committed remain in `git log -p` for the life of the repository**. Untracking a file does not rewrite history. If you find a key in `git log -p -- .env`, rotating it on the provider side is what neutralises the exposure — code-side cleanup alone leaves the leaked value retrievable by anyone with read access to the repo. See `docs/SECURITY_TRIAGE.md` for the current rotation status of each known-leaked key.
+
 ---
 
 ## Architecture
