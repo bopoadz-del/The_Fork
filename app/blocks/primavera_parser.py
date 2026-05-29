@@ -116,12 +116,19 @@ class PrimaveraParserBlock(UniversalBlock):
         # ``activity_count`` already reports the true total so callers
         # can detect truncation. The defaults below cover real EPC-scale
         # schedules without forcing every caller to opt in.
-        def _cap(name: str, default: int) -> int:
+        # Codex P2 fix on PR #28: the earlier implementation returned
+        # ``len(activities)`` for the "unlimited" (0) case regardless of
+        # which list the cap would be applied to. For an XER whose RSRC
+        # table has more rows than TASK, ``resource_definitions[:max_resources]``
+        # with ``max_resources == len(activities)`` STILL truncated.
+        # Returning None means "no cap" — ``lst[:None]`` is the full list in
+        # Python, so the slice always reflects the caller's actual list size.
+        def _cap(name: str, default: int) -> Optional[int]:
             try:
                 v = int(params.get(name, default))
             except (TypeError, ValueError):
                 v = default
-            return v if v > 0 else len(activities)  # 0 → unlimited
+            return v if v > 0 else None  # 0 → unlimited (lst[:None] == lst)
 
         max_activities = _cap("max_activities", 5000)
         max_wbs = _cap("max_wbs", 2000)

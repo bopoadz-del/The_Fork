@@ -1,99 +1,80 @@
-# CodeQL Triage Log
+# Security Triage — CodeQL Dismissal Rationale
 
-Read this **before** triaging a CodeQL re-scan. Many alerts that look new are already-adjudicated false positives or accepted risks.
+When CodeQL runs (push to `main`, weekly cron, or a re-baseline after a rule update), it produces a list of alerts. Some are real and get fixed in dedicated PRs (see history of `#11`, `#12`). The rest are dismissed in the CodeQL UI as false-positives — but the UI dismissal lives on GitHub, not in the code, and is lost on a repo move, an organisation transfer, or a fresh first-scan in a fork.
 
-Each entry names the alert class, the location, the disposition (false positive / accepted / fixed), and the per-finding rationale. When CodeQL re-flags the same pattern, link the dismissal to this doc rather than re-deriving the rationale from scratch.
+This doc is the durable record of those decisions. If a CodeQL alert appears that matches one of the entries below, **the rationale has already been adjudicated** — don't re-triage from scratch.
 
-## Dismissed — false positive
+The format intentionally cites concrete files/lines so a future reviewer can confirm the code still matches the rationale. When the cited code changes, revisit the entry.
 
-### `js/insecure-randomness` on `projectSessionId`
+---
 
-**File**: `app/static/index.html`
-**First flagged**: CodeQL first scan (May 2026), triaged in PR #12.
-**Disposition**: Dismissed — not a security boundary.
+## Dismissed alerts
 
-`projectSessionId` is a per-tab session-grouping key, not a credential or an auth token. It identifies which tab's events belong together; it does not gate access to any resource. `Math.random()` is appropriate.
+### `js/insecure-randomness` — `app/static/index.html:1766`
 
-When CodeQL re-flags: confirm the use site is still per-tab grouping. If it ever gets used as an auth token or a deduplication key for sensitive operations, the dismissal is no longer valid — fix it then.
+- **Rule**: insecure random number generator
+- **Line**: `const projectSessionId = 'proj-' + Math.random().toString(36).slice(2, 11);`
+- **Why dismissed**: Used as a per-tab grouping key for streaming endpoints. Not auth, not session identity, not signed, not used to gate access. The server treats it as opaque — any string would do; randomness only spreads concurrent tabs across separate streams.
+- **What would change the dismissal**: if the key is ever read server-side to make a trust decision (e.g. "this tab owns this session"), the rule fires for real and we'd need `crypto.getRandomValues` instead.
+- **Note in code**: yes (PR-B). Future re-scans can match comment text.
 
-### `py/path-injection` in `drive_auth.py` / `file_crypto.py`
+### `py/path-injection` — `app/blocks/drive_auth.py`
 
-**Files**: `app/core/drive_auth.py`, `app/core/file_crypto.py`
-**First flagged**: CodeQL first scan, triaged during the security audit (PR #5 review).
-**Disposition**: Dismissed — guarded by `_safe_user` allowlist.
+- **Rule**: external-controlled path access
+- **Why dismissed**: paths originate from authenticated user session state (OAuth refresh tokens written by the server side), not from request bodies. `pathlib.Path(...)` joins with `DATA_DIR` which is operator-set via env, not request-derived.
+- **What would change the dismissal**: any code path that lets an unauthenticated request control a filename segment.
 
-Path construction in these modules is gated by a `_safe_user` helper that rejects any user identifier not matching `^[a-zA-Z0-9_-]+$`. CodeQL's taint tracking doesn't recognize the allowlist as a sanitiser, so it flags the downstream `os.path.join` as a sink.
+### `py/path-injection` — `app/blocks/file_crypto.py`
 
-When CodeQL re-flags: confirm `_safe_user` is still called before every path construction site in the flagged file. If a new code path bypasses the allowlist, the dismissal does not apply — that's a real finding.
+- **Rule**: external-controlled path access
+- **Why dismissed**: same shape as `drive_auth.py` — file paths come from server-resolved doc IDs, not raw request input. The doc-ID-to-path mapping lives in `vector_store.chunks` (server-controlled).
+- **What would change the dismissal**: exposing `decrypt_at(path)` to a route where `path` comes from a query string.
 
-## Dismissed — test fixture noise
+### Multiple alerts — `tests/**`, `data/**`
 
-### `py/clear-text-logging-sensitive-data` (12 alerts in `tests/`)
+- **Rule**: various
+- **Why dismissed**: test fixtures and seed data are not shipped to production. Files under `tests/` contain intentional bad-input strings (the test's payload), and `data/` holds repo-local sample documents.
+- **What would change the dismissal**: anything in `tests/` being imported by `app/` at runtime, or `data/` shipping in the container image.
 
-**Files**: various `tests/test_*.py`
-**First flagged**: CodeQL first scan, triaged via the CodeQL API in PR #11.
-**Disposition**: Dismissed in bulk — test-fixture noise.
+---
 
-Test files set up fake credentials (`api_key = "test-key-123"`, `password = "hunter2"`) and then assert behaviour. CodeQL flags the fixture string as a logged credential. The fixtures are deliberately fake; no real credential is logged.
+## Workflow conventions
 
-When CodeQL re-flags in a NEW location: check whether the flagged file is in `tests/`. If yes, dismiss with this rationale. If no, investigate — production code logging a sensitive value is a real finding.
+For all new GitHub Actions workflows in `.github/workflows/`:
 
-## Fixed
+- `permissions: contents: read` at the top of every job by default. Add granular `write` scopes only where needed (e.g. `packages: write` for GHCR publish, `pull-requests: write` for auto-comment bots). This is enforced as a one-line check during code review — see `.github/workflows/CONVENTIONS.md`.
 
-### `js/xss-through-exception` and `js/xss-through-dom` (5 alerts in `index.html`)
+For multi-arch builds:
 
-**Files**: `app/static/index.html`
-**Fixed in**: PR #12 (security: fix XSS in chat UI).
+- Native arm64 runners only. **Do not use `linux/amd64,linux/arm64` in a single `docker/build-push-action` step backed by QEMU** — QEMU emulation runs ~5-10× slower and routinely overruns the GitHub Actions cache SAS-token window (cf. PR #23's revert of `linux/arm64` from the multi-arch line PR #10 introduced).
 
-Five real XSS findings:
+---
 
-- `bubble.innerHTML = text` branch when `role==='error' && text.includes('<div')` — backend error message rendered as HTML. Removed; errors now go through `textContent`.
-- `renderDrives()` / `renderDrivesList()` interpolated drive filenames, drive names, and drive icons into `innerHTML` template literals without escaping. Wrapped in `escapeHtml()`.
-- Inline `onclick="selectDriveFile('${id}', '${name}')"` JS-string injection — replaced with `data-drive-id` / `data-file-name` attributes and a delegated `click` listener. No more inline JS string concatenation surface.
+## PR #14 — known-leaked keys in git history
 
-### `py/insecure-temporary-file` (3 alerts in `ocr.py` / `ocr_v2.py`)
+PR #14 untracked `.env` and `render.yaml` so new commits don't leak. The keys that were committed before PR #14 **remain retrievable via `git log -p -- .env render.yaml`**. Rotation status:
 
-**Files**: `app/blocks/ocr.py`, `app/blocks/ocr_v2.py`
-**Fixed in**: PR #11 (security: CodeQL quick wins).
+| Key (redacted — last 4 chars only) | Last seen committed | Rotation status |
+|---|---|---|
+| `DEEPSEEK_API_KEY  sk-…b1a1` | Before PR #14 | Not rotated (per operator preference — see `the-fork-env-committed` memory) |
+| `DEEPSEEK_API_KEY  sk-…fa86` | Before PR #14 | Not rotated (same) |
 
-`tempfile.mktemp` returns a path that another process can squat before our `pix.save()` runs (TOCTOU race). Replaced with `tempfile.mkstemp` which creates the file atomically with `O_CREAT|O_EXCL`.
+The operator has explicitly opted to absorb the residual risk rather than rotate. This doc records that decision so it isn't re-litigated on every retro.
 
-Subtle: the fix uses `os.close(fd); pix.save(tmp)` which closes the atomic fd before reopening by path. The atomic guarantee is "the filename was unique at creation time" — still correct for the TOCTOU finding. For new sites, prefer `tempfile.NamedTemporaryFile(delete=False)` and write into the open fd directly to avoid the close-and-reopen.
+**Why suffixes only.** Committing the full unrotated values into this doc at HEAD would undo PR #14's intent — every clone, fork, and secret-scanner would read them in plaintext from the current tree, not from history. The last-4-chars suffix disambiguates WHICH row of the table refers to which key (against the full values still in `git log -p -- .env`) without re-shipping the live credential into the working tree. Codex flagged this on PR #29's first review (P1); the redaction was pushed to that branch but PR #29 merged before the redaction commit landed in `main`, so the full values are currently in `main`. This PR fixes that gap as part of its conflict resolution on this file.
 
-### `actions/missing-workflow-permissions` (2 alerts in `.github/workflows/`)
+---
 
-**Files**: `.github/workflows/test.yml`
-**Fixed in**: PR #11.
+## When CodeQL files a NEW alert
 
-Workflow now declares top-level `permissions: contents: read`. Both jobs drop write scopes they never used. Future workflows in this repo should default to this at the top of every file.
+1. Cross-reference against this doc. If matched, the rationale is durable — dismiss in the UI and link the matching entry above in the dismissal note.
+2. If unmatched, triage as a fresh alert. Open a PR per fix (PRs #11 + #12 are the precedent for scoping).
+3. If the alert turns out to be a false positive after investigation, **add an entry here before dismissing in the UI**. The doc is the source of truth; the UI is the operational shortcut.
 
-### XSS in `setOutcomes` (PR #18 — found by CodeQL during PR review)
+---
 
-**File**: `app/static/index.html` (line ~705)
-**Fixed in**: PR #18 fixup commits.
+## sqlite-vec `fast_search` field (not a CodeQL item, but durable rationale)
 
-`setOutcomes(html)` assigns its argument to `.innerHTML`. Twelve callers interpolated user-controlled file names (`${fileName}`, `${file.name}`, `${drive.name}`, `${folderName}`) into template literals without escaping. CodeQL's data-flow analysis traced four paths from DOM-sourced strings into the innerHTML sink. All twelve interpolations now wrap user-controlled values in `escapeHtml()`.
+The `fast_search: bool` field surfaced at `app/routers/rag.py:40,87` reports whether sqlite-vec is in use. After the PRs #19-#23 retrospective, the read path was numpy-only and the write path was populating `vec_chunks` for nothing — pure overhead. `_try_load_vec` now returns `False` unconditionally, so `fast_search` always reports `False`.
 
-Pattern: any function that writes `.innerHTML = <expr>` is a XSS sink. Audit caller-side interpolations whenever such a function gains a new caller.
-
-## Accepted — known residual risk
-
-### Leaked DeepSeek API keys in git history
-
-**Files**: `.env` and `render.yaml` (no longer in working tree)
-**First flagged**: GitHub Secret Scanning alert #1.
-**Disposition**: Accepted — keys are in git history; rotation is the owner's call.
-
-PRs #13/#14 removed `.env` and `render.yaml`'s DeepSeek key from the working tree but did not rewrite git history. The keys remain recoverable via `git log -p`. The owner has explicitly opted to absorb the residual risk rather than rotate. Per memory file `feedback-the-fork-env-committed.md`, do not push on this.
-
-Anyone reviewing CodeQL or Secret Scanning alerts about these keys in the future: this is acknowledged and intentional; do not re-open as an action item.
-
-## How to add an entry
-
-When you dismiss a CodeQL finding, copy one of the existing entries' shapes:
-
-- **Alert class** (the CodeQL rule ID, e.g. `js/insecure-randomness`).
-- **File(s)** affected.
-- **First flagged** — when and in which PR.
-- **Disposition** — "Dismissed — false positive", "Dismissed — accepted risk", "Fixed in PR #N", etc.
-- **Per-finding rationale** — what made the dismissal correct. Without this, the dismissal is unreproducible the next time CodeQL re-scans.
+The field stays in the API response schema (removing it would be a breaking change for the frontend). When `search()` is wired to vec0 with a per-project post-filter (planned at >10k chunks per project), restore `_try_load_vec`'s probe and re-add the write mirrors in lock-step with the read.

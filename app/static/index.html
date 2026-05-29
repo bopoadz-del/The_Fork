@@ -697,6 +697,13 @@ function addMessage(text, role = 'assistant', { persist = true } = {}) {
     if (role === 'assistant') {
         bubble.innerHTML = renderMarkdown(text);
     } else {
+        // Errors/user input must NEVER use innerHTML — see PR #12. An earlier
+        // version branched on `role === 'error' && text.includes('<div')` and
+        // set innerHTML so error payloads could carry rich markup; that was
+        // an unbounded XSS surface (any backend that echoes user text into
+        // an error string would let an attacker inject markup). textContent
+        // string-types end-to-end with no JS interpretation. Do not revive
+        // the rich-error branch without a sanitiser.
         bubble.textContent = text;
     }
     msg.appendChild(bubble);
@@ -1756,6 +1763,10 @@ async function createProject() {
 // ── Project reasoning mode (Reasoning Engine Plan 6) ──────────────
 let projectMode = false;
 // Fallback per-tab session id when no real project is selected.
+// CodeQL: js/insecure-randomness — non-security. This is a per-tab
+// grouping key for streaming endpoints, NOT auth, NOT entropy. The
+// dismissal lives in CodeQL UI but the rationale lives here so it
+// survives a re-scan or a repo move. See docs/SECURITY_TRIAGE.md.
 const projectSessionId = 'proj-' + Math.random().toString(36).slice(2, 11);
 
 function onProjectModeChange(on) {
