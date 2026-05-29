@@ -376,6 +376,13 @@ class OrchestratorBlock(UniversalBlock):
         context = input_data
         results = []
         type_conversions = []
+        # Track the previously-executed step's block for chain output
+        # unwrapping (see the _coerce_dict_to_text call below). Indexing
+        # `validated_steps[step.index - 1]` would be wrong when
+        # validation drops a step (fail_fast=False) and `step.index`
+        # diverges from the position in `validated_steps`. Codex P2 fix
+        # on PR #32. A local variable is also clearer at the call site.
+        prev_block: Optional[Any] = None
 
         for step in validated_steps:
             self._report_progress(step.index, step.block_name, "running")
@@ -418,14 +425,12 @@ class OrchestratorBlock(UniversalBlock):
                 and isinstance(context, dict)
                 and str(step.input_type).lower() in _TEXT_LIKE_INPUT_TYPES
             ):
-                # Pass the producing block (the previous step's instance)
-                # so _coerce_dict_to_text can consult its text_output_field
-                # before falling back to the global priority list.
-                prev_block = (
-                    validated_steps[step.index - 1].block
-                    if step.index - 1 < len(validated_steps)
-                    else None
-                )
+                # `prev_block` (the block whose output produced `context`)
+                # is tracked across loop iterations rather than looked up
+                # via `validated_steps[step.index - 1]` — `step.index`
+                # is the ORIGINAL input step number, which can diverge
+                # from `validated_steps` position when a step was dropped
+                # during validation (fail_fast=False). Codex P2 fix on PR #32.
                 unwrapped = _coerce_dict_to_text(context, source_block=prev_block)
                 if unwrapped is not None:
                     type_conversions.append({
@@ -516,6 +521,10 @@ class OrchestratorBlock(UniversalBlock):
             # Stop on error unless continue_on_error is set
             if result.get("status") == "error" and not params.get("continue_on_error"):
                 break
+
+            # The next iteration's chain-output unwrap consults this
+            # block's `text_output_field`; remember it for them.
+            prev_block = step.block
 
         return {
             "status": "success",
