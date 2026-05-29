@@ -122,6 +122,65 @@ def test_walk_folder_respects_max_depth(isolated_data_dir, monkeypatch):
     assert files == []
 
 
+def test_walk_folder_max_depth_reports_skipped_count(isolated_data_dir, monkeypatch):
+    """PR #25 review fix #2: when max_depth trips, the error must include
+    the COUNT of subfolders that went unexplored, so operators can tell
+    whether one folder or fifty was skipped under that branch."""
+    from app.core import gdrive_service as _gds
+
+    FOLDER_MIME = "application/vnd.google-apps.folder"
+    # Three sibling subfolders under one branch, all past the cap
+    tree = {
+        "root": [{"id": "L1", "name": "deep_section", "mimeType": FOLDER_MIME}],
+        "L1": [
+            {"id": "L2a", "name": "a", "mimeType": FOLDER_MIME},
+            {"id": "L2b", "name": "b", "mimeType": FOLDER_MIME},
+            {"id": "L2c", "name": "c", "mimeType": FOLDER_MIME},
+        ],
+        # L2a/b/c each contain a folder that pushes beyond the cap
+        "L2a": [{"id": "L3a", "name": "extra", "mimeType": FOLDER_MIME}],
+        "L2b": [{"id": "L3b", "name": "extra", "mimeType": FOLDER_MIME}],
+        "L2c": [{"id": "L3c", "name": "extra", "mimeType": FOLDER_MIME}],
+    }
+    _fake_drive_tree(monkeypatch, tree)
+
+    _files, errors = _gds.walk_folder("root", max_depth=2)
+    depth_errors = [e for e in errors if "max_depth" in e]
+    assert depth_errors, "expected a depth-cap error"
+    # The walker emits one tally PER truncated branch (preserving which
+    # branch was hit, not just an opaque global count). Three branches
+    # hit the cap → three errors, each naming its parent path and count.
+    assert len(depth_errors) == 3, (
+        f"expected one error per truncated branch; got: {depth_errors}"
+    )
+    # The actionable subfolder count appears in EACH message
+    for err in depth_errors:
+        assert "subfolder" in err and "skipped" in err, err
+    # And the branch path is identifiable in each tally
+    branches_named = {e for e in depth_errors if any(b in e for b in ("/a", "/b", "/c"))}
+    assert len(branches_named) == 3, depth_errors
+
+
+def test_walk_folder_emits_no_double_prefix(isolated_data_dir, monkeypatch):
+    """PR #25 review fix #1: the walker prefixes its own errors with
+    'gdrive walk(...):'. Callers (hydration) used to add another
+    'gdrive walk:' on top, producing 'gdrive walk: gdrive walk(path): err'.
+    This test pins the walker's contract — its errors must already carry
+    the gdrive walk prefix so callers can pass through verbatim."""
+    from app.core import gdrive_service as _gds
+
+    def fake_list(folder_id, page_size=100):
+        if folder_id == "root":
+            return [], "Drive list returned 403: permission denied"
+        return [], "unknown folder"
+
+    monkeypatch.setattr(_gds, "list_folder_files", fake_list)
+    _files, errors = _gds.walk_folder("root")
+    assert any(e.startswith("gdrive walk(") for e in errors), errors
+    # And NEVER doubles the prefix
+    assert not any("gdrive walk: gdrive walk" in e for e in errors), errors
+
+
 def test_walk_folder_continues_past_subtree_error(isolated_data_dir, monkeypatch):
     """A 403 on one branch doesn't abort the whole walk. The error is
     captured; other branches still yield their files."""

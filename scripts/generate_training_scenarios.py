@@ -234,7 +234,39 @@ async def _run(
             "LLM provider (DEEPSEEK_API_KEY set, or a local model configured)."
         )
         return 1
+
+    # ── Sample preview (PR #25 review fix #3) ─────────────────────────
+    # Synthetic Q&A quality is the load-bearing risk on this pipeline.
+    # The docs recommend reading 20 random rows by eye before paying for
+    # a fine-tune; that check is easy to skip. Print 5 random rows here
+    # so the operator sees a quality signal without an extra command —
+    # if the first 5 look wrong or generic, the whole run is suspect.
+    _print_sample(out_path, n=5)
     return 0
+
+
+def _print_sample(out_path: str, n: int = 5) -> None:
+    """Print n random rows from the output to stderr for an at-a-glance
+    quality check. Stderr so it doesn't pollute pipe-to-file usage."""
+    import random as _random
+    try:
+        with open(out_path, "r", encoding="utf-8") as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("could not read back for sample preview: %s", exc)
+        return
+    if not rows:
+        return
+    sample = _random.sample(rows, k=min(n, len(rows)))
+    print("\n── %d random samples (read these before fine-tuning) ──" % len(sample), file=sys.stderr)
+    for i, r in enumerate(sample, start=1):
+        q = (r.get("instruction") or "").strip()
+        a = (r.get("response") or "").strip()
+        src = r.get("source") or "?"
+        print(f"\n[{i}] source: {src}", file=sys.stderr)
+        print(f"    Q: {q[:200]}{'…' if len(q) > 200 else ''}", file=sys.stderr)
+        print(f"    A: {a[:300]}{'…' if len(a) > 300 else ''}", file=sys.stderr)
+    print("", file=sys.stderr)
 
 
 def main() -> int:

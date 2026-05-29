@@ -861,9 +861,11 @@ def _discover_gdrive_files(project_id: str) -> Tuple[int, List[str]]:
         errors.append(f"gdrive: sidecar save failed: {exc}")
 
     # Surface subtree walk errors alongside per-file errors. A 403 on one
-    # subtree shouldn't make the whole run look clean.
+    # subtree shouldn't make the whole run look clean. The walker already
+    # prefixes each error with "gdrive walk(...)" — pass through verbatim
+    # rather than double-prefixing (PR #25 review #1).
     if walk_errors:
-        errors.extend(f"gdrive walk: {e}" for e in walk_errors)
+        errors.extend(walk_errors)
 
     return attached, errors
 

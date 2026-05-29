@@ -246,14 +246,25 @@ def walk_folder(
     for SOP-style folder structures (100-/200-/300-/... with one or two
     levels of section nesting) but stops cycles dead even if Drive's
     folder graph somehow contained one.
+
+    Depth-cap fidelity (PR #25 review #2): when ``max_depth`` is hit, the
+    walker counts how many subfolders went unexplored under that branch
+    and surfaces the count in the error message so operators can tell
+    whether one folder or fifty was skipped.
     """
     files: List[Dict[str, Any]] = []
     errors: List[str] = []
     visited: set = set()  # folder_ids we've already entered (cycle guard)
+    # path_prefix → count of subfolders skipped at the depth cap.
+    # Aggregated so we emit ONE error per truncated branch with a tally.
+    depth_cap_skipped: Dict[str, int] = {}
 
     def _walk(folder_id: str, path_prefix: str, depth: int) -> None:
         if depth > max_depth:
-            errors.append(f"gdrive walk: max_depth {max_depth} exceeded at {path_prefix or '/'}")
+            # Count this subtree as skipped against the deepest ancestor
+            # the operator can act on (the parent directory at the cap).
+            parent_path = "/".join(path_prefix.split("/")[:max_depth]) or "/"
+            depth_cap_skipped[parent_path] = depth_cap_skipped.get(parent_path, 0) + 1
             return
         if folder_id in visited:
             return
@@ -278,6 +289,17 @@ def walk_folder(
                 files.append(annotated)
 
     _walk(root_folder_id, "", 0)
+
+    # Roll up the depth-cap tallies into a single error per truncated
+    # branch so operators get an actionable count rather than a stream
+    # of identical messages.
+    for parent_path, count in sorted(depth_cap_skipped.items()):
+        suffix = f"{count} subfolder{'s' if count != 1 else ''} skipped"
+        errors.append(
+            f"gdrive walk: max_depth {max_depth} exceeded at {parent_path} "
+            f"({suffix})"
+        )
+
     return files, errors
 
 
