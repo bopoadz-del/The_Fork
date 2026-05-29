@@ -67,8 +67,63 @@ async def _stream_from_heavy_reasoning(
 
     On any agent error: emit one error SSE event and stop — the caller will
     see the error and can decide whether to retry the fast path.
+
+    Tenant isolation (PR #18 security fix — Codex P1 #1).
+    ----------------------------------------------------
+    The agent's ``search_project_documents`` tool reads by ``project_id``
+    only — if we pass an unowned ``project_id`` through, an authenticated
+    user can supply any tenant's id and the agent will pull that tenant's
+    indexed docs. The fast chat path already gates this via
+    ``_with_project_memory`` / ``_with_doc_search``; the heavy path
+    bypassed it because it goes through the agent runtime instead.
+
+    Fix: silently drop ``project_id`` when the caller doesn't own the
+    project (matches the fast path's "if you don't own it, we just don't
+    inject it" behaviour rather than returning 403, so probing for a
+    valid id doesn't leak an oracle).
+
+    Cross-user conversation isolation (PR #18 security fix — Codex P1 #2).
+    --------------------------------------------------------------------
+    ``conversation_id=f"hr-{session_id}"`` was keyed only on
+    ``session_id``, which defaults to ``"default"`` on the fast path's
+    callers. Two users both on the default session would write to the
+    SAME ``hr-default`` row in ``agent_memory`` and see each other's
+    prior turns surfacing in replies. Fix: prefix with ``user_id`` so
+    the key is per-user; ``anon`` fallback is acceptable because this
+    route already requires ``auth: dict = Depends(require_user)``.
     """
     yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'mode': 'heavy_reasoning'})}\n\n"
+
+    # Tenant gate: drop project_id when the caller doesn't own it.
+    # Looked up once here so the agent's tool calls inherit a None
+    # project_id and the search_project_documents tool naturally
+    # no-ops (it already early-returns on missing project_id).
+    safe_project_id = project_id
+    if project_id:
+        try:
+            from app.core import projects as projects_store
+            if projects_store.get_project(project_id, user_id=user_id) is None:
+                logger.warning(
+                    "heavy-reasoning: user=%s does not own project=%s; "
+                    "dropping project_id (matches fast-path tenant guard)",
+                    user_id or "<anon>", project_id,
+                )
+                safe_project_id = None
+        except Exception:  # noqa: BLE001
+            # Lookup failure → fail closed: drop the project_id rather
+            # than risk handing it to the agent on a transient store
+            # error. Worst case: the user loses RAG context for one
+            # request, which is preferable to a cross-tenant leak.
+            logger.exception(
+                "heavy-reasoning: project ownership check failed; "
+                "dropping project_id (fail-closed)"
+            )
+            safe_project_id = None
+
+    # Per-user conversation key so two users on the default session don't
+    # alias into the same agent_memory row.
+    safe_user = user_id or "anon"
+    conversation_id = f"hr-{safe_user}-{session_id}" if session_id else None
 
     # Pipe agent events into an asyncio queue so we can yield SSE chunks as
     # they arrive instead of buffering everything until the agent returns.
@@ -87,8 +142,8 @@ async def _stream_from_heavy_reasoning(
             result = await agent.chat(
                 user_message=user_message,
                 history=history,
-                project_id=project_id,
-                conversation_id=f"hr-{session_id}" if session_id else None,
+                project_id=safe_project_id,
+                conversation_id=conversation_id,
                 on_event=on_event,
             )
             return result
