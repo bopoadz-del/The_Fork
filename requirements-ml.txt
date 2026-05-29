@@ -27,3 +27,10 @@ accelerate>=0.30.0
 peft>=0.11.0
 datasets>=2.18.0
 safetensors>=0.4.0
+
+# ── Managed-GPU fine-tuning via Tinker (PR 3a-Tinker — opt-in) ───────
+# Required ONLY when running scripts/finetune_router.py --trainer tinker
+# (or scripts/tinker_trainer.py directly). The local trainer above does
+# not need it. Auth via TINKER_API_KEY env var — never in code or logs.
+# Sign up: https://tinker-console.thinkingmachines.ai
+tinker>=0.1.0

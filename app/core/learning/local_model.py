@@ -41,7 +41,28 @@ _DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-3B-Instruct"
 
 
 def _base_model_name() -> str:
-    return os.getenv("LOCAL_BASE_MODEL") or _DEFAULT_BASE_MODEL
+    """Resolve the base model ID.
+
+    Precedence (highest first):
+    1. ``LOCAL_BASE_MODEL`` env — pins a concrete HF model ID
+    2. ``LOCAL_MODEL_ALIAS`` env → resolved via model_registry
+    3. Default alias ``construction_v1`` → resolved via model_registry
+    4. Historical fallback ``Qwen/Qwen2.5-3B-Instruct`` when the
+       registry is missing or the alias is unknown (don't break existing
+       deploys on an import error)
+
+    PR 3a-Tinker added the registry so model deprecation swaps don't
+    require code changes on this loader.
+    """
+    override = os.getenv("LOCAL_BASE_MODEL")
+    if override:
+        return override
+    alias = os.getenv("LOCAL_MODEL_ALIAS") or "construction_v1"
+    try:
+        from app.core.learning.model_registry import resolve_base_model
+        return resolve_base_model(alias, trainer="local")
+    except Exception:
+        return _DEFAULT_BASE_MODEL
 
 
 def _adapter_dir() -> str:
