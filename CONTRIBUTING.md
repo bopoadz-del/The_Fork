@@ -34,6 +34,28 @@ For new code:
 - **New blocks under `app/blocks/`** need at least the happy path tested. The resilient block loader (PR #8) means a broken block load is non-fatal at app startup, but it's still a hidden bug.
 - **Tests for new code should use the `isolated_data_dir` fixture pattern** established by the hydration work — fresh `DATA_DIR` per test, module-level `_initialized` flags reset. Don't write tests that share state via `/tmp` or the live `data/` directory.
 
+## Block output contracts
+
+Blocks compose into chains via `OrchestratorBlock`. A chain step that produces a JSON dict (e.g. `translate` returning `{"translated": "...", ...}`) automatically gets its primary text unwrapped before flowing into a text-expecting next step (`chat`, `translate -> chat`, etc.).
+
+The unwrap order is:
+
+1. **Producing block's declared `text_output_field`** (class attribute on `UniversalBlock`). If set, this key wins.
+2. **Global priority-ordered fallback list** in `app/blocks/orchestrator.py:_TEXT_OUTPUT_FIELDS` (`text`, `translated`, `response`, ...).
+3. **Single-string heuristic**: if exactly one value in the dict is a non-empty string, return it.
+
+If your block's canonical text lives under a key that's NOT in the global list, declare it:
+
+```python
+class MyBlock(UniversalBlock):
+    name = "my_block"
+    text_output_field = "my_canonical_key"  # add this
+```
+
+Even if the key IS in the global list (e.g. `translated`), declaring it explicitly is preferred — it locks the contract and survives reordering of the global tuple.
+
+Test the override in `tests/test_chain_text_output_field.py` and the legacy global-list path in `tests/test_chain_json_text_coercion.py`.
+
 ## Security follow-ups
 
 `docs/SECURITY_TRIAGE.md` captures the CodeQL dismissal rationales from PRs #11/#12/#14. Read it before re-triaging a CodeQL re-scan — many alerts are already-adjudicated false positives.

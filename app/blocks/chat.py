@@ -49,6 +49,14 @@ class ChatBlock(TypedBlock):
     accepted_input_types = ["Text", "TextContent", "ChatMessage"]
     produced_output_types = ["Text", "TextContent", "ChatMessage"]
 
+    # Canonical text key for chain unwrapping. ChatBlock returns either
+    # ``{"text": "..."}`` (DeepSeek path) or ``{"response": "..."}`` (local
+    # LoRA path); ``"text"`` is the primary shape, so declaring it locks
+    # the contract for the common case. The orchestrator's global fallback
+    # still picks up ``"response"`` on the local path because it's in
+    # _TEXT_OUTPUT_FIELDS, so no behaviour change either way.
+    text_output_field = "text"
+
     input_schema = Schema(
         content_type=ContentType.TEXT,
         required_fields=[],

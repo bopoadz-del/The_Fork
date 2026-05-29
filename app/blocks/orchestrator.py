@@ -22,19 +22,41 @@ _TEXT_OUTPUT_FIELDS = (
 )
 
 
-def _coerce_dict_to_text(data: Dict) -> Optional[str]:
+def _coerce_dict_to_text(data: Dict, source_block: Optional[Any] = None) -> Optional[str]:
     """Extract the primary human-readable string from a block's JSON output.
 
-    Used to unwrap a step's dict output (e.g. translate's
-    ``{"translated": "...", ...}``) before it reaches a text-expecting block.
-    Returns ``None`` when no obvious text field is present, so the caller can
-    fall back to its normal type handling rather than guess wrongly.
+    Resolution order:
+
+    1. If ``source_block`` declares ``text_output_field`` (a class attribute
+       set by the producing block — see ``UniversalBlock``), use that key
+       first. This is the per-block contract: a block whose canonical text
+       lives under a non-standard key opts in by declaring the field name.
+
+    2. Otherwise, scan the global priority-ordered ``_TEXT_OUTPUT_FIELDS``.
+       Works for most existing blocks because their canonical key is
+       already in the list (``text``, ``response``, ``answer``, ...).
+
+    3. As a last resort, if exactly one string value exists in the dict
+       it's unambiguous; return it.
+
+    Returns ``None`` when no obvious text field is present, so the caller
+    can fall back to its normal type handling rather than guess wrongly.
     """
+    # 1. Per-block override — the producing block declared its canonical key
+    if source_block is not None:
+        override_key = getattr(source_block, "text_output_field", None)
+        if override_key:
+            value = data.get(override_key)
+            if isinstance(value, str) and value.strip():
+                return value
+
+    # 2. Global fallback list
     for key in _TEXT_OUTPUT_FIELDS:
         value = data.get(key)
         if isinstance(value, str) and value.strip():
             return value
-    # No known field — if exactly one string value exists it is unambiguous.
+
+    # 3. Single-string-value heuristic
     string_values = [v for v in data.values() if isinstance(v, str) and v.strip()]
     if len(string_values) == 1:
         return string_values[0]
@@ -354,6 +376,13 @@ class OrchestratorBlock(UniversalBlock):
         context = input_data
         results = []
         type_conversions = []
+        # Track the previously-executed step's block for chain output
+        # unwrapping (see the _coerce_dict_to_text call below). Indexing
+        # `validated_steps[step.index - 1]` would be wrong when
+        # validation drops a step (fail_fast=False) and `step.index`
+        # diverges from the position in `validated_steps`. Codex P2 fix
+        # on PR #32. A local variable is also clearer at the call site.
+        prev_block: Optional[Any] = None
 
         for step in validated_steps:
             self._report_progress(step.index, step.block_name, "running")
@@ -396,7 +425,13 @@ class OrchestratorBlock(UniversalBlock):
                 and isinstance(context, dict)
                 and str(step.input_type).lower() in _TEXT_LIKE_INPUT_TYPES
             ):
-                unwrapped = _coerce_dict_to_text(context)
+                # `prev_block` (the block whose output produced `context`)
+                # is tracked across loop iterations rather than looked up
+                # via `validated_steps[step.index - 1]` — `step.index`
+                # is the ORIGINAL input step number, which can diverge
+                # from `validated_steps` position when a step was dropped
+                # during validation (fail_fast=False). Codex P2 fix on PR #32.
+                unwrapped = _coerce_dict_to_text(context, source_block=prev_block)
                 if unwrapped is not None:
                     type_conversions.append({
                         "step": step.index,
@@ -486,6 +521,10 @@ class OrchestratorBlock(UniversalBlock):
             # Stop on error unless continue_on_error is set
             if result.get("status") == "error" and not params.get("continue_on_error"):
                 break
+
+            # The next iteration's chain-output unwrap consults this
+            # block's `text_output_field`; remember it for them.
+            prev_block = step.block
 
         return {
             "status": "success",

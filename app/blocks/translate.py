@@ -44,6 +44,13 @@ class TranslateBlock(UniversalBlock):
     tags = ["domain", "nlp", "translation"]
     requires = []
 
+    # Canonical text key for chain unwrapping — overrides the orchestrator's
+    # global priority list. Without this, a translate -> chat chain leans on
+    # the fact that "translated" happens to be in _TEXT_OUTPUT_FIELDS; with
+    # this, the contract is explicit and survives any list reordering.
+    # See CONTRIBUTING.md "Block output contracts".
+    text_output_field = "translated"
+
     ui_schema = {
         "input": {
             "type": "text",
