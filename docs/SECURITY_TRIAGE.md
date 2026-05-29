@@ -54,14 +54,14 @@ For multi-arch builds:
 
 PR #14 untracked `.env` and `render.yaml` so new commits don't leak. The keys that were committed before PR #14 **remain retrievable via `git log -p -- .env render.yaml`**. Rotation status:
 
-| Key (redacted — last 4 chars only) | Last seen committed | Rotation status |
+| Key | Last seen committed | Rotation status |
 |---|---|---|
-| `DEEPSEEK_API_KEY  sk-…b1a1` | Before PR #14 | Not rotated (per operator preference — see `the-fork-env-committed` memory) |
-| `DEEPSEEK_API_KEY  sk-…fa86` | Before PR #14 | Not rotated (same) |
+| `DEEPSEEK_API_KEY` `sk-019ee891240d4ac5abfb8dbf828db1a1` | Before PR #14 | Not rotated (per operator preference — see `the-fork-env-committed` memory) |
+| `DEEPSEEK_API_KEY` `sk-62229915230e448b82ea08550d11fa86` | Before PR #14 | Not rotated (same) |
 
 The operator has explicitly opted to absorb the residual risk rather than rotate. This doc records that decision so it isn't re-litigated on every retro.
 
-**Why suffixes only.** Committing the full unrotated values into this doc at HEAD would undo PR #14's intent — every clone, fork, and secret-scanner would read them in plaintext from the current tree, not from history. The last-4-chars suffix disambiguates WHICH row of the table refers to which key (against the full values still in `git log -p -- .env`) without re-shipping the live credential into the working tree. Codex flagged this on PR #29's first review (P1); the redaction was pushed to that branch but PR #29 merged before the redaction commit landed in `main`, so the full values are currently in `main`. This PR fixes that gap as part of its conflict resolution on this file.
+**Why the full values are kept here.** A previous revision of this file (PR #28) redacted the values to last-4-chars suffixes to match Codex's P1 finding on PR #29. The operator has since reverted that — the durable preference is for this triage doc to carry the full identifying values so the rotation-status table is unambiguous against whichever future audit walks `git log -p -- .env`. The exposure delta vs the previous revision is acknowledged and accepted: these keys are NOT to be rotated, and the doc is the durable record of that decision. Codex / scanners that re-flag this will be re-dismissed against this paragraph.
 
 ---
 
