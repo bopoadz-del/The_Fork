@@ -222,6 +222,65 @@ def is_downloadable(file_meta: Dict[str, Any]) -> bool:
     return mime not in _GOOGLE_DOC_MIMES
 
 
+_FOLDER_MIME = "application/vnd.google-apps.folder"
+
+
+def walk_folder(
+    root_folder_id: str,
+    max_depth: int = 8,
+    page_size: int = 100,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Recursively walk ``root_folder_id`` and return every file beneath it.
+
+    Each yielded file dict carries an additional ``_drive_path`` field — a
+    forward-slash-joined name path from the root (e.g.
+    ``"200-Project Controls/2.3 Risk/2.3.1 Register.pdf"``) so callers can
+    attribute files to their location for downstream training data.
+
+    Returns ``(files, errors)``. Errors don't abort the walk — a permission
+    denial or 5xx on one subtree gets logged in the errors list and the
+    walker moves on. The contract matches ``list_folder_files``: callers
+    see partial data rather than nothing on transient issues.
+
+    ``max_depth`` caps recursion at 8 levels by default. This is generous
+    for SOP-style folder structures (100-/200-/300-/... with one or two
+    levels of section nesting) but stops cycles dead even if Drive's
+    folder graph somehow contained one.
+    """
+    files: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    visited: set = set()  # folder_ids we've already entered (cycle guard)
+
+    def _walk(folder_id: str, path_prefix: str, depth: int) -> None:
+        if depth > max_depth:
+            errors.append(f"gdrive walk: max_depth {max_depth} exceeded at {path_prefix or '/'}")
+            return
+        if folder_id in visited:
+            return
+        visited.add(folder_id)
+
+        entries, err = list_folder_files(folder_id, page_size=page_size)
+        if err:
+            errors.append(f"gdrive walk({path_prefix or folder_id}): {err}")
+            return
+
+        for entry in entries:
+            name = entry.get("name") or ""
+            mime = entry.get("mimeType") or ""
+            entry_path = f"{path_prefix}/{name}".lstrip("/")
+            if mime == _FOLDER_MIME:
+                _walk(entry.get("id") or "", entry_path, depth + 1)
+            else:
+                # Annotate with the path so downstream code can attribute
+                # the file to its location in the SOP tree.
+                annotated = dict(entry)
+                annotated["_drive_path"] = entry_path
+                files.append(annotated)
+
+    _walk(root_folder_id, "", 0)
+    return files, errors
+
+
 def download_file_bytes(file_id: str) -> Tuple[Optional[bytes], Optional[str]]:
     """Download a single Drive file's raw bytes.
 
