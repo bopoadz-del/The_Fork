@@ -81,6 +81,30 @@ def _device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+# ── Prompt template (SINGLE SOURCE OF TRUTH for train + inference) ────────
+#
+# Critical: training in scripts/finetune_router.py wraps each example in
+# this exact Alpaca-style template. Inference MUST use the same wrapper or
+# the model sees a different prompt shape than it trained on, silently
+# degrading response quality. Both sides import from here so they cannot
+# drift.
+
+_TEMPLATE_INSTRUCTION_PREFIX = "### Instruction:\n"
+_TEMPLATE_RESPONSE_PREFIX = "\n\n### Response:\n"
+
+
+def format_prompt(instruction: str, response: str = "") -> str:
+    """Wrap an instruction (and optional response) in the training template.
+
+    With ``response``, returns a full training example (used by the trainer
+    at fit time). Without one, returns the prompt suffix used at inference
+    time — the model continues from after ``### Response:\\n``.
+    """
+    if response:
+        return f"{_TEMPLATE_INSTRUCTION_PREFIX}{instruction}{_TEMPLATE_RESPONSE_PREFIX}{response}"
+    return f"{_TEMPLATE_INSTRUCTION_PREFIX}{instruction}{_TEMPLATE_RESPONSE_PREFIX}"
+
+
 # ── Module-level cache ────────────────────────────────────────────────────
 
 
@@ -185,20 +209,37 @@ def generate(
     temperature: float = 0.7,
 ) -> Optional[str]:
     """Run one generation through the cached pipeline. Returns None when
-    the model isn't loadable (callers should fall back to cloud chat)."""
+    the model isn't loadable (callers should fall back to cloud chat).
+
+    Wraps ``prompt`` in the same Alpaca-style template the trainer used at
+    fit time (see :func:`format_prompt`). Without this wrap the model sees
+    a different prompt shape than it trained on, silently producing
+    worse-quality responses. Reviewer note: this was the load-bearing
+    correctness fix on PR #24 review.
+    """
     pipe = get_pipeline()
     if pipe is None:
         return None
+    # Wrap with the training template — MUST match what finetune_router.py
+    # fed to tokenize() during training, or the adapter underperforms.
+    wrapped = format_prompt(prompt)
     try:
         out = pipe(
-            prompt,
+            wrapped,
             max_new_tokens=max_new_tokens,
             do_sample=temperature > 0,
             temperature=max(temperature, 0.01),  # transformers rejects 0.0
             return_full_text=False,
         )
         if isinstance(out, list) and out:
-            return (out[0].get("generated_text") or "").strip()
+            text = (out[0].get("generated_text") or "").strip()
+            # Defense-in-depth: if the adapter ever overruns EOS and starts
+            # producing a fresh "### Instruction:" block, cut at the next
+            # turn boundary so we don't return a hallucinated follow-up.
+            cut = text.find("### Instruction:")
+            if cut > 0:
+                text = text[:cut].rstrip()
+            return text
         return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("local model generation failed; falling back: %s", exc)

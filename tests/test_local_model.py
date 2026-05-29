@@ -92,6 +92,81 @@ def test_generate_returns_none_when_unavailable(isolated_data_dir, monkeypatch):
     assert _lm.generate("anything") is None
 
 
+def test_format_prompt_matches_training_template():
+    """Single source of truth: the inference wrap MUST equal the trainer's
+    wrap. Both finetune_router._format_prompt and local_model.format_prompt
+    delegate to the same function — if anyone redefines either in a way
+    that drifts, this test fails. Reviewer-flagged bug on PR #24."""
+    from app.core.learning.local_model import format_prompt
+    from scripts.finetune_router import _format_prompt
+
+    instruction = "what is the typical concrete cover for a slab?"
+    response = "25-40mm depending on exposure class"
+
+    # 1. The two wrappers must produce identical output for identical input.
+    assert format_prompt(instruction, response) == _format_prompt(instruction, response)
+    assert format_prompt(instruction) == _format_prompt(instruction)
+
+    # 2. The inference-time wrap (no response) MUST end with the response
+    # prefix so the model continues generating from after "### Response:\n".
+    inference_prompt = format_prompt(instruction)
+    assert inference_prompt.endswith("### Response:\n"), (
+        f"inference prompt must end at the response anchor; got: {inference_prompt!r}"
+    )
+    assert "### Instruction:" in inference_prompt
+
+
+def test_generate_wraps_prompt_with_training_template(isolated_data_dir, monkeypatch):
+    """The actual fix: generate() wraps the raw prompt in the Alpaca-style
+    template before calling the pipeline. Without this, the model sees a
+    different prompt shape at inference than during training, silently
+    degrading quality. We mock the pipeline to capture exactly what the
+    wrapper passed in."""
+    from app.core.learning import local_model as _lm
+
+    captured = {}
+    def fake_pipe(text, **kwargs):
+        captured["text"] = text
+        captured["kwargs"] = kwargs
+        return [{"generated_text": "  some answer  "}]
+
+    monkeypatch.setattr(_lm, "get_pipeline", lambda: fake_pipe)
+    result = _lm.generate("what is the typical slab cover?", max_new_tokens=100)
+
+    # The wrapped prompt must start with the instruction marker
+    assert captured["text"].startswith("### Instruction:")
+    assert "what is the typical slab cover?" in captured["text"]
+    # And end at the response anchor so the model continues from there
+    assert captured["text"].endswith("### Response:\n")
+    # The output is returned (and stripped of leading/trailing whitespace)
+    assert result == "some answer"
+
+
+def test_generate_truncates_at_next_instruction_boundary(isolated_data_dir, monkeypatch):
+    """Defense-in-depth: if the adapter ever overruns EOS and starts a
+    fresh '### Instruction:' block, we cut at the next turn boundary so
+    callers don't see hallucinated follow-ups."""
+    from app.core.learning import local_model as _lm
+
+    def fake_pipe(text, **kwargs):
+        # Simulate the model producing a real answer then leaking into a
+        # hallucinated new turn
+        return [{
+            "generated_text": (
+                "the slab cover is 30mm.\n\n"
+                "### Instruction:\nand for columns?\n\n"
+                "### Response:\n40mm typical"
+            )
+        }]
+    monkeypatch.setattr(_lm, "get_pipeline", lambda: fake_pipe)
+
+    result = _lm.generate("slab cover?")
+    assert "slab cover is 30mm" in result
+    assert "and for columns" not in result, (
+        "must cut at the next ### Instruction: boundary, not return hallucinated turn"
+    )
+
+
 def test_invalidate_cache_drops_pipeline(isolated_data_dir, monkeypatch):
     """After swapping an adapter, operators call invalidate_cache(). Verify
     it actually clears the module-level reference."""
