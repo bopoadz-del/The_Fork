@@ -63,14 +63,15 @@ def _device():
 def _format_prompt(instruction: str, response: str = "") -> str:
     """Build the instruction-tuning prompt the model trains against.
 
-    Uses a minimal Alpaca-style template. The base models in the
-    roadmap (Qwen2.5-Instruct, Llama-3.2-Instruct) ship with their
-    own chat templates, but they're not consistent across families;
-    a tokenizer-agnostic template keeps the training loop portable.
+    Single source of truth lives in ``app.core.learning.local_model.format_prompt``.
+    Both the trainer (fit-time) and the inference loader use the SAME
+    template so the adapter sees the same prompt shape end to end. Drift
+    here was the load-bearing correctness bug on PR #24 review — keep
+    this thin wrapper as a backwards-compat alias and route all real
+    work through the shared module.
     """
-    if response:
-        return f"### Instruction:\n{instruction}\n\n### Response:\n{response}"
-    return f"### Instruction:\n{instruction}\n\n### Response:\n"
+    from app.core.learning.local_model import format_prompt
+    return format_prompt(instruction, response)
 
 
 def _load_jsonl(path: str) -> List[dict]:
