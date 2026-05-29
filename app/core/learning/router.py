@@ -200,7 +200,9 @@ def _runtime_data_from_patterns() -> List[TrainingRow]:
     cls = BLOCK_REGISTRY.get("learning_engine")
     if cls is None:
         return []
-    le = cls()
+    # shared_instance() — uses the same _state the writeback paths populated,
+    # so train_router sees patterns hydration just recorded without a re-load.
+    le = cls.shared_instance()
 
     if "patterns" not in le._state:
         return []

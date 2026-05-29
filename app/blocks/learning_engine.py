@@ -2,6 +2,7 @@
 
 import os
 import json
+import threading
 import time
 from typing import Any, Dict, List, Optional
 from app.core.universal_base import UniversalBlock
@@ -64,8 +65,52 @@ class LearningEngineBlock(UniversalBlock):
         ],
     }
 
+    # ── Process-local singleton cache ───────────────────────────────────
+    #
+    # Path-keyed cache so different LEARNING_ENGINE_STORAGE values (one per
+    # test via monkeypatch.setenv, or one per worker in a future multi-tenant
+    # setup) get distinct instances. Mirrors app/core/rag/vector_store.py:63-70
+    # (get_store keyed on db_path under _CACHE_LOCK) so the same reset_*_cache
+    # shape works for test teardown.
+    #
+    # Process-local. If we ever move to multi-worker uvicorn, replace this
+    # with a fcntl lock around _save_state OR migrate _state to SQLite.
+
+    _instance_by_path: Dict[str, "LearningEngineBlock"] = {}
+    _instance_cache_lock = threading.Lock()
+
+    @classmethod
+    def shared_instance(cls) -> "LearningEngineBlock":
+        """Process-cached instance keyed on the current LEARNING_ENGINE_STORAGE
+        path. Hot paths (smart_orchestrator._predict_learned + _record_routing_decision,
+        routers/feedback.py:submit_routing_correction) use this instead of
+        ``cls()`` so they avoid a full JSON load+save per request. The
+        per-instance state lock makes the read-modify-write window inside
+        ``_record_pattern`` safe under concurrent dispatches — before this,
+        concurrent writes would last-write-wins and silently lose observations.
+        Tests that need a fresh instance can call ``reset_shared_instance_cache()``
+        or construct ``cls()`` directly (which bypasses the cache)."""
+        path = _storage_path()
+        with cls._instance_cache_lock:
+            inst = cls._instance_by_path.get(path)
+            if inst is None:
+                inst = cls()
+                cls._instance_by_path[path] = inst
+        return inst
+
+    @classmethod
+    def reset_shared_instance_cache(cls) -> None:
+        """Drop cached instances. Used by tests to pick up a swapped storage
+        path or to force a fresh state load."""
+        with cls._instance_cache_lock:
+            cls._instance_by_path.clear()
+
     def __init__(self, hal_block=None, config: Dict = None):
         super().__init__(hal_block, config)
+        # Reentrant lock guarding _record_pattern's read-modify-write window
+        # (and any future op that mutates _state then calls _save_state).
+        # RLock so a single thread can re-enter via nested ops without deadlock.
+        self._state_lock = threading.RLock()
         self._state: Dict = self._load_state()
 
     def _load_state(self) -> Dict:
@@ -178,22 +223,30 @@ class LearningEngineBlock(UniversalBlock):
         if not project_id or not observation:
             return {"status": "error", "error": "project_id and observation required"}
 
-        # Defensive init for state loaded from disk before this slot existed
-        if "patterns" not in self._state:
-            self._state["patterns"] = {}
-        bucket = self._state["patterns"].setdefault(project_id, {}).setdefault(category, [])
-        bucket.append({
-            "observation": str(observation),
-            "source": data.get("source") or params.get("source") or "manual",
-            "run_date": data.get("run_date") or params.get("run_date"),
-            "ts": time.time(),
-        })
-        self._save_state()
+        # Lock the read-modify-write window. Before this lock, two threads
+        # calling _record_pattern concurrently would both serialise + write
+        # _state and the second's _save_state would silently overwrite any
+        # bucket changes the first had committed to disk. The list.append
+        # itself is GIL-atomic, but the write-to-file is not. Reviewer fix
+        # from PRs #19-#23 retro.
+        with self._state_lock:
+            # Defensive init for state loaded from disk before this slot existed
+            if "patterns" not in self._state:
+                self._state["patterns"] = {}
+            bucket = self._state["patterns"].setdefault(project_id, {}).setdefault(category, [])
+            bucket.append({
+                "observation": str(observation),
+                "source": data.get("source") or params.get("source") or "manual",
+                "run_date": data.get("run_date") or params.get("run_date"),
+                "ts": time.time(),
+            })
+            self._save_state()
+            total = len(bucket)
         return {
             "status": "success",
             "project_id": project_id,
             "category": category,
-            "total_observations": len(bucket),
+            "total_observations": total,
         }
 
     # ── Learned chat router (PR 1 — Applied ML) ───────────────────────────
@@ -233,6 +286,20 @@ class LearningEngineBlock(UniversalBlock):
             persisted["per_class_metrics"] = result.get("per_class_metrics", {})
             self._state["models"]["router"] = persisted
             self._save_state()
+            # Cache invalidation (P2 from Codex on PR #27 review): /v1/execute
+            # runs train_router through app.dependencies.block_instances which
+            # is a DIFFERENT instance than the smart_orchestrator's cached
+            # shared_instance(). Without this drop, the singleton keeps the
+            # OLD models.router.sha256 in its _state; the next _predict_route
+            # compares it against the freshly-rewritten joblib file, the
+            # integrity check fails, and learned routing silently falls back
+            # to the keyword regex until the process restarts. Drop here so
+            # the next shared_instance() call loads the new metadata.
+            #
+            # If `self` happens to be the cached singleton (e.g. auto-retrain
+            # via hydration_scheduler), self stays alive for the rest of this
+            # call; the next shared_instance() builds a fresh instance.
+            self.__class__.reset_shared_instance_cache()
         return result
 
     def _predict_route(self, data: Dict, params: Dict) -> Dict:

@@ -113,27 +113,23 @@ class VectorStore:
     # ── Setup ────────────────────────────────────────────────────────────
 
     def _try_load_vec(self) -> bool:
-        """Attempt to load the sqlite-vec extension. Returns True on
-        success. False causes search() to take the numpy path."""
-        try:
-            import sqlite_vec  # noqa: F401
-        except ImportError:
-            return False
-        try:
-            self._conn.enable_load_extension(True)
-        except (AttributeError, sqlite3.OperationalError):
-            # Python's sqlite3 module on some distros is built without
-            # extension loading. Not an error condition.
-            logger.info("sqlite3 build does not support extension loading; using numpy fallback")
-            return False
-        try:
-            import sqlite_vec
-            sqlite_vec.load(self._conn)
-            self._conn.enable_load_extension(False)
-            return True
-        except Exception as exc:  # noqa: BLE001
-            logger.info("sqlite-vec extension load failed (%s); using numpy fallback", exc)
-            return False
+        """Was: probe whether sqlite-vec can load and surface that via
+        ``fast_search``. As of the PRs #19-#23 retrospective, the search
+        path was already numpy-only (the "10k chunks" threshold comment
+        below in search() explains why), and the write path was populating
+        ``vec_chunks`` for nothing — pure overhead including a stable-rowid
+        IntegrityError dance to maintain ordering.
+
+        Now forced to ``False``. ``fast_search`` always reports False to
+        match reality (the field stays in the API response schema at
+        ``app/routers/rag.py:40,87`` so removing it would be a breaking
+        change). Re-enable by reverting this method when search() is
+        actually wired to vec0 with a post-filter — at that point the
+        write path needs to come back too.
+
+        See ``docs/SECURITY_TRIAGE.md`` for the rationale trail.
+        """
+        return False
 
     def _init_schema(self) -> None:
         with self._lock, self._conn:
@@ -219,24 +215,12 @@ class VectorStore:
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
-            if self._vec_available:
-                # vec0 uses rowid; map chunk_id → rowid via lookup
-                # so we keep our own integer key. sqlite-vec accepts
-                # INSERT (rowid, embedding) and we use a stable hash.
-                for chunk_id, vec in vec_rows:
-                    rid = _stable_rowid(chunk_id)
-                    try:
-                        self._conn.execute(
-                            "INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)",
-                            (rid, vec.tobytes()),
-                        )
-                    except sqlite3.IntegrityError:
-                        # Pre-existing row for this chunk — overwrite by delete+insert
-                        self._conn.execute("DELETE FROM vec_chunks WHERE rowid = ?", (rid,))
-                        self._conn.execute(
-                            "INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)",
-                            (rid, vec.tobytes()),
-                        )
+            # Dead-write removal (PRs #19-#23 retro): the vec_chunks
+            # virtual-table mirror was populated here but never read by
+            # search(). Now _try_load_vec returns False so _vec_available
+            # is False and this branch never ran anyway — removing the
+            # code to make the intent explicit. When search() is wired to
+            # vec0, restore the upsert here in lock-step with the read.
         return len(chunks)
 
     def delete_doc(self, project_id: str, doc_id: str) -> int:
@@ -244,16 +228,9 @@ class VectorStore:
             return self._delete_doc_locked(project_id, doc_id)
 
     def _delete_doc_locked(self, project_id: str, doc_id: str) -> int:
-        if self._vec_available:
-            existing = self._conn.execute(
-                "SELECT chunk_id FROM chunks WHERE project_id = ? AND doc_id = ?",
-                (project_id, doc_id),
-            ).fetchall()
-            for row in existing:
-                self._conn.execute(
-                    "DELETE FROM vec_chunks WHERE rowid = ?",
-                    (_stable_rowid(row["chunk_id"]),),
-                )
+        # Dead-write removal (PRs #19-#23 retro): the vec_chunks delete
+        # mirror is gone alongside the upsert mirror. Restore in lock-step
+        # with the upsert when search() is wired to vec0.
         cur = self._conn.execute(
             "DELETE FROM chunks WHERE project_id = ? AND doc_id = ?",
             (project_id, doc_id),
@@ -336,12 +313,6 @@ def _now() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-
-def _stable_rowid(chunk_id: str) -> int:
-    """Deterministic int rowid for the vec0 virtual table. Range is
-    constrained to fit SQLite's INTEGER (signed 64-bit) — we take the
-    first 8 bytes of SHA-256 and mask the sign bit."""
-    import hashlib
-    h = hashlib.sha256(chunk_id.encode("utf-8")).digest()
-    n = int.from_bytes(h[:8], "big")
-    return n & 0x7FFFFFFFFFFFFFFF
+# _stable_rowid removed in PRs #19-#23 retro — its only callers were the
+# vec_chunks write/delete mirrors which are now gone. Restore alongside
+# the read path if/when search() is wired to vec0.

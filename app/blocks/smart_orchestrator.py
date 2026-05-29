@@ -295,14 +295,19 @@ class SmartOrchestratorBlock(UniversalBlock):
 
     def _predict_learned(self, message: str) -> Optional[Dict[str, Any]]:
         """Consult learning_engine's predict_route op. Returns None on any error
-        (caller treats that as "fall back to keyword router")."""
+        (caller treats that as "fall back to keyword router").
+
+        Uses shared_instance() to avoid a full JSON load per chat dispatch —
+        before the singleton, every call instantiated a fresh LearningEngineBlock
+        which read _state from disk in __init__. Reviewer fix from PRs #19-#23 retro.
+        """
         from app.blocks import BLOCK_REGISTRY
 
         cls = BLOCK_REGISTRY.get("learning_engine")
         if cls is None:
             return None
-        le = cls()
         try:
+            le = cls.shared_instance()
             # We bypass execute() and call the op directly to avoid the
             # envelope wrap; this is a hot path, ms matter.
             return le._predict_route({"text": message}, {})
@@ -315,7 +320,13 @@ class SmartOrchestratorBlock(UniversalBlock):
     ) -> None:
         """Log the dispatch as a routing_decisions pattern on learning_engine
         so the next train_router has live data. Best-effort — failures here
-        never break the dispatch."""
+        never break the dispatch.
+
+        Uses shared_instance() so concurrent dispatches share one instance
+        with a lock around _record_pattern's read-modify-write window;
+        before the singleton, concurrent writes raced and silently lost
+        observations. Reviewer fix from PRs #19-#23 retro.
+        """
         import json
         from app.blocks import BLOCK_REGISTRY
 
@@ -323,7 +334,7 @@ class SmartOrchestratorBlock(UniversalBlock):
             cls = BLOCK_REGISTRY.get("learning_engine")
             if cls is None:
                 return
-            le = cls()
+            le = cls.shared_instance()
             project_id = (session_context or {}).get("project_id") or "default"
             le._record_pattern({
                 "project_id": project_id,

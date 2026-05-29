@@ -99,7 +99,11 @@ async def _run_one_pass() -> None:
     if cls is None:
         logger.warning("hydration scheduler: learning_engine block not registered, skipping")
         return
-    block = cls()
+    # shared_instance() for consistency with the hot-path migration. The
+    # nightly hydration is not contended with itself, but using the same
+    # cached instance means train_router (auto-retrain) sees patterns the
+    # scheduler just wrote without re-loading from disk.
+    block = cls.shared_instance()
     try:
         envelope = await block.execute({"operation": "hydrate"}, {})
         # The execute() wrapper nests the operation's return in `result`.
