@@ -286,6 +286,20 @@ class LearningEngineBlock(UniversalBlock):
             persisted["per_class_metrics"] = result.get("per_class_metrics", {})
             self._state["models"]["router"] = persisted
             self._save_state()
+            # Cache invalidation (P2 from Codex on PR #27 review): /v1/execute
+            # runs train_router through app.dependencies.block_instances which
+            # is a DIFFERENT instance than the smart_orchestrator's cached
+            # shared_instance(). Without this drop, the singleton keeps the
+            # OLD models.router.sha256 in its _state; the next _predict_route
+            # compares it against the freshly-rewritten joblib file, the
+            # integrity check fails, and learned routing silently falls back
+            # to the keyword regex until the process restarts. Drop here so
+            # the next shared_instance() call loads the new metadata.
+            #
+            # If `self` happens to be the cached singleton (e.g. auto-retrain
+            # via hydration_scheduler), self stays alive for the rest of this
+            # call; the next shared_instance() builds a fresh instance.
+            self.__class__.reset_shared_instance_cache()
         return result
 
     def _predict_route(self, data: Dict, params: Dict) -> Dict:
