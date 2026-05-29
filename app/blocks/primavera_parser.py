@@ -106,15 +106,45 @@ class PrimaveraParserBlock(UniversalBlock):
             "milestone_count": len(milestones),
         }
 
+        # Response payload caps. PR #3 flagged the original hardcoded
+        # ``activities[:200]`` as a known follow-up — it silently
+        # truncated real-world P6 schedules (often 1000+ activities) so
+        # downstream CPM consumers saw ~80 % of the work disappear. The
+        # caps are now generous defaults and operator-configurable per
+        # call via ``params``; ``max_*=0`` returns the full list.
+        #
+        # ``activity_count`` already reports the true total so callers
+        # can detect truncation. The defaults below cover real EPC-scale
+        # schedules without forcing every caller to opt in.
+        # Codex P2 fix on PR #28: the earlier implementation returned
+        # ``len(activities)`` for the "unlimited" (0) case regardless of
+        # which list the cap would be applied to. For an XER whose RSRC
+        # table has more rows than TASK, ``resource_definitions[:max_resources]``
+        # with ``max_resources == len(activities)`` STILL truncated.
+        # Returning None means "no cap" — ``lst[:None]`` is the full list in
+        # Python, so the slice always reflects the caller's actual list size.
+        def _cap(name: str, default: int) -> Optional[int]:
+            try:
+                v = int(params.get(name, default))
+            except (TypeError, ValueError):
+                v = default
+            return v if v > 0 else None  # 0 → unlimited (lst[:None] == lst)
+
+        max_activities = _cap("max_activities", 5000)
+        max_wbs = _cap("max_wbs", 2000)
+        max_low_float = _cap("max_low_float_activities", 500)
+        max_milestones = _cap("max_milestones", 500)
+        max_resources = _cap("max_resources", 200)
+
         response: Dict[str, Any] = {
             "status": "success",
             "schedule_data": schedule_data,
-            "low_float_activities": low_float_activities[:100],
+            "low_float_activities": low_float_activities[:max_low_float],
             "_note": "computed via real CPM forward+backward pass",
-            "milestones": milestones[:50],
-            "activities": activities[:200],
-            "wbs": wbs[:100],
-            "resource_definitions": resource_definitions[:50],
+            "milestones": milestones[:max_milestones],
+            "activities": activities[:max_activities],
+            "wbs": wbs[:max_wbs],
+            "resource_definitions": resource_definitions[:max_resources],
             "activity_count": len(activities),
         }
 

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter
 
-from app.blocks import BLOCK_REGISTRY
+from app.blocks import BLOCK_REGISTRY, FAILED_BLOCKS
 from app.dependencies import block_instances, MONITORING_AVAILABLE, get_monitoring_block
 
 router = APIRouter()
@@ -9,11 +9,22 @@ router = APIRouter()
 
 @router.get("/health")
 def health():
-    """Health check."""
+    """Health check.
+
+    Reports block-load failures so a deploy that's missing optional deps
+    (and silently dropped a block at import time) is visible without
+    grepping logs. ``status`` stays "healthy" — failed blocks are by
+    design non-fatal (PR #8) — but ``blocks_failed`` lets operators
+    notice if e.g. all ML blocks dropped because requirements-ml.txt
+    wasn't installed.
+    """
     return {
         "status": "healthy",
         "blocks_loaded": len(block_instances),
         "blocks_available": len(BLOCK_REGISTRY),
+        "blocks_failed": {
+            name: reason for name, reason in sorted(FAILED_BLOCKS.items())
+        },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
