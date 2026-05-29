@@ -1,4 +1,4 @@
-"""Image Block — local-only image analysis (PIL metadata + Tesseract OCR).
+"""Image Block — local-only image analysis (PIL metadata + Tesseract OCR + YOLO).
 
 No external cloud vision API. All processing runs in-process on the host:
 
@@ -6,21 +6,30 @@ No external cloud vision API. All processing runs in-process on the host:
   megapixels, aspect ratio, dominant colour channel.
 - ``extract_text`` — Tesseract OCR (already a project dependency) for
   text-bearing images. Returns the extracted text plus a confidence proxy.
-- ``construction`` / ``analyze`` — combines metadata with an OCR pass and
-  returns a structured local-only summary. A future local CV tier (e.g.
-  YOLO for object/PPE detection) will plug into this same operation.
+- ``detect_objects`` — YOLOv8n object detection (PR 3b). Optional dep
+  on ``ultralytics`` (``requirements-cv.txt``); returns
+  ``{available: false}`` when missing rather than raising.
+- ``construction`` / ``analyze`` — combines metadata + OCR + optional
+  detection. Detection results appear under ``detections`` only when
+  ultralytics is installed.
 
 The block exposes ``provider`` so callers can see the local backend that
-served the response (``pil``, ``tesseract``, ``pil+tesseract``).
+served the response (``pil``, ``tesseract``, ``pil+tesseract+yolo``).
 """
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from threading import Lock
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.universal_base import UniversalBlock
 
 _MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15 MB — generous for local processing
+
+# Default YOLO model — COCO-trained, ~6 MB. Override via ``YOLO_MODEL`` env
+# for custom fine-tunes (e.g. a PPE-aware model trained on site photos).
+_DEFAULT_YOLO_MODEL = "yolov8n.pt"
+
 
 
 async def _download_to_temp(url: str) -> str:
@@ -92,6 +101,104 @@ def _tesseract_ocr(file_path: str) -> Tuple[str, float]:
     return text, confidence
 
 
+# ── YOLO object detection (PR 3b) ─────────────────────────────────────────
+# One model load per process — ultralytics' SentenceTransformer-equivalent
+# pattern: instantiate once, infer many. The model is ~6MB for v8n and
+# loads in ~1-2s on CPU.
+
+_YOLO_MODEL_CACHE: Dict[str, Any] = {}
+_YOLO_LOCK = Lock()
+
+
+def _yolo_available() -> bool:
+    """True when the ``ultralytics`` package is importable. Distinct from
+    "model file exists" — ultralytics auto-downloads weights on first use
+    from its own CDN (not Hugging Face), so callers can rely on
+    ``available()`` to gate the operation without separately checking
+    for the weights file."""
+    try:
+        import ultralytics  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _get_yolo_model(model_name: Optional[str] = None):
+    """Return a process-cached ``YOLO`` model instance.
+
+    First call loads the model (slow); subsequent calls return the cache.
+    Raises ``RuntimeError`` when ultralytics isn't installed — callers
+    should gate with :func:`_yolo_available` and degrade gracefully.
+    """
+    name = model_name or os.getenv("YOLO_MODEL") or _DEFAULT_YOLO_MODEL
+    with _YOLO_LOCK:
+        if name not in _YOLO_MODEL_CACHE:
+            if not _yolo_available():
+                raise RuntimeError(
+                    "ultralytics not installed. Install with "
+                    "`pip install -r requirements-cv.txt` to enable detection."
+                )
+            from ultralytics import YOLO
+            _YOLO_MODEL_CACHE[name] = YOLO(name)
+        return _YOLO_MODEL_CACHE[name]
+
+
+def _reset_yolo_cache() -> None:
+    """Drop cached YOLO models. Used by tests to swap fakes cleanly."""
+    global _YOLO_MODEL_CACHE
+    with _YOLO_LOCK:
+        _YOLO_MODEL_CACHE = {}
+
+
+def _yolo_detect(
+    file_path: str,
+    conf_threshold: float = 0.25,
+    model_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Run object detection on the image. Returns a list of detections
+    each shaped ``{class_name, confidence, box: [x1, y1, x2, y2]}``.
+
+    Empty list means "no objects above threshold detected" — not an
+    error. Raises when ultralytics isn't installed; callers should
+    gate with :func:`_yolo_available`.
+    """
+    model = _get_yolo_model(model_name)
+    results = model(file_path, conf=conf_threshold, verbose=False)
+    detections: List[Dict[str, Any]] = []
+    for result in results:
+        boxes = getattr(result, "boxes", None)
+        names = getattr(result, "names", {}) or {}
+        if boxes is None:
+            continue
+        # ultralytics returns torch tensors; iterate per detection
+        for i in range(len(boxes)):
+            try:
+                cls_id = int(boxes.cls[i].item())
+                conf = float(boxes.conf[i].item())
+                xyxy = boxes.xyxy[i].tolist()
+                detections.append({
+                    "class_name": names.get(cls_id, str(cls_id)),
+                    "confidence": round(conf, 3),
+                    "box": [round(float(v), 1) for v in xyxy],
+                })
+            except Exception:
+                # Skip malformed rows rather than aborting the whole batch
+                continue
+    return detections
+
+
+def _summarize_detections(detections: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Group detections by class for the human-readable summary line.
+
+    e.g. ``[{class_name: "person", ...} × 3, {class_name: "car", ...}]`` →
+    ``{"person": 3, "car": 1}``. Stable ordering by count desc, class asc."""
+    counts: Dict[str, int] = {}
+    for d in detections:
+        cls = d.get("class_name") or "unknown"
+        counts[cls] = counts.get(cls, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
 class ImageBlock(UniversalBlock):
     """Local image analysis — PIL metadata + Tesseract OCR. No cloud calls."""
 
@@ -161,6 +268,46 @@ class ImageBlock(UniversalBlock):
                     "word_count": len(text.split()),
                 }
 
+            # ── PR 3b: object detection tier ────────────────────────────
+            # Graceful no-op when ultralytics isn't installed — same
+            # pattern as RAG's available() check. Operators get a clear
+            # "install requirements-cv.txt" message rather than a stack
+            # trace.
+            if operation in ("detect_objects", "detect", "detection"):
+                if not _yolo_available():
+                    return {
+                        "status": "success",
+                        "operation": operation,
+                        "provider": "yolo",
+                        "available": False,
+                        "detections": [],
+                        "note": (
+                            "Object detection unavailable: ultralytics not installed. "
+                            "Install with `pip install -r requirements-cv.txt`."
+                        ),
+                    }
+                conf = float(params.get("conf_threshold", 0.25))
+                try:
+                    detections = _yolo_detect(file_path, conf_threshold=conf)
+                except Exception as e:
+                    return {
+                        "status": "error",
+                        "operation": operation,
+                        "provider": "yolo",
+                        "error": f"YOLO detection failed: {e}",
+                    }
+                return {
+                    "status": "success",
+                    "operation": operation,
+                    "provider": "yolo",
+                    "available": True,
+                    "model": os.getenv("YOLO_MODEL") or _DEFAULT_YOLO_MODEL,
+                    "conf_threshold": conf,
+                    "detections": detections,
+                    "summary_by_class": _summarize_detections(detections),
+                    "detection_count": len(detections),
+                }
+
             # analyze / construction → combined local summary
             meta = _pil_metadata(file_path)
             ocr_text = ""
@@ -171,18 +318,48 @@ class ImageBlock(UniversalBlock):
             except Exception as e:
                 ocr_error = str(e)
 
+            # Optional detection tier — only invoked when ultralytics is
+            # installed AND the operation hints at it (analyze/construction).
+            # Failures are non-fatal so the metadata+OCR result still ships.
+            detections: List[Dict[str, Any]] = []
+            detection_error: Optional[str] = None
+            yolo_used = False
+            if _yolo_available():
+                try:
+                    detections = _yolo_detect(file_path)
+                    yolo_used = True
+                except Exception as e:
+                    detection_error = str(e)
+
             description = self._compose_local_summary(
                 operation=operation, meta=meta, ocr_text=ocr_text, ocr_conf=ocr_conf, ocr_error=ocr_error,
             )
 
+            # Append the detection summary to the human-readable description
+            # so any consumer that only reads `description` still sees the
+            # CV signal without parsing the structured field.
+            if detections:
+                summary = _summarize_detections(detections)
+                top = ", ".join(f"{n} × {c}" for n, c in list(summary.items())[:5])
+                description = f"{description}\n\n**Detected**: {top}"
+
+            provider_parts = ["pil"]
+            if ocr_text:
+                provider_parts.append("tesseract")
+            if yolo_used:
+                provider_parts.append("yolo")
+
             return {
                 "status": "success",
                 "operation": operation,
-                "provider": "pil+tesseract" if ocr_text else "pil",
+                "provider": "+".join(provider_parts),
                 "description": description,
                 "extracted_text": ocr_text,
                 "ocr_confidence": ocr_conf,
                 "metadata": meta,
+                "detections": detections,
+                "summary_by_class": _summarize_detections(detections) if detections else {},
+                **({"detection_error": detection_error} if detection_error else {}),
             }
 
         finally:
