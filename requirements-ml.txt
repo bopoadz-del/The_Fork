@@ -1,0 +1,36 @@
+# Optional dependencies for the LoRA fine-tune track (PR 3a of the ML roadmap).
+#
+# Install only when you want to fine-tune a domain-specific chat model
+# from the accumulated chat history (or a curated seed corpus):
+#
+#     pip install -r requirements-ml.txt
+#
+# When NOT installed, the platform behaves exactly as before: chat goes
+# to the configured cloud provider; ``use_local_model=true`` on chat
+# requests is silently ignored (warning logged). No code paths break.
+#
+# Disk + GPU cost:
+# - torch + transformers + accelerate together = ~3 GB on disk
+# - A 3B-param base model + tokenizer = ~6 GB cached to
+#   ~/.cache/huggingface/ on first ``finetune_router.py`` run
+# - LoRA fine-tune of a 3B model fits on a single 16 GB GPU (RTX 4080 /
+#   3090, A4000-class). CPU-only training of a 3B model is impractical;
+#   the scaffolding ships unverified for that path.
+#
+# Note: bitsandbytes / 4-bit quantization is NOT in this file. Per the
+# roadmap, quantization belongs in the Orin port (see docs/EDGE_PORT.md),
+# not in the cloud-GPU training environment.
+
+torch>=2.2.0
+transformers>=4.40.0
+accelerate>=0.30.0
+peft>=0.11.0
+datasets>=2.18.0
+safetensors>=0.4.0
+
+# ── Managed-GPU fine-tuning via Tinker (PR 3a-Tinker — opt-in) ───────
+# Required ONLY when running scripts/finetune_router.py --trainer tinker
+# (or scripts/tinker_trainer.py directly). The local trainer above does
+# not need it. Auth via TINKER_API_KEY env var — never in code or logs.
+# Sign up: https://tinker-console.thinkingmachines.ai
+tinker>=0.1.0

@@ -131,6 +131,44 @@ class ChatBlock(TypedBlock):
                     "RAG retrieval failed for project %s: %s", rag_project_id, exc
                 )
 
+        # ── Local fine-tuned model (PR 3a) — opt-in. Defaults preserve
+        # existing cloud-first behavior. When use_local_model=true AND the
+        # local stack is available (deps installed + adapter present), the
+        # generation runs through the LoRA-tuned model and bypasses the
+        # cloud provider entirely. Failures fall through to the existing
+        # cloud chain — chat never goes dark because of a local-model bug.
+        use_local_model = bool(
+            params.get("use_local_model")
+            or (isinstance(input_data, dict) and input_data.get("use_local_model"))
+        )
+        if use_local_model:
+            from app.core.learning import local_model as _local
+
+            if _local.available():
+                local_text = _local.generate(
+                    message,
+                    max_new_tokens=int(max_tokens),
+                    temperature=float(temperature),
+                )
+                if local_text:
+                    return {
+                        "status": "success",
+                        "response": local_text,
+                        "provider": "local_lora",
+                        "model": os.getenv("LOCAL_BASE_MODEL") or "Qwen/Qwen2.5-3B-Instruct",
+                        "adapter": os.getenv("LOCAL_ADAPTER_DIR") or "data/learning/adapters/construction_v1",
+                    }
+                # generate() returned None — fall through to cloud chain
+                import logging as _logging
+                _logging.getLogger(__name__).info(
+                    "use_local_model requested but generate() returned None; falling back to cloud"
+                )
+            else:
+                import logging as _logging
+                _logging.getLogger(__name__).info(
+                    "use_local_model requested but local stack unavailable; falling back to cloud"
+                )
+
         deepseek_key = os.getenv("DEEPSEEK_API_KEY")
         primary_error = None
 
