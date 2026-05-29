@@ -207,7 +207,19 @@ class LearningEngineBlock(UniversalBlock):
 
         prefer_corrected = bool(data.get("prefer_corrected") or params.get("prefer_corrected"))
         min_samples = int(data.get("min_samples") or params.get("min_samples") or _router._MIN_TOTAL_SAMPLES)
-        result = _router.train(prefer_corrected=prefer_corrected, min_samples=min_samples)
+        # feature_mode: "tfidf" (PR 1 baseline, no extra deps) or "embeddings"
+        # (PR 2.5, needs sentence-transformers). Defaults to tfidf so a fresh
+        # repo with no RAG deps installed still trains successfully.
+        feature_mode = (
+            data.get("feature_mode")
+            or params.get("feature_mode")
+            or os.environ.get("ROUTER_FEATURE_MODE", "tfidf")
+        )
+        result = _router.train(
+            prefer_corrected=prefer_corrected,
+            min_samples=min_samples,
+            feature_mode=feature_mode,
+        )
 
         # Persist metadata on the block's state so predict_route can do
         # integrity checks (sha256 + label set) without re-reading the file.

@@ -41,6 +41,7 @@ from app.routers import (
     doc_types,
     drive,
     execute,
+    feedback as feedback_router,
     health,
     hydration as hydration_router,
     memory,
@@ -48,6 +49,7 @@ from app.routers import (
     monitoring,
     project,
     projects,
+    rag as rag_router,
     redline,
     static,
     upload,
@@ -273,6 +275,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # Include all routers
 app.include_router(blocks.router)
 app.include_router(execute.router)
+app.include_router(feedback_router.router)
 app.include_router(chain.router)
 app.include_router(chat.router)
 app.include_router(upload.router)
@@ -281,6 +284,7 @@ app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
 app.include_router(doc_search.router)
+app.include_router(rag_router.router)
 app.include_router(redline.router)
 app.include_router(project.router)
 app.include_router(users.router)

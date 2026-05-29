@@ -60,6 +60,52 @@ def _model_path() -> str:
     return os.path.join(d, "router_model.joblib")
 
 
+# ── Feature vectorizers ───────────────────────────────────────────────────
+
+
+class EmbeddingVectorizer:
+    """Sklearn-compatible wrapper around the RAG embedder (PR 2.5).
+
+    Deliberately **stateless** — the embedder isn't pickled into the
+    joblib artifact. fit/transform reach into the process-cached
+    embedder via :func:`app.core.rag.embeddings.get_embedder`, so the
+    saved Pipeline stays a few kilobytes even though the underlying
+    model is ~25 MB. Trade-off: the loading code path needs the RAG
+    deps available; the integrity check at predict time will surface
+    a clean error if they aren't.
+
+    Implements the sklearn estimator protocol via duck-typing rather
+    than inheriting from ``BaseEstimator``/``TransformerMixin``: those
+    are heavyweight when we only need fit/transform/fit_transform and
+    we don't want sklearn pulled into joblib's pickle graph for the
+    wrapper itself.
+    """
+
+    # Tell sklearn we're a transformer. CalibratedClassifierCV inspects
+    # this on the upstream stage during cross-validation.
+    _estimator_type = "transformer"
+
+    def fit(self, X, y=None):
+        # Touch the embedder at train time so availability errors surface
+        # here rather than on first predict. Stateless otherwise.
+        from app.core.rag.embeddings import get_embedder
+        get_embedder()
+        return self
+
+    def transform(self, X):
+        from app.core.rag.embeddings import get_embedder
+        return get_embedder().encode(list(X))
+
+    def fit_transform(self, X, y=None):
+        return self.fit(X).transform(X)
+
+    def get_params(self, deep: bool = True) -> Dict[str, Any]:
+        return {}
+
+    def set_params(self, **params):
+        return self
+
+
 # ── Training row schema ───────────────────────────────────────────────────
 
 
@@ -326,19 +372,44 @@ def invalidate_model_cache() -> None:
 # ── Training ──────────────────────────────────────────────────────────────
 
 
+def _build_vectorizer(feature_mode: str):
+    """Construct the first stage of the Pipeline.
+
+    ``"tfidf"`` (default) is the PR 1 baseline — no extra dependencies,
+    pure sklearn. ``"embeddings"`` swaps in :class:`EmbeddingVectorizer`
+    which wraps the RAG embedder; requires ``requirements-rag.txt`` to
+    be installed (or ``RAG_EMBEDDING_MODEL=fake`` for tests).
+    """
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    if feature_mode == "tfidf":
+        return TfidfVectorizer(
+            ngram_range=(1, 2),
+            min_df=1,
+            lowercase=True,
+            stop_words=None,  # domain terms; don't strip
+        )
+    if feature_mode == "embeddings":
+        return EmbeddingVectorizer()
+    raise ValueError(
+        f"unknown feature_mode {feature_mode!r}; use 'tfidf' or 'embeddings'"
+    )
+
+
 def train(
     prefer_corrected: bool = False,
     min_samples: int = _MIN_TOTAL_SAMPLES,
+    feature_mode: str = "tfidf",
 ) -> Dict[str, Any]:
     """Fit + calibrate the classifier, persist to disk, return metrics.
 
     Returns ``{"status": "success", ...}`` on success or
     ``{"status": "insufficient_data", "samples_used": N, "threshold_needed": _MIN_TOTAL_SAMPLES}``
-    when the training set is too small.
+    when the training set is too small. ``feature_mode`` selects the
+    first Pipeline stage — see :func:`_build_vectorizer`.
     """
     import joblib
     from sklearn.calibration import CalibratedClassifierCV
-    from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import brier_score_loss, classification_report
     from sklearn.model_selection import train_test_split
@@ -382,6 +453,22 @@ def train(
     y_train = [r.label for r in train_rows]
     w_train = np.array([r.weight for r in train_rows])
 
+    # LogisticRegression needs at least two classes. Without this guard,
+    # sklearn raises a long traceback that masks the real problem (e.g.
+    # prefer_corrected=True with corrections for only one action). The
+    # graceful return tells the caller what to do.
+    if len(set(y_train)) < 2:
+        return {
+            "status": "insufficient_classes",
+            "samples_used": len(rows),
+            "single_class": next(iter(set(y_train)), None),
+            "remediation": (
+                "Training requires labeled examples for at least 2 classes. "
+                "If prefer_corrected=True, accumulate corrections for additional "
+                "actions before retraining."
+            ),
+        }
+
     # CalibratedClassifierCV needs cv ≤ min_class_count. With 40 actions and
     # 3-10 keywords per class plus paraphrases, min_class_count is typically 6+.
     # We compute it defensively.
@@ -392,12 +479,7 @@ def train(
     cv_folds = max(2, min(5, min_class))
 
     pipeline = Pipeline([
-        ("tfidf", TfidfVectorizer(
-            ngram_range=(1, 2),
-            min_df=1,
-            lowercase=True,
-            stop_words=None,  # domain terms; don't strip
-        )),
+        ("vec", _build_vectorizer(feature_mode)),
         ("clf", CalibratedClassifierCV(
             LogisticRegression(class_weight="balanced", max_iter=1000, C=1.0),
             method="sigmoid",
@@ -451,6 +533,7 @@ def train(
         "trained_at": time.time(),
         "model_path": path,
         "sha256": sha,
+        "feature_mode": feature_mode,
         "samples_used": len(rows),
         "real_samples": len(real_rows),
         "paraphrase_samples": len(paraphrase_rows),
