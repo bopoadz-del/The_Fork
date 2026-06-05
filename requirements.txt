@@ -69,7 +69,7 @@ mcp>=1.0.0               # Expose blocks as agent tools + consume external MCP s
 # Browser testing (Playwright + pytest plugin)
 playwright>=1.50.0       # Real-browser UI tests
 pytest-playwright>=0.7.0
-# reportlab>=4.1.0       # PDF generation
+reportlab>=4.1.0       # PDF generation (used by app/routers/exports.py)
 # statsmodels>=0.14.0    # statistical modeling
 # xgboost>=2.0.0         # gradient boosting
 # polars>=0.20.0         # fast DataFrames

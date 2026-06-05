@@ -309,6 +309,8 @@ app.include_router(auth.router)
 app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
+from app.routers import exports as exports_router  # noqa: E402 — late import to keep diff small
+app.include_router(exports_router.router)
 app.include_router(doc_search.router)
 app.include_router(rag_router.router)
 app.include_router(redline.router)
