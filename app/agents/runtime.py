@@ -111,6 +111,44 @@ _DSML_PARAM_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Llama 3.x native tool-call markup: `<function=name{"k":"v",...}>` — Groq's
+# strict tool-use validator rejects this shape with HTTP 400 `tool_use_failed`
+# and emits the raw markup in `failed_generation`. We recover it into proper
+# OpenAI-style tool_calls so the agent loop can dispatch and continue.
+_LLAMA_FUNC_RE = re.compile(
+    r"<\s*function\s*=\s*([A-Za-z_][\w]*)\s*(\{.*?\})\s*>",
+    re.DOTALL,
+)
+
+
+def _parse_llama_native_tool_calls(text: str) -> list[dict]:
+    """Extract Llama-native `<function=name{json}>` markup into OpenAI-shaped
+    tool_calls dicts. Returns [] if no markup found or every match fails to
+    parse as JSON.
+    """
+    if not text or "<function" not in text:
+        return []
+    out: list[dict] = []
+    counter = 0
+    for m in _LLAMA_FUNC_RE.finditer(text):
+        name = m.group(1).strip()
+        if not name:
+            continue
+        try:
+            args = json.loads(m.group(2))
+        except json.JSONDecodeError:
+            continue
+        counter += 1
+        out.append({
+            "id": f"llama_{counter}",
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": json.dumps(args),
+            },
+        })
+    return out
+
 
 def _strip_dsml(content: str) -> str:
     """Discard the entire DSML region from ``content`` and return only the prose before it.
@@ -744,7 +782,34 @@ class Agent:
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 )
                 if r.status_code >= 400:
-                    return {"status": "error", "error": f"{cfg['provider']} HTTP {r.status_code}: {r.text[:300]}"}
+                    body = r.text
+                    # Groq's tool-use validator rejects Llama-native function
+                    # markup (`<function=name{json}>`) with HTTP 400 and
+                    # `tool_use_failed`. The raw markup lives in
+                    # `error.failed_generation`. Recover it into OpenAI-style
+                    # tool_calls so the agent loop can dispatch and continue
+                    # rather than bubbling a 400 to the user.
+                    try:
+                        err = json.loads(body)
+                        err_obj = err.get("error", {}) if isinstance(err, dict) else {}
+                        if err_obj.get("code") == "tool_use_failed":
+                            failed_gen = err_obj.get("failed_generation", "") or ""
+                            recovered = _parse_llama_native_tool_calls(failed_gen)
+                            if recovered:
+                                return {
+                                    "status": "success",
+                                    "choice": {
+                                        "message": {
+                                            "role": "assistant",
+                                            "content": "",
+                                            "tool_calls": recovered,
+                                        },
+                                    },
+                                    "raw": err,
+                                }
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        pass
+                    return {"status": "error", "error": f"{cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
                 data = r.json()
                 choice = (data.get("choices") or [{}])[0]
                 return {"status": "success", "choice": choice, "raw": data}
