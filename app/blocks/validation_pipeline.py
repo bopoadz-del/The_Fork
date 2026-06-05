@@ -20,6 +20,9 @@ Input shape::
         "context": {
             "material_type": "concrete",       # picks the empirical range
             "metric": "rate_usd_per_m3",       # picks the empirical range
+            "currency": "SAR",                 # optional; swaps the cost band
+            "slack_factor": 2.0,               # optional; empirical slack
+            "strict": False,                   # optional; no slack at all
             "physical_min": 0,                 # optional override
             "physical_max": 1e9,
             "empirical_min": 100,
@@ -39,7 +42,7 @@ Output::
             "syntactic":   {"pass": bool, "reason": str},
             "dimensional": {"pass": bool, "reason": str},
             "physical":    {"pass": bool, "reason": str},
-            "empirical":   {"pass": bool, "reason": str},
+            "empirical":   {"pass": bool, "reason": str, "borderline": bool?},
             "operational": {"pass": bool, "reason": str},
         },
         "first_failure": Optional[str],
@@ -57,25 +60,134 @@ from app.core.universal_base import UniversalBlock
 # caller doesn't supply explicit empirical_min/empirical_max. Numbers are
 # global rough averages, NOT precise — they exist to catch order-of-
 # magnitude errors (5,900 °C vs 5.9 °C, 1500 USD/m³ vs 150 USD/m³, etc.).
-EMPIRICAL_RANGES: Dict[Tuple[str, str], Tuple[float, float]] = {
-    # (material_type, metric) -> (min, max)
-    ("concrete",  "rate_usd_per_m3"):     (50.0,   500.0),
-    ("concrete",  "volume_m3"):           (1.0,    5_000_000.0),
-    ("concrete",  "compressive_mpa"):     (10.0,   80.0),
-    ("steel",     "rate_usd_per_kg"):     (0.5,    10.0),
-    ("steel",     "weight_kg"):           (1.0,    100_000_000.0),
-    ("rebar",     "rate_usd_per_kg"):     (0.5,    8.0),
-    ("rebar",     "length_m"):            (1.0,    50_000_000.0),
-    ("excavation","volume_m3"):           (1.0,    50_000_000.0),
-    ("formwork",  "rate_usd_per_m2"):     (10.0,   200.0),
-    ("formwork",  "area_m2"):             (1.0,    5_000_000.0),
-    # Generic temperature / time / cost ranges (used when caller passes
-    # one of these as the metric without a material_type).
-    ("__any__",   "temperature_degc"):    (-40.0,  500.0),  # heat in HVAC + curing
-    ("__any__",   "duration_weeks"):      (0.0,    1040.0),  # 20 years cap
-    ("__any__",   "cost_usd"):            (0.0,    1e10),
-    ("__any__",   "percent"):             (0.0,    100.0),
+#
+# Keyed by (material_type, metric, currency). `currency` is "USD" for cost
+# metrics, "__none__" for non-cost metrics (temperature, volume, ...). The
+# lookup falls back from a currency-specific entry to the USD baseline and
+# then to a currency-agnostic 2-tuple form for backwards compat.
+#
+# Rough FX used to derive the non-USD cost bands (mid-2026):
+#   1 USD ≈ 3.75 SAR ≈ 3.67 AED ≈ 0.92 EUR
+EMPIRICAL_RANGES: Dict[Tuple[str, str, str], Tuple[float, float]] = {
+    # Concrete supply rate.
+    ("concrete",  "rate_usd_per_m3", "USD"): (50.0,    500.0),
+    ("concrete",  "rate_usd_per_m3", "SAR"): (188.0,   1_875.0),
+    ("concrete",  "rate_usd_per_m3", "AED"): (184.0,   1_835.0),
+    ("concrete",  "rate_usd_per_m3", "EUR"): (46.0,    460.0),
+    # Steel rate per kg.
+    ("steel",     "rate_usd_per_kg", "USD"): (0.5,     10.0),
+    ("steel",     "rate_usd_per_kg", "SAR"): (1.88,    37.5),
+    ("steel",     "rate_usd_per_kg", "AED"): (1.84,    36.7),
+    ("steel",     "rate_usd_per_kg", "EUR"): (0.46,    9.2),
+    # Rebar rate per kg.
+    ("rebar",     "rate_usd_per_kg", "USD"): (0.5,     8.0),
+    ("rebar",     "rate_usd_per_kg", "SAR"): (1.88,    30.0),
+    ("rebar",     "rate_usd_per_kg", "AED"): (1.84,    29.4),
+    ("rebar",     "rate_usd_per_kg", "EUR"): (0.46,    7.36),
+    # Formwork rate per m2.
+    ("formwork",  "rate_usd_per_m2", "USD"): (10.0,    200.0),
+    ("formwork",  "rate_usd_per_m2", "SAR"): (37.5,    750.0),
+    ("formwork",  "rate_usd_per_m2", "AED"): (36.7,    734.0),
+    ("formwork",  "rate_usd_per_m2", "EUR"): (9.2,     184.0),
+    # Generic cost ceiling, per currency.
+    ("__any__",   "cost_usd",        "USD"): (0.0,     1e10),
+    ("__any__",   "cost_usd",        "SAR"): (0.0,     3.75e10),
+    ("__any__",   "cost_usd",        "AED"): (0.0,     3.67e10),
+    ("__any__",   "cost_usd",        "EUR"): (0.0,     0.92e10),
+    # Non-cost metrics: currency dimension is N/A.
+    ("concrete",    "volume_m3",        "__none__"): (1.0,    5_000_000.0),
+    ("concrete",    "compressive_mpa",  "__none__"): (10.0,   80.0),
+    ("steel",       "weight_kg",        "__none__"): (1.0,    100_000_000.0),
+    ("rebar",       "length_m",         "__none__"): (1.0,    50_000_000.0),
+    ("excavation",  "volume_m3",        "__none__"): (1.0,    50_000_000.0),
+    ("formwork",    "area_m2",          "__none__"): (1.0,    5_000_000.0),
+    ("__any__",     "temperature_degc", "__none__"): (-40.0,  500.0),
+    ("__any__",     "duration_weeks",   "__none__"): (0.0,    1040.0),
+    ("__any__",     "percent",          "__none__"): (0.0,    100.0),
 }
+
+
+# Metrics that are inherently currency-denominated. Everything else is
+# physical and uses the "__none__" currency slot.
+_COST_METRICS = {"rate_usd_per_m3", "rate_usd_per_kg", "rate_usd_per_m2", "cost_usd"}
+
+
+def _lookup_range(material: str, metric: str, currency: Optional[str]) -> Optional[Tuple[float, float]]:
+    """Return the empirical (min, max) for (material, metric, currency).
+
+    Lookup order:
+      1. (material, metric, currency) — exact match if currency supplied.
+      2. (material, metric, "USD") — USD baseline for cost metrics.
+      3. (material, metric, "__none__") — non-cost metric.
+      4. (__any__, metric, currency) → (__any__, metric, "USD") →
+         (__any__, metric, "__none__") — generic backstops.
+    """
+    keys = []
+    if currency:
+        keys.append((material, metric, currency.upper()))
+    keys.append((material, metric, "USD"))
+    keys.append((material, metric, "__none__"))
+    if currency:
+        keys.append(("__any__", metric, currency.upper()))
+    keys.append(("__any__", metric, "USD"))
+    keys.append(("__any__", metric, "__none__"))
+    for k in keys:
+        rng = EMPIRICAL_RANGES.get(k)
+        if rng:
+            return rng
+    return None
+
+
+def _infer_metric(value: Any, unit: Optional[str], ctx: Dict[str, Any]) -> Optional[str]:
+    """Best-effort guess of the empirical-range key from unit + material_type.
+
+    Caller can always override by setting `context.metric` explicitly. This
+    just covers the common case where the result envelope already carries
+    enough info to disambiguate.
+    """
+    if not unit:
+        return None
+    u = unit.strip()
+    u_lower = u.lower()
+    material = (ctx.get("material_type") or "").lower().strip()
+
+    u_compact = u_lower.replace(" ", "")
+    if u_compact.endswith("/m3") or u_compact.endswith("/m**3") or u_compact.endswith("/cubicmeter"):
+        if material in {"concrete", "excavation"}:
+            return "rate_usd_per_m3"
+    if u_compact.endswith("/kg"):
+        if material in {"steel", "rebar"}:
+            return "rate_usd_per_kg"
+    if u_compact.endswith("/m2") or u_compact.endswith("/m**2"):
+        if material == "formwork":
+            return "rate_usd_per_m2"
+
+    if u_lower in {"kg", "kilogram", "kilograms"} and material in {"steel", "rebar"}:
+        return "weight_kg"
+
+    if u_lower in {"m3", "m**3", "cubicmeter", "cubic_meter", "cubic meters"}:
+        if material in {"concrete", "excavation"}:
+            return "volume_m3"
+
+    if u_lower in {"m2", "m**2", "squaremeter", "square_meter", "square meters"} and material == "formwork":
+        return "area_m2"
+
+    if u_lower in {"m", "meter", "meters"} and material == "rebar":
+        return "length_m"
+
+    if u_lower in {"mpa", "megapascal"} and material == "concrete":
+        return "compressive_mpa"
+
+    if u_lower in {"degc", "celsius", "delta_degc", "deg c", "°c"} or u_lower.endswith("degc"):
+        return "temperature_degc"
+
+    if u_lower in {"weeks", "week"} and ctx.get("duration_weeks") is not None:
+        return "duration_weeks"
+
+    if u_lower in {"%", "percent", "pct"}:
+        return "percent"
+
+    return None
 
 
 def _check_syntactic(value: Any) -> Dict[str, Any]:
@@ -171,14 +283,24 @@ def _check_physical(value: float, ctx: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _check_empirical(value: float, ctx: Dict[str, Any]) -> Dict[str, Any]:
-    """Rough industry sanity range. Order-of-magnitude check, not precision."""
+    """Rough industry sanity range with a tunable slack band.
+
+    Slack model:
+      * `slack_factor` (default 2.0): values inside `[emin/slack, emax*slack]`
+        pass but are flagged borderline if outside `[emin, emax]`.
+      * `strict=True`: slack disabled — anything outside `[emin, emax]` fails.
+
+    The previous implementation hard-coded a 5× slack, which let 1,500 USD/m³
+    concrete pass as "borderline" (3× the high end). Default 2× catches that
+    while still tolerating regional pricing wiggle.
+    """
     emin = ctx.get("empirical_min")
     emax = ctx.get("empirical_max")
     if emin is None or emax is None:
         material = (ctx.get("material_type") or "").lower().strip()
         metric = (ctx.get("metric") or "").lower().strip()
-        rng = (EMPIRICAL_RANGES.get((material, metric))
-               or EMPIRICAL_RANGES.get(("__any__", metric)))
+        currency = ctx.get("currency")
+        rng = _lookup_range(material, metric, currency)
         if rng:
             emin = emin if emin is not None else rng[0]
             emax = emax if emax is not None else rng[1]
@@ -188,15 +310,42 @@ def _check_empirical(value: float, ctx: Dict[str, Any]) -> Dict[str, Any]:
         v = float(value)
     except Exception:
         return {"pass": False, "reason": "value not coercible to float for empirical check"}
-    # The empirical stage is "5× off" — beyond 5x outside the range, flag.
-    slack_lo = emin / 5.0 if emin > 0 else emin
-    slack_hi = emax * 5.0
+
+    strict = bool(ctx.get("strict"))
+    try:
+        slack = float(ctx.get("slack_factor", 2.0))
+    except (TypeError, ValueError):
+        slack = 2.0
+    if slack < 1.0:
+        slack = 1.0
+
+    if strict:
+        if v < emin or v > emax:
+            return {"pass": False, "reason": f"value {v} outside empirical range [{emin}, {emax}] (strict)"}
+        return {"pass": True, "reason": f"value {v} within empirical range [{emin}, {emax}] (strict)"}
+
+    if emin > 0 and emax > 0:
+        slack_lo = emin / slack
+        slack_hi = emax * slack
+    else:
+        # Range spans or sits below zero (e.g. temperature -40..500). Widen
+        # additively by `(slack - 1)` of the span on each side so 2× slack
+        # = "twice the width," matching the multiplicative case for spans
+        # starting near zero.
+        width = emax - emin
+        slack_lo = emin - width * (slack - 1.0)
+        slack_hi = emax + width * (slack - 1.0)
+
     if v < slack_lo:
-        return {"pass": False, "reason": f"value {v} far below empirical range [{emin}, {emax}] (5x slack {slack_lo})"}
+        return {"pass": False, "reason": f"value {v} far below empirical range [{emin}, {emax}] ({slack}x slack {slack_lo})"}
     if v > slack_hi:
-        return {"pass": False, "reason": f"value {v} far above empirical range [{emin}, {emax}] (5x slack {slack_hi})"}
+        return {"pass": False, "reason": f"value {v} far above empirical range [{emin}, {emax}] ({slack}x slack {slack_hi})"}
     if v < emin or v > emax:
-        return {"pass": True, "reason": f"value {v} outside tight empirical range [{emin}, {emax}] but within 5x slack — borderline"}
+        return {
+            "pass": True,
+            "borderline": True,
+            "reason": f"value {v} outside tight empirical range [{emin}, {emax}] but within {slack}x slack — borderline",
+        }
     return {"pass": True, "reason": f"value {v} within empirical range [{emin}, {emax}]"}
 
 
@@ -224,7 +373,7 @@ class ValidationPipelineBlock(UniversalBlock):
     """
 
     name = "validation_pipeline"
-    version = "1.0.0"
+    version = "1.1.0"
     description = (
         "Runnable 5-stage validation (syntactic / dimensional / physical / empirical / "
         "operational) for numeric results. Returns per-stage pass/fail plus an overall "
@@ -266,6 +415,12 @@ class ValidationPipelineBlock(UniversalBlock):
         unit = data.get("unit", params.get("unit"))
         ctx = dict(data.get("context") or params.get("context") or {})
 
+        # Params can promote slack_factor / strict / currency without
+        # forcing every caller to nest them under `context`.
+        for k in ("slack_factor", "strict", "currency", "metric", "material_type"):
+            if k not in ctx and k in params:
+                ctx[k] = params[k]
+
         # Stage 1 — syntactic gates the rest. If the input isn't numeric,
         # downstream checks can't run cleanly.
         syntactic = _check_syntactic(value)
@@ -286,6 +441,15 @@ class ValidationPipelineBlock(UniversalBlock):
         # Coerce stringy-numeric to float before continuing.
         v = float(value) if not isinstance(value, (int, float)) else value
 
+        # Infer metric from unit + material_type when caller didn't spell
+        # it out. Runs before the physical check so temperature deltas get
+        # the negative-allowed floor.
+        if not ctx.get("metric"):
+            inferred = _infer_metric(v, unit, ctx)
+            if inferred:
+                ctx["metric"] = inferred
+                ctx.setdefault("_metric_inferred", True)
+
         dimensional = _check_dimensional(v, unit)
         physical = _check_physical(v, ctx)
         empirical = _check_empirical(v, ctx)
@@ -303,7 +467,7 @@ class ValidationPipelineBlock(UniversalBlock):
             None,
         )
         overall = "fail" if first_failure else "pass"
-        return {
+        result = {
             "status": "success",
             "value": v,
             "unit": unit,
@@ -311,3 +475,8 @@ class ValidationPipelineBlock(UniversalBlock):
             "stages": stages,
             "first_failure": first_failure,
         }
+        if empirical.get("borderline"):
+            result["borderline"] = True
+        if ctx.get("_metric_inferred"):
+            result["metric_inferred"] = ctx.get("metric")
+        return result
