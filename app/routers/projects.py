@@ -32,10 +32,14 @@ except PermissionError:
     DATA_DIR = tempfile.gettempdir()
 
 ALLOWED_DOC_EXTENSIONS = {
-    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp",
+    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff",
     ".txt", ".md", ".csv", ".json", ".xml",
     ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".xer", ".mpp", ".ifc", ".dwg",
+    # Construction-domain formats the registered blocks know how to parse.
+    # ezdxf reads .dxf; ifcopenshell reads .ifc; xer/mpp are schedule exports;
+    # .dwg is kept even though drawing_qto rejects it with a "convert to DXF"
+    # message so the upload doesn't 400 before the user sees that guidance.
+    ".dxf", ".dwg", ".ifc", ".xer", ".mpp", ".rvt",
 }
 
 

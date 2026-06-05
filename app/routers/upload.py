@@ -15,10 +15,13 @@ router = APIRouter()
 
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", "10485760"))  # 10MB
 ALLOWED_UPLOAD_EXTENSIONS = {
-    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp",
+    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff",
     ".txt", ".md", ".csv", ".json", ".xml",
     ".mp3", ".mp4", ".wav", ".webm",
-    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    # Construction-domain formats matched against the registered blocks:
+    # drawing_qto (.dxf, .dwg), bim (.ifc), primavera_parser (.xer), MS Project (.mpp), Revit (.rvt).
+    ".dxf", ".dwg", ".ifc", ".xer", ".mpp", ".rvt",
 }
 
 DATA_DIR = os.getenv("DATA_DIR", "./data")
