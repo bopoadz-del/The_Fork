@@ -94,15 +94,60 @@ class BOQProcessorBlock(UniversalBlock):
         df = pd.read_excel(file_path, sheet_name=sheet, engine="openpyxl")
         return self._process_dataframe(df, params)
 
+    @staticmethod
+    def _normalize_col(name: str) -> str:
+        """Reduce a raw column header to a canonical token for alias matching.
+
+        Strips parenthesized suffixes (currency / unit hints) and a small set of
+        trailing currency tokens, then lowercases and replaces spaces/slashes
+        with underscores. Lets us match real BOQ headers like 'Rate (SAR)',
+        'Amount (USD)', 'Qty.', 'Item No.' against the short alias list.
+        """
+        import re
+        n = name.strip()
+        # Strip any (...) suffix — usually a currency or unit qualifier.
+        n = re.sub(r"\s*\([^)]*\)\s*$", "", n)
+        # Strip trailing currency tokens with optional punctuation.
+        n = re.sub(
+            r"[\s,;:]+(SAR|USD|AED|EUR|GBP|JPY|CNY|AUD|CAD|KWD|QAR|BHD|OMR)\b\.?$",
+            "",
+            n,
+            flags=re.IGNORECASE,
+        )
+        # Drop trailing punctuation ("Qty.", "Item No.").
+        n = n.rstrip(" .,:;")
+        n = n.lower().replace(" ", "_").replace("/", "_").replace("-", "_")
+        # Collapse repeats of underscore so 'item__no' becomes 'item_no'.
+        n = re.sub(r"_+", "_", n).strip("_")
+        return n
+
     def _resolve_columns(self, columns: List[str]) -> Dict[str, str]:
-        """Map field names to actual DataFrame column names."""
-        resolved = {}
-        normalized = [c.strip().lower().replace(" ", "_") for c in columns]
+        """Map alias-set field names to actual DataFrame column names.
+
+        Two-pass: exact normalized match first (cheap, deterministic), then
+        substring match against the same alias set as a fallback so columns
+        like 'unit_rate_in_sar' still resolve when the prefix is recognised.
+        """
+        resolved: Dict[str, str] = {}
+        normalized = [self._normalize_col(c) for c in columns]
         for field, candidates in self._COL_MAP.items():
+            chosen_idx = None
+            # Pass 1: exact normalized match.
             for c in candidates:
                 if c in normalized:
-                    resolved[field] = columns[normalized.index(c)]
+                    chosen_idx = normalized.index(c)
                     break
+            # Pass 2: substring match (longest alias first so "unit_rate" beats "unit").
+            if chosen_idx is None:
+                for c in sorted(candidates, key=len, reverse=True):
+                    for i, ncol in enumerate(normalized):
+                        if c in ncol.split("_") or ncol.startswith(c + "_") or ncol.endswith("_" + c):
+                            chosen_idx = i
+                            break
+                    if chosen_idx is not None:
+                        break
+            if chosen_idx is not None:
+                resolved[field] = columns[chosen_idx]
         return resolved
 
     def _process_dataframe(self, df, params: Dict) -> Dict:
