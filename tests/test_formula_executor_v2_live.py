@@ -1,8 +1,9 @@
 """LIVE DeepSeek end-to-end test — Reasoning Engine Plan 4.
 
-Skipped until DEEPSEEK_API_KEY is funded. This is the acceptance check for
-real LLM code generation. The mock-LLM coverage is in
-tests/test_formula_executor_v2.py and runs always.
+Off by default — even with DEEPSEEK_API_KEY in .env, this test stays skipped
+unless LIVE_LLM_TESTS=1 is explicitly set. Two-key gate prevents a routine
+`pytest` run from silently burning the LLM credit (the key in .env is for ad-hoc
+chat use; arming live tests is an explicit opt-in).
 """
 
 import os
@@ -12,8 +13,8 @@ import pytest
 from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
 
 pytestmark = pytest.mark.skipif(
-    not os.getenv("DEEPSEEK_API_KEY"),
-    reason="DEEPSEEK_API_KEY not configured — pending refill",
+    not (os.getenv("DEEPSEEK_API_KEY") and os.getenv("LIVE_LLM_TESTS") == "1"),
+    reason="live LLM tests off — set LIVE_LLM_TESTS=1 (plus DEEPSEEK_API_KEY) to arm",
 )
 
 

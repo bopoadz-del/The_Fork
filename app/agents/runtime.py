@@ -35,6 +35,41 @@ MAX_DELEGATION_DEPTH = 3  # how deep agent → agent delegation may recurse
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
+# Groq provides an OpenAI-compatible chat-completions endpoint, so the only
+# things that differ from DeepSeek are the base URL, the env-var name, and the
+# default model id. Tool-calling payload shape is identical.
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+
+
+def _llm_config() -> Dict[str, str]:
+    """Pick the active LLM provider's URL + env-key + default model.
+
+    Precedence:
+      1. Explicit `LLM_PROVIDER` env var (deepseek | groq) wins.
+      2. Otherwise: if `GROQ_API_KEY` is set, use Groq (free tier-friendly).
+      3. Otherwise: DeepSeek (the historical default).
+
+    A per-provider override env (`GROQ_MODEL` / `DEEPSEEK_MODEL`) lets the
+    operator pin a specific model without code changes.
+    """
+    provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
+    if not provider:
+        provider = "groq" if os.getenv("GROQ_API_KEY") else "deepseek"
+    if provider == "groq":
+        return {
+            "provider": "groq",
+            "url": GROQ_API_URL,
+            "env_key": "GROQ_API_KEY",
+            "default_model": os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL),
+        }
+    return {
+        "provider": "deepseek",
+        "url": DEEPSEEK_API_URL,
+        "env_key": "DEEPSEEK_API_KEY",
+        "default_model": os.getenv("DEEPSEEK_MODEL", DEEPSEEK_DEFAULT_MODEL),
+    }
+
 
 # ── DeepSeek DSML tool-call markup handling ─────────────────────────────────
 # deepseek-chat sometimes emits a tool call as inline text markup inside the
@@ -334,11 +369,12 @@ class Agent:
             except Exception:
                 # Event handler must never break the agent loop.
                 pass
-        api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        cfg = _llm_config()
+        api_key = api_key or os.getenv(cfg["env_key"])
         if not api_key:
             return {
                 "status": "error",
-                "error": "No DEEPSEEK_API_KEY configured. Set it in .env or pass via env.",
+                "error": f"No {cfg['env_key']} configured. Set it in .env or pass via env.",
             }
 
         _call_stack = _call_stack or [self.name]
@@ -507,9 +543,10 @@ class Agent:
         Tool-calling is non-streamed (we collect the whole assistant turn before deciding),
         but the FINAL assistant answer streams token-by-token.
         """
-        api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        cfg = _llm_config()
+        api_key = api_key or os.getenv(cfg["env_key"])
         if not api_key:
-            yield {"type": "error", "message": "No DEEPSEEK_API_KEY configured."}
+            yield {"type": "error", "message": f"No {cfg['env_key']} configured."}
             return
 
         _call_stack = _call_stack or [self.name]
@@ -674,8 +711,16 @@ class Agent:
         project_id: Optional[str] = None,
         with_tools: bool = True,
     ) -> Dict[str, Any]:
+        cfg = _llm_config()
+        # Agent configs default to "deepseek-chat"; when the runtime is routed
+        # to a different provider we remap that placeholder to the provider's
+        # default model. An agent that explicitly pinned a provider-specific
+        # model (e.g. "llama-3.3-70b-versatile") is left alone.
+        model = self.model
+        if cfg["provider"] != "deepseek" and model.startswith("deepseek-"):
+            model = cfg["default_model"]
         payload = {
-            "model": self.model,
+            "model": model,
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
@@ -689,12 +734,12 @@ class Agent:
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 r = await client.post(
-                    DEEPSEEK_API_URL,
+                    cfg["url"],
                     json=payload,
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 )
                 if r.status_code >= 400:
-                    return {"status": "error", "error": f"DeepSeek HTTP {r.status_code}: {r.text[:300]}"}
+                    return {"status": "error", "error": f"{cfg['provider']} HTTP {r.status_code}: {r.text[:300]}"}
                 data = r.json()
                 choice = (data.get("choices") or [{}])[0]
                 return {"status": "success", "choice": choice, "raw": data}

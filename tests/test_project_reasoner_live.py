@@ -1,7 +1,8 @@
 """LIVE DeepSeek end-to-end test — Reasoning Engine Plan 5.
 
-Skipped until DEEPSEEK_API_KEY is funded. Acceptance check for the real
-reasoning loop. Mock-LLM coverage is in tests/test_project_reasoner.py.
+Off by default — even with DEEPSEEK_API_KEY in .env, this test stays skipped
+unless LIVE_LLM_TESTS=1 is explicitly set. Two-key gate prevents a routine
+`pytest` run from silently burning the LLM credit.
 """
 
 import os
@@ -12,8 +13,8 @@ from app.blocks.project_reasoner import ProjectReasonerBlock
 from app.core.session_store import InMemorySessionStore
 
 pytestmark = pytest.mark.skipif(
-    not os.getenv("DEEPSEEK_API_KEY"),
-    reason="DEEPSEEK_API_KEY not configured — pending refill",
+    not (os.getenv("DEEPSEEK_API_KEY") and os.getenv("LIVE_LLM_TESTS") == "1"),
+    reason="live LLM tests off — set LIVE_LLM_TESTS=1 (plus DEEPSEEK_API_KEY) to arm",
 )
 
 
