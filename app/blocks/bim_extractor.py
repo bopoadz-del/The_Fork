@@ -94,7 +94,10 @@ class BIMExtractorBlock(UniversalBlock):
             }
 
         try:
-            model = ifcopenshell.open(file_path)
+            # Decrypt-on-read for encrypted-at-rest uploads; no-op for plaintext.
+            from app.core.file_crypto import open_plaintext
+            with open_plaintext(file_path) as plain_path:
+                model = ifcopenshell.open(plain_path)
         except Exception as e:
             return {"status": "error", "error": f"IFC open error: {e}"}
 

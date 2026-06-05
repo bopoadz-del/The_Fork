@@ -192,8 +192,13 @@ class BIMBlock(UniversalBlock):
             return {"error": f"file_path required and must exist (got {path!r})"}
         try:
             import ifcopenshell
+            from app.core.file_crypto import open_plaintext
 
-            ifc_file = ifcopenshell.open(path)
+            # open_plaintext transparently decrypts when DATA_ENCRYPTION_KEY
+            # is set on the server (uploads encrypt at rest); plaintext files
+            # short-circuit to their original path.
+            with open_plaintext(path) as plain_path:
+                ifc_file = ifcopenshell.open(plain_path)
 
             project = ifc_file.by_type("IfcProject")[0] if ifc_file.by_type("IfcProject") else None
             site = ifc_file.by_type("IfcSite")[0] if ifc_file.by_type("IfcSite") else None
@@ -400,7 +405,9 @@ class BIMBlock(UniversalBlock):
             }
 
         try:
-            model = ifcopenshell.open(file_path)
+            from app.core.file_crypto import open_plaintext
+            with open_plaintext(file_path) as plain_path:
+                model = ifcopenshell.open(plain_path)
         except Exception as e:
             return {"status": "error", "error": f"IFC open failed: {e}"}
 

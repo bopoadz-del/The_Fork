@@ -49,12 +49,17 @@ async def _download_to_temp(url: str) -> str:
 
 def _pil_metadata(file_path: str) -> Dict:
     from PIL import Image
+    from app.core.file_crypto import open_plaintext
 
-    img = Image.open(file_path)
-    width, height = img.size
-    mode = img.mode
-    fmt = img.format or Path(file_path).suffix.upper().lstrip(".")
-    file_size = os.path.getsize(file_path)
+    # Decrypt-on-read for encrypted-at-rest uploads; no-op for plaintext.
+    # PIL needs a real path (it sniffs format from the bytes), and the
+    # context manager keeps the temp file alive for the metadata pass below.
+    with open_plaintext(file_path) as plain_path:
+        img = Image.open(plain_path)
+        width, height = img.size
+        mode = img.mode
+        fmt = img.format or Path(file_path).suffix.upper().lstrip(".")
+        file_size = os.path.getsize(plain_path)
 
     info = {
         "width": width,
@@ -85,18 +90,23 @@ def _tesseract_ocr(file_path: str) -> Tuple[str, float]:
     """Run Tesseract OCR locally. Returns (text, mean_confidence_0_to_1)."""
     import pytesseract
     from PIL import Image
+    from app.core.file_crypto import open_plaintext
 
-    img = Image.open(file_path)
-    text = pytesseract.image_to_string(img).strip()
-
+    # Decrypt-on-read for encrypted-at-rest uploads; no-op for plaintext.
+    # Both pytesseract calls must run INSIDE the with-block — PIL lazy-loads
+    # pixel data, and the temp file gets removed when the context manager
+    # exits, so the second call would otherwise hit a missing file.
     confidence = 0.0
-    try:
-        data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
-        confs = [int(c) for c in data.get("conf", []) if str(c).isdigit() and int(c) >= 0]
-        if confs:
-            confidence = sum(confs) / len(confs) / 100.0
-    except Exception:
-        pass
+    with open_plaintext(file_path) as plain_path:
+        img = Image.open(plain_path)
+        text = pytesseract.image_to_string(img).strip()
+        try:
+            data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+            confs = [int(c) for c in data.get("conf", []) if str(c).isdigit() and int(c) >= 0]
+            if confs:
+                confidence = sum(confs) / len(confs) / 100.0
+        except Exception:
+            pass
 
     return text, confidence
 
