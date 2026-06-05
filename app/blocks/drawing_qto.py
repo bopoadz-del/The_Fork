@@ -94,8 +94,13 @@ class DrawingQTOBlock(UniversalBlock):
         except ImportError:
             return {"status": "error", "error": "ezdxf not installed. Run: pip install ezdxf"}
 
+        # open_plaintext transparently decrypts when DATA_ENCRYPTION_KEY is set
+        # on the server (uploads go through file_crypto.write_document); no-op
+        # for plaintext files.
+        from app.core.file_crypto import open_plaintext
         try:
-            doc = ezdxf.readfile(file_path)
+            with open_plaintext(file_path) as plain_path:
+                doc = ezdxf.readfile(plain_path)
         except Exception as e:
             return {"status": "error", "error": f"DXF read error: {e}"}
 

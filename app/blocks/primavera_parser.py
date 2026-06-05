@@ -58,9 +58,13 @@ class PrimaveraParserBlock(UniversalBlock):
             return {"status": "error", "error": "File must be a .xer Primavera export"}
 
         try:
-            # Primavera P6 exports XER files in Windows-1252; UTF-8 mangles Arabic / European chars.
-            with open(file_path, "r", encoding="cp1252", errors="replace") as f:
-                xer_text = f.read()
+            # open_plaintext transparently decrypts when DATA_ENCRYPTION_KEY is
+            # set; plaintext files short-circuit. Primavera P6 exports XER in
+            # Windows-1252; UTF-8 mangles Arabic / European chars.
+            from app.core.file_crypto import open_plaintext
+            with open_plaintext(file_path) as plain_path:
+                with open(plain_path, "r", encoding="cp1252", errors="replace") as f:
+                    xer_text = f.read()
             tables = self._parse_xer_text(xer_text)
         except Exception as e:
             return {"status": "error", "error": f"XER parse error: {e}"}

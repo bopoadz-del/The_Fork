@@ -208,11 +208,16 @@ class SpecAnalyzerBlock(UniversalBlock):
 
     def _extract_text(self, file_path: str, params: Dict) -> Tuple[str, int]:
         import fitz
+        from app.core.file_crypto import open_plaintext
         max_pages = int(params.get("max_pages", self.config.get("max_pages", 100)))
-        doc = fitz.open(file_path)
-        pages = min(len(doc), max_pages)
-        text = "\n".join(doc[i].get_text() for i in range(pages))
-        doc.close()
+        # open_plaintext transparently decrypts when DATA_ENCRYPTION_KEY is set
+        # (uploads go through file_crypto.write_document); plaintext files
+        # short-circuit to their original path.
+        with open_plaintext(file_path) as plain_path:
+            doc = fitz.open(plain_path)
+            pages = min(len(doc), max_pages)
+            text = "\n".join(doc[i].get_text() for i in range(pages))
+            doc.close()
         return text, pages
 
     # Post-filter stopwords for the loose grade/class/type pattern. The pattern is

@@ -61,15 +61,20 @@ class BOQProcessorBlock(UniversalBlock):
 
         ext = os.path.splitext(file_path)[1].lower()
         try:
-            if ext == ".csv":
-                return await self._parse_csv(file_path, params)
-            elif ext in (".xlsx", ".xls"):
-                return await self._parse_excel(file_path, params)
-            else:
-                return {
-                    "status": "error",
-                    "error": f"Unsupported format: {ext}. Use .xlsx or .csv",
-                }
+            # open_plaintext transparently decrypts when DATA_ENCRYPTION_KEY is
+            # set on the server (uploads go through file_crypto.write_document)
+            # and is a no-op for legacy plaintext files.
+            from app.core.file_crypto import open_plaintext
+            with open_plaintext(file_path) as plain_path:
+                if ext == ".csv":
+                    return await self._parse_csv(plain_path, params)
+                elif ext in (".xlsx", ".xls"):
+                    return await self._parse_excel(plain_path, params)
+                else:
+                    return {
+                        "status": "error",
+                        "error": f"Unsupported format: {ext}. Use .xlsx or .csv",
+                    }
         except ImportError as e:
             return {
                 "status": "error",
