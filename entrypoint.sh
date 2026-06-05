@@ -22,4 +22,6 @@ fi
 
 echo "📡 Listening on 0.0.0.0:$PORT (HARDWARE=$HARDWARE)"
 
+command -v ODAFileConverter >/dev/null 2>&1 || echo "⚠️  ODAFileConverter not on PATH — drawing_qto will reject .dwg uploads with a guidance error"
+
 exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --no-access-log
