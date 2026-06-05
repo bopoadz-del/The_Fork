@@ -329,7 +329,11 @@ class Agent:
                                 "description": "Project brief / scope description (from RFP, BOD, conversation)."
                             },
                             "target_count": {
-                                "type": "integer",
+                                # Some providers (Groq/llama-3.x/llama-4-scout) emit integer
+                                # tool args as strings. Declaring ["integer","string"] keeps
+                                # the strict tool-use validator happy; we coerce in
+                                # _run_tool_call before passing to ConstructionContainer.
+                                "type": ["integer", "string"],
                                 "description": "Target number of activities (default 200, clamped to [20, 1000]).",
                             },
                             "project_type": {
@@ -959,9 +963,15 @@ class Agent:
                     "ok": False,
                     "result": {"status": "error", "error": f"construction unavailable: {e}"},
                 }
+            # Coerce target_count if the provider shipped it as a string ("30" → 30).
+            tc_raw = args.get("target_count", 200)
+            try:
+                tc = int(tc_raw) if tc_raw not in (None, "") else 200
+            except (TypeError, ValueError):
+                tc = 200
             params = {
                 "brief": args.get("brief") or "",
-                "target_count": args.get("target_count", 200),
+                "target_count": tc,
                 "project_type": args.get("project_type"),
                 "start_date": args.get("start_date"),
             }
