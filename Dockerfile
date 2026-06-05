@@ -14,6 +14,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
+# Frontend stage: build the React SPA. VITE_API_BASE='' makes the app talk to
+# the same origin it was served from, so a single Render service is enough.
+FROM node:20-slim AS frontend
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+ENV VITE_API_BASE=""
+RUN npm run build
+
 FROM python:3.11-slim
 WORKDIR /app
 
@@ -30,6 +40,8 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY . .
+# Replace the (gitignored) frontend/dist with the freshly built one.
+COPY --from=frontend /frontend/dist /app/frontend/dist
 
 # Run as an unprivileged user. /app/data (the persistent volume) and the app
 # tree must be owned by it so the process can write its DBs and uploads.

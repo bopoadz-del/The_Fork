@@ -57,6 +57,27 @@ from app.routers import (
     workflows,
 )
 from app.agents import load_agents
+def _bootstrap_first_user() -> None:
+    """Create a single bootstrap user from env vars if no users exist yet.
+
+    Avoids opening global registration on a public deploy: the operator sets
+    BOOTSTRAP_USER_EMAIL + BOOTSTRAP_USER_PASSWORD once on the host, the first
+    boot seeds that account, and subsequent boots no-op (idempotent).
+    """
+    email = os.getenv("BOOTSTRAP_USER_EMAIL", "").strip().lower()
+    password = os.getenv("BOOTSTRAP_USER_PASSWORD", "")
+    if not email or not password:
+        return
+    from app.core import users as users_store
+    if users_store.get_user_by_email(email) is not None:
+        return
+    try:
+        users_store.create_user(email, password, role="admin")
+        logger.info("bootstrap: created first user %s", email)
+    except Exception as e:
+        logger.warning("bootstrap: could not create user %s: %s", email, e)
+
+
 def _validate_startup_env() -> None:
     """Fail fast on missing security config when ENV is explicitly production.
 
@@ -90,6 +111,7 @@ async def lifespan(app: FastAPI):
     init_db()
     from app.core.users import init_db as init_users_db
     init_users_db()
+    _bootstrap_first_user()
     from app.core.agent_memory import init_db as init_agent_memory_db
     init_agent_memory_db()
     from app.core.doc_index import init_db as init_doc_index_db
@@ -298,7 +320,6 @@ mcp.mount_message_endpoint(app)
 app.include_router(drive.router)
 app.include_router(agents_router.router)
 app.include_router(hydration_router.router)
-app.include_router(static.router)
 # Debug routes — only in non-production environments
 env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
 if env in {"dev", "development", "local", "test", "testing"}:
@@ -313,3 +334,8 @@ if os.path.isdir("frontend/dist"):
     app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
 if os.path.isdir("frontend/dist/assets"):
     app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+
+# static.router includes a catch-all SPA fallback. Register it LAST so
+# specific API routes and StaticFiles mounts are matched first; only
+# unmatched GETs fall through to serve frontend/dist/index.html.
+app.include_router(static.router)
