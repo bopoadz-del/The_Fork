@@ -78,16 +78,26 @@ class DrawingQTOBlock(UniversalBlock):
             return {"status": "error", "error": f"File not found: {file_path}"}
 
         ext = os.path.splitext(file_path)[1].lower()
+
+        # --- PDF input: extract vector drawings via PyMuPDF -----------------
+        # PDF drawings carry their geometry as vector paths in the page
+        # content stream. We can pull lines, rectangles, and closed shapes
+        # straight out — coordinates come back in PDF points (1pt = 1/72")
+        # at the page's scale, NOT real-world metres. The caller usually
+        # knows the title-block scale (e.g. 1:100) and can pass
+        # `pdf_scale_factor` to convert from page-units to metres.
+        if ext == ".pdf":
+            return self._extract_from_pdf(file_path, params)
+
+        # --- DWG input: attempt ODA File Converter, else clear guidance ----
         if ext == ".dwg":
-            return {
-                "status": "error",
-                "error": (
-                    "DWG format requires ODA File Converter. "
-                    "Convert to DXF first: https://www.opendesign.com/guestfiles/oda_file_converter"
-                ),
-            }
-        if ext != ".dxf":
-            return {"status": "error", "error": f"Unsupported format: {ext}. Use .dxf"}
+            converted = self._try_convert_dwg(file_path)
+            if isinstance(converted, dict):  # error envelope
+                return converted
+            file_path = converted  # ezdxf will read the converted DXF below
+
+        if ext not in (".dxf", ".dwg"):
+            return {"status": "error", "error": f"Unsupported format: {ext}. Use .dxf, .dwg, or .pdf"}
 
         try:
             import ezdxf
@@ -142,6 +152,179 @@ class DrawingQTOBlock(UniversalBlock):
         if hatch_hole_fallback:
             response["hatch_hole_handling"] = "may include holes as positive area"
         return response
+
+    def _extract_from_pdf(self, file_path: str, params: Dict) -> Dict:
+        """Extract vector geometry from a PDF drawing via PyMuPDF.
+
+        PDF drawings carry their geometry as ``page.get_drawings()`` items —
+        each item has a ``type`` (``'l'`` line, ``'re'`` rect, ``'c'`` curve)
+        and a ``rect`` bbox plus an ``items`` path. We translate those into
+        the same shape ``drawing_qto`` produces for DXF (measurements +
+        areas + estimated_volumes), with coordinates in **PDF points** by
+        default. Pass ``pdf_scale_factor`` to convert to metres (e.g.
+        ``0.000352778`` to go from 1pt to mm-of-paper, then multiply by the
+        drawing's plot scale).
+        """
+        try:
+            import fitz
+        except ImportError:
+            return {"status": "error", "error": "PyMuPDF (fitz) not installed."}
+        from app.core.file_crypto import open_plaintext
+
+        scale = float(params.get("pdf_scale_factor", 1.0))
+        max_pages = int(params.get("max_pages", self.config.get("max_pages", 20)))
+        min_length = float(params.get("min_length_units", 0.5))  # in input units
+
+        measurements: List[Dict] = []
+        areas: List[Dict] = []
+        pages_inspected = 0
+        page_dims: List[Dict] = []
+
+        try:
+            with open_plaintext(file_path) as plain_path:
+                doc = fitz.open(plain_path)
+                pages_inspected = min(len(doc), max_pages)
+                for pi in range(pages_inspected):
+                    page = doc[pi]
+                    page_dims.append({
+                        "page": pi + 1,
+                        "width_pt": page.rect.width,
+                        "height_pt": page.rect.height,
+                    })
+                    drawings = page.get_drawings() or []
+                    for d in drawings:
+                        # `items` is a list of path commands: ("l", p1, p2)
+                        # for lines, ("re", rect) for rectangles, ("c", ...)
+                        # for cubic Béziers, ("qu", quad) for quads.
+                        for item in d.get("items") or []:
+                            kind = item[0]
+                            if kind == "l" and len(item) >= 3:
+                                p1, p2 = item[1], item[2]
+                                length_pt = math.hypot(p2.x - p1.x, p2.y - p1.y)
+                                if length_pt < min_length:
+                                    continue
+                                measurements.append({
+                                    "type": "line",
+                                    "page": pi + 1,
+                                    "length_pt": round(length_pt, 3),
+                                    "length_scaled": round(length_pt * scale, 6),
+                                    "start": [round(p1.x, 2), round(p1.y, 2)],
+                                    "end":   [round(p2.x, 2), round(p2.y, 2)],
+                                })
+                            elif kind == "re" and len(item) >= 2:
+                                r = item[1]
+                                w, h = abs(r.width), abs(r.height)
+                                if w < min_length and h < min_length:
+                                    continue
+                                area = w * h
+                                areas.append({
+                                    "type": "rect",
+                                    "page": pi + 1,
+                                    "width_pt": round(w, 3),
+                                    "height_pt": round(h, 3),
+                                    "area_pt2": round(area, 3),
+                                    "area_scaled": round(area * scale * scale, 6),
+                                })
+        except Exception as e:
+            return {"status": "error", "error": f"PDF drawing read error: {e}"}
+
+        total_area = sum(a["area_pt2"] for a in areas)
+        total_length = sum(m["length_pt"] for m in measurements)
+        return {
+            "status": "success",
+            "source_format": "pdf",
+            "pages_inspected": pages_inspected,
+            "page_dimensions": page_dims,
+            "measurements_count": len(measurements),
+            "measurements": measurements[:200],   # cap for response size
+            "areas_count": len(areas),
+            "areas": areas[:200],
+            "totals": {
+                "length_pt": round(total_length, 3),
+                "length_scaled": round(total_length * scale, 6),
+                "area_pt2": round(total_area, 3),
+                "area_scaled": round(total_area * scale * scale, 6),
+            },
+            "pdf_scale_factor": scale,
+            "scale_note": (
+                "PDF drawings carry no intrinsic scale — coordinates are in "
+                "PDF points (1pt = 1/72\"). Pass `pdf_scale_factor` to convert "
+                "to your target unit (e.g. for a 1:100 plotted drawing in mm, "
+                "use 0.000352778 * 100 = 0.0352778 pt → m)."
+            ),
+        }
+
+    def _try_convert_dwg(self, file_path: str):
+        """Best-effort DWG → DXF conversion via ODA File Converter CLI.
+
+        Returns the converted DXF path on success, or a structured error
+        dict on failure. The CLI is shipped as ``ODAFileConverter`` on most
+        Linux/Mac installs and as ``ODAFileConverter.exe`` on Windows; we
+        also look for ``oda_file_converter`` for image builds that ship a
+        symlink. If neither is present, return the long-standing
+        "convert to DXF first" guidance.
+        """
+        import shutil
+        import subprocess
+        import tempfile
+
+        for candidate in ("ODAFileConverter", "ODAFileConverter.exe",
+                          "oda_file_converter", "oda-file-converter"):
+            tool = shutil.which(candidate)
+            if tool:
+                break
+        else:
+            return {
+                "status": "error",
+                "error": (
+                    "DWG format requires the ODA File Converter CLI, which is "
+                    "not bundled in this image (no pure-Python DWG reader "
+                    "exists). Either: (a) install ODA File Converter — "
+                    "https://www.opendesign.com/guestfiles/oda_file_converter — "
+                    "and ensure `ODAFileConverter` is on PATH, or (b) export "
+                    "the drawing as .dxf from AutoCAD/BricsCAD/LibreCAD "
+                    "(File → Save As → DXF R2018) and upload that."
+                ),
+                "hint": "Upload the .dxf instead of .dwg",
+            }
+
+        try:
+            with tempfile.TemporaryDirectory() as src_dir, tempfile.TemporaryDirectory() as dst_dir:
+                # ODA CLI converts an input DIRECTORY to an output directory.
+                # Copy the single DWG into a clean source dir, then convert.
+                src_path = os.path.join(src_dir, os.path.basename(file_path))
+                from app.core.file_crypto import open_plaintext
+                with open_plaintext(file_path) as plain:
+                    with open(plain, "rb") as fh, open(src_path, "wb") as fo:
+                        fo.write(fh.read())
+                # Args: in_dir out_dir output_version output_format
+                #       (ACAD2018, DXF, recurse-flag, audit-flag)
+                subprocess.run(
+                    [tool, src_dir, dst_dir, "ACAD2018", "DXF", "0", "1"],
+                    timeout=60, check=False, capture_output=True,
+                )
+                dxf_name = os.path.splitext(os.path.basename(file_path))[0] + ".dxf"
+                converted = os.path.join(dst_dir, dxf_name)
+                if not os.path.exists(converted):
+                    return {
+                        "status": "error",
+                        "error": (
+                            "ODA File Converter ran but produced no DXF; the "
+                            "DWG may be corrupt or a future-version export "
+                            "the bundled CLI doesn't yet support."
+                        ),
+                    }
+                # Move into a path that survives the temp-dir teardown.
+                stable = os.path.join(
+                    tempfile.gettempdir(), f"converted_{os.path.basename(dxf_name)}"
+                )
+                with open(converted, "rb") as fh, open(stable, "wb") as fo:
+                    fo.write(fh.read())
+                return stable
+        except FileNotFoundError as e:
+            return {"status": "error", "error": f"DWG conversion launcher error: {e}"}
+        except Exception as e:
+            return {"status": "error", "error": f"DWG conversion failed: {e}"}
 
     def _extract_measurements(self, msp, unit_factor: float) -> Tuple[List[Dict], int]:
         """``unit_factor`` converts raw drawing units straight to metres.

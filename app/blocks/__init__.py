@@ -78,6 +78,7 @@ _BLOCK_SPECS: List[Tuple[str, str, str]] = [
     ("learning_engine",     "app.blocks.learning_engine",      "LearningEngineBlock"),
     ("llm_enhancer",        "app.blocks.llm_enhancer",         "LLMEnhancerBlock"),
     ("recommendation_template", "app.blocks.recommendation_template", "RecommendationTemplateBlock"),
+    ("validation_pipeline", "app.blocks.validation_pipeline",  "ValidationPipelineBlock"),
     ("sandbox",             "app.blocks.sandbox",              "SandboxBlock"),
     ("traffic_manager",     "app.blocks.traffic_manager",      "TrafficManagerBlock"),
     ("webhook",             "app.blocks.webhook",              "WebhookBlock"),

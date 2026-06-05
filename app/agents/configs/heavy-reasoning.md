@@ -11,6 +11,7 @@ max_tokens: 8192
 allowed_blocks:
   - sympy_reasoning
   - recommendation_template
+  - validation_pipeline
   - formula_executor
   - construction
   - boq_processor

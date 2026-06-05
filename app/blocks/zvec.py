@@ -1,12 +1,87 @@
-"""Zvec Block - Real TF-IDF embeddings + cosine similarity via scikit-learn"""
+"""Zvec block — semantic embeddings + cosine similarity + zero-shot classify.
 
-from typing import Any, Dict, List
+Embedding backend selection (lazy, module-level cache):
+
+1. **model2vec** if installed — small static distilled model (~80 MB
+   total, no torch), produces real semantic 256-dim vectors. This is the
+   path the runtime image installs.
+2. **sentence-transformers** if installed — full MiniLM (~1.5 GB with
+   torch). Used when present, never auto-installed.
+3. **TF-IDF fallback** — scikit-learn. Useful for similarity within a
+   corpus, but for a SINGLE input text returns a uniform vector by
+   construction (every n-gram has the same TF and IDF). Kept for
+   backwards-compat and as a similarity workhorse.
+
+Previous behaviour was TF-IDF-only, which made the operation `embed`
+return a uniform `1/sqrt(d)` vector for any single text — useless for
+semantic search. With model2vec, the same call returns a real semantic
+vector that clusters meaningfully.
+"""
+
+import threading
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.core.universal_base import UniversalBlock
+
+# Lazy module-level cache so the model loads once per process.
+_SEMANTIC_LOCK = threading.Lock()
+_SEMANTIC_MODEL = None
+_SEMANTIC_BACKEND: Optional[str] = None  # "model2vec" | "sentence_transformers" | None
+
+
+def _get_semantic_model():
+    """Lazy-load and cache the best available semantic embedding model.
+
+    Returns ``(model, backend_name)`` or ``(None, None)`` if no semantic
+    backend is installed.
+    """
+    global _SEMANTIC_MODEL, _SEMANTIC_BACKEND
+    if _SEMANTIC_MODEL is not None or _SEMANTIC_BACKEND == "missing":
+        return _SEMANTIC_MODEL, _SEMANTIC_BACKEND if _SEMANTIC_BACKEND != "missing" else None
+
+    with _SEMANTIC_LOCK:
+        if _SEMANTIC_MODEL is not None:
+            return _SEMANTIC_MODEL, _SEMANTIC_BACKEND
+        # model2vec: small, no torch.
+        try:
+            from model2vec import StaticModel
+            _SEMANTIC_MODEL = StaticModel.from_pretrained("minishlab/potion-base-8M")
+            _SEMANTIC_BACKEND = "model2vec"
+            return _SEMANTIC_MODEL, _SEMANTIC_BACKEND
+        except Exception:
+            pass
+        # sentence-transformers (heavy, only if explicitly installed).
+        try:
+            from sentence_transformers import SentenceTransformer
+            _SEMANTIC_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+            _SEMANTIC_BACKEND = "sentence_transformers"
+            return _SEMANTIC_MODEL, _SEMANTIC_BACKEND
+        except Exception:
+            pass
+        _SEMANTIC_BACKEND = "missing"
+        return None, None
+
+
+def _semantic_encode(texts: List[str]) -> Optional[np.ndarray]:
+    """Return an (n, d) float array of L2-normalized semantic vectors,
+    or None if no semantic backend is available.
+    """
+    model, backend = _get_semantic_model()
+    if model is None:
+        return None
+    if backend == "model2vec":
+        vecs = model.encode(texts)
+    else:  # sentence_transformers
+        vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+    arr = np.asarray(vecs, dtype=np.float32)
+    # Defensive L2 normalize (model2vec already returns normalized but be safe).
+    norms = np.linalg.norm(arr, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return arr / norms
 
 
 def _vectorize(texts: List[str], char_level: bool = False) -> np.ndarray:
@@ -74,24 +149,55 @@ class ZvecBlock(UniversalBlock):
 
         try:
             if operation == "embed":
+                # Prefer semantic (model2vec) — TF-IDF on a single text
+                # returns a uniform vector by construction.
+                semantic = _semantic_encode([text])
+                if semantic is not None:
+                    vec = semantic[0].tolist()
+                    return {
+                        "status": "success",
+                        "operation": "embed",
+                        "backend": _SEMANTIC_BACKEND,
+                        "vector": vec,
+                        "dimensions": len(vec),
+                        "text": text[:200],
+                    }
+                # Fallback: TF-IDF (caller may not get semantic similarity).
                 vectors = _vectorize([text])
                 vec = vectors[0].tolist()
                 return {
                     "status": "success",
                     "operation": "embed",
+                    "backend": "tfidf_fallback",
                     "vector": vec,
                     "dimensions": len(vec),
                     "text": text[:200],
+                    "warning": (
+                        "model2vec not installed — fell back to TF-IDF which "
+                        "returns a uniform vector for a single text. Install "
+                        "model2vec or sentence-transformers for semantic embeddings."
+                    ),
                 }
 
             elif operation == "batch_embed":
                 texts = params.get("texts", [text] if text else [])
                 if not texts:
                     return {"status": "error", "error": "Provide 'texts' list in params"}
+                semantic = _semantic_encode(texts)
+                if semantic is not None:
+                    return {
+                        "status": "success",
+                        "operation": "batch_embed",
+                        "backend": _SEMANTIC_BACKEND,
+                        "embeddings": [v.tolist() for v in semantic],
+                        "dimensions": semantic.shape[1],
+                        "count": len(texts),
+                    }
                 vectors = _vectorize(texts)
                 return {
                     "status": "success",
                     "operation": "batch_embed",
+                    "backend": "tfidf_fallback",
                     "embeddings": [v.tolist() for v in vectors],
                     "dimensions": vectors.shape[1],
                     "count": len(texts),
@@ -115,11 +221,24 @@ class ZvecBlock(UniversalBlock):
                 if not text_b:
                     return {"status": "error", "error": "Provide text_b or texts list in params"}
 
+                # Pairwise similarity benefits from semantic too.
+                semantic = _semantic_encode([text_a, text_b])
+                if semantic is not None:
+                    score = float(np.dot(semantic[0], semantic[1]))
+                    return {
+                        "status": "success",
+                        "operation": "similarity",
+                        "backend": _SEMANTIC_BACKEND,
+                        "similarity": round(score, 4),
+                        "text_a": text_a[:100],
+                        "text_b": text_b[:100],
+                    }
                 vectors = _vectorize([text_a, text_b])
                 score = _cosine(vectors[0], vectors[1])
                 return {
                     "status": "success",
                     "operation": "similarity",
+                    "backend": "tfidf_fallback",
                     "similarity": round(score, 4),
                     "text_a": text_a[:100],
                     "text_b": text_b[:100],

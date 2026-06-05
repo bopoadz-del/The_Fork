@@ -45,6 +45,10 @@ ifcopenshell>=0.7.0
 
 # Intelligence Blocks (Week 4)
 scikit-learn>=1.4.0
+# Lightweight static semantic embeddings (~80 MB total, no torch). Used by
+# app/blocks/zvec.py to return real semantic vectors instead of the
+# corpus-uniform TF-IDF output. Falls back to TF-IDF when absent.
+model2vec>=0.4.0
 
 # Reasoning Engine — sandboxed code execution (Plan 3)
 RestrictedPython>=7.0
