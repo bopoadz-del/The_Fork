@@ -98,14 +98,22 @@ class ProjectReasonerBlock(UniversalBlock):
     }
 
     async def _call_llm(self, prompt: str) -> str:
-        """DeepSeek call. Overridden by test doubles."""
-        api_key = os.getenv("DEEPSEEK_API_KEY")
+        """Active-LLM-provider call. Overridden by test doubles.
+
+        Routes via app.agents.runtime._llm_config — auto-uses Groq when
+        GROQ_API_KEY is set, otherwise DeepSeek.
+        """
+        from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
+        cfg = _llm_config()
+        api_key = os.getenv(cfg["env_key"])
         if not api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY not configured")
-        model = self.config.get("model", "deepseek-chat")
+            raise RuntimeError(f"{cfg['env_key']} not configured")
+        model = self.config.get("model", cfg["default_model"])
+        if cfg["provider"] != "deepseek" and isinstance(model, str) and model.startswith("deepseek-"):
+            model = cfg["default_model"]
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                "https://api.deepseek.com/v1/chat/completions",
+                cfg["url"],
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
                 json={"model": model,
@@ -114,7 +122,7 @@ class ProjectReasonerBlock(UniversalBlock):
             )
             if resp.status_code != 200:
                 raise RuntimeError(
-                    f"DeepSeek API error (HTTP {resp.status_code})"
+                    f"{cfg['provider']} API error (HTTP {resp.status_code})"
                 )
             return resp.json()["choices"][0]["message"]["content"]
 

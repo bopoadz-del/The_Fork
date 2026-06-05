@@ -138,18 +138,24 @@ class FormulaExecutorV2Block(UniversalBlock):
     }
 
     async def _call_llm(self, prompt: str) -> str:
-        """Send the code-gen prompt to DeepSeek and return the raw reply.
+        """Send the code-gen prompt to the active LLM provider and return the reply.
 
-        Overridden by test doubles. Raises RuntimeError when no key is set so
-        callers get a clear, non-secret error.
+        Routes via app.agents.runtime._llm_config so the block honours the same
+        LLM_PROVIDER / GROQ_API_KEY precedence the agent runtime uses. Overridden
+        by test doubles. Raises RuntimeError when no key is set so callers get a
+        clear, non-secret error.
         """
-        api_key = os.getenv("DEEPSEEK_API_KEY")
+        from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
+        cfg = _llm_config()
+        api_key = os.getenv(cfg["env_key"])
         if not api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY not configured")
-        model = self.config.get("model", "deepseek-chat")
+            raise RuntimeError(f"{cfg['env_key']} not configured")
+        model = self.config.get("model", cfg["default_model"])
+        if cfg["provider"] != "deepseek" and isinstance(model, str) and model.startswith("deepseek-"):
+            model = cfg["default_model"]
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                "https://api.deepseek.com/v1/chat/completions",
+                cfg["url"],
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
                 json={
@@ -160,7 +166,7 @@ class FormulaExecutorV2Block(UniversalBlock):
             )
             if resp.status_code != 200:
                 raise RuntimeError(
-                    f"DeepSeek API error (HTTP {resp.status_code})"
+                    f"{cfg['provider']} API error (HTTP {resp.status_code})"
                 )
             return resp.json()["choices"][0]["message"]["content"]
 

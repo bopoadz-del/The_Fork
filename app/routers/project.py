@@ -3,10 +3,13 @@
 POST /v1/project/ask — run the Project Reasoner over a persistent session.
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 from app.dependencies import require_user
 from app.core.session_store import SessionStore, get_session_store
@@ -75,9 +78,28 @@ async def project_ask(
     # Use the explicit project_id when given; otherwise fall back to the
     # session_id (UI convention: activeProjectId IS the session id).
     project_id = body.project_id or body.session_id
+
+    # Tenant gate (same pattern as heavy-reasoning at app/routers/chat.py:97-121):
+    # drop the project_id when the caller doesn't own it. The reasoner's
+    # search_project_documents then runs without a project scope and returns
+    # nothing, instead of leaking another tenant's docs into the answer.
+    safe_project_id: Optional[str] = project_id
+    if project_id:
+        try:
+            from app.core import projects as projects_store
+            if projects_store.get_project(project_id, user_id=caller_id) is None:
+                logger.warning(
+                    "project_ask: user=%s does not own project=%s; dropping project_id",
+                    caller_id, project_id,
+                )
+                safe_project_id = None
+        except Exception:
+            logger.exception("project_ask: ownership check failed; dropping project_id (fail-closed)")
+            safe_project_id = None
+
     result = await reasoner.process({"request": body.request,
                                      "session": session,
-                                     "project_id": project_id})
+                                     "project_id": safe_project_id})
 
     _store.save(session)   # persist the turn — history, computed state, cache
 

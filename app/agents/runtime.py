@@ -253,7 +253,12 @@ class Agent:
                         "type": "object",
                         "properties": {
                             "query": {"type": "string", "description": "What to search for."},
-                            "top_k": {"type": "integer", "description": "Max number of results (default 5)."},
+                            # Some providers (Groq/llama-3.3-70b in particular) emit numeric tool
+                            # args as strings — declaring this as ["integer","string"] avoids the
+                            # provider-side tool_use_failed validator rejecting the call. The
+                            # Python side at _run_tool_call coerces with `top_k or 5`, so a
+                            # string here works at runtime.
+                            "top_k": {"type": ["integer", "string"], "description": "Max number of results (default 5)."},
                         },
                         "required": ["query"],
                     },
@@ -853,7 +858,13 @@ class Agent:
                 }
             query = args.get("query") or ""
             top_k = args.get("top_k")
-            results = await search_project_documents(project_id, query, top_k or 5)
+            # Some providers ship integer args as strings ("1" vs 1). Coerce
+            # so the downstream sqlite LIMIT clause doesn't choke on a str.
+            try:
+                top_k = int(top_k) if top_k not in (None, "") else 5
+            except (TypeError, ValueError):
+                top_k = 5
+            results = await search_project_documents(project_id, query, top_k)
             return {
                 "name": "search_project_documents",
                 "ok": True,

@@ -75,7 +75,11 @@ def _bootstrap_first_user() -> None:
         users_store.create_user(email, password, role="admin")
         logger.info("bootstrap: created first user %s", email)
     except Exception as e:
-        logger.warning("bootstrap: could not create user %s: %s", email, e)
+        # Fail loud — a silent warning lets a broken bootstrap hide. If the
+        # only intended admin can't be created (db lock, schema drift, etc),
+        # the operator needs to see it in startup logs as an ERROR, not warn.
+        logger.error("bootstrap: FAILED to create user %s: %s", email, e, exc_info=True)
+        raise
 
 
 def _validate_startup_env() -> None:
