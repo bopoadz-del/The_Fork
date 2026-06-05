@@ -36,6 +36,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# ODA File Converter — required by app.blocks.drawing_qto for DWG → DXF.
+# Override at build time if the upstream version changes:
+#   docker build --build-arg ODA_URL=https://.../ODAFileConverter_QT6_lnxX64_*.deb .
+ARG ODA_URL="https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_8.3dll_27.1.deb"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libxext6 libsm6 libxrender1 libice6 libxi6 \
+        libxcomposite1 libxcursor1 libxdamage1 libxfixes3 libxrandr2 \
+        libxtst6 libnss3 \
+    && curl -fSL -A "Mozilla/5.0" -o /tmp/oda.deb "${ODA_URL}" \
+    && apt-get install -y --no-install-recommends /tmp/oda.deb \
+    && rm /tmp/oda.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV QT_QPA_PLATFORM=offscreen
+
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
