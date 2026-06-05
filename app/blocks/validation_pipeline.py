@@ -95,18 +95,59 @@ def _check_syntactic(value: Any) -> Dict[str, Any]:
 
 
 def _check_dimensional(value: Any, unit: Optional[str]) -> Dict[str, Any]:
+    """Run a Pint sanity check on the unit string, with two carve-outs:
+
+    * Currency-bearing units (USD/m3, SAR/kg, etc.) — Pint doesn't model
+      currencies by default, so we strip the currency token and re-check
+      the remaining physical units instead of marking the whole result
+      as failed.
+    * Offset-unit ambiguity (degC, degF used as a delta) — Pint refuses
+      to multiply scalars by an offset-bearing unit; we re-try with the
+      `delta_` prefix which is Pint's syntax for "this is a difference".
+    """
     if not unit:
         return {"pass": True, "reason": "no unit declared — dimensional check skipped"}
     try:
         import pint
     except ImportError:
         return {"pass": True, "reason": "pint not installed — dimensional check skipped"}
-    try:
-        ureg = pint.UnitRegistry()
-        q = float(value) * ureg(unit)
-        return {"pass": True, "reason": f"unit '{unit}' parsed as {q.units}"}
-    except Exception as e:
-        return {"pass": False, "reason": f"unit '{unit}' not recognised by pint ({type(e).__name__}: {str(e)[:80]})"}
+
+    import re
+    ureg = pint.UnitRegistry()
+
+    # Carve-out 1: strip currency tokens before checking.
+    currency_re = re.compile(r"\b(USD|SAR|AED|EUR|GBP|JPY|CNY|AUD|CAD|KWD|QAR|BHD|OMR|INR|PKR)\b", re.IGNORECASE)
+    stripped = currency_re.sub("", unit)
+    stripped = re.sub(r"^[/\s*·]+|[/\s*·]+$", "", stripped).strip("/ ")
+    if stripped != unit and not stripped:
+        return {"pass": True, "reason": f"unit '{unit}' is currency-only — outside dimensional check scope"}
+    probe = stripped or unit
+
+    # Carve-out 3: construction shorthand. Pint wants `m**3`, not `m3` —
+    # site engineers always write the latter. Expand `<unit><digit>` to
+    # the explicit power form before handing to Pint.
+    probe = re.sub(r"\b(m|mm|cm|km|in|ft|yd)([2-4])\b", r"\1**\2", probe)
+
+    # Carve-out 2: offset-unit retry with delta_ prefix.
+    def _try(u: str):
+        try:
+            q = float(value) * ureg(u)
+            return True, str(q.units)
+        except Exception as e:
+            return False, f"{type(e).__name__}: {str(e)[:120]}"
+
+    ok, info = _try(probe)
+    if ok:
+        return {"pass": True, "reason": f"unit '{unit}' parsed as {info}"}
+    if "Offset" in info or "OffsetUnitCalculusError" in info:
+        # Pint treats degC as an absolute temperature; deltas need `delta_degC`.
+        delta_probe = re.sub(r"\b(deg[CF]|celsius|fahrenheit|degree[CF])\b",
+                             lambda m: f"delta_{m.group(1)}",
+                             probe, flags=re.IGNORECASE)
+        ok2, info2 = _try(delta_probe)
+        if ok2:
+            return {"pass": True, "reason": f"unit '{unit}' parsed as delta-{info2}"}
+    return {"pass": False, "reason": f"unit '{unit}' not recognised by pint ({info})"}
 
 
 def _check_physical(value: float, ctx: Dict[str, Any]) -> Dict[str, Any]:
