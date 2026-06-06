@@ -174,7 +174,7 @@ function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerP
     setUploading(true)
     setAttachStatus(`Uploading ${file.name}…`)
     try {
-      const token = localStorage.getItem('thefork.jwt') || ''
+      const token = getToken() || ''
       const fd = new FormData()
       fd.append('file', file)
       fd.append('role', role)
