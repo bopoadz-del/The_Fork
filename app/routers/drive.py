@@ -199,6 +199,156 @@ class DriveImportRequest(BaseModel):
     name: str
 
 
+class DriveIndexFolderRequest(BaseModel):
+    folder_id: str | None = None        # default: My Drive root
+    max_files: int = 100                 # hard cap so a Drive of 10k files can't DoS
+    max_depth: int = 4                   # how deep to recurse
+    role: str = "other"                  # doc_role to tag the imports with
+    include_extensions: list[str] | None = None  # whitelist override; default = ALLOWED_DOC_EXTENSIONS
+
+
+@router.post("/v1/projects/{project_id}/drive/index-folder", status_code=201)
+async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
+                             background_tasks: BackgroundTasks,
+                             auth: dict = Depends(require_user)):
+    """Walk a Google Drive folder + auto-import every supported file into the project.
+
+    Recurses up to ``max_depth`` levels deep, stopping at ``max_files`` total
+    imports. Each downloaded file goes through the SAME path the single-file
+    import uses — encrypted at rest, indexed via ``doc_index.maybe_eager_index``.
+    Returns a per-file status list so the UI can show what landed and what
+    was skipped (wrong extension, native Google Doc not handled, etc.).
+    """
+    proj = store.get_project(project_id, user_id=auth["user_id"])
+    if not proj:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    try:
+        access_token = await drive_auth.get_access_token(auth["user_id"])
+    except drive_auth.DriveNotConnected:
+        raise HTTPException(409, "Google Drive is not connected.")
+    except drive_auth.DriveAuthError as e:
+        raise HTTPException(409, f"{e} Reconnect Google Drive.")
+
+    allowed = set(ext.lower() for ext in (req.include_extensions or ALLOWED_DOC_EXTENSIONS))
+    folder_mt = "application/vnd.google-apps.folder"
+    imported: list[Dict[str, Any]] = []
+    skipped: list[Dict[str, Any]] = []
+
+    async def _list_folder(client: httpx.AsyncClient, fid: str) -> list[Dict[str, Any]]:
+        q = f"'{fid}' in parents and trashed=false"
+        r = await client.get(
+            f"{_DRIVE_API}/files",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"q": q, "pageSize": 200, "orderBy": "folder,name",
+                    "fields": "files(id,name,mimeType,size,parents)"},
+        )
+        r.raise_for_status()
+        return r.json().get("files", [])
+
+    async def _download_bytes(client: httpx.AsyncClient, file_id: str, mime: str, name: str):
+        """Native Google Docs/Sheets/Slides need /export?mimeType=...; everything
+        else uses ?alt=media. Returns (bytes, exported_extension)."""
+        EXPORTS = {
+            "application/vnd.google-apps.document":     ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
+            "application/vnd.google-apps.spreadsheet":  ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
+            "application/vnd.google-apps.presentation": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
+            "application/vnd.google-apps.drawing":      ("application/pdf", ".pdf"),
+        }
+        if mime in EXPORTS:
+            export_mime, ext = EXPORTS[mime]
+            r = await client.get(
+                f"{_DRIVE_API}/files/{file_id}/export",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"mimeType": export_mime},
+            )
+            r.raise_for_status()
+            return r.content, ext
+        r = await client.get(
+            f"{_DRIVE_API}/files/{file_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"alt": "media"},
+        )
+        r.raise_for_status()
+        return r.content, os.path.splitext(name)[1].lower()
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        start = req.folder_id or "root"
+        stack: list[tuple[str, int]] = [(start, 0)]
+        while stack and len(imported) < req.max_files:
+            fid, depth = stack.pop(0)
+            try:
+                children = await _list_folder(client, fid)
+            except Exception as e:
+                skipped.append({"folder_id": fid, "reason": f"list failed: {str(e)[:80]}"})
+                continue
+            for child in children:
+                if len(imported) >= req.max_files:
+                    skipped.append({"name": child.get("name"), "reason": "max_files cap"})
+                    continue
+                if child.get("mimeType") == folder_mt:
+                    if depth + 1 <= req.max_depth:
+                        stack.append((child["id"], depth + 1))
+                    else:
+                        skipped.append({"name": child.get("name"), "reason": "max_depth cap"})
+                    continue
+                # Pre-flight extension check (override for native Google types).
+                mime = child.get("mimeType", "")
+                name_raw = child.get("name") or "unnamed"
+                pre_ext = os.path.splitext(name_raw.lower())[1]
+                if mime.startswith("application/vnd.google-apps."):
+                    # Will be exported to a supported ext below; skip the
+                    # pre-check.
+                    pass
+                elif pre_ext not in allowed:
+                    skipped.append({"name": name_raw, "mime": mime, "reason": f"extension {pre_ext} not in allowlist"})
+                    continue
+                try:
+                    raw_bytes, exported_ext = await _download_bytes(
+                        client, child["id"], mime, name_raw,
+                    )
+                except Exception as e:
+                    skipped.append({"name": name_raw, "reason": f"download failed: {str(e)[:80]}"})
+                    continue
+                # Re-validate the post-export extension for native Google types.
+                if exported_ext and exported_ext not in allowed:
+                    skipped.append({"name": name_raw, "reason": f"exported ext {exported_ext} not allowed"})
+                    continue
+                # Same storage path as upload/import.
+                stored_basename = name_raw
+                if mime.startswith("application/vnd.google-apps.") and exported_ext:
+                    # Strip any old extension, append the exported one so
+                    # downstream parsers recognise the format.
+                    root, _ = os.path.splitext(name_raw)
+                    stored_basename = f"{root}{exported_ext}"
+                stored_basename = os.path.basename(stored_basename.replace("\\", "/"))
+                file_uuid = str(uuid.uuid4())[:8]
+                stored_as = f"{file_uuid}_{stored_basename}"
+                filepath = os.path.join(projects_router.DATA_DIR, stored_as)
+                file_crypto.write_document(filepath, raw_bytes)
+                doc = store.add_document(project_id, stored_basename, stored_as, filepath, len(raw_bytes))
+                audit.record("document.added", project_id=project_id,
+                             document_id=doc["id"], name=stored_basename,
+                             size=len(raw_bytes), user_id=auth["user_id"],
+                             source="drive_walker")
+                background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
+                imported.append({
+                    "drive_id": child["id"],
+                    "name": stored_basename,
+                    "doc_id": doc["id"],
+                    "size": len(raw_bytes),
+                    "doc_type": doc.get("doc_type"),
+                })
+
+    return {
+        "status": "ok",
+        "imported_count": len(imported),
+        "skipped_count": len(skipped),
+        "imported": imported,
+        "skipped": skipped[:50],
+        "readiness": store.compute_readiness(project_id),
+    }
+
+
 @router.post("/v1/projects/{project_id}/drive/import", status_code=201)
 async def drive_import(project_id: str, req: DriveImportRequest,
                        background_tasks: BackgroundTasks,
