@@ -383,6 +383,7 @@ class Agent:
         project_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
         on_event: Optional[Callable[[str, Dict[str, Any]], Union[None, Awaitable[None]]]] = None,
+        user_id: Optional[str] = None,
         _depth: int = 0,
         _call_stack: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
@@ -447,7 +448,7 @@ class Agent:
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             await _emit("iteration", {"n": iteration + 1})
-            resp = await self._call_llm(messages, api_key, project_id=project_id)
+            resp = await self._call_llm(messages, api_key, project_id=project_id, user_id=user_id)
             if resp.get("status") == "error":
                 return resp
             choice = resp["choice"]
@@ -475,9 +476,7 @@ class Agent:
                     # first marker), force one no-tools call so the model must
                     # produce a plain-text answer instead of an empty bubble.
                     if not final_text.strip():
-                        forced_resp = await self._call_llm(
-                            messages, api_key, project_id=project_id, with_tools=False
-                        )
+                        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if forced_resp.get("status") == "error":
                             final_text = "I wasn't able to produce a response — please rephrase."
                         else:
@@ -554,7 +553,7 @@ class Agent:
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
-        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False)
+        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
         if forced_resp.get("status") == "error":
             # Even the forced call failed; fall back to the original error shape.
             return {
@@ -584,6 +583,7 @@ class Agent:
         user_message: str,
         history: Optional[List[Dict[str, str]]] = None,
         api_key: Optional[str] = None,
+        user_id: Optional[str] = None,
         project_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
         _depth: int = 0,
@@ -621,7 +621,7 @@ class Agent:
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
 
         for iteration in range(MAX_TOOL_ITERATIONS):
-            resp = await self._call_llm(messages, api_key, project_id=project_id)
+            resp = await self._call_llm(messages, api_key, project_id=project_id, user_id=user_id)
             if resp.get("status") == "error":
                 yield {"type": "error", "message": resp.get("error", "LLM call failed")}
                 return
@@ -649,9 +649,7 @@ class Agent:
                     # first marker), force one no-tools call so the model must
                     # produce a plain-text answer instead of an empty bubble.
                     if not final_text.strip():
-                        forced_resp = await self._call_llm(
-                            messages, api_key, project_id=project_id, with_tools=False
-                        )
+                        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if forced_resp.get("status") == "error":
                             final_text = "I wasn't able to produce a response — please rephrase."
                         else:
@@ -702,7 +700,7 @@ class Agent:
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled.
-        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False)
+        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
         if forced_resp.get("status") == "error":
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
             return
@@ -765,6 +763,7 @@ class Agent:
         api_key: str,
         project_id: Optional[str] = None,
         with_tools: bool = True,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         cfg = _llm_config()
         # Agent configs default to "deepseek-chat"; when the runtime is routed
@@ -828,7 +827,7 @@ class Agent:
                 try:
                     from app.core import usage_tracker
                     usage_tracker.record(
-                        user_id=None,
+                        user_id=user_id,
                         agent_name=self.name,
                         provider=cfg.get("provider", ""),
                         model=data.get("model") or cfg.get("default_model") or "",

@@ -153,6 +153,7 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
         history=req.history,
         project_id=req.project_id,
         conversation_id=req.conversation_id,
+        user_id=auth["user_id"],
     )
 
     # Echo conversation_id back so the client can resume the conversation.
@@ -199,6 +200,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
                 history=history,
                 project_id=project_id,
                 conversation_id=conversation_id,
+                user_id=auth["user_id"],
             ):
                 yield f"data: {json.dumps(evt, default=str)}\n\n"
                 await asyncio.sleep(0)  # yield to the event loop
