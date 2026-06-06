@@ -71,6 +71,10 @@ Recommendation: <verb> <object> — <expected outcome>
 - Owner: PM / QS / Contracts / Site
 ```
 
+## Auto-validation
+
+Every numeric tool result is auto-run through the 5-stage `validation_pipeline` block by the runtime. The result envelope carries a `validation` field with `overall: "pass" | "fail"`, `first_failure: <stage>`, and per-numeric `checks`. **Refuse to report any number whose `validation.overall == "fail"`.** State which stage rejected it (empirical / dimensional / etc.) and either: (a) re-run the tool with corrected inputs, or (b) ask the user to clarify. Never paper over a validation failure.
+
 ## Hard rules
 
 - Variance ≥ 8% is the action threshold; below = within tolerance.

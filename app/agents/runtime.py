@@ -545,7 +545,11 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": json.dumps(tool_result["result"], default=str)[:8000],
+                    "content": json.dumps(
+                        {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
+                         **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
+                        default=str,
+                    )[:8000],
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled
@@ -690,7 +694,11 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": json.dumps(tool_result["result"], default=str)[:8000],
+                    "content": json.dumps(
+                        {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
+                         **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
+                        default=str,
+                    )[:8000],
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled.
@@ -1047,7 +1055,9 @@ class Agent:
         block_params = args.get("params") or {}
         try:
             result = await instance.execute(block_input, block_params)
-            return {"name": name, "ok": True, "result": result}
+            envelope = {"name": name, "ok": True, "result": result}
+            await _auto_validate(envelope)
+            return envelope
         except Exception as e:
             return {
                 "name": name,
@@ -1058,6 +1068,147 @@ class Agent:
                     "hint": "The tool failed; retry with different input or proceed without it.",
                 },
             }
+
+
+# ── Auto-validation middleware ───────────────────────────────────────────
+# Every successful block call gets its numeric payload run through the
+# validation_pipeline block automatically, and the verdict is grafted onto
+# the tool result so the LLM sees it next turn. The heavy-reasoning prompt
+# is updated to refuse to report numbers whose `validation.overall == fail`.
+# Without this, the validation_pipeline block existed but only ran when the
+# LLM remembered to call it — which is exactly the failure mode that let
+# the 5,900 °C unit-conversion slip through earlier.
+
+_AUTOVAL_SKIP_BLOCKS = {
+    "validation_pipeline",          # don't recurse
+    "remember_fact",                # synthetic, no numeric
+    "delegate_to_agent",            # nested agent result
+    "search_project_documents",     # text results
+    "generate_wbs",                 # has its own CPM validation
+    "chat", "translate", "voice",   # text-only blocks
+    "ocr", "ocr_v2", "pdf", "pdf_v2", "document_engine",
+    "spec_analyzer",                # extracts text, not single numerics
+    "smart_orchestrator",           # routing decisions
+    "zvec", "vector_search",        # vectors aren't numerics to validate
+    "local_drive", "google_drive", "onedrive", "android_drive",
+    "code", "sandbox",              # caller responsible
+    "image", "bim", "bim_extractor",
+    "primavera_parser",
+}
+
+
+def _collect_numerics(result: Any) -> List[Dict[str, Any]]:
+    """Walk a block result dict and pick out numeric payloads worth checking.
+
+    Yields a list of ``{value, unit?, context}`` packets in the shape
+    validation_pipeline.process() expects. The detection is lenient — better
+    to spot-check a few extras than miss a value silently.
+    """
+    if not isinstance(result, dict):
+        return []
+    out: List[Dict[str, Any]] = []
+
+    # sympy_reasoning / recommendation_template / formula_executor_v2 shapes
+    for key, ctx_extra in (
+        ("variances",     {"metric": "percent",   "label": "variance_pct"}),
+        ("cost_impacts",  {"metric": "cost_usd",  "label": "cost_impact"}),
+    ):
+        items = result.get(key)
+        if isinstance(items, list):
+            for it in items[:8]:  # cap so we don't blow context
+                if isinstance(it, dict):
+                    v = it.get("value", it.get("variance_pct", it.get("cost_impact")))
+                    if isinstance(v, (int, float)):
+                        ctx = {**ctx_extra}
+                        for c_key in ("material_type", "material", "item"):
+                            if c_key in it:
+                                ctx["material_type"] = str(it[c_key]).lower()
+                                break
+                        out.append({"value": v, "unit": it.get("unit"), "context": ctx})
+
+    # boq_processor / construction container shapes
+    if "total_cost" in result and isinstance(result["total_cost"], (int, float)):
+        out.append({
+            "value": result["total_cost"],
+            "unit": result.get("currency", "USD"),
+            "context": {"metric": "cost_usd", "currency": result.get("currency", "USD")},
+        })
+
+    # formula_executor result envelope
+    fr = result.get("result")
+    if isinstance(fr, (int, float)) and not isinstance(fr, bool):
+        ctx = {"metric": result.get("metric") or result.get("task_metric") or ""}
+        unit = result.get("unit") or result.get("output_unit")
+        out.append({"value": fr, "unit": unit, "context": ctx})
+
+    return out
+
+
+async def _auto_validate(envelope: Dict[str, Any]) -> None:
+    """In-place: attach a `validation` field to the tool envelope.
+
+    Runs the validation_pipeline block over every numeric in the result.
+    Aggregates per-numeric verdicts into a single summary the LLM can read.
+    """
+    name = envelope.get("name", "")
+    if name in _AUTOVAL_SKIP_BLOCKS:
+        return
+    result = envelope.get("result")
+    if not isinstance(result, dict) or result.get("status") != "success":
+        return
+    numerics = _collect_numerics(result)
+    if not numerics:
+        envelope["validation"] = {"skipped": "no numeric value found"}
+        return
+    try:
+        from app.blocks import BLOCK_REGISTRY
+        from app.dependencies import block_instances as _bi, _create_block_instance as _create
+        if "validation_pipeline" not in BLOCK_REGISTRY:
+            envelope["validation"] = {"skipped": "validation_pipeline not registered"}
+            return
+        vp_block = _bi.get("validation_pipeline")
+        if vp_block is None:
+            vp_block = _create(BLOCK_REGISTRY["validation_pipeline"])
+            _bi["validation_pipeline"] = vp_block
+    except Exception as e:
+        envelope["validation"] = {"skipped": f"validation_pipeline init failed: {type(e).__name__}"}
+        return
+
+    per: List[Dict[str, Any]] = []
+    overall = "pass"
+    first_failure: Optional[str] = None
+    for n in numerics[:8]:  # hard cap
+        try:
+            envelope_inner = await vp_block.execute(n, {})
+        except Exception as e:  # noqa: BLE001
+            per.append({"input": n, "overall": "error", "error": str(e)[:120]})
+            continue
+        # UniversalBlock.execute wraps the block's process() return in a
+        # {block, status, result: {...}} envelope; the real verdict lives
+        # under `result`.
+        vr = envelope_inner.get("result") if isinstance(envelope_inner, dict) else None
+        if not isinstance(vr, dict):
+            continue
+        v_overall = vr.get("overall")
+        per.append({
+            "value": n.get("value"),
+            "unit": n.get("unit"),
+            "overall": v_overall,
+            "first_failure": vr.get("first_failure"),
+        })
+        if v_overall == "fail" and overall == "pass":
+            overall = "fail"
+            first_failure = vr.get("first_failure")
+    envelope["validation"] = {
+        "overall": overall,
+        "first_failure": first_failure,
+        "checks": per,
+        "note": (
+            "auto-run by runtime middleware; refuse to report any number "
+            "whose check shows overall=fail without explaining which "
+            "stage rejected it."
+        ),
+    }
 
 
 # ── Loader ────────────────────────────────────────────────────────────────
