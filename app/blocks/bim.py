@@ -11,6 +11,7 @@ class BIMBlock(UniversalBlock):
     BIM File Processor - ACTUALLY parses IFC, extracts DWG metadata, OCRs PDFs
     """
     
+    auto_validate = False
     name = "bim"
     version = "1.0.0"
     # Original `requires = ["config", "storage", "vector", "pdf", "ocr"]`
@@ -77,7 +78,7 @@ class BIMBlock(UniversalBlock):
     def database_block(self): return self.get_dep("database")
         
     async def _legacy_initialize(self):
-        print(f"📐 BIM File Processor ready")
+        print(f"BIM File Processor ready")
         print(f"   Supports: {list(self.SUPPORTED_FORMATS.keys())}")
         
         # Check ifcopenshell availability

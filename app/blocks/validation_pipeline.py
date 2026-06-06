@@ -51,60 +51,80 @@ Output::
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Dict, Optional, Tuple
 
 from app.core.universal_base import UniversalBlock
 
 
-# Industry-rough sanity ranges. Used as the EMPIRICAL backstop when the
-# caller doesn't supply explicit empirical_min/empirical_max. Numbers are
-# global rough averages, NOT precise — they exist to catch order-of-
-# magnitude errors (5,900 °C vs 5.9 °C, 1500 USD/m³ vs 150 USD/m³, etc.).
+# Empirical sanity ranges live in config/empirical_ranges.json, keyed
+# as `"<material>.<metric>.<currency>": [min, max]`. The file is
+# operator-editable; learning_engine state at key `empirical_ranges`
+# overrides the file when populated. Neither path requires a code
+# change to add or refine a band.
 #
-# Keyed by (material_type, metric, currency). `currency` is "USD" for cost
-# metrics, "__none__" for non-cost metrics (temperature, volume, ...). The
-# lookup falls back from a currency-specific entry to the USD baseline and
-# then to a currency-agnostic 2-tuple form for backwards compat.
-#
-# Rough FX used to derive the non-USD cost bands (mid-2026):
-#   1 USD ≈ 3.75 SAR ≈ 3.67 AED ≈ 0.92 EUR
-EMPIRICAL_RANGES: Dict[Tuple[str, str, str], Tuple[float, float]] = {
-    # Concrete supply rate.
-    ("concrete",  "rate_usd_per_m3", "USD"): (50.0,    500.0),
-    ("concrete",  "rate_usd_per_m3", "SAR"): (188.0,   1_875.0),
-    ("concrete",  "rate_usd_per_m3", "AED"): (184.0,   1_835.0),
-    ("concrete",  "rate_usd_per_m3", "EUR"): (46.0,    460.0),
-    # Steel rate per kg.
-    ("steel",     "rate_usd_per_kg", "USD"): (0.5,     10.0),
-    ("steel",     "rate_usd_per_kg", "SAR"): (1.88,    37.5),
-    ("steel",     "rate_usd_per_kg", "AED"): (1.84,    36.7),
-    ("steel",     "rate_usd_per_kg", "EUR"): (0.46,    9.2),
-    # Rebar rate per kg.
-    ("rebar",     "rate_usd_per_kg", "USD"): (0.5,     8.0),
-    ("rebar",     "rate_usd_per_kg", "SAR"): (1.88,    30.0),
-    ("rebar",     "rate_usd_per_kg", "AED"): (1.84,    29.4),
-    ("rebar",     "rate_usd_per_kg", "EUR"): (0.46,    7.36),
-    # Formwork rate per m2.
-    ("formwork",  "rate_usd_per_m2", "USD"): (10.0,    200.0),
-    ("formwork",  "rate_usd_per_m2", "SAR"): (37.5,    750.0),
-    ("formwork",  "rate_usd_per_m2", "AED"): (36.7,    734.0),
-    ("formwork",  "rate_usd_per_m2", "EUR"): (9.2,     184.0),
-    # Generic cost ceiling, per currency.
-    ("__any__",   "cost_usd",        "USD"): (0.0,     1e10),
-    ("__any__",   "cost_usd",        "SAR"): (0.0,     3.75e10),
-    ("__any__",   "cost_usd",        "AED"): (0.0,     3.67e10),
-    ("__any__",   "cost_usd",        "EUR"): (0.0,     0.92e10),
-    # Non-cost metrics: currency dimension is N/A.
-    ("concrete",    "volume_m3",        "__none__"): (1.0,    5_000_000.0),
-    ("concrete",    "compressive_mpa",  "__none__"): (10.0,   80.0),
-    ("steel",       "weight_kg",        "__none__"): (1.0,    100_000_000.0),
-    ("rebar",       "length_m",         "__none__"): (1.0,    50_000_000.0),
-    ("excavation",  "volume_m3",        "__none__"): (1.0,    50_000_000.0),
-    ("formwork",    "area_m2",          "__none__"): (1.0,    5_000_000.0),
-    ("__any__",     "temperature_degc", "__none__"): (-40.0,  500.0),
-    ("__any__",     "duration_weeks",   "__none__"): (0.0,    1040.0),
-    ("__any__",     "percent",          "__none__"): (0.0,    100.0),
-}
+# Keys use `<material>.<metric>.<currency>` strings (vs runtime tuples)
+# so they survive JSON / DB round-trips cleanly. `__none__` is used as
+# the currency slot for non-cost metrics (temperature, volume, etc.);
+# `__any__` is the material wildcard for generic backstops.
+
+_RANGES_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "empirical_ranges.json")
+_RANGES_OVERRIDE_ENV = "EMPIRICAL_RANGES_FILE"
+_RANGES_CACHE: Optional[Dict[str, Tuple[float, float]]] = None
+_RANGES_MTIME: float = 0.0
+
+
+def _load_ranges() -> Dict[str, Tuple[float, float]]:
+    """Reload the empirical ranges table when the on-disk JSON has
+    changed, OR when learning_engine has a more recent override. The
+    operator can edit ranges without a redeploy: next validation call
+    picks up the new file. Learning-engine corrections shadow the file.
+    """
+    global _RANGES_CACHE, _RANGES_MTIME
+    import json
+    path = os.getenv(_RANGES_OVERRIDE_ENV) or _RANGES_PATH
+
+    # File-based base layer.
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0.0
+    if _RANGES_CACHE is None or mtime != _RANGES_MTIME:
+        base: Dict[str, Tuple[float, float]] = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for k, v in (data.get("ranges") or {}).items():
+                if isinstance(v, (list, tuple)) and len(v) == 2:
+                    base[k] = (float(v[0]), float(v[1]))
+        except (OSError, ValueError):
+            pass
+        _RANGES_CACHE = base
+        _RANGES_MTIME = mtime
+
+    # learning_engine override layer — when it knows a better band from
+    # real corrections, it wins.
+    try:
+        from app.blocks import BLOCK_REGISTRY
+        from app.dependencies import block_instances, _create_block_instance
+        if "learning_engine" in BLOCK_REGISTRY:
+            inst = block_instances.get("learning_engine")
+            if inst is None:
+                inst = _create_block_instance(BLOCK_REGISTRY["learning_engine"])
+                block_instances["learning_engine"] = inst
+            getter = getattr(inst, "get_state", None) or getattr(inst, "state", None)
+            if callable(getter):
+                state = getter("empirical_ranges") if getter.__name__ == "get_state" else getter
+                if isinstance(state, dict):
+                    overrides = state.get("ranges") or state
+                    if isinstance(overrides, dict):
+                        for k, v in overrides.items():
+                            if isinstance(v, (list, tuple)) and len(v) == 2:
+                                _RANGES_CACHE[k] = (float(v[0]), float(v[1]))
+    except Exception:
+        pass
+
+    return _RANGES_CACHE
 
 
 # Metrics that are inherently currency-denominated. Everything else is
@@ -115,24 +135,25 @@ _COST_METRICS = {"rate_usd_per_m3", "rate_usd_per_kg", "rate_usd_per_m2", "cost_
 def _lookup_range(material: str, metric: str, currency: Optional[str]) -> Optional[Tuple[float, float]]:
     """Return the empirical (min, max) for (material, metric, currency).
 
-    Lookup order:
-      1. (material, metric, currency) — exact match if currency supplied.
-      2. (material, metric, "USD") — USD baseline for cost metrics.
-      3. (material, metric, "__none__") — non-cost metric.
-      4. (__any__, metric, currency) → (__any__, metric, "USD") →
-         (__any__, metric, "__none__") — generic backstops.
+    Lookup order on the flat string-keyed table:
+      1. <material>.<metric>.<currency>  — exact match if currency supplied
+      2. <material>.<metric>.USD          — USD baseline for cost metrics
+      3. <material>.<metric>.__none__     — non-cost metric
+      4. __any__.<metric>.<currency> -> __any__.<metric>.USD ->
+         __any__.<metric>.__none__       — generic backstops
     """
+    ranges = _load_ranges()
     keys = []
     if currency:
-        keys.append((material, metric, currency.upper()))
-    keys.append((material, metric, "USD"))
-    keys.append((material, metric, "__none__"))
+        keys.append(f"{material}.{metric}.{currency.upper()}")
+    keys.append(f"{material}.{metric}.USD")
+    keys.append(f"{material}.{metric}.__none__")
     if currency:
-        keys.append(("__any__", metric, currency.upper()))
-    keys.append(("__any__", metric, "USD"))
-    keys.append(("__any__", metric, "__none__"))
+        keys.append(f"__any__.{metric}.{currency.upper()}")
+    keys.append(f"__any__.{metric}.USD")
+    keys.append(f"__any__.{metric}.__none__")
     for k in keys:
-        rng = EMPIRICAL_RANGES.get(k)
+        rng = ranges.get(k)
         if rng:
             return rng
     return None
@@ -401,7 +422,7 @@ class ValidationPipelineBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "✅", "label": "Validate", "prompt": "Run the 5-stage validation pipeline"},
+            {"icon": "", "label": "Validate", "prompt": "Run the 5-stage validation pipeline"},
         ],
     }
 

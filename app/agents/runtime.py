@@ -225,7 +225,7 @@ class Agent:
     model: str = DEEPSEEK_DEFAULT_MODEL
     temperature: float = 0.3
     max_tokens: int = 2048
-    icon: str = "🤖"
+    icon: str = ""
     can_delegate: bool = False
 
     def tool_definitions(self, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -502,7 +502,7 @@ class Agent:
             messages.append(assistant_msg)
             for tc in tool_calls:
                 # Surface the tool call to the event stream BEFORE running it
-                # so the UI can show "⚙️ tool_name — running…" live.
+                # so the UI can show "️ tool_name — running…" live.
                 fn = tc.get("function") or {}
                 tc_name = fn.get("name") or tc.get("name") or "unknown"
                 tc_args_raw = fn.get("arguments") or tc.get("arguments") or "{}"
@@ -1090,22 +1090,30 @@ class Agent:
 # LLM remembered to call it — which is exactly the failure mode that let
 # the 5,900 °C unit-conversion slip through earlier.
 
-_AUTOVAL_SKIP_BLOCKS = {
-    "validation_pipeline",          # don't recurse
-    "remember_fact",                # synthetic, no numeric
-    "delegate_to_agent",            # nested agent result
-    "search_project_documents",     # text results
-    "generate_wbs",                 # has its own CPM validation
-    "chat", "translate", "voice",   # text-only blocks
-    "ocr", "ocr_v2", "pdf", "pdf_v2", "document_engine",
-    "spec_analyzer",                # extracts text, not single numerics
-    "smart_orchestrator",           # routing decisions
-    "zvec", "vector_search",        # vectors aren't numerics to validate
-    "local_drive", "google_drive", "onedrive", "android_drive",
-    "code", "sandbox",              # caller responsible
-    "image", "bim", "bim_extractor",
-    "primavera_parser",
+# Synthetic tools that aren't in BLOCK_REGISTRY and so can't carry a
+# class-level `auto_validate` flag. Hardcoded here because they're part
+# of the runtime contract, not a block.
+_SYNTHETIC_NEVER_VALIDATE = {
+    "validation_pipeline",        # don't recurse
+    "remember_fact",              # synthetic, no numeric
+    "delegate_to_agent",          # nested agent result
+    "search_project_documents",   # text results
+    "generate_wbs",               # has its own CPM validation
 }
+
+
+def _block_should_auto_validate(name: str) -> bool:
+    """Per-block opt-out for auto-validation. Blocks declare
+    ``auto_validate = False`` as a class attribute; the runtime reads
+    it instead of an enumerated skip list. Synthetic tools without a
+    ``BLOCK_REGISTRY`` entry use ``_SYNTHETIC_NEVER_VALIDATE``.
+    """
+    if name in _SYNTHETIC_NEVER_VALIDATE:
+        return False
+    cls = BLOCK_REGISTRY.get(name)
+    if cls is None:
+        return False
+    return bool(getattr(cls, "auto_validate", True))
 
 
 def _collect_numerics(result: Any) -> List[Dict[str, Any]]:
@@ -1162,7 +1170,7 @@ async def _auto_validate(envelope: Dict[str, Any]) -> None:
     Aggregates per-numeric verdicts into a single summary the LLM can read.
     """
     name = envelope.get("name", "")
-    if name in _AUTOVAL_SKIP_BLOCKS:
+    if not _block_should_auto_validate(name):
         return
     result = envelope.get("result")
     if not isinstance(result, dict) or result.get("status") != "success":
@@ -1237,7 +1245,7 @@ def load_agents(configs_dir: Optional[Path] = None) -> Dict[str, Agent]:
             agent = _parse_agent_file(md)
             AGENT_REGISTRY[agent.name] = agent
         except Exception as e:
-            print(f"⚠ failed to load agent {md.name}: {e}")
+            print(f"failed to load agent {md.name}: {e}")
     return AGENT_REGISTRY
 
 
@@ -1288,7 +1296,7 @@ def _parse_agent_file(path: Path) -> Agent:
         model=config.get("model") or DEEPSEEK_DEFAULT_MODEL,
         temperature=float(config.get("temperature", 0.3)),
         max_tokens=int(config.get("max_tokens", 2048)),
-        icon=config.get("icon", "🤖"),
+        icon=config.get("icon", ""),
         can_delegate=str(config.get("can_delegate", "false")).strip().lower() in ("true", "1", "yes"),
     )
 

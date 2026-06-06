@@ -34,8 +34,8 @@ class BOQProcessorBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "📊", "label": "Parse BOQ", "prompt": "Parse and summarize this Bill of Quantities"},
-            {"icon": "💰", "label": "Cost Summary", "prompt": "Give me a cost breakdown by trade/division"},
+            {"icon": "", "label": "Parse BOQ", "prompt": "Parse and summarize this Bill of Quantities"},
+            {"icon": "", "label": "Cost Summary", "prompt": "Give me a cost breakdown by trade/division"},
         ],
     }
 

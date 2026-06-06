@@ -212,6 +212,7 @@ def _summarize_detections(detections: List[Dict[str, Any]]) -> Dict[str, int]:
 class ImageBlock(UniversalBlock):
     """Local image analysis — PIL metadata + Tesseract OCR. No cloud calls."""
 
+    auto_validate = False
     name = "image"
     version = "3.0"
     description = "Local image analysis — metadata + OCR (no cloud vision)"
@@ -235,9 +236,9 @@ class ImageBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "🖼️", "label": "Metadata", "prompt": "Show image metadata"},
-            {"icon": "📐", "label": "Construction", "prompt": "Analyze construction image"},
-            {"icon": "🔍", "label": "Extract Text", "prompt": "Extract all text"},
+            {"icon": "️", "label": "Metadata", "prompt": "Show image metadata"},
+            {"icon": "", "label": "Construction", "prompt": "Analyze construction image"},
+            {"icon": "", "label": "Extract Text", "prompt": "Extract all text"},
         ],
     }
 

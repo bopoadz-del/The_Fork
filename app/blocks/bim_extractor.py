@@ -36,6 +36,7 @@ IFC_CATEGORY_MAP: Dict[str, str] = {
 
 
 class BIMExtractorBlock(UniversalBlock):
+    auto_validate = False
     name = "bim_extractor"
     version = "1.0.0"
     description = "Extract building elements, quantities, and clash report from IFC BIM models"
@@ -66,9 +67,9 @@ class BIMExtractorBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "🏗️", "label": "Extract All", "prompt": "Extract all building elements and quantities"},
-            {"icon": "⚡", "label": "Clash Detection", "prompt": "Run clash detection on this BIM model"},
-            {"icon": "📊", "label": "Quantities", "prompt": "Extract material quantities for cost estimation"},
+            {"icon": "️", "label": "Extract All", "prompt": "Extract all building elements and quantities"},
+            {"icon": "", "label": "Clash Detection", "prompt": "Run clash detection on this BIM model"},
+            {"icon": "", "label": "Quantities", "prompt": "Extract material quantities for cost estimation"},
         ],
     }
 

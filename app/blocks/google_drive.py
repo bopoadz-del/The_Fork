@@ -43,6 +43,7 @@ def _oauth_url() -> str:
 class GoogleDriveBlock(UniversalBlock):
     """Google Drive: list, read, download files via OAuth 2.0"""
 
+    auto_validate = False
     name = "google_drive"
     version = "2.0"
     description = "Google Drive file operations — set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET or GOOGLE_ACCESS_TOKEN"
@@ -62,8 +63,8 @@ class GoogleDriveBlock(UniversalBlock):
             "fields": [{"name": "files", "type": "array", "label": "Files"}],
         },
         "quick_actions": [
-            {"icon": "☁️", "label": "Browse Drive", "prompt": "List files from Google Drive"},
-            {"icon": "🔑", "label": "Auth", "prompt": "Authenticate with Google Drive"},
+            {"icon": "️", "label": "Browse Drive", "prompt": "List files from Google Drive"},
+            {"icon": "", "label": "Auth", "prompt": "Authenticate with Google Drive"},
         ],
     }
 
@@ -167,19 +168,7 @@ class GoogleDriveBlock(UniversalBlock):
                 return {"status": "error", "error": "Not authenticated"}
             try:
                 import httpx
-                # Google-native types (Docs, Sheets, Slides, Drawings) refuse
-                # alt=media; they need /export?mimeType=... to a downloadable
-                # format. Auto-detect and branch.
-                EXPORTS = {
-                    "application/vnd.google-apps.document":
-                        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
-                    "application/vnd.google-apps.spreadsheet":
-                        ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
-                    "application/vnd.google-apps.presentation":
-                        ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
-                    "application/vnd.google-apps.drawing":
-                        ("application/pdf", ".pdf"),
-                }
+                from app.core import drive_mime
                 async with httpx.AsyncClient(timeout=60) as client:
                     meta = await client.get(
                         f"{_DRIVE_API}/files/{file_id}",
@@ -188,8 +177,9 @@ class GoogleDriveBlock(UniversalBlock):
                     )
                     meta.raise_for_status()
                     mime = meta.json().get("mimeType", "")
-                    if mime in EXPORTS:
-                        export_mime, exported_ext = EXPORTS[mime]
+                    target = drive_mime.export_target(mime)
+                    if target is not None:
+                        export_mime, exported_ext = target
                         resp = await client.get(
                             f"{_DRIVE_API}/files/{file_id}/export",
                             headers={"Authorization": f"Bearer {access_token}"},

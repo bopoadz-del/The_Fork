@@ -9,6 +9,7 @@ from app.core.typed_block import TypedBlock, Schema, ContentType
 class PDFBlock(TypedBlock):
     """Extract text from PDF files with typed output"""
     
+    auto_validate = False
     name = "pdf"
     version = "2.0.0"
     description = "Extract text from PDF files"

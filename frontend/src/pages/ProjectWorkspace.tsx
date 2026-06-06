@@ -219,7 +219,7 @@ function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerP
       mediaRecorderRef.current = mr
       mr.start()
       setRecording(true)
-      setAttachStatus('Recording — click 🎤 again to stop')
+      setAttachStatus('Recording — click Stop to finish')
     } catch (err) {
       setAttachStatus(`Mic blocked: ${(err as Error).message}`)
     }
@@ -269,7 +269,7 @@ function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerP
           disabled={disabled || uploading}
           aria-label="Attach file"
         >
-          📎
+          Attach
         </button>
         <button
           type="button"
@@ -279,7 +279,7 @@ function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerP
           disabled={disabled || uploading}
           aria-label="Take photo"
         >
-          📷
+          Photo
         </button>
         <button
           type="button"
@@ -289,7 +289,7 @@ function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerP
           disabled={disabled || uploading}
           aria-label={recording ? 'Stop recording' : 'Record voice'}
         >
-          {recording ? '⏹' : '🎤'}
+          {recording ? 'Stop' : 'Voice'}
         </button>
         <textarea
           ref={textareaRef}
@@ -313,7 +313,7 @@ function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerP
         </button>
       </div>
       <p className="chat-composer__hint">
-        Enter to send · Shift+Enter for newline · 📎 attach · 📷 photo · 🎤 voice
+        Enter to send · Shift+Enter for newline · attach, photo, voice via buttons
       </p>
     </div>
   )

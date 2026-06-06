@@ -46,6 +46,7 @@ def _stt_sync(file_path: str) -> str:
 class VoiceBlock(UniversalBlock):
     """TTS via gTTS (free, no key) · STT via Google SpeechRecognition (free, no key)"""
 
+    auto_validate = False
     name = "voice"
     version = "2.0"
     description = "Text-to-speech (gTTS) and speech-to-text (Google STT) — no API key needed"

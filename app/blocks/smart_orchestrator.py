@@ -151,6 +151,7 @@ PARALLEL_GROUPS: Dict[str, List[str]] = {
 
 
 class SmartOrchestratorBlock(UniversalBlock):
+    auto_validate = False
     name = "smart_orchestrator"
     version = "1.0.0"
     description = "39-action construction keyword router: maps user messages to action queues with parallel execution hints"

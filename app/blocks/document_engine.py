@@ -21,6 +21,7 @@ class DocumentEngineBlock(UniversalBlock):
     cost_engine, and risk_engine downstream blocks.
     """
 
+    auto_validate = False
     name = "document_engine"
     version = "1.0.0"
     description = "Parse → Reason → Map pipeline for technical document intelligence"

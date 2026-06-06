@@ -92,7 +92,7 @@ class ProjectReasonerBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "🧭", "label": "Critical path", "prompt": "What is the critical path?"},
+            {"icon": "", "label": "Critical path", "prompt": "What is the critical path?"},
             {"icon": "⏱️", "label": "Compress", "prompt": "How can I finish 2 weeks sooner?"},
         ],
     }

@@ -150,7 +150,14 @@ class SymPyReasoningBlock(UniversalBlock):
                         self.config.get("variance_threshold_pct", 10.0))
         )
 
+        # Two variance sources, both stay in the same `variances` list so
+        # downstream consumers don't need to branch:
+        #   1. BOQ rate vs historical_benchmarks (the original design — needs
+        #      a populated benchmarks dict to fire).
+        #   2. BOQ quantity vs drawing_data quantity (the construction-domain
+        #      headline use case; what the heavy-reasoning prompt expects).
         variances = self._compute_variances(boq_data, historical_benchmarks, threshold)
+        variances.extend(self._compute_qty_variances(boq_data, drawing_data, threshold))
         cost_impacts = self._compute_cost_impacts(variances)
         recommendations = self._generate_recommendations(variances, spec_data, drawing_data)
 
@@ -219,6 +226,64 @@ class SymPyReasoningBlock(UniversalBlock):
             )
 
         return sorted(variances, key=lambda x: abs(x["variance_pct"]), reverse=True)
+
+    def _compute_qty_variances(
+        self, boq_data: List, drawing_data: Dict, threshold: float
+    ) -> List[Dict]:
+        """Quantity variance: each BOQ row matched against a drawing_data entry.
+
+        Match key precedence: ``item_key`` on the row -> ``description``
+        lowered+snake-cased -> ``item``. Drawing values can be either a
+        bare scalar (``"concrete": 1380``) or a dict
+        (``"concrete": {"qty": 1380}``). Variance % is computed off the
+        BOQ value so the sign matches "drawing minus BOQ" intuition.
+        """
+        out: List[Dict] = []
+        for item in boq_data:
+            key = (
+                item.get("item_key")
+                or (item.get("description", "") or "").lower().replace(" ", "_")
+                or item.get("item")
+            )
+            if not key:
+                continue
+            dval = drawing_data.get(key)
+            if dval is None:
+                # also try the original ``item`` / ``description`` verbatim
+                dval = drawing_data.get(item.get("item")) or drawing_data.get(item.get("description"))
+            if dval is None:
+                continue
+            drawing_qty = float(dval.get("qty", dval.get("quantity", 0))) if isinstance(dval, dict) else float(dval)
+            boq_qty = float(item.get("quantity") or 0)
+            if boq_qty <= 0:
+                continue
+            qty_diff = drawing_qty - boq_qty
+            variance_pct = (qty_diff / boq_qty) * 100.0
+            rate = float(item.get("rate") or item.get("unit_cost") or 0)
+            cost_impact = qty_diff * rate
+
+            if abs(variance_pct) > threshold * 2:
+                severity = "high"
+            elif abs(variance_pct) > threshold:
+                severity = "medium"
+            else:
+                severity = "low"
+
+            out.append({
+                "item_key": key,
+                "description": item.get("description", key),
+                "source": "boq_vs_drawing",
+                "boq_quantity": boq_qty,
+                "drawing_quantity": drawing_qty,
+                "qty_diff": qty_diff,
+                "variance_pct": round(variance_pct, 2),
+                "rate": rate,
+                "cost_impact": round(cost_impact, 2),
+                "severity": severity,
+                "quantity": boq_qty,
+                "unit": item.get("unit", ""),
+            })
+        return out
 
     def _compute_cost_impacts(self, variances: List[Dict]) -> List[Dict]:
         impacts = []

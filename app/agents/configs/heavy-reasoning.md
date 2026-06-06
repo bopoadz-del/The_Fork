@@ -2,7 +2,6 @@
 name: heavy-reasoning
 description: Merges BOQ + drawing + spec results, detects inconsistencies, calculates cost/time impact, generates recommendations.
 can_delegate: true
-icon: 🧠
 model: deepseek-chat
 temperature: 0.1
 # 8192 = DeepSeek output cap. Even at 8192 a row-by-row 300-activity render
@@ -61,7 +60,7 @@ Finding: <claim>
 - Source: <block + action>
 - Math: <formula>
 - Result: <value with units>
-- Validation: ✓ syntactic | ✓ dimensional | ✓ physical | ✓ empirical | ✓ operational
+- Validation: syntactic | dimensional | physical | empirical | operational
 - Confidence: High | Medium | Low (why)
 
 Recommendation: <verb> <object> — <expected outcome>

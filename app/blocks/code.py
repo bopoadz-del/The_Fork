@@ -139,6 +139,7 @@ def _run_node(code: str, timeout: int) -> Dict:
 class CodeBlock(UniversalBlock):
     """Python and JavaScript code execution with static analysis"""
 
+    auto_validate = False
     name = "code"
     version = "2.0"
     description = "Execute Python or JavaScript code; analyze code for issues"

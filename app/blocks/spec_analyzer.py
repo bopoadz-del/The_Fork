@@ -7,6 +7,7 @@ from app.core.universal_base import UniversalBlock
 
 
 class SpecAnalyzerBlock(UniversalBlock):
+    auto_validate = False
     name = "spec_analyzer"
     version = "1.0.0"
     description = "Extract grade requirements, material specs, and compliance flags from specification PDFs"
@@ -42,9 +43,9 @@ class SpecAnalyzerBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "📋", "label": "Extract Specs", "prompt": "Extract all material specifications and grade requirements"},
-            {"icon": "✅", "label": "Check Compliance", "prompt": "Check specification for ASTM/ACI/SASO compliance requirements"},
-            {"icon": "🔍", "label": "Find Standards", "prompt": "List all referenced standards and codes"},
+            {"icon": "", "label": "Extract Specs", "prompt": "Extract all material specifications and grade requirements"},
+            {"icon": "", "label": "Check Compliance", "prompt": "Check specification for ASTM/ACI/SASO compliance requirements"},
+            {"icon": "", "label": "Find Standards", "prompt": "List all referenced standards and codes"},
         ],
     }
 

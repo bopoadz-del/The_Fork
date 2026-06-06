@@ -37,6 +37,7 @@ def _translate_sync(text: str, source: str, target: str) -> tuple[str, str]:
 class TranslateBlock(UniversalBlock):
     """Multi-language translation via Google Translate (deep-translator, no API key)"""
 
+    auto_validate = False
     name = "translate"
     version = "2.0"
     description = "Translate text between 20+ languages — no API key needed"

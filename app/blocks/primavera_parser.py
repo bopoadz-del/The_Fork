@@ -11,6 +11,7 @@ _logger = logging.getLogger(__name__)
 
 
 class PrimaveraParserBlock(UniversalBlock):
+    auto_validate = False
     name = "primavera_parser"
     version = "1.0.0"
     description = "Parse Primavera P6 .xer schedule files: low-float activities, milestones, resource definitions"
@@ -39,9 +40,9 @@ class PrimaveraParserBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "🗓️", "label": "Low-Float Activities", "prompt": "Show activities with total float at or below the threshold"},
-            {"icon": "🏁", "label": "Milestones", "prompt": "List all project milestones"},
-            {"icon": "📊", "label": "Resource Definitions", "prompt": "Show resource definitions from the RSRC table"},
+            {"icon": "️", "label": "Low-Float Activities", "prompt": "Show activities with total float at or below the threshold"},
+            {"icon": "", "label": "Milestones", "prompt": "List all project milestones"},
+            {"icon": "", "label": "Resource Definitions", "prompt": "Show resource definitions from the RSRC table"},
         ],
     }
 

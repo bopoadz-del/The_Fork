@@ -80,6 +80,13 @@ class UniversalBlock(ABC):
     default_config: Dict = {}
     author: str = ""
 
+    # Whether the agent runtime should auto-validate this block's result
+    # by running each numeric in the response through validation_pipeline.
+    # Defaults True; blocks that produce text-only or vector output should
+    # override to False to avoid noisy "skipped — no numeric value found"
+    # validation entries.
+    auto_validate: bool = True
+
     # Canonical text field for chain unwrapping.
     #
     # When this block produces a dict (e.g. ``{"status": "success",

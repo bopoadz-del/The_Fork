@@ -33,6 +33,7 @@ DEFAULT_LOCAL_MODEL = "qwen2.5:3b-instruct"
 class ChatBlock(TypedBlock):
     """AI chat completions — DeepSeek with local-inference fallback."""
 
+    auto_validate = False
     name = "chat"
     version = "3.0.0"
     description = "AI chat completions — DeepSeek primary, local LLM fallback"

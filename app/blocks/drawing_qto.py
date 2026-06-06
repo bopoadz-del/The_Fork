@@ -57,9 +57,9 @@ class DrawingQTOBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "📐", "label": "Full QTO", "prompt": "Extract all quantities from this drawing"},
-            {"icon": "📏", "label": "Measurements", "prompt": "List all linear measurements"},
-            {"icon": "🔲", "label": "Floor Areas", "prompt": "Calculate floor areas by room"},
+            {"icon": "", "label": "Full QTO", "prompt": "Extract all quantities from this drawing"},
+            {"icon": "", "label": "Measurements", "prompt": "List all linear measurements"},
+            {"icon": "", "label": "Floor Areas", "prompt": "Calculate floor areas by room"},
         ],
     }
 

@@ -73,6 +73,7 @@ class SandboxBlock(UniversalBlock):
     - Plugin sandboxing
     - Code validation before deployment
     """
+    auto_validate = False
     name = "sandbox"
     version = "1.0.0"
     requires = ["memory", "config"]

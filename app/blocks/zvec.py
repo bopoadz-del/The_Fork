@@ -99,6 +99,7 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
 class ZvecBlock(UniversalBlock):
     """TF-IDF vector embeddings, similarity, and zero-shot classification"""
 
+    auto_validate = False
     name = "zvec"
     version = "2.0"
     description = "Embed text as TF-IDF vectors; compute similarity; zero-shot classify"
@@ -121,7 +122,7 @@ class ZvecBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "⚡", "label": "Vectorize", "prompt": "Convert to vector embedding"}
+            {"icon": "", "label": "Vectorize", "prompt": "Convert to vector embedding"}
         ],
     }
 

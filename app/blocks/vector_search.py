@@ -51,6 +51,7 @@ def _search_collection(collection: str, query: str, n: int) -> List[Dict]:
 class VectorSearchBlock(UniversalBlock):
     """In-memory semantic search via TF-IDF cosine similarity"""
 
+    auto_validate = False
     name = "vector_search"
     version = "2.0"
     description = "Semantic search over in-memory document collections — no external DB needed"

@@ -645,12 +645,14 @@
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  width: 40px;
+  padding: 0 12px;
   height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
   cursor: pointer;
   transition: background-color var(--transition), border-color var(--transition);
 }

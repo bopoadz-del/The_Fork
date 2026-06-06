@@ -133,7 +133,7 @@ class FormulaExecutorV2Block(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "🧮", "label": "Calculate", "prompt": "Calculate concrete volume for a 10x8m slab, 200mm thick"},
+            {"icon": "", "label": "Calculate", "prompt": "Calculate concrete volume for a 10x8m slab, 200mm thick"},
         ],
     }
 

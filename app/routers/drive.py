@@ -248,14 +248,10 @@ async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
     async def _download_bytes(client: httpx.AsyncClient, file_id: str, mime: str, name: str):
         """Native Google Docs/Sheets/Slides need /export?mimeType=...; everything
         else uses ?alt=media. Returns (bytes, exported_extension)."""
-        EXPORTS = {
-            "application/vnd.google-apps.document":     ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
-            "application/vnd.google-apps.spreadsheet":  ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
-            "application/vnd.google-apps.presentation": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
-            "application/vnd.google-apps.drawing":      ("application/pdf", ".pdf"),
-        }
-        if mime in EXPORTS:
-            export_mime, ext = EXPORTS[mime]
+        from app.core import drive_mime
+        target = drive_mime.export_target(mime)
+        if target is not None:
+            export_mime, ext = target
             r = await client.get(
                 f"{_DRIVE_API}/files/{file_id}/export",
                 headers={"Authorization": f"Bearer {access_token}"},

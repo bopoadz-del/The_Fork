@@ -31,6 +31,7 @@ def _auth_url() -> str:
 class OneDriveBlock(UniversalBlock):
     """OneDrive: list, read, download files via Microsoft Graph + MSAL"""
 
+    auto_validate = False
     name = "onedrive"
     version = "2.0"
     description = "OneDrive file operations — set AZURE_CLIENT_ID + ONEDRIVE_ACCESS_TOKEN"

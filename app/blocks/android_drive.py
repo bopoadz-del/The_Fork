@@ -7,6 +7,7 @@ from app.core.universal_base import UniversalBlock
 class AndroidDriveBlock(UniversalBlock):
     """Android device storage operations"""
     
+    auto_validate = False
     name = "android_drive"
     version = "1.0"
     description = "Android device storage access via ADB or REST bridge"

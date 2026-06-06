@@ -62,28 +62,41 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_user_created ON runs(user_id, created_at)")
 
 
-# Per-provider pricing per 1M tokens (USD). Free-tier Groq models log
-# tokens but $0 cost. Anything not listed defaults to $0.
-_PRICING: Dict[str, Dict[str, float]] = {
-    "deepseek": {
-        "deepseek-chat":           {"prompt": 0.27, "completion": 1.10},
-        "deepseek-reasoner":       {"prompt": 0.55, "completion": 2.19},
-    },
-    "groq": {
-        # Free tier — record tokens, $0 cost.
-        "llama-3.3-70b-versatile":                       {"prompt": 0.0, "completion": 0.0},
-        "llama-3.1-8b-instant":                           {"prompt": 0.0, "completion": 0.0},
-        "meta-llama/llama-4-scout-17b-16e-instruct":      {"prompt": 0.0, "completion": 0.0},
-        "openai/gpt-oss-20b":                              {"prompt": 0.0, "completion": 0.0},
-        "openai/gpt-oss-120b":                             {"prompt": 0.0, "completion": 0.0},
-        "qwen/qwen3-32b":                                  {"prompt": 0.0, "completion": 0.0},
-        "groq/compound":                                   {"prompt": 0.0, "completion": 0.0},
-    },
-}
+# Per-provider pricing per 1M tokens loaded from config/llm_pricing.json
+# at first use. Operator-editable; missing models / providers cost $0
+# (tokens still recorded so daily TPD usage stays visible).
+_PRICING_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "llm_pricing.json")
+_PRICING_OVERRIDE_ENV = "LLM_PRICING_FILE"
+_PRICING_CACHE: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None
+_PRICING_MTIME: float = 0.0
+
+
+def _load_pricing() -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Reload the pricing table when the on-disk JSON has changed. The
+    operator can edit prices without a redeploy: next `record()` call
+    picks up the new file."""
+    global _PRICING_CACHE, _PRICING_MTIME
+    import json
+    path = os.getenv(_PRICING_OVERRIDE_ENV) or _PRICING_PATH
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {}
+    if _PRICING_CACHE is not None and mtime == _PRICING_MTIME:
+        return _PRICING_CACHE
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _PRICING_CACHE = data.get("providers", {}) if isinstance(data, dict) else {}
+        _PRICING_MTIME = mtime
+    except (OSError, ValueError):
+        _PRICING_CACHE = _PRICING_CACHE or {}
+    return _PRICING_CACHE
 
 
 def _estimate_cost(provider: str, model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    rates = _PRICING.get(provider, {}).get(model)
+    pricing = _load_pricing()
+    rates = pricing.get(provider, {}).get(model)
     if not rates:
         return 0.0
     return round(

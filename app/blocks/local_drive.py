@@ -43,6 +43,7 @@ def _safe_path(requested: str) -> Optional[str]:
 class LocalDriveBlock(UniversalBlock):
     """Local filesystem operations, confined to a configured root directory."""
 
+    auto_validate = False
     name = "local_drive"
     version = "1.1"
     description = "Sandboxed local filesystem access: list, read, write files"
