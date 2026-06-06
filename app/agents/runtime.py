@@ -1175,6 +1175,11 @@ async def _auto_validate(envelope: Dict[str, Any]) -> None:
     result = envelope.get("result")
     if not isinstance(result, dict) or result.get("status") != "success":
         return
+    # UniversalBlock.execute returns {block, status, result: {actual...}}.
+    # The numerics live in the inner result; unwrap one level when present.
+    inner = result.get("result")
+    if isinstance(inner, dict) and inner.get("status") == "success":
+        result = inner
     numerics = _collect_numerics(result)
     if not numerics:
         envelope["validation"] = {"skipped": "no numeric value found"}
