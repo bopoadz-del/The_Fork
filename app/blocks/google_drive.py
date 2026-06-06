@@ -167,18 +167,49 @@ class GoogleDriveBlock(UniversalBlock):
                 return {"status": "error", "error": "Not authenticated"}
             try:
                 import httpx
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.get(
+                # Google-native types (Docs, Sheets, Slides, Drawings) refuse
+                # alt=media; they need /export?mimeType=... to a downloadable
+                # format. Auto-detect and branch.
+                EXPORTS = {
+                    "application/vnd.google-apps.document":
+                        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
+                    "application/vnd.google-apps.spreadsheet":
+                        ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
+                    "application/vnd.google-apps.presentation":
+                        ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
+                    "application/vnd.google-apps.drawing":
+                        ("application/pdf", ".pdf"),
+                }
+                async with httpx.AsyncClient(timeout=60) as client:
+                    meta = await client.get(
                         f"{_DRIVE_API}/files/{file_id}",
                         headers={"Authorization": f"Bearer {access_token}"},
-                        params={"alt": "media"},
+                        params={"fields": "mimeType,name"},
                     )
+                    meta.raise_for_status()
+                    mime = meta.json().get("mimeType", "")
+                    if mime in EXPORTS:
+                        export_mime, exported_ext = EXPORTS[mime]
+                        resp = await client.get(
+                            f"{_DRIVE_API}/files/{file_id}/export",
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            params={"mimeType": export_mime},
+                        )
+                    else:
+                        exported_ext = None
+                        resp = await client.get(
+                            f"{_DRIVE_API}/files/{file_id}",
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            params={"alt": "media"},
+                        )
                     resp.raise_for_status()
                     content = resp.content
                 return {
                     "status": "success",
                     "operation": "download",
                     "file_id": file_id,
+                    "mime_type": mime,
+                    "exported_extension": exported_ext,
                     "size_bytes": len(content),
                     "content_base64": __import__("base64").b64encode(content).decode(),
                 }

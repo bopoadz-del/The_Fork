@@ -133,11 +133,20 @@ function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
 interface ChatComposerProps {
   onSend: (text: string) => void
   disabled: boolean
+  projectId: string
+  onAttached?: (docName: string) => void
 }
 
-function ChatComposer({ onSend, disabled }: ChatComposerProps) {
+function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerProps) {
   const [text, setText] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [attachStatus, setAttachStatus] = useState<string | null>(null)
+  const [recording, setRecording] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -161,16 +170,134 @@ function ChatComposer({ onSend, disabled }: ChatComposerProps) {
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`
   }
 
+  async function uploadFile(file: File, role = 'other') {
+    setUploading(true)
+    setAttachStatus(`Uploading ${file.name}…`)
+    try {
+      const token = localStorage.getItem('thefork.jwt') || ''
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('role', role)
+      const res = await fetch(`${API_BASE}/v1/projects/${projectId}/documents`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      })
+      if (!res.ok) {
+        const errBody = await res.text()
+        setAttachStatus(`Upload failed (${res.status}): ${errBody.slice(0, 120)}`)
+        return
+      }
+      const body = await res.json()
+      const docName = body?.document?.original_name || file.name
+      setAttachStatus(`Attached: ${docName}`)
+      onAttached?.(docName)
+      setText((prev) => (prev ? `${prev}\n` : '') + `[attached: ${docName}] `)
+      setTimeout(() => setAttachStatus(null), 4000)
+    } catch (err) {
+      setAttachStatus(`Upload error: ${(err as Error).message}`)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function startVoiceRecording() {
+    if (recording) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream)
+      audioChunksRef.current = []
+      mr.ondataavailable = (ev) => {
+        if (ev.data.size > 0) audioChunksRef.current.push(ev.data)
+      }
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop())
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })
+        await uploadFile(file, 'other')
+      }
+      mediaRecorderRef.current = mr
+      mr.start()
+      setRecording(true)
+      setAttachStatus('Recording — click 🎤 again to stop')
+    } catch (err) {
+      setAttachStatus(`Mic blocked: ${(err as Error).message}`)
+    }
+  }
+
+  function stopVoiceRecording() {
+    mediaRecorderRef.current?.stop()
+    mediaRecorderRef.current = null
+    setRecording(false)
+  }
+
   return (
     <div className="chat-composer">
+      {attachStatus && (
+        <p className="chat-composer__attach-status" aria-live="polite">{attachStatus}</p>
+      )}
       <div className="chat-composer__inner">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          style={{ display: 'none' }}
+          accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg,.webp,.tif,.tiff,.dxf,.ifc,.xer,.mp3,.wav,.webm,.mp4"
+          onChange={(e) => {
+            const files = e.target.files
+            if (files) Array.from(files).forEach((f) => uploadFile(f))
+            e.target.value = ''
+          }}
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) uploadFile(f)
+            e.target.value = ''
+          }}
+        />
+        <button
+          type="button"
+          className="chat-composer__attach"
+          title="Attach file"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled || uploading}
+          aria-label="Attach file"
+        >
+          📎
+        </button>
+        <button
+          type="button"
+          className="chat-composer__attach"
+          title="Take photo"
+          onClick={() => cameraInputRef.current?.click()}
+          disabled={disabled || uploading}
+          aria-label="Take photo"
+        >
+          📷
+        </button>
+        <button
+          type="button"
+          className={`chat-composer__attach ${recording ? 'chat-composer__attach--recording' : ''}`}
+          title={recording ? 'Stop recording' : 'Voice note'}
+          onClick={() => (recording ? stopVoiceRecording() : startVoiceRecording())}
+          disabled={disabled || uploading}
+          aria-label={recording ? 'Stop recording' : 'Record voice'}
+        >
+          {recording ? '⏹' : '🎤'}
+        </button>
         <textarea
           ref={textareaRef}
           className="chat-composer__textarea"
           value={text}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="Ask about this project — documents, schedules, or run a calculation…"
+          placeholder="Ask, attach a doc, take a photo, or hold the mic…"
           disabled={disabled}
           rows={1}
           aria-label="Chat message"
@@ -186,7 +313,7 @@ function ChatComposer({ onSend, disabled }: ChatComposerProps) {
         </button>
       </div>
       <p className="chat-composer__hint">
-        Enter to send · Shift+Enter for newline
+        Enter to send · Shift+Enter for newline · 📎 attach · 📷 photo · 🎤 voice
       </p>
     </div>
   )
@@ -1021,6 +1148,7 @@ export default function ProjectWorkspace() {
           <ChatComposer
             onSend={(text) => void handleSend(text)}
             disabled={streaming}
+            projectId={id ?? ''}
           />
         </div>
 

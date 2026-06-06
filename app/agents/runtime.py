@@ -824,6 +824,18 @@ class Agent:
                     return {"status": "error", "error": f"{cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
                 data = r.json()
                 choice = (data.get("choices") or [{}])[0]
+                # Best-effort cost tracking — never let it sink an LLM call.
+                try:
+                    from app.core import usage_tracker
+                    usage_tracker.record(
+                        user_id=None,
+                        agent_name=self.name,
+                        provider=cfg.get("provider", ""),
+                        model=data.get("model") or cfg.get("default_model") or "",
+                        usage=data.get("usage"),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 return {"status": "success", "choice": choice, "raw": data}
         except httpx.TimeoutException:
             return {"status": "error", "error": "LLM call timed out (120s)."}
