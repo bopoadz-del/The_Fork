@@ -13,7 +13,7 @@ async def test_user_turn_persisted_when_llm_errors(tmp_path, monkeypatch):
     load_agents()
     agent = AGENT_REGISTRY["smart-orchestrator"]
 
-    async def failing_llm(self, messages, api_key, project_id=None, with_tools=True):
+    async def failing_llm(self, messages, api_key, project_id=None, with_tools=True, **kwargs):
         return {"status": "error", "error": "simulated LLM outage"}
 
     monkeypatch.setattr(Agent, "_call_llm", failing_llm)
@@ -38,7 +38,7 @@ async def test_user_turn_persisted_once_on_success(tmp_path, monkeypatch):
     load_agents()
     agent = AGENT_REGISTRY["smart-orchestrator"]
 
-    async def ok_llm(self, messages, api_key, project_id=None, with_tools=True):
+    async def ok_llm(self, messages, api_key, project_id=None, with_tools=True, **kwargs):
         return {
             "status": "success",
             "choice": {"message": {"content": "the answer", "tool_calls": []}},

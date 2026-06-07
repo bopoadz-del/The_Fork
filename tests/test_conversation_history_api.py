@@ -57,7 +57,7 @@ def _register_and_login(client, suffix: str) -> dict:
 
 def _fake_llm(text: str = "LLM reply"):
     """Return a scripted _call_llm that resolves with no tool calls."""
-    async def _inner(self, messages, api_key, project_id=None):
+    async def _inner(self, messages, api_key, project_id=None, **kwargs):
         return {
             "status": "success",
             "choice": {"message": {"content": text, "tool_calls": []}},
