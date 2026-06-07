@@ -192,11 +192,11 @@ async def test_chat_falls_back_to_cloud_when_local_unavailable(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
 
     captured = {}
-    async def fake_call(self, message, model, max_tokens, temperature, stream, key):
+    async def fake_call(self, message, model, max_tokens, temperature, stream, key, cfg=None):
         captured["called"] = True
         captured["message"] = message
         return {"status": "success", "response": "cloud answer", "provider": "deepseek"}
-    monkeypatch.setattr(ChatBlock, "_call_deepseek", fake_call)
+    monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
 
     cb = ChatBlock()
     result = await cb.process({"text": "hello"}, {"use_local_model": True})
@@ -221,7 +221,7 @@ async def test_chat_uses_local_model_when_available(isolated_data_dir, monkeypat
     async def fake_call(self, *a, **kw):
         cloud_called["yes"] = True
         return {"status": "success", "response": "cloud"}
-    monkeypatch.setattr(ChatBlock, "_call_deepseek", fake_call)
+    monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
 
     cb = ChatBlock()
@@ -248,7 +248,7 @@ async def test_chat_falls_back_when_generate_returns_none(
     async def fake_call(self, *a, **kw):
         cloud_called["yes"] = True
         return {"status": "success", "response": "cloud rescue", "provider": "deepseek"}
-    monkeypatch.setattr(ChatBlock, "_call_deepseek", fake_call)
+    monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
 
     cb = ChatBlock()
@@ -274,7 +274,7 @@ async def test_chat_without_use_local_model_unchanged(isolated_data_dir, monkeyp
 
     async def fake_call(self, *a, **kw):
         return {"status": "success", "response": "cloud", "provider": "deepseek"}
-    monkeypatch.setattr(ChatBlock, "_call_deepseek", fake_call)
+    monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
 
     cb = ChatBlock()

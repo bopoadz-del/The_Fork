@@ -293,16 +293,16 @@ def test_doc_index_writes_embeddings(isolated_data_dir):
 
 
 def _chat_capture_fixture(monkeypatch, captured: dict):
-    """Patch ChatBlock._call_deepseek on the class with an async stub that
+    """Patch ChatBlock._call_cloud on the class with an async stub that
     captures the message. The signature must include `self` because we're
     patching at class level — when called on an instance, Python passes
     self as the first argument."""
     from app.blocks.chat import ChatBlock
 
-    async def fake_call(self, message, model, max_tokens, temperature, stream, key):
+    async def fake_call(self, message, model, max_tokens, temperature, stream, key, cfg=None):
         captured["message"] = message
         return {"status": "success", "response": "ok"}
-    monkeypatch.setattr(ChatBlock, "_call_deepseek", fake_call)
+    monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
 
 

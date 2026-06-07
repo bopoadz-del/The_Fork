@@ -48,7 +48,7 @@ def _register_and_login(client, suffix):
 
 def _llm_ok(text="Hello from the mock LLM."):
     """Scripted _call_llm that returns a clean final answer (no tool calls)."""
-    async def fake(self, messages, api_key, project_id=None):
+    async def fake(self, messages, api_key, project_id=None, **kwargs):
         return {
             "status": "success",
             "choice": {"message": {"content": text, "tool_calls": []}},

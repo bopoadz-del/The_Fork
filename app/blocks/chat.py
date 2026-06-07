@@ -178,18 +178,32 @@ class ChatBlock(TypedBlock):
                     "use_local_model requested but local stack unavailable; falling back to cloud"
                 )
 
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        # ── Cloud provider selection — DeepSeek or Groq depending on which
+        # creds are set. This is the same _llm_config() the agent runtime
+        # uses so that LLM_PROVIDER=groq applies uniformly across the chat
+        # block route and the agent path.
+        from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
+        cfg = _llm_config()
+        provider_key = os.getenv(cfg["env_key"])
         primary_error = None
 
-        if deepseek_key:
-            result = await self._call_deepseek(
-                message, model, max_tokens, temperature, stream, deepseek_key
+        if provider_key:
+            # Agent configs (and this block's default) pin "deepseek-chat".
+            # When the active provider is NOT DeepSeek, remap that
+            # placeholder onto the provider's default model. An explicit
+            # provider-specific model id is left alone.
+            effective_model = model
+            if cfg["provider"] != "deepseek" and effective_model.startswith("deepseek-"):
+                effective_model = cfg["default_model"]
+            result = await self._call_cloud(
+                message, effective_model, max_tokens, temperature, stream,
+                provider_key, cfg,
             )
             if result.get("status") == "success":
                 return result
-            primary_error = result.get("error", "DeepSeek call failed")
+            primary_error = result.get("error", f"{cfg['provider']} call failed")
         else:
-            primary_error = "DEEPSEEK_API_KEY not configured"
+            primary_error = f"{cfg['env_key']} not configured"
 
         # ── Local inference fallback ───────────────────────────────────────
         local = await self._call_local(message, max_tokens, temperature, primary_error)
@@ -200,10 +214,10 @@ class ChatBlock(TypedBlock):
         return self._offline_template(message, primary_error, local.get("error"))
 
     # ────────────────────────────────────────────────────────────────────────
-    # DeepSeek
+    # Cloud provider — chat completions (DeepSeek / Groq, OAI-shape protocol)
     # ────────────────────────────────────────────────────────────────────────
 
-    async def _call_deepseek(
+    async def _call_cloud(
         self,
         message: str,
         model: str,
@@ -211,13 +225,16 @@ class ChatBlock(TypedBlock):
         temperature: float,
         stream: bool,
         api_key: str,
+        cfg: Dict[str, str],
     ) -> Dict:
+        url = cfg["url"]
+        provider_name = cfg["provider"]
         if stream:
             async def _stream_generator():
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     async with client.stream(
                         "POST",
-                        "https://api.deepseek.com/v1/chat/completions",
+                        url,
                         headers={
                             "Authorization": f"Bearer {api_key}",
                             "Content-Type": "application/json",
@@ -234,7 +251,7 @@ class ChatBlock(TypedBlock):
                             err = await response.aread()
                             yield json.dumps({
                                 "type": "error",
-                                "message": f"DeepSeek error {response.status_code}: {err[:200]}",
+                                "message": f"{provider_name} error {response.status_code}: {err[:200]}",
                             })
                             return
                         async for line in response.aiter_lines():
@@ -254,7 +271,7 @@ class ChatBlock(TypedBlock):
             return {
                 "status": "success",
                 "text": "",
-                "provider": "deepseek",
+                "provider": provider_name,
                 "model": model,
                 "stream": _stream_generator(),
             }
@@ -262,7 +279,7 @@ class ChatBlock(TypedBlock):
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
-                    "https://api.deepseek.com/v1/chat/completions",
+                    url,
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
@@ -277,20 +294,20 @@ class ChatBlock(TypedBlock):
                 if response.status_code != 200:
                     return {
                         "status": "error",
-                        "error": f"DeepSeek API error (HTTP {response.status_code}): {response.text[:200]}",
+                        "error": f"{provider_name} API error (HTTP {response.status_code}): {response.text[:200]}",
                     }
                 data = response.json()
                 return {
                     "status": "success",
                     "text": data["choices"][0]["message"]["content"],
-                    "provider": "deepseek",
+                    "provider": provider_name,
                     "model": model,
                     "tokens": data.get("usage", {}),
                 }
         except httpx.TimeoutException:
-            return {"status": "error", "error": "DeepSeek request timed out"}
+            return {"status": "error", "error": f"{provider_name} request timed out"}
         except Exception as e:
-            return {"status": "error", "error": f"DeepSeek failed: {e}"}
+            return {"status": "error", "error": f"{provider_name} failed: {e}"}
 
     # ────────────────────────────────────────────────────────────────────────
     # Local inference (Ollama → llama.cpp)
@@ -417,7 +434,7 @@ class ChatBlock(TypedBlock):
             "generate an AI response right now. Your message was received intact:\n\n"
             f"> {snippet or '(empty)'}\n\n"
             "**How to restore full chat:**\n"
-            "- Set `DEEPSEEK_API_KEY` in `.env` to use the primary provider, **or**\n"
+            "- Set `GROQ_API_KEY` (free tier) or `DEEPSEEK_API_KEY` in `.env` to use a cloud provider, **or**\n"
             "- Run a local model: `ollama serve` + `ollama pull qwen2.5:3b-instruct`\n"
             "  (optionally set `OLLAMA_URL` and `LOCAL_LLM_MODEL`), **or**\n"
             "- Provide a GGUF file via `LLAMA_CPP_MODEL_PATH` with `llama-cpp-python` installed.\n\n"
