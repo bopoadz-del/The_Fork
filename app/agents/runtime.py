@@ -766,6 +766,32 @@ class Agent:
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         cfg = _llm_config()
+        # Soft daily cap: refuse the call when today's spend already meets
+        # USAGE_DAILY_CAP_USD for this user. Only enforced for authenticated
+        # callers — internal calls without a user_id are not capped (they
+        # shouldn't be billable in the first place). A missing / unparseable
+        # / non-positive cap disables the check entirely.
+        if user_id:
+            try:
+                cap = float(os.getenv("USAGE_DAILY_CAP_USD") or "0")
+            except ValueError:
+                cap = 0.0
+            if cap > 0:
+                try:
+                    from app.core import usage_tracker
+                    if usage_tracker.is_over_cap(user_id, cap):
+                        today = usage_tracker.daily_total(user_id)
+                        return {
+                            "status": "error",
+                            "error": (
+                                f"Daily LLM cost cap reached: "
+                                f"${today['cost_usd']:.4f} >= ${cap:.4f} "
+                                f"(USAGE_DAILY_CAP_USD). Retry after 00:00 UTC."
+                            ),
+                        }
+                except Exception:  # noqa: BLE001
+                    # A broken usage tracker must never block a real call.
+                    pass
         # Agent configs default to "deepseek-chat"; when the runtime is routed
         # to a different provider we remap that placeholder to the provider's
         # default model. An agent that explicitly pinned a provider-specific

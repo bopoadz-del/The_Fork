@@ -47,7 +47,7 @@ def _isolate(tmp_path, monkeypatch):
 
 def _llm_text(text):
     """A scripted _call_llm coroutine that returns a plain final answer."""
-    async def fake(self, messages, api_key, project_id=None):
+    async def fake(self, messages, api_key, project_id=None, **kwargs):
         return {
             "status": "success",
             "choice": {"message": {"content": text}},
@@ -58,7 +58,7 @@ def _llm_text(text):
 
 def _llm_capture(box, text="ok"):
     """A scripted _call_llm that records the messages it received."""
-    async def fake(self, messages, api_key, project_id=None):
+    async def fake(self, messages, api_key, project_id=None, **kwargs):
         box["messages"] = messages
         box["project_id"] = project_id
         return {
@@ -397,7 +397,7 @@ async def test_chat_forces_final_answer_on_cap(tmp_path, monkeypatch):
 
     calls = {"n": 0, "with_tools_seen": []}
 
-    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True, **kwargs):
         calls["n"] += 1
         calls["with_tools_seen"].append(with_tools)
         if calls["n"] <= 12:
@@ -451,7 +451,7 @@ async def test_chat_stream_forces_final_answer_on_cap(tmp_path, monkeypatch):
 
     calls = {"n": 0, "with_tools_seen": []}
 
-    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True, **kwargs):
         calls["n"] += 1
         calls["with_tools_seen"].append(with_tools)
         if calls["n"] <= 12:
@@ -558,7 +558,7 @@ async def test_chat_handles_dsml_tool_call(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             return {
@@ -607,7 +607,7 @@ async def test_final_answer_strips_dsml(tmp_path, monkeypatch):
     being returned to the user."""
     _isolate(tmp_path, monkeypatch)
 
-    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -691,7 +691,7 @@ async def test_chat_empty_after_dsml_strip_forces_answer(tmp_path, monkeypatch):
 
     calls = {"n": 0, "with_tools_seen": []}
 
-    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True):
+    async def fake_llm(self, messages, api_key, project_id=None, with_tools=True, **kwargs):
         calls["n"] += 1
         calls["with_tools_seen"].append(with_tools)
         if calls["n"] == 1:
