@@ -111,6 +111,13 @@ class ChatBlock(TypedBlock):
         stream = params.get("stream", False)
         model = params.get("model", "deepseek-chat")
 
+        # Auto-inject construction expert system prompt if no system prompt supplied
+        if not params.get("system_prompt") and not params.get("system_prompt_file"):
+            if not (isinstance(input_data, dict) and (
+                input_data.get("system_prompt") or input_data.get("system_prompt_file")
+            )):
+                params = {**params, "system_prompt_file": "construction_expert.txt"}
+
         # ── System prompt resolution — optional, never aborts the chat ─────
         # Accepts either a literal `system_prompt` string or a
         # `system_prompt_file` that names a file inside app/prompts/.

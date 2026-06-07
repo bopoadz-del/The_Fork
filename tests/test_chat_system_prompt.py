@@ -204,19 +204,25 @@ async def test_missing_file_falls_through(monkeypatch):
     assert captured["messages"] == [{"role": "user", "content": "hi"}]
 
 
-# ── 5. Default behavior unchanged when neither param is set ───────────────
+# ── 5. Default behavior: auto-injects construction expert system prompt ────
 
 
 @pytest.mark.asyncio
-async def test_no_system_prompt_means_no_system_role(monkeypatch):
-    """Neither system_prompt nor system_prompt_file → behavior is
-    byte-for-byte identical to before: a single user message, no system
-    role, no kwarg pollution."""
+async def test_default_auto_injects_construction_expert(monkeypatch):
+    """When neither system_prompt nor system_prompt_file is supplied,
+    ChatBlock auto-injects construction_expert.txt as the system prompt
+    so chat queries arrive at the LLM with the construction PMC context
+    by default. Callers that want to opt out must supply their own
+    system_prompt or system_prompt_file (which can be a different file)."""
     captured: dict = {}
     _install_cloud_stub(monkeypatch, captured)
 
     cb = ChatBlock()
     result = await cb.process({"text": "hello"})
     assert result["status"] == "success"
-    assert captured["system_prompt"] is None
-    assert captured["messages"] == [{"role": "user", "content": "hello"}]
+    # Construction expert prompt has been loaded from app/prompts/.
+    assert captured["system_prompt"] is not None
+    assert "construction project management platform" in captured["system_prompt"].lower()
+    # Messages array now starts with the system role.
+    assert captured["messages"][0]["role"] == "system"
+    assert captured["messages"][-1] == {"role": "user", "content": "hello"}

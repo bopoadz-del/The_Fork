@@ -3,6 +3,7 @@
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
+from app.blocks._procedure_routing import PROCEDURE_ROUTING_ADDITIONS
 
 
 # Word-boundary keyword cache. Substring `kw in text` is unsafe — 2-char keys
@@ -31,7 +32,11 @@ def _matches_keyword(kw: str, text: str) -> bool:
 
 
 # ── Action → keyword patterns ─────────────────────────────────────────────────
-ACTION_PATTERNS: List[Tuple[str, List[str]]] = [
+# PROCEDURE_ROUTING_ADDITIONS are prepended so procedure-specific queries (RFI,
+# NCR, design review, payment cert, etc.) are matched BEFORE the generic
+# construction keywords below — otherwise "raise an NCR" falls through to a
+# bare contract-analysis action.
+ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     # BOQ / Cost
     ("boq_process",           ["boq", "bill of quantities", "bill of quantity", "quantities sheet", "cost sheet", "price list", ".xlsx", ".csv"]),
     # WBS / schedule generation — matched ahead of extract_quantities so

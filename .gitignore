@@ -63,6 +63,8 @@ claudebot/KEYS.md
 # Claude Code local settings (personal, machine-specific)
 .claude/settings.local.json
 
-# Runtime data directory (uploads, SQLite DB, audit log)
-data/
+# Runtime data directory at repo root (uploads, SQLite DB, audit log).
+# Anchored with leading slash so app/data/ (versioned content like the
+# procedures DB) is NOT swept up by this rule.
+/data/
 .playwright-mcp/

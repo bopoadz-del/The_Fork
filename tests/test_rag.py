@@ -299,7 +299,7 @@ def _chat_capture_fixture(monkeypatch, captured: dict):
     self as the first argument."""
     from app.blocks.chat import ChatBlock
 
-    async def fake_call(self, message, model, max_tokens, temperature, stream, key, cfg=None):
+    async def fake_call(self, message, model, max_tokens, temperature, stream, key, cfg=None, **kwargs):
         captured["message"] = message
         return {"status": "success", "response": "ok"}
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)

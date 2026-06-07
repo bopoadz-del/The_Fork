@@ -192,7 +192,7 @@ async def test_chat_falls_back_to_cloud_when_local_unavailable(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
 
     captured = {}
-    async def fake_call(self, message, model, max_tokens, temperature, stream, key, cfg=None):
+    async def fake_call(self, message, model, max_tokens, temperature, stream, key, cfg=None, **kwargs):
         captured["called"] = True
         captured["message"] = message
         return {"status": "success", "response": "cloud answer", "provider": "deepseek"}

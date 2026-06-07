@@ -23,6 +23,9 @@ from app.core.confidence import assess_extraction_confidence
 # Shared dataclasses live in app.core.construction_types — see that module
 # for the canonical definitions (same shape was duplicated here historically).
 from app.core.construction_types import Measurement, SpecItem, RiskItem
+from app.core.construction_knowledge import ConstructionKnowledge
+
+_ck = ConstructionKnowledge()
 
 
 class ConstructionBlockV2(TypedBlock):
@@ -132,7 +135,22 @@ class ConstructionBlockV2(TypedBlock):
     def _detect_document_type(self, text: str) -> str:
         """Auto-detect document type from content."""
         text_lower = text[:5000].lower()
-        
+
+        # Procedure-specific documents (checked before generic categories so a
+        # contract-shaped NCR isn't mis-classified as a plain contract).
+        if any(kw in text_lower for kw in ["non-conformance", "ncr", "disposition", "corrective action"]):
+            return "ncr"
+        if any(kw in text_lower for kw in ["request for information", "rfi", "technical query"]):
+            return "rfi"
+        if any(kw in text_lower for kw in ["payment request", "interim payment", "retention", "certified amount"]):
+            return "payment"
+        if any(kw in text_lower for kw in ["variation order", "request for modification", "rfm", "scope change"]):
+            return "change_order"
+        if any(kw in text_lower for kw in ["design review", "review comments", "design acceptance", "for comment"]):
+            return "design_review"
+        if any(kw in text_lower for kw in ["risk register", "probability", "impact", "risk score", "mitigation"]):
+            return "risk"
+
         # Check for drawing indicators
         if any(kw in text_lower for kw in ["drawing", "plan", "elevation", "section", "scale", "dimension"]):
             return "drawing"
@@ -228,6 +246,10 @@ class ConstructionBlockV2(TypedBlock):
                 "extracted_at": self._timestamp()
             }
         }
+        # Enforce critical construction rules
+        violations = _ck.enforce_critical_rules(text)
+        if violations:
+            result["rule_violations"] = violations
         conf_report = assess_extraction_confidence(
             result,
             expected_fields=["quantities", "materials"],
