@@ -182,7 +182,11 @@ def test_reasoning_blocks_broadened():
 
 
 def test_project_assistant_loads():
-    """project-assistant loads with can_delegate=True and exactly [sympy_reasoning, formula_executor] as allowed_blocks."""
+    """project-assistant loads with can_delegate=True and the full
+    construction toolkit so the UI's primary chat agent can actually
+    call generate_wbs / boq_processor / drawing_qto / spec_analyzer
+    instead of describing what it could do in prose. sympy_reasoning
+    + formula_executor are kept for calculation paths."""
     agents = load_agents()
 
     # New agent is present
@@ -190,9 +194,17 @@ def test_project_assistant_loads():
 
     pa = agents["project-assistant"]
     assert pa.can_delegate is True, "project-assistant.can_delegate should be True"
-    assert pa.allowed_blocks == ["sympy_reasoning", "formula_executor"], (
-        f"project-assistant.allowed_blocks = {pa.allowed_blocks!r}; "
-        "expected ['sympy_reasoning', 'formula_executor']"
+    required = {
+        "sympy_reasoning", "formula_executor",
+        "construction",       # exposes generate_wbs synthetic tool
+        "boq_processor", "drawing_qto", "spec_analyzer",
+        "validation_pipeline", "recommendation_template",
+        "historical_benchmark",
+    }
+    missing = required - set(pa.allowed_blocks)
+    assert not missing, (
+        f"project-assistant is missing construction tools: {sorted(missing)}. "
+        f"Got allowed_blocks={pa.allowed_blocks!r}"
     )
 
     # Total count: the new agent makes 14
