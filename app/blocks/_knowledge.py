@@ -1,4 +1,4 @@
-"""UAE Construction Knowledge Base loader and evaluator.
+"""Construction Knowledge Base loader and evaluator.
 
 A utility module (not a UniversalBlock) that exposes the construction
 knowledge base shipped at ``app/knowledge/construction_kb.json``.
@@ -101,23 +101,30 @@ def get_rule(rule_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _build_warnings(entry: Dict[str, Any]) -> List[str]:
-    """Standard warning list applied to every evaluator response."""
+    """Standard warning list applied to every evaluator response.
+
+    Entries at credibility tier 3 or below (site-experience priors or
+    unverified) surface a "verify against your project spec or applicable
+    standards" reminder. Entries flagged as region- or project-specific
+    in the applicability block surface the same reminder so a prior
+    sourced from one project is never silently applied to another.
+    """
     warnings: List[str] = []
     tier = entry.get("credibility_tier")
     applic = entry.get("applicability", {}) or {}
     region = applic.get("region_specific")
     project = applic.get("project_specific")
-    if isinstance(tier, int) and tier <= 2:
+    if isinstance(tier, int) and tier <= 3:
         warnings.append(
-            f"low credibility tier ({tier}); verify against your spec/geotech"
+            f"credibility tier {tier}; verify against your project spec or applicable standards"
         )
     if region:
         warnings.append(
-            f"region_specific={region}; verify against your spec/geotech"
+            f"region_specific={region}; verify against your project spec or applicable standards"
         )
     if project:
         warnings.append(
-            f"project_specific={project}; verify against your spec/geotech"
+            f"project_specific={project}; verify against your project spec or applicable standards"
         )
     return warnings
 

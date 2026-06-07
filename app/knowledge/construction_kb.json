@@ -7,7 +7,7 @@
       "domain": "construction.buildings",
       "type": "formula",
       "title": "Mass concrete pour equilibrium time",
-      "statement": "Time for a mass concrete pour of half-thickness X (m) to reach thermal equilibrium with ambient, based on Landmark Tower (Abu Dhabi) site experience. Result is hours; the constant 168 carries the hour unit while (X / 1.5) is dimensionless (meter/meter).",
+      "statement": "Time for a mass concrete pour of half-thickness X (m) to reach thermal equilibrium with ambient. Result is hours; the constant 168 carries the hour unit while (X / 1.5) is dimensionless (meter/meter).",
       "expression": "168 * (X / 1.5)**2",
       "variables": {
         "X": {"unit": "meter", "desc": "Half-thickness of the pour"}
@@ -15,8 +15,8 @@
       "thresholds": {"unit": "hour"},
       "applicability": {
         "applies_to": ["construction.buildings", "construction.concrete"],
-        "region_specific": "UAE",
-        "project_specific": "Landmark Tower (Abu Dhabi)",
+        "region_specific": null,
+        "project_specific": null,
         "standards_cross_ref": []
       },
       "remediation": [],
@@ -34,7 +34,7 @@
       "domain": "construction.roads",
       "type": "formula",
       "title": "Earthworks swelling factor from Proctor density and compaction",
-      "statement": "Swelling factor = (Proctor density A x Compaction factor C) / Loose density B. From Dubai roads/earthworks reference table (Sub-base row: A=2.18, B=1.6, C=96, expected D=1.31). Unit convention note: the published table treats C as a percentage (96 means 96%); applying the formula with raw C=96 reproduces 130.8 rather than 1.31. To match the published 1.31 use C as a decimal (0.96). The loader returns the raw formula result; the caller picks the convention.",
+      "statement": "Swelling factor = (Proctor density A x Compaction factor C) / Loose density B. Reference table sub-base row: A=2.18, B=1.6, C=96, expected D=1.31. Unit convention note: the source table treats C as a percentage (96 means 96%); applying the formula with raw C=96 reproduces 130.8 rather than 1.31. To match the published 1.31 use C as a decimal (0.96). The loader returns the raw formula result; the caller picks the convention.",
       "expression": "(A * C) / B",
       "variables": {
         "A": {"unit": "ton/meter**3", "desc": "Modified Proctor density"},
@@ -44,14 +44,14 @@
       "thresholds": {"unit": "dimensionless"},
       "applicability": {
         "applies_to": ["construction.roads"],
-        "region_specific": "UAE",
+        "region_specific": null,
         "project_specific": null,
         "standards_cross_ref": ["AASHTO T 180-93"]
       },
       "remediation": [],
       "provenance": {
         "source": "Message_from_MGTC55234 sect 2",
-        "project": "Dubai roads/earthworks reference binder",
+        "project": "Roads / earthworks reference binder",
         "confidence": "site_experience",
         "verified_against_standard": "AASHTO T 180-93 (Modified Proctor)"
       },
@@ -62,7 +62,7 @@
       "id": "procurement.tender_lifecycle",
       "domain": "construction.procurement",
       "type": "workflow",
-      "title": "Dubai Parks and Resorts tender lifecycle",
+      "title": "Construction tender lifecycle",
       "statement": "Job Requisition -> Sole Source justification (optional) -> Request for Authority to Tender (RAT) -> RFP issue -> Tender queries -> Tender Analysis (RAP) -> Preferred Tenderer -> BAFO -> Award.",
       "expression": null,
       "variables": {},
@@ -108,8 +108,8 @@
       ],
       "applicability": {
         "applies_to": ["construction.procurement"],
-        "region_specific": "UAE",
-        "project_specific": "Dubai Parks and Resorts (Samsung C&T / Hill International)",
+        "region_specific": null,
+        "project_specific": null,
         "standards_cross_ref": ["PRC-601", "PRC-602", "PRC-603", "PRC-604"]
       },
       "remediation": [],

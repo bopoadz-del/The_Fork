@@ -1,4 +1,4 @@
-"""5-stage gates per KB entry for the UAE Construction Knowledge Base MVP.
+"""5-stage gates per KB entry for the Construction Knowledge Base MVP.
 
 The five gates per entry:
 
@@ -12,7 +12,7 @@ The five gates per entry:
                  range; workflow rejects when guard preconditions absent).
 5. Operational — every result carries provenance + credibility + warnings;
                  region/project/tier triggers append a "verify against
-                 your spec/geotech" warning.
+                 your project spec or applicable standards" warning.
 
 A dedicated security test exercises the safe guard parser against
 ``ast.Call`` and ``ast.Lambda`` payloads.
@@ -75,11 +75,14 @@ def test_thermal_empirical_range():
 def test_thermal_operational_envelope():
     out = kb.evaluate("thermal.equilibrium_time", X=1.2)
     assert "provenance" in out
-    assert out["provenance"]["project"] == "Landmark Tower Abu Dhabi (CCC)"
+    # Provenance preserves the source/project audit trail; we only assert
+    # the project field exists rather than pin a specific source name so
+    # the JSON can be edited without breaking the test.
+    assert out["provenance"].get("project")
     assert isinstance(out["credibility_tier"], int)
     assert isinstance(out["warnings"], list)
-    # region_specific=UAE AND project_specific set => verify-against-spec warning.
-    assert any("verify against your spec" in w for w in out["warnings"])
+    # Tier 3 (site-experience) entries surface the verify-against-spec warning.
+    assert any("verify against your project spec" in w for w in out["warnings"])
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +129,8 @@ def test_earthworks_operational_envelope():
     )
     assert isinstance(out["credibility_tier"], int)
     assert isinstance(out["warnings"], list)
-    # region_specific=UAE triggers the verify-against-spec warning.
-    assert any("verify against your spec" in w for w in out["warnings"])
+    # Tier 3 (site-experience) entries surface the verify-against-spec warning.
+    assert any("verify against your project spec" in w for w in out["warnings"])
 
 
 # ---------------------------------------------------------------------------
@@ -186,10 +189,12 @@ def test_procurement_operational_envelope():
     )
     assert "provenance" in out
     assert isinstance(out["credibility_tier"], int)
+    # Tier 4 (controlled documents) entries do not auto-warn — the
+    # workflow is generic enough to adopt as-is. The envelope still
+    # carries the warnings list shape so callers don't have to branch.
     assert isinstance(out["warnings"], list)
     assert "missing_documents" in out
     assert "missing_approvals" in out
-    assert any("verify against your spec" in w for w in out["warnings"])
 
 
 # ---------------------------------------------------------------------------
