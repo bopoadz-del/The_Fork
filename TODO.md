@@ -16,6 +16,52 @@ Live at https://the-fork.onrender.com (auto-deploy from `main`).
 
 The 2026-06-07 work is committed locally but not yet pushed (auto-mode classifier flagged direct main push given the "batch fixes into one PR" preference). Push when ready: `04e378c`, `c5d5704`, `3220a3d`.
 
+## 2026-06-08 session additions (pushed + live)
+
+All commits pushed and Render auto-deployed.
+
+- [x] **UAE construction KB scaffold** at `app/knowledge/construction_kb.json` + loader `app/blocks/_knowledge.py` + 28 tests. Three demo entries: `thermal.equilibrium_time`, `earthworks.swelling_factor`, `procurement.tender_lifecycle`. Workflow guards parsed via `_safe_guard_eval` (ast allowlist, rejects Call/Lambda/imports). Commit `a82e42c`.
+- [x] **KB scrubbed of UAE/regional framing** — entries now treated as general construction priors, provenance preserved as audit trail only. Warning threshold bumped tier <=2 -> tier <=3. Commit `b90b441`.
+- [x] **Construction procedure knowledge layer** — PMC system prompt `app/prompts/construction_expert.txt` (17 PRC procedures, EVM formulas, document numbering), procedures DB `app/data/procedures/procedures_db.json`, knowledge module `app/core/construction_knowledge.py` (validate_design_status / score_risk / generate_doc_number / calculate_payment / calculate_evm / evaluate_tender / enforce_critical_rules), procedure routing `app/blocks/_procedure_routing.py` (17 PROCEDURE_ROUTING_ADDITIONS). Auto-injected into ChatBlock when no system_prompt supplied. construction_v2 detects 6 procedure document types. gitignore `data/` -> `/data/`. Commit `2c8808c`.
+- [x] **project-assistant given the construction toolkit** — was previously stuck on `[sympy_reasoning, formula_executor]` with max_tokens=1500. The synthetic `generate_wbs` tool is only exposed when `construction` is in allowed_blocks (runtime.py:313), so the UI's chat agent literally couldn't call it. Now has 12 tools, max_tokens=8192, temperature=0.3, system prompt mandates tool calls. Commit `e0b15c9`.
+- [x] **Ollama as a first-class LLM provider** — `_llm_config()` recognises `LLM_PROVIDER=ollama` + `OLLAMA_URL` + `OLLAMA_MODEL`. URL normalisation accepts bare host / `/v1` / full path. `chat()` and `chat_stream()` skip the env-key check for ollama (no auth). 9 new tests. Commit `de7df44`. Setup doc at `docs/self-hosted-llm.md`.
+- [x] **Auth-header bug fix** — runtime was sending `Authorization: Bearer ` (empty bearer) when `api_key=""`, which httpx rejects as malformed (surfaced in UI as `LLM call failed: Illegal header value b'Bearer '`). Now omits the header entirely when `api_key` is falsy. Caught via WebBridge end-to-end test against the live deploy. Commit `ba3eb27`.
+
+### Wiring state at end of 2026-06-08 session
+
+Render live with these env vars:
+- `LLM_PROVIDER=ollama`
+- `OLLAMA_URL=https://yeast-carry-paul-fundamentals.trycloudflare.com` **(EPHEMERAL — see below)**
+- `OLLAMA_MODEL=qwen3-coder:480b-cloud`
+
+Tunnel path: Render -> cloudflared on operator's PC -> localhost:11434 Ollama -> Ollama Cloud's qwen3-coder:480b.
+
+**CRITICAL: the tunnel will die.** `cloudflared.exe` was spawned as a child process of the Claude Code session. When the operator's PC sleeps, reboots, or this session ends, the tunnel goes down. The URL `yeast-carry-paul-fundamentals.trycloudflare.com` becomes invalid. Render's chat will error.
+
+**Recovery options when tunnel dies:**
+1. Restart cloudflared: `C:/Users/shimm/Downloads/ollama-setup/cloudflared.exe tunnel --url http://localhost:11434 --http-host-header localhost`. Wait ~10s for the new URL to print. Update Render env var `OLLAMA_URL` to the new URL. Trigger redeploy.
+2. OR temporarily revert to Groq: unset `LLM_PROVIDER` on Render (or set to `groq`). The free-tier 30K TPM cap returns.
+
+**Persistent fix (deferred to a future session):** sign in to Cloudflare (free account), create a named tunnel via `cloudflared tunnel create the-fork-ollama`, install it as a Windows service. Named tunnels survive reboots.
+
+### Open problem to brainstorm (2026-06-09)
+
+- [ ] **Tool-call discipline under contaminated conversation history.** Verified end-to-end that:
+  - Architecture works (CPI question returned correct answer through gpt-oss:120b-cloud)
+  - Both gpt-oss:120b-cloud and qwen3-coder:480b-cloud emit perfect `tool_calls` in isolated context (verified via direct OAI probe with single tool definition + small system prompt)
+  - In the live project workspace with 11 bubbles of prior conversation (including hallucinated WBS tables from earlier Groq attempts), BOTH models drift into prose and reproduce the hallucination pattern instead of calling `generate_wbs`
+  - The model pattern-matches to the prior assistant turns: "user asked for schedule -> assistant produced a table -> repeat that"
+  - Every fabricated activity has Float=0 / Critical=Y (mathematical impossibility — the giveaway)
+  - References fabricated file paths like `Anthropic_DataCentre_250_Activities.csv` that don't exist
+- Solutions to evaluate tomorrow (operator wants to brainstorm):
+  - Force `tool_choice="required"` (or `"function_call": {"name": "generate_wbs"}`) when intent classification detects a deliverable request — denies the prose escape
+  - Strip prior assistant turns containing tabular WBS / BOQ data from history before re-sending to the LLM (treat hallucinated turns as cancer to remove from context)
+  - Add explicit anti-hallucination directive to system prompt with a worked example showing the tool-call shape
+  - Add a hallucination DETECTOR: after the response, post-process for telltale signs (all-zero floats, made-up filenames) and re-prompt with `tool_choice="required"`
+  - Conversation-fresh endpoint: clear `agent_memory` for a given conversation_id so the operator can test in a clean thread without making a new project
+  - Trim system prompt size — 3000+ tokens of PMC context may be biasing the model toward prose
+- Cleanest fix in the meantime: create a NEW project in the UI for any heavy deliverable request. Fresh conversation, no prior contaminated turns, tools work.
+
 Format: `[ ]` open, `[x]` done, `[~]` partial / needs verification.
 
 
