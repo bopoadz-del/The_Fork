@@ -858,7 +858,11 @@ class Agent:
                 r = await client.post(
                     cfg["url"],
                     json=payload,
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    headers=(
+                        {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                        if api_key
+                        else {"Content-Type": "application/json"}
+                    ),
                 )
                 if r.status_code >= 400:
                     body = r.text
