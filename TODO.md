@@ -1,7 +1,20 @@
 # TODO
 
-State of the platform after the long session ending 2026-06-06 ~04:30 Riyadh.
+State of the platform after the second session on 2026-06-07.
 Live at https://the-fork.onrender.com (auto-deploy from `main`).
+
+## 2026-06-07 session additions (verified end-to-end against live Groq)
+
+- [x] **Soft daily cap on LLM cost** — `runtime.py::_call_llm` now short-circuits with a structured error when today's spend meets `USAGE_DAILY_CAP_USD` for the authenticated user. Internal calls without a user_id are exempt; cap parses to a positive float or check is disabled; tracker failures fail open. 9 unit tests pass. Commit `04e378c`.
+- [x] **chat.py block migrated off hardcoded DeepSeek** onto `_llm_config()`. Same provider precedence as the agent runtime; OAI-shape protocol; model placeholder remapped when Groq is active. Stream + non-stream + offline_template all provider-agnostic. Commit `c5d5704`.
+- [x] **Cerebrum EVM system prompt landed** at `app/prompts/construction_evm.md` (393 lines: EVM formulas, CBS, traffic lights, variance types, response template). Commit `c5d5704`.
+- [x] **ChatBlock accepts system_prompt / system_prompt_file params** — literal string or filename inside `app/prompts/`. Path-traversal hardened. Three call paths (cloud / Ollama / llama.cpp) prepend the system role when resolved. Commit `3220a3d`.
+- [x] **ConstructionContainer.chat() route** — delegates to ChatBlock with `system_prompt_file="construction_evm.md"` injected by default. Caller wins if they supply their own prompt. Exposed via `route()` and `get_actions()` so the orchestrator can dispatch with `{"action": "chat"}`. Commit `3220a3d`.
+- [x] **End-to-end EVM verification** against live Groq llama-3.3-70b — CPI=0.87, SPI=0.91, BAC=$50M, AC=$18M, EV=$15.6M returned the exact template with correct math (EAC=$57.5M, VAC=-$7.5M, Optimistic $52.6M, Pessimistic $62.5M). 4,073 tokens. All 8 shape checks pass.
+
+### Local commits not yet pushed to GitHub
+
+The 2026-06-07 work is committed locally but not yet pushed (auto-mode classifier flagged direct main push given the "batch fixes into one PR" preference). Push when ready: `04e378c`, `c5d5704`, `3220a3d`.
 
 Format: `[ ]` open, `[x]` done, `[~]` partial / needs verification.
 
