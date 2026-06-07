@@ -41,21 +41,52 @@ DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
+# Ollama exposes an OpenAI-compatible endpoint at /v1/chat/completions
+# (v0.1.31+). Self-hosted on the operator's PC or a VPS. No auth, no token
+# cost, no TPM rate limits — bounded by local hardware. Used when the
+# operator wants to escape cloud rate limits entirely.
+OLLAMA_DEFAULT_URL = "http://localhost:11434/v1/chat/completions"
+OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
+
 
 def _llm_config() -> Dict[str, str]:
     """Pick the active LLM provider's URL + env-key + default model.
 
     Precedence:
-      1. Explicit `LLM_PROVIDER` env var (deepseek | groq) wins.
-      2. Otherwise: if `GROQ_API_KEY` is set, use Groq (free tier-friendly).
+      1. Explicit ``LLM_PROVIDER`` env var (``deepseek`` | ``groq`` |
+         ``ollama``) wins.
+      2. Otherwise: if ``GROQ_API_KEY`` is set, use Groq (free tier).
       3. Otherwise: DeepSeek (the historical default).
 
-    A per-provider override env (`GROQ_MODEL` / `DEEPSEEK_MODEL`) lets the
-    operator pin a specific model without code changes.
+    Per-provider override envs let the operator pin a specific model
+    without code changes:
+      - ``GROQ_MODEL`` / ``DEEPSEEK_MODEL`` / ``OLLAMA_MODEL``
+      - ``OLLAMA_URL`` overrides the localhost default — set this to your
+        Cloudflare Tunnel / Tailscale / VPS URL so the Render deploy can
+        reach your self-hosted Ollama.
+
+    Ollama uses an empty ``env_key`` because the local API has no auth
+    requirement; the caller passes an empty string as the bearer token
+    and Ollama ignores it.
     """
     provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
     if not provider:
         provider = "groq" if os.getenv("GROQ_API_KEY") else "deepseek"
+    if provider == "ollama":
+        url = os.getenv("OLLAMA_URL", OLLAMA_DEFAULT_URL).rstrip("/")
+        # Accept both the bare host (http://host:11434) and the full
+        # OAI-shape path. Append the canonical suffix when missing.
+        if not url.endswith("/v1/chat/completions"):
+            if url.endswith("/v1"):
+                url = url + "/chat/completions"
+            elif "/v1/" not in url:
+                url = url + "/v1/chat/completions"
+        return {
+            "provider": "ollama",
+            "url": url,
+            "env_key": "",  # no auth
+            "default_model": os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
+        }
     if provider == "groq":
         return {
             "provider": "groq",
@@ -418,12 +449,18 @@ class Agent:
                 # Event handler must never break the agent loop.
                 pass
         cfg = _llm_config()
-        api_key = api_key or os.getenv(cfg["env_key"])
-        if not api_key:
-            return {
-                "status": "error",
-                "error": f"No {cfg['env_key']} configured. Set it in .env or pass via env.",
-            }
+        # Ollama (local / self-hosted) has no auth — skip the env-key
+        # check entirely. The empty bearer token sent later is ignored
+        # by Ollama's OAI-compatible endpoint.
+        if cfg["provider"] != "ollama":
+            api_key = api_key or os.getenv(cfg["env_key"])
+            if not api_key:
+                return {
+                    "status": "error",
+                    "error": f"No {cfg['env_key']} configured. Set it in .env or pass via env.",
+                }
+        else:
+            api_key = api_key or ""
 
         _call_stack = _call_stack or [self.name]
 
@@ -595,10 +632,15 @@ class Agent:
         but the FINAL assistant answer streams token-by-token.
         """
         cfg = _llm_config()
-        api_key = api_key or os.getenv(cfg["env_key"])
-        if not api_key:
-            yield {"type": "error", "message": f"No {cfg['env_key']} configured."}
-            return
+        # Ollama (local / self-hosted) has no auth — skip the env-key
+        # check. The empty bearer is ignored by Ollama's OAI endpoint.
+        if cfg["provider"] != "ollama":
+            api_key = api_key or os.getenv(cfg["env_key"])
+            if not api_key:
+                yield {"type": "error", "message": f"No {cfg['env_key']} configured."}
+                return
+        else:
+            api_key = api_key or ""
 
         _call_stack = _call_stack or [self.name]
 
