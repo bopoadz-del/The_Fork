@@ -21,8 +21,11 @@ see which path served the answer (``deepseek`` / ``local_ollama`` /
 
 import json
 import os
+import logging
+from pathlib import Path
+from typing import Any, Dict, Optional
+
 import httpx
-from typing import Any, Dict
 from app.core.typed_block import TypedBlock, Schema, ContentType
 
 
@@ -107,6 +110,13 @@ class ChatBlock(TypedBlock):
         temperature = params.get("temperature", self.config.get("temperature", 0.7))
         stream = params.get("stream", False)
         model = params.get("model", "deepseek-chat")
+
+        # ── System prompt resolution — optional, never aborts the chat ─────
+        # Accepts either a literal `system_prompt` string or a
+        # `system_prompt_file` that names a file inside app/prompts/.
+        # Literal wins if both are supplied. Missing file or path-traversal
+        # attempt: log a warning and continue with NO system prompt.
+        system_prompt_text = self._resolve_system_prompt(input_data, params)
 
         # ── RAG (PR 2) — strictly opt-in. Defaults preserve existing behavior.
         # When use_rag=True AND project_id is provided AND the embedding
@@ -195,9 +205,14 @@ class ChatBlock(TypedBlock):
             effective_model = model
             if cfg["provider"] != "deepseek" and effective_model.startswith("deepseek-"):
                 effective_model = cfg["default_model"]
+            # Only forward system_prompt when one was resolved — older
+            # tests stub _call_cloud with a fixed signature that ends at
+            # ``cfg=None`` and can't absorb unknown kwargs.
+            extra_kwargs = {"system_prompt": system_prompt_text} if system_prompt_text else {}
             result = await self._call_cloud(
                 message, effective_model, max_tokens, temperature, stream,
                 provider_key, cfg,
+                **extra_kwargs,
             )
             if result.get("status") == "success":
                 return result
@@ -206,12 +221,98 @@ class ChatBlock(TypedBlock):
             primary_error = f"{cfg['env_key']} not configured"
 
         # ── Local inference fallback ───────────────────────────────────────
-        local = await self._call_local(message, max_tokens, temperature, primary_error)
+        local = await self._call_local(
+            message, max_tokens, temperature, primary_error,
+            system_prompt=system_prompt_text,
+        )
         if local.get("status") == "success":
             return local
 
         # ── Graceful template — chat must not go dark ──────────────────────
         return self._offline_template(message, primary_error, local.get("error"))
+
+    # ────────────────────────────────────────────────────────────────────────
+    # System prompt resolution + message-list construction
+    # ────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_messages(message: str, system_prompt: Optional[str]) -> list:
+        """Build the OAI-shape messages array, optionally prepending a
+        system message. A literal-empty / whitespace-only system_prompt is
+        treated as absent so callers can pass any truthy string without
+        worrying about producing a stray empty system role."""
+        msgs = []
+        if system_prompt and system_prompt.strip():
+            msgs.append({"role": "system", "content": system_prompt})
+        msgs.append({"role": "user", "content": message})
+        return msgs
+
+    def _resolve_system_prompt(
+        self, input_data: Any, params: Dict
+    ) -> Optional[str]:
+        """Resolve an optional system prompt from input_data or params.
+
+        Precedence:
+          1. Literal ``system_prompt`` string (input_data first, then params).
+          2. ``system_prompt_file`` naming a file inside ``app/prompts/``.
+
+        Failure modes (missing file, path-traversal, read error) log a
+        warning and return None — chat must not go dark over a bad prompt
+        reference.
+        """
+        # 1. Literal — wins outright if non-empty.
+        literal = None
+        if isinstance(input_data, dict):
+            literal = input_data.get("system_prompt")
+        if not literal:
+            literal = params.get("system_prompt")
+        if isinstance(literal, str) and literal.strip():
+            return literal
+
+        # 2. Filename — must resolve inside app/prompts/.
+        fname = None
+        if isinstance(input_data, dict):
+            fname = input_data.get("system_prompt_file")
+        if not fname:
+            fname = params.get("system_prompt_file")
+        if not fname:
+            return None
+        if not isinstance(fname, str):
+            return None
+
+        log = logging.getLogger(__name__)
+        prompts_dir = (Path(__file__).parent.parent / "prompts").resolve()
+        try:
+            candidate = (prompts_dir / fname).resolve()
+        except (OSError, ValueError) as exc:
+            log.warning("system_prompt_file %r could not be resolved: %s", fname, exc)
+            return None
+
+        # Reject anything that escapes prompts_dir (path traversal, absolute
+        # path that resolves elsewhere, etc.).
+        try:
+            inside = candidate.is_relative_to(prompts_dir)
+        except AttributeError:
+            # Python < 3.9 fallback — current target is 3.11+, kept defensively.
+            inside = str(candidate).startswith(str(prompts_dir) + os.sep)
+        if not inside or candidate == prompts_dir:
+            log.warning(
+                "system_prompt_file %r rejected — resolves outside app/prompts/",
+                fname,
+            )
+            return None
+        if not candidate.is_file():
+            log.warning(
+                "system_prompt_file %r not found at %s", fname, candidate,
+            )
+            return None
+        try:
+            return candidate.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.warning(
+                "system_prompt_file %r failed to read: %s", fname, exc,
+            )
+            return None
 
     # ────────────────────────────────────────────────────────────────────────
     # Cloud provider — chat completions (DeepSeek / Groq, OAI-shape protocol)
@@ -226,9 +327,11 @@ class ChatBlock(TypedBlock):
         stream: bool,
         api_key: str,
         cfg: Dict[str, str],
+        system_prompt: Optional[str] = None,
     ) -> Dict:
         url = cfg["url"]
         provider_name = cfg["provider"]
+        messages = self._build_messages(message, system_prompt)
         if stream:
             async def _stream_generator():
                 async with httpx.AsyncClient(timeout=60.0) as client:
@@ -241,7 +344,7 @@ class ChatBlock(TypedBlock):
                         },
                         json={
                             "model": model,
-                            "messages": [{"role": "user", "content": message}],
+                            "messages": messages,
                             "max_tokens": max_tokens,
                             "temperature": temperature,
                             "stream": True,
@@ -286,7 +389,7 @@ class ChatBlock(TypedBlock):
                     },
                     json={
                         "model": model,
-                        "messages": [{"role": "user", "content": message}],
+                        "messages": messages,
                         "max_tokens": max_tokens,
                         "temperature": temperature,
                     },
@@ -314,14 +417,20 @@ class ChatBlock(TypedBlock):
     # ────────────────────────────────────────────────────────────────────────
 
     async def _call_local(
-        self, message: str, max_tokens: int, temperature: float, primary_error: str
+        self,
+        message: str,
+        max_tokens: int,
+        temperature: float,
+        primary_error: str,
+        system_prompt: Optional[str] = None,
     ) -> Dict:
         """Try local inference backends in priority order."""
 
         ollama_url = os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL)
         local_model = os.getenv("LOCAL_LLM_MODEL", DEFAULT_LOCAL_MODEL)
         ollama_result = await self._call_ollama(
-            message, local_model, max_tokens, temperature, ollama_url
+            message, local_model, max_tokens, temperature, ollama_url,
+            system_prompt=system_prompt,
         )
         if ollama_result.get("status") == "success":
             ollama_result["fallback_reason"] = primary_error
@@ -330,7 +439,10 @@ class ChatBlock(TypedBlock):
         # llama.cpp — synchronous library, run only if importable AND a model path set
         gguf_path = os.getenv("LLAMA_CPP_MODEL_PATH")
         if gguf_path and os.path.exists(gguf_path):
-            llama_result = self._call_llama_cpp(message, gguf_path, max_tokens, temperature)
+            llama_result = self._call_llama_cpp(
+                message, gguf_path, max_tokens, temperature,
+                system_prompt=system_prompt,
+            )
             if llama_result.get("status") == "success":
                 llama_result["fallback_reason"] = primary_error
                 return llama_result
@@ -351,14 +463,16 @@ class ChatBlock(TypedBlock):
         max_tokens: int,
         temperature: float,
         base_url: str,
+        system_prompt: Optional[str] = None,
     ) -> Dict:
         try:
+            messages = self._build_messages(message, system_prompt)
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     f"{base_url.rstrip('/')}/api/chat",
                     json={
                         "model": model,
-                        "messages": [{"role": "user", "content": message}],
+                        "messages": messages,
                         "options": {
                             "temperature": temperature,
                             "num_predict": max_tokens,
@@ -393,7 +507,12 @@ class ChatBlock(TypedBlock):
             return {"status": "error", "error": f"ollama failed: {e}"}
 
     def _call_llama_cpp(
-        self, message: str, gguf_path: str, max_tokens: int, temperature: float
+        self,
+        message: str,
+        gguf_path: str,
+        max_tokens: int,
+        temperature: float,
+        system_prompt: Optional[str] = None,
     ) -> Dict:
         try:
             from llama_cpp import Llama  # type: ignore
@@ -402,8 +521,9 @@ class ChatBlock(TypedBlock):
 
         try:
             llm = Llama(model_path=gguf_path, n_ctx=4096, verbose=False)
+            messages = self._build_messages(message, system_prompt)
             out = llm.create_chat_completion(
-                messages=[{"role": "user", "content": message}],
+                messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )

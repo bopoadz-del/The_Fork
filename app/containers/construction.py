@@ -223,6 +223,44 @@ class ConstructionContainer(UniversalContainer):
             result["_source"] = "processor"
         return result
 
+    # ─────────────────────────────────────────────────────────────────
+    # CONVERSATIONAL CHAT (EVM-anchored)
+    # ─────────────────────────────────────────────────────────────────
+
+    async def chat(self, input_data: Any, params: Dict = None) -> Dict:
+        """Delegate a chat turn to ChatBlock with the Construction EVM
+        system prompt pre-injected.
+
+        The container owns the policy (which prompt file to use); ChatBlock
+        owns the mechanics (loading the file, building the messages list,
+        calling the provider). When the caller already supplies either a
+        literal ``system_prompt`` or a ``system_prompt_file`` — via params
+        OR input_data — we do NOT override it; the caller wins.
+
+        All other params (``stream``, ``model``, ``max_tokens``,
+        ``temperature``, ``project_id``, ``use_rag``, ``rag_k``,
+        ``use_local_model``, ...) are forwarded to ChatBlock unchanged.
+
+        Returns ChatBlock.process()'s result dict as-is (status / text /
+        provider / model / tokens / ...).
+        """
+        chat_block = self._resolve_block("chat")
+        if chat_block is None:
+            return {"status": "error", "error": "chat block unavailable"}
+
+        merged = dict(params or {})
+        data = input_data if isinstance(input_data, dict) else {}
+        caller_supplied_prompt = (
+            merged.get("system_prompt")
+            or merged.get("system_prompt_file")
+            or data.get("system_prompt")
+            or data.get("system_prompt_file")
+        )
+        if not caller_supplied_prompt:
+            merged["system_prompt_file"] = "construction_evm.md"
+
+        return await chat_block.process(input_data, merged)
+
     async def _classify_document(self, file_path: str) -> str:
         name = Path(file_path).name.lower()
         if any(x in name for x in [".ifc", ".bim", "model"]):
@@ -7160,6 +7198,7 @@ Total Extension of Time Sought: {total_delay} days
             return {"status": "error", "error": "No action specified"}
         
         handlers = {
+            "chat": self.chat,
             "process_document": self.process_document,
             "qa_qc_inspection": self.qa_qc_inspection,
             "extract_quantities": self.extract_quantities,
@@ -7225,6 +7264,7 @@ Total Extension of Time Sought: {total_delay} days
 
     def get_actions(self) -> Dict[str, Any]:
         return {
+            "chat": self.chat,
             "process_document": self.process_document,
             "qa_qc_inspection": self.qa_qc_inspection,
             "extract_quantities": self.extract_quantities,
