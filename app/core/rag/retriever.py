@@ -86,31 +86,65 @@ def chunk_text(text: str, max_chars: int = 512, overlap: int = 50) -> List[str]:
     return chunks
 
 
+def _doc_name_for_id(doc_id: str) -> str:
+    """Resolve a doc_id to its original filename. Returns '' if not
+    found - the noise filter treats unknown names as non-noise so a
+    schema mismatch never silently drops a real document."""
+    try:
+        from app.core import projects as _projects
+        doc = _projects.get_document(doc_id)
+        return (doc or {}).get("original_name") or ""
+    except Exception:
+        return ""
+
+
 def retrieve(
     query: str,
     project_id: str,
     k: int = 5,
 ) -> List[Chunk]:
-    """Top-``k`` chunks for ``query`` within ``project_id``.
+    """Backwards-compatible: returns top-K AFTER the noise filter."""
+    chunks, _ = retrieve_with_filter(query, project_id, k=k)
+    return chunks
 
-    Returns an empty list when:
-    - the embedding stack isn't installed (no exception — callers can
-      treat "empty" uniformly whether RAG is disabled or just unhelpful)
-    - the project has no indexed chunks
-    - the query is empty
+
+def retrieve_with_filter(
+    query: str,
+    project_id: str,
+    k: int = 5,
+) -> tuple:
+    """Returns ``(chunks, noise_filtered_count)``.
+
+    Internally pulls ``max(k*4, 20)`` raw candidates from the vector
+    store so the noise filter has room to drop garbage without
+    starving the caller of K real results. The audit log records
+    ``noise_filtered_count`` so the regex can be tuned from data.
     """
     if not available():
         logger.debug("retrieve called but embedding stack not available; returning []")
-        return []
+        return [], 0
     if not query or not query.strip():
-        return []
+        return [], 0
     if not project_id:
         raise ValueError("project_id is required")
 
     embedder = get_embedder()
     query_vec = embedder.encode([query])[0]
     store = get_store(dim=embedder.dim)
-    return store.search(project_id, query_vec, k=k)
+    over_fetch = max(k * 4, 20)
+    raw = store.search(project_id, query_vec, k=over_fetch)
+
+    kept: List[Chunk] = []
+    noise_dropped = 0
+    for c in raw:
+        name = _doc_name_for_id(c.doc_id)
+        if _is_noise_filename(name):
+            noise_dropped += 1
+            continue
+        kept.append(c)
+        if len(kept) == k:
+            break
+    return kept, noise_dropped
 
 
 def index_chunks(

@@ -116,3 +116,39 @@ def test_noise_filter_env_override(monkeypatch):
     from app.core.rag.retriever import _is_noise_filename
     assert _is_noise_filename("MyCustomNoise_v3.txt") is True
     assert _is_noise_filename("Real Document.pdf") is False
+
+
+def test_retrieve_drops_noise_before_top_k(monkeypatch):
+    """The candidate pool from the vector store may include chunks
+    from noise docs. They must be filtered BEFORE we pick top-K so a
+    noise chunk cannot displace a real chunk."""
+    from app.core.rag import retriever as ret
+    from app.core.rag.vector_store import Chunk
+
+    def fake_search(self, project_id, qvec, k):
+        return [
+            Chunk(chunk_id="c1", project_id=project_id, doc_id="d-noise",
+                  chunk_index=0, text="noise content", score=0.95),
+            Chunk(chunk_id="c2", project_id=project_id, doc_id="d-real",
+                  chunk_index=0, text="real content",  score=0.80),
+            Chunk(chunk_id="c3", project_id=project_id, doc_id="d-real",
+                  chunk_index=1, text="more real",     score=0.70),
+        ]
+
+    def fake_doc_name(doc_id):
+        return {
+            "d-noise": "~$lockfile.docx",
+            "d-real":  "Anthropic - BOD.pdf",
+        }[doc_id]
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(ret, "_doc_name_for_id", fake_doc_name, raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+
+    # K=2 - if noise weren't filtered we'd get 2 chunks total
+    # (noise + real), since noise scored highest. Filter must skip noise
+    # and we must therefore see 2 REAL chunks.
+    chunks, dropped = ret.retrieve_with_filter("query", "p1", k=2)
+    assert dropped == 1
+    assert all("real" in c.text for c in chunks)
+    assert len(chunks) == 2
