@@ -46,6 +46,28 @@ context up front.
 
 ## Components
 
+### 0. Noise document filter (new, in `app/core/rag/retriever.py`)
+
+Some projects accumulate documents that are unrelated to construction work
+(stray pptx menus, office lockfile artifacts like `~$C-201_*.docx`, etc.).
+We can't mutate `doc_type` via a PATCH endpoint without adding one, and we
+don't want to delete the files (the operator's instruction). Instead, the
+retriever filters them out by filename pattern at query time.
+
+Configuration:
+- `RAG_NOISE_FILENAME_REGEX` env var, default
+  `^(~\$|nambae-menu|SandsChina_Application)`. Operator can append more
+  patterns over time without a redeploy.
+- Matched docs are skipped from the candidate pool BEFORE top-K selection,
+  so they cannot consume a slot a real doc would have taken.
+
+Audit log records noise-filter activity:
+- New field `noise_filtered_count: int` in the audit record, counting how
+  many candidates were dropped by the noise filter for that query.
+- Lets the operator monitor whether the regex is over- or under-matching.
+
+Out of scope here: building a UI to manage noise rules; that's a v2.
+
 ### 1. RAG injector (new, in `app/agents/runtime.py`)
 
 A helper called from `chat_stream` before iter 0:
@@ -160,10 +182,13 @@ State:
 - Updated atomically inside the same transaction that emits the audit record,
   so consumption can never drift from the log.
 
-Behaviour on each turn (before RAG injection):
+Behaviour on each turn (before RAG injection). Boundary semantics are
+**inclusive** on the budget: when consumption *reaches* the budget the
+next turn already degrades — it does not have to *exceed* it.
+
 1. Compute `today = utcnow().strftime("%Y-%m-%d")`.
 2. Read `consumed = rag_budget WHERE day = today` (default 0).
-3. If `consumed >= RAG_DAILY_TOKEN_BUDGET`:
+3. If `consumed >= RAG_DAILY_TOKEN_BUDGET`  (note: `>=`, not `>`):
    - Degrade: set `effective_k = 2` for this turn (instead of `K_DEFAULT`).
    - Apply the same MAX_RAG_TOKENS cap to the 2 chunks.
    - Set `budget_degraded = true` for the audit record.
@@ -327,8 +352,12 @@ run.
    - Target tool call: `generate_wbs(brief, target_count=50, project_type=data_center)`
    - Verifies the runtime change does NOT break tool calling; RAG context
      should not displace the tool-call mandate.
-   - Pass criterion: a real `generate_wbs` tool-call card appears in the trace,
-     and the model's text summary cites the tool result.
+   - Pass criterion (explicit): the iter-0 LLM response has
+     `finish_reason == "tool_calls"` AND the `tool_calls` array contains an
+     entry with `function.name == "generate_wbs"`. The streaming UI showing
+     a tool-call card is a downstream consequence, not the test. Match
+     against the LLM response shape, not the rendered chat trace. Tested
+     in `tests/test_rag_injection.py::test_q4_tool_call_discipline_under_rag`.
 
 5. **The BOD specifies cooling availability at 99.99% across 100% of IT
    capacity. One CDU failure must not impact more than 4 rows. What does this
@@ -413,6 +442,10 @@ Phase 2.5 has shipped (budget enforcement live).
 - `scripts/generate_training_scenarios.py`: validation pipeline, `--provider ollama`
 - `frontend/src/pages/ProjectWorkspace.tsx`: Sources footer component
 - `tests/test_rag_injection.py` (new): unit tests for `_rag_inject`, token cap,
-  threshold behaviour, audit log shape
+  threshold behaviour, audit log shape, noise filter, Q4 tool-call discipline
+  under RAG, **and budget boundary**: explicit test that
+  `consumed == RAG_DAILY_TOKEN_BUDGET` (exact-equal, not strictly-over)
+  triggers degradation. Off-by-one on that boundary is a classic bug — the
+  spec is "degrade when consumed >= budget", not "consumed > budget".
 - `tests/test_drive_sha256_dedupe.py` (new): walker skips unchanged file on
   second run
