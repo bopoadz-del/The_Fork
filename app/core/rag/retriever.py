@@ -14,6 +14,31 @@ from typing import List
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import Chunk, get_store
 
+import os
+import re
+
+
+_NOISE_DEFAULT = r"^(~\$|nambae-menu|SandsChina_Application)"
+
+
+def _noise_regex():
+    """Compile the active noise regex. Re-reads env every call so
+    tests / operators can flip RAG_NOISE_FILENAME_REGEX live."""
+    return re.compile(os.getenv("RAG_NOISE_FILENAME_REGEX", _NOISE_DEFAULT))
+
+
+def _is_noise_filename(name: str) -> bool:
+    """True iff the document filename matches the noise regex.
+
+    Used to drop accumulated garbage docs (lockfiles, unrelated pptx
+    menus, etc.) from the retrieval candidate pool BEFORE top-K
+    selection, so they cannot displace a relevant chunk.
+    """
+    if not name:
+        return False
+    return bool(_noise_regex().match(name))
+
+
 logger = logging.getLogger(__name__)
 
 

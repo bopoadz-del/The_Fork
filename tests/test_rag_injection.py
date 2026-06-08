@@ -95,3 +95,24 @@ def test_budget_rollover_at_new_day_resets_consumed(monkeypatch, tmp_path):
     assert budget.snapshot(day="2026-06-09")["consumed"] == 400000
     # New day - implicit rollover by querying a fresh date.
     assert budget.snapshot(day="2026-06-10")["consumed"] == 0
+
+
+def test_noise_filter_default_regex_matches_known_garbage():
+    from app.core.rag.retriever import _is_noise_filename
+    # The defaults from the spec.
+    assert _is_noise_filename("~$C-201_Time Management.docx") is True
+    assert _is_noise_filename("nambae-menu(4).pptx") is True
+    assert _is_noise_filename("SandsChina_Application_ChaD.docx") is True
+    # And NOT a real doc.
+    assert _is_noise_filename("Anthropic - Performance Basis of Design.pdf") is False
+    assert _is_noise_filename("RFP_Appendix_B.xlsx") is False
+
+
+def test_noise_filter_env_override(monkeypatch):
+    monkeypatch.setenv(
+        "RAG_NOISE_FILENAME_REGEX",
+        r"^(~\$|nambae-menu|SandsChina_Application|MyCustomNoise)",
+    )
+    from app.core.rag.retriever import _is_noise_filename
+    assert _is_noise_filename("MyCustomNoise_v3.txt") is True
+    assert _is_noise_filename("Real Document.pdf") is False
