@@ -17,7 +17,8 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
-from typing import Dict, Optional
+from contextlib import closing
+from typing import Dict
 
 _LOCK = threading.RLock()
 
@@ -37,7 +38,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def _ensure_db() -> None:
-    with _LOCK, _connect() as conn:
+    with _LOCK, closing(_connect()) as conn, conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS rag_budget (
@@ -50,15 +51,16 @@ def _ensure_db() -> None:
 
 def _budget_value() -> int:
     try:
-        return int(os.getenv("RAG_DAILY_TOKEN_BUDGET", "500000"))
+        v = int(os.getenv("RAG_DAILY_TOKEN_BUDGET", "500000"))
     except ValueError:
         return 500000
+    return v if v >= 0 else 500000
 
 
 def snapshot(day: str) -> Dict[str, object]:
     """Return the day's current budget state without mutating it."""
     _ensure_db()
-    with _LOCK, _connect() as conn:
+    with _LOCK, closing(_connect()) as conn, conn:
         row = conn.execute(
             "SELECT consumed FROM rag_budget WHERE day = ?", (day,)
         ).fetchone()
@@ -78,7 +80,7 @@ def consume(day: str, tokens: int) -> None:
     if tokens <= 0:
         return
     _ensure_db()
-    with _LOCK, _connect() as conn:
+    with _LOCK, closing(_connect()) as conn, conn:
         conn.execute(
             "INSERT INTO rag_budget (day, consumed) VALUES (?, ?) "
             "ON CONFLICT(day) DO UPDATE SET consumed = consumed + excluded.consumed",
