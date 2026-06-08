@@ -280,14 +280,25 @@ Target: 500 rows kept. If we fall short, raise `--questions-per-chunk` or
 Five queries become the gate between phases. Each phase ships only after all
 five run through the updated code path and you sign off on the outputs.
 
-The queries reference two doc sets:
+The queries reference two doc sets, both now uploaded (commit-time setup
+completed 2026-06-08):
 
-- **Anthropic project (`fb776aa2`):** Anthropic RFP, Performance BOD, three PRC
-  procurement PDFs. Already indexed.
-- **Diriyah Gate Phase II BOQ:** PDF the operator holds locally, NOT yet
-  uploaded. The two BOQ-specific queries (Q2, Q3) require this doc to be
-  uploaded to a project before they can run. Plan: create a new project
-  `diriyah-bqa-test` and upload the BOQ pdf before Phase 2 sign-off.
+- **Anthropic project (`fb776aa2`):**
+  - Anthropic Request for Proposals 041726.docx
+  - Anthropic Performance Basis of Design.pdf (`ca6292f9`, 762 KB)
+  - Anthropic RFP Appendix B 041726.xlsx (`0f9ffc6b`, 14.5 KB)
+  - PRC-201 Time Management.pdf
+  - PRC-301 Request for Information.pdf
+  - Plus two unrelated docs (nambae-menu pptx, SandsChina docx) and a
+    `~$C-201` Office lockfile artifact — these will appear in the index but
+    are noise for the regression queries.
+- **Diriyah BOQ Test project (`3f6f28b2`):**
+  - DGII - Infra-1 - Demolition BOQ.pdf (`c6dae280`, 9.7 MB; auto-classified
+    by the upload route as doc_type=`boq`)
+
+Phase 1 of the implementation plan should kick off the doc_index extraction
+on both projects so chunks + embeddings exist before the regression queries
+run.
 
 ### The five queries
 
