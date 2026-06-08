@@ -84,18 +84,31 @@ _DELIVERABLE_PHRASES = (
 
 
 def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
-    """True iff the most recent user message names a deliverable that
-    should be produced by a tool call (vs. an explanation in prose).
+    """True iff the latest turn is the operator's first request AND it
+    names a deliverable that should be produced by a tool call.
 
-    Walks `messages` from the tail to find the last role=user content
-    string and matches it against the deliverable phrase list. Returns
-    False on no user message (so the runtime keeps tool_choice="auto").
+    Two gates:
+    1. The tail of ``messages`` must be a ``role=user`` turn — i.e. we're
+       on iteration 0 of the agent loop, before any tool call has run.
+       On iteration N+1 the runtime has appended assistant + tool result
+       turns; we must NOT force ``tool_choice="required"`` then or the
+       model gets trapped in a forever-tool-call loop (it keeps being
+       forced to call another tool instead of writing the final answer).
+    2. The user message content matches a deliverable phrase.
+
+    Returns False on no user message OR when the tail isn't user-role
+    (so the runtime keeps ``tool_choice="auto"`` and the model is free
+    to summarise the tool result into the user-visible final answer).
     """
-    for m in reversed(messages):
-        if m.get("role") == "user":
-            text = (m.get("content") or "").lower()
-            return any(p in text for p in _DELIVERABLE_PHRASES)
-    return False
+    if not messages:
+        return False
+    tail = messages[-1]
+    if tail.get("role") != "user":
+        # Iter > 0: assistant + tool turns have been appended; let the
+        # model decide how to proceed (will be summary, not another tool).
+        return False
+    text = (tail.get("content") or "").lower()
+    return any(p in text for p in _DELIVERABLE_PHRASES)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
@@ -937,17 +950,6 @@ class Agent:
                 payload["tool_choice"] = "required"
             else:
                 payload["tool_choice"] = "auto"
-            # DEBUG (temporary): log which tool_choice is in flight so we
-            # can prove the anti-hallucination gate is firing in prod.
-            # Remove this print after the WebBridge test confirms.
-            import sys as _sys
-            print(
-                f"[runtime/_call_llm] agent={self.name} "
-                f"tool_choice={payload.get('tool_choice')} "
-                f"tools_n={len(tools)} "
-                f"last_user_preview={(next((m['content'] for m in reversed(messages) if m.get('role')=='user'), '') or '')[:80]!r}",
-                file=_sys.stderr, flush=True,
-            )
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:

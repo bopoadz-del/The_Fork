@@ -167,15 +167,54 @@ def test_intent_requires_tool_does_not_fire_on_explanation_question():
 
 
 def test_intent_requires_tool_picks_latest_user_turn():
-    """When the conversation has multiple user turns, the matcher must
-    use the MOST RECENT one — the model's response depends on what the
-    user is asking right now, not what they asked five turns ago."""
+    """When the conversation has multiple user turns, the matcher uses
+    the MOST RECENT one — the model's response depends on what the user
+    is asking right now, not what they asked five turns ago.
+
+    The matcher now also requires the tail to be the user turn (i.e.
+    iteration 0 of the agent loop) — see
+    test_intent_requires_tool_returns_false_after_tool_call_iteration.
+    """
     messages = [
         {"role": "user", "content": "What is CPI?"},
         {"role": "assistant", "content": "CPI is earned value / actual cost."},
         {"role": "user", "content": "Now give me a manpower histogram for the project."},
     ]
     assert _user_intent_requires_tool(messages) is True
+
+
+def test_intent_requires_tool_returns_false_after_tool_call_iteration():
+    """REGRESSION: on iteration 2+ of the agent loop the runtime has
+    appended an assistant turn with tool_calls AND tool result turns
+    after the user message. If we still flipped tool_choice="required"
+    on these iterations the model would be FORCED to call another tool
+    instead of summarising into the final answer — a forever-loop trap
+    seen in prod via the Render debug log.
+
+    The matcher must return False whenever the tail of messages is
+    NOT a user turn.
+    """
+    messages = [
+        {"role": "system", "content": "..."},
+        {"role": "user", "content": "Generate a 250-activity construction schedule"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "function": {"name": "generate_wbs"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "[activities...]"},
+    ]
+    assert _user_intent_requires_tool(messages) is False, (
+        "On iter 2+ the tail is a tool result — must return False "
+        "so the model can write the final answer instead of being "
+        "forced into another tool call."
+    )
+
+
+def test_intent_requires_tool_returns_false_after_assistant_summary():
+    """A tail of role=assistant (no tool_calls, final-answer-shape) also
+    means we're past iter 0 — the matcher must return False."""
+    messages = [
+        {"role": "user", "content": "Schedule please"},
+        {"role": "assistant", "content": "Here's the schedule..."},
+    ]
+    assert _user_intent_requires_tool(messages) is False
 
 
 def test_intent_requires_tool_returns_false_with_no_user_turn():
