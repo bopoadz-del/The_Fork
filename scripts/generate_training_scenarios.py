@@ -286,10 +286,18 @@ def main() -> int:
     )
     parser.add_argument(
         "--provider", default="any",
-        choices=("any", "deepseek", "local_ollama", "local_llama_cpp", "local_lora"),
+        choices=("any", "deepseek", "local_ollama", "local_llama_cpp", "local_lora", "ollama"),
         help="Require this provider on chat responses (default: any non-offline)",
     )
     args = parser.parse_args()
+
+    # When the operator forces 'ollama' (the cloud-style provider routed via
+    # _llm_config), propagate that selection to the chat block via the env
+    # var it reads. Without this, the chat block would pick groq/deepseek
+    # based on whichever API key is configured and the provider-hint match
+    # at _generate_for_chunk would drop every chunk.
+    if args.provider == "ollama":
+        os.environ["LLM_PROVIDER"] = "ollama"
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     return asyncio.run(_run(
