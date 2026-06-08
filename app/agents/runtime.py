@@ -937,6 +937,17 @@ class Agent:
                 payload["tool_choice"] = "required"
             else:
                 payload["tool_choice"] = "auto"
+            # DEBUG (temporary): log which tool_choice is in flight so we
+            # can prove the anti-hallucination gate is firing in prod.
+            # Remove this print after the WebBridge test confirms.
+            import sys as _sys
+            print(
+                f"[runtime/_call_llm] agent={self.name} "
+                f"tool_choice={payload.get('tool_choice')} "
+                f"tools_n={len(tools)} "
+                f"last_user_preview={(next((m['content'] for m in reversed(messages) if m.get('role')=='user'), '') or '')[:80]!r}",
+                file=_sys.stderr, flush=True,
+            )
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
