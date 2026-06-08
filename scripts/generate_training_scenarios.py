@@ -269,6 +269,78 @@ def _print_sample(out_path: str, n: int = 5) -> None:
     print("", file=sys.stderr)
 
 
+def _validate_scenarios(rows: List[Dict[str, str]]) -> tuple:
+    """Apply the validation pipeline. Returns ``(kept_rows, report)``.
+
+    Drops:
+    * empty instruction or response
+    * response under 29 chars (too short to be a real answer)
+    * duplicate responses (cosine >= 0.85 against any kept row)
+
+    Uses the platform embedder (``app.core.rag.embeddings``) when
+    available; falls back to string-equality dedupe when it isn't, so
+    the script can still validate offline / in CI without optional ML
+    deps. Both code paths are correct; the fallback is just coarser.
+    """
+    out: List[Dict[str, str]] = []
+    report = {
+        "input": len(rows),
+        "dropped_empty": 0,
+        "dropped_short": 0,
+        "dropped_duplicates": 0,
+    }
+    # Stage 1: drop empties / too-short.
+    stage1: List[Dict[str, str]] = []
+    for r in rows:
+        instr = (r.get("instruction") or "").strip()
+        resp = (r.get("response") or "").strip()
+        if not instr or not resp:
+            report["dropped_empty"] += 1
+            continue
+        if len(resp) < 29:
+            report["dropped_short"] += 1
+            continue
+        stage1.append(r)
+
+    # Stage 2: dedupe by response cosine. Use the platform embedder
+    # if available; fall back to a string-equality dedupe if not.
+    try:
+        from app.core.rag.embeddings import Embedder, get_embedder
+        if not Embedder.available():
+            raise RuntimeError("embedder not available")
+        embedder = get_embedder()
+        responses = [r["response"] for r in stage1]
+        vecs = embedder.encode(responses)
+    except Exception:
+        seen = set()
+        for r in stage1:
+            key = r["response"]
+            if key in seen:
+                report["dropped_duplicates"] += 1
+                continue
+            seen.add(key)
+            out.append(r)
+        report["kept"] = len(out)
+        return out, report
+
+    import numpy as np
+    kept_vecs = []
+    for r, v in zip(stage1, vecs):
+        keep = True
+        for kv in kept_vecs:
+            # Cosine assumes unit-normalized embeddings (zvec is).
+            cos = float(np.dot(v, kv))
+            if cos >= 0.85:
+                keep = False
+                report["dropped_duplicates"] += 1
+                break
+        if keep:
+            kept_vecs.append(v)
+            out.append(r)
+    report["kept"] = len(out)
+    return out, report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-id", required=True, help="Project to source chunks from")
