@@ -123,6 +123,8 @@ turn, schema:
   "injected_tokens": 1247,
   "top_score": 0.71,
   "threshold_fired": false,
+  "budget_remaining": 487253,
+  "budget_degraded": false,
   "chunks": [
     {"doc_id": "anthropic-bod-pdf-1", "chunk_index": 42, "score": 0.71},
     {"doc_id": "anthropic-rfp-docx-1", "chunk_index": 17, "score": 0.62},
@@ -132,7 +134,60 @@ turn, schema:
 ```
 
 `threshold_fired=true` rows still carry full `chunks` and `top_score` so we can
-re-evaluate the threshold later from the log.
+re-evaluate the threshold later from the log. `budget_remaining` and
+`budget_degraded` are written on every turn regardless of the budget state
+(see Component 4.5).
+
+### 4.5 Daily token budget (Phase 2.5, non-blocking for Phase 2 go-live)
+
+A soft daily cap on RAG injection tokens so a runaway day cannot drain the
+LLM token quota. Layered on TOP of the per-turn `MAX_RAG_TOKENS` cap and the
+confidence threshold, so degradation has three independent dimensions.
+
+Configuration:
+- `RAG_DAILY_TOKEN_BUDGET` env var, default `500_000` per day per Render
+  service.
+
+State:
+- New SQLite table `rag_budget` in the existing audit DB (or `agent_memory.db`
+  if cheaper to colocate):
+  ```
+  CREATE TABLE IF NOT EXISTS rag_budget (
+      day        TEXT PRIMARY KEY,   -- ISO YYYY-MM-DD in UTC
+      consumed   INTEGER NOT NULL DEFAULT 0
+  );
+  ```
+- Updated atomically inside the same transaction that emits the audit record,
+  so consumption can never drift from the log.
+
+Behaviour on each turn (before RAG injection):
+1. Compute `today = utcnow().strftime("%Y-%m-%d")`.
+2. Read `consumed = rag_budget WHERE day = today` (default 0).
+3. If `consumed >= RAG_DAILY_TOKEN_BUDGET`:
+   - Degrade: set `effective_k = 2` for this turn (instead of `K_DEFAULT`).
+   - Apply the same MAX_RAG_TOKENS cap to the 2 chunks.
+   - Set `budget_degraded = true` for the audit record.
+4. Otherwise:
+   - Proceed with `K_DEFAULT` and the standard token cap.
+   - Set `budget_degraded = false`.
+5. After deciding `injected_tokens`, atomically:
+   `UPDATE rag_budget SET consumed = consumed + injected_tokens WHERE day = today`
+   (with an `INSERT OR IGNORE` to seed the row).
+
+Reset: implicit by date rollover at midnight UTC. No cron / scheduled task
+required. The first turn of a new UTC day creates the row with
+`consumed = 0`.
+
+Acceptance criteria for Phase 2.5:
+- `RAG_DAILY_TOKEN_BUDGET` env var present, defaults to 500,000.
+- A day with budget exhausted shows `budget_degraded=true` and `injected_k <= 2`
+  in the audit log.
+- A day rollover (manipulated via test fixture) resets the consumed counter
+  to 0.
+- `budget_remaining` appears in every audit record, including non-degraded
+  turns and threshold_fired turns.
+- No core architecture change needed; the budget hook is a 30-50 line addition
+  to `_rag_inject`.
 
 ### 5. Debug mode (new query param)
 
@@ -286,6 +341,11 @@ Phase 2 - RAG default
   -> smoke: 5 regression queries run, sources visible (raw)
   -> CHECKPOINT (operator signs off on retrieval quality)
 
+Phase 2.5 - Daily token budget (non-blocking; can ship after Phase 2 go-live)
+  -> smoke: budget exhausted via test fixture, audit shows budget_degraded=true,
+     injected_k <= 2; new day resets to 0
+  -> CHECKPOINT (operator confirms budget telemetry visible in audit log)
+
 Phase 3 - Drive ingestion incremental
   -> smoke: one file ingested, second run skips, full folder ingest succeeds
   -> CHECKPOINT (operator sees row count + skip count)
@@ -294,7 +354,8 @@ Phase 4 - Source UX
   -> smoke: 5 regression queries again, sources visible in UI
   -> CHECKPOINT (operator confirms confidence labels look right)
 
-DONE when all five queries produce grounded answers with visible sources.
+DONE when all five queries produce grounded answers with visible sources, and
+Phase 2.5 has shipped (budget enforcement live).
 
 ## Risks and mitigations
 
@@ -306,7 +367,7 @@ DONE when all five queries produce grounded answers with visible sources.
 | SHA-256 ALTER TABLE on a populated doc_index.db | doc_index is small (under 100 docs typically); online ALTER is fast |
 | Drive walker timeout on large folders | Walker already streams; pagination is folder-by-folder, not file-by-file |
 | RAG context pollutes tool-calling discipline | Q4 in the regression set specifically tests this; the iter-0 forced tool_choice fix from yesterday handles the case where the model would otherwise drift to prose |
-| Token cost balloon: ~1500 tokens injected per turn | Threshold drops injection on poor retrieval; debug mode is opt-in not default |
+| Token cost balloon: ~1500 tokens injected per turn | Three layers: per-turn MAX_RAG_TOKENS cap (1500), confidence threshold (drops injection when top_score < 0.4), daily token budget (Phase 2.5: 500K/day default, degrades to K=2 when exhausted). All env-overridable on Render. |
 
 ## Out of scope for this spec
 
@@ -324,8 +385,8 @@ DONE when all five queries produce grounded answers with visible sources.
 - Query 4 produces a real tool-call card + tool-result-cited summary
 - `rag_audit.jsonl` has one row per turn, including `threshold_fired=true`
   rows
-- `MAX_RAG_TOKENS`, `RAG_K`, `RAG_CONFIDENCE_THRESHOLD` are tunable via Render
-  env without code change
+- `MAX_RAG_TOKENS`, `RAG_K`, `RAG_CONFIDENCE_THRESHOLD`, `RAG_DAILY_TOKEN_BUDGET`
+  are all tunable via Render env without code change
 - Drive walker on second run reports skipped count > 0 for any unchanged file
 - Frontend renders a Sources footer when `sources` is non-empty, hides when
   empty, expandable, shows confidence labels per spec
