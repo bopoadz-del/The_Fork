@@ -53,3 +53,45 @@ def test_audit_writer_never_raises_on_disk_failure(monkeypatch):
     monkeypatch.setattr(audit, "_log_path", lambda: "\x00invalid/logs/rag_audit.jsonl")
     # Should not raise even though the path is unwritable.
     audit.write({"hello": "world"})
+
+
+def test_budget_starts_at_zero_consumed_for_new_day(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_DAILY_TOKEN_BUDGET", "500000")
+    from app.core.rag import budget
+    state = budget.snapshot(day="2026-06-09")
+    assert state == {"day": "2026-06-09", "consumed": 0, "budget": 500000, "remaining": 500000, "degraded": False}
+
+
+def test_budget_consume_accumulates_and_reports_degraded_at_inclusive_boundary(
+    monkeypatch, tmp_path,
+):
+    """The spec says 'consumed >= RAG_DAILY_TOKEN_BUDGET' (inclusive).
+    The boundary test: when consumed reaches exactly the budget the
+    next snapshot must report degraded=True."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_DAILY_TOKEN_BUDGET", "1000")
+    from app.core.rag import budget
+    budget.consume(day="2026-06-09", tokens=600)
+    st = budget.snapshot(day="2026-06-09")
+    assert st["consumed"] == 600 and st["remaining"] == 400 and st["degraded"] is False
+    budget.consume(day="2026-06-09", tokens=400)
+    # Now consumed == 1000 == budget, EXACTLY at the boundary.
+    st = budget.snapshot(day="2026-06-09")
+    assert st["consumed"] == 1000
+    assert st["remaining"] == 0
+    assert st["degraded"] is True, (
+        "Boundary semantics: degradation must fire when consumed reaches "
+        "the budget exactly. The classic off-by-one would have this still "
+        "be False until consumed > budget."
+    )
+
+
+def test_budget_rollover_at_new_day_resets_consumed(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_DAILY_TOKEN_BUDGET", "500000")
+    from app.core.rag import budget
+    budget.consume(day="2026-06-09", tokens=400000)
+    assert budget.snapshot(day="2026-06-09")["consumed"] == 400000
+    # New day - implicit rollover by querying a fresh date.
+    assert budget.snapshot(day="2026-06-10")["consumed"] == 0
