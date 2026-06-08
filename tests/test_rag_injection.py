@@ -38,3 +38,18 @@ def test_audit_writer_writes_one_jsonl_row_per_call(monkeypatch, tmp_path):
     assert len(rows) == 1
     assert rows[0]["project_id"] == "p1"
     assert rows[0]["injected_tokens"] == 1200
+
+
+def test_audit_writer_never_raises_on_disk_failure(monkeypatch):
+    """Audit writes must never break a real chat turn. If the path is
+    unwritable, the writer logs and swallows."""
+    from app.core.rag import audit
+    # Force the resolved log path to contain a NUL byte. os.makedirs raises
+    # ValueError on NUL on every platform, which reliably exercises the
+    # writer's failure branch. (A literal unwritable string like
+    # "/nonexistent/..." can't be used here: on Windows it resolves under
+    # C:\ and the write actually succeeds; and os.environ rejects NUL on
+    # the way in, so DATA_DIR can't carry it directly.)
+    monkeypatch.setattr(audit, "_log_path", lambda: "\x00invalid/logs/rag_audit.jsonl")
+    # Should not raise even though the path is unwritable.
+    audit.write({"hello": "world"})
