@@ -135,9 +135,11 @@ interface ChatComposerProps {
   disabled: boolean
   projectId: string
   onAttached?: (docName: string) => void
+  onClear?: () => void
+  hasHistory?: boolean
 }
 
-function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerProps) {
+function ChatComposer({ onSend, disabled, projectId, onAttached, onClear, hasHistory }: ChatComposerProps) {
   const [text, setText] = useState('')
   const [uploading, setUploading] = useState(false)
   const [attachStatus, setAttachStatus] = useState<string | null>(null)
@@ -291,6 +293,18 @@ function ChatComposer({ onSend, disabled, projectId, onAttached }: ChatComposerP
         >
           {recording ? 'Stop' : 'Voice'}
         </button>
+        {onClear && (
+          <button
+            type="button"
+            className="chat-composer__attach"
+            title="Clear chat history (cannot be undone)"
+            onClick={() => onClear()}
+            disabled={disabled || uploading || !hasHistory}
+            aria-label="Clear chat history"
+          >
+            Clear
+          </button>
+        )}
         <textarea
           ref={textareaRef}
           className="chat-composer__textarea"
@@ -1149,6 +1163,34 @@ export default function ProjectWorkspace() {
             onSend={(text) => void handleSend(text)}
             disabled={streaming}
             projectId={id ?? ''}
+            hasHistory={messages.length > 0}
+            onClear={async () => {
+              if (!id || !conversationId) return
+              if (!window.confirm(
+                'Clear this conversation? The chat history on the server will be wiped. This cannot be undone.',
+              )) return
+              try {
+                const token = getToken() || ''
+                const res = await fetch(
+                  `${API_BASE}/v1/projects/${id}/conversations/${conversationId}/clear`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: '{}',
+                  },
+                )
+                if (!res.ok) {
+                  alert(`Clear failed (${res.status})`)
+                  return
+                }
+                setMessages([])
+              } catch (err) {
+                alert(`Clear failed: ${(err as Error).message}`)
+              }
+            }}
           />
         </div>
 

@@ -32,6 +32,71 @@ MAX_TOOL_ITERATIONS = 12  # hard cap so a runaway loop can't burn budget; raised
 MAX_HISTORY_TURNS = 20
 MAX_DELEGATION_DEPTH = 3  # how deep agent → agent delegation may recurse
 
+
+# ── Anti-hallucination: scrub prior assistant turns that contain WBS/BOQ
+# markdown tables. When conversation history carries a previously-emitted
+# table (often hallucinated — Float=0 / Critical=Y on every row, fabricated
+# file paths), the model pattern-matches to "produce another table" instead
+# of calling generate_wbs / boq_processor. Replacing the table with a
+# placeholder removes the pattern while preserving turn position so the
+# conversation stays coherent.
+_HALLUC_TABLE_RE = re.compile(
+    r"^\s*\|[^\n]*?(?:Activity\s+ID|Float|Early\s+Start|Late\s+Start|Duration|"
+    r"Quantity|Unit\s+Rate|BOQ|WBS|Critical\?)[^\n]*\|\s*\n"
+    r"(?:\s*\|[-:\s|]+\|\s*\n)"
+    r"(?:\s*\|[^\n]*\|\s*\n){5,}",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _scrub_history(turns: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Replace assistant turns that contain a WBS/BOQ-shaped table with a
+    placeholder so the model can't pattern-match to a prior (often
+    hallucinated) table when it should be calling the tool.
+
+    Heuristic only: markdown tables with WBS/BOQ-like headers and >=5 rows.
+    Legitimate operator-pasted tables in user turns are NOT touched.
+    Returns a new list; the caller's history is left intact.
+    """
+    out: List[Dict[str, str]] = []
+    for t in turns:
+        if t.get("role") == "assistant" and _HALLUC_TABLE_RE.search(t.get("content") or ""):
+            out.append({**t, "content": "[Previous schedule/BOQ output omitted — call the tool to re-derive.]"})
+        else:
+            out.append(t)
+    return out
+
+
+# ── Anti-hallucination: force tool_choice="required" when the user's
+# message names a deliverable type that maps 1:1 to a tool. Keeps Q&A on
+# "auto" so explanation questions ("what is a WBS?") still get prose.
+_DELIVERABLE_PHRASES = (
+    "construction schedule", "wbs", "activity list", "gantt",
+    "schedule with", "schedule of", "n-activity", "n activities",
+    "critical path", "programme", "program of works", "project schedule",
+    "manpower histogram", "labour histogram", "labor histogram",
+    "resource histogram",
+    "boq", "bill of quantities", "quantity takeoff", "extract quantities",
+    "cost estimate", "budget breakdown", "cost breakdown",
+    "compare boq to drawings", "discrepancy report",
+    "generate recommendations", "recommend action",
+)
+
+
+def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
+    """True iff the most recent user message names a deliverable that
+    should be produced by a tool call (vs. an explanation in prose).
+
+    Walks `messages` from the tail to find the last role=user content
+    string and matches it against the deliverable phrase list. Returns
+    False on no user message (so the runtime keeps tool_choice="auto").
+    """
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            text = (m.get("content") or "").lower()
+            return any(p in text for p in _DELIVERABLE_PHRASES)
+    return False
+
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
@@ -480,6 +545,11 @@ class Agent:
             # the question and ends up inconsistent.
             agent_memory.append_message(conversation_id, "user", user_message)
 
+        # Strip prior hallucinated WBS/BOQ tables from history before
+        # sending. Prevents the model from pattern-matching to a prior
+        # (often fabricated) table when it should be calling the tool.
+        effective_history = _scrub_history(effective_history)
+
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
         tool_calls_made: List[Dict[str, Any]] = []
 
@@ -659,6 +729,11 @@ class Agent:
             effective_history = prior_turns + effective_history
             # Persist the user turn up front so it survives a mid-loop error.
             agent_memory.append_message(conversation_id, "user", user_message)
+
+        # Strip prior hallucinated WBS/BOQ tables from history before
+        # sending. Prevents the model from pattern-matching to a prior
+        # (often fabricated) table when it should be calling the tool.
+        effective_history = _scrub_history(effective_history)
 
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
 
@@ -851,7 +926,17 @@ class Agent:
         tools = self.tool_definitions(project_id=project_id)
         if tools and with_tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            # When the latest user message names a deliverable (schedule,
+            # WBS, BOQ, cost estimate, etc.), force the model to emit a
+            # tool call instead of drifting into prose. Gated to the
+            # project-assistant agent because other agents (e.g.
+            # heavy-reasoning) have their own discipline + may legitimately
+            # answer in prose on the same keywords. Q&A queries that don't
+            # name a deliverable keep tool_choice="auto" as before.
+            if self.name == "project-assistant" and _user_intent_requires_tool(messages):
+                payload["tool_choice"] = "required"
+            else:
+                payload["tool_choice"] = "auto"
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:

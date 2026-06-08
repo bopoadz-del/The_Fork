@@ -195,6 +195,35 @@ def delete_conversation(conversation_id: str) -> bool:
         return cur.rowcount > 0
 
 
+def clear_conversation(conversation_id: str) -> Dict[str, int]:
+    """Wipe the conversation's messages and agent_facts without dropping
+    the conversation row itself. Used by the UI's "Clear history" button
+    to escape a thread poisoned by prior hallucinated turns while keeping
+    the conversation_id stable (so the React composer doesn't need to
+    remount).
+
+    Returns ``{"messages": N, "facts": M}`` so the caller can surface
+    how much was removed. Idempotent — clearing an empty / nonexistent
+    conversation returns zeros without raising.
+    """
+    _ensure_db()
+    with _lock, _connect() as conn:
+        msgs = conn.execute(
+            "DELETE FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).rowcount
+        facts = conn.execute(
+            "DELETE FROM agent_facts WHERE conversation_id = ?",
+            (conversation_id,),
+        ).rowcount
+        # Bump updated_at so the UI can detect the clear via list_conversations.
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (_now(), conversation_id),
+        )
+    return {"messages": int(msgs or 0), "facts": int(facts or 0)}
+
+
 # ── messages ─────────────────────────────────────────────────────────────────
 
 def append_message(conversation_id: str, role: str, content: str) -> Dict[str, Any]:

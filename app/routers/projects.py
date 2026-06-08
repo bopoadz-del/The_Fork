@@ -120,6 +120,51 @@ async def delete_project(project_id: str, auth: dict = Depends(require_user)):
     }
 
 
+@router.post("/v1/projects/{project_id}/conversations/{conversation_id}/clear")
+async def clear_project_conversation(
+    project_id: str,
+    conversation_id: str,
+    auth: dict = Depends(require_user),
+):
+    """Wipe one conversation's messages + facts without deleting the
+    conversation row. Lets the operator escape a thread poisoned by
+    prior hallucinated tool-skip / fabricated-table turns without
+    creating a new project.
+
+    Owner-only. Cross-project conversation IDs are rejected with 404 to
+    avoid info-leak via timing.
+    """
+    _owned_or_404(project_id, auth["user_id"])
+    from app.core import agent_memory
+
+    # Workspace conversation IDs are deterministic (ws-{project_id}).
+    # Reject any other workspace prefix that doesn't match this project
+    # before we let the call near agent_memory.
+    if conversation_id.startswith("ws-") and conversation_id != f"ws-{project_id}":
+        raise HTTPException(404, "Conversation not found")
+
+    # For non-workspace conversation IDs, confirm the stored row (if any)
+    # belongs to this project.
+    conv = agent_memory.get_conversation(conversation_id)
+    if conv is not None and conv.get("project_id") not in (None, "", project_id):
+        raise HTTPException(404, "Conversation not found")
+
+    cleared = agent_memory.clear_conversation(conversation_id)
+    audit.record(
+        "conversation.cleared",
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_id=auth["user_id"],
+        messages=cleared["messages"],
+        facts=cleared["facts"],
+    )
+    return {
+        "status": "cleared",
+        "conversation_id": conversation_id,
+        **cleared,
+    }
+
+
 @router.post("/v1/projects/{project_id}/connectors/aconex")
 async def connect_aconex(
     project_id: str, req: ConnectorRequest, auth: dict = Depends(require_user)
