@@ -25,6 +25,8 @@ interface DocumentRecord {
   doc_role?: string
   size?: number
   uploaded_at?: string
+  /** Number of chunks the indexer stored for this doc. 0 = extraction failed. */
+  chunk_count?: number
 }
 
 interface DriveFile {
@@ -85,6 +87,43 @@ function formatDate(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function formatRelativeDate(iso: string): string {
+  try {
+    const ts = new Date(iso).getTime()
+    if (Number.isNaN(ts)) return iso
+    const diffSec = Math.round((Date.now() - ts) / 1000)
+    if (diffSec < 60) return 'just now'
+    const diffMin = Math.round(diffSec / 60)
+    if (diffMin < 60) return `${diffMin} min ago`
+    const diffHr = Math.round(diffMin / 60)
+    if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? '' : 's'} ago`
+    const diffDay = Math.round(diffHr / 24)
+    if (diffDay < 7) return `${diffDay} day${diffDay === 1 ? '' : 's'} ago`
+    if (diffDay < 30) {
+      const w = Math.round(diffDay / 7)
+      return `${w} week${w === 1 ? '' : 's'} ago`
+    }
+    return formatDate(iso)
+  } catch {
+    return iso
+  }
+}
+
+/**
+ * Classify a filename into a coarse type for the document badge.
+ * Returns null for unknown — caller should fall back to ``doc_type`` from the
+ * server or render no badge.
+ */
+function fileTypeBadge(filename: string): { label: string; kind: 'pdf' | 'docx' | 'xlsx' | 'image' | 'text' } | null {
+  const ext = filename.toLowerCase().split('.').pop() || ''
+  if (ext === 'pdf') return { label: 'PDF', kind: 'pdf' }
+  if (ext === 'docx' || ext === 'doc') return { label: 'DOCX', kind: 'docx' }
+  if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') return { label: ext.toUpperCase(), kind: 'xlsx' }
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'tif', 'tiff', 'bmp'].includes(ext)) return { label: ext.toUpperCase(), kind: 'image' }
+  if (['txt', 'md', 'json', 'xml'].includes(ext)) return { label: ext.toUpperCase(), kind: 'text' }
+  return null
 }
 
 function formatSize(bytes: number): string {
@@ -629,40 +668,60 @@ function DocumentsPanel({
         </div>
       ) : (
         <ul className="doc-list" aria-label="Project documents">
-          {documents.map((doc) => (
-            <li key={doc.id} className="doc-row">
-              <div className="doc-row__main">
-                <span className="doc-row__name" title={doc.original_name}>
-                  {doc.original_name}
-                </span>
-                <span className="doc-row__meta">
-                  {doc.doc_type && (
-                    <span className="doc-tag">{doc.doc_type}</span>
+          {documents.map((doc) => {
+            const typeBadge = fileTypeBadge(doc.original_name)
+            const notIndexed = doc.chunk_count === 0
+            return (
+              <li key={doc.id} className="doc-row">
+                <div className="doc-row__main">
+                  <span className="doc-row__name" title={doc.original_name}>
+                    {doc.original_name}
+                  </span>
+                  <span className="doc-row__meta">
+                    {notIndexed ? (
+                      <span
+                        className="doc-tag doc-tag--not-indexed"
+                        title="Extraction returned no usable text; the assistant cannot read this document"
+                      >
+                        Not indexed
+                      </span>
+                    ) : typeBadge ? (
+                      <span className={`doc-tag doc-tag--type doc-tag--type-${typeBadge.kind}`}>
+                        {typeBadge.label}
+                      </span>
+                    ) : doc.doc_type ? (
+                      <span className="doc-tag">{doc.doc_type}</span>
+                    ) : null}
+                    {doc.doc_role && doc.doc_role !== 'other' && (
+                      <span className="doc-tag doc-tag--role">{doc.doc_role.replace('_', ' ')}</span>
+                    )}
+                  </span>
+                </div>
+                <div className="doc-row__data">
+                  {doc.size != null && (
+                    <span className="mono doc-row__size">{formatSize(doc.size)}</span>
                   )}
-                  {doc.doc_role && doc.doc_role !== 'other' && (
-                    <span className="doc-tag doc-tag--role">{doc.doc_role.replace('_', ' ')}</span>
+                  {doc.uploaded_at && (
+                    <span
+                      className="doc-row__date"
+                      title={formatDate(doc.uploaded_at)}
+                    >
+                      {formatRelativeDate(doc.uploaded_at)}
+                    </span>
                   )}
-                </span>
-              </div>
-              <div className="doc-row__data">
-                {doc.size != null && (
-                  <span className="mono doc-row__size">{formatSize(doc.size)}</span>
-                )}
-                {doc.uploaded_at && (
-                  <span className="mono doc-row__date">{formatDate(doc.uploaded_at)}</span>
-                )}
-                <button
-                  type="button"
-                  className="doc-row__delete"
-                  aria-label={`Delete ${doc.original_name}`}
-                  disabled={deletingId === doc.id}
-                  onClick={() => void handleDeleteDirect(doc)}
-                >
-                  {deletingId === doc.id ? '…' : '×'}
-                </button>
-              </div>
-            </li>
-          ))}
+                  <button
+                    type="button"
+                    className="doc-row__delete"
+                    aria-label={`Delete ${doc.original_name}`}
+                    disabled={deletingId === doc.id}
+                    onClick={() => void handleDeleteDirect(doc)}
+                  >
+                    {deletingId === doc.id ? '…' : '×'}
+                  </button>
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
 

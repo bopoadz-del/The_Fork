@@ -286,6 +286,51 @@
   border-color: rgba(30, 95, 168, 0.15);
 }
 
+.doc-tag--type {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.doc-tag--type-pdf {
+  background: rgba(185, 28, 28, 0.10);
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.25);
+}
+
+.doc-tag--type-docx {
+  background: rgba(37, 99, 235, 0.10);
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.25);
+}
+
+.doc-tag--type-xlsx {
+  background: rgba(20, 128, 60, 0.10);
+  color: #14803c;
+  border-color: rgba(20, 128, 60, 0.25);
+}
+
+.doc-tag--type-image {
+  background: rgba(217, 119, 6, 0.10);
+  color: #b45309;
+  border-color: rgba(217, 119, 6, 0.25);
+}
+
+.doc-tag--type-text {
+  background: rgba(75, 85, 99, 0.10);
+  color: #4b5563;
+  border-color: rgba(75, 85, 99, 0.25);
+}
+
+.doc-tag--not-indexed {
+  background: rgba(185, 28, 28, 0.10);
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.28);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: help;
+}
+
 .doc-row__data {
   display: flex;
   align-items: center;

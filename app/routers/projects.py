@@ -92,8 +92,27 @@ async def list_projects(auth: dict = Depends(require_user)):
 
 @router.get("/v1/projects/{project_id}")
 async def get_project(project_id: str, auth: dict = Depends(require_user)):
-    """Project detail — documents + the computed readiness gate."""
+    """Project detail — documents + the computed readiness gate.
+
+    Documents are enriched with ``chunk_count`` so the frontend can render
+    a "Not indexed" badge for docs the extractor failed on (count == 0)
+    without making N extra round-trips.
+    """
     proj = _owned_or_404(project_id, auth["user_id"])
+    try:
+        from app.core import doc_index as _doc_index
+        index = _doc_index._load_index(project_id)  # noqa: SLF001 — internal use
+        chunk_counts: dict[str, int] = {}
+        if index and isinstance(index.get("documents"), list):
+            for entry in index["documents"]:
+                doc_id = entry.get("document_id")
+                if doc_id:
+                    chunk_counts[doc_id] = len(entry.get("chunks", []))
+        for doc in proj.get("documents", []) or []:
+            doc["chunk_count"] = chunk_counts.get(doc.get("id"), 0)
+    except Exception:
+        # Enrichment is best-effort — never break the project load on it.
+        pass
     return proj
 
 
