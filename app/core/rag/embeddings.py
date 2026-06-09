@@ -24,13 +24,18 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# MiniLM's hidden size. Hardcoded because the fake-embedder mode needs
-# the same dim and changing the model is a separate decision.
+# MiniLM's hidden size. The fake-embedder mode and sentence-transformers
+# path both use this. model2vec/potion-base-8M produces 256-dim vectors
+# instead; the Embedder reports its actual dim via .dim so the vector
+# store initializes with the matching size.
 EMBEDDING_DIM = 384
+EMBEDDING_DIM_MODEL2VEC = 256
 
-# Default model — the only "real" one we promise to support. Other
-# sentence-transformers models work too but aren't tested.
+# Default model — the only "real" sentence-transformers one we promise
+# to support. When sentence-transformers is missing but model2vec is
+# installed (the slim production image case), we use model2vec instead.
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_MODEL2VEC = "minishlab/potion-base-8M"
 
 
 # ── Module-level cache ────────────────────────────────────────────────────
@@ -63,57 +68,118 @@ def reset_embedder_cache() -> None:
 
 
 class Embedder:
-    """Wraps a sentence-transformers model (or the fake mode for tests).
+    """Wraps a real semantic embedding model (or fake mode for tests).
+
+    Backend resolution order (lazy, first hit wins):
+
+    1. fake — when ``model_name="fake"``. Deterministic, no model load.
+    2. sentence-transformers — when installed (requirements-rag.txt).
+       Produces 384-dim MiniLM vectors. Adds ~1.5 GB of torch deps to
+       the image; not in the slim production build.
+    3. model2vec — when installed (requirements.txt baseline). Produces
+       256-dim potion-base-8M vectors. ~80 MB, no torch. This is the
+       production path on the slim Render image.
+    4. raises RuntimeError if none of the above is available.
 
     Public surface:
 
-    * :attr:`dim` — vector dimension (384)
+    * :attr:`dim` — vector dimension (384 for fake / sentence-transformers,
+      256 for model2vec). Inspect AFTER construction so the vector store
+      can size itself to the actual backend.
     * :meth:`encode(texts)` — returns L2-normalized ``np.ndarray`` of shape
       ``(len(texts), dim)``. Normalization is on so cosine similarity is a
       pure dot product downstream.
-    * :meth:`available` (static) — True when sentence-transformers is
-      importable. Always True for fake mode.
+    * :meth:`available` (static) — True when ANY real backend is
+      importable (sentence-transformers OR model2vec). Always True for
+      fake mode.
     """
 
     def __init__(self, model_name: str = DEFAULT_MODEL):
         self.model_name = model_name
         self._fake = (model_name == "fake")
-        self._model = None  # lazy-loaded on first encode for real models
-        if not self._fake and not self.available():
+        self._model = None
+        self._backend: Optional[str] = None  # "fake" | "sentence_transformers" | "model2vec"
+        self._dim: int = EMBEDDING_DIM
+        if self._fake:
+            self._backend = "fake"
+            self._dim = EMBEDDING_DIM
+            return
+        # Backend selection at construction time so .dim is stable.
+        if _has_sentence_transformers():
+            self._backend = "sentence_transformers"
+            self._dim = EMBEDDING_DIM
+        elif _has_model2vec():
+            self._backend = "model2vec"
+            self._dim = EMBEDDING_DIM_MODEL2VEC
+        else:
             raise RuntimeError(
-                "sentence-transformers is not installed. Install with "
-                "`pip install -r requirements-rag.txt` or pass model_name='fake'."
+                "No semantic embedding backend available. Install "
+                "sentence-transformers (requirements-rag.txt) OR model2vec "
+                "(in baseline requirements.txt) -- or pass model_name='fake'."
             )
 
     @staticmethod
     def available() -> bool:
-        """True when the real embedding stack can be loaded."""
-        try:
-            import sentence_transformers  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        """True when ANY real embedding backend can be loaded."""
+        return _has_sentence_transformers() or _has_model2vec()
 
     @property
     def dim(self) -> int:
-        return EMBEDDING_DIM
+        return self._dim
+
+    @property
+    def backend(self) -> Optional[str]:
+        return self._backend
 
     def encode(self, texts: List[str]) -> np.ndarray:
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
-        if self._fake:
+        if self._backend == "fake":
             return np.array([_fake_embedding(t) for t in texts], dtype=np.float32)
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            logger.info("Loading embedding model: %s", self.model_name)
-            self._model = SentenceTransformer(self.model_name)
-        vecs = self._model.encode(
-            texts,
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-            show_progress_bar=False,
-        )
+            self._load_model()
+        if self._backend == "sentence_transformers":
+            vecs = self._model.encode(
+                texts,
+                normalize_embeddings=True,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            )
+        else:  # model2vec
+            vecs = self._model.encode(texts)
+            # model2vec doesn't normalize by default — do it here so cosine
+            # similarity stays a pure dot product downstream.
+            arr = np.asarray(vecs, dtype=np.float32)
+            norms = np.linalg.norm(arr, axis=1, keepdims=True)
+            norms = np.where(norms == 0, 1.0, norms)
+            return (arr / norms).astype(np.float32)
         return vecs.astype(np.float32)
+
+    def _load_model(self) -> None:
+        if self._backend == "sentence_transformers":
+            from sentence_transformers import SentenceTransformer
+            logger.info("Loading sentence-transformers model: %s", self.model_name)
+            self._model = SentenceTransformer(self.model_name)
+        elif self._backend == "model2vec":
+            from model2vec import StaticModel
+            logger.info("Loading model2vec model: %s", DEFAULT_MODEL2VEC)
+            self._model = StaticModel.from_pretrained(DEFAULT_MODEL2VEC)
+
+
+def _has_sentence_transformers() -> bool:
+    try:
+        import sentence_transformers  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _has_model2vec() -> bool:
+    try:
+        import model2vec  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def _fake_embedding(text: str) -> np.ndarray:
