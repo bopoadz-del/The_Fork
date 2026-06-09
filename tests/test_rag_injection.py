@@ -203,3 +203,128 @@ def test_token_cap_keeps_all_when_under_budget(monkeypatch):
     ]
     kept, total_tokens = apply_token_cap(chunks)
     assert len(kept) == 3
+
+
+def test_rag_inject_returns_none_when_below_threshold(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
+
+    def fake_retrieve(query, project_id, k):
+        from app.core.rag.vector_store import Chunk
+        return ([
+            Chunk(chunk_id="c1", project_id=project_id, doc_id="d1",
+                  chunk_index=0, text="weak match", score=0.30),
+        ], 0)
+
+    monkeypatch.setattr("app.core.rag.inject.retrieve_with_filter", fake_retrieve)
+    from app.core.rag.inject import rag_inject
+
+    sys_msg, audit_rec = rag_inject(
+        user_message="hello",
+        project_id="p1",
+        conversation_id="c1",
+        user_id="u1",
+        agent_name="project-assistant",
+    )
+    assert sys_msg is None
+    assert audit_rec["threshold_fired"] is True
+    assert audit_rec["injected_k"] == 0
+    assert audit_rec["budget_degraded"] is False
+
+
+def test_rag_inject_returns_system_message_when_confident(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
+    monkeypatch.setenv("MAX_RAG_TOKENS", "1500")
+
+    def fake_retrieve(query, project_id, k):
+        from app.core.rag.vector_store import Chunk
+        return ([
+            Chunk(chunk_id="c1", project_id=project_id, doc_id="d1",
+                  chunk_index=0, text="strong match content", score=0.80),
+            Chunk(chunk_id="c2", project_id=project_id, doc_id="d1",
+                  chunk_index=1, text="second chunk content",  score=0.60),
+        ], 0)
+
+    monkeypatch.setattr("app.core.rag.inject.retrieve_with_filter", fake_retrieve)
+    from app.core.rag.inject import rag_inject
+
+    sys_msg, audit_rec = rag_inject(
+        user_message="data center cooling architecture?",
+        project_id="p1",
+        conversation_id="c1",
+        user_id="u1",
+        agent_name="project-assistant",
+    )
+    assert sys_msg is not None and sys_msg["role"] == "system"
+    assert "strong match" in sys_msg["content"]
+    assert audit_rec["injected_k"] == 2
+    assert audit_rec["threshold_fired"] is False
+    assert audit_rec["top_score"] == 0.80
+    assert audit_rec["budget_degraded"] is False
+    assert audit_rec["budget_remaining"] >= 0
+
+
+def test_rag_inject_degrades_to_k2_when_budget_exhausted(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_DAILY_TOKEN_BUDGET", "100")
+    monkeypatch.setenv("RAG_K", "5")
+    monkeypatch.setenv("MAX_RAG_TOKENS", "10000")  # don't let cap interfere
+    monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.0")
+
+    # Burn the budget first.
+    from app.core.rag import budget
+    import datetime as _dt
+    today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+    budget.consume(day=today, tokens=100)  # consumed == 100 == budget
+
+    seen_k = {"value": None}
+    def fake_retrieve(query, project_id, k):
+        seen_k["value"] = k
+        from app.core.rag.vector_store import Chunk
+        return ([
+            Chunk(chunk_id=f"c{i}", project_id=project_id, doc_id="d1",
+                  chunk_index=i, text="x", score=0.9)
+            for i in range(k)
+        ], 0)
+
+    monkeypatch.setattr("app.core.rag.inject.retrieve_with_filter", fake_retrieve)
+    from app.core.rag.inject import rag_inject
+
+    sys_msg, audit_rec = rag_inject(
+        user_message="any",
+        project_id="p1",
+        conversation_id="c1",
+        user_id="u1",
+        agent_name="project-assistant",
+    )
+    assert seen_k["value"] == 2  # K degraded to 2
+    assert audit_rec["budget_degraded"] is True
+
+
+def test_rag_inject_skips_for_non_project_assistant_agent(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.core.rag.inject import rag_inject
+    sys_msg, audit_rec = rag_inject(
+        user_message="hi",
+        project_id="p1",
+        conversation_id="c1",
+        user_id="u1",
+        agent_name="heavy-reasoning",
+    )
+    assert sys_msg is None
+    assert audit_rec == {}
+
+
+def test_rag_inject_skips_when_project_id_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.core.rag.inject import rag_inject
+    sys_msg, audit_rec = rag_inject(
+        user_message="hi",
+        project_id=None,
+        conversation_id=None,
+        user_id="u1",
+        agent_name="project-assistant",
+    )
+    assert sys_msg is None
+    assert audit_rec == {}
