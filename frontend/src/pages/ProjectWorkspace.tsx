@@ -101,6 +101,44 @@ function msgId(): string {
   return Math.random().toString(36).slice(2)
 }
 
+/**
+ * Map raw exception text (Python tracebacks, fetch errors, HTTP status strings)
+ * to a single user-safe sentence. We never want to show "Errno -2", stack
+ * traces, or "HTTP 502" verbatim — the operator sees that in logs; users see
+ * the friendly version.
+ */
+function friendlyErrorMessage(raw: string): string {
+  const r = raw.toLowerCase()
+  if (
+    r.includes('errno -2') ||
+    r.includes('errno -3') ||
+    r.includes('name or service not known') ||
+    r.includes('getaddrinfo') ||
+    r.includes('connection refused') ||
+    r.includes('connection error') ||
+    r.includes('502') ||
+    r.includes('503') ||
+    r.includes('504') ||
+    r.includes('failed to fetch') ||
+    r.includes('llm call failed')
+  ) {
+    return 'The assistant is temporarily unavailable. Please try again in a moment.'
+  }
+  if (r.includes('timeout') || r.includes('timed out') || r.includes('etimedout')) {
+    return 'The assistant took too long to respond. Please try again.'
+  }
+  if (r.includes('429') || r.includes('rate limit')) {
+    return 'Too many requests right now. Please wait a moment and try again.'
+  }
+  if (r.includes('401') || r.includes('unauthorized') || r.includes('403')) {
+    return 'Your session has expired. Please refresh the page and sign in again.'
+  }
+  if (r.includes('aborterror') || r.includes('aborted')) {
+    return 'Request was cancelled.'
+  }
+  return 'Something went wrong. Please try again.'
+}
+
 // ── ChatMessage bubble ─────────────────────────────────────────────────────
 
 interface ChatMessageBubbleProps {
@@ -112,7 +150,25 @@ function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
   if (message.error) {
     return (
       <div className="chat-error-bubble" role="alert">
-        {message.content || 'An error occurred. Please try again.'}
+        <svg
+          className="chat-error-bubble__icon"
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <span className="chat-error-bubble__text">
+          {message.content || 'Something went wrong. Please try again.'}
+        </span>
       </div>
     )
   }
@@ -911,12 +967,13 @@ export default function ProjectWorkspace() {
       content: m.content,
     }))
 
-    // Append user message + empty streaming assistant bubble
+    // Append user message + empty streaming assistant bubble.
+    // Drop any stale error bubbles from a prior turn so they don't linger.
     const userMsgId = msgId()
     const assistantMsgId = msgId()
 
     setMessages((prev) => [
-      ...prev,
+      ...prev.filter((m) => !m.error),
       { id: userMsgId, role: 'user', content: userText },
       { id: assistantMsgId, role: 'assistant', content: '', streaming: true },
     ])
@@ -1067,17 +1124,21 @@ export default function ProjectWorkspace() {
                 )
               )
             } else if (evtType === 'error') {
-              const errMsg =
+              const rawMsg =
                 typeof evt['message'] === 'string'
                   ? evt['message']
-                  : 'An error occurred during streaming.'
+                  : 'stream error'
+              const friendly = friendlyErrorMessage(rawMsg)
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantMsgId
-                    ? { ...m, content: errMsg, streaming: false, error: true, toolStatus: undefined }
+                    ? { ...m, content: friendly, streaming: false, error: true, toolStatus: undefined }
                     : m
                 )
               )
+              setTimeout(() => {
+                setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
+              }, 8000)
             }
           }
         }
@@ -1103,14 +1164,18 @@ export default function ProjectWorkspace() {
         )
         return
       }
-      const errMsg = err instanceof Error ? err.message : 'Stream failed.'
+      const rawMsg = err instanceof Error ? err.message : 'stream failed'
+      const friendly = friendlyErrorMessage(rawMsg)
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId
-            ? { ...m, content: errMsg, streaming: false, error: true, toolStatus: undefined }
+            ? { ...m, content: friendly, streaming: false, error: true, toolStatus: undefined }
             : m
         )
       )
+      setTimeout(() => {
+        setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
+      }, 8000)
     } finally {
       setStreaming(false)
     }
