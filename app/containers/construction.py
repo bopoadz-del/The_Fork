@@ -250,6 +250,11 @@ class ConstructionContainer(UniversalContainer):
 
         merged = dict(params or {})
         data = input_data if isinstance(input_data, dict) else {}
+        # RAG default: ON. The chat block will retrieve from this
+        # project's index unless the caller has explicitly set use_rag.
+        if "use_rag" not in merged and not (isinstance(input_data, dict)
+                                            and "use_rag" in input_data):
+            merged["use_rag"] = True
         caller_supplied_prompt = (
             merged.get("system_prompt")
             or merged.get("system_prompt_file")

@@ -86,3 +86,24 @@ async def test_construction_route_chat_delegates(container_and_chat):
     assert fake_chat.called is True
     # EVM injection still happens via the route path.
     assert fake_chat.captured_params.get("system_prompt_file") == "construction_evm.md"
+
+
+@pytest.mark.asyncio
+async def test_construction_container_defaults_use_rag_true(monkeypatch):
+    """Caller doesn't pass use_rag; container must default it to True so
+    chat block invokes retrieval."""
+    from app.containers.construction import ConstructionContainer
+
+    container = ConstructionContainer()
+    captured_params = {}
+
+    class _FakeChatBlock:
+        async def process(self, input_data, params):
+            captured_params.update(params)
+            return {"status": "success", "text": "ok"}
+
+    monkeypatch.setattr(container, "_resolve_block",
+                        lambda name: _FakeChatBlock() if name == "chat" else None)
+
+    await container.chat({"text": "hi"}, {"project_id": "p1"})
+    assert captured_params.get("use_rag") is True
