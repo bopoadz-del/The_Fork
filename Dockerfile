@@ -10,9 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY requirements.txt requirements-rag.txt ./
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-rag.txt
 
 # Frontend stage: build the React SPA. VITE_API_BASE='' makes the app talk to
 # the same origin it was served from, so a single Render service is enough.
