@@ -24,6 +24,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 import httpx
 
 from app.blocks import BLOCK_REGISTRY
+from app.core.rag.inject import rag_inject
 from app.dependencies import block_instances, _create_block_instance
 
 
@@ -564,6 +565,21 @@ class Agent:
         effective_history = _scrub_history(effective_history)
 
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
+        # Pre-iter-0 RAG injection. project-assistant only; returns None for
+        # other agents or when project_id is absent. Adds a system message
+        # AFTER the prompt + project context but BEFORE the latest user turn.
+        _rag_sys_msg, _rag_audit = rag_inject(
+            user_message=user_message,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            agent_name=self.name,
+        )
+        if _rag_sys_msg and _rag_sys_msg.get("content"):
+            # Insert just before the last user message (which is always last
+            # after _build_messages). Index = len(messages) - 1.
+            insert_at = max(0, len(messages) - 1)
+            messages.insert(insert_at, _rag_sys_msg)
         tool_calls_made: List[Dict[str, Any]] = []
 
         for iteration in range(MAX_TOOL_ITERATIONS):
@@ -749,6 +765,21 @@ class Agent:
         effective_history = _scrub_history(effective_history)
 
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
+        # Pre-iter-0 RAG injection. project-assistant only; returns None for
+        # other agents or when project_id is absent. Adds a system message
+        # AFTER the prompt + project context but BEFORE the latest user turn.
+        _rag_sys_msg, _rag_audit = rag_inject(
+            user_message=user_message,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            agent_name=self.name,
+        )
+        if _rag_sys_msg and _rag_sys_msg.get("content"):
+            # Insert just before the last user message (which is always last
+            # after _build_messages). Index = len(messages) - 1.
+            insert_at = max(0, len(messages) - 1)
+            messages.insert(insert_at, _rag_sys_msg)
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             resp = await self._call_llm(messages, api_key, project_id=project_id, user_id=user_id)

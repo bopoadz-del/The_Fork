@@ -328,3 +328,64 @@ def test_rag_inject_skips_when_project_id_missing(monkeypatch, tmp_path):
     )
     assert sys_msg is None
     assert audit_rec == {}
+
+
+def test_chat_stream_injects_rag_system_message_for_project_assistant(monkeypatch, tmp_path):
+    """When agent_name == project-assistant + project_id provided +
+    rag_inject returns a system message, the runtime must inject it
+    AFTER the existing system prompt and BEFORE the user message."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MAX_RAG_TOKENS", "1500")
+    monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+
+    captured = {}
+
+    def fake_inject(user_message, project_id, conversation_id, user_id, agent_name):
+        captured["args"] = (user_message, project_id, agent_name)
+        return ({"role": "system", "content": "INJECTED_CONTEXT"}, {"injected_k": 1})
+
+    monkeypatch.setattr("app.agents.runtime.rag_inject", fake_inject)
+
+    # Intercept _call_llm so we see the messages list that goes to the model.
+    seen_messages = {"value": None}
+
+    async def fake_call_llm(self, messages, api_key=None, **kwargs):
+        seen_messages["value"] = messages
+        return {
+            "status": "success",
+            "choice": {"message": {"content": "ok", "tool_calls": []}},
+            "raw": {},
+        }
+
+    from app.agents import runtime
+    monkeypatch.setattr(runtime.Agent, "_call_llm", fake_call_llm)
+
+    import asyncio
+    agent = runtime.Agent(
+        name="project-assistant",
+        description="test",
+        system_prompt="you are project-assistant",
+        allowed_blocks=[],
+    )
+
+    async def collect():
+        events = []
+        async for ev in agent.chat_stream(
+            user_message="how big is the IT load?",
+            project_id="p1",
+            conversation_id=None,
+            user_id="u1",
+        ):
+            events.append(ev)
+        return events
+
+    events = asyncio.run(collect())
+    # The fake_inject was called with the user's question.
+    assert captured["args"][0] == "how big is the IT load?"
+    # The runtime passed the injected system message into _call_llm.
+    msgs = seen_messages["value"]
+    contents = [m.get("content", "") for m in msgs]
+    assert any("INJECTED_CONTEXT" in c for c in contents)
+
