@@ -91,10 +91,38 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function readinessDisplay(r: ProjectReadiness): { label: string; ready: boolean } {
-  if (typeof r.label === 'string' && r.label) return { label: r.label, ready: r.ready }
-  if (typeof r.status === 'string' && r.status) return { label: r.status, ready: r.ready }
-  return { label: r.ready ? 'Ready' : 'Not ready', ready: r.ready }
+/**
+ * Combined readiness + LLM-availability state used by the rail badge and the
+ * composer send-button. Three mutually-exclusive modes:
+ *   setting-up    — project still indexing, no chat allowed
+ *   ai-unavailable — project ready but last LLM call failed
+ *   ready         — green light, send enabled
+ */
+type ReadinessMode = 'setting-up' | 'ai-unavailable' | 'ready'
+
+function readinessMode(
+  readiness: ProjectReadiness | null | undefined,
+  llmAvailable: boolean,
+): ReadinessMode {
+  if (!readiness || !readiness.ready) return 'setting-up'
+  if (!llmAvailable) return 'ai-unavailable'
+  return 'ready'
+}
+
+function readinessModeLabel(mode: ReadinessMode): string {
+  switch (mode) {
+    case 'setting-up': return 'Setting up...'
+    case 'ai-unavailable': return 'AI unavailable'
+    case 'ready': return 'Ready'
+  }
+}
+
+function readinessModeTooltip(mode: ReadinessMode): string {
+  switch (mode) {
+    case 'setting-up': return 'Project is indexing documents. Chat will be available shortly.'
+    case 'ai-unavailable': return 'The assistant is temporarily unreachable. Sending will retry once it recovers.'
+    case 'ready': return ''
+  }
 }
 
 function msgId(): string {
@@ -212,13 +240,15 @@ function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
 interface ChatComposerProps {
   onSend: (text: string) => void
   disabled: boolean
+  /** Tooltip shown on the send button when disabled by external state (not just empty text) */
+  disabledReason?: string
   projectId: string
   onAttached?: (docName: string) => void
   onClear?: () => void
   hasHistory?: boolean
 }
 
-function ChatComposer({ onSend, disabled, projectId, onAttached, onClear, hasHistory }: ChatComposerProps) {
+function ChatComposer({ onSend, disabled, disabledReason, projectId, onAttached, onClear, hasHistory }: ChatComposerProps) {
   const [text, setText] = useState('')
   const [uploading, setUploading] = useState(false)
   const [attachStatus, setAttachStatus] = useState<string | null>(null)
@@ -401,6 +431,7 @@ function ChatComposer({ onSend, disabled, projectId, onAttached, onClear, hasHis
           onClick={submit}
           disabled={disabled || !text.trim()}
           aria-label="Send message"
+          title={disabled && disabledReason ? disabledReason : undefined}
         >
           ↑
         </button>
@@ -776,14 +807,14 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
 interface RailProps {
   project: ProjectDetail
   documents: DocumentRecord[]
+  readinessMode: ReadinessMode
   onDocumentAdded: (doc: DocumentRecord) => void
   onDocumentRemoved: (docId: string) => void
 }
 
-function WorkspaceRail({ project, documents, onDocumentAdded, onDocumentRemoved }: RailProps) {
-  const readiness = project.readiness
-    ? readinessDisplay(project.readiness as ProjectReadiness)
-    : null
+function WorkspaceRail({ project, documents, readinessMode: mode, onDocumentAdded, onDocumentRemoved }: RailProps) {
+  const modeLabel = readinessModeLabel(mode)
+  const tooltip = readinessModeTooltip(mode)
 
   return (
     <aside className="workspace-rail" aria-label="Project details">
@@ -818,16 +849,17 @@ function WorkspaceRail({ project, documents, onDocumentAdded, onDocumentRemoved 
           <span className="rail-meta-value mono">{project.id}</span>
         </div>
 
-        {readiness && (
-          <div className="rail-meta-row">
-            <span className="rail-meta-label">Readiness</span>
-            <span
-              className={`readiness-badge ${readiness.ready ? 'readiness-badge--ready' : 'readiness-badge--not-ready'}`}
-            >
-              {readiness.label}
-            </span>
-          </div>
-        )}
+        <div className="rail-meta-row">
+          <span className="rail-meta-label">Readiness</span>
+          <span
+            className={`readiness-badge readiness-badge--${mode}`}
+            title={tooltip || undefined}
+            aria-label={tooltip ? `${modeLabel}. ${tooltip}` : modeLabel}
+          >
+            <span className="readiness-badge__dot" aria-hidden="true" />
+            {modeLabel}
+          </span>
+        </div>
       </div>
 
       {/* Documents — B5 */}
@@ -873,6 +905,9 @@ export default function ProjectWorkspace() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
+  // LLM availability — flipped false when a stream errors, true again once a
+  // stream completes cleanly. Drives the rail badge's "AI unavailable" state.
+  const [llmAvailable, setLlmAvailable] = useState(true)
 
   // Stable conversation id tied to this project — persists across page reloads
   // so the backend agent memory carries context forward.
@@ -1123,6 +1158,7 @@ export default function ProjectWorkspace() {
                     : m
                 )
               )
+              setLlmAvailable(true)
             } else if (evtType === 'error') {
               const rawMsg =
                 typeof evt['message'] === 'string'
@@ -1136,6 +1172,7 @@ export default function ProjectWorkspace() {
                     : m
                 )
               )
+              setLlmAvailable(false)
               setTimeout(() => {
                 setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
               }, 8000)
@@ -1173,6 +1210,7 @@ export default function ProjectWorkspace() {
             : m
         )
       )
+      setLlmAvailable(false)
       setTimeout(() => {
         setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
       }, 8000)
@@ -1239,6 +1277,8 @@ export default function ProjectWorkspace() {
   }
 
   const { project } = wsState
+  const mode = readinessMode(project.readiness, llmAvailable)
+  const composerBlockedReason = readinessModeTooltip(mode) || undefined
 
   return (
     <div className="workspace-shell">
@@ -1250,7 +1290,8 @@ export default function ProjectWorkspace() {
           <ChatThread messages={messages} />
           <ChatComposer
             onSend={(text) => void handleSend(text)}
-            disabled={streaming}
+            disabled={streaming || mode !== 'ready'}
+            disabledReason={composerBlockedReason}
             projectId={id ?? ''}
             hasHistory={messages.length > 0}
             onClear={async () => {
@@ -1287,6 +1328,7 @@ export default function ProjectWorkspace() {
         <WorkspaceRail
           project={project}
           documents={documents}
+          readinessMode={mode}
           onDocumentAdded={handleDocumentAdded}
           onDocumentRemoved={handleDocumentRemoved}
         />
