@@ -217,13 +217,41 @@ function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
         </div>
         {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
           <details className="chat-message__sources">
-            <summary>Sources ({message.sources.length})</summary>
-            <ul>
+            <summary className="chat-message__sources-summary">
+              <span className="chat-message__sources-chevron" aria-hidden="true" />
+              Sources ({message.sources.length})
+            </summary>
+            <ul className="chat-message__sources-list">
               {message.sources.map((s, i) => (
-                <li key={i}>
-                  <span className="chat-message__sources-name">{s.doc_name || s.doc_id}</span>
-                  <span className="chat-message__sources-meta">
-                    {s.page_or_section} . score {s.score.toFixed(2)} . {s.confidence}
+                <li key={i} className="chat-message__sources-row">
+                  <span className="chat-message__sources-doc">
+                    <svg
+                      className="chat-message__sources-icon"
+                      viewBox="0 0 24 24"
+                      width="14"
+                      height="14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                    <span className="chat-message__sources-name" title={s.doc_name || s.doc_id}>
+                      {s.doc_name || s.doc_id}
+                    </span>
+                    {s.page_or_section && (
+                      <span className="chat-message__sources-loc">{s.page_or_section}</span>
+                    )}
+                  </span>
+                  <span className="chat-message__sources-tail">
+                    <span className="chat-message__sources-score">{s.score.toFixed(2)}</span>
+                    <span className={`chat-message__sources-badge chat-message__sources-badge--${s.confidence.toLowerCase()}`}>
+                      {s.confidence}
+                    </span>
                   </span>
                 </li>
               ))}
