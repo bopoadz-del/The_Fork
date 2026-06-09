@@ -446,13 +446,13 @@ function ChatComposer({ onSend, disabled, disabledReason, projectId, onAttached,
         >
           {recording ? 'Stop' : 'Voice'}
         </button>
-        {onClear && (
+        {onClear && hasHistory && (
           <button
             type="button"
             className="chat-composer__attach"
             title="Clear chat history (cannot be undone)"
             onClick={() => onClear()}
-            disabled={disabled || uploading || !hasHistory}
+            disabled={disabled || uploading}
             aria-label="Clear chat history"
           >
             Clear
@@ -464,7 +464,7 @@ function ChatComposer({ onSend, disabled, disabledReason, projectId, onAttached,
           value={text}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="Ask, attach a doc, take a photo, or hold the mic…"
+          placeholder="Ask about your project documents..."
           disabled={disabled}
           rows={1}
           aria-label="Chat message"
@@ -481,7 +481,7 @@ function ChatComposer({ onSend, disabled, disabledReason, projectId, onAttached,
         </button>
       </div>
       <p className="chat-composer__hint">
-        Enter to send · Shift+Enter for newline · attach, photo, voice via buttons
+        Enter to send &middot; Shift+Enter for new line
       </p>
     </div>
   )
