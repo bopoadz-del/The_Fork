@@ -57,6 +57,14 @@ interface ChatMessage {
   error?: boolean
   /** Transient tool-activity label shown while the agent is calling tools. Cleared on first token. */
   toolStatus?: string
+  /** Top retrieved sources, populated from the SSE 'end' event when RAG injection fired. */
+  sources?: Array<{
+    doc_id: string
+    doc_name: string
+    page_or_section: string
+    score: number
+    confidence: 'High' | 'Medium' | 'Low'
+  }>
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -123,6 +131,21 @@ function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
           {message.content}
           {message.streaming && <span className="chat-cursor" aria-hidden="true" />}
         </div>
+        {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
+          <details className="chat-message__sources">
+            <summary>Sources ({message.sources.length})</summary>
+            <ul>
+              {message.sources.map((s, i) => (
+                <li key={i}>
+                  <span className="chat-message__sources-name">{s.doc_name || s.doc_id}</span>
+                  <span className="chat-message__sources-meta">
+                    {s.page_or_section} . score {s.score.toFixed(2)} . {s.confidence}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
     </div>
   )
@@ -1035,10 +1058,11 @@ export default function ProjectWorkspace() {
               }
             } else if (evtType === 'end') {
               const finalContent = accumulatedContent
+              const rawSources = Array.isArray(evt['sources']) ? (evt['sources'] as ChatMessage['sources']) : []
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantMsgId
-                    ? { ...m, content: finalContent, streaming: false, toolStatus: undefined }
+                    ? { ...m, content: finalContent, streaming: false, toolStatus: undefined, sources: rawSources }
                     : m
                 )
               )
