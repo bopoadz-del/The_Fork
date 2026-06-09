@@ -850,6 +850,29 @@
 }
 
 /* Error bubble */
+/* ── Download button (assistant bubbles, post-stream) ── */
+.chat-message__download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-2, 8px);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-light, rgba(0, 0, 0, 0.10));
+  background: var(--surface-2, rgba(0, 0, 0, 0.02));
+  color: var(--text-subtle, #4b5563);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.chat-message__download:hover {
+  background: var(--accent-light, #eff6ff);
+  color: var(--accent, #2563eb);
+  border-color: var(--accent, #2563eb);
+}
+
 /* ── Sources footer (under assistant bubbles when RAG injected) ── */
 .chat-message__sources {
   margin-top: var(--space-3);

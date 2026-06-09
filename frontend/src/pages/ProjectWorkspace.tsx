@@ -212,9 +212,10 @@ function friendlyErrorMessage(raw: string): string {
 
 interface ChatMessageBubbleProps {
   message: ChatMessage
+  onDownload?: () => void
 }
 
-function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
+function ChatMessageBubble({ message, onDownload }: ChatMessageBubbleProps) {
   const isUser = message.role === 'user'
   if (message.error) {
     return (
@@ -270,6 +271,32 @@ function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
             </div>
           )}
         </div>
+        {message.role === 'assistant' && !message.streaming && message.content && onDownload && (
+          <button
+            type="button"
+            className="chat-message__download"
+            onClick={onDownload}
+            title="Download this message as a Word document"
+            aria-label="Download as Word document"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Download
+          </button>
+        )}
         {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
           <details className="chat-message__sources">
             <summary className="chat-message__sources-summary">
@@ -533,6 +560,7 @@ interface ChatThreadProps {
   documentCount: number
   onSuggestion: (text: string) => void
   suggestionsDisabled: boolean
+  onDownloadMessage?: (assistantIndex: number) => void
 }
 
 const EMPTY_SUGGESTIONS = [
@@ -541,7 +569,7 @@ const EMPTY_SUGGESTIONS = [
   'What are the main project risks?',
 ]
 
-function ChatThread({ messages, documentCount, onSuggestion, suggestionsDisabled }: ChatThreadProps) {
+function ChatThread({ messages, documentCount, onSuggestion, suggestionsDisabled, onDownloadMessage }: ChatThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -592,11 +620,24 @@ function ChatThread({ messages, documentCount, onSuggestion, suggestionsDisabled
     )
   }
 
+  // Build assistant-message index lookup (position within assistant messages
+  // only) so the download button can request the right one from the server.
+  let assistantSeen = 0
   return (
     <div className="chat-thread" role="log" aria-live="polite" aria-label="Conversation">
-      {messages.map((msg) => (
-        <ChatMessageBubble key={msg.id} message={msg} />
-      ))}
+      {messages.map((msg) => {
+        let downloadHandler: (() => void) | undefined
+        if (msg.role === 'assistant' && !msg.streaming && !msg.error && msg.content) {
+          const idx = assistantSeen
+          assistantSeen += 1
+          if (onDownloadMessage) {
+            downloadHandler = () => onDownloadMessage(idx)
+          }
+        } else if (msg.role === 'assistant') {
+          assistantSeen += 1
+        }
+        return <ChatMessageBubble key={msg.id} message={msg} onDownload={downloadHandler} />
+      })}
       <div ref={bottomRef} />
     </div>
   )
@@ -1434,6 +1475,34 @@ export default function ProjectWorkspace() {
             documentCount={documents.length}
             onSuggestion={(text) => void handleSend(text)}
             suggestionsDisabled={streaming || mode !== 'ready'}
+            onDownloadMessage={(assistantIndex) => {
+              if (!id || !conversationId) return
+              const token = getToken() || ''
+              const url = `${API_BASE}/v1/projects/${id}/conversations/${conversationId}/export?format=docx&message_index=${assistantIndex}`
+              void fetch(url, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+              })
+                .then(async (res) => {
+                  if (!res.ok) {
+                    const detail = await res.text().catch(() => '')
+                    alert(`Download failed (${res.status}): ${detail.slice(0, 200)}`)
+                    return
+                  }
+                  const blob = await res.blob()
+                  const a = document.createElement('a')
+                  const objUrl = URL.createObjectURL(blob)
+                  a.href = objUrl
+                  const cd = res.headers.get('Content-Disposition') || ''
+                  const m = /filename="?([^";]+)"?/.exec(cd)
+                  a.download = m?.[1] || `the-fork-${conversationId.slice(0, 8)}.docx`
+                  document.body.appendChild(a)
+                  a.click()
+                  a.remove()
+                  URL.revokeObjectURL(objUrl)
+                })
+                .catch((e) => alert(`Download error: ${(e as Error).message}`))
+            }}
           />
           <ChatComposer
             onSend={(text) => void handleSend(text)}
