@@ -152,3 +152,54 @@ def test_retrieve_drops_noise_before_top_k(monkeypatch):
     assert dropped == 1
     assert all("real" in c.text for c in chunks)
     assert len(chunks) == 2
+
+
+def test_format_chunks_emits_doc_chunk_score_header():
+    from app.core.rag.inject import format_chunks_as_system_message
+    from app.core.rag.vector_store import Chunk
+    chunks = [
+        Chunk(chunk_id="c1", project_id="p", doc_id="d1", chunk_index=0,
+              text="A short chunk.", score=0.81),
+        Chunk(chunk_id="c2", project_id="p", doc_id="d1", chunk_index=1,
+              text="Another short chunk.", score=0.74),
+    ]
+    msg = format_chunks_as_system_message(chunks, total_candidates=10)
+    assert msg["role"] == "system"
+    body = msg["content"]
+    assert "Relevant project context" in body
+    assert "[doc_id=d1 chunk=0 score=0.810]" in body
+    assert "[doc_id=d1 chunk=1 score=0.740]" in body
+    assert "A short chunk." in body
+
+
+def test_token_cap_drops_whole_chunks_from_bottom(monkeypatch):
+    """When total estimated tokens > MAX_RAG_TOKENS, drop the lowest-
+    score chunks (whole-chunk only, never truncate mid-chunk)."""
+    monkeypatch.setenv("MAX_RAG_TOKENS", "100")  # very tight
+    from app.core.rag.inject import apply_token_cap
+    from app.core.rag.vector_store import Chunk
+    # Three chunks, each ~80 tokens (320 chars / 4 = 80 tokens).
+    big = "X" * 320
+    chunks = [
+        Chunk(chunk_id="c1", project_id="p", doc_id="d1", chunk_index=0, text=big, score=0.9),
+        Chunk(chunk_id="c2", project_id="p", doc_id="d1", chunk_index=1, text=big, score=0.8),
+        Chunk(chunk_id="c3", project_id="p", doc_id="d1", chunk_index=2, text=big, score=0.7),
+    ]
+    kept, total_tokens = apply_token_cap(chunks)
+    # Only one chunk should fit under the 100-token cap.
+    assert len(kept) == 1
+    assert kept[0].score == 0.9  # highest score retained
+    assert total_tokens <= 100
+
+
+def test_token_cap_keeps_all_when_under_budget(monkeypatch):
+    monkeypatch.setenv("MAX_RAG_TOKENS", "1500")
+    from app.core.rag.inject import apply_token_cap
+    from app.core.rag.vector_store import Chunk
+    chunks = [
+        Chunk(chunk_id=f"c{i}", project_id="p", doc_id="d1", chunk_index=i,
+              text="hello world. " * 5, score=0.9 - i*0.1)
+        for i in range(3)
+    ]
+    kept, total_tokens = apply_token_cap(chunks)
+    assert len(kept) == 3
