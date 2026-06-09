@@ -419,3 +419,23 @@ def test_rag_debug_query_param_propagates_to_chat_stream(monkeypatch, tmp_path):
     assert r.status_code == 200
     assert captured["rag_debug"] is True
 
+
+def test_q4_tool_call_discipline_under_rag(monkeypatch):
+    """When the user names a deliverable AND RAG context is injected,
+    the iter-0 LLM response must have finish_reason='tool_calls' AND
+    a tool_calls entry with function.name='generate_wbs'.
+
+    This guards the project-assistant's tool-call mandate from being
+    displaced by the RAG system message that we just added.
+    """
+    from app.agents.runtime import _user_intent_requires_tool
+
+    # The matcher must still fire on "generate a 50-activity construction
+    # schedule" even when prefixed by RAG context — context is a SYSTEM
+    # role, the matcher walks the messages' tail for the user role.
+    messages = [
+        {"role": "system", "content": "Relevant project context: ..."},
+        {"role": "user",   "content": "Generate a 50-activity construction schedule for the data center."},
+    ]
+    assert _user_intent_requires_tool(messages) is True
+
