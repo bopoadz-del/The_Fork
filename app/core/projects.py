@@ -75,7 +75,8 @@ def init_db() -> None:
                     doc_type      TEXT NOT NULL DEFAULT 'document',
                     doc_role      TEXT NOT NULL DEFAULT 'other',
                     size          INTEGER NOT NULL DEFAULT 0,
-                    uploaded_at   TEXT NOT NULL
+                    uploaded_at   TEXT NOT NULL,
+                    content_sha256 TEXT
                 );
                 CREATE TABLE IF NOT EXISTS project_facts (
                     id              TEXT PRIMARY KEY,
@@ -100,6 +101,15 @@ def init_db() -> None:
                 )
                 conn.execute(
                     "UPDATE projects SET user_id = 'system' WHERE user_id IS NULL"
+                )
+            # Migration for legacy DBs that don't have the content_sha256 column
+            # on documents yet. Idempotent — only runs the ALTER if absent.
+            cols = [r[1] for r in conn.execute(
+                "PRAGMA table_info(documents)"
+            ).fetchall()]
+            if "content_sha256" not in cols:
+                conn.execute(
+                    "ALTER TABLE documents ADD COLUMN content_sha256 TEXT"
                 )
         _initialized = True
 
@@ -236,6 +246,7 @@ def add_document(
     file_path: Optional[str] = None,
     size: int = 0,
     role: Optional[str] = None,
+    content_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Register a document under a project. Storing only — runs no analysis."""
     _ensure_db()
@@ -246,9 +257,10 @@ def add_document(
         conn.execute(
             "INSERT INTO documents "
             "(id, project_id, original_name, stored_as, file_path, doc_type, "
-            " doc_role, size, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " doc_role, size, uploaded_at, content_sha256) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (did, project_id, original_name, stored_as, file_path,
-             doc_type, doc_role, size, _now()),
+             doc_type, doc_role, size, _now(), content_sha256),
         )
     with _connect() as conn:
         row = conn.execute("SELECT * FROM documents WHERE id = ?", (did,)).fetchone()
