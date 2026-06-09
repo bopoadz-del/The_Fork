@@ -447,9 +447,18 @@ function ChatComposer({ onSend, disabled, disabledReason, projectId, onAttached,
 
 interface ChatThreadProps {
   messages: ChatMessage[]
+  documentCount: number
+  onSuggestion: (text: string) => void
+  suggestionsDisabled: boolean
 }
 
-function ChatThread({ messages }: ChatThreadProps) {
+const EMPTY_SUGGESTIONS = [
+  'What is the IT load specification?',
+  'Summarise the key BOQ items',
+  'What are the main project risks?',
+]
+
+function ChatThread({ messages, documentCount, onSuggestion, suggestionsDisabled }: ChatThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -457,15 +466,45 @@ function ChatThread({ messages }: ChatThreadProps) {
   }, [messages])
 
   if (messages.length === 0) {
+    const docLabel =
+      documentCount === 0
+        ? 'No documents indexed yet for this project'
+        : documentCount === 1
+          ? 'I have access to 1 document in this project'
+          : `I have access to ${documentCount} documents in this project`
     return (
       <div className="chat-empty">
-        <div className="chat-empty__mark" aria-hidden="true">⌬</div>
-        <p className="chat-empty__heading">Project Intelligence</p>
-        <p className="chat-empty__hint">
-          Ask about documents, drawings, schedules, or contract status. The
-          assistant can search your project files, run calculations, and
-          delegate to specialist agents.
-        </p>
+        <svg
+          className="chat-empty__art"
+          viewBox="0 0 96 96"
+          width="96"
+          height="96"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M14 28h28l6 8h34v44a4 4 0 0 1-4 4H18a4 4 0 0 1-4-4V28z" />
+          <path d="M28 50h40M28 60h40M28 70h28" />
+          <path d="M58 14l8 4 8-4v18l-8 4-8-4z" opacity="0.55" />
+        </svg>
+        <p className="chat-empty__heading">Ask anything about your project</p>
+        <p className="chat-empty__hint">{docLabel}</p>
+        <div className="chat-empty__chips" role="group" aria-label="Suggested questions">
+          {EMPTY_SUGGESTIONS.map((suggestion) => (
+            <button
+              type="button"
+              key={suggestion}
+              className="chat-empty__chip"
+              disabled={suggestionsDisabled}
+              onClick={() => onSuggestion(suggestion)}
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
       </div>
     )
   }
@@ -1287,7 +1326,12 @@ export default function ProjectWorkspace() {
       <div className="workspace-body">
         {/* Primary conversation column */}
         <div className="workspace-chat">
-          <ChatThread messages={messages} />
+          <ChatThread
+            messages={messages}
+            documentCount={documents.length}
+            onSuggestion={(text) => void handleSend(text)}
+            suggestionsDisabled={streaming || mode !== 'ready'}
+          />
           <ChatComposer
             onSend={(text) => void handleSend(text)}
             disabled={streaming || mode !== 'ready'}

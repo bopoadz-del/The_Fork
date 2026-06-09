@@ -546,8 +546,14 @@
   margin-bottom: var(--space-2);
 }
 
+.chat-empty__art {
+  color: var(--accent, #2563eb);
+  opacity: 0.85;
+  margin-bottom: var(--space-2);
+}
+
 .chat-empty__heading {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   color: var(--text);
 }
@@ -556,7 +562,44 @@
   font-size: 13px;
   color: var(--text-muted);
   line-height: 1.65;
-  max-width: 320px;
+  max-width: 360px;
+}
+
+.chat-empty__chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  max-width: 560px;
+  margin-top: var(--space-3);
+}
+
+.chat-empty__chip {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--surface, #ffffff);
+  color: var(--text);
+  border: 1px solid var(--border, #d1d5db);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+  line-height: 1.3;
+}
+
+.chat-empty__chip:hover:not(:disabled) {
+  background: var(--accent-light, #eff6ff);
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+}
+
+.chat-empty__chip:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.chat-empty__chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* ── Message Rows ── */
