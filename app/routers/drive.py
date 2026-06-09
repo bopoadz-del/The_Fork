@@ -317,11 +317,24 @@ async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
                     root, _ = os.path.splitext(name_raw)
                     stored_basename = f"{root}{exported_ext}"
                 stored_basename = os.path.basename(stored_basename.replace("\\", "/"))
+                # SHA-256 dedupe: skip files whose bytes are already in the
+                # project so a re-walk doesn't re-encrypt/re-index them.
+                import hashlib as _hashlib
+                content_sha = _hashlib.sha256(raw_bytes).hexdigest()
+                existing = store.find_document_by_sha(project_id, content_sha)
+                if existing:
+                    skipped.append({
+                        "name": stored_basename,
+                        "reason": f"unchanged (sha {content_sha[:12]}...)",
+                    })
+                    continue
                 file_uuid = str(uuid.uuid4())[:8]
                 stored_as = f"{file_uuid}_{stored_basename}"
                 filepath = os.path.join(projects_router.DATA_DIR, stored_as)
                 file_crypto.write_document(filepath, raw_bytes)
-                doc = store.add_document(project_id, stored_basename, stored_as, filepath, len(raw_bytes))
+                doc = store.add_document(project_id, stored_basename, stored_as,
+                                         filepath, len(raw_bytes),
+                                         content_sha256=content_sha)
                 audit.record("document.added", project_id=project_id,
                              document_id=doc["id"], name=stored_basename,
                              size=len(raw_bytes), user_id=auth["user_id"],

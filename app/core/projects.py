@@ -267,6 +267,25 @@ def add_document(
     return dict(row)
 
 
+def find_document_by_sha(
+    project_id: str, content_sha256: str,
+) -> Optional[Dict[str, Any]]:
+    """Return the FIRST existing document in this project with this content
+    hash, or None. Used by the Drive walker to skip unchanged files on
+    re-walk. Returns None for empty/None hashes so a missing sha cannot
+    accidentally match other null-sha rows."""
+    if not content_sha256:
+        return None
+    _ensure_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM documents WHERE project_id = ? AND content_sha256 = ? "
+            "ORDER BY uploaded_at LIMIT 1",
+            (project_id, content_sha256),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def list_documents(project_id: str) -> List[Dict[str, Any]]:
     _ensure_db()
     with _connect() as conn:

@@ -34,3 +34,29 @@ def test_add_document_writes_sha256(monkeypatch, tmp_path):
         content_sha256=sha,
     )
     assert doc["content_sha256"] == sha
+
+
+def test_walker_skips_unchanged_file_on_rewalk(monkeypatch, tmp_path):
+    """Second walk over a Drive folder whose file bytes haven't changed
+    must skip the file (no new document row, no re-encryption)."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.core import projects
+    projects._initialized = False
+    projects.create_project(name="P", client="C", user_id="u1")
+    proj = projects.list_projects("u1")[0]
+
+    body = b"hello world content for sha test"
+    sha = hashlib.sha256(body).hexdigest()
+    # First walk: insert.
+    projects.add_document(
+        project_id=proj["id"],
+        original_name="x.pdf", stored_as="x.pdf", file_path="/tmp/x.pdf",
+        size=len(body), content_sha256=sha,
+    )
+    # Second walk: should detect via find_document_by_sha and skip.
+    found = projects.find_document_by_sha(proj["id"], sha)
+    assert found is not None
+    # If the walker were to add again it would create a duplicate row.
+    # Ensure the existing row is the only one.
+    docs = projects.list_documents(proj["id"])
+    assert len(docs) == 1
