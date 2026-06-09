@@ -1,6 +1,8 @@
 /* ProjectWorkspace — project detail + streaming chat (B4) + documents/Drive (B5) */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import AppHeader from '../components/AppHeader'
 import { type Project } from './ProjectCard'
 import { apiGet, apiPost, apiPostForm, ApiError } from '../lib/api'
@@ -212,8 +214,22 @@ function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
           </div>
         )}
         <div className="chat-message__content">
-          {message.content}
-          {message.streaming && <span className="chat-cursor" aria-hidden="true" />}
+          {isUser ? (
+            <span className="chat-message__text">{message.content}</span>
+          ) : message.streaming && !message.content ? (
+            <span className="chat-typing" aria-label="Assistant is thinking">
+              <span className="chat-typing__dot" />
+              <span className="chat-typing__dot" />
+              <span className="chat-typing__dot" />
+            </span>
+          ) : (
+            <div className="chat-message__markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
+              {message.streaming && <span className="chat-cursor" aria-hidden="true" />}
+            </div>
+          )}
         </div>
         {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
           <details className="chat-message__sources">
