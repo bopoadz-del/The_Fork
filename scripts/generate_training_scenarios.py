@@ -209,29 +209,54 @@ async def _run(
                 len(chunks), min_chunk_chars, project_id)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    total_pairs = 0
+    # Accumulate in memory so the validation pipeline can dedupe / drop
+    # before any rows hit disk. At 500-row scale this is well under a MB.
+    rows: List[Dict[str, str]] = []
     skipped = 0
-    with open(out_path, "w", encoding="utf-8") as out:
-        for i, chunk in enumerate(chunks, start=1):
-            pairs = await _generate_for_chunk(chunk, questions_per_chunk, provider_hint)
-            if not pairs:
-                skipped += 1
-                continue
-            for p in pairs:
-                out.write(json.dumps(p, ensure_ascii=False) + "\n")
-                total_pairs += 1
-            if i % 20 == 0:
-                logger.info("processed %d/%d chunks → %d pairs (%d skipped)",
-                            i, len(chunks), total_pairs, skipped)
+    for i, chunk in enumerate(chunks, start=1):
+        pairs = await _generate_for_chunk(chunk, questions_per_chunk, provider_hint)
+        if not pairs:
+            skipped += 1
+            continue
+        rows.extend(pairs)
+        if i % 20 == 0:
+            logger.info("processed %d/%d chunks -> %d pairs (%d skipped)",
+                        i, len(chunks), len(rows), skipped)
 
-    logger.info(
-        "wrote %d pairs to %s (%d chunks processed, %d skipped)",
-        total_pairs, out_path, len(chunks), skipped,
-    )
-    if total_pairs == 0:
+    if not rows:
         logger.error(
             "ZERO pairs generated. Check that the chat block has a working "
             "LLM provider (DEEPSEEK_API_KEY set, or a local model configured)."
+        )
+        return 1
+
+    # Validate before writing. The validator is deterministic given the
+    # input rows, so re-running this step is safe.
+    kept_rows, validation_report = _validate_scenarios(rows)
+    print("== validation ==", file=sys.stderr)
+    for k, v in validation_report.items():
+        print(f"  {k} = {v}", file=sys.stderr)
+
+    # Also surface top contributors so the operator can sanity-check.
+    by_doc: Dict[str, int] = {}
+    for r in kept_rows:
+        key = r.get("source") or "?"
+        by_doc[key] = by_doc.get(key, 0) + 1
+    top = sorted(by_doc.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    print(f"  top sources: {top}", file=sys.stderr)
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        for r in kept_rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    print(f"wrote {len(kept_rows)} rows to {out_path}", file=sys.stderr)
+
+    logger.info(
+        "wrote %d validated pairs to %s (%d generated, %d chunks, %d skipped)",
+        len(kept_rows), out_path, len(rows), len(chunks), skipped,
+    )
+    if not kept_rows:
+        logger.error(
+            "ZERO pairs survived validation. Check the validation report above."
         )
         return 1
 
