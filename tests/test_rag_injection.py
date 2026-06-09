@@ -389,3 +389,33 @@ def test_chat_stream_injects_rag_system_message_for_project_assistant(monkeypatc
     contents = [m.get("content", "") for m in msgs]
     assert any("INJECTED_CONTEXT" in c for c in contents)
 
+
+def test_rag_debug_query_param_propagates_to_chat_stream(monkeypatch, tmp_path):
+    """The ?rag_debug=true query param must be forwarded into chat_stream.
+    Verifying via a stubbed chat_stream that captures the kwarg.
+
+    Note: project_id is intentionally omitted from the body so the router's
+    project-ownership check (404 on unknown project) doesn't fire — the test
+    only exercises query-param forwarding."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    captured = {"rag_debug": None}
+
+    async def fake_chat_stream(self, message, **kwargs):
+        captured["rag_debug"] = kwargs.get("rag_debug")
+        yield {"type": "start", "agent": self.name}
+        yield {"type": "end", "iterations": 1}
+
+    monkeypatch.setattr("app.agents.runtime.Agent.chat_stream", fake_chat_stream)
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/v1/agents/project-assistant/chat/stream?rag_debug=true",
+            json={"message": "hi"},
+            headers={"Authorization": "Bearer cb_dev_key"},
+        )
+    assert r.status_code == 200
+    assert captured["rag_debug"] is True
+

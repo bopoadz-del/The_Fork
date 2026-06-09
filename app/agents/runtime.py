@@ -722,6 +722,7 @@ class Agent:
         user_id: Optional[str] = None,
         project_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
+        rag_debug: bool = False,
         _depth: int = 0,
         _call_stack: Optional[List[str]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
@@ -824,6 +825,32 @@ class Agent:
                         from app.core import agent_memory
                         # User turn was already persisted up front.
                         agent_memory.append_message(conversation_id, "assistant", final_text)
+                    # rag_debug opt-in: run a second LLM call with the RAG
+                    # system message stripped so the caller can compare
+                    # on/off responses for the same turn. Audit record is
+                    # passed through unmodified for downstream inspection.
+                    if rag_debug and _rag_sys_msg is not None:
+                        no_rag_messages = [m for m in messages if m is not _rag_sys_msg]
+                        try:
+                            no_rag_resp = await self._call_llm(
+                                no_rag_messages, api_key,
+                                project_id=project_id, user_id=user_id,
+                            )
+                            off_response = (no_rag_resp.get("choice", {})
+                                            .get("message", {})
+                                            .get("content", "") or "")
+                        except Exception as _e:
+                            off_response = f"[rag_debug off-run failed: {_e}]"
+                        yield {
+                            "type": "end",
+                            "iterations": iteration + 1,
+                            "rag_debug": {
+                                "on_response": final_text,
+                                "off_response": off_response,
+                                "audit": _rag_audit,
+                            },
+                        }
+                        return
                     yield {"type": "end", "iterations": iteration + 1}
                     return
 

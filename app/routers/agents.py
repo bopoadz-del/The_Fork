@@ -177,6 +177,9 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     model = body.get("model")
     project_id = body.get("project_id")
     conversation_id = body.get("conversation_id")
+    # Opt-in A/B path: when set, runtime runs a second LLM call without the
+    # RAG system message and surfaces both responses in the SSE end event.
+    rag_debug = request.query_params.get("rag_debug", "").lower() in ("true", "1", "yes")
 
     # Authoritative ownership check: a ws-{pid} conversation_id binds to a
     # project; the caller must own it. Raised here (before StreamingResponse) so
@@ -201,6 +204,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
                 project_id=project_id,
                 conversation_id=conversation_id,
                 user_id=auth["user_id"],
+                rag_debug=rag_debug,
             ):
                 yield f"data: {json.dumps(evt, default=str)}\n\n"
                 await asyncio.sleep(0)  # yield to the event loop
