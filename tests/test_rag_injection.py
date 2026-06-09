@@ -439,3 +439,26 @@ def test_q4_tool_call_discipline_under_rag(monkeypatch):
     ]
     assert _user_intent_requires_tool(messages) is True
 
+
+def test_chat_stream_end_event_carries_sources(monkeypatch, tmp_path):
+    """The final SSE 'end' event must include sources[] with up to top-3
+    items sorted by score desc, each with doc_id, doc_name, page_or_section,
+    score, confidence."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.core.rag.vector_store import Chunk
+    audit_rec = {
+        "injected_k": 3,
+        "chunks": [
+            {"doc_id": "d1", "chunk_index": 0, "score": 0.91},
+            {"doc_id": "d1", "chunk_index": 7, "score": 0.62},
+            {"doc_id": "d2", "chunk_index": 2, "score": 0.48},
+            {"doc_id": "d3", "chunk_index": 0, "score": 0.30},  # would be 4th
+        ],
+    }
+    from app.agents.runtime import _build_sources_from_audit
+    sources = _build_sources_from_audit(audit_rec)
+    assert len(sources) == 3
+    assert sources[0]["score"] == 0.91
+    assert sources[0]["confidence"] == "High"
+    assert sources[1]["confidence"] == "Medium"
+    assert sources[2]["confidence"] == "Low"

@@ -111,6 +111,45 @@ def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
     text = (tail.get("content") or "").lower()
     return any(p in text for p in _DELIVERABLE_PHRASES)
 
+
+def _build_sources_from_audit(audit_rec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """From a rag_inject audit record, build the top-3 sources list for
+    the SSE end event. Resolves doc_id -> filename via projects.get_document.
+    Empty list when there are no chunks (fallback or non-RAG turn)."""
+    chunks = (audit_rec or {}).get("chunks") or []
+    if not chunks:
+        return []
+    by_score = sorted(chunks, key=lambda c: -(c.get("score") or 0))[:3]
+    out: List[Dict[str, Any]] = []
+    try:
+        from app.core import projects as _projects
+    except Exception:
+        _projects = None
+    for c in by_score:
+        score = c.get("score") or 0.0
+        if score >= 0.75:
+            conf = "High"
+        elif score >= 0.5:
+            conf = "Medium"
+        else:
+            conf = "Low"
+        doc_name = ""
+        if _projects:
+            try:
+                d = _projects.get_document(c["doc_id"]) or {}
+                doc_name = d.get("original_name") or ""
+            except Exception:
+                doc_name = ""
+        out.append({
+            "doc_id": c["doc_id"],
+            "doc_name": doc_name,
+            "page_or_section": f"chunk #{c['chunk_index']}",
+            "score": float(score),
+            "confidence": conf,
+        })
+    return out
+
+
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
@@ -851,7 +890,11 @@ class Agent:
                             },
                         }
                         return
-                    yield {"type": "end", "iterations": iteration + 1}
+                    yield {
+                        "type": "end",
+                        "iterations": iteration + 1,
+                        "sources": _build_sources_from_audit(_rag_audit),
+                    }
                     return
 
             messages.append(assistant_msg)
@@ -900,7 +943,12 @@ class Agent:
             from app.core import agent_memory
             # User turn was already persisted up front.
             agent_memory.append_message(conversation_id, "assistant", final_text)
-        yield {"type": "end", "iterations": MAX_TOOL_ITERATIONS, "forced_final": True}
+        yield {
+            "type": "end",
+            "iterations": MAX_TOOL_ITERATIONS,
+            "forced_final": True,
+            "sources": _build_sources_from_audit(_rag_audit),
+        }
 
     # ── Internals ─────────────────────────────────────────────────────────
     def _build_messages(
