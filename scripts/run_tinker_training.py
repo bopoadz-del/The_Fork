@@ -262,12 +262,12 @@ def _build_datum_for_pair(
     )
 
 
-def _execute_one_step(plan: RunPlan, rows: List[Dict[str, str]]) -> str:
-    """Run a single ``forward_backward`` + ``optim_step`` and save state.
+def _execute_training(plan: RunPlan, rows: List[Dict[str, str]]) -> str:
+    """Run ``plan.max_steps`` forward_backward + optim_step cycles and save
+    state. Rotates the dataset, so passing fewer steps than rows/batch_size
+    iterates a single random pass and more steps continues into epoch 2+.
 
-    This is the minimum that proves: SDK auth works, the chosen model
-    accepts a LoRA training client, the chat template tokenizes, and a
-    checkpoint can be written on the service side. Returns the tinker_path.
+    Returns the tinker_path of the saved checkpoint.
     """
     import tinker
     from tinker import AdamParams
@@ -281,29 +281,58 @@ def _execute_one_step(plan: RunPlan, rows: List[Dict[str, str]]) -> str:
     tokenizer = training_client.get_tokenizer()
     info = training_client.get_info()
     max_ctx = 4096
-    logger.info("training client ready: model_id=%s lora_rank=%d", info.model_id, info.lora_rank)
+    logger.info(
+        "training client ready: model_id=%s lora_rank=%d", info.model_id, info.lora_rank
+    )
 
-    batch_rows = rows[: plan.batch_size]
-    data = []
-    for r in batch_rows:
+    # Pre-tokenize all rows once — dropping any that don't yield a Datum
+    # (over-long, no usable response, etc.).
+    all_data = []
+    for r in rows:
         datum = _build_datum_for_pair(
             tokenizer, r["instruction"], r["response"], max_ctx
         )
         if datum is not None:
-            data.append(datum)
-    if not data:
+            all_data.append(datum)
+    if not all_data:
         raise RuntimeError("no usable training examples after tokenization")
-
-    logger.info("submitting forward_backward on %d examples …", len(data))
-    fb_future = training_client.forward_backward(data, loss_fn="cross_entropy")
-    fb_result = fb_future.result()
-    logger.info("forward_backward done: %r", getattr(fb_result, "metrics", fb_result))
-
-    opt_future = training_client.optim_step(
-        AdamParams(learning_rate=plan.learning_rate)
+    logger.info(
+        "pre-tokenized %d/%d rows usable for training", len(all_data), len(rows)
     )
-    opt_future.result()
-    logger.info("optim_step done")
+
+    batch_size = plan.batch_size
+    n = len(all_data)
+    losses: List[float] = []
+
+    for step in range(plan.max_steps):
+        # Rotating window: deterministic, ensures every row visited once
+        # per `n/batch_size` steps before repeating.
+        start = (step * batch_size) % n
+        end = start + batch_size
+        if end <= n:
+            batch = all_data[start:end]
+        else:
+            batch = all_data[start:] + all_data[: end - n]
+
+        fb_future = training_client.forward_backward(batch, loss_fn="cross_entropy")
+        fb_result = fb_future.result()
+        opt_future = training_client.optim_step(
+            AdamParams(learning_rate=plan.learning_rate)
+        )
+        opt_future.result()
+
+        metrics = getattr(fb_result, "metrics", None) or {}
+        loss_sum = metrics.get("loss:sum") if isinstance(metrics, dict) else None
+        avg = (loss_sum / len(batch)) if loss_sum is not None else None
+        if avg is not None:
+            losses.append(avg)
+        if step % 10 == 0 or step == plan.max_steps - 1:
+            logger.info(
+                "step %d/%d  loss/sample=%.4f",
+                step + 1,
+                plan.max_steps,
+                avg if avg is not None else float("nan"),
+            )
 
     # Tinker checkpoint labels only allow [A-Za-z0-9._-]. Flatten the
     # model name AND the path separator into hyphens to satisfy the
@@ -314,8 +343,19 @@ def _execute_one_step(plan: RunPlan, rows: List[Dict[str, str]]) -> str:
     save_future = training_client.save_state(checkpoint_name)
     save_result = save_future.result()
     tinker_path = getattr(save_result, "path", None) or checkpoint_name
+    if losses:
+        logger.info(
+            "training done: first_loss=%.4f  last_loss=%.4f  delta=%.4f",
+            losses[0],
+            losses[-1],
+            losses[0] - losses[-1],
+        )
     logger.info("saved state at %s", tinker_path)
     return tinker_path
+
+
+# Backwards-compatible alias for code that still calls the old name.
+_execute_one_step = _execute_training
 
 
 def _plan_run(args: argparse.Namespace, num_rows: int) -> RunPlan:
@@ -396,7 +436,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     tinker_path: Optional[str] = None
     if args.execute:
         try:
-            tinker_path = _execute_one_step(plan, rows)
+            tinker_path = _execute_training(plan, rows)
         except Exception as exc:  # noqa: BLE001
             logger.exception("execute failed: %s", exc)
             _write_metadata(plan, tinker_path=None)
