@@ -1,16 +1,15 @@
-"""Platform Blocks — Construction Intelligence Platform.
+"""Platform Blocks — Cerebrum runtime block registry.
 
-Blocks are loaded RESILIENTLY: each block module is imported in isolation, and
-one whose import fails (missing optional dependency, import-time error, syntax
-error, ...) is logged and skipped. A single bad block can no longer crash the
-whole registry — and therefore the whole app — at startup.
+Virgin Fork (default): ~17 generic blocks + ``DomainContainer`` host.
+Domain kits (construction, etc.) register via ``CEREBRUM_DOMAIN_KITS`` or
+Block Store install → ``data/domain_kit_registry.json``.
 
-``BLOCK_REGISTRY`` contains only blocks that loaded; ``FAILED_BLOCKS`` maps the
-name of any block that failed to a short error string for diagnostics.
+Set ``CEREBRUM_VIRGIN=false`` for legacy full-platform boot (production Fork).
 """
 
 import importlib
 import logging
+import os
 from typing import Dict, List, Tuple
 
 from app.core.universal_base import UniversalBlock, UniversalContainer
@@ -18,91 +17,81 @@ from app.core.typed_block import TypedBlock
 
 logger = logging.getLogger(__name__)
 
-# (registry name, module path, class name) — the single source of truth for
-# which blocks exist. Loaded one at a time so a failure is isolated.
-_BLOCK_SPECS: List[Tuple[str, str, str]] = [
-    # Document Extraction
-    ("pdf",                 "app.blocks.pdf",                  "PDFBlock"),
+# Plug-and-play generic blocks — always loaded (virgin Fork outcome #1).
+_GENERIC_BLOCK_SPECS: List[Tuple[str, str, str]] = [
+    ("pdf",              "app.blocks.pdf",             "PDFBlock"),
+    ("ocr",              "app.blocks.ocr",             "OCRBlock"),
+    ("image",            "app.blocks.image",           "ImageBlock"),
+    ("document_engine",  "app.blocks.document_engine", "DocumentEngineBlock"),
+    ("chat",             "app.blocks.chat",            "ChatBlock"),
+    ("translate",        "app.blocks.translate",       "TranslateBlock"),
+    ("voice",            "app.blocks.voice",           "VoiceBlock"),
+    ("web",              "app.blocks.web",             "WebBlock"),
+    ("search",           "app.blocks.search",          "SearchBlock"),
+    ("code",             "app.blocks.code",            "CodeBlock"),
+    ("vector_search",    "app.blocks.vector_search",   "VectorSearchBlock"),
+    ("zvec",             "app.blocks.zvec",            "ZvecBlock"),
+    ("cache_manager",    "app.blocks.cache_manager",   "CacheManagerBlock"),
+    ("file_hasher",      "app.blocks.file_hasher",     "FileHasherBlock"),
+    ("orchestrator",     "app.blocks.orchestrator",    "OrchestratorBlock"),
+    ("validation_pipeline", "app.blocks.validation_pipeline", "ValidationPipelineBlock"),
+    ("async_processor",  "app.blocks.async_processor", "AsyncProcessorBlock"),
+]
+
+# Extended platform blocks — loaded when CEREBRUM_VIRGIN=false (legacy production).
+# Construction domain blocks are NEVER here; they load only via domain kits.
+_EXTENDED_PLATFORM_SPECS: List[Tuple[str, str, str]] = [
     ("pdf_v2",              "app.blocks.pdf_v2",               "PDFBlockV2"),
-    ("ocr",                 "app.blocks.ocr",                  "OCRBlock"),
     ("ocr_v2",              "app.blocks.ocr_v2",               "OCRBlockV2"),
-    ("image",               "app.blocks.image",                "ImageBlock"),
-    ("document_engine",     "app.blocks.document_engine",      "DocumentEngineBlock"),
-    # AI / Language
-    ("chat",                "app.blocks.chat",                 "ChatBlock"),
-    ("translate",           "app.blocks.translate",            "TranslateBlock"),
-    ("voice",               "app.blocks.voice",                "VoiceBlock"),
-    ("web",                 "app.blocks.web",                  "WebBlock"),
-    # Construction Intelligence
-    ("construction",        "app.containers",                  "ConstructionContainer"),
-    ("construction_v2",     "app.blocks.construction_v2",      "ConstructionBlockV2"),
-    ("boq_processor",       "app.blocks.boq_processor",        "BOQProcessorBlock"),
-    ("bim",                 "app.blocks.bim",                  "BIMBlock"),
-    ("bim_extractor",       "app.blocks.bim_extractor",        "BIMExtractorBlock"),
-    ("drawing_qto",         "app.blocks.drawing_qto",          "DrawingQTOBlock"),
-    ("primavera_parser",    "app.blocks.primavera_parser",     "PrimaveraParserBlock"),
-    ("spec_analyzer",       "app.blocks.spec_analyzer",        "SpecAnalyzerBlock"),
-    ("formula_executor",    "app.blocks.formula_executor",     "FormulaExecutorBlock"),
-    ("formula_executor_v2", "app.blocks.formula_executor_v2",  "FormulaExecutorV2Block"),
-    ("project_reasoner",    "app.blocks.project_reasoner",     "ProjectReasonerBlock"),
-    ("sympy_reasoning",     "app.blocks.sympy_reasoning",      "SymPyReasoningBlock"),
-    # historical_benchmark removed: it shipped 2024 RS-Means snapshots that
-    # would drift silently. The container's _get_historical_benchmark_block()
-    # already returns an "unavailable" error path. Real historical data will
-    # be accumulated by the learning_engine block over time.
-    ("smart_orchestrator",  "app.blocks.smart_orchestrator",   "SmartOrchestratorBlock"),
-    ("orchestrator",        "app.blocks.orchestrator",         "OrchestratorBlock"),
-    # File Access
+    ("llm_enhancer",        "app.blocks.llm_enhancer",         "LLMEnhancerBlock"),
     ("local_drive",         "app.blocks.local_drive",          "LocalDriveBlock"),
     ("google_drive",        "app.blocks.google_drive",         "GoogleDriveBlock"),
     ("onedrive",            "app.blocks.onedrive",             "OneDriveBlock"),
-    # Search & Memory
-    ("vector_search",       "app.blocks.vector_search",        "VectorSearchBlock"),
-    ("zvec",                "app.blocks.zvec",                 "ZvecBlock"),
-    ("cache_manager",       "app.blocks.cache_manager",        "CacheManagerBlock"),
-    # MCP (agent interop)
+    ("android_drive",       "app.blocks.android_drive",        "AndroidDriveBlock"),
     ("mcp_adapter",         "app.blocks.mcp_adapter",          "MCPAdapterBlock"),
     ("mcp_consumer",        "app.blocks.mcp_consumer",         "MCPConsumerBlock"),
-    # Other
-    ("code",                "app.blocks.code",                 "CodeBlock"),
-    ("search",              "app.blocks.search",               "SearchBlock"),
-    ("android_drive",       "app.blocks.android_drive",        "AndroidDriveBlock"),
-    # Construction container support blocks — these were on disk but
-    # unregistered. Container methods that called BLOCK_REGISTRY.get(...)
-    # against them silently received None and hit error paths instead of
-    # the real implementations. Registering them so the calls actually
-    # resolve.
-    ("async_processor",     "app.blocks.async_processor",      "AsyncProcessorBlock"),
-    ("file_hasher",         "app.blocks.file_hasher",          "FileHasherBlock"),
-    ("jetson_gateway",      "app.blocks.jetson_gateway",       "JetsonGatewayBlock"),
-    ("learning_engine",     "app.blocks.learning_engine",      "LearningEngineBlock"),
-    ("llm_enhancer",        "app.blocks.llm_enhancer",         "LLMEnhancerBlock"),
-    ("recommendation_template", "app.blocks.recommendation_template", "RecommendationTemplateBlock"),
-    ("validation_pipeline", "app.blocks.validation_pipeline",  "ValidationPipelineBlock"),
     ("sandbox",             "app.blocks.sandbox",              "SandboxBlock"),
     ("traffic_manager",     "app.blocks.traffic_manager",      "TrafficManagerBlock"),
     ("webhook",             "app.blocks.webhook",              "WebhookBlock"),
-    # Hydration was retired as a standalone block — it is now the `hydrate`
-    # operation on learning_engine (see app/core/learning/hydration.py).
 ]
+
+
+def _legacy_boot() -> bool:
+    return os.getenv("CEREBRUM_VIRGIN", "true").strip().lower() in ("0", "false", "no")
+
+
+def _build_block_specs() -> List[Tuple[str, str, str]]:
+    from app.core.domain_kit_loader import kit_block_specs, verify_installed_containers
+
+    verify_installed_containers()
+    specs = list(_GENERIC_BLOCK_SPECS)
+    seen = {name for name, _, _ in specs}
+
+    if _legacy_boot():
+        for item in _EXTENDED_PLATFORM_SPECS:
+            if item[0] not in seen:
+                specs.append(item)
+                seen.add(item[0])
+
+    for item in kit_block_specs():
+        if item[0] not in seen:
+            specs.append(item)
+            seen.add(item[0])
+
+    return specs
 
 
 def _load_blocks(
     specs: List[Tuple[str, str, str]]
 ) -> Tuple[Dict[str, type], Dict[str, str]]:
-    """Import each ``(name, module, class)`` spec in isolation.
-
-    Returns ``(registry, failed)``. A spec whose import raises is recorded in
-    ``failed`` (name -> error string) and omitted from ``registry`` rather than
-    aborting the whole load — one broken block cannot take down the app.
-    """
+    """Import each ``(name, module, class)`` spec in isolation."""
     registry: Dict[str, type] = {}
     failed: Dict[str, str] = {}
     for name, module, class_name in specs:
         try:
             mod = importlib.import_module(module)
             registry[name] = getattr(mod, class_name)
-        except Exception as exc:  # noqa: BLE001 — isolate any import-time failure
+        except Exception as exc:  # noqa: BLE001
             failed[name] = f"{type(exc).__name__}: {exc}"
             logger.warning(
                 "Block '%s' failed to load and was skipped: %s", name, exc
@@ -110,10 +99,9 @@ def _load_blocks(
     return registry, failed
 
 
+_BLOCK_SPECS = _build_block_specs()
 BLOCK_REGISTRY, FAILED_BLOCKS = _load_blocks(_BLOCK_SPECS)
 
-# Re-export each loaded class as a module attribute so existing
-# `from app.blocks import XBlock` imports keep working.
 for _cls in BLOCK_REGISTRY.values():
     globals()[_cls.__name__] = _cls
 
@@ -122,6 +110,19 @@ if FAILED_BLOCKS:
         "%d/%d blocks failed to load: %s",
         len(FAILED_BLOCKS), len(_BLOCK_SPECS), ", ".join(sorted(FAILED_BLOCKS)),
     )
+
+if _legacy_boot():
+    logger.info("block registry: legacy boot (%d blocks)", len(BLOCK_REGISTRY))
+else:
+    from app.core.domain_kit_loader import active_kit_ids
+
+    logger.info(
+        "block registry: virgin boot (%d generic + %d kit blocks)",
+        len(_GENERIC_BLOCK_SPECS),
+        len(BLOCK_REGISTRY) - len(_GENERIC_BLOCK_SPECS),
+    )
+    if active_kit_ids():
+        logger.info("active domain kits: %s", ", ".join(active_kit_ids()))
 
 
 def get_block(name: str):
@@ -138,6 +139,7 @@ __all__ = [
     "TypedBlock",
     "BLOCK_REGISTRY",
     "FAILED_BLOCKS",
+    "_load_blocks",
     "get_block",
     "get_all_blocks",
 ]

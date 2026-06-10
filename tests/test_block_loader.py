@@ -5,10 +5,16 @@ from app.blocks import BLOCK_REGISTRY, FAILED_BLOCKS, _load_blocks
 
 
 def test_registry_loads_and_is_populated():
-    """A healthy install loads every block with no failures."""
-    assert len(BLOCK_REGISTRY) >= 30
+    """A healthy install loads generic blocks; construction is kit-gated."""
+    from app.core.domain_kit_loader import is_virgin_boot
+
     assert "chat" in BLOCK_REGISTRY and "pdf" in BLOCK_REGISTRY
     assert FAILED_BLOCKS == {}, f"blocks failed to load: {FAILED_BLOCKS}"
+    if is_virgin_boot():
+        assert len(BLOCK_REGISTRY) >= 15
+        assert "construction" not in BLOCK_REGISTRY
+    else:
+        assert len(BLOCK_REGISTRY) >= 30
 
 
 def test_loader_isolates_a_broken_block():
