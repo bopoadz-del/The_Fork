@@ -48,3 +48,40 @@ Source: Kimi research dispatch 2026-06-10 (`/tmp/kimi-fleet/20260610-011403-206/
   (current behaviour kept for non-BOQ docs)
 - Validate via the new `/v1/admin/debug/doc-extract` endpoint on
   Diriyah doc `c6dae280`: target 80+ chunks, avg >1000 chars
+
+## Live diagnostic (2026-06-10, against production)
+
+`GET /v1/admin/debug/doc-extract?project_id=3f6f28b2&document_id=c6dae280`
+returned:
+
+- `pdf_page_count`: 16 (the file is 9.7 MB but only 16 pages — embedded
+  images / fonts inflate the bytes; the actual text is ~24K chars)
+- `pdf_first_pages_chars`: [176, 1459, 1529, 1676, 1923, 1982, 1680,
+  1597, 1419, 1566] — page 1 is a thin header (176 chars), pages 2-10
+  carry the BOQ rows
+- `indexed_chunk_count`: 8
+- `indexed_chunks_avg_chars`: 2798 (way over Kimi's target of 1000-2000)
+
+Chunks contain real BOQ line items + prices, e.g. `D 999.1 Nr 897
+1,275.00 1,143,675.00`. The first chunk also contains Arabic mojibake
+(`'yLjUgLiiflJIg jIojIlUIBtJgiall`) — that is the Arabic header line
+being mangled by PyMuPDF's get_text() because the PDF stores Arabic
+glyphs without proper CMAP. Tesseract with `lang='ara+eng'` (rendered
+at 300 DPI) is the right fix for that subset of pages.
+
+The chat-side symptom ("I was not able to process it") is consistent
+with this state: chunks exist, but each chunk is so big (700 tokens)
+that finding a specific rate buried inside one is hard for the model.
+**Two distinct improvements needed:**
+
+1. **Smaller chunks** — re-chunk by BOQ section header / line group,
+   not by 500-word window. Target 100-300 chars per chunk so a
+   specific rate is in a focused chunk.
+2. **Arabic OCR layer** — Tesseract `ara+eng` for pages with
+   detectable Arabic-glyph mojibake (heuristic: if get_text() output
+   contains characters outside the basic-Latin + standard-symbol
+   ranges at a rate >5%, treat the page as Arabic and OCR).
+
+Both improvements are scoped to PDF documents with mixed Arabic-Latin
+content; they should NOT touch the working extraction for English-only
+PDFs (RFP/BOD on the Anthropic project).
