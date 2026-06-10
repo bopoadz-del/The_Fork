@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import os
 import re
 import time
@@ -26,6 +27,16 @@ import httpx
 from app.blocks import BLOCK_REGISTRY
 from app.core.rag.inject import rag_inject
 from app.dependencies import block_instances, _create_block_instance
+
+_LOG = logging.getLogger(__name__)
+
+# Final-text fallback used whenever a forced retry returns empty content.
+# Without it, the generator emits an `end` event with zero `token` events,
+# which the UI renders as an empty assistant bubble (FOLLOW-UP #90).
+_EMPTY_RESPONSE_FALLBACK = (
+    "I was unable to generate a response for this turn. "
+    "Please rephrase the question or try again."
+)
 
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
@@ -769,13 +780,86 @@ class Agent:
 
         Tool-calling is non-streamed (we collect the whole assistant turn before deciding),
         but the FINAL assistant answer streams token-by-token.
+
+        **Emit guarantee (FOLLOW-UP #90):** every exit from this generator MUST
+        emit either at least one ``token`` event OR a structured ``error`` event
+        before a ``end`` event. Silent exits are bugs. The trailing safety net
+        below converts any escaping exception or unhandled empty-content state
+        into a synthetic ``error`` + ``end`` pair.
         """
+        agent_name = self.name
+        token_emitted = False
+        terminal_emitted = False  # True once we yield an `end` or `error` event
+
+        async def _inner():
+            nonlocal token_emitted, terminal_emitted
+            _LOG.info("chat_stream: start agent=%s conv=%s project=%s",
+                      agent_name, conversation_id, project_id)
+            async for event in self._chat_stream_impl(
+                user_message=user_message,
+                history=history,
+                api_key=api_key,
+                user_id=user_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                rag_debug=rag_debug,
+                _depth=_depth,
+                _call_stack=_call_stack,
+            ):
+                if event.get("type") == "token":
+                    token_emitted = True
+                if event.get("type") in ("end", "error"):
+                    terminal_emitted = True
+                yield event
+
+        try:
+            async for event in _inner():
+                yield event
+        except Exception as exc:  # noqa: BLE001 - last-line safety net
+            _LOG.exception("chat_stream: generator escaped with exception")
+            if not token_emitted:
+                # Make sure the UI does NOT render an empty bubble. A token
+                # event populates the bubble with the friendly fallback; the
+                # error event then triggers the styled error banner.
+                yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
+                token_emitted = True
+            yield {"type": "error", "message": f"chat_stream crashed: {exc}"}
+            terminal_emitted = True
+            return
+
+        # Inner generator completed without exception but emitted no terminal
+        # event — synthesise one so the SSE consumer sees a clean close.
+        if not terminal_emitted:
+            _LOG.warning(
+                "chat_stream: inner generator returned with no terminal event "
+                "(token_emitted=%s) — emitting synthetic end",
+                token_emitted,
+            )
+            if not token_emitted:
+                yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
+            yield {"type": "end", "iterations": 0, "sources": []}
+
+    async def _chat_stream_impl(
+        self,
+        user_message: str,
+        history: Optional[List[Dict[str, str]]] = None,
+        api_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        rag_debug: bool = False,
+        _depth: int = 0,
+        _call_stack: Optional[List[str]] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Internal implementation. ``chat_stream`` wraps this with an emit
+        guarantee so silent / crashing exits become structured error events."""
         cfg = _llm_config()
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check. The empty bearer is ignored by Ollama's OAI endpoint.
         if cfg["provider"] != "ollama":
             api_key = api_key or os.getenv(cfg["env_key"])
             if not api_key:
+                _LOG.warning("chat_stream: missing %s — yielding error", cfg["env_key"])
                 yield {"type": "error", "message": f"No {cfg['env_key']} configured."}
                 return
         else:
@@ -822,9 +906,12 @@ class Agent:
             messages.insert(insert_at, _rag_sys_msg)
 
         for iteration in range(MAX_TOOL_ITERATIONS):
+            _LOG.info("chat_stream: iter=%d agent=%s", iteration, self.name)
             resp = await self._call_llm(messages, api_key, project_id=project_id, user_id=user_id)
             if resp.get("status") == "error":
-                yield {"type": "error", "message": resp.get("error", "LLM call failed")}
+                err = resp.get("error", "LLM call failed")
+                _LOG.warning("chat_stream: iter=%d LLM error %s", iteration, err)
+                yield {"type": "error", "message": err}
                 return
             assistant_msg = resp["choice"].get("message") or {}
             tool_calls = assistant_msg.get("tool_calls") or []
@@ -850,14 +937,16 @@ class Agent:
                     # first marker), force one no-tools call so the model must
                     # produce a plain-text answer instead of an empty bubble.
                     if not final_text.strip():
+                        _LOG.info("chat_stream: empty final_text, forcing no-tools retry")
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if forced_resp.get("status") == "error":
-                            final_text = "I wasn't able to produce a response — please rephrase."
+                            final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
                             forced_msg = forced_resp["choice"].get("message") or {}
                             final_text = _strip_dsml(forced_msg.get("content") or "")
                             if not final_text.strip():
-                                final_text = "I wasn't able to produce a response — please rephrase."
+                                final_text = _EMPTY_RESPONSE_FALLBACK
+                    _LOG.info("chat_stream: final_text iter=%d chars=%d", iteration, len(final_text))
                     for chunk in _chunks(final_text, 80):
                         yield {"type": "token", "content": chunk}
                     if conversation_id:
@@ -931,18 +1020,26 @@ class Agent:
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled.
+        _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
+                     MAX_TOOL_ITERATIONS)
         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
         if forced_resp.get("status") == "error":
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
             return
         forced_msg = forced_resp["choice"].get("message") or {}
         final_text = _strip_dsml(forced_msg.get("content") or "")
+        if not final_text.strip():
+            # Forced retry returned empty — substitute the user-safe fallback
+            # so the UI never renders an empty bubble (FOLLOW-UP #90).
+            _LOG.warning("chat_stream: forced final returned empty, using fallback")
+            final_text = _EMPTY_RESPONSE_FALLBACK
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:
             from app.core import agent_memory
             # User turn was already persisted up front.
             agent_memory.append_message(conversation_id, "assistant", final_text)
+        _LOG.info("chat_stream: end (forced_final) chars=%d", len(final_text))
         yield {
             "type": "end",
             "iterations": MAX_TOOL_ITERATIONS,
