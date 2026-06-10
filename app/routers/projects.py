@@ -402,12 +402,38 @@ async def delete_document(
         except OSError:
             pass
     store.delete_document(document_id)
+    # Drop the deleted doc from the project's doc_index too — otherwise its
+    # stale chunks keep surfacing in RAG retrieval (verified failure mode on
+    # the Diriyah project where a deleted duplicate kept appearing as a
+    # Sources-footer entry).
+    index_pruned = False
+    try:
+        from app.core import doc_index as _doc_index
+
+        def _drop(current):
+            current = current or {"project_id": project_id, "documents": [], "skipped": []}
+            current["documents"] = [
+                d for d in (current.get("documents") or [])
+                if d.get("document_id") != document_id
+            ]
+            current["skipped"] = [
+                s for s in (current.get("skipped") or [])
+                if s.get("document_id") != document_id
+            ]
+            return current
+
+        _doc_index._update_index(project_id, _drop)  # noqa: SLF001
+        index_pruned = True
+    except Exception:  # noqa: BLE001 — never block delete on index cleanup
+        pass
     audit.record("document.deleted", project_id=project_id,
-                 document_id=document_id, file_removed=file_removed, user_id=auth["user_id"])
+                 document_id=document_id, file_removed=file_removed,
+                 index_pruned=index_pruned, user_id=auth["user_id"])
     return {
         "status": "deleted",
         "document_id": document_id,
         "file_removed": file_removed,
+        "index_pruned": index_pruned,
     }
 
 
