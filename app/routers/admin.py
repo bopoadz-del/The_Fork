@@ -150,3 +150,98 @@ def admin_project_reindex(
     _require_admin(auth)
     from app.core import doc_index as _doc_index
     return _doc_index.index_project(project_id)
+
+
+# ── Training scenario generation (Task 1.4 / MEGA-2) ───────────────────────
+
+@router.post("/v1/admin/training/generate-scenarios")
+async def admin_generate_training_scenarios(
+    project_id: str = Query(...),
+    questions_per_chunk: int = Query(3, ge=1, le=20),
+    min_chunk_chars: int = Query(150, ge=50, le=2000),
+    max_chunks: int = Query(200, ge=1, le=2000),
+    provider_hint: str = Query("any"),
+    auth: dict = Depends(require_api_key),
+):
+    """Run the synthetic Q&A generator against a project's indexed chunks.
+
+    Iterates the project's doc_index, sends each chunk to the chat block,
+    parses + filters the JSONL output, dedupes/validates, and writes the
+    result to ``${DATA_DIR}/learning/training_scenarios_<ts>.jsonl``.
+
+    Slow — up to ~5 seconds per chunk through the LLM. The frontend caller
+    should set a long fetch timeout (15-30 minutes for a full project).
+    """
+    _require_admin(auth)
+
+    import asyncio
+    import json
+    import os
+    import time as _time
+
+    from scripts.generate_training_scenarios import (
+        iter_chunks_for_project,
+        _generate_for_chunk,
+        _validate_scenarios,
+    )
+
+    chunks = list(iter_chunks_for_project(
+        project_id, min_chars=min_chunk_chars, max_chunks=max_chunks
+    ))
+    if not chunks:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no chunks in doc_index for project {project_id}",
+        )
+
+    rows: list = []
+    skipped_chunks = 0
+    per_chunk_timeout = 60.0  # never wait more than 60s on a single chunk
+
+    for chunk in chunks:
+        try:
+            pairs = await asyncio.wait_for(
+                _generate_for_chunk(chunk, questions_per_chunk, provider_hint),
+                timeout=per_chunk_timeout,
+            )
+        except asyncio.TimeoutError:
+            skipped_chunks += 1
+            continue
+        except Exception:  # noqa: BLE001 — never crash on one bad chunk
+            skipped_chunks += 1
+            continue
+        if not pairs:
+            skipped_chunks += 1
+            continue
+        rows.extend(pairs)
+
+    kept_rows, validation_report = _validate_scenarios(rows)
+
+    data_dir = os.getenv("DATA_DIR", "data")
+    out_dir = os.path.join(data_dir, "learning")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(
+        out_dir,
+        f"training_scenarios_{project_id}_{int(_time.time())}.jsonl",
+    )
+    with open(out_path, "w", encoding="utf-8") as f:
+        for r in kept_rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+    by_doc: dict = {}
+    for r in kept_rows:
+        src = r.get("source") or "?"
+        by_doc[src] = by_doc.get(src, 0) + 1
+    top_sources = sorted(by_doc.items(), key=lambda kv: kv[1], reverse=True)[:5]
+
+    return {
+        "project_id": project_id,
+        "chunks_processed": len(chunks),
+        "chunks_skipped": skipped_chunks,
+        "rows_generated": len(rows),
+        "rows_kept": len(kept_rows),
+        "validation": validation_report,
+        "top_sources": top_sources,
+        "output_path": out_path,
+        "sample": kept_rows[:3],
+    }
