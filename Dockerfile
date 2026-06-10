@@ -27,13 +27,19 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
-# Runtime system libs (OpenGL/glib for image processing; curl for healthcheck).
+# Runtime system libs (OpenGL/glib for image processing; curl for healthcheck;
+# tesseract + Arabic language pack so Arabic BOQ pages OCR correctly per
+# FOLLOW-UP #93 — without ara, PyMuPDF's CMAP-less Arabic text becomes
+# mojibake and downstream chunks lose ground truth for rate-points).
 # No "|| true" — a missing dependency must fail the build, not surface later
 # as a runtime crash on first import.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     curl \
+    tesseract-ocr \
+    tesseract-ocr-ara \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # ODA File Converter — required by app.blocks.drawing_qto for DWG → DXF.

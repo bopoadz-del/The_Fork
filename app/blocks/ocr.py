@@ -7,6 +7,13 @@ from typing import Any, Dict
 from app.core.typed_block import TypedBlock, Schema, ContentType
 
 
+def _ocr_lang() -> str:
+    """Tesseract language code(s). Defaults to 'eng'; set RAG_OCR_LANG to
+    'ara+eng' on the production image where tesseract-ocr-ara is installed
+    (FOLLOW-UP #93) so Arabic BOQ pages stop producing CMAP-less mojibake."""
+    return os.getenv("RAG_OCR_LANG", "eng")
+
+
 class OCRBlock(TypedBlock):
     """Optical Character Recognition from images with typed I/O"""
     
@@ -143,14 +150,14 @@ class OCRBlock(TypedBlock):
 
                 for page_img_path in page_images:
                     img = Image.open(page_img_path)
-                    text = pytesseract.image_to_string(img)
+                    text = pytesseract.image_to_string(img, lang=_ocr_lang())
                     if text.strip():
                         all_texts.append(text.strip())
                     # Capture REAL per-word confidence (Roadmap V2 · Epic 5 / 1)
                     # instead of the old hardcoded 0.85.
                     try:
                         data = pytesseract.image_to_data(
-                            img, output_type=pytesseract.Output.DICT
+                            img, lang=_ocr_lang(), output_type=pytesseract.Output.DICT
                         )
                         for conf in data.get("conf", []):
                             try:
