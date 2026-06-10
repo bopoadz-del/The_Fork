@@ -1,5 +1,6 @@
 """Construction Container - Full AEC Industry Domain Container v3.1"""
 
+import logging
 import re
 import json
 import os
@@ -13,6 +14,97 @@ from app.core.universal_base import UniversalContainer
 # Shared dataclasses live in app.core.construction_types so app/blocks/
 # construction_v2.py uses the same definitions — see that module for docs.
 from app.core.construction_types import Measurement, SpecItem, RiskItem
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Convert anything to a float without crashing on bad input.
+
+    The audit flagged several _safe_float(p.get(...)) sites that crash with
+    ValueError when the user passes a string like "10%" or "1,200" or None.
+    This swallows those cases and returns `default` instead.
+    """
+    if value is None or value == "":
+        return default
+    try:
+        if isinstance(value, str):
+            value = value.replace(",", "").replace("%", "").strip()
+            if not value:
+                return default
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_money_str(value: Any) -> Optional[float]:
+    """Parse a money string handling US (1,234,567.89) and EU (1.234.567,89)
+    thousands/decimal conventions. Returns None if unparseable.
+
+    Heuristics for ambiguous cases (single separator, no other):
+    - followed by exactly 3 digits → thousands separator ("500.000" → 500000)
+    - followed by 1-2 or 4+ digits → decimal separator ("1.5", "1.2345")
+    Multiple occurrences of one separator → all thousands ("1.234.567" → 1234567).
+    """
+    if value is None:
+        return None
+    s = re.sub(r"[^0-9,.\-]", "", str(value))
+    if not s or s in ("-", ".", ","):
+        return None
+
+    has_comma = "," in s
+    has_period = "." in s
+
+    if has_comma and has_period:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif has_comma:
+        if s.count(",") > 1:
+            s = s.replace(",", "")
+        else:
+            after = s.split(",")[-1]
+            s = s.replace(",", "") if len(after) == 3 else s.replace(",", ".")
+    elif has_period:
+        if s.count(".") > 1:
+            s = s.replace(".", "")
+        else:
+            after = s.split(".")[-1]
+            if len(after) == 3:
+                s = s.replace(".", "")
+
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _safe_iso_date(value: Any) -> Optional[datetime]:
+    """Parse a date string tolerating common AEC formats.
+
+    Handles: ISO 8601 (with/without Z), `YYYY-MM-DD`, `DD/MM/YYYY`,
+    `MM/DD/YYYY`, Primavera's date strings. Returns None on failure
+    instead of crashing — the audit flagged datetime.fromisoformat()
+    blowing up on legitimate non-ISO inputs.
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    s = str(value).strip()
+    # ISO 8601 with optional trailing Z
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    # Common alternates
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
 
 
 class ConstructionContainer(UniversalContainer):
@@ -1255,10 +1347,10 @@ class ConstructionContainer(UniversalContainer):
         unpriced_items = []
         for item_name, qty_data in quantities.items():
             if isinstance(qty_data, dict):
-                quantity = qty_data.get("quantity", 0)
+                quantity = _safe_float(qty_data.get("quantity", 0))
                 unit = qty_data.get("unit", "ea")
             else:
-                quantity = qty_data
+                quantity = _safe_float(qty_data)
                 unit = "ea"
                 # extract unit from key suffix e.g. concrete_m3 → m3
                 for suffix, u in _UNIT_SUFFIXES.items():
@@ -1507,7 +1599,7 @@ class ConstructionContainer(UniversalContainer):
 
         quantities = p.get("quantities") or data.get("quantities") or {}
         boq = p.get("boq") or data.get("boq") or data.get("line_items", [])
-        budget = float(p.get("budget") or data.get("summary", {}).get("total_estimate", 0))
+        budget = _safe_float(p.get("budget") or data.get("summary", {}).get("total_estimate", 0))
         schedule_start = p.get("schedule_start_date") or data.get("schedule_start_date")
         location = p.get("location") or data.get("location") or "US National Average"
         project_type = p.get("project_type") or data.get("project_type") or "general_building"
@@ -1520,7 +1612,12 @@ class ConstructionContainer(UniversalContainer):
                 name = item.get("item", item.get("description", "Unknown"))
                 qty = item.get("quantity", 0)
                 unit = item.get("unit", "ea")
-                unit_cost = item.get("adjusted_rate") or item.get("base_rate") or 0
+                unit_cost_raw = item.get("adjusted_rate") or item.get("base_rate") or 0
+                unit_cost = (
+                    _parse_money_str(unit_cost_raw)
+                    if isinstance(unit_cost_raw, str)
+                    else _safe_float(unit_cost_raw)
+                )
                 total = item.get("total") or (qty * unit_cost)
                 cat, lead, supplier = self._classify_procurement_item(name)
                 procurement_items.append(self._build_procurement_item(
@@ -1534,6 +1631,12 @@ class ConstructionContainer(UniversalContainer):
                 qty = item.get("quantity", 0)
                 unit = item.get("unit", "ea")
                 unit_cost = item.get("unit_price")
+                if unit_cost is not None:
+                    unit_cost = (
+                        _parse_money_str(unit_cost)
+                        if isinstance(unit_cost, str)
+                        else _safe_float(unit_cost)
+                    )
                 if unit_cost is None:
                     unit_cost = await self._lookup_unit_cost(name, unit, location, project_type)
                 total = qty * (unit_cost or 0)
@@ -1551,10 +1654,10 @@ class ConstructionContainer(UniversalContainer):
                 if item_name in aggregate_keys:
                     continue
                 if isinstance(qty_data, dict):
-                    qty = float(qty_data.get("quantity", 0))
+                    qty = _safe_float(qty_data.get("quantity", 0))
                     unit = qty_data.get("unit", "ea")
                 else:
-                    qty = float(qty_data)
+                    qty = _safe_float(qty_data)
                     unit = "ea"
                 if qty <= 0:
                     continue
@@ -5428,11 +5531,9 @@ Total Extension of Time Sought: {total_delay} days
         for pattern, key, unit in patterns:
             m = re.search(pattern, t)
             if m:
-                try:
-                    val = float(m.group(1).replace(",", ""))
+                val = _safe_float(m.group(1).replace(",", ""))
+                if val > 0:
                     quantities[key] = {"quantity": val, "unit": unit}
-                except ValueError:
-                    pass
 
         # Extract risks from text
         risks = []
@@ -5524,7 +5625,7 @@ Total Extension of Time Sought: {total_delay} days
                     continue
                 # Use whitelist filter consistent with _calculate_quantities
                 key = " ".join(desc.split()).lower().replace(" ", "_")[:40]
-                quantities[key] = {"quantity": float(qty), "unit": unit}
+                quantities[key] = {"quantity": _safe_float(qty), "unit": unit}
 
         # Pull risks/requirements from document_engine if present
         risks_raw = engine_result.get("risks", []) if isinstance(engine_result, dict) else []
@@ -5590,6 +5691,10 @@ Total Extension of Time Sought: {total_delay} days
         panels = []
         downstream = {}
         next_actions = []
+        # Per-panel failures are captured here so the SPA can render a
+        # "1 panel failed to populate" notice instead of silently empty
+        # sections. Each entry: {"panel": <name>, "error": <message>}.
+        pipeline_warnings: List[Dict] = []
 
         # ── Document info panel (always) ─────────────────────────────────────
         panels.append({
@@ -5613,10 +5718,16 @@ Total Extension of Time Sought: {total_delay} days
             doc_result.get("extracted_quantities") or
             doc_result.get("bill_of_quantities") or {}
         )
+
+        def _qty_val(q):
+            """Normalize quantity value to a number."""
+            if isinstance(q, dict):
+                return _safe_float(q.get("quantity", 0))
+            return _safe_float(q)
+
         # Only show quantities panel when at least one value is non-zero
         has_quantities = bool(quantities) and any(
-            (v.get("quantity", 0) if isinstance(v, dict) else v) > 0
-            for v in quantities.values()
+            _qty_val(v) > 0 for v in quantities.values()
         )
         if has_quantities:
             panels.append({"type": "quantities", "title": "Quantities", "data": quantities})
@@ -5655,7 +5766,9 @@ Total Extension of Time Sought: {total_delay} days
                             "error", "Cost estimate unavailable"
                         ) if isinstance(cost_result, dict) else "Cost estimate unavailable",
                     })
-            except Exception as e:
+            except Exception as exc:
+                logger.exception("auto_pipeline: cost estimate calculation failed")
+                pipeline_warnings.append({"panel": "cost_estimate", "error": str(exc)})
                 # Surface the failure honestly rather than silently dropping
                 # the panel — consistent with the else-branch above.
                 panels.append({
@@ -5664,7 +5777,7 @@ Total Extension of Time Sought: {total_delay} days
                     "data": {},
                     "line_items": [],
                     "unpriced_items": [],
-                    "error": f"Cost estimate failed: {e}",
+                    "error": f"Cost estimate failed: {exc}",
                 })
         # Procurement: if we extracted real quantities, derive the procurement
         # list inline so the user sees it without having to click another button.
@@ -5689,8 +5802,9 @@ Total Extension of Time Sought: {total_delay} days
                             "action_required": proc_result.get("action_required", []),
                         },
                     })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("auto_pipeline: procurement_list_generator failed")
+                pipeline_warnings.append({"panel": "procurement", "error": str(exc)})
         next_actions.append({
             "action": "procurement_list_generator",
             "label": "Generate Procurement List",
@@ -5712,8 +5826,9 @@ Total Extension of Time Sought: {total_delay} days
                     "data": risk_result.get("risks", []),
                     "total": risk_result.get("total_risks", 0)
                 })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("auto_pipeline: risk_register_auto_populate failed")
+                pipeline_warnings.append({"panel": "risks", "error": str(exc)})
 
         # Specifications → submittal log
         specs = doc_result.get("specifications") or doc_result.get("spec_sections") or []
@@ -5730,8 +5845,9 @@ Total Extension of Time Sought: {total_delay} days
                     "data": submittal_result.get("submittals", []),
                     "total": submittal_result.get("total_submittals", 0)
                 })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("auto_pipeline: submittal_log_generator failed")
+                pipeline_warnings.append({"panel": "submittals", "error": str(exc)})
 
         # Schedule → progress tracker
         if doc_type == "schedule":
@@ -5754,9 +5870,9 @@ Total Extension of Time Sought: {total_delay} days
                             "label": "Track Progress",
                             "reason": "Schedule loaded",
                         })
-                except Exception:
-                    pass
-            elif ext_for_sched in ("xlsx", "xls"):
+                except Exception as exc:
+                    logger.exception("auto_pipeline: parse_primavera_schedule failed")
+                    pipeline_warnings.append({"panel": "schedule", "error": str(exc)})
                 # Excel schedule — build a summary panel from what document_engine
                 # already extracted, plus a quick row scan for date columns.
                 eng = doc_result.get("_engine_result") if isinstance(doc_result, dict) else None
@@ -5814,8 +5930,9 @@ Total Extension of Time Sought: {total_delay} days
                     "label": "Issue Payment Certificate",
                     "reason": "Contract terms identified"
                 })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("auto_pipeline: process_contract failed")
+                pipeline_warnings.append({"panel": "contract", "error": str(exc)})
 
         # ── Chat context: structured text the user can follow up on ──────────
         chat_context_parts = [f"Document: {file_path.split('/')[-1]} (type: {doc_type})"]
@@ -5846,6 +5963,7 @@ Total Extension of Time Sought: {total_delay} days
             "panels": validated_panels,
             "downstream_actions_run": list(downstream.keys()),
             "next_actions": next_actions,
+            "pipeline_warnings": pipeline_warnings,
             "chat_context": "\n".join(chat_context_parts),
             "raw_doc_result": doc_result,
         }
@@ -7194,6 +7312,26 @@ Total Extension of Time Sought: {total_delay} days
 
     # ────────────────────────────────────────────────────────────────────────
 
+    async def _status(self, input_data: Any, params: Dict) -> Dict:
+        # Discover available actions by calling the active route() with a
+        # sentinel — its handlers dict is the source of truth. Cheaper than
+        # duplicating the action list here (which inevitably drifts).
+        actions: List[str] = []
+        try:
+            # route() builds its handlers dict on every call; trigger it with
+            # an unknown action and pull known_actions out of the error.
+            sentinel = await self.route("__list__", None, {})
+            actions = sentinel.get("known_actions", []) if isinstance(sentinel, dict) else []
+        except Exception:
+            actions = []
+        return {
+            "status": "success",
+            "container": self.name,
+            "version": self.version,
+            "actions_available": actions,
+            "action_count": len(actions),
+        }
+
     async def route(self, action: str, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
@@ -7259,11 +7397,22 @@ Total Extension of Time Sought: {total_delay} days
             "learn": self.learn,
             "benchmark_lookup": self.benchmark_lookup,
             "recommend": self.recommend,
+            # Short-name aliases — older callers + the now-removed initial route()
+            # used these names. Keep them mapped so existing integrations keep
+            # working, even though the canonical names are above.
+            "cost_estimate": self.generate_cost_estimate,
+            "analyze_spec": self.analyze_spec_section,
+            "schedule_risk": self.analyze_schedule_risk,
+            "contract_review": self.process_contract,
+            "safety_audit": self.safety_compliance_audit,
+            "carbon_report": self.generate_carbon_report,
+            "procurement": self.procurement_analysis,
+            "status": self._status,
         }
 
         handler = handlers.get(action)
         if not handler:
-            return {"status": "error", "error": f"Unknown action: {action}"}
+            return {"status": "error", "error": f"Unknown action: {action}", "known_actions": sorted(handlers.keys())}
 
         return await handler(input_data, params)
 
