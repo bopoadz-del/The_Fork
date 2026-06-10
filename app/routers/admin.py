@@ -134,3 +134,19 @@ def admin_doc_reindex(
     _require_admin(auth)
     from app.core import doc_index as _doc_index
     return _doc_index.index_document(project_id, document_id, chunker=chunker)
+
+
+@router.post("/v1/admin/debug/project-reindex")
+def admin_project_reindex(
+    project_id: str = Query(...),
+    auth: dict = Depends(require_api_key),
+):
+    """Full rebuild of a project's doc_index from its current document list.
+
+    Use this to clean up orphans left behind by deletes that pre-dated the
+    auto-prune-on-delete fix, or to apply a chunker change to all docs at
+    once. Slow — extracts text from every document.
+    """
+    _require_admin(auth)
+    from app.core import doc_index as _doc_index
+    return _doc_index.index_project(project_id)
