@@ -333,6 +333,12 @@ env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
 if env in {"dev", "development", "local", "test", "testing"}:
     app.include_router(debug.router)
 
+# Admin diagnostic routes — mounted in ALL environments. Endpoints are
+# role-gated (admin only); without them, a shell-less Render deploy has
+# no way to inspect the production index.
+from app.routers import admin as admin_router  # noqa: E402
+app.include_router(admin_router.router)
+
 # Mount static files. The frontend bundle (frontend/dist) is a build artifact
 # that is absent in CI and fresh checkouts; StaticFiles raises RuntimeError at
 # import time if its directory is missing, so mount each frontend path only
