@@ -133,11 +133,14 @@ function formatSize(bytes: number): string {
 }
 
 /**
- * Combined readiness + LLM-availability state used by the rail badge and the
+ * Combined readiness + LLM-availability state for the rail badge and the
  * composer send-button. Three mutually-exclusive modes:
- *   setting-up    — project still indexing, no chat allowed
- *   ai-unavailable — project ready but last LLM call failed
- *   ready         — green light, send enabled
+ *   setting-up     — backend reports project-execution gates unsatisfied
+ *                    (baseline schedule, daily reports, Aconex). Badge only;
+ *                    does NOT block chat — the chat surface is functional as
+ *                    soon as the project exists.
+ *   ai-unavailable — last LLM call errored. Blocks send.
+ *   ready          — green light, send enabled.
  */
 type ReadinessMode = 'setting-up' | 'ai-unavailable' | 'ready'
 
@@ -145,8 +148,8 @@ function readinessMode(
   readiness: ProjectReadiness | null | undefined,
   llmAvailable: boolean,
 ): ReadinessMode {
-  if (!readiness || !readiness.ready) return 'setting-up'
   if (!llmAvailable) return 'ai-unavailable'
+  if (!readiness || !readiness.ready) return 'setting-up'
   return 'ready'
 }
 
@@ -160,10 +163,17 @@ function readinessModeLabel(mode: ReadinessMode): string {
 
 function readinessModeTooltip(mode: ReadinessMode): string {
   switch (mode) {
-    case 'setting-up': return 'Project is indexing documents. Chat will be available shortly.'
+    case 'setting-up': return 'Project execution gates (baseline schedule, daily reports, connectors) are not yet satisfied. Chat is available.'
     case 'ai-unavailable': return 'The assistant is temporarily unreachable. Sending will retry once it recovers.'
     case 'ready': return ''
   }
+}
+
+/** Send button is gated only on streaming + actual LLM failure, not on
+ *  project-execution readiness — chat must work even when the broader
+ *  project setup is incomplete. */
+function composerBlocked(mode: ReadinessMode): boolean {
+  return mode === 'ai-unavailable'
 }
 
 function msgId(): string {
@@ -1461,7 +1471,8 @@ export default function ProjectWorkspace() {
 
   const { project } = wsState
   const mode = readinessMode(project.readiness, llmAvailable)
-  const composerBlockedReason = readinessModeTooltip(mode) || undefined
+  const composerIsBlocked = composerBlocked(mode)
+  const composerBlockedReason = composerIsBlocked ? readinessModeTooltip(mode) : undefined
 
   return (
     <div className="workspace-shell">
@@ -1474,7 +1485,7 @@ export default function ProjectWorkspace() {
             messages={messages}
             documentCount={documents.length}
             onSuggestion={(text) => void handleSend(text)}
-            suggestionsDisabled={streaming || mode !== 'ready'}
+            suggestionsDisabled={streaming || composerIsBlocked}
             onDownloadMessage={(assistantIndex) => {
               if (!id || !conversationId) return
               const token = getToken() || ''
@@ -1506,7 +1517,7 @@ export default function ProjectWorkspace() {
           />
           <ChatComposer
             onSend={(text) => void handleSend(text)}
-            disabled={streaming || mode !== 'ready'}
+            disabled={streaming || composerIsBlocked}
             disabledReason={composerBlockedReason}
             projectId={id ?? ''}
             hasHistory={messages.length > 0}
