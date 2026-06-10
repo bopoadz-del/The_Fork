@@ -1212,6 +1212,29 @@ export default function ProjectWorkspace() {
     const controller = new AbortController()
     abortRef.current = controller
 
+    // Reader-side wall-clock deadline (FOLLOW-UP #92). Resets on every
+    // chunk read — token, heartbeat, or tool event all count as proof of
+    // life. If 95s pass with no bytes from the server, abort the fetch and
+    // surface a friendly timeout banner instead of an indefinite spinner.
+    // 95s is intentionally larger than the server's CHAT_STREAM_TIMEOUT_SECONDS
+    // (90s default) so the server's structured error reaches us first.
+    const READER_TIMEOUT_MS = 95_000
+    let didTimeout = false
+    let readerTimer: ReturnType<typeof setTimeout> | null = null
+    const resetReaderDeadline = () => {
+      if (readerTimer !== null) clearTimeout(readerTimer)
+      readerTimer = setTimeout(() => {
+        didTimeout = true
+        controller.abort()
+      }, READER_TIMEOUT_MS)
+    }
+    const clearReaderDeadline = () => {
+      if (readerTimer !== null) {
+        clearTimeout(readerTimer)
+        readerTimer = null
+      }
+    }
+
     /** Build a human-readable status label for an agent tool_call event. */
     function toolStatusLabel(toolName: string, argsPreview: string): string {
       let args: Record<string, unknown> = {}
@@ -1266,10 +1289,17 @@ export default function ProjectWorkspace() {
       let accumulatedContent = ''
       let firstTokenReceived = false
 
+      // Arm the wall-clock deadline now that the response has started.
+      resetReaderDeadline()
+
       // Read the stream chunk by chunk
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
+
+        // Any byte from the server counts as proof of life — covers tokens,
+        // heartbeats, tool events, anything. Reset the wall-clock deadline.
+        resetReaderDeadline()
 
         sseBuffer += decoder.decode(value, { stream: true })
 
@@ -1295,6 +1325,11 @@ export default function ProjectWorkspace() {
 
             if (evtType === 'start') {
               // Agent stream start — {type, agent}. No session_id to echo back.
+            } else if (evtType === 'heartbeat') {
+              // Server is alive but the LLM hasn't produced a token yet.
+              // The byte arrival already reset the reader deadline above;
+              // we render nothing for heartbeats — they exist solely as
+              // proof of life for the consumer-side wall-clock.
             } else if (evtType === 'tool_call') {
               // Show ephemeral status inside the assistant bubble while tools run.
               const toolName = typeof evt['tool'] === 'string' ? evt['tool'] : 'tool'
@@ -1384,6 +1419,24 @@ export default function ProjectWorkspace() {
       )
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
+        if (didTimeout) {
+          // OUR timeout fired (95s of reader silence) — surface a friendly
+          // error rather than the silent-cancel UX, otherwise the user is
+          // left with an indefinite spinner that just vanished.
+          const friendly = friendlyErrorMessage('timeout')
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId
+                ? { ...m, content: friendly, streaming: false, error: true, toolStatus: undefined }
+                : m
+            )
+          )
+          setLlmAvailable(false)
+          setTimeout(() => {
+            setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
+          }, 8000)
+          return
+        }
         // Intentional cancel — mark assistant message done, keep content, clear tool status
         setMessages((prev) =>
           prev.map((m) =>
@@ -1408,6 +1461,7 @@ export default function ProjectWorkspace() {
         setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
       }, 8000)
     } finally {
+      clearReaderDeadline()
       setStreaming(false)
     }
   }, [id, conversationId, streaming])

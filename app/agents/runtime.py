@@ -776,7 +776,7 @@ class Agent:
         _depth: int = 0,
         _call_stack: Optional[List[str]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Generator: yields {type, ...} events. Types: start, tool_call, tool_result, token, end, error.
+        """Generator: yields {type, ...} events. Types: start, tool_call, tool_result, token, end, error, heartbeat.
 
         Tool-calling is non-streamed (we collect the whole assistant turn before deciding),
         but the FINAL assistant answer streams token-by-token.
@@ -786,31 +786,127 @@ class Agent:
         before a ``end`` event. Silent exits are bugs. The trailing safety net
         below converts any escaping exception or unhandled empty-content state
         into a synthetic ``error`` + ``end`` pair.
+
+        **Wall-clock timeout + heartbeat (FOLLOW-UP #92):** a producer task
+        runs ``_chat_stream_impl`` and pushes events into a queue; a heartbeat
+        task injects ``{"type": "heartbeat"}`` after each ``CHAT_STREAM_HEARTBEAT_SECONDS``
+        of silence; the consumer reads with an *absolute* wall-clock deadline
+        of ``CHAT_STREAM_TIMEOUT_SECONDS`` (computed once, NOT reset by events),
+        and emits a structured timeout error when the deadline expires before
+        the producer finishes.
         """
         agent_name = self.name
         token_emitted = False
         terminal_emitted = False  # True once we yield an `end` or `error` event
 
+        # Read knobs at call-time so tests can monkeypatch env. Bad values
+        # fall back to safe defaults rather than crashing the stream.
+        try:
+            timeout_s = float(os.getenv("CHAT_STREAM_TIMEOUT_SECONDS") or "90")
+        except ValueError:
+            timeout_s = 90.0
+        try:
+            heartbeat_s = float(os.getenv("CHAT_STREAM_HEARTBEAT_SECONDS") or "15")
+        except ValueError:
+            heartbeat_s = 15.0
+
+        _SENTINEL = object()
+
         async def _inner():
             nonlocal token_emitted, terminal_emitted
-            _LOG.info("chat_stream: start agent=%s conv=%s project=%s",
-                      agent_name, conversation_id, project_id)
-            async for event in self._chat_stream_impl(
-                user_message=user_message,
-                history=history,
-                api_key=api_key,
-                user_id=user_id,
-                project_id=project_id,
-                conversation_id=conversation_id,
-                rag_debug=rag_debug,
-                _depth=_depth,
-                _call_stack=_call_stack,
-            ):
-                if event.get("type") == "token":
-                    token_emitted = True
-                if event.get("type") in ("end", "error"):
-                    terminal_emitted = True
-                yield event
+            _LOG.info(
+                "chat_stream: start agent=%s conv=%s project=%s timeout=%.1fs heartbeat=%.1fs",
+                agent_name, conversation_id, project_id, timeout_s, heartbeat_s,
+            )
+
+            queue: asyncio.Queue = asyncio.Queue()
+
+            async def producer() -> None:
+                try:
+                    async for event in self._chat_stream_impl(
+                        user_message=user_message,
+                        history=history,
+                        api_key=api_key,
+                        user_id=user_id,
+                        project_id=project_id,
+                        conversation_id=conversation_id,
+                        rag_debug=rag_debug,
+                        _depth=_depth,
+                        _call_stack=_call_stack,
+                    ):
+                        await queue.put(event)
+                finally:
+                    await queue.put(_SENTINEL)
+
+            async def heartbeat() -> None:
+                # Infinite loop — cancelled by the consumer's finally block.
+                while True:
+                    await asyncio.sleep(heartbeat_s)
+                    await queue.put({"type": "heartbeat"})
+
+            producer_task = asyncio.create_task(producer())
+            heartbeat_task = asyncio.create_task(heartbeat())
+
+            # Absolute deadline — computed ONCE and NOT reset by events.
+            # Heartbeats keep the queue active even when the upstream LLM is
+            # hung, so a per-get() timeout would never trigger. The fixed
+            # deadline is the only correct semantic for a wall-clock cap.
+            deadline = time.monotonic() + timeout_s
+
+            try:
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        # Wall-clock cap exceeded. Emit a structured timeout
+                        # error so the frontend's friendlyErrorMessage maps
+                        # it (substring "timeout") to a clean banner.
+                        _LOG.warning(
+                            "chat_stream: wall-clock deadline exceeded after %.1fs",
+                            timeout_s,
+                        )
+                        if not token_emitted:
+                            yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
+                            token_emitted = True
+                        yield {
+                            "type": "error",
+                            "message": (
+                                f"Response timeout — stream exceeded "
+                                f"the wall-clock timeout ({timeout_s:.0f}s)."
+                            ),
+                        }
+                        terminal_emitted = True
+                        return
+
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        # Loop top will see remaining <= 0 and emit the error.
+                        continue
+
+                    if item is _SENTINEL:
+                        # Producer finished — re-raise any exception it caught
+                        # so the outer safety net can convert it to error+end.
+                        # (Necessary to keep test_inner_generator_exception_...
+                        # passing under the producer-task indirection.)
+                        await producer_task
+                        return
+
+                    event = item
+                    if event.get("type") == "token":
+                        token_emitted = True
+                    if event.get("type") in ("end", "error"):
+                        terminal_emitted = True
+                    yield event
+            finally:
+                # Cancel-then-gather so both tasks fully unwind even when the
+                # wall-clock branch fires mid-stream. The bare cancel() alone
+                # left coroutine warnings; gather with return_exceptions=True
+                # swallows the CancelledError and any producer leftovers.
+                producer_task.cancel()
+                heartbeat_task.cancel()
+                await asyncio.gather(
+                    producer_task, heartbeat_task, return_exceptions=True,
+                )
 
         try:
             async for event in _inner():
