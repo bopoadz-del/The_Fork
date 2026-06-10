@@ -196,22 +196,27 @@ async def admin_generate_training_scenarios(
 
     rows: list = []
     skipped_chunks = 0
-    per_chunk_timeout = 60.0  # never wait more than 60s on a single chunk
+    skip_reasons: dict = {}
+    # qwen3-coder:480b through the tunnel can take 60-150s on a dense BOQ
+    # chunk; budget 200s per chunk so a slow chunk doesn't kill the run.
+    per_chunk_timeout = 200.0
 
     for chunk in chunks:
+        reason = None
         try:
             pairs = await asyncio.wait_for(
                 _generate_for_chunk(chunk, questions_per_chunk, provider_hint),
                 timeout=per_chunk_timeout,
             )
         except asyncio.TimeoutError:
-            skipped_chunks += 1
-            continue
-        except Exception:  # noqa: BLE001 — never crash on one bad chunk
-            skipped_chunks += 1
-            continue
+            pairs = []
+            reason = "timeout"
+        except Exception as exc:  # noqa: BLE001 — never crash on one bad chunk
+            pairs = []
+            reason = f"exc:{type(exc).__name__}"
         if not pairs:
             skipped_chunks += 1
+            skip_reasons[reason or "no_pairs"] = skip_reasons.get(reason or "no_pairs", 0) + 1
             continue
         rows.extend(pairs)
 
@@ -238,6 +243,7 @@ async def admin_generate_training_scenarios(
         "project_id": project_id,
         "chunks_processed": len(chunks),
         "chunks_skipped": skipped_chunks,
+        "skip_reasons": skip_reasons,
         "rows_generated": len(rows),
         "rows_kept": len(kept_rows),
         "validation": validation_report,
