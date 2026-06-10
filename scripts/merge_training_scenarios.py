@@ -44,6 +44,9 @@ from typing import Dict, Iterable, List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import hashlib
+import re
+
 from scripts.generate_training_scenarios import _validate_scenarios
 
 DEFAULT_INPUTS: Dict[str, str] = {
@@ -51,6 +54,44 @@ DEFAULT_INPUTS: Dict[str, str] = {
     "procedure_knowledge": "data/learning/expert_scenarios.jsonl",
     "knowledge_functions": "data/learning/knowledge_scenarios.jsonl",
 }
+
+
+def _normalize_instruction(text: str) -> str:
+    """Normalize an instruction for cross-source dedupe.
+
+    Catches near-duplicates from different sources (e.g. the same BOQ row
+    showing up in two generator runs with slightly different whitespace or
+    truncation). Drops case, collapses internal whitespace, strips edge
+    whitespace + trailing punctuation. Doesn't touch the response — that's
+    the cosine pass's job.
+    """
+    s = text or ""
+    s = s.lower()
+    s = re.sub(r"\s+", " ", s)
+    s = s.strip().rstrip(".?!,;: ")
+    return s
+
+
+def _dedupe_by_instruction(rows: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], int]:
+    """First-pass dedupe by normalized instruction hash. Returns
+    ``(kept, dropped_count)``. Earlier-pool rows win; later rows lose, so
+    sources passed first to the merger (knowledge, procedures, evm)
+    anchor the dataset and LLM-generated rows fill in around them."""
+    seen: Dict[str, str] = {}
+    kept: List[Dict[str, str]] = []
+    dropped = 0
+    for r in rows:
+        norm = _normalize_instruction(r.get("instruction", ""))
+        if not norm:
+            kept.append(r)
+            continue
+        digest = hashlib.sha1(norm.encode("utf-8")).hexdigest()
+        if digest in seen:
+            dropped += 1
+            continue
+        seen[digest] = r.get("source", "?")
+        kept.append(r)
+    return kept, dropped
 
 
 def _load_jsonl(path: str) -> List[Dict[str, str]]:
@@ -138,13 +179,21 @@ def main() -> int:
         print("error: no input rows found", file=sys.stderr)
         return 1
 
-    # Validate the whole pool (the validator is global — it dedupes across
-    # all sources, which is the right behaviour for the merged file).
+    # Stage A: dedupe by normalized instruction text. Catches near-duplicate
+    # questions across sources (same BOQ row paraphrased in two generator
+    # runs, or whitespace/truncation drift). The existing _validate_scenarios
+    # only dedupes by response cosine, so two rows asking the same question
+    # with slightly different answers would BOTH survive without this pass.
+    pool, dropped_instructions = _dedupe_by_instruction(pool)
+
+    # Stage B: validate (empties / short responses / response-cosine dupes).
     if args.no_validate:
         kept_all = pool
-        validation_report = {"validation": "skipped"}
+        validation_report = {"validation": "skipped",
+                             "instruction_dupes_dropped": dropped_instructions}
     else:
         kept_all, validation_report = _validate_scenarios(pool)
+        validation_report["instruction_dupes_dropped"] = dropped_instructions
 
     # Group kept rows back by source label for the report.
     for label in by_source_before:
