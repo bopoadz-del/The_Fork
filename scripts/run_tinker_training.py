@@ -305,7 +305,12 @@ def _execute_one_step(plan: RunPlan, rows: List[Dict[str, str]]) -> str:
     opt_future.result()
     logger.info("optim_step done")
 
-    checkpoint_name = f"checkpoints/{plan.base_model.replace('/', '_')}/{plan.run_id}"
+    # Tinker checkpoint labels only allow [A-Za-z0-9._-]. Flatten the
+    # model name AND the path separator into hyphens to satisfy the
+    # validator (previously the trailing `/` between model and run_id
+    # failed validation server-side).
+    safe_model = plan.base_model.replace("/", "_")
+    checkpoint_name = f"checkpoints-{safe_model}-{plan.run_id}"
     save_future = training_client.save_state(checkpoint_name)
     save_result = save_future.result()
     tinker_path = getattr(save_result, "path", None) or checkpoint_name
