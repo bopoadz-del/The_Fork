@@ -136,6 +136,54 @@ def admin_doc_reindex(
     return _doc_index.index_document(project_id, document_id, chunker=chunker)
 
 
+@router.get("/v1/admin/training/list")
+def admin_training_list(auth: dict = Depends(require_api_key)):
+    """List all training-scenario JSONL files on the server."""
+    _require_admin(auth)
+    data_dir = os.getenv("DATA_DIR", "data")
+    learn_dir = os.path.join(data_dir, "learning")
+    if not os.path.isdir(learn_dir):
+        return {"files": []}
+    out = []
+    for name in sorted(os.listdir(learn_dir)):
+        path = os.path.join(learn_dir, name)
+        if name.endswith(".jsonl") and os.path.isfile(path):
+            line_count = 0
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    line_count = sum(1 for _ in f)
+            except Exception:
+                pass
+            out.append({
+                "name": name,
+                "size_bytes": os.path.getsize(path),
+                "line_count": line_count,
+            })
+    return {"files": out}
+
+
+@router.get("/v1/admin/training/download")
+def admin_training_download(
+    filename: str = Query(..., description="Filename inside DATA_DIR/learning/"),
+    auth: dict = Depends(require_api_key),
+):
+    """Stream a training-scenario JSONL back to the caller. Sandboxed to
+    DATA_DIR/learning so an attacker can't traverse to other paths."""
+    _require_admin(auth)
+    import os as _os
+    # Path-traversal guard: filename must be a basename, no slashes.
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(400, "filename must be a plain basename")
+    data_dir = _os.getenv("DATA_DIR", "data")
+    full = _os.path.join(data_dir, "learning", filename)
+    if not _os.path.isfile(full):
+        raise HTTPException(404, "file not found")
+    with open(full, "r", encoding="utf-8") as f:
+        body = f.read()
+    return {"filename": filename, "line_count": body.count("\n"),
+            "size_bytes": len(body), "content": body}
+
+
 @router.post("/v1/admin/debug/project-reindex")
 def admin_project_reindex(
     project_id: str = Query(...),
