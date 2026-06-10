@@ -183,7 +183,9 @@ async def admin_generate_training_scenarios(
         iter_chunks_for_project,
         _generate_for_chunk,
         _validate_scenarios,
+        _DEFAULT_PROMPT,
     )
+    from app.blocks import BLOCK_REGISTRY
 
     chunks = list(iter_chunks_for_project(
         project_id, min_chars=min_chunk_chars, max_chunks=max_chunks
@@ -197,9 +199,37 @@ async def admin_generate_training_scenarios(
     rows: list = []
     skipped_chunks = 0
     skip_reasons: dict = {}
+    debug_first: dict = {}  # Capture raw chat-block output for first chunk
     # qwen3-coder:480b through the tunnel can take 60-150s on a dense BOQ
     # chunk; budget 200s per chunk so a slow chunk doesn't kill the run.
     per_chunk_timeout = 200.0
+
+    # Debug: capture the very first chunk's raw chat-block response so the
+    # operator can see whether the LLM is producing JSONL or prose.
+    if chunks:
+        first = chunks[0]
+        try:
+            cls = BLOCK_REGISTRY.get("chat")
+            if cls is not None:
+                block = cls()
+                prompt = _DEFAULT_PROMPT.format(
+                    source=first["source"], n=questions_per_chunk, chunk=first["text"][:3000]
+                )
+                envelope = await asyncio.wait_for(
+                    block.execute({"text": prompt}, {"max_tokens": 1500, "temperature": 0.7}),
+                    timeout=per_chunk_timeout,
+                )
+                inner = envelope.get("result") if isinstance(envelope, dict) else {}
+                if isinstance(inner, dict):
+                    raw = (inner.get("response") or inner.get("text") or "")
+                    debug_first = {
+                        "provider": inner.get("provider"),
+                        "model": inner.get("model"),
+                        "raw_len": len(raw),
+                        "raw_head": raw[:500],
+                    }
+        except Exception as exc:  # noqa: BLE001
+            debug_first = {"error": f"{type(exc).__name__}: {exc}"}
 
     for chunk in chunks:
         reason = None
@@ -250,4 +280,5 @@ async def admin_generate_training_scenarios(
         "top_sources": top_sources,
         "output_path": out_path,
         "sample": kept_rows[:3],
+        "debug_first_chunk": debug_first,
     }
