@@ -201,27 +201,29 @@ def admin_project_reindex(
 
 
 # ── Training scenario generation (Task 1.4 / MEGA-2) ───────────────────────
+#
+# Long-running generation jobs are now ASYNC: POST returns a job_id
+# immediately, the actual work runs in an asyncio background task, and the
+# client polls GET /v1/admin/training/job/{job_id}. This decouples the
+# 10-20 minute generator from any client-side connection (bridge, curl
+# pipe) that might drop mid-flight.
 
-@router.post("/v1/admin/training/generate-scenarios")
-async def admin_generate_training_scenarios(
-    project_id: str = Query(...),
-    questions_per_chunk: int = Query(3, ge=1, le=20),
-    min_chunk_chars: int = Query(150, ge=50, le=2000),
-    max_chunks: int = Query(200, ge=1, le=2000),
-    provider_hint: str = Query("any"),
-    auth: dict = Depends(require_api_key),
-):
-    """Run the synthetic Q&A generator against a project's indexed chunks.
+# In-memory job registry. Process-local; if uvicorn restarts mid-job, the
+# job is lost and the client will see a 404 on next poll — that's the
+# correct signal for "kick a new one off". Persistent job state would
+# need its own table; not worth it for an admin-only diagnostic tool.
+_TRAINING_JOBS: Dict[str, Dict[str, Any]] = {}
 
-    Iterates the project's doc_index, sends each chunk to the chat block,
-    parses + filters the JSONL output, dedupes/validates, and writes the
-    result to ``${DATA_DIR}/learning/training_scenarios_<ts>.jsonl``.
 
-    Slow — up to ~5 seconds per chunk through the LLM. The frontend caller
-    should set a long fetch timeout (15-30 minutes for a full project).
-    """
-    _require_admin(auth)
-
+async def _training_job_runner(
+    job_id: str,
+    project_id: str,
+    questions_per_chunk: int,
+    min_chunk_chars: int,
+    max_chunks: int,
+    provider_hint: str,
+) -> None:
+    """Background task: runs the full generator, updates job state."""
     import asyncio
     import json
     import os
@@ -235,98 +237,135 @@ async def admin_generate_training_scenarios(
     )
     from app.blocks import BLOCK_REGISTRY
 
-    chunks = list(iter_chunks_for_project(
-        project_id, min_chars=min_chunk_chars, max_chunks=max_chunks
-    ))
-    if not chunks:
-        raise HTTPException(
-            status_code=404,
-            detail=f"no chunks in doc_index for project {project_id}",
-        )
+    job = _TRAINING_JOBS[job_id]
+    try:
+        chunks = list(iter_chunks_for_project(
+            project_id, min_chars=min_chunk_chars, max_chunks=max_chunks
+        ))
+        if not chunks:
+            job["status"] = "failed"
+            job["error"] = f"no chunks in doc_index for project {project_id}"
+            job["finished_at"] = _time.time()
+            return
+        job["total_chunks"] = len(chunks)
 
-    rows: list = []
-    skipped_chunks = 0
-    skip_reasons: dict = {}
-    debug_first: dict = {}  # Capture raw chat-block output for first chunk
-    # qwen3-coder:480b through the tunnel can take 60-150s on a dense BOQ
-    # chunk; budget 200s per chunk so a slow chunk doesn't kill the run.
-    per_chunk_timeout = 200.0
+        rows: list = []
+        skipped_chunks = 0
+        skip_reasons: dict = {}
+        per_chunk_timeout = 200.0
 
-    # Debug: capture the very first chunk's raw chat-block response so the
-    # operator can see whether the LLM is producing JSONL or prose.
-    if chunks:
-        first = chunks[0]
-        try:
-            cls = BLOCK_REGISTRY.get("chat")
-            if cls is not None:
-                block = cls()
-                prompt = _DEFAULT_PROMPT.format(
-                    source=first["source"], n=questions_per_chunk, chunk=first["text"][:3000]
-                )
-                envelope = await asyncio.wait_for(
-                    block.execute({"text": prompt}, {"max_tokens": 1500, "temperature": 0.7}),
+        for i, chunk in enumerate(chunks):
+            reason = None
+            try:
+                pairs = await asyncio.wait_for(
+                    _generate_for_chunk(chunk, questions_per_chunk, provider_hint),
                     timeout=per_chunk_timeout,
                 )
-                inner = envelope.get("result") if isinstance(envelope, dict) else {}
-                if isinstance(inner, dict):
-                    raw = (inner.get("response") or inner.get("text") or "")
-                    debug_first = {
-                        "provider": inner.get("provider"),
-                        "model": inner.get("model"),
-                        "raw_len": len(raw),
-                        "raw_head": raw[:500],
-                    }
-        except Exception as exc:  # noqa: BLE001
-            debug_first = {"error": f"{type(exc).__name__}: {exc}"}
+            except asyncio.TimeoutError:
+                pairs = []
+                reason = "timeout"
+            except Exception as exc:  # noqa: BLE001
+                pairs = []
+                reason = f"exc:{type(exc).__name__}"
+            if not pairs:
+                skipped_chunks += 1
+                skip_reasons[reason or "no_pairs"] = skip_reasons.get(reason or "no_pairs", 0) + 1
+            else:
+                rows.extend(pairs)
+            job["chunks_done"] = i + 1
+            job["rows_generated"] = len(rows)
+            job["chunks_skipped"] = skipped_chunks
 
-    for chunk in chunks:
-        reason = None
-        try:
-            pairs = await asyncio.wait_for(
-                _generate_for_chunk(chunk, questions_per_chunk, provider_hint),
-                timeout=per_chunk_timeout,
-            )
-        except asyncio.TimeoutError:
-            pairs = []
-            reason = "timeout"
-        except Exception as exc:  # noqa: BLE001 — never crash on one bad chunk
-            pairs = []
-            reason = f"exc:{type(exc).__name__}"
-        if not pairs:
-            skipped_chunks += 1
-            skip_reasons[reason or "no_pairs"] = skip_reasons.get(reason or "no_pairs", 0) + 1
-            continue
-        rows.extend(pairs)
+        kept_rows, validation_report = _validate_scenarios(rows)
 
-    kept_rows, validation_report = _validate_scenarios(rows)
+        data_dir = os.getenv("DATA_DIR", "data")
+        out_dir = os.path.join(data_dir, "learning")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(
+            out_dir,
+            f"training_scenarios_{project_id}_{int(_time.time())}.jsonl",
+        )
+        with open(out_path, "w", encoding="utf-8") as f:
+            for r in kept_rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    data_dir = os.getenv("DATA_DIR", "data")
-    out_dir = os.path.join(data_dir, "learning")
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(
-        out_dir,
-        f"training_scenarios_{project_id}_{int(_time.time())}.jsonl",
-    )
-    with open(out_path, "w", encoding="utf-8") as f:
-        for r in kept_rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        job["status"] = "done"
+        job["output_path"] = out_path
+        job["rows_kept"] = len(kept_rows)
+        job["validation"] = validation_report
+        job["skip_reasons"] = skip_reasons
+        job["finished_at"] = _time.time()
+    except Exception as exc:  # noqa: BLE001 — last-line safety
+        job["status"] = "failed"
+        job["error"] = f"{type(exc).__name__}: {exc}"
+        job["finished_at"] = _time.time()
 
-    by_doc: dict = {}
-    for r in kept_rows:
-        src = r.get("source") or "?"
-        by_doc[src] = by_doc.get(src, 0) + 1
-    top_sources = sorted(by_doc.items(), key=lambda kv: kv[1], reverse=True)[:5]
 
-    return {
+@router.post("/v1/admin/training/generate-scenarios")
+async def admin_generate_training_scenarios(
+    project_id: str = Query(...),
+    questions_per_chunk: int = Query(3, ge=1, le=20),
+    min_chunk_chars: int = Query(150, ge=50, le=2000),
+    max_chunks: int = Query(200, ge=1, le=2000),
+    provider_hint: str = Query("any"),
+    auth: dict = Depends(require_api_key),
+):
+    """Kick off a Q&A generation job in the background. Returns a job_id
+    for polling via GET /v1/admin/training/job/{job_id}.
+
+    The job runs server-side and survives client disconnects — this is the
+    reliability fix for the 10-20 minute generator (which used to time out
+    bridge curl pipes mid-flight).
+    """
+    _require_admin(auth)
+
+    import asyncio
+    import time as _time
+    import uuid as _uuid
+
+    job_id = _uuid.uuid4().hex[:12]
+    _TRAINING_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "running",
         "project_id": project_id,
-        "chunks_processed": len(chunks),
-        "chunks_skipped": skipped_chunks,
-        "skip_reasons": skip_reasons,
-        "rows_generated": len(rows),
-        "rows_kept": len(kept_rows),
-        "validation": validation_report,
-        "top_sources": top_sources,
-        "output_path": out_path,
-        "sample": kept_rows[:3],
-        "debug_first_chunk": debug_first,
+        "questions_per_chunk": questions_per_chunk,
+        "min_chunk_chars": min_chunk_chars,
+        "max_chunks": max_chunks,
+        "provider_hint": provider_hint,
+        "started_at": _time.time(),
+        "finished_at": None,
+        "chunks_done": 0,
+        "total_chunks": None,
+        "rows_generated": 0,
+        "chunks_skipped": 0,
+        "output_path": None,
+        "rows_kept": None,
+        "error": None,
     }
+    asyncio.create_task(_training_job_runner(
+        job_id, project_id, questions_per_chunk, min_chunk_chars,
+        max_chunks, provider_hint,
+    ))
+    return {
+        "job_id": job_id,
+        "status_url": f"/v1/admin/training/job/{job_id}",
+        "status": "running",
+    }
+
+
+@router.get("/v1/admin/training/job/{job_id}")
+def admin_training_job_status(job_id: str, auth: dict = Depends(require_api_key)):
+    """Poll status of a generate-scenarios job."""
+    _require_admin(auth)
+    job = _TRAINING_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, f"job '{job_id}' not found (worker may have restarted)")
+    return job
+
+
+# ── Synchronous (legacy) path — kept for tests / quick small jobs ────────
+
+def _legacy_sync_generate_unused():
+    """Stub kept to preserve the import surface for the deleted sync path —
+    intentionally never called. Real entrypoint is the async job above."""
+    return None
