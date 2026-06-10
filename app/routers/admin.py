@@ -122,9 +122,15 @@ def admin_doc_extract(
 def admin_doc_reindex(
     project_id: str = Query(...),
     document_id: str = Query(...),
+    chunker: str = Query("default", pattern="^(default|finer)$"),
     auth: dict = Depends(require_api_key),
 ):
-    """Re-run extraction + chunking + RAG indexing for a single document."""
+    """Re-run extraction + chunking + RAG indexing for a single document.
+
+    ``chunker=finer`` uses the BOQ-aware char-level chunker (500-char target,
+    50-char overlap, BOQ row boundaries preferred). Use it for BOQ / tender
+    PDFs where the default 500-word chunker produces too-coarse chunks.
+    """
     _require_admin(auth)
     from app.core import doc_index as _doc_index
-    return _doc_index.index_document(project_id, document_id)
+    return _doc_index.index_document(project_id, document_id, chunker=chunker)

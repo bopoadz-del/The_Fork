@@ -35,6 +35,7 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import threading
@@ -274,6 +275,103 @@ def chunk_text(text: str, words_per_chunk: int = 500) -> List[str]:
     return chunks
 
 
+# ── BOQ-aware finer chunker (FOLLOW-UP #91) ────────────────────────────────
+#
+# Used for documents where word-count chunking produces too-coarse chunks
+# (the Diriyah BOQ symptom — 8 chunks at 2798 chars per chunk, so finding
+# a single rate requires the LLM to scan 700 tokens). Re-chunks at character
+# level with overlap and respects BOQ row boundaries (lines that start with
+# an item code like ``D 999.14``) so a rate stays adjacent to its item code.
+
+_BOQ_ITEM_PATTERN = re.compile(r"^\s*[A-Z]\s*\d+(?:\.\d+)+\b")
+
+# ``re`` is used here; the module-level ``import re`` was added with the
+# noise-filter helper earlier.
+
+
+def chunk_text_with_overlap(
+    text: str,
+    target_chars: int = 500,
+    overlap: int = 50,
+    max_chars: int = 800,
+) -> List[str]:
+    """Split ``text`` into chunks targeting ``target_chars`` per chunk with
+    ``overlap`` characters carried into the next chunk.
+
+    Prefer breakpoints at, in order of preference:
+    1. A line that looks like the start of a BOQ row (matches an item-code
+       pattern such as ``D 999.14``) — keeps a row contiguous in one chunk.
+    2. A paragraph break (``\\n\\n``).
+    3. A line break (``\\n``).
+    4. A sentence boundary (``. ``).
+    5. Hard cut at ``max_chars`` if nothing better was found.
+
+    ``overlap`` chars of trailing context from the previous chunk are
+    prepended to the next so a row split mid-sentence still has context.
+
+    Empty / whitespace-only input returns ``[]``.
+    """
+    import re as _re
+
+    if not text or not text.strip():
+        return []
+    if target_chars <= 0:
+        raise ValueError("target_chars must be positive")
+    if overlap < 0 or overlap >= target_chars:
+        raise ValueError("overlap must be in [0, target_chars)")
+    if max_chars < target_chars:
+        max_chars = target_chars
+
+    chunks: List[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        # Hard window — never go past max_chars from the start of this chunk.
+        hard_end = min(i + max_chars, n)
+        if hard_end == n:
+            tail = text[i:].strip()
+            if tail:
+                chunks.append(tail)
+            break
+
+        # Soft target — prefer a break point near i+target_chars.
+        soft_end = min(i + target_chars, n)
+        search_start = max(soft_end - 120, i + target_chars // 2)
+
+        # Look for BOQ row start within [soft_end, hard_end] — break ABOVE the
+        # next row so the new chunk starts with that row's code.
+        next_row = None
+        for match in _BOQ_ITEM_PATTERN.finditer(text, soft_end, hard_end):
+            # Walk back to the line start.
+            line_start = text.rfind("\n", i, match.start()) + 1
+            if line_start > i and line_start <= hard_end:
+                next_row = line_start
+                break
+        if next_row is not None:
+            end = next_row
+        else:
+            # Fall back to whitespace boundaries.
+            end = -1
+            for marker in ("\n\n", "\n", ". "):
+                idx = text.rfind(marker, search_start, soft_end)
+                if idx > 0:
+                    end = idx + len(marker)
+                    break
+            if end <= i:
+                # No boundary found in the soft window — extend to hard_end.
+                end = hard_end
+
+        chunk = text[i:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        # Carry overlap from the tail of this chunk.
+        next_i = end - overlap if end - overlap > i else end
+        if next_i <= i:
+            next_i = end
+        i = next_i
+    return chunks
+
+
 # ── index persistence ─────────────────────────────────────────────────────────
 
 def init_db() -> None:
@@ -440,7 +538,11 @@ def index_project(project_id: str) -> Dict[str, Any]:
     }
 
 
-def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
+def index_document(
+    project_id: str,
+    document_id: str,
+    chunker: str = "default",
+) -> Dict[str, Any]:
     """Incrementally index a single document into the project's index.
 
     Loads the existing index (or starts an empty one), extracts + chunks the
@@ -448,6 +550,14 @@ def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
     writes back.
 
     Returns a summary dict with ``indexed`` count (always 1 on success).
+
+    ``chunker`` selects the chunking strategy:
+
+    * ``"default"`` — 500-word windows (legacy, what every doc uses today).
+    * ``"finer"``   — char-level windows with overlap (FOLLOW-UP #91 fix
+      for the Diriyah BOQ symptom: coarse word-windows produced 8 chunks
+      averaging 2800 chars each, so single line items were buried inside
+      a wall of unrelated text).
     """
     doc = _projects.get_document(document_id)
     if doc is None:
@@ -472,7 +582,10 @@ def index_document(project_id: str, document_id: str) -> Dict[str, Any]:
     else:
         file_path = doc.get("file_path") or ""
         text, meta = _extract_with_meta(file_path, filename)
-        chunks = chunk_text(text)
+        if chunker == "finer":
+            chunks = chunk_text_with_overlap(text, target_chars=500, overlap=50)
+        else:
+            chunks = chunk_text(text)
         entry = {
             "document_id": document_id,
             "filename": filename,
