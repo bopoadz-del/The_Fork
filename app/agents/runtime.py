@@ -1186,6 +1186,72 @@ class Agent:
         msgs.append({"role": "user", "content": user_message})
         return msgs
 
+    async def _call_grounded_adapter(
+        self, messages: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Invoke the Tinker-hosted grounded LoRA on a tool-less turn.
+
+        Returns ``None`` on any failure so the caller falls through to the
+        normal cloud-provider path. On success, returns the same
+        ``{"status": "success", "choice": ..., "raw": ...}`` envelope
+        ``_call_llm`` produces, with an OpenAI-shape ``choice`` synthesized
+        from the adapter's text reply so the runtime loop's downstream
+        parsing (final_text vs tool_calls) is unchanged.
+
+        Conventions:
+        - The last user message is the question.
+        - The last system message (RAG injection runs last in our build
+          order) is passed as the adapter's ``system_prompt`` so its
+          training format (``Context:\\n<chunks>\\n\\nQuestion: <q>``) is
+          honoured. The agent-identity system prompt is intentionally
+          dropped here — the adapter wasn't trained on it.
+        """
+        from app.core.llm import tinker_adapter
+
+        user_message = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                user_message = (m.get("content") or "").strip()
+                break
+        if not user_message:
+            return None
+
+        rag_system = ""
+        for m in reversed(messages):
+            if m.get("role") == "system" and (m.get("content") or "").strip():
+                rag_system = m["content"].strip()
+                break
+
+        try:
+            result = await tinker_adapter.call(
+                user_message, rag_system, self.max_tokens, self.temperature
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("grounded adapter raised: %s; falling back", exc)
+            return None
+
+        if result.get("status") != "success":
+            _LOG.warning(
+                "grounded adapter returned non-success: %s; falling back",
+                result.get("error"),
+            )
+            return None
+
+        text = result.get("response") or ""
+        choice = {
+            "index": 0,
+            "message": {"role": "assistant", "content": text, "tool_calls": []},
+            "finish_reason": "stop",
+        }
+        return {
+            "status": "success",
+            "choice": choice,
+            "raw": {
+                "provider": result.get("provider", "tinker_grounded_adapter"),
+                "model": result.get("model"),
+            },
+        }
+
     async def _call_llm(
         self,
         messages: List[Dict[str, Any]],
@@ -1195,6 +1261,17 @@ class Agent:
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         cfg = _llm_config()
+        # Grounded LoRA adapter (narrow path): serve forced-final / tool-less
+        # turns directly so the RAG-grounded weights see production traffic.
+        # Tool-using turns stay on the cloud provider — the adapter doesn't
+        # emit tool_calls. Gated by GROUNDED_ADAPTER_ENABLED + a configured
+        # sampler-weights path; any failure falls through to the normal call.
+        if not with_tools:
+            from app.core.llm import tinker_adapter
+            if tinker_adapter.is_available():
+                adapter_result = await self._call_grounded_adapter(messages)
+                if adapter_result is not None:
+                    return adapter_result
         # Soft daily cap: refuse the call when today's spend already meets
         # USAGE_DAILY_CAP_USD for this user. Only enforced for authenticated
         # callers — internal calls without a user_id are not capped (they
