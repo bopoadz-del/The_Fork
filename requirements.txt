@@ -29,6 +29,7 @@ pytesseract>=0.3.10
 
 # PDF Processing
 pymupdf>=1.23.0
+pdfplumber>=0.11.0
 
 # Construction Intelligence Blocks (Week 1)
 sympy>=1.12

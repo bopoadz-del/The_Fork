@@ -1,9 +1,48 @@
-"""Drawing QTO Block - Quantity Take-Off from DXF/DWG construction drawings"""
+"""Drawing QTO Block - Quantity Take-Off from DXF/DWG construction drawings.
+
+V1.1 adds a pdfplumber-based text-extraction path for PDF drawings that
+classifies title-block fields, notes, dimensions, and cross-references
+(per docs/superpowers/specs/2026-06-11-drawing-reader-design.md). The
+existing DXF/PDF geometry extraction (fitz.get_drawings()) is preserved
+so legacy callers keep their measurements/areas outputs; the new
+structured drawing data goes under result["drawing"], and a
+chunk-ready string lands at result["text"] for the RAG indexer.
+"""
 
 import os
 import math
+import re
 from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
+
+
+# --- Discipline lookup ------------------------------------------------------
+# DG2 (Diriyah Gate Phase II) drawing-number discipline codes. Module-level
+# so tests can import + monkeypatch if a new project adds codes.
+DISCIPLINE_FULL: Dict[str, str] = {
+    "TM": "Traffic Management",
+    "SW": "Storm Water",
+    "SG": "Sewage",
+    "EL": "Electrical",
+    "LI": "Lighting",
+    "ST": "Structural",
+    "WS": "Water Supply",
+    "IR": "Irrigation",
+    "TL": "Telecom",
+    "SE": "Security",
+    "SF": "Safety",
+    "IF": "Infrastructure",
+}
+
+# JCB-DWG drawing-number pattern observed across the DG2 corpus, e.g.
+#   IP-INF-053-0000-JCB-DWG-TM-200-1000005-A
+# Shorter fallback covers project-specific schemes that don't use the
+# full IP-INF prefix.
+_DWG_NUMBER_FULL = re.compile(
+    r"[A-Z]{2,}-[A-Z]{2,}-\d{3}-\d{4}-[A-Z]{3,}-[A-Z]{3,}-"
+    r"[A-Z]{2,}-\d{3}-\d{6,7}(?:-[A-Z0-9]+)?"
+)
+_DWG_NUMBER_SHORT = re.compile(r"[A-Z]{2,}-[A-Z]{2,}-\d{2,}-[A-Z0-9]+")
 
 
 def _to_metres_factor(doc_units: int) -> float:
@@ -87,7 +126,20 @@ class DrawingQTOBlock(UniversalBlock):
         # knows the title-block scale (e.g. 1:100) and can pass
         # `pdf_scale_factor` to convert from page-units to metres.
         if ext == ".pdf":
-            return self._extract_from_pdf(file_path, params)
+            # Run the legacy geometry extractor for backward compat
+            # (measurements, areas, estimated_volumes), then layer the new
+            # text-based structured drawing fields on top.
+            geom = self._extract_from_pdf(file_path, params)
+            text_result = self._extract_drawing_text(file_path)
+            # Merge: legacy keys first, new fields supplement.
+            merged = dict(geom) if isinstance(geom, dict) else {}
+            merged.update({
+                "status": text_result.get("status", merged.get("status", "success")),
+                "text": text_result.get("text", ""),
+                "drawing": text_result.get("drawing", {}),
+                "errors": text_result.get("errors", []),
+            })
+            return merged
 
         # --- DWG input: attempt ODA File Converter, else clear guidance ----
         if ext == ".dwg":
@@ -253,6 +305,627 @@ class DrawingQTOBlock(UniversalBlock):
                 "use 0.000352778 * 100 = 0.0352778 pt → m)."
             ),
         }
+
+    # ====================================================================
+    # V1.1 -- pdfplumber-based text extraction for CAD drawings
+    # ====================================================================
+    # See docs/superpowers/specs/2026-06-11-drawing-reader-design.md.
+    # Coordinate orientation: pdfplumber returns y0 in PDF user-space
+    # (0 = bottom of page, page.height = top). All "bottom 15%" zones
+    # are y0 < page.height * 0.15. The right-20% fallback handles the
+    # common DG2 landscape layout where the title block lives on the
+    # right edge, not the bottom.
+
+    def _extract_drawing_text(self, file_path: str) -> Dict:
+        """Top-level text-extraction orchestrator: returns
+        ``{"text", "drawing", "errors", "status"}``."""
+        errors: List[str] = []
+        try:
+            import pdfplumber
+        except ImportError:
+            return {
+                "status": "error",
+                "text": "",
+                "drawing": {},
+                "errors": ["pdfplumber_not_installed"],
+            }
+        from app.core.file_crypto import open_plaintext
+
+        page_full_raw_texts: List[str] = []
+        try:
+            with open_plaintext(file_path) as plain_path:
+                try:
+                    pdf = pdfplumber.open(plain_path)
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    if "password" in msg or "encrypt" in msg:
+                        return {
+                            "status": "error",
+                            "text": "",
+                            "drawing": {},
+                            "errors": ["password_protected"],
+                        }
+                    return {
+                        "status": "error",
+                        "text": "",
+                        "drawing": {},
+                        "errors": [f"pdf_open_failed: {exc}"],
+                    }
+
+                with pdf:
+                    if not pdf.pages:
+                        return {
+                            "status": "error",
+                            "text": "",
+                            "drawing": {},
+                            "errors": ["no_pages"],
+                        }
+
+                    page_results = []
+                    total_chars = 0
+                    for page in pdf.pages:
+                        chars = page.chars or []
+                        total_chars += len(chars)
+                        # Save raw full-page text for drawing-number fallback
+                        # rescue (Bug 2: when title-block extractor returned a
+                        # half-match like "IP-INF-053-JCB" we re-scan the full
+                        # page for a proper JCB-DWG pattern).
+                        page_full_raw_texts.append(
+                            "".join(c["text"] for c in chars)
+                        )
+                        page_results.append(self._process_page(page, chars, errors))
+
+                    if total_chars == 0:
+                        # Scanned drawing / no text layer. OCR fallback is
+                        # deferred to a follow-up task per the spec.
+                        return {
+                            "status": "error",
+                            "text": "",
+                            "drawing": {},
+                            "errors": errors + ["no_text_layer_pdfplumber"],
+                        }
+        except Exception as exc:
+            return {
+                "status": "error",
+                "text": "",
+                "drawing": {},
+                "errors": errors + [f"text_extract_failed: {exc}"],
+            }
+
+        # Multi-page combine. Take page-1 title block; if page N differs,
+        # collapse-to-one-chunk for v1 and flag in errors.
+        primary = page_results[0]
+        for pr in page_results[1:]:
+            if (pr["title_block"].get("drawing_number") and
+                primary["title_block"].get("drawing_number") and
+                pr["title_block"]["drawing_number"] !=
+                    primary["title_block"]["drawing_number"]):
+                errors.append("multi_drawing_pdf_collapsed_to_one_chunk")
+                break
+
+        # Aggregate notes/dimensions/cross_refs across pages
+        all_notes: List[str] = []
+        all_dims: List[str] = []
+        all_refs: List[Dict] = []
+        cad_filtered = 0
+        # Dedup cross_refs across pages too, by (ref_type, target_drawing).
+        seen_refs: set = set()
+        for i, pr in enumerate(page_results, 1):
+            if len(page_results) > 1:
+                all_notes.extend(f"[Sheet {i}] {n}" for n in pr["notes"])
+                all_dims.extend(f"[Sheet {i}] {d}" for d in pr["dimensions"])
+            else:
+                all_notes.extend(pr["notes"])
+                all_dims.extend(pr["dimensions"])
+            for r in pr["cross_refs"]:
+                key = (r.get("ref_type"), r.get("target_drawing"))
+                if key in seen_refs:
+                    continue
+                seen_refs.add(key)
+                all_refs.append(r)
+            cad_filtered += pr["cad_tags_filtered_count"]
+
+        # Guardrail cap: if dedup yielded >100 unique cross_refs we've almost
+        # certainly regressed the regex; trim alphabetically and flag.
+        if len(all_refs) > 100:
+            errors.append("cross_refs_count_suspect_over_100")
+            all_refs = sorted(
+                all_refs,
+                key=lambda r: (r.get("target_drawing") or "",
+                               r.get("ref_type") or ""),
+            )[:100]
+
+        tb = dict(primary["title_block"])
+        # Bug 2: reject drawing-number matches that aren't JCB-DWG-shaped on
+        # this corpus. The short fallback regex sometimes grabs a half-match
+        # ("IP-INF-053-JCB") from a random title-block fragment. If the
+        # current value doesn't contain "JCB-DWG-", re-scan the full page raw
+        # text with the full pattern before falling back to filename.
+        current_dn = tb.get("drawing_number")
+        if current_dn and "JCB-DWG-" not in current_dn.upper():
+            rescued = None
+            for raw in page_full_raw_texts:
+                m = _DWG_NUMBER_FULL.search(raw)
+                if m and "JCB-DWG-" in m.group(0).upper():
+                    rescued = m.group(0)
+                    break
+            if rescued:
+                tb["drawing_number"] = rescued
+                tb["discipline"] = None
+                tb["discipline_full"] = None
+                tb["revision"] = None
+            else:
+                # Drop the half-match so the filename fallback below fires.
+                tb["drawing_number"] = None
+                tb["discipline"] = None
+                tb["discipline_full"] = None
+                tb["revision"] = None
+        if not tb.get("drawing_number"):
+            tb["drawing_number"] = os.path.splitext(
+                os.path.basename(file_path)
+            )[0]
+            errors.append("drawing_number_fallback_to_filename")
+        # Re-derive discipline + revision from the (possibly rescued or
+        # filename-fallback) drawing_number so all paths agree.
+        if not tb.get("discipline") and tb.get("drawing_number"):
+            tb["discipline"], tb["discipline_full"] = (
+                self._discipline_from_number(tb["drawing_number"])
+            )
+        if not tb.get("revision") and tb.get("drawing_number"):
+            tail = tb["drawing_number"].rsplit("-", 1)[-1]
+            if 1 <= len(tail) <= 3 and re.fullmatch(r"[A-Z0-9]+", tail):
+                # Don't accept obviously non-revision tails like "JCB" or
+                # pure 6-7 digit sequence numbers.
+                if tail not in ("JCB", "DWG") and not tail.isdigit():
+                    tb["revision"] = tail
+        # Phase 1.5 fallback: many JCB filenames carry the revision as a
+        # trailing letter (e.g. ...-1000005-A.pdf). When title-block parse
+        # and drawing-number-tail extraction both miss it, look at the
+        # filename. Single uppercase letter immediately before the .pdf
+        # extension wins. Numeric tails like "04" / "05" are NOT accepted
+        # here because they are sheet-sequence indices, not revisions.
+        if not tb.get("revision"):
+            stem = os.path.splitext(os.path.basename(file_path))[0]
+            m = re.search(r"-([A-Z])$", stem)
+            if m:
+                tb["revision"] = m.group(1)
+                errors.append("revision_fallback_to_filename")
+
+        # Bug 1: reject drawing_title that's actually the drawing_number with
+        # a clustering artifact. The title-block extractor picks "longest
+        # cluster" which often grabs the drawing number with a typo or trailing
+        # revision letter glued on. Normalize both (uppercase + strip
+        # non-alphanumerics) and reject any title that contains a 12+ char
+        # substring of the normalized drawing_number.
+        title = tb.get("drawing_title")
+        dn = tb.get("drawing_number") or ""
+        if title and dn:
+            norm_title = re.sub(r"[^A-Z0-9]", "", title.upper())
+            norm_dn = re.sub(r"[^A-Z0-9]", "", dn.upper())
+            collision = False
+            if norm_title and norm_dn:
+                if norm_title == norm_dn:
+                    collision = True
+                elif len(norm_dn) >= 12:
+                    for i in range(0, len(norm_dn) - 11):
+                        if norm_dn[i:i + 12] in norm_title:
+                            collision = True
+                            break
+            if collision:
+                tb["drawing_title"] = None
+                errors.append("drawing_title_not_found")
+
+        drawing = {
+            **tb,
+            "notes": all_notes,
+            "dimensions": all_dims,
+            "cross_refs": all_refs,
+            "cad_tags_filtered_count": cad_filtered,
+            "n_pages": len(page_results),
+        }
+        raw_chunk = self._build_raw_chunk(drawing)
+        return {
+            "status": "success",
+            "text": raw_chunk,
+            "drawing": drawing,
+            "errors": errors,
+        }
+
+    # --- per-page pipeline --------------------------------------------------
+    def _process_page(self, page, chars: List[Dict], errors: List[str]) -> Dict:
+        """Steps 1-5 of the spec for a single page."""
+        title_block_chars, drawing_zone_chars = self._split_page_chars(
+            page, chars
+        )
+
+        # --- Title-block fallback chain ------------------------------------
+        # Use clustered line count as a "richness" signal -- below 5 lines
+        # we fall back to the right-20% zone (landscape title blocks), then
+        # to the full page.
+        tb_lines = self._lines_from_chars(title_block_chars)
+        if len(tb_lines) < 5:
+            right_chars = [c for c in chars if c["x0"] >= page.width * 0.80]
+            right_lines = self._lines_from_chars(right_chars)
+            if len(right_lines) >= 5:
+                title_block_chars = right_chars
+                tb_lines = right_lines
+            else:
+                # full-page scan fallback
+                title_block_chars = chars
+                tb_lines = self._lines_from_chars(chars)
+                errors.append("title_block_zone_fallback_full_page")
+
+        title_block = self._extract_title_block(title_block_chars, page)
+
+        # --- Drawing-zone classification -----------------------------------
+        notes, dimensions, filtered_count = self._classify_drawing_zone(
+            drawing_zone_chars or chars
+        )
+
+        # --- Cross-refs ----------------------------------------------------
+        # Run on the *raw* char order of the page -- a single Tj operator's
+        # chars are contiguous in page.chars even when the label is
+        # rotated, which spatial reconstruction would scatter.
+        raw_text = "".join(c["text"] for c in chars)
+        cross_refs = self._extract_cross_refs(raw_text)
+
+        return {
+            "title_block": title_block,
+            "notes": notes,
+            "dimensions": dimensions,
+            "cross_refs": cross_refs,
+            "cad_tags_filtered_count": filtered_count,
+        }
+
+    # --- Step 1: page region split -----------------------------------------
+    @staticmethod
+    def _split_page_chars(page, chars: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+        """Bottom 15% of page height -> title-block zone, rest -> drawing
+        zone. pdfplumber y0=0 is the page bottom."""
+        threshold = page.height * 0.15
+        tb, dz = [], []
+        for c in chars:
+            if c["y0"] < threshold:
+                tb.append(c)
+            else:
+                dz.append(c)
+        return tb, dz
+
+    # --- helpers: reconstruct lines from chars -----------------------------
+    @staticmethod
+    def _lines_from_chars(
+        chars: List[Dict], y_tol: float = 2.0, x_gap: float = 30.0
+    ) -> List[Dict]:
+        """Cluster chars into reading-order lines.
+
+        Returns a list of ``{"y": <y0>, "size": <avg>, "text": <str>}``
+        records. Same line = chars within ``y_tol`` of the same y0
+        baseline; same word/line continuation = adjacent chars within
+        ``x_gap`` horizontally. This is intentionally lossy on rotated
+        labels (those come out scrambled) -- spatial reconstruction is
+        for the title block and dimension/notes blocks, not for
+        rotated callouts (those go through raw-char-order cross-ref
+        scanning instead).
+        """
+        if not chars:
+            return []
+        # Bucket by y0 rounded to tolerance
+        buckets: Dict[float, List[Dict]] = {}
+        for c in chars:
+            key = round(c["y0"] / y_tol) * y_tol
+            buckets.setdefault(key, []).append(c)
+
+        lines: List[Dict] = []
+        for y, cs in buckets.items():
+            cs_sorted = sorted(cs, key=lambda c: c["x0"])
+            # Split into runs separated by big x gaps
+            run: List[Dict] = []
+            last_x1 = None
+            for c in cs_sorted:
+                if last_x1 is not None and c["x0"] - last_x1 > x_gap:
+                    if run:
+                        lines.append(_line_from_run(y, run))
+                    run = []
+                run.append(c)
+                last_x1 = c["x1"]
+            if run:
+                lines.append(_line_from_run(y, run))
+        # Sort lines top-down for readability (PDF y0 large = top of page)
+        lines.sort(key=lambda L: -L["y"])
+        return lines
+
+    # --- Step 2: title-block structured extraction -------------------------
+    def _extract_title_block(self, tb_chars: List[Dict], page) -> Dict:
+        """Extract drawing_number, title, discipline, revision, scale,
+        date, drafter, checked_by, project_name, sheet_number from the
+        title-block char set. Uses raw char order for the drawing
+        number (a single rotated Tj operator can land contiguously in
+        the content stream even when its bounding boxes scatter) and
+        spatial clustering for everything else."""
+        result: Dict[str, Any] = {
+            "drawing_number": None,
+            "drawing_title": None,
+            "discipline": None,
+            "discipline_full": None,
+            "revision": None,
+            "scale": None,
+            "date": None,
+            "drafter": None,
+            "checked_by": None,
+            "project_name": None,
+            "sheet_number": None,
+        }
+        if not tb_chars:
+            return result
+
+        # --- Drawing number from raw char order ---------------------------
+        raw = "".join(c["text"] for c in tb_chars)
+        m = _DWG_NUMBER_FULL.search(raw)
+        if not m:
+            m = _DWG_NUMBER_SHORT.search(raw)
+        if m:
+            result["drawing_number"] = m.group(0)
+            disc, disc_full = self._discipline_from_number(m.group(0))
+            result["discipline"] = disc
+            result["discipline_full"] = disc_full
+            # Last hyphenated token of the JCB pattern is the revision
+            tail = m.group(0).rsplit("-", 1)[-1]
+            if 1 <= len(tail) <= 3 and re.fullmatch(r"[A-Z0-9]+", tail):
+                result["revision"] = tail
+
+        # --- Cluster title-block into lines for label-based fields --------
+        lines = self._lines_from_chars(tb_chars, y_tol=2.0, x_gap=50.0)
+        line_texts = [L["text"] for L in lines if L["text"].strip()]
+        all_text = " \n".join(line_texts)
+
+        # Scale: 1:NNN, NTS, N.T.S., NOT TO SCALE
+        sm = re.search(
+            r"(1\s*:\s*\d{1,5}|N\.?T\.?S\.?|NOT\s*TO\s*SCALE)",
+            all_text,
+            re.IGNORECASE,
+        )
+        if sm:
+            result["scale"] = sm.group(1).strip()
+
+        # Date: DD/MM/YY etc.
+        dm = re.search(
+            r"\b(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4})\b", all_text
+        )
+        if dm:
+            result["date"] = dm.group(1)
+
+        # Sheet number: Sheet N of M, or N/M near "SHEET"
+        shm = re.search(
+            r"(?:SHEET|SH\.?)\s*[:\-]?\s*(\d+(?:\s*(?:OF|/)\s*\d+)?)",
+            all_text,
+            re.IGNORECASE,
+        )
+        if shm:
+            result["sheet_number"] = shm.group(1).strip()
+
+        # Project name: look for known DG2 project header keywords
+        for L in lines:
+            t = L["text"]
+            if (re.search(r"DIRIYAH\s+GATE", t, re.IGNORECASE) or
+                re.search(r"KING\s+KHALID", t, re.IGNORECASE) or
+                re.search(r"INFRASTRUCTURE\s+DESIGN", t, re.IGNORECASE)):
+                # Prefer the largest-font line
+                if (result["project_name"] is None or
+                    L["size"] > result.get("_project_size", 0)):
+                    result["project_name"] = t.strip()
+                    result["_project_size"] = L["size"]
+        result.pop("_project_size", None)
+
+        # Drafter: known DG2 drafter is "Jacobs"
+        for L in lines:
+            if re.search(r"\bJACOBS\b", L["text"], re.IGNORECASE):
+                result["drafter"] = "Jacobs"
+                break
+
+        # Drawing title: largest text in the title block that isn't the
+        # project name, dwg number, a cross-ref callout, or a known
+        # boilerplate line.
+        candidates = sorted(
+            (L for L in lines if L["text"].strip()),
+            key=lambda L: -L["size"],
+        )
+        for L in candidates:
+            t = L["text"].strip()
+            if not t or len(t) < 4:
+                continue
+            tu = t.upper()
+            if result["drawing_number"] and result["drawing_number"] in tu:
+                continue
+            if result["project_name"] and t == result["project_name"]:
+                continue
+            # Bug 1.5b: reject cross-ref callouts as title candidates.
+            # On TM detail sheets the longest cluster was the MATCH LINE
+            # text. Skip anything that looks like a sheet-to-sheet ref.
+            if re.search(
+                r"\bMATCH\s*LINE\b|"
+                r"\bCONT(?:INUED|D|\.)?\s*ON\b|"
+                r"\bSEE\s+DWG\b|"
+                r"\bREF(?:ER|\.)?[^\n]{0,40}?\b(?:SHEET|DWG|DRAWING)\b",
+                tu,
+            ):
+                continue
+            if any(k in tu for k in (
+                "DIRIYAH GATE", "KING KHALID", "INFRASTRUCTURE DESIGN",
+                "KINGDOM OF SAUDI", "JACOBS", "WWW.", "P.O. BOX",
+                "PRINCE SATTAM", "AL SHOHDA", "DATUM", "GEODETIC",
+                "PROJECT SYSTEM", "ZONE:", "NOTES",
+            )):
+                continue
+            result["drawing_title"] = t[:200]
+            break
+
+        return result
+
+    @staticmethod
+    def _discipline_from_number(dn: str) -> Tuple[str, str]:
+        """Extract the 2-letter discipline code from a JCB-DWG drawing
+        number and look up the human-readable name."""
+        # JCB pattern places discipline 7th segment (e.g. ...-DWG-TM-200-...).
+        # Fallback: any 2-letter segment that matches the table.
+        parts = dn.split("-")
+        for p in parts:
+            if p in DISCIPLINE_FULL:
+                return p, DISCIPLINE_FULL[p]
+        return None, None
+
+    # --- Step 3: drawing-zone font-size classification ---------------------
+    def _classify_drawing_zone(
+        self, dz_chars: List[Dict]
+    ) -> Tuple[List[str], List[str], int]:
+        """Classify drawing-zone text clusters by font size, then pattern-
+        filter the kept text. Returns (notes, dimensions, filtered_count).
+        """
+        if not dz_chars:
+            return [], [], 0
+
+        # Build clusters: chars within 1px vertically + 5px horizontally are
+        # one word; words on same y line within 30px gap are one line.
+        lines = self._lines_from_chars(dz_chars, y_tol=1.5, x_gap=30.0)
+
+        notes: List[str] = []
+        dimensions: List[str] = []
+        filtered = 0
+
+        for L in lines:
+            text = L["text"].strip()
+            if not text:
+                continue
+            size = L["size"]
+
+            # Size-based bucketing
+            if size < 2.0:
+                filtered += 1
+                continue
+            target_bucket = "notes" if size >= 4.0 else "dimensions"
+
+            # Pattern filters apply to all kept clusters
+            if _is_cad_tag(text):
+                filtered += 1
+                continue
+            if _is_coordinate_pair(text):
+                filtered += 1
+                continue
+            if len(text) <= 2:
+                filtered += 1
+                continue
+            if _has_repeated_run(text, 4):
+                filtered += 1
+                continue
+
+            if target_bucket == "notes":
+                notes.append(text)
+            else:
+                dimensions.append(f"DIM: {text}")
+
+        return notes, dimensions, filtered
+
+    # --- Step 4: cross-ref extraction --------------------------------------
+    # Sheet-identifier shape: either a JCB-style hyphenated number
+    # (3+ tokens) OR a short sheet number (2-4 digits like "02", "10", "1234").
+    # Loose `[A-Z0-9-]+` over-matched on SG (1755 hits) so we lock this down.
+    _SHEET_ID_RE = re.compile(
+        r"(?:[A-Z0-9]+(?:-[A-Z0-9]+){2,}|\d{2,4})"
+    )
+
+    @classmethod
+    def _extract_cross_refs(cls, raw_text: str) -> List[Dict]:
+        """Scan raw page text for match-line / continuation / reference
+        callouts. Returns one dict per (ref_type, target_drawing) tuple
+        after dedup. Caps at 100 entries per page (alphabetical) with a
+        guardrail error if exceeded."""
+        refs: List[Dict] = []
+        # Tolerant patterns: allow arbitrary whitespace and optional colons
+        # between tokens, and capture a strict sheet-id shape only.
+        sheet = r"(?P<target>[A-Z0-9]+(?:-[A-Z0-9]+){2,}|\d{2,4})"
+        patterns: List[Tuple[str, str]] = [
+            ("match_line",
+             r"MATCH\s*LINE\b[\s:.,\-]*"
+             r"(?:FOR\s+REFERENCE\s+)?"
+             r"(?:REFER(?:ENCE)?\s+(?:TO\s+)?)?"
+             r"SHEET\s*(?:NO\.?)?\s*[:.\-]?\s*" + sheet),
+            ("continuation",
+             r"CONT(?:INUED|D|\.)?\.?\s*ON\s*[:.\-]?\s*" + sheet),
+            ("reference",
+             r"SEE\s+DWG\.?\s*[:.\-]?\s*" + sheet),
+            ("reference",
+             r"REF(?:ER|\.)?\.?\s*(?:TO\s+)?"
+             r"(?:SHEET|DWG|DRAWING)\s+(?:NO\.?\s*)?[:.\-]?\s*" + sheet),
+        ]
+        # Dedup by (ref_type, target_drawing) — repeated identical match-line
+        # callouts collapse to one entry.
+        dedup: Dict[Tuple[str, str], Dict] = {}
+        for ref_type, pat in patterns:
+            for m in re.finditer(pat, raw_text, re.IGNORECASE | re.MULTILINE):
+                target = (m.group("target") or "").strip().upper()
+                if not target or len(target) < 2:
+                    continue
+                key = (ref_type, target)
+                if key in dedup:
+                    continue
+                dedup[key] = {
+                    "ref_type": ref_type,
+                    "target_drawing": target,
+                    "raw": m.group(0).strip(),
+                }
+        refs = list(dedup.values())
+        return refs
+
+    # --- Step 6: raw chunk builder -----------------------------------------
+    @staticmethod
+    def _build_raw_chunk(drawing: Dict) -> str:
+        """Assemble the RAG-indexable chunk per the spec's template."""
+        lines: List[str] = []
+        header = drawing.get("drawing_number") or "(unknown)"
+        title = drawing.get("drawing_title")
+        disc_full = drawing.get("discipline_full") or drawing.get("discipline") or ""
+        rev = drawing.get("revision") or ""
+        head_bits = [header]
+        if title:
+            head_bits.append(f"-- {title}")
+        meta = []
+        if disc_full:
+            meta.append(disc_full)
+        if rev:
+            meta.append(f"Rev {rev}")
+        if meta:
+            head_bits.append(f"({', '.join(meta)})")
+        lines.append(" ".join(head_bits))
+
+        meta_line_bits = []
+        if drawing.get("scale"):
+            meta_line_bits.append(f"Scale: {drawing['scale']}")
+        if drawing.get("date"):
+            meta_line_bits.append(f"Date: {drawing['date']}")
+        if drawing.get("project_name"):
+            meta_line_bits.append(f"Project: {drawing['project_name']}")
+        if drawing.get("sheet_number"):
+            meta_line_bits.append(f"Sheet: {drawing['sheet_number']}")
+        if meta_line_bits:
+            lines.append(" | ".join(meta_line_bits))
+
+        notes = drawing.get("notes") or []
+        if notes:
+            lines.append("")
+            lines.append("Notes:")
+            for n in notes:
+                lines.append(f"- {n}")
+
+        refs = drawing.get("cross_refs") or []
+        if refs:
+            lines.append("")
+            lines.append("References:")
+            for r in refs:
+                lines.append(
+                    f"- {r['ref_type']}: {r['target_drawing']} ({r['raw']})"
+                )
+        return "\n".join(lines)
+
+    # ====================================================================
 
     def _try_convert_dwg(self, file_path: str):
         """Best-effort DWG → DXF conversion via ODA File Converter CLI.
@@ -609,6 +1282,51 @@ class DrawingQTOBlock(UniversalBlock):
                     "layer": a.get("layer", ""),
                 })
         return volumes
+
+
+def _line_from_run(y: float, run: List[Dict]) -> Dict:
+    """Build a line record from a list of chars that share a y baseline."""
+    text = "".join(c["text"] for c in run)
+    sizes = [c["size"] for c in run if c.get("size")]
+    avg_size = sum(sizes) / len(sizes) if sizes else 0.0
+    return {"y": y, "size": avg_size, "text": text}
+
+
+# Pure CAD-tag patterns (all-caps + digits + hyphens, 4-15 chars, no spaces)
+_CAD_TAG_RE = re.compile(r"^[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8}){1,4}$")
+_COORD_PAIR_RE = re.compile(r"^\s*-?\d+\.\d+\s*,\s*-?\d+\.\d+\s*$")
+
+
+def _is_cad_tag(text: str) -> bool:
+    t = text.strip()
+    if not t or " " in t:
+        return False
+    if not (4 <= len(t) <= 15):
+        return False
+    # All-caps + digits + hyphens, must have at least one digit AND a hyphen
+    if "-" not in t or not any(ch.isdigit() for ch in t):
+        return False
+    return bool(_CAD_TAG_RE.match(t))
+
+
+def _is_coordinate_pair(text: str) -> bool:
+    return bool(_COORD_PAIR_RE.match(text.strip()))
+
+
+def _has_repeated_run(text: str, n: int) -> bool:
+    """True if any single token repeats >= n times consecutively."""
+    tokens = text.split()
+    if len(tokens) < n:
+        return False
+    run = 1
+    for i in range(1, len(tokens)):
+        if tokens[i] == tokens[i - 1]:
+            run += 1
+            if run >= n:
+                return True
+        else:
+            run = 1
+    return False
 
 
 def _shoelace(coords: List[Tuple[float, float]]) -> float:
