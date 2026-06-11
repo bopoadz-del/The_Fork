@@ -34,15 +34,28 @@ DISCIPLINE_FULL: Dict[str, str] = {
     "IF": "Infrastructure",
 }
 
-# JCB-DWG drawing-number pattern observed across the DG2 corpus, e.g.
-#   IP-INF-053-0000-JCB-DWG-TM-200-1000005-A
-# Shorter fallback covers project-specific schemes that don't use the
-# full IP-INF prefix.
+# JCB-DWG drawing-number pattern observed across the DG2 corpus.
+# Two token orders both appear in the wild:
+#   IP-INF-053-0000-JCB-DWG-TM-200-1000005-A   (TM/SG/EL/TL sheets)
+#   IP-INF-053-JCB-0000-DWG-WS-600-0000001-C   (WS sheets — tokens 4-5 swapped)
+# Accept both by alternation. Shorter fallback covers project-specific
+# schemes that don't use the full IP-INF prefix.
 _DWG_NUMBER_FULL = re.compile(
-    r"[A-Z]{2,}-[A-Z]{2,}-\d{3}-\d{4}-[A-Z]{3,}-[A-Z]{3,}-"
-    r"[A-Z]{2,}-\d{3}-\d{6,7}(?:-[A-Z0-9]+)?"
+    r"[A-Z]{2,}-[A-Z]{2,}-\d{3}-"
+    r"(?:\d{4}-[A-Z]{3,}|[A-Z]{3,}-\d{4})-"
+    r"[A-Z]{3,}-[A-Z]{2,}-\d{3}-\d{6,7}(?:-[A-Z0-9]+)?"
 )
 _DWG_NUMBER_SHORT = re.compile(r"[A-Z]{2,}-[A-Z]{2,}-\d{2,}-[A-Z0-9]+")
+
+# Diriyah Gate area / district names that show up at large font sizes
+# inside the main drawing region of regional / key-plan sheets and win the
+# "largest cluster" title selection. They are sheet content, not
+# drawing-title text. Match as whole-token uppercase.
+_DG2_PLACE_NAMES = frozenset({
+    "KHUZAMA", "AL TURAIF", "AL BUJAIRI", "AL QARYA", "AL QARYA AL KHADRA",
+    "AL KHADRA", "AL SHOHDA", "AL DARIYAH", "DIRIYAH",
+    "MECCA", "MADINAH", "RIYADH",
+})
 
 
 def _to_metres_factor(doc_units: int) -> float:
@@ -436,17 +449,24 @@ class DrawingQTOBlock(UniversalBlock):
             )[:100]
 
         tb = dict(primary["title_block"])
-        # Bug 2: reject drawing-number matches that aren't JCB-DWG-shaped on
-        # this corpus. The short fallback regex sometimes grabs a half-match
-        # ("IP-INF-053-JCB") from a random title-block fragment. If the
-        # current value doesn't contain "JCB-DWG-", re-scan the full page raw
-        # text with the full pattern before falling back to filename.
+        # Bug 2: reject drawing-number matches that aren't a full JCB
+        # drawing-number on this corpus. The short fallback regex
+        # sometimes grabs a half-match ("IP-INF-053-JCB") from a random
+        # title-block fragment. Two valid full forms exist in the wild:
+        #   ...-0000-JCB-DWG-...   (TM/SG/EL/TL token order)
+        #   ...-JCB-0000-DWG-...   (WS token order, tokens 4-5 swapped)
+        # Both contain BOTH "JCB" and "DWG" as separate tokens. If the
+        # current value lacks either, re-scan the full page raw text.
         current_dn = tb.get("drawing_number")
-        if current_dn and "JCB-DWG-" not in current_dn.upper():
+
+        def _is_full_jcb(s: str) -> bool:
+            u = s.upper()
+            return "JCB" in u and "DWG" in u and u.count("-") >= 8
+        if current_dn and not _is_full_jcb(current_dn):
             rescued = None
             for raw in page_full_raw_texts:
                 m = _DWG_NUMBER_FULL.search(raw)
-                if m and "JCB-DWG-" in m.group(0).upper():
+                if m and _is_full_jcb(m.group(0)):
                     rescued = m.group(0)
                     break
             if rescued:
@@ -748,6 +768,24 @@ class DrawingQTOBlock(UniversalBlock):
                 r"\bREF(?:ER|\.)?[^\n]{0,40}?\b(?:SHEET|DWG|DRAWING)\b",
                 tu,
             ):
+                continue
+            # Phase 1.6: reject pure-numeric and scale-shaped candidates.
+            # On WS the title-block selection picked "1800" — a chainage
+            # station number. The user wanted "1:1800" as scale, but
+            # that lives in a different field; for drawing_title we just
+            # refuse all numeric-shaped strings.
+            t_compact = re.sub(r"\s+", "", t)
+            if re.fullmatch(r"[\d.,/:\-]+", t_compact):
+                continue
+            # Reject scale labels (1:N or 1: N etc.) that escaped the
+            # numeric check above due to embedded spaces.
+            if re.fullmatch(r"1\s*:\s*\d+", t):
+                continue
+            # Phase 1.6: reject DG2 area / district names that win at
+            # large font on regional key-plan sheets but are not
+            # drawing-title text (KHUZAMA, AL TURAIF, etc.).
+            tu_compact = re.sub(r"\s+", " ", tu).strip()
+            if tu_compact in _DG2_PLACE_NAMES:
                 continue
             if any(k in tu for k in (
                 "DIRIYAH GATE", "KING KHALID", "INFRASTRUCTURE DESIGN",

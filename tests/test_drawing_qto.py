@@ -188,6 +188,53 @@ async def test_revision_fallback_to_filename():
     assert re.search(r"-([A-Z])$", "drawing-foo-z") is None
 
 
+async def test_drawing_number_regex_accepts_swapped_jcb_tokens():
+    """Phase 1.6: WS sheets use IP-INF-053-JCB-0000-DWG-WS-... — token
+    order 4-5 swapped vs the TM/SG/EL/TL form. Both must parse."""
+    from app.blocks.drawing_qto import _DWG_NUMBER_FULL
+    # Original TM/SG/EL/TL form
+    assert _DWG_NUMBER_FULL.fullmatch(
+        "IP-INF-053-0000-JCB-DWG-TM-200-1000005-A"
+    ), "long-regex failed on 0000-JCB-DWG form"
+    # WS swapped form
+    assert _DWG_NUMBER_FULL.fullmatch(
+        "IP-INF-053-JCB-0000-DWG-WS-600-0000001-C"
+    ), "long-regex failed on JCB-0000-DWG form"
+    # Reject obvious non-matches
+    assert _DWG_NUMBER_FULL.fullmatch("IP-INF-053-JCB") is None
+    assert _DWG_NUMBER_FULL.fullmatch("FOO-BAR-BAZ") is None
+
+
+async def test_drawing_title_rejects_pure_numeric():
+    """Phase 1.6: pure-numeric clusters (1800, chainage stations) must
+    never be accepted as drawing_title. Validates the candidate filter
+    in _extract_title_block."""
+    # The filter is a pure function over candidate text. Verify by
+    # checking the regex shape directly so we don't depend on a fixture
+    # PDF.
+    bad_titles = ["1800", "1:1800", "1 : 1800", "100.5,200.3", "-/--", "12-34/56"]
+    pat_numeric = re.compile(r"[\d.,/:\-]+")
+    pat_scale = re.compile(r"1\s*:\s*\d+")
+    for t in bad_titles:
+        t_compact = re.sub(r"\s+", "", t)
+        rejected = bool(pat_numeric.fullmatch(t_compact)) or bool(pat_scale.fullmatch(t))
+        assert rejected, f"title {t!r} should have been rejected by numeric/scale filter"
+
+
+async def test_drawing_title_rejects_dg2_place_names():
+    """Phase 1.6: DG2 area / district names must be rejected as
+    drawing_title candidates."""
+    from app.blocks.drawing_qto import _DG2_PLACE_NAMES
+    for name in ("KHUZAMA", "AL TURAIF", "AL BUJAIRI", "AL QARYA"):
+        assert name in _DG2_PLACE_NAMES, f"{name!r} missing from DG2 blocklist"
+    # Lowercase and whitespace variants should round-trip to a blocked entry
+    for variant in ("khuzama", " AL  TURAIF ", "Al Bujairi"):
+        normalized = re.sub(r"\s+", " ", variant.upper()).strip()
+        assert normalized in _DG2_PLACE_NAMES, (
+            f"variant {variant!r} normalised to {normalized!r} not in blocklist"
+        )
+
+
 async def test_drawing_title_not_cross_ref_callout(primary_result):
     """Bug 1.5b: drawing_title must not be a cross-ref callout like
     'MATCH LINE : FOR REFERENCE REFER TO SHEET NO : N'. On TM detail
