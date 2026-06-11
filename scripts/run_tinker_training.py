@@ -220,15 +220,26 @@ def _build_datum_for_pair(
     instruction: str,
     response: str,
     max_tokens: int,
+    context: str = "",
 ):
     """Tokenize one (instruction, response) into a Datum suitable for
     cross-entropy training. Loss weights are 0 on prompt tokens and 1 on
     response tokens — only the assistant continuation contributes gradient.
+
+    When ``context`` is non-empty (RAG-grounded dataset path), the user
+    message is built as ``"Context:\\n<context>\\n\\nQuestion: <instruction>"``
+    so the model sees retrieved evidence at training time the same way it
+    will see it at inference. This is what lets the trained adapter learn
+    to reason over retrieved context instead of recalling from weights.
     """
     from tinker import Datum
     from tinker.types import ModelInput
 
-    user_msg = {"role": "user", "content": instruction}
+    if context:
+        user_content = f"Context:\n{context}\n\nQuestion: {instruction}"
+    else:
+        user_content = instruction
+    user_msg = {"role": "user", "content": user_content}
     assistant_msg = {"role": "assistant", "content": response}
 
     prompt_ids: List[int] = tokenizer.encode_message_with_chat_template(
@@ -290,7 +301,8 @@ def _execute_training(plan: RunPlan, rows: List[Dict[str, str]]) -> str:
     all_data = []
     for r in rows:
         datum = _build_datum_for_pair(
-            tokenizer, r["instruction"], r["response"], max_ctx
+            tokenizer, r["instruction"], r["response"], max_ctx,
+            context=r.get("context", ""),
         )
         if datum is not None:
             all_data.append(datum)

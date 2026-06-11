@@ -429,6 +429,24 @@ class ChatBlock(TypedBlock):
     ) -> Dict:
         """Try local inference backends in priority order."""
 
+        # Tinker-hosted grounded LoRA adapter — only when the env flag
+        # is on AND a sampler-weights path is configured. Any failure
+        # falls through to the existing Ollama path so the flag is a
+        # one-toggle rollback.
+        from app.core.llm import tinker_adapter
+        if tinker_adapter.is_available():
+            adapter_result = await tinker_adapter.call(
+                message, system_prompt, max_tokens, temperature
+            )
+            if adapter_result.get("status") == "success":
+                adapter_result["fallback_reason"] = primary_error
+                return adapter_result
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "grounded adapter failed, falling back to Ollama: %s",
+                adapter_result.get("error"),
+            )
+
         ollama_url = os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL)
         local_model = os.getenv("LOCAL_LLM_MODEL", DEFAULT_LOCAL_MODEL)
         ollama_result = await self._call_ollama(
