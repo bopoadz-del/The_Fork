@@ -17,6 +17,8 @@ Env vars
 - ``GROUNDED_ADAPTER_ENABLED``       — bool, off by default. "1" / "true" / "yes" turn it on.
 - ``GROUNDED_ADAPTER_TINKER_PATH``   — full ``tinker://<session>:train:0/sampler_weights/<name>`` URI.
 - ``GROUNDED_ADAPTER_TIMEOUT``       — seconds (default 60). Hard cap on a single sample call.
+- ``GROUNDED_ADAPTER_REWRITE_PASS``  — bool, off by default. When on, the agent
+  runtime re-grounds a tool-free cloud response through the adapter (broad path).
 - ``TINKER_API_KEY``                 — required for the Tinker SDK to authenticate.
 """
 from __future__ import annotations
@@ -39,6 +41,14 @@ _INIT_LOCK = threading.Lock()
 
 def is_enabled() -> bool:
     flag = os.getenv("GROUNDED_ADAPTER_ENABLED", "").strip().lower()
+    return flag in ("1", "true", "yes", "on")
+
+
+def is_rewrite_pass_enabled() -> bool:
+    """Separate, narrower gate for the broad rewrite-pass path. Independent of
+    ``is_enabled`` so a deployer can turn rewrite on without changing the
+    narrow forced-final wiring. Both flags must be true to actually rewrite."""
+    flag = os.getenv("GROUNDED_ADAPTER_REWRITE_PASS", "").strip().lower()
     return flag in ("1", "true", "yes", "on")
 
 
@@ -125,11 +135,22 @@ def _sample_sync(message: str, system_prompt: Optional[str], max_tokens: int, te
     }
 
 
-async def call(message: str, system_prompt: Optional[str], max_tokens: int, temperature: float) -> Dict[str, Any]:
+async def call(
+    message: str,
+    system_prompt: Optional[str],
+    max_tokens: int,
+    temperature: float,
+    timeout_override: Optional[float] = None,
+) -> Dict[str, Any]:
     """Async wrapper: enforces a wall-clock timeout and routes the
     blocking SDK call to a worker thread so the FastAPI event loop
-    isn't pinned."""
-    timeout = float(os.getenv("GROUNDED_ADAPTER_TIMEOUT", "60"))
+    isn't pinned. ``timeout_override`` lets callers (e.g. rewrite-pass)
+    impose a tighter cap than ``GROUNDED_ADAPTER_TIMEOUT`` without
+    mutating the env."""
+    if timeout_override is not None:
+        timeout = float(timeout_override)
+    else:
+        timeout = float(os.getenv("GROUNDED_ADAPTER_TIMEOUT", "60"))
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(_sample_sync, message, system_prompt, max_tokens, temperature),
