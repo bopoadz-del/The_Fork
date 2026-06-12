@@ -19,9 +19,9 @@ GitHub shows **3 open low-severity Dependabot alerts**. None are fixable today w
 
 **Why not bump:** PyPI latest is already `1.11.4`. The advisory documents a **2022 account-compromise / malicious release** incident; OSV marks all `1.x` versions affected and publishes **no `first_patched_version`**. There is no newer clean release to upgrade to.
 
-**Risk acceptance:** We install from PyPI over HTTPS with pinned hashes in CI lockfile; the incident was a historical supply-chain event, not an runtime RCE in normal translate-block usage. Replacing the library (e.g. direct HTTP to Google Translate) is a feature change, not a patch bump — deferred.
+**Risk acceptance:** Installed via pinned version (`==1.11.4`) from PyPI over HTTPS. No hash verification enforced at install time (`requirements.txt` is not compiled with `--generate-hashes`; the Dockerfile runs plain `pip install -r requirements.txt`). Risk accepted as historical supply-chain incident with no runtime RCE vector in normal translate-block usage. Replacing the library (e.g. direct HTTP to Google Translate) is a feature change, not a patch bump — deferred.
 
-**Dismiss comment:** `Accepted: deep-translator 1.11.4 is latest on PyPI; PYSEC-2022-252 has no patched release. Pin + PyPI install; tracked in deploy/DEPENDENCY_RISKS.md.`
+**Dismiss comment:** `Accepted: deep-translator ==1.11.4 is latest on PyPI; PYSEC-2022-252 has no patched release. Version-pinned PyPI install (no hash verify); tracked in deploy/DEPENDENCY_RISKS.md.`
 
 ---
 
