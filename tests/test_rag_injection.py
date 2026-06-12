@@ -125,7 +125,7 @@ def test_retrieve_drops_noise_before_top_k(monkeypatch):
     from app.core.rag import retriever as ret
     from app.core.rag.vector_store import Chunk
 
-    def fake_search(self, project_id, qvec, k):
+    def fake_search(self, project_id, qvec, k, query_text=None):
         return [
             Chunk(chunk_id="c1", project_id=project_id, doc_id="d-noise",
                   chunk_index=0, text="noise content", score=0.95),
