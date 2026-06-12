@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import io
 import json
+import multiprocessing
 import os
 import shlex
 import sys
@@ -512,6 +513,128 @@ def _drawing_audit_extras(
     return extras
 
 
+# ── watchdog (per-doc hard timeout) ──────────────────────────────────────────
+#
+# Why a worker process and not a thread: a stuck PDF parser inside fitz /
+# pdf_v2 is uninterruptible from Python. `Thread.join(timeout=...)` would
+# unblock the main loop, but the worker keeps running and holds the GIL
+# during native calls, leaving a real zombie + memory leak across files.
+# A worker process can be force-killed with SIGTERM/TerminateProcess via
+# ``pool.terminate()``, which truly releases the file handle and memory.
+#
+# Why only ``extract()`` runs in the worker: the hang is in PDF parsing.
+# Chunking + embedding + audit + state stay in main, so the vector store
+# has a single owner (no cross-process write / partial-write-on-kill),
+# and worker restarts after a timeout do not reload the embedder. This
+# is a slight deviation from a literal "5 minutes per *doc*" reading —
+# the embedder call is uncapped — but matches where the hang risk lives.
+#
+# Worker payload is a plain dict, NOT the ``ExtractResult`` slotted class,
+# to avoid pickle surprises across the process boundary.
+
+
+def _extract_worker(path: str, ext: str) -> Dict:
+    """Run ``extract()`` in a worker process; return a JSON-safe dict.
+
+    Module-scope so ``multiprocessing`` can pickle it on Windows
+    (spawn-method default). Imports and block init happen lazily inside
+    the worker on first call; the parent submits a one-shot warmup
+    before the timed loop so cold-start cost is not charged to a real
+    file's per-doc budget.
+    """
+    res = extract(path, ext)
+    return {
+        "text": res.text,
+        "ocr_required": res.ocr_required,
+        "skipped_reason": res.skipped_reason,
+        "pages_ocrd": res.pages_ocrd,
+        "ocr_error": res.ocr_error,
+        "extractor_used": res.extractor_used,
+        "block_status": res.block_status,
+        "is_drawing": res.is_drawing,
+        "drawing": res.drawing,
+        "drawing_errors": res.drawing_errors,
+    }
+
+
+def _warmup_worker() -> str:
+    """Force the worker to load fitz + pdf_v2 + drawing_qto so the first
+    real extract() inside the timed loop isn't charged for cold-start
+    init. Returns a literal string so the parent can assert success."""
+    _init_platform_blocks()
+    return "ok"
+
+
+class _Watchdog:
+    """One-worker process pool with per-call hard timeout.
+
+    On TimeoutError, ``call()`` calls ``pool.terminate()`` (TerminateProcess
+    on Windows) and rebuilds the pool so the next call gets a fresh
+    worker. Workers are otherwise long-lived: the embedder + block
+    singletons load once per worker and are amortized across all
+    healthy files.
+    """
+
+    def __init__(self, timeout_seconds: int) -> None:
+        self.timeout = timeout_seconds
+        self._pool: Optional[multiprocessing.pool.Pool] = None
+        self._open_pool_and_warm()
+
+    def _open_pool_and_warm(self) -> None:
+        # spawn context so the worker starts clean — no inherited fitz
+        # state, no inherited asyncio loop from the parent. Matches
+        # Windows default behaviour explicitly.
+        ctx = multiprocessing.get_context("spawn")
+        self._pool = ctx.Pool(processes=1)
+        # Warmup is untimed — first-time fitz/PyMuPDF init can take a
+        # few seconds on Windows and we do not want that charged to a
+        # `--per-doc-timeout-seconds 5` smoke test.
+        try:
+            self._pool.apply(_warmup_worker)
+        except Exception:
+            # If even warmup fails, keep going — the per-file call will
+            # surface the real error. We don't want to abort the batch.
+            pass
+
+    def call(self, path: str, ext: str) -> Tuple[Optional[Dict], Optional[float]]:
+        """Run extract() in the worker with a hard timeout.
+
+        Returns (result_dict, None) on success; (None, elapsed_seconds)
+        on timeout. Any non-timeout exception from the worker is
+        re-raised to the main loop's existing ``except Exception``
+        handler so it lands in the audit log as an error row.
+        """
+        assert self._pool is not None
+        t0 = time.monotonic()
+        async_res = self._pool.apply_async(_extract_worker, (path, ext))
+        try:
+            data = async_res.get(timeout=self.timeout)
+            return data, None
+        except multiprocessing.TimeoutError:
+            elapsed = time.monotonic() - t0
+            # Force-kill the stuck worker and rebuild so the next file
+            # starts fresh. apply_async's worker IS the only worker in
+            # this pool of size 1, so terminate() targets it.
+            self._pool.terminate()
+            self._pool.join()
+            self._pool = None
+            self._open_pool_and_warm()
+            return None, elapsed
+
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.close()
+            self._pool.join()
+            self._pool = None
+
+
+def _append_timeout_path(timeouts_path: str, path: str) -> None:
+    """One line per timeout, for the operator to inspect after the run."""
+    os.makedirs(os.path.dirname(timeouts_path) or ".", exist_ok=True)
+    with open(timeouts_path, "a", encoding="utf-8") as fh:
+        fh.write(path + "\n")
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def now_iso() -> str:
@@ -533,6 +656,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--budget-seconds", type=int, default=7200,
         help="Wall-clock budget in seconds; on overrun, save state and exit 0.",
+    )
+    ap.add_argument(
+        "--per-doc-timeout-seconds", type=int, default=300,
+        help=(
+            "Hard timeout per file. On timeout the file is logged with "
+            "status=timeout, appended to data/logs/drive_indexer_timeouts.txt, "
+            "and marked DONE in resume-state so daily reruns skip it. "
+            "Default 300 (5 minutes)."
+        ),
+    )
+    ap.add_argument(
+        "--timeouts-log",
+        default=os.path.join("data", "logs", "drive_indexer_timeouts.txt"),
+        help="Append-only one-line-per-path log of files that timed out.",
     )
     ap.add_argument(
         "--package-name", default=None,
@@ -580,15 +717,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     processed = 0
     skipped = 0
     errors = 0
+    timeouts = 0
     chunks_total = 0
     ocr_required_count = 0
     pages_ocrd_total = 0
+
+    # Per-doc watchdog: one worker process, hard timeout on each extract().
+    # Init AFTER inventory is loaded so a bad inventory path fails fast in
+    # the parent rather than after spawning a worker.
+    watchdog = _Watchdog(args.per_doc_timeout_seconds)
 
     for i, e in enumerate(entries, start=1):
         # Wall-clock budget check at the TOP of every iteration so a slow doc
         # cannot push us arbitrarily over budget after it lands.
         if args.budget_seconds and (time.monotonic() - t_mono_start) >= args.budget_seconds:
             save_resume(args.resume_state, {"done": sorted(done_set)})
+            watchdog.close()
             print(
                 f"budget exhausted: processed={processed} / {total}, "
                 f"resume next run.",
@@ -618,7 +762,53 @@ def main(argv: Optional[List[str]] = None) -> int:
         drawing_errors: List[str] = []
 
         try:
-            res = extract(path, ext)
+            # Per-doc watchdog: hard timeout enforced in a worker process.
+            res_dict, timeout_elapsed = watchdog.call(path, ext)
+            if res_dict is None:
+                # Timeout. Build a status=timeout audit row, append to the
+                # timeouts log, mark DONE in resume-state, save state
+                # immediately (don't wait for the every-50 checkpoint —
+                # an unattended crash here would replay the hang), and
+                # move on. Action=skipped per the operator's spec.
+                _append_timeout_path(args.timeouts_log, path)
+                timeout_row = {
+                    "path": path,
+                    "doc_id": doc_id_for(path),
+                    "ext": ext,
+                    "size_bytes": size,
+                    "package": package_name,
+                    "status": "timeout",
+                    "action": "skipped",
+                    "elapsed_s": round(timeout_elapsed or 0.0, 3),
+                    "per_doc_timeout_seconds": args.per_doc_timeout_seconds,
+                    "timestamp": now_iso(),
+                }
+                append_audit(args.audit, timeout_row)
+                timeouts += 1
+                done_set.add(path)
+                save_resume(args.resume_state, {"done": sorted(done_set)})
+                if args.verbose:
+                    print(
+                        f"  TIMEOUT {path} after {timeout_elapsed:.1f}s "
+                        f"(limit {args.per_doc_timeout_seconds}s)",
+                        flush=True,
+                    )
+                continue
+
+            # Re-hydrate ExtractResult from the worker's plain dict so
+            # the rest of the loop's `res.<field>` accesses are unchanged.
+            res = ExtractResult(
+                text=res_dict.get("text") or "",
+                ocr_required=bool(res_dict.get("ocr_required")),
+                skipped_reason=res_dict.get("skipped_reason"),
+                pages_ocrd=int(res_dict.get("pages_ocrd") or 0),
+                ocr_error=res_dict.get("ocr_error"),
+                extractor_used=res_dict.get("extractor_used"),
+                block_status=res_dict.get("block_status"),
+                is_drawing=bool(res_dict.get("is_drawing")),
+                drawing=res_dict.get("drawing"),
+                drawing_errors=res_dict.get("drawing_errors") or [],
+            )
             extractor_used = res.extractor_used
             block_status = res.block_status
             is_drawing = res.is_drawing
@@ -768,9 +958,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # final state save
     save_resume(args.resume_state, {"done": sorted(done_set)})
+    watchdog.close()
     elapsed = time.time() - t_start
     print(
         f"done. processed={processed} skipped={skipped} errors={errors} "
+        f"timeouts={timeouts} "
         f"chunks_total={chunks_total} ocr_required={ocr_required_count} "
         f"pages_ocrd_total={pages_ocrd_total} elapsed={elapsed:.1f}s"
     )
