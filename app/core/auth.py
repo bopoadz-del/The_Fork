@@ -45,6 +45,7 @@ class APIKeyAuth:
             keys[master] = {
                 "user": "master",
                 "tier": "unlimited",
+                "role": "admin",
                 "rate_limit": float('inf'),
                 "created_at": time.time()
             }
