@@ -37,15 +37,41 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     # Reset module-level init flags so the fresh DATA_DIR actually gets a schema
     from app.core import agent_memory as _am
+    from app.core import hydration_store as _hs
     from app.core import projects as _proj
     if hasattr(_am, "_initialized"):
         _am._initialized = False
+    if hasattr(_hs, "_initialized"):
+        _hs._initialized = False
+    if hasattr(_hs, "_initialized_for_url"):
+        _hs._initialized_for_url = None
     if hasattr(_proj, "_initialized"):
         _proj._initialized = False
     yield tmp_path
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _ensure_project_row(project_id: str) -> None:
+    """Stub project row for hydration_runs FK (unified schema)."""
+    from app.core import projects as projects_store, users as users_mod
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+
+    projects_store.init_db()
+    users_mod.ensure_user_exists("system")
+    with SessionLocal() as session:
+        if session.get(Project, project_id) is None:
+            session.add(
+                Project(
+                    id=project_id,
+                    name=project_id,
+                    user_id="system",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            session.commit()
 
 
 def _seed_conversation(project_id: str, ts: str, user_msg: str, assistant_msg: str) -> str:
@@ -57,6 +83,7 @@ def _seed_conversation(project_id: str, ts: str, user_msg: str, assistant_msg: s
     import uuid as _uuid
     from app.core import agent_memory
 
+    _ensure_project_row(project_id)
     agent_memory.init_db()
     original = agent_memory._now
     agent_memory._now = lambda: ts  # type: ignore[assignment]
@@ -80,6 +107,7 @@ def _seed_conversation(project_id: str, ts: str, user_msg: str, assistant_msg: s
 def test_store_init_and_roundtrip(isolated_data_dir):
     from app.core import hydration_store
 
+    _ensure_project_row("p1")
     hydration_store.init_db()
     rid = hydration_store.record_run(
         run_date="2026-05-26",
@@ -103,6 +131,7 @@ def test_store_init_and_roundtrip(isolated_data_dir):
 def test_store_scope_validation(isolated_data_dir):
     from app.core import hydration_store
 
+    _ensure_project_row("p1")
     hydration_store.init_db()
     with pytest.raises(ValueError):
         hydration_store.record_run(

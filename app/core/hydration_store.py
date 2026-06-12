@@ -5,69 +5,57 @@ per-project summaries and ``global`` for the cross-tenant rollup. Querying is
 cheap: the index on (scope, project_id, run_date DESC) makes ``latest`` and
 ``history`` lookups direct.
 
-DB lives at ``$DATA_DIR/hydration.db`` (default ``./data/hydration.db``) so it
-follows the same convention as ``agent_memory.db`` and ``doc_index.db``.
+SQLAlchemy-backed via app.core.db — unified The Fork schema.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import select
+
+from app.core.db import SessionLocal, engine, get_database_url
+from app.core.models import HydrationRun
 
 _lock = threading.Lock()
+_initialized = False
+_initialized_for_url: str | None = None
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _data_dir() -> str:
-    return os.getenv("DATA_DIR", "./data")
-
-
-def _db_path() -> str:
-    return os.path.join(_data_dir(), "hydration.db")
-
-
-def _connect() -> sqlite3.Connection:
-    os.makedirs(_data_dir(), exist_ok=True)
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
 
 def init_db() -> None:
     """Idempotent schema creation. Safe to call on every app startup."""
-    with _lock, _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS hydration_runs (
-                id TEXT PRIMARY KEY,
-                run_date TEXT NOT NULL,
-                scope TEXT NOT NULL CHECK(scope IN ('project','global')),
-                project_id TEXT,
-                summary_md TEXT NOT NULL,
-                facts_json TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_hydration_lookup "
-            "ON hydration_runs(scope, project_id, run_date DESC)"
-        )
+    global _initialized, _initialized_for_url
+    url = get_database_url()
+    with _lock:
+        from app.core.projects import init_db as init_projects_db
+
+        init_projects_db()
+        _ensure_sqlite_parent_dir()
+        HydrationRun.__table__.create(bind=engine, checkfirst=True)
+        _initialized = True
+        _initialized_for_url = url
 
 
 def _ensure_db() -> None:
-    if not os.path.exists(_db_path()):
+    url = get_database_url()
+    if not _initialized or _initialized_for_url != url:
         init_db()
 
 
@@ -93,49 +81,61 @@ def record_run(
         raise ValueError("project scope requires project_id")
     rid = str(uuid.uuid4())
     _ensure_db()
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO hydration_runs "
-            "(id, run_date, scope, project_id, summary_md, facts_json, provider, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                rid,
-                run_date,
-                scope,
-                project_id if scope == "project" else None,
-                summary_md,
-                json.dumps(facts, ensure_ascii=False),
-                provider,
-                _now_iso(),
-            ),
-        )
+    with _lock:
+        with SessionLocal() as session:
+            session.add(
+                HydrationRun(
+                    id=rid,
+                    run_date=run_date,
+                    scope=scope,
+                    project_id=project_id if scope == "project" else None,
+                    summary_md=summary_md,
+                    facts_json=facts,
+                    provider=provider,
+                    created_at=_now_iso(),
+                )
+            )
+            session.commit()
     return rid
 
 
-def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
-    d = dict(row)
+def _row_to_dict(row: HydrationRun) -> Dict[str, Any]:
+    raw = row.facts_json
     try:
-        d["facts"] = json.loads(d.pop("facts_json"))
+        if isinstance(raw, dict):
+            facts = raw
+        elif isinstance(raw, str):
+            facts = json.loads(raw)
+        else:
+            facts = {}
     except Exception:
-        d["facts"] = {}
-    return d
+        facts = {}
+    return {
+        "id": row.id,
+        "run_date": row.run_date,
+        "scope": row.scope,
+        "project_id": row.project_id,
+        "summary_md": row.summary_md,
+        "facts": facts,
+        "provider": row.provider,
+        "created_at": row.created_at,
+    }
 
 
 def get_latest(scope: str, project_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Return the most recently inserted run for the given scope/project."""
     _ensure_db()
-    with _connect() as conn:
-        if scope == "global":
-            row = conn.execute(
-                "SELECT * FROM hydration_runs WHERE scope='global' "
-                "ORDER BY created_at DESC LIMIT 1"
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM hydration_runs WHERE scope='project' AND project_id = ? "
-                "ORDER BY created_at DESC LIMIT 1",
-                (project_id,),
-            ).fetchone()
+    stmt = select(HydrationRun)
+    if scope == "global":
+        stmt = stmt.where(HydrationRun.scope == "global")
+    else:
+        stmt = stmt.where(
+            HydrationRun.scope == "project",
+            HydrationRun.project_id == project_id,
+        )
+    stmt = stmt.order_by(HydrationRun.created_at.desc()).limit(1)
+    with SessionLocal() as session:
+        row = session.scalars(stmt).first()
     return _row_to_dict(row) if row else None
 
 
@@ -145,16 +145,14 @@ def list_history(
     limit: int = 20,
 ) -> List[Dict[str, Any]]:
     _ensure_db()
-    q = "SELECT * FROM hydration_runs WHERE 1=1"
-    params: List[Any] = []
+    stmt = select(HydrationRun)
     if scope is not None:
-        q += " AND scope = ?"
-        params.append(scope)
+        stmt = stmt.where(HydrationRun.scope == scope)
     if project_id is not None:
-        q += " AND project_id = ?"
-        params.append(project_id)
-    q += " ORDER BY created_at DESC LIMIT ?"
-    params.append(max(1, min(int(limit), 200)))
-    with _connect() as conn:
-        rows = conn.execute(q, params).fetchall()
+        stmt = stmt.where(HydrationRun.project_id == project_id)
+    stmt = stmt.order_by(HydrationRun.created_at.desc()).limit(
+        max(1, min(int(limit), 200))
+    )
+    with SessionLocal() as session:
+        rows = session.scalars(stmt).all()
     return [_row_to_dict(r) for r in rows]

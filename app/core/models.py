@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    desc,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -196,6 +197,41 @@ class UsageRun(Base):
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     estimated_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class HydrationRun(Base):
+    """hydration_runs table — see the_fork_schema.sql."""
+
+    __tablename__ = "hydration_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "scope IN ('project', 'global')",
+            name="ck_hydration_runs_scope",
+        ),
+        Index("idx_hydration_lookup", "scope", "project_id", desc("run_date")),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_date: Mapped[str] = mapped_column(String, nullable=False)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    summary_md: Mapped[str] = mapped_column(Text, nullable=False)
+    facts_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class RagBudget(Base):
+    """rag_budget table — see the_fork_schema.sql."""
+
+    __tablename__ = "rag_budget"
+
+    day: Mapped[str] = mapped_column(String, primary_key=True)
+    consumed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class AgentFact(Base):
