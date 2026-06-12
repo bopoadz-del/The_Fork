@@ -7,9 +7,9 @@ roadmap's "small + fast" rubric. Swap is one line if you want all-mpnet-
 base-v2 later.
 
 Test fixture: pass ``model_name="fake"`` to get a deterministic
-hash-based embedder that produces 384-dim vectors without loading any
-model. Used throughout ``tests/test_rag.py`` so the suite has no model
-download dependency.
+hash-based embedder that produces 256-dim vectors (schema-aligned) without
+loading any model. Used throughout ``tests/test_rag.py`` so the suite has
+no model download dependency.
 """
 
 from __future__ import annotations
@@ -50,10 +50,11 @@ def get_embedder(model_name: Optional[str] = None) -> "Embedder":
     """Return the process-cached embedder, creating it on first call.
 
     ``model_name=None`` honors the ``RAG_EMBEDDING_MODEL`` env var, then
-    falls back to ``DEFAULT_MODEL``. Pass ``"fake"`` for tests.
+    falls back to ``DEFAULT_MODEL2VEC`` (slim production image). Pass
+    ``"fake"`` for tests.
     """
     global _EMBEDDER_CACHE
-    name = model_name or os.getenv("RAG_EMBEDDING_MODEL") or DEFAULT_MODEL
+    name = model_name or os.getenv("RAG_EMBEDDING_MODEL") or DEFAULT_MODEL2VEC
     with _CACHE_LOCK:
         if _EMBEDDER_CACHE is None or _EMBEDDER_CACHE.model_name != name:
             _EMBEDDER_CACHE = Embedder(model_name=name)
@@ -83,9 +84,9 @@ class Embedder:
 
     Public surface:
 
-    * :attr:`dim` — vector dimension (384 for fake / sentence-transformers,
-      256 for model2vec). Inspect AFTER construction so the vector store
-      can size itself to the actual backend.
+    * :attr:`dim` — vector dimension (256 for fake / model2vec; 384 for
+      sentence-transformers when installed). Inspect AFTER construction so
+      the vector store can size itself to the actual backend.
     * :meth:`encode(texts)` — returns L2-normalized ``np.ndarray`` of shape
       ``(len(texts), dim)``. Normalization is on so cosine similarity is a
       pure dot product downstream.
@@ -102,7 +103,7 @@ class Embedder:
         self._dim: int = EMBEDDING_DIM
         if self._fake:
             self._backend = "fake"
-            self._dim = EMBEDDING_DIM
+            self._dim = EMBEDDING_DIM_MODEL2VEC
             return
         # Backend selection at construction time so .dim is stable.
         if _has_sentence_transformers():
@@ -183,7 +184,7 @@ def _has_model2vec() -> bool:
 
 
 def _fake_embedding(text: str) -> np.ndarray:
-    """Deterministic 384-dim L2-normalized vector derived from text hash.
+    """Deterministic 256-dim L2-normalized vector derived from text hash.
 
     Lets tests assert "same input → same vector" and "different input →
     different vector" without any model file. Two inputs produce
@@ -194,14 +195,15 @@ def _fake_embedding(text: str) -> np.ndarray:
     actually a useful property for tests: it makes accidental collisions
     rare and similarity scores meaningful in toy datasets.
     """
+    dim = EMBEDDING_DIM_MODEL2VEC
     h = hashlib.sha256(text.encode("utf-8")).digest()
-    # Expand 32 bytes to 384 floats by repeated hashing.
+    # Expand 32 bytes to ``dim`` floats by repeated hashing.
     buf = bytearray()
     seed = h
-    while len(buf) < EMBEDDING_DIM * 4:
+    while len(buf) < dim * 4:
         seed = hashlib.sha256(seed).digest()
         buf.extend(seed)
-    arr = np.frombuffer(bytes(buf[: EMBEDDING_DIM * 4]), dtype=np.uint32).astype(np.float32)
+    arr = np.frombuffer(bytes(buf[: dim * 4]), dtype=np.uint32).astype(np.float32)
     # Shift to [-1, 1] range so vectors aren't all in one quadrant
     arr = (arr / (2**32 - 1)) * 2.0 - 1.0
     # L2 normalize so cosine = dot product

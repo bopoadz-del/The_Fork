@@ -9,7 +9,7 @@ Reads eight legacy ``.db`` files:
 * ``doc_index.db``
 * ``hydration.db``
 * ``usage.db``
-* ``rag/vectors.db`` (chunks — embeddings unpacked with ``struct.unpack('<384f')``)
+* ``rag/vectors.db`` (chunks — embeddings unpacked dynamically from BLOB length)
 * ``rag/budget.db``
 
 Rows are inserted in foreign-key order with ``ON CONFLICT DO NOTHING`` so the
@@ -42,7 +42,8 @@ from typing import Any, Callable, Generator, Sequence
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
-EMBEDDING_DIM = 384
+# Canonical Postgres pgvector dimension (model2vec / app.core.models.EMBEDDING_DIM).
+EMBEDDING_DIM = 256
 SYSTEM_USER_ID = "system"
 
 # Insert order respects PostgreSQL FK constraints in the_fork_schema.sql.
@@ -114,14 +115,20 @@ def _json_value(raw: Any) -> Any:
 
 
 def _unpack_embedding(blob: bytes | None) -> list[float]:
+    """Unpack a float32 BLOB and fit to the Postgres ``vector(EMBEDDING_DIM)`` column."""
     if not blob:
         raise ValueError("chunk embedding BLOB is empty")
-    expected = EMBEDDING_DIM * 4
-    if len(blob) != expected:
+    if len(blob) % 4 != 0:
         raise ValueError(
-            f"expected {expected} bytes for {EMBEDDING_DIM} float32 values, got {len(blob)}"
+            f"embedding BLOB length {len(blob)} is not a multiple of 4 (float32)"
         )
-    return list(struct.unpack("<384f", blob))
+    dim = len(blob) // 4
+    values = list(struct.unpack(f"<{dim}f", blob))
+    if dim > EMBEDDING_DIM:
+        values = values[:EMBEDDING_DIM]
+    elif dim < EMBEDDING_DIM:
+        values.extend([0.0] * (EMBEDDING_DIM - dim))
+    return values
 
 
 def _vector_literal(values: Sequence[float]) -> str:

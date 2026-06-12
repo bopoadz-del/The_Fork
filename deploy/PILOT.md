@@ -47,6 +47,7 @@ Copy `.env.example` → `.env` and set at minimum:
 | `DATA_DIR` | Persistent volume for uploads |
 | `REDIS_URL` | Shared Redis for 2 workers |
 | `SENTRY_DSN` | Project DSN |
+| `RAG_EMBEDDING_MODEL` | **Unset** on Render (model2vec 256-dim default) or `minishlab/potion-base-8M` |
 
 ## 4. Boot and smoke
 

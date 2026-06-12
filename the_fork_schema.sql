@@ -1,8 +1,8 @@
 -- The Fork unified PostgreSQL schema (reverse-engineered from SQLite stores).
 -- Source modules: users, projects, workflows, agent_memory, doc_index,
 -- usage_tracker, hydration_store, rag/budget, rag/vector_store.
--- Embedding dimension: 384 (sentence-transformers/all-MiniLM-L6-v2; see
--- app/core/rag/embeddings.py EMBEDDING_DIM).
+-- Embedding dimension: 256 (model2vec minishlab/potion-base-8M; see
+-- app/core/models.py EMBEDDING_DIM and embeddings.py EMBEDDING_DIM_MODEL2VEC).
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -186,7 +186,7 @@ CREATE TABLE rag_budget (
 );
 
 -- ── RAG vector store (app/core/rag/vector_store.py) ─────────────────────────
--- embedding: vector(384) per EMBEDDING_DIM in embeddings.py (MiniLM-L6-v2).
+-- embedding: vector(256) per EMBEDDING_DIM in app/core/models.py (model2vec).
 
 CREATE TABLE chunks (
     chunk_id    TEXT PRIMARY KEY,
@@ -196,7 +196,7 @@ CREATE TABLE chunks (
                 REFERENCES documents (id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
     text        TEXT NOT NULL,
-    embedding   vector(384) NOT NULL,
+    embedding   vector(256) NOT NULL,
     created_at  TEXT NOT NULL,
     UNIQUE (project_id, doc_id, chunk_index)
 );

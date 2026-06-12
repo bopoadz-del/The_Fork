@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
-from scripts.migrate_sqlite_to_pg import main as migrate_main
+from scripts.migrate_sqlite_to_pg import _unpack_embedding, main as migrate_main
 
 
 def _pg_url() -> str | None:
@@ -212,7 +212,22 @@ def test_execute_migrates_and_is_idempotent(tmp_path, pg_engine, monkeypatch):
         dim = conn.execute(
             text("SELECT vector_dims(embedding) FROM chunks WHERE chunk_id = 'c1'")
         ).scalar()
-        assert dim == 384
+        assert dim == 256
+
+
+def test_unpack_embedding_truncates_legacy_384_blob():
+    blob = struct.pack("<384f", *([0.1] * 384))
+    values = _unpack_embedding(blob)
+    assert len(values) == 256
+    assert all(pytest.approx(v) == 0.1 for v in values)
+
+
+def test_unpack_embedding_pads_short_blob():
+    blob = struct.pack("<128f", *([0.2] * 128))
+    values = _unpack_embedding(blob)
+    assert len(values) == 256
+    assert all(pytest.approx(v) == 0.2 for v in values[:128])
+    assert values[128:] == [0.0] * 128
 
 
 def test_requires_dry_run_or_execute(tmp_path, monkeypatch):
