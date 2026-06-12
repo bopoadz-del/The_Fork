@@ -235,6 +235,160 @@ async def test_drawing_title_rejects_dg2_place_names():
         )
 
 
+async def test_fitz_char_extraction_smoke():
+    """Phase 1.7 fitz swap: ``_chars_from_fitz`` must produce a healthy
+    span population on the primary fixture. <100 records would indicate
+    the page.get_text("dict") loop is mis-iterating blocks/lines/spans."""
+    import fitz
+    doc = fitz.open(str(PRIMARY))
+    try:
+        chars = DrawingQTOBlock._chars_from_fitz(doc[0])
+    finally:
+        doc.close()
+    assert len(chars) >= 100, (
+        f"_chars_from_fitz returned only {len(chars)} records; "
+        f"expected >= 100 for the TM detail fixture"
+    )
+    # And the records must carry the schema downstream code consumes.
+    c = chars[0]
+    for k in ("text", "x0", "y0", "x1", "y1", "size", "fontname"):
+        assert k in c, f"_chars_from_fitz record missing key {k!r}: {c!r}"
+
+
+async def test_drawing_number_no_doubled_letter_prefix():
+    """Phase 1.7 bug fix: a source text run like ``XIIP-INF-053-...``
+    used to yield a JCB drawing-number of ``IIP-INF-053-...`` (the head
+    ``[A-Z]{2,}`` happily accepted the doubled letter). The
+    ``_strip_doubled_letter_prefix`` helper must peel the stray prefix
+    char-by-char while the remainder still parses, leaving the canonical
+    2-char ``IP`` head."""
+    from app.blocks.drawing_qto import (
+        _strip_doubled_letter_prefix, _DWG_NUMBER_FULL,
+    )
+    # The pattern itself matches IIP- because [A-Z]{2,} accepts >=2.
+    bad_run = "XIIP-INF-053-0000-JCB-DWG-ST-200-0010001-A"
+    raw_match = _DWG_NUMBER_FULL.search(bad_run)
+    assert raw_match is not None
+    raw = raw_match.group(0)
+    # After strip, no doubled-letter prefix
+    cleaned = _strip_doubled_letter_prefix(raw)
+    assert not cleaned.startswith("II"), (
+        f"strip_doubled_letter_prefix kept the doubled prefix: {cleaned!r}"
+    )
+    # Canonical DG2 prefix
+    assert cleaned.startswith("IP-INF-"), (
+        f"strip_doubled_letter_prefix did not preserve canonical IP-INF prefix: {cleaned!r}"
+    )
+    # The known-clean form is a no-op
+    clean_in = "IP-INF-053-0000-JCB-DWG-TM-200-1000005-A"
+    assert _strip_doubled_letter_prefix(clean_in) == clean_in
+
+
+async def test_drawing_title_rejects_trailing_lowercase_artifact():
+    """Phase 1.7 bug fix: candidates ending in ``[A-Z]{2,}[a-z]`` (e.g.
+    ``KEY PLANg`` — a subscript glyph that bled into the title span)
+    must be rejected, while mixed-case titles like ``Section A-A`` and
+    all-caps titles like ``CONCRETE ENCASEMENT`` must NOT be rejected."""
+    from app.blocks.drawing_qto import _has_trailing_lowercase_artifact
+    # Rejected
+    assert _has_trailing_lowercase_artifact("KEY PLANg") is True
+    assert _has_trailing_lowercase_artifact("TITLEx") is True
+    assert _has_trailing_lowercase_artifact("CONCRETE BEAMa") is True
+    # Accepted (must not match)
+    assert _has_trailing_lowercase_artifact("Section A-A") is False
+    assert _has_trailing_lowercase_artifact("CONCRETE ENCASEMENT") is False
+    assert _has_trailing_lowercase_artifact("KEY PLAN") is False
+    # The full title-candidate flow rejects "KEY PLANg" via this filter
+    # while keeping "CONCRETE ENCASEMENT".
+    assert _has_trailing_lowercase_artifact("KEY PLAN.") is False  # trailing period
+
+
+async def test_notes_dedup_drops_near_identical():
+    """Phase 1.8: near-identical notes (Levenshtein distance < 5) must
+    collapse to a single entry. Asserts both the helper and the
+    classifier path.
+
+    Verifies that ``_note_near_duplicate`` reports True on a candidate
+    that differs from an accepted entry by < 5 chars but False on a
+    candidate that differs by >= 5 chars. Then drives
+    ``_classify_drawing_zone`` with a constructed char stream that
+    contains two near-identical lines and asserts only one survives.
+    """
+    from app.blocks.drawing_qto import _note_near_duplicate
+
+    # Two strings differing by 1 char -> duplicate
+    base = "ISSUED FOR CONSTRUCTION (CONDITIONAL) 02 31/05/24 AJ"
+    near = "ISSUED FOR CONSTRUCTION (CONDITIONAL) 03 29/01/25 AJ"
+    # These differ by more than 5 chars in pairwise comparison — they're
+    # NOT duplicates by the < 5 rule. Check explicitly:
+    from app.blocks.drawing_qto import _lev_distance
+    assert _lev_distance(base, near) >= 5  # sanity: not deduped
+
+    # A 1-char-different pair IS a duplicate
+    assert _note_near_duplicate(
+        "WATERSTOP PROFILE",
+        ["WATERSTOP PROFIL"],
+        max_distance=5,
+    ) is True
+    # Distance 5 (boundary) should NOT be flagged (< 5 rule).
+    # "ABCDEFGHIJ" vs "AAAAAAGHIJ" = 5 substitutions (chars 2..6: B→A,C→A,D→A,E→A,F→A).
+    assert _lev_distance("ABCDEFGHIJ", "AAAAAAGHIJ") == 5
+    assert _note_near_duplicate("ABCDEFGHIJ", ["AAAAAAGHIJ"], max_distance=5) is False
+    # Identical
+    assert _note_near_duplicate("FOO", ["FOO"], max_distance=5) is True
+    # Length-difference early-out
+    assert _note_near_duplicate("FOO", ["FOOBAR123456"], max_distance=5) is False
+    # Empty accepted list
+    assert _note_near_duplicate("FOO", [], max_distance=5) is False
+
+    # Drive the classifier path: construct two near-identical char lines
+    # large enough to land in the "notes" bucket (size >= 4.0) and short
+    # enough to escape every other filter.
+    def _chars_for_line(text: str, y0: float) -> list:
+        # Approximate per-char widths to keep them on the same y-line and
+        # within the 30-px x_gap cluster threshold.
+        out = []
+        x = 0.0
+        for ch in text:
+            out.append({
+                "text": ch,
+                "x0": x,
+                "y0": y0,
+                "x1": x + 5.0,
+                "y1": y0 + 8.0,
+                "size": 6.0,
+                "fontname": "Arial",
+            })
+            x += 5.5
+        return out
+
+    chars = (
+        _chars_for_line("THIS IS A LONG NOTE ABOUT WATERPROOFING DETAIL", 100.0)
+        + _chars_for_line("THIS IS A LONG NOTE ABOUT WATERPROOFING DETAIM", 200.0)
+    )
+    block = DrawingQTOBlock()
+    notes, _, _, dropped = block._classify_drawing_zone(chars)
+    assert len(notes) == 1, f"expected dedup to leave 1 note, got {notes!r}"
+    assert dropped == 1, f"expected dedup_dropped_count=1, got {dropped}"
+
+
+async def test_notes_dedup_does_not_strip_legitimate_notes(primary_result):
+    """Phase 1.8 regression: the dedup filter must not strip legitimate
+    notes on the TM fixture. The existing
+    ``test_notes_present_and_meaningful`` assertion (len(notes) >= 1 AND
+    word count > 10) must still pass — re-assert it here for clarity."""
+    drawing = primary_result["drawing"]
+    notes = drawing.get("notes") or []
+    assert len(notes) >= 1, f"dedup stripped all notes; got {notes!r}"
+    word_count = sum(len(n.split()) for n in notes)
+    assert word_count > 10, (
+        f"dedup over-stripped on TM fixture; word count {word_count} <= 10; "
+        f"notes={notes!r}"
+    )
+    # The new field must be present on the drawing dict
+    assert "notes_dedup_dropped_count" in drawing
+
+
 async def test_drawing_title_not_cross_ref_callout(primary_result):
     """Bug 1.5b: drawing_title must not be a cross-ref callout like
     'MATCH LINE : FOR REFERENCE REFER TO SHEET NO : N'. On TM detail

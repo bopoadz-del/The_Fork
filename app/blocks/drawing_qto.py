@@ -1,12 +1,16 @@
 """Drawing QTO Block - Quantity Take-Off from DXF/DWG construction drawings.
 
-V1.1 adds a pdfplumber-based text-extraction path for PDF drawings that
-classifies title-block fields, notes, dimensions, and cross-references
-(per docs/superpowers/specs/2026-06-11-drawing-reader-design.md). The
-existing DXF/PDF geometry extraction (fitz.get_drawings()) is preserved
-so legacy callers keep their measurements/areas outputs; the new
-structured drawing data goes under result["drawing"], and a
-chunk-ready string lands at result["text"] for the RAG indexer.
+V1.2 swaps the text-extraction path from pdfplumber to PyMuPDF (fitz).
+pdfplumber was a 80-180s/drawing bottleneck on dense CAD PDFs; fitz
+returns the same span-level data in a fraction of the time. The
+font-size buckets, candidate filters, JCB regex, place-name blocklist,
+cross-ref extraction, multi-page combine, fallback chains, and the
+chunk-builder are unchanged.
+
+Coordinate-system note: pdfplumber returned y0 in PDF user-space
+(0 = bottom of page, increasing upward). PyMuPDF returns y0 top-down
+(0 = top of page, increasing downward). Every comparison that referred
+to "bottom 15%" or sorted top-down has been flipped accordingly.
 """
 
 import os
@@ -46,6 +50,123 @@ _DWG_NUMBER_FULL = re.compile(
     r"[A-Z]{3,}-[A-Z]{2,}-\d{3}-\d{6,7}(?:-[A-Z0-9]+)?"
 )
 _DWG_NUMBER_SHORT = re.compile(r"[A-Z]{2,}-[A-Z]{2,}-\d{2,}-[A-Z0-9]+")
+
+def _strip_doubled_letter_prefix(dn: str) -> str:
+    """Strip stray leading characters that fall outside a clean JCB-style
+    drawing-number prefix.
+
+    Bug observed in pilot: ST sheet returned ``IIP-INF-054-...`` because
+    the source text run was something like ``XIIP-INF-054-...`` and the
+    regex `[A-Z]{2,}-[A-Z]{2,}-...` legitimately accepted ``XIIP`` (or in
+    a leading position, ``IIP``). A negative-lookbehind in the regex does
+    not help: at string start there's no preceding char, so
+    ``XIIP-INF-...`` produces ``IIP-...`` and ``IIP-INF-...`` produces
+    ``IIP-...`` again.
+
+    Strategy: peel one leading char at a time as long as the remainder
+    still matches the same full-or-short JCB pattern. The minimum first
+    token in the DG2 corpus is the 2-letter ``IP`` prefix, so this stops
+    once the first token shrinks to that length. Single-pass over the
+    string; cheap and pattern-aware.
+    """
+    if not dn:
+        return dn
+    candidate = dn
+    while len(candidate) > 2 and candidate[0].isalpha():
+        peeled = candidate[1:]
+        # Only peel while the remainder STILL parses as a JCB drawing
+        # number with the same suffix. Use fullmatch to make sure we're
+        # not accidentally shrinking past the prefix.
+        if (_DWG_NUMBER_FULL.fullmatch(peeled) or
+                _DWG_NUMBER_SHORT.fullmatch(peeled)):
+            candidate = peeled
+            continue
+        break
+    return candidate
+
+
+# Phase 1.7: reject drawing-title candidates whose final char is a single
+# lowercase letter directly after an uppercase run (e.g. "KEY PLANg" —
+# a fitz-only artifact where a subscript glyph bled into the title span).
+# Legitimate mixed-case titles like "Section A-A" and "CONCRETE ENCASEMENT"
+# do not match this shape.
+_TRAILING_LOWERCASE_ARTIFACT_RE = re.compile(r"[A-Z]{2,}[a-z]$")
+
+
+def _has_trailing_lowercase_artifact(text: str) -> bool:
+    """True if a candidate ends in ``[A-Z]{2,}[a-z]`` — caught by
+    Phase 1.7 filter. Operates on the trimmed last token to ignore
+    trailing punctuation."""
+    if not text:
+        return False
+    tail = text.strip().split()[-1] if text.strip() else ""
+    # Strip trailing punctuation so e.g. ``KEY PLANg.`` still trips
+    while tail and not tail[-1].isalnum():
+        tail = tail[:-1]
+    return bool(_TRAILING_LOWERCASE_ARTIFACT_RE.search(tail))
+
+
+# Phase 1.8: Levenshtein dedup for repetitive legend / schedule tables
+# (observed on ST sheet: 161 notes vs 2-4 for other disciplines of similar
+# size). Many near-identical notes survive the existing CAD-tag /
+# pure-numeric / place-name filters — e.g. five "ISSUED FOR CONSTRUCTION
+# (CONDITIONAL) NN DD/MM/YY AJ" revision-history rows. We drop any note
+# whose Levenshtein distance from an already-accepted note is < 5.
+try:
+    # Prefer the C-extension if it's available; otherwise fall back to a
+    # hand-rolled DP. The lists are small (<= a few hundred notes per
+    # drawing, each <= 200 chars), so either is fast enough.
+    from Levenshtein import distance as _lev_distance  # type: ignore
+    _LEV_IMPL = "Levenshtein"
+except ImportError:
+    _LEV_IMPL = "hand_rolled"
+
+    def _lev_distance(a: str, b: str) -> int:  # type: ignore
+        """Classic DP Levenshtein. O(len(a) * len(b)) time, O(min) space."""
+        if a == b:
+            return 0
+        if not a:
+            return len(b)
+        if not b:
+            return len(a)
+        # Make `a` the shorter string for the O(min) row buffer.
+        if len(a) > len(b):
+            a, b = b, a
+        prev = list(range(len(a) + 1))
+        for i, cb in enumerate(b, 1):
+            curr = [i] + [0] * len(a)
+            for j, ca in enumerate(a, 1):
+                cost = 0 if ca == cb else 1
+                curr[j] = min(
+                    curr[j - 1] + 1,        # insert
+                    prev[j] + 1,            # delete
+                    prev[j - 1] + cost,     # substitute
+                )
+            prev = curr
+        return prev[-1]
+
+
+def _note_near_duplicate(
+    candidate: str, accepted: List[str], max_distance: int = 5
+) -> bool:
+    """True if ``candidate`` is within ``max_distance`` Levenshtein
+    edit-distance of ANY string already in ``accepted``.
+
+    Early-out: if ``abs(len(candidate) - len(existing)) > max_distance``
+    the distance is necessarily greater, so skip the DP entirely. Cheap
+    O(1) length check protects us against the worst case where the
+    candidate is much longer/shorter than every accepted entry.
+    """
+    if not candidate:
+        return False
+    cand_len = len(candidate)
+    for existing in accepted:
+        if abs(cand_len - len(existing)) > max_distance:
+            continue
+        if _lev_distance(candidate, existing) < max_distance:
+            return True
+    return False
+
 
 # Diriyah Gate area / district names that show up at large font sizes
 # inside the main drawing region of regional / key-plan sheets and win the
@@ -320,27 +441,70 @@ class DrawingQTOBlock(UniversalBlock):
         }
 
     # ====================================================================
-    # V1.1 -- pdfplumber-based text extraction for CAD drawings
+    # V1.2 -- PyMuPDF (fitz) based text extraction for CAD drawings
     # ====================================================================
     # See docs/superpowers/specs/2026-06-11-drawing-reader-design.md.
-    # Coordinate orientation: pdfplumber returns y0 in PDF user-space
-    # (0 = bottom of page, page.height = top). All "bottom 15%" zones
-    # are y0 < page.height * 0.15. The right-20% fallback handles the
-    # common DG2 landscape layout where the title block lives on the
-    # right edge, not the bottom.
+    # Coordinate orientation: fitz returns y0 in TOP-DOWN page space
+    # (y0=0 at top, y0=page.rect.height at bottom). All "bottom 15%" zones
+    # are y0 > page.rect.height * 0.85 — the OPPOSITE of pdfplumber.
+    # The right-20% fallback (x0 > 0.80*width) is direction-agnostic and
+    # unchanged. Title-block clustering sorts top-down (smaller y0 first).
+
+    @staticmethod
+    def _chars_from_fitz(page) -> List[Dict]:
+        """Pull span-level "char" records from a fitz Page.
+
+        Each fitz span carries its own text (including internal spaces),
+        font size, font name, and bbox — the same shape the pdfplumber
+        path consumed at char granularity. We emit ONE record per span:
+        the downstream line clustering already glues runs by proximity
+        and the regex/cad-tag filters operate on assembled text, so
+        per-span (vs per-char) granularity is strictly faster and avoids
+        the per-char ligature ambiguities that occasionally bit
+        pdfplumber.
+
+        Returned dicts mirror the pdfplumber char schema so all downstream
+        logic (line clustering, font-size buckets, drawing-number regex,
+        cross-ref regex) works unchanged:
+            {"text", "x0", "y0", "x1", "y1", "size", "fontname"}
+        Coordinates are in fitz's TOP-DOWN space (y0=0 at page top).
+        """
+        out: List[Dict] = []
+        try:
+            d = page.get_text("dict") or {}
+        except Exception:
+            return out
+        for block in d.get("blocks", []) or []:
+            # Image blocks have no "lines" key — skip.
+            for line in block.get("lines", []) or []:
+                for span in line.get("spans", []) or []:
+                    text = span.get("text", "")
+                    if text == "":
+                        continue
+                    bbox = span.get("bbox", (0.0, 0.0, 0.0, 0.0))
+                    out.append({
+                        "text": text,
+                        "x0": float(bbox[0]),
+                        "y0": float(bbox[1]),
+                        "x1": float(bbox[2]),
+                        "y1": float(bbox[3]),
+                        "size": float(span.get("size", 0.0)),
+                        "fontname": span.get("font", ""),
+                    })
+        return out
 
     def _extract_drawing_text(self, file_path: str) -> Dict:
         """Top-level text-extraction orchestrator: returns
         ``{"text", "drawing", "errors", "status"}``."""
         errors: List[str] = []
         try:
-            import pdfplumber
+            import fitz
         except ImportError:
             return {
                 "status": "error",
                 "text": "",
                 "drawing": {},
-                "errors": ["pdfplumber_not_installed"],
+                "errors": ["pymupdf_not_installed"],
             }
         from app.core.file_crypto import open_plaintext
 
@@ -348,7 +512,7 @@ class DrawingQTOBlock(UniversalBlock):
         try:
             with open_plaintext(file_path) as plain_path:
                 try:
-                    pdf = pdfplumber.open(plain_path)
+                    doc = fitz.open(plain_path)
                 except Exception as exc:
                     msg = str(exc).lower()
                     if "password" in msg or "encrypt" in msg:
@@ -365,8 +529,15 @@ class DrawingQTOBlock(UniversalBlock):
                         "errors": [f"pdf_open_failed: {exc}"],
                     }
 
-                with pdf:
-                    if not pdf.pages:
+                try:
+                    if doc.needs_pass:
+                        return {
+                            "status": "error",
+                            "text": "",
+                            "drawing": {},
+                            "errors": ["password_protected"],
+                        }
+                    if doc.page_count == 0:
                         return {
                             "status": "error",
                             "text": "",
@@ -376,8 +547,8 @@ class DrawingQTOBlock(UniversalBlock):
 
                     page_results = []
                     total_chars = 0
-                    for page in pdf.pages:
-                        chars = page.chars or []
+                    for page in doc:
+                        chars = self._chars_from_fitz(page)
                         total_chars += len(chars)
                         # Save raw full-page text for drawing-number fallback
                         # rescue (Bug 2: when title-block extractor returned a
@@ -395,8 +566,10 @@ class DrawingQTOBlock(UniversalBlock):
                             "status": "error",
                             "text": "",
                             "drawing": {},
-                            "errors": errors + ["no_text_layer_pdfplumber"],
+                            "errors": errors + ["no_text_layer_pymupdf"],
                         }
+                finally:
+                    doc.close()
         except Exception as exc:
             return {
                 "status": "error",
@@ -421,6 +594,7 @@ class DrawingQTOBlock(UniversalBlock):
         all_dims: List[str] = []
         all_refs: List[Dict] = []
         cad_filtered = 0
+        dedup_dropped_total = 0
         # Dedup cross_refs across pages too, by (ref_type, target_drawing).
         seen_refs: set = set()
         for i, pr in enumerate(page_results, 1):
@@ -437,6 +611,7 @@ class DrawingQTOBlock(UniversalBlock):
                 seen_refs.add(key)
                 all_refs.append(r)
             cad_filtered += pr["cad_tags_filtered_count"]
+            dedup_dropped_total += pr.get("notes_dedup_dropped_count", 0)
 
         # Guardrail cap: if dedup yielded >100 unique cross_refs we've almost
         # certainly regressed the regex; trim alphabetically and flag.
@@ -467,7 +642,9 @@ class DrawingQTOBlock(UniversalBlock):
             for raw in page_full_raw_texts:
                 m = _DWG_NUMBER_FULL.search(raw)
                 if m and _is_full_jcb(m.group(0)):
-                    rescued = m.group(0)
+                    # Phase 1.7: strip leading doubled-letter artifacts
+                    # (e.g. ``IIP-INF-...`` -> ``IP-INF-...``).
+                    rescued = _strip_doubled_letter_prefix(m.group(0))
                     break
             if rescued:
                 tb["drawing_number"] = rescued
@@ -541,6 +718,7 @@ class DrawingQTOBlock(UniversalBlock):
             "dimensions": all_dims,
             "cross_refs": all_refs,
             "cad_tags_filtered_count": cad_filtered,
+            "notes_dedup_dropped_count": dedup_dropped_total,
             "n_pages": len(page_results),
         }
         raw_chunk = self._build_raw_chunk(drawing)
@@ -564,7 +742,9 @@ class DrawingQTOBlock(UniversalBlock):
         # to the full page.
         tb_lines = self._lines_from_chars(title_block_chars)
         if len(tb_lines) < 5:
-            right_chars = [c for c in chars if c["x0"] >= page.width * 0.80]
+            # Right-20% fallback is x-axis only; unchanged across the
+            # pdfplumber -> fitz swap. ``page.rect.width`` on fitz.
+            right_chars = [c for c in chars if c["x0"] >= page.rect.width * 0.80]
             right_lines = self._lines_from_chars(right_chars)
             if len(right_lines) >= 5:
                 title_block_chars = right_chars
@@ -578,8 +758,8 @@ class DrawingQTOBlock(UniversalBlock):
         title_block = self._extract_title_block(title_block_chars, page)
 
         # --- Drawing-zone classification -----------------------------------
-        notes, dimensions, filtered_count = self._classify_drawing_zone(
-            drawing_zone_chars or chars
+        notes, dimensions, filtered_count, dedup_dropped = (
+            self._classify_drawing_zone(drawing_zone_chars or chars)
         )
 
         # --- Cross-refs ----------------------------------------------------
@@ -595,17 +775,23 @@ class DrawingQTOBlock(UniversalBlock):
             "dimensions": dimensions,
             "cross_refs": cross_refs,
             "cad_tags_filtered_count": filtered_count,
+            "notes_dedup_dropped_count": dedup_dropped,
         }
 
     # --- Step 1: page region split -----------------------------------------
     @staticmethod
     def _split_page_chars(page, chars: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
         """Bottom 15% of page height -> title-block zone, rest -> drawing
-        zone. pdfplumber y0=0 is the page bottom."""
-        threshold = page.height * 0.15
+        zone. fitz y0=0 is the page TOP, so "bottom 15%" is the high-y0
+        band: y0 > height * 0.85. (Coordinate-flip vs the pdfplumber
+        path; see module docstring.)"""
+        # Phase 1.7 (fitz coords flip): bottom band is y0 > 0.85*height,
+        # not y0 < 0.15*height.
+        height = page.rect.height
+        threshold = height * 0.85
         tb, dz = [], []
         for c in chars:
-            if c["y0"] < threshold:
+            if c["y0"] > threshold:
                 tb.append(c)
             else:
                 dz.append(c)
@@ -650,8 +836,10 @@ class DrawingQTOBlock(UniversalBlock):
                 last_x1 = c["x1"]
             if run:
                 lines.append(_line_from_run(y, run))
-        # Sort lines top-down for readability (PDF y0 large = top of page)
-        lines.sort(key=lambda L: -L["y"])
+        # Sort lines top-down for readability. fitz: y0=0 at the top of
+        # the page, so ascending y0 IS top-down. (Inverse of the
+        # pdfplumber path, which sorted by -y.)
+        lines.sort(key=lambda L: L["y"])
         return lines
 
     # --- Step 2: title-block structured extraction -------------------------
@@ -684,12 +872,18 @@ class DrawingQTOBlock(UniversalBlock):
         if not m:
             m = _DWG_NUMBER_SHORT.search(raw)
         if m:
-            result["drawing_number"] = m.group(0)
-            disc, disc_full = self._discipline_from_number(m.group(0))
+            # Phase 1.7: strip leading doubled-letter artifacts
+            # (e.g. ``IIP-INF-...`` -> ``IP-INF-...``). Source text runs
+            # occasionally start one char inside an earlier token and the
+            # ``[A-Z]{2,}`` head accepts that as a valid prefix. The
+            # strip is pattern-aware so legitimate prefixes survive.
+            dn = _strip_doubled_letter_prefix(m.group(0))
+            result["drawing_number"] = dn
+            disc, disc_full = self._discipline_from_number(dn)
             result["discipline"] = disc
             result["discipline_full"] = disc_full
             # Last hyphenated token of the JCB pattern is the revision
-            tail = m.group(0).rsplit("-", 1)[-1]
+            tail = dn.rsplit("-", 1)[-1]
             if 1 <= len(tail) <= 3 and re.fullmatch(r"[A-Z0-9]+", tail):
                 result["revision"] = tail
 
@@ -773,9 +967,10 @@ class DrawingQTOBlock(UniversalBlock):
             # On WS the title-block selection picked "1800" — a chainage
             # station number. The user wanted "1:1800" as scale, but
             # that lives in a different field; for drawing_title we just
-            # refuse all numeric-shaped strings.
+            # refuse all numeric-shaped strings. Phase 1.7: ``+`` joins
+            # chainage stations (``0+124.138``) — extend the class.
             t_compact = re.sub(r"\s+", "", t)
-            if re.fullmatch(r"[\d.,/:\-]+", t_compact):
+            if re.fullmatch(r"[\d.,/:\-+]+", t_compact):
                 continue
             # Reject scale labels (1:N or 1: N etc.) that escaped the
             # numeric check above due to embedded spaces.
@@ -787,12 +982,25 @@ class DrawingQTOBlock(UniversalBlock):
             tu_compact = re.sub(r"\s+", " ", tu).strip()
             if tu_compact in _DG2_PLACE_NAMES:
                 continue
+            # Phase 1.7: reject candidates with trailing lowercase
+            # artifacts (e.g. ``KEY PLANg`` — a subscript glyph that bled
+            # into the span text). Catches ``[A-Z]{2,}[a-z]`` at the end
+            # of the trimmed last token, leaves ``Section A-A`` and
+            # ``CONCRETE ENCASEMENT`` alone.
+            if _has_trailing_lowercase_artifact(t):
+                continue
             if any(k in tu for k in (
                 "DIRIYAH GATE", "KING KHALID", "INFRASTRUCTURE DESIGN",
                 "KINGDOM OF SAUDI", "JACOBS", "WWW.", "P.O. BOX",
                 "PRINCE SATTAM", "AL SHOHDA", "DATUM", "GEODETIC",
                 "PROJECT SYSTEM", "ZONE:", "NOTES",
             )):
+                continue
+            # Phase 1.7: reject CAD Xref filepath strings (the SG sheet
+            # leaks the underlying ``Xref ..\..\_Refsecure\....dwg`` debug
+            # label as a high-font cluster under fitz — pdfplumber never
+            # surfaced it). Match "XREF " prefix or a backslash anywhere.
+            if tu.startswith("XREF ") or "\\" in t:
                 continue
             result["drawing_title"] = t[:200]
             break
@@ -814,12 +1022,20 @@ class DrawingQTOBlock(UniversalBlock):
     # --- Step 3: drawing-zone font-size classification ---------------------
     def _classify_drawing_zone(
         self, dz_chars: List[Dict]
-    ) -> Tuple[List[str], List[str], int]:
+    ) -> Tuple[List[str], List[str], int, int]:
         """Classify drawing-zone text clusters by font size, then pattern-
-        filter the kept text. Returns (notes, dimensions, filtered_count).
+        filter the kept text. Returns
+        ``(notes, dimensions, filtered_count, dedup_dropped_count)``.
+
+        Phase 1.8 adds Levenshtein-based note dedup: when a candidate is
+        within edit-distance 5 of an already-accepted note, it's dropped
+        and the dedup counter is bumped. This kills the repetitive
+        legend / schedule / revision-history overproduction observed on
+        ST sheets (161 notes vs 2-4 for other disciplines of comparable
+        size).
         """
         if not dz_chars:
-            return [], [], 0
+            return [], [], 0, 0
 
         # Build clusters: chars within 1px vertically + 5px horizontally are
         # one word; words on same y line within 30px gap are one line.
@@ -828,6 +1044,7 @@ class DrawingQTOBlock(UniversalBlock):
         notes: List[str] = []
         dimensions: List[str] = []
         filtered = 0
+        dedup_dropped = 0
 
         for L in lines:
             text = L["text"].strip()
@@ -856,11 +1073,16 @@ class DrawingQTOBlock(UniversalBlock):
                 continue
 
             if target_bucket == "notes":
+                # Phase 1.8: drop near-identical duplicates AFTER all
+                # other filters. Edit-distance < 5 = duplicate.
+                if _note_near_duplicate(text, notes, max_distance=5):
+                    dedup_dropped += 1
+                    continue
                 notes.append(text)
             else:
                 dimensions.append(f"DIM: {text}")
 
-        return notes, dimensions, filtered
+        return notes, dimensions, filtered, dedup_dropped
 
     # --- Step 4: cross-ref extraction --------------------------------------
     # Sheet-identifier shape: either a JCB-style hyphenated number
@@ -1323,8 +1545,41 @@ class DrawingQTOBlock(UniversalBlock):
 
 
 def _line_from_run(y: float, run: List[Dict]) -> Dict:
-    """Build a line record from a list of chars that share a y baseline."""
-    text = "".join(c["text"] for c in run)
+    """Build a line record from a list of chars (fitz spans) that share
+    a y baseline.
+
+    Under the pdfplumber path the run was per-character so a naive join
+    was correct. Under fitz the run is per-span; if two spans on the
+    same line don't already end/start with whitespace, glue them with a
+    space so word boundaries survive ("KEY PLAN" + "Road" = "KEY PLAN
+    Road", not "KEY PLANRoad"). A char/span that already ends in
+    whitespace or starts in whitespace is left alone.
+    """
+    if not run:
+        return {"y": y, "size": 0.0, "text": ""}
+    parts: List[str] = []
+    for i, c in enumerate(run):
+        if i == 0:
+            parts.append(c["text"])
+            continue
+        prev_text = run[i - 1]["text"]
+        cur_text = c["text"]
+        # Only insert a separator when neither side already has one AND
+        # there's a visible x gap between the spans. Single-char items
+        # (pdfplumber back-compat) never have a gap >= 0.5 between
+        # adjacent chars, so this is a no-op on that path.
+        gap = c["x0"] - run[i - 1]["x1"]
+        needs_space = (
+            gap >= 0.5
+            and prev_text
+            and cur_text
+            and not prev_text[-1].isspace()
+            and not cur_text[0].isspace()
+        )
+        if needs_space:
+            parts.append(" ")
+        parts.append(cur_text)
+    text = "".join(parts)
     sizes = [c["size"] for c in run if c.get("size")]
     avg_size = sum(sizes) / len(sizes) if sizes else 0.0
     return {"y": y, "size": avg_size, "text": text}
