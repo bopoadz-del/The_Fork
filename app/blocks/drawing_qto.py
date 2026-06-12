@@ -51,6 +51,21 @@ _DWG_NUMBER_FULL = re.compile(
 )
 _DWG_NUMBER_SHORT = re.compile(r"[A-Z]{2,}-[A-Z]{2,}-\d{2,}-[A-Z0-9]+")
 
+
+def _is_full_jcb(s: str) -> bool:
+    """True iff ``s`` looks like a complete JCB drawing-number — has both
+    'JCB' and 'DWG' tokens and at least 8 hyphens.
+
+    Used by both the title-block band-preference pick (in ``_process_page``)
+    and the rescue path (in ``_extract_drawing_text``). Lifted to module
+    scope so both callers can share the same predicate.
+    """
+    if not s:
+        return False
+    u = s.upper()
+    return "JCB" in u and "DWG" in u and u.count("-") >= 8
+
+
 def _strip_doubled_letter_prefix(dn: str) -> str:
     """Strip stray leading characters that fall outside a clean JCB-style
     drawing-number prefix.
@@ -634,9 +649,6 @@ class DrawingQTOBlock(UniversalBlock):
         # current value lacks either, re-scan the full page raw text.
         current_dn = tb.get("drawing_number")
 
-        def _is_full_jcb(s: str) -> bool:
-            u = s.upper()
-            return "JCB" in u and "DWG" in u and u.count("-") >= 8
         if current_dn and not _is_full_jcb(current_dn):
             rescued = None
             for raw in page_full_raw_texts:
@@ -736,6 +748,23 @@ class DrawingQTOBlock(UniversalBlock):
             page, chars
         )
 
+        # Capture the drawing number from the ORIGINAL bottom-15% band
+        # BEFORE the richness fallback below widens ``title_block_chars``
+        # to the right-20% zone or the full page. On the LI bug fixture,
+        # bottom-15% has only 3 spans (lines < 5), tripping the right-20%
+        # fallback. Right-20% raw char order then puts a referenced
+        # drawing number ahead of the title-block one, so a plain
+        # ``_DWG_NUMBER_FULL.search()`` returns the wrong number. The
+        # bottom-band match is the title-block's own number — prefer it
+        # when it parses as a full JCB. Safe because the band IS the
+        # title-block region by spatial definition; widening was only
+        # needed to harvest title/scale/date labels.
+        band_raw = "".join(c["text"] for c in title_block_chars)
+        m_band = _DWG_NUMBER_FULL.search(band_raw)
+        band_dn = (
+            _strip_doubled_letter_prefix(m_band.group(0)) if m_band else None
+        )
+
         # --- Title-block fallback chain ------------------------------------
         # Use clustered line count as a "richness" signal -- below 5 lines
         # we fall back to the right-20% zone (landscape title blocks), then
@@ -756,6 +785,24 @@ class DrawingQTOBlock(UniversalBlock):
                 errors.append("title_block_zone_fallback_full_page")
 
         title_block = self._extract_title_block(title_block_chars, page)
+
+        # If the bottom-15% band yielded a valid full JCB number, prefer
+        # it over the (possibly contaminated) widened-zone match. Clear
+        # discipline/revision so the downstream re-derive at
+        # ``_extract_drawing_text`` lines 667-689 re-fills them from the
+        # corrected number — that re-derive only fires when the field is
+        # missing, so an explicit reset is required, not just an
+        # overwrite of ``drawing_number``.
+        if (
+            band_dn
+            and _is_full_jcb(band_dn)
+            and title_block.get("drawing_number") != band_dn
+        ):
+            title_block["drawing_number"] = band_dn
+            title_block["discipline"] = None
+            title_block["discipline_full"] = None
+            title_block["revision"] = None
+            errors.append("drawing_number_picked_from_bottom_band")
 
         # --- Drawing-zone classification -----------------------------------
         notes, dimensions, filtered_count, dedup_dropped = (

@@ -389,6 +389,98 @@ async def test_notes_dedup_does_not_strip_legitimate_notes(primary_result):
     assert "notes_dedup_dropped_count" in drawing
 
 
+async def test_process_page_prefers_bottom_band_dn_over_referenced_dn():
+    """LI-sheet regression (2026-06-12): the LI fixture's bottom-15% title-
+    block band carries only a handful of spans (lines < 5), tripping the
+    richness fallback that widens ``title_block_chars`` to the right-20%
+    zone. The right-20% raw char stream happens to put a REFERENCED
+    drawing number (the sheet calls out another sheet) ahead of the
+    title-block's own number, so ``_DWG_NUMBER_FULL.search()`` returns
+    the wrong one.
+
+    Fix: capture the bottom-band raw DN before the fallback widens, and
+    if it parses as a full JCB, prefer it. This test exercises the real
+    mechanism via a stubbed page (no PDF fixture required) — feed
+    ``_process_page`` chars where the bottom-15% band yields JCB number
+    X and the right-20% zone contains JCB number Y appearing first;
+    assert X wins.
+
+    A synthetic-rescue-only test (one that just feeds
+    ``page_full_raw_texts``) would prove nothing — the rescue never fires
+    here, because the wrong number Y already passes ``_is_full_jcb``.
+    """
+    from app.blocks.drawing_qto import DrawingQTOBlock
+
+    class _FakeRect:
+        def __init__(self, width: float, height: float) -> None:
+            self.width = width
+            self.height = height
+
+    class _FakePage:
+        def __init__(self, width: float, height: float) -> None:
+            self.rect = _FakeRect(width, height)
+
+    page_w, page_h = 1000.0, 700.0
+    # Bottom-15% band threshold: y0 > 0.85 * 700 = 595.
+    # Right-20% threshold: x0 >= 0.80 * 1000 = 800.
+    # The bottom band gets the CORRECT title-block JCB number — just a
+    # few chars (mimicking the LI sheet's sparse title-block band).
+    correct_dn = "IP-INF-053-0000-JCB-DWG-LI-200-1001100"
+    # The right-20% zone gets a REFERENCED drawing first (top of band)
+    # then the correct DN somewhere later, plus enough filler "lines"
+    # to push the right-zone richness past the >= 5 lines fallback gate.
+    referenced_dn = "IP-INF-053-0000-JCB-DWG-LI-600-0000002"
+
+    def _line_chars(text: str, x_start: float, y0: float) -> list:
+        out = []
+        x = x_start
+        for ch in text:
+            out.append({
+                "text": ch,
+                "x0": x,
+                "y0": y0,
+                "x1": x + 5.0,
+                "y1": y0 + 8.0,
+                "size": 6.0,
+                "fontname": "Arial",
+            })
+            x += 5.5
+        return out
+
+    chars = []
+    # Bottom-15% band: a single ~50-char span carrying the correct DN.
+    # Place it in the LEFT half (x_start=100) so it falls OUTSIDE the
+    # right-20% zone — otherwise the widened-zone search() would
+    # accidentally find the correct DN too (LI sheet's title-block band
+    # actually sits in the bottom-right corner; this is a tighter
+    # synthetic that isolates "bottom band == correct, right zone ==
+    # contaminated"). Keep span count < 5 so the richness fallback fires.
+    chars.extend(_line_chars(correct_dn, x_start=100.0, y0=650.0))
+    # Right-20% zone (x0 >= 800), NOT in bottom band (y0 < 595):
+    # referenced DN appears FIRST in char order, then enough filler
+    # lines to push line count >= 5 so the right-20% fallback wins
+    # (instead of falling through to full-page).
+    chars.extend(_line_chars(referenced_dn, x_start=820.0, y0=100.0))
+    chars.extend(_line_chars("CHECKED BY: AB", x_start=820.0, y0=200.0))
+    chars.extend(_line_chars("DATE: 01/01/24", x_start=820.0, y0=250.0))
+    chars.extend(_line_chars("DRAFTER: CD", x_start=820.0, y0=300.0))
+    chars.extend(_line_chars("SCALE: 1:100", x_start=820.0, y0=350.0))
+    chars.extend(_line_chars("PROJECT: FOO", x_start=820.0, y0=400.0))
+
+    page = _FakePage(page_w, page_h)
+    block = DrawingQTOBlock()
+    errors: list = []
+    result = block._process_page(page, chars, errors)
+    tb = result["title_block"]
+    assert tb.get("drawing_number") == correct_dn, (
+        f"expected bottom-band DN to win; got {tb.get('drawing_number')!r}; "
+        f"errors={errors!r}"
+    )
+    assert "drawing_number_picked_from_bottom_band" in errors, (
+        f"expected band-preference marker in errors; got {errors!r}"
+    )
+
+
 async def test_drawing_title_not_cross_ref_callout(primary_result):
     """Bug 1.5b: drawing_title must not be a cross-ref callout like
     'MATCH LINE : FOR REFERENCE REFER TO SHEET NO : N'. On TM detail
