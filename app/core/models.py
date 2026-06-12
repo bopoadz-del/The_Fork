@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -25,3 +34,70 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(String, nullable=False, default="user")
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class Project(Base):
+    """projects table — see the_fork_schema.sql."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    client: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    aconex_connected: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        default="system",
+    )
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class Document(Base):
+    """documents table — see the_fork_schema.sql."""
+
+    __tablename__ = "documents"
+    __table_args__ = (
+        CheckConstraint(
+            "doc_role IN ("
+            "'baseline_schedule', 'daily_report', 'weekly_report', 'other'"
+            ")",
+            name="ck_documents_doc_role",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    original_name: Mapped[str] = mapped_column(String, nullable=False)
+    stored_as: Mapped[str | None] = mapped_column(String, nullable=True)
+    file_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    doc_type: Mapped[str] = mapped_column(String, nullable=False, default="document")
+    doc_role: Mapped[str] = mapped_column(String, nullable=False, default="other")
+    size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    uploaded_at: Mapped[str] = mapped_column(String, nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ProjectFact(Base):
+    """project_facts table — see the_fork_schema.sql."""
+
+    __tablename__ = "project_facts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "key", name="uq_project_facts_project_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    source_document: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)

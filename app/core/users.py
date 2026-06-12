@@ -78,6 +78,32 @@ def _ensure_db() -> None:
         init_db()
 
 
+def ensure_user_exists(
+    user_id: str,
+    *,
+    email: Optional[str] = None,
+    display_name: Optional[str] = None,
+    role: str = "user",
+) -> None:
+    """Idempotently ensure a user row exists (satisfies projects.user_id FK)."""
+    _ensure_db()
+    with SessionLocal() as session:
+        if session.get(User, user_id) is not None:
+            return
+        session.add(
+            User(
+                id=user_id,
+                email=(email or f"{user_id}@local").lower(),
+                password_hash=None,
+                salt=None,
+                display_name=display_name or user_id,
+                role=role,
+                created_at=_now(),
+            )
+        )
+        session.commit()
+
+
 def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     _ensure_db()
     with SessionLocal() as session:

@@ -1,49 +1,46 @@
-"""Migration test: legacy projects.db gains a user_id column. Stream A."""
+"""Schema tests for the SQLAlchemy projects store (Phase 1.3b)."""
 import importlib
 import sqlite3
-import pytest
+
 from app.core import projects as projects_mod
 
 
-def test_legacy_db_is_migrated_and_backfilled(monkeypatch, tmp_path):
-    db_path = tmp_path / "projects.db"
-    conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
-        CREATE TABLE projects (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL, client TEXT,
-            status TEXT NOT NULL DEFAULT 'active',
-            aconex_connected INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        );
-        """
-    )
-    conn.execute(
-        "INSERT INTO projects (id, name, status, aconex_connected, created_at) "
-        "VALUES ('legacy01', 'Old Project', 'active', 0, '2024-01-01T00:00:00Z')"
-    )
-    conn.commit()
-    conn.close()
-
+def _reload_stores(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    pm = importlib.reload(projects_mod)
-    pm.init_db()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    import app.core.db as db_mod
+    import app.core.users as users_mod
 
-    conn = sqlite3.connect(db_path)
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()]
-    assert "user_id" in cols
-    row = conn.execute(
-        "SELECT user_id FROM projects WHERE id = 'legacy01'"
-    ).fetchone()
-    conn.close()
-    assert row[0] == "system"
+    importlib.reload(db_mod)
+    importlib.reload(users_mod)
+    users_mod._initialized = False
+    pm = importlib.reload(projects_mod)
+    pm._initialized = False
+    return pm, db_mod
 
 
 def test_init_db_on_fresh_db_has_user_id(monkeypatch, tmp_path):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    pm = importlib.reload(projects_mod)
+    pm, db_mod = _reload_stores(monkeypatch, tmp_path)
     pm.init_db()
-    conn = sqlite3.connect(tmp_path / "projects.db")
+    db_path = db_mod.get_database_url().replace("sqlite:///", "")
+    conn = sqlite3.connect(db_path)
     cols = [r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()]
     conn.close()
     assert "user_id" in cols
+
+
+def test_init_db_on_fresh_db_has_content_sha256_on_documents(monkeypatch, tmp_path):
+    pm, db_mod = _reload_stores(monkeypatch, tmp_path)
+    pm.init_db()
+    db_path = db_mod.get_database_url().replace("sqlite:///", "")
+    conn = sqlite3.connect(db_path)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(documents)").fetchall()]
+    conn.close()
+    assert "content_sha256" in cols
+
+
+def test_fresh_project_defaults_user_id_to_system(monkeypatch, tmp_path):
+    pm, _ = _reload_stores(monkeypatch, tmp_path)
+    pm.init_db()
+    p = pm.create_project("Fresh")
+    assert p["user_id"] == "system"

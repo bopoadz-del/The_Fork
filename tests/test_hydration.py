@@ -347,8 +347,10 @@ def _make_dropbox_file(tmp_path, project_id: str, filename: str, content: bytes 
 def _make_project(name: str = "test-project") -> str:
     """Create a real project row and return its generated id."""
     from app.core import projects as projects_store
+    from app.core import users as users_mod
 
     projects_store.init_db()
+    users_mod.ensure_user_exists("u1")
     p = projects_store.create_project(name=name, user_id="u1")
     return p["id"]
 
