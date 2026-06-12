@@ -44,7 +44,7 @@ if not _existing or os.path.abspath(_existing) == os.path.abspath("./data"):
 if os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() not in ("1", "true", "yes"):
     os.environ.pop("DATABASE_URL", None)
 else:
-    # model2vec is 256-dim; pgvector schema is 384 — use fake embedder in PG CI.
+    # Fake embedder is 256-dim, aligned with pgvector schema (model2vec default).
     os.environ.setdefault("RAG_EMBEDDING_MODEL", "fake")
 
 def is_extended_boot() -> bool:

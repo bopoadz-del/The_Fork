@@ -21,11 +21,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-EMBEDDING_DIM = 384
+EMBEDDING_DIM = 256
 
 
 class EmbeddingVector(TypeDecorator):
-    """Postgres: ``vector(384)``; SQLite: float32 BLOB for numpy fallback search."""
+    """Postgres: ``vector(256)``; SQLite: float32 BLOB for numpy fallback search."""
 
     impl = LargeBinary
     cache_ok = True

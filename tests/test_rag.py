@@ -1,7 +1,7 @@
 """Tests for the RAG layer (PR 2 — persistent retrieval).
 
 Strategy:
-- The fake embedder (deterministic hash → 384-dim) is the workhorse —
+- The fake embedder (deterministic hash → 256-dim) is the workhorse —
   the suite does NOT depend on sentence-transformers being installed.
 - The fast (sqlite-vec) and slow (numpy) search paths produce identical
   ordering on toy data; we only assert behavior, not which path was taken,
@@ -46,11 +46,11 @@ def isolated_data_dir(tmp_path, monkeypatch):
 
 
 def test_fake_embedder_shape_and_normalization(isolated_data_dir):
-    from app.core.rag.embeddings import Embedder, EMBEDDING_DIM
+    from app.core.rag.embeddings import Embedder
 
     e = Embedder(model_name="fake")
     vecs = e.encode(["alpha", "beta", "gamma"])
-    assert vecs.shape == (3, EMBEDDING_DIM)
+    assert vecs.shape == (3, e.dim)
     # L2-normalized so cosine = dot product downstream
     norms = np.linalg.norm(vecs, axis=1)
     assert np.allclose(norms, 1.0, atol=1e-5)
@@ -79,11 +79,11 @@ def test_fake_embedder_distinguishes_different_inputs(isolated_data_dir):
 
 def test_embedder_empty_input(isolated_data_dir):
     """Empty text list returns a (0, dim) array, not an error."""
-    from app.core.rag.embeddings import Embedder, EMBEDDING_DIM
+    from app.core.rag.embeddings import Embedder
 
     e = Embedder(model_name="fake")
     v = e.encode([])
-    assert v.shape == (0, EMBEDDING_DIM)
+    assert v.shape == (0, e.dim)
 
 
 def test_embedder_get_cache_returns_same_instance(isolated_data_dir):

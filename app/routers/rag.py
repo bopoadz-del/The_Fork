@@ -54,7 +54,7 @@ async def rag_search(
     """
     from app.core.rag import retriever as _r
     from app.core.rag.vector_store import get_store
-    from app.core.rag.embeddings import EMBEDDING_DIM
+    from app.core.models import EMBEDDING_DIM
 
     if not _r.available():
         return RagSearchResponse(

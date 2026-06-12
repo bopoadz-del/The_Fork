@@ -1,7 +1,7 @@
 """Per-project chunk store backed by SQLAlchemy.
 
 Storage shape: one row per chunk in the ``chunks`` table. On PostgreSQL
-embeddings use ``pgvector`` ``vector(384)`` with cosine-distance ANN search
+embeddings use ``pgvector`` ``vector(256)`` with cosine-distance ANN search
 (``ORDER BY embedding <=> :q`` scoped by ``project_id``). On SQLite the
 same table stores float32 BLOBs and search falls back to numpy cosine
 similarity over the project's rows — slower but works everywhere.
@@ -56,7 +56,7 @@ _INITIALIZED_URLS: Set[str] = set()
 _INIT_LOCK = Lock()
 
 
-def get_store(dim: int = 384, db_path: Optional[str] = None) -> "VectorStore":
+def get_store(dim: int = EMBEDDING_DIM, db_path: Optional[str] = None) -> "VectorStore":
     """Process-cached store. Different ``db_path`` values get different
     cached instances, which keeps tests isolated when they swap DATA_DIR."""
     path = db_path or _default_db_path()
@@ -127,7 +127,7 @@ class VectorStore:
     massive parallel ingest.
     """
 
-    def __init__(self, db_path: str, dim: int = 384):
+    def __init__(self, db_path: str, dim: int = EMBEDDING_DIM):
         self.db_path = db_path
         self.dim = dim
         self._lock = Lock()
