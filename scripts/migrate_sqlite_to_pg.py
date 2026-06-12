@@ -71,6 +71,11 @@ def _sqlite_path(data_dir: Path, *parts: str) -> Path:
     return data_dir.joinpath(*parts)
 
 
+def _unified_db_path(data_dir: Path) -> Path:
+    """Unified SQLAlchemy-local store (may coexist with legacy split *.db files)."""
+    return data_dir / "the_fork.db"
+
+
 @contextmanager
 def _sqlite_conn(path: Path) -> Generator[sqlite3.Connection | None, None, None]:
     if not path.is_file():
@@ -133,6 +138,22 @@ def _existing_user_ids(pg: Connection) -> set[str]:
     return {str(r[0]) for r in rows}
 
 
+def _existing_project_ids(pg: Connection) -> set[str]:
+    rows = pg.execute(text("SELECT id FROM projects")).fetchall()
+    return {str(r[0]) for r in rows}
+
+
+def _user_rows_from_sqlite(data_dir: Path) -> list[sqlite3.Row]:
+    seen: dict[str, sqlite3.Row] = {}
+    for path in (_sqlite_path(data_dir, "users.db"), _unified_db_path(data_dir)):
+        with _sqlite_conn(path) as conn:
+            if conn is None:
+                continue
+            for row in _fetch_rows(conn, "users"):
+                seen[str(row["id"])] = row
+    return list(seen.values())
+
+
 def _migrate_users(
     pg: Connection,
     data_dir: Path,
@@ -141,43 +162,53 @@ def _migrate_users(
     counts: dict[str, int],
     known_users: set[str],
 ) -> None:
-    path = _sqlite_path(data_dir, "users.db")
-    with _sqlite_conn(path) as conn:
-        if conn is None:
-            counts["users"] = 0
-            return
-        rows = _fetch_rows(conn, "users")
-        inserted = 0
-        for row in rows:
-            known_users.add(str(row["id"]))
-            params = {
-                "id": row["id"],
-                "email": row["email"],
-                "password_hash": row["password_hash"],
-                "salt": row["salt"],
-                "display_name": row["display_name"],
-                "role": row["role"] or "user",
-                "created_at": row["created_at"],
-            }
-            if dry_run:
-                inserted += 1
+    rows = _user_rows_from_sqlite(data_dir)
+    if not rows:
+        counts["users"] = 0
+        return
+    inserted = 0
+    for row in rows:
+        known_users.add(str(row["id"]))
+        params = {
+            "id": row["id"],
+            "email": row["email"],
+            "password_hash": row["password_hash"],
+            "salt": row["salt"],
+            "display_name": row["display_name"],
+            "role": row["role"] or "user",
+            "created_at": row["created_at"],
+        }
+        if dry_run:
+            inserted += 1
+            continue
+        result = pg.execute(
+            text(
+                """
+                INSERT INTO users (
+                    id, email, password_hash, salt, display_name, role, created_at
+                ) VALUES (
+                    :id, :email, :password_hash, :salt, :display_name, :role, :created_at
+                )
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            params,
+        )
+        if result.rowcount:
+            inserted += 1
+    counts["users"] = inserted
+
+
+def _project_rows_from_sqlite(data_dir: Path) -> list[sqlite3.Row]:
+    """Collect projects from legacy ``projects.db`` and unified ``the_fork.db``."""
+    seen: dict[str, sqlite3.Row] = {}
+    for path in (_sqlite_path(data_dir, "projects.db"), _unified_db_path(data_dir)):
+        with _sqlite_conn(path) as conn:
+            if conn is None:
                 continue
-            result = pg.execute(
-                text(
-                    """
-                    INSERT INTO users (
-                        id, email, password_hash, salt, display_name, role, created_at
-                    ) VALUES (
-                        :id, :email, :password_hash, :salt, :display_name, :role, :created_at
-                    )
-                    ON CONFLICT (id) DO NOTHING
-                    """
-                ),
-                params,
-            )
-            if result.rowcount:
-                inserted += 1
-        counts["users"] = inserted
+            for row in _fetch_rows(conn, "projects"):
+                seen[str(row["id"])] = row
+    return list(seen.values())
 
 
 def _migrate_projects(
@@ -188,46 +219,44 @@ def _migrate_projects(
     counts: dict[str, int],
     known_users: set[str],
 ) -> None:
-    path = _sqlite_path(data_dir, "projects.db")
-    with _sqlite_conn(path) as conn:
-        if conn is None:
-            counts["projects"] = 0
-            return
-        rows = _fetch_rows(conn, "projects")
-        inserted = 0
-        for row in rows:
-            user_id = row["user_id"] if "user_id" in row.keys() else SYSTEM_USER_ID
-            user_id = user_id or SYSTEM_USER_ID
-            if str(user_id) not in known_users:
-                user_id = SYSTEM_USER_ID
-            params = {
-                "id": row["id"],
-                "name": row["name"],
-                "client": row["client"],
-                "status": row["status"] or "active",
-                "aconex_connected": bool(row["aconex_connected"]),
-                "user_id": user_id,
-                "created_at": row["created_at"],
-            }
-            if dry_run:
-                inserted += 1
-                continue
-            result = pg.execute(
-                text(
-                    """
-                    INSERT INTO projects (
-                        id, name, client, status, aconex_connected, user_id, created_at
-                    ) VALUES (
-                        :id, :name, :client, :status, :aconex_connected, :user_id, :created_at
-                    )
-                    ON CONFLICT (id) DO NOTHING
-                    """
-                ),
-                params,
-            )
-            if result.rowcount:
-                inserted += 1
-        counts["projects"] = inserted
+    rows = _project_rows_from_sqlite(data_dir)
+    if not rows:
+        counts["projects"] = 0
+        return
+    inserted = 0
+    for row in rows:
+        user_id = row["user_id"] if "user_id" in row.keys() else SYSTEM_USER_ID
+        user_id = user_id or SYSTEM_USER_ID
+        if str(user_id) not in known_users:
+            user_id = SYSTEM_USER_ID
+        params = {
+            "id": row["id"],
+            "name": row["name"],
+            "client": row["client"],
+            "status": row["status"] or "active",
+            "aconex_connected": bool(row["aconex_connected"]),
+            "user_id": user_id,
+            "created_at": row["created_at"],
+        }
+        if dry_run:
+            inserted += 1
+            continue
+        result = pg.execute(
+            text(
+                """
+                INSERT INTO projects (
+                    id, name, client, status, aconex_connected, user_id, created_at
+                ) VALUES (
+                    :id, :name, :client, :status, :aconex_connected, :user_id, :created_at
+                )
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            params,
+        )
+        if result.rowcount:
+            inserted += 1
+    counts["projects"] = inserted
 
 
 def _migrate_documents(
@@ -329,52 +358,69 @@ def _migrate_project_facts(
         counts["project_facts"] = inserted
 
 
+def _workflow_rows_from_sqlite(data_dir: Path) -> list[sqlite3.Row]:
+    seen: dict[str, sqlite3.Row] = {}
+    for path in (_sqlite_path(data_dir, "projects.db"), _unified_db_path(data_dir)):
+        with _sqlite_conn(path) as conn:
+            if conn is None:
+                continue
+            for row in _fetch_rows(conn, "workflows"):
+                seen[str(row["id"])] = row
+    return list(seen.values())
+
+
 def _migrate_workflows(
     pg: Connection,
     data_dir: Path,
     *,
     dry_run: bool,
     counts: dict[str, int],
+    known_users: set[str],
     **_kwargs: Any,
 ) -> None:
-    path = _sqlite_path(data_dir, "projects.db")
-    with _sqlite_conn(path) as conn:
-        if conn is None:
-            counts["workflows"] = 0
-            return
-        rows = _fetch_rows(conn, "workflows")
-        inserted = 0
-        for row in rows:
-            steps = _json_value(row["steps"])
-            if not isinstance(steps, list):
-                steps = []
-            params = {
-                "id": row["id"],
-                "name": row["name"],
-                "project_id": row["project_id"],
-                "owner_id": row["owner_id"] if "owner_id" in row.keys() else None,
-                "steps": json.dumps(steps),
-                "created_at": row["created_at"],
-            }
-            if dry_run:
-                inserted += 1
-                continue
-            result = pg.execute(
-                text(
-                    """
-                    INSERT INTO workflows (
-                        id, name, project_id, owner_id, steps, created_at
-                    ) VALUES (
-                        :id, :name, :project_id, :owner_id, CAST(:steps AS JSONB), :created_at
-                    )
-                    ON CONFLICT (id) DO NOTHING
-                    """
-                ),
-                params,
-            )
-            if result.rowcount:
-                inserted += 1
-        counts["workflows"] = inserted
+    rows = _workflow_rows_from_sqlite(data_dir)
+    if not rows:
+        counts["workflows"] = 0
+        return
+    known_projects = _existing_project_ids(pg)
+    inserted = 0
+    for row in rows:
+        project_id = row["project_id"]
+        if project_id and str(project_id) not in known_projects:
+            continue
+        owner_id = row["owner_id"] if "owner_id" in row.keys() else None
+        if owner_id and str(owner_id) not in known_users:
+            owner_id = None
+        steps = _json_value(row["steps"])
+        if not isinstance(steps, list):
+            steps = []
+        params = {
+            "id": row["id"],
+            "name": row["name"],
+            "project_id": project_id,
+            "owner_id": owner_id,
+            "steps": json.dumps(steps),
+            "created_at": row["created_at"],
+        }
+        if dry_run:
+            inserted += 1
+            continue
+        result = pg.execute(
+            text(
+                """
+                INSERT INTO workflows (
+                    id, name, project_id, owner_id, steps, created_at
+                ) VALUES (
+                    :id, :name, :project_id, :owner_id, CAST(:steps AS JSONB), :created_at
+                )
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            params,
+        )
+        if result.rowcount:
+            inserted += 1
+    counts["workflows"] = inserted
 
 
 def _migrate_conversations(
