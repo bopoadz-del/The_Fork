@@ -69,10 +69,33 @@ Copy `.env.example` → `.env` and set at minimum:
 | Alembic on boot | `entrypoint.sh` runs `python -m alembic upgrade head` |
 | `UVICORN_WORKERS` | `1` on Render starter (sole worker knob; `2` OOMs at 512Mi) |
 | `REDIS_URL` | `cerebrum-redis` resumed (shared rate limits when workers > 1) |
-| `SENTRY_DSN` | **Not set** — operator must add from Sentry project settings |
-| SQLite → Postgres cutover | Migration script ready (PR #36 merged); **not run on prod `DATA_DIR` yet** |
-| Doc re-index / Diriyah E2E | Pending empty `the-fork-db` |
+| `SENTRY_DSN` | **Not set** — create project, set DSN, redeploy, `POST /v1/admin/debug/sentry-smoke` |
+| SQLite → Postgres cutover | Use `POST /v1/admin/debug/migrate-sqlite` (one-off jobs **cannot** mount disk) |
+| `chunks.embedding` | Must be `vector(256)` — verify via `GET /v1/admin/debug/pilot-preflight` |
+| Doc re-index / Diriyah E2E | After cutover: `project_id=3f6f28b2` |
 | 2-week uptime / backup drill | Not started |
+
+### Production admin ops (disk-backed)
+
+One-off Render jobs do not mount `/app/data`. Run cutover from the web process:
+
+```bash
+# After deploy with admin endpoints + CEREBRUM_MASTER_KEY set:
+curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_MASTER_KEY" \
+  "https://the-fork.onrender.com/v1/admin/debug/migrate-sqlite?dry_run=true"
+
+curl -sS -H "Authorization: Bearer $CEREBRUM_MASTER_KEY" \
+  "https://the-fork.onrender.com/v1/admin/debug/pilot-preflight"
+
+curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_MASTER_KEY" \
+  "https://the-fork.onrender.com/v1/admin/debug/sentry-smoke"
+```
+
+**81 users** in SQLite dry-run likely includes test-account accumulation — prune or document before `execute=true`.
+
+### Pilot ops log
+
+<!-- Append ISO-dated entries as gates complete -->
 
 ## 5. Pilot exit criteria (brief)
 
