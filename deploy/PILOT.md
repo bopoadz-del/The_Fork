@@ -69,11 +69,12 @@ Copy `.env.example` → `.env` and set at minimum:
 | Alembic on boot | `entrypoint.sh` runs `python -m alembic upgrade head` |
 | `UVICORN_WORKERS` | `1` on Render starter (sole worker knob; `2` OOMs at 512Mi) |
 | `REDIS_URL` | `cerebrum-redis` resumed (shared rate limits when workers > 1) |
-| `SENTRY_DSN` | **Not set** — create project, set DSN, redeploy, `POST /v1/admin/debug/sentry-smoke` |
-| SQLite → Postgres cutover | Use `POST /v1/admin/debug/migrate-sqlite` (one-off jobs **cannot** mount disk) |
-| `chunks.embedding` | Must be `vector(256)` — verify via `GET /v1/admin/debug/pilot-preflight` |
-| Doc re-index / Diriyah E2E | After cutover: `project_id=3f6f28b2` |
-| 2-week uptime / backup drill | Not started |
+| `SENTRY_DSN` | **Not set** — blocker for pilot clock; see Sentry gate below |
+| SQLite → Postgres cutover | **Done** 2026-06-12 — 56 documents, 141 chunks in Postgres |
+| `chunks.embedding` | **Confirmed** `vector(256)` via pilot-preflight |
+| Doc re-index / Diriyah E2E | **RAG gate passed** — D999.14 @ 1,060, D999.15 @ 1,288, Part 3 summary 1,852,848 |
+| Backup drill | **Done** — PITR restore `the-fork-db-drill-20260612` (snapshot @ 2026-06-12T15:22:13Z) |
+| 2-week pilot clock | **Pending Sentry smoke** |
 
 ### Production admin ops (disk-backed)
 
@@ -95,7 +96,24 @@ curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_MASTER_KEY" \
 
 ### Pilot ops log
 
-<!-- Append ISO-dated entries as gates complete -->
+#### 2026-06-12T16:16:00Z — Cutover, schema, RAG, backup drill
+
+| Gate | Result |
+|------|--------|
+| Schema | `chunks.embedding` = `vector(256)` |
+| Cutover dry-run (prod volume) | 3 users, 6 projects, 56 documents, 165 chunks would migrate (not 81 users — that was local `./data`) |
+| Cutover execute | Inserted 56 documents, 141 chunks (24 orphan chunks skipped — missing `documents` rows) |
+| Re-index | `project-reindex` on `3f6f28b2` → 8 chunks indexed |
+| Diriyah BOQ RAG | `POST /v1/rag/search` retrieves chunk `3f6f28b2:76e63ed2:23` with D999.14 @ 1,060.00 and D999.15 @ 1,288.00; chunk `:50` has Part 3 total 1,852,848.00 |
+| Backup drill | PITR restore to `the-fork-db-drill-20260612` succeeded; scratch DB `available` (pre-cutover snapshot — expect documents/chunks = 0 vs live 56/141) |
+
+**Sentry (open):** No `SENTRY_AUTH_TOKEN` in agent environment — create project in Sentry UI, set `SENTRY_DSN` on Render, redeploy, then `POST /v1/admin/debug/sentry-smoke`.
+
+**Ops auth:** `CEREBRUM_MASTER_KEY` set on Render for admin endpoints (rotate after pilot setup).
+
+#### Pilot clock
+
+Starts when Sentry smoke passes. Target end: **2026-06-26** (2 weeks after clock start).
 
 ## 5. Pilot exit criteria (brief)
 
