@@ -11,14 +11,11 @@ echo "📁 Data Directory: ${DATA_DIR:-/app/data}"
 # Create data directory if it doesn't exist
 mkdir -p ${DATA_DIR:-/app/data}
 
-# REDIS_URL backs shared session + rate-limit state; set UVICORN_WORKERS=2
-# on hosts with enough RAM (Render starter 512Mi should stay at 1).
+# shellcheck source=scripts/uvicorn_worker_count.sh
+. "$(dirname "$0")/scripts/uvicorn_worker_count.sh"
+
 UVICORN_ARGS=(--host 0.0.0.0 --port "$PORT" --timeout-keep-alive 65)
-WORKERS="${UVICORN_WORKERS:-1}"
-if [ -n "$REDIS_URL" ]; then
-  echo "🔀 REDIS_URL set — Redis session/rate-limit backend active"
-fi
-echo "👷 uvicorn workers: ${WORKERS}"
-UVICORN_ARGS+=(--workers "$WORKERS")
+echo "👷 uvicorn workers: ${UVICORN_WORKER_COUNT} (UVICORN_WORKERS)"
+UVICORN_ARGS+=(--workers "$UVICORN_WORKER_COUNT")
 
 exec uvicorn app.main:app "${UVICORN_ARGS[@]}"

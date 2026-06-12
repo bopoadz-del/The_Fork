@@ -30,4 +30,9 @@ echo "  App:       http://localhost:$PORT/"
 echo "  API docs:  http://localhost:$PORT/docs"
 echo
 
-exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
+# shellcheck source=scripts/uvicorn_worker_count.sh
+. "$(dirname "$0")/scripts/uvicorn_worker_count.sh"
+echo "  Workers:   ${UVICORN_WORKER_COUNT} (UVICORN_WORKERS)"
+echo
+
+exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers "$UVICORN_WORKER_COUNT"

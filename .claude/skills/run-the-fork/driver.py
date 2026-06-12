@@ -49,10 +49,11 @@ def main():
            "DATA_DIR": str(REPO / "data")}
     (REPO / "data").mkdir(exist_ok=True)
 
-    print(f"[driver] launching uvicorn on :{PORT} (cwd={REPO}) ...")
+    workers = os.environ.get("UVICORN_WORKERS", "1")
+    print(f"[driver] launching uvicorn on :{PORT} workers={workers} (cwd={REPO}) ...")
     proc = subprocess.Popen(
         [py, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
-         "--port", str(PORT), "--log-level", "warning"],
+         "--port", str(PORT), "--log-level", "warning", "--workers", workers],
         cwd=str(REPO), env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
     )
