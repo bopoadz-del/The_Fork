@@ -145,8 +145,32 @@ def _existing_user_ids(pg: Connection) -> set[str]:
     return {str(r[0]) for r in rows}
 
 
+def _existing_users_by_email(pg: Connection) -> dict[str, str]:
+    """Map lowercased email → canonical Postgres user id."""
+    rows = pg.execute(text("SELECT id, email FROM users")).fetchall()
+    return {str(email).strip().lower(): str(uid) for uid, email in rows}
+
+
+def _resolve_user_id(
+    user_id: str | None,
+    known_users: set[str],
+    user_id_remap: dict[str, str],
+) -> str | None:
+    if not user_id:
+        return None
+    uid = user_id_remap.get(str(user_id), str(user_id))
+    if uid not in known_users:
+        return None
+    return uid
+
+
 def _existing_project_ids(pg: Connection) -> set[str]:
     rows = pg.execute(text("SELECT id FROM projects")).fetchall()
+    return {str(r[0]) for r in rows}
+
+
+def _existing_document_ids(pg: Connection) -> set[str]:
+    rows = pg.execute(text("SELECT id FROM documents")).fetchall()
     return {str(r[0]) for r in rows}
 
 
@@ -168,14 +192,27 @@ def _migrate_users(
     dry_run: bool,
     counts: dict[str, int],
     known_users: set[str],
+    user_id_remap: dict[str, str],
 ) -> None:
     rows = _user_rows_from_sqlite(data_dir)
     if not rows:
         counts["users"] = 0
         return
+    existing_by_email = _existing_users_by_email(pg)
     inserted = 0
     for row in rows:
-        known_users.add(str(row["id"]))
+        sqlite_id = str(row["id"])
+        email_key = str(row["email"]).strip().lower()
+        canonical_id = existing_by_email.get(email_key)
+        if canonical_id and canonical_id != sqlite_id:
+            # App may have created the same email under a different id (bootstrap).
+            user_id_remap[sqlite_id] = canonical_id
+            known_users.add(sqlite_id)
+            known_users.add(canonical_id)
+            if dry_run:
+                inserted += 1
+            continue
+        known_users.add(sqlite_id)
         params = {
             "id": row["id"],
             "email": row["email"],
@@ -203,6 +240,7 @@ def _migrate_users(
         )
         if result.rowcount:
             inserted += 1
+            existing_by_email[email_key] = sqlite_id
     counts["users"] = inserted
 
 
@@ -225,6 +263,7 @@ def _migrate_projects(
     dry_run: bool,
     counts: dict[str, int],
     known_users: set[str],
+    user_id_remap: dict[str, str],
 ) -> None:
     rows = _project_rows_from_sqlite(data_dir)
     if not rows:
@@ -234,8 +273,8 @@ def _migrate_projects(
     for row in rows:
         user_id = row["user_id"] if "user_id" in row.keys() else SYSTEM_USER_ID
         user_id = user_id or SYSTEM_USER_ID
-        if str(user_id) not in known_users:
-            user_id = SYSTEM_USER_ID
+        resolved = _resolve_user_id(str(user_id), known_users, user_id_remap)
+        user_id = resolved if resolved is not None else SYSTEM_USER_ID
         params = {
             "id": row["id"],
             "name": row["name"],
@@ -266,6 +305,18 @@ def _migrate_projects(
     counts["projects"] = inserted
 
 
+def _document_rows_from_sqlite(data_dir: Path) -> list[sqlite3.Row]:
+    """Collect documents from legacy ``projects.db`` and unified ``the_fork.db``."""
+    seen: dict[str, sqlite3.Row] = {}
+    for path in (_sqlite_path(data_dir, "projects.db"), _unified_db_path(data_dir)):
+        with _sqlite_conn(path) as conn:
+            if conn is None:
+                continue
+            for row in _fetch_rows(conn, "documents"):
+                seen[str(row["id"])] = row
+    return list(seen.values())
+
+
 def _migrate_documents(
     pg: Connection,
     data_dir: Path,
@@ -274,49 +325,54 @@ def _migrate_documents(
     counts: dict[str, int],
     **_kwargs: Any,
 ) -> None:
-    path = _sqlite_path(data_dir, "projects.db")
-    with _sqlite_conn(path) as conn:
-        if conn is None:
-            counts["documents"] = 0
-            return
-        rows = _fetch_rows(conn, "documents")
-        inserted = 0
-        for row in rows:
-            params = {
-                "id": row["id"],
-                "project_id": row["project_id"],
-                "original_name": row["original_name"],
-                "stored_as": row["stored_as"],
-                "file_path": row["file_path"],
-                "doc_type": row["doc_type"] or "document",
-                "doc_role": row["doc_role"] or "other",
-                "size": int(row["size"] or 0),
-                "uploaded_at": row["uploaded_at"],
-                "content_sha256": row["content_sha256"]
-                if "content_sha256" in row.keys()
-                else None,
-            }
-            if dry_run:
-                inserted += 1
-                continue
-            result = pg.execute(
-                text(
-                    """
-                    INSERT INTO documents (
-                        id, project_id, original_name, stored_as, file_path,
-                        doc_type, doc_role, size, uploaded_at, content_sha256
-                    ) VALUES (
-                        :id, :project_id, :original_name, :stored_as, :file_path,
-                        :doc_type, :doc_role, :size, :uploaded_at, :content_sha256
-                    )
-                    ON CONFLICT (id) DO NOTHING
-                    """
-                ),
-                params,
-            )
-            if result.rowcount:
-                inserted += 1
-        counts["documents"] = inserted
+    rows = _document_rows_from_sqlite(data_dir)
+    if not rows:
+        counts["documents"] = 0
+        return
+    if dry_run:
+        known_projects = {str(r["id"]) for r in _project_rows_from_sqlite(data_dir)}
+    else:
+        known_projects = _existing_project_ids(pg)
+    inserted = 0
+    for row in rows:
+        project_id = row["project_id"]
+        if project_id and str(project_id) not in known_projects:
+            continue
+        params = {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "original_name": row["original_name"],
+            "stored_as": row["stored_as"],
+            "file_path": row["file_path"],
+            "doc_type": row["doc_type"] or "document",
+            "doc_role": row["doc_role"] or "other",
+            "size": int(row["size"] or 0),
+            "uploaded_at": row["uploaded_at"],
+            "content_sha256": row["content_sha256"]
+            if "content_sha256" in row.keys()
+            else None,
+        }
+        if dry_run:
+            inserted += 1
+            continue
+        result = pg.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, project_id, original_name, stored_as, file_path,
+                    doc_type, doc_role, size, uploaded_at, content_sha256
+                ) VALUES (
+                    :id, :project_id, :original_name, :stored_as, :file_path,
+                    :doc_type, :doc_role, :size, :uploaded_at, :content_sha256
+                )
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            params,
+        )
+        if result.rowcount:
+            inserted += 1
+    counts["documents"] = inserted
 
 
 def _migrate_project_facts(
@@ -383,6 +439,7 @@ def _migrate_workflows(
     dry_run: bool,
     counts: dict[str, int],
     known_users: set[str],
+    user_id_remap: dict[str, str],
     **_kwargs: Any,
 ) -> None:
     rows = _workflow_rows_from_sqlite(data_dir)
@@ -396,8 +453,7 @@ def _migrate_workflows(
         if project_id and str(project_id) not in known_projects:
             continue
         owner_id = row["owner_id"] if "owner_id" in row.keys() else None
-        if owner_id and str(owner_id) not in known_users:
-            owner_id = None
+        owner_id = _resolve_user_id(str(owner_id) if owner_id else None, known_users, user_id_remap)
         steps = _json_value(row["steps"])
         if not isinstance(steps, list):
             steps = []
@@ -766,13 +822,20 @@ def _migrate_chunks(
             counts["chunks"] = 0
             return
         rows = _fetch_rows(conn, "chunks")
+        if dry_run:
+            known_docs = {str(r["id"]) for r in _document_rows_from_sqlite(data_dir)}
+        else:
+            known_docs = _existing_document_ids(pg)
         inserted = 0
         for row in rows:
+            doc_id = row["doc_id"]
+            if doc_id and str(doc_id) not in known_docs:
+                continue
             embedding = _unpack_embedding(row["embedding"])
             params = {
                 "chunk_id": row["chunk_id"],
                 "project_id": row["project_id"],
-                "doc_id": row["doc_id"],
+                "doc_id": doc_id,
                 "chunk_index": int(row["chunk_index"]),
                 "text": row["text"],
                 "embedding": _vector_literal(embedding),
@@ -828,6 +891,7 @@ def migrate(
     """Run all table migrators in FK order. Returns per-table row counts."""
     counts: dict[str, int] = {table: 0 for table in MIGRATION_TABLES}
     known_users: set[str] = set()
+    user_id_remap: dict[str, str] = {}
 
     with engine.begin() as pg:
         known_users.update(_existing_user_ids(pg))
@@ -835,7 +899,14 @@ def migrate(
 
         for table in MIGRATION_TABLES:
             migrator = MIGRATORS[table]
-            migrator(pg, data_dir, dry_run=dry_run, counts=counts, known_users=known_users)
+            migrator(
+                pg,
+                data_dir,
+                dry_run=dry_run,
+                counts=counts,
+                known_users=known_users,
+                user_id_remap=user_id_remap,
+            )
             if dry_run:
                 continue
             # Refresh user ids after users migration for downstream orphan checks.
