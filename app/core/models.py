@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -10,12 +12,43 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    LargeBinary,
     String,
     Text,
+    TypeDecorator,
     UniqueConstraint,
     desc,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+EMBEDDING_DIM = 384
+
+
+class EmbeddingVector(TypeDecorator):
+    """Postgres: ``vector(384)``; SQLite: float32 BLOB for numpy fallback search."""
+
+    impl = LargeBinary
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(Vector(EMBEDDING_DIM))
+        return dialect.type_descriptor(LargeBinary())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        arr = np.asarray(value, dtype=np.float32)
+        if dialect.name == "postgresql":
+            return arr.tolist()
+        return arr.tobytes()
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return np.asarray(value, dtype=np.float32)
+        return np.frombuffer(value, dtype=np.float32)
 
 
 class Base(DeclarativeBase):
@@ -232,6 +265,31 @@ class RagBudget(Base):
 
     day: Mapped[str] = mapped_column(String, primary_key=True)
     consumed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class RagChunk(Base):
+    """chunks table — RAG vector store (see the_fork_schema.sql).
+
+    ORM omits FK constraints so SQLite test DBs accept arbitrary
+    project/doc ids; Alembic applies FK on PostgreSQL deployments.
+    """
+
+    __tablename__ = "chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "doc_id", "chunk_index", name="uq_chunks_project_doc_index"
+        ),
+        Index("idx_chunks_project", "project_id"),
+        Index("idx_chunks_doc", "project_id", "doc_id"),
+    )
+
+    chunk_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, nullable=False)
+    doc_id: Mapped[str] = mapped_column(String, nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[np.ndarray] = mapped_column(EmbeddingVector(), nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class AgentFact(Base):
