@@ -3,7 +3,6 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from blocks.container_security.src.block import SecurityContainer
 from app.main import app
 
 
