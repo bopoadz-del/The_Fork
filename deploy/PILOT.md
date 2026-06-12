@@ -40,16 +40,18 @@ Compare printed row counts with legacy `sqlite3` counts before cutover.
 
 Copy `.env.example` → `.env` and set at minimum:
 
-| Variable | Pilot value |
-|----------|-------------|
-| `DATABASE_URL` | Postgres connection string |
-| `CEREBRUM_VIRGIN` | `false` |
-| `CEREBRUM_DOMAIN_KITS` | `construction` |
-| `DATA_DIR` | Persistent volume for uploads |
-| `UVICORN_WORKERS` | `1` on Render starter; `2` only after RAM upgrade |
-| `REDIS_URL` | Shared Redis for sessions/rate limits (optional) |
-| `SENTRY_DSN` | Project DSN |
-| `RAG_EMBEDDING_MODEL` | **Unset** on Render (model2vec 256-dim default) or `minishlab/potion-base-8M` |
+
+| Variable               | Pilot value                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `DATABASE_URL`         | Postgres connection string                                                    |
+| `CEREBRUM_VIRGIN`      | `false`                                                                       |
+| `CEREBRUM_DOMAIN_KITS` | `construction`                                                                |
+| `DATA_DIR`             | Persistent volume for uploads                                                 |
+| `UVICORN_WORKERS`      | `1` on Render starter; `2` only after RAM upgrade                             |
+| `REDIS_URL`            | Shared Redis for sessions/rate limits (optional)                              |
+| `SENTRY_DSN`           | Project DSN                                                                   |
+| `RAG_EMBEDDING_MODEL`  | **Unset** on Render (model2vec 256-dim default) or `minishlab/potion-base-8M` |
+
 
 ## 4. Boot and smoke
 
@@ -62,19 +64,21 @@ Copy `.env.example` → `.env` and set at minimum:
 
 ## Current status (2026-06-12)
 
-| Item | Status |
-|------|--------|
-| Render web (`the-fork`) | Live — 45 blocks, construction kit on |
-| Postgres `the-fork-db` (PG 16) | Provisioned; `DATABASE_URL` set (internal) |
-| Alembic on boot | `entrypoint.sh` runs `python -m alembic upgrade head` |
-| `UVICORN_WORKERS` | `1` on Render starter (sole worker knob; `2` OOMs at 512Mi) |
-| `REDIS_URL` | `cerebrum-redis` resumed (shared rate limits when workers > 1) |
-| `SENTRY_DSN` | **Not set** — blocker for pilot clock; see Sentry gate below |
-| SQLite → Postgres cutover | **Done** 2026-06-12 — 56 documents, 141 chunks in Postgres |
-| `chunks.embedding` | **Confirmed** `vector(256)` via pilot-preflight |
-| Doc re-index / Diriyah E2E | **RAG gate passed** — D999.14 @ 1,060, D999.15 @ 1,288, Part 3 summary 1,852,848 |
-| Backup drill | **Done** — PITR restore `the-fork-db-drill-20260612` (snapshot @ 2026-06-12T15:22:13Z) |
-| 2-week pilot clock | **Pending Sentry smoke** |
+
+| Item                           | Status                                                                                 |
+| ------------------------------ | -------------------------------------------------------------------------------------- |
+| Render web (`the-fork`)        | Live — 45 blocks, construction kit on                                                  |
+| Postgres `the-fork-db` (PG 16) | Provisioned; `DATABASE_URL` set (internal)                                             |
+| Alembic on boot                | `entrypoint.sh` runs `python -m alembic upgrade head`                                  |
+| `UVICORN_WORKERS`              | `1` on Render starter (sole worker knob; `2` OOMs at 512Mi)                            |
+| `REDIS_URL`                    | `cerebrum-redis` resumed (shared rate limits when workers > 1)                         |
+| `SENTRY_DSN`                   | **Set** — `python-fastapi` project; smoke event `d28cfe07de4b485bbcc6a5e616eb7a07`     |
+| SQLite → Postgres cutover      | **Done** 2026-06-12 — 56 documents, 141 chunks in Postgres                             |
+| `chunks.embedding`             | **Confirmed** `vector(256)` via pilot-preflight                                        |
+| Doc re-index / Diriyah E2E     | **RAG gate passed** — D999.14 @ 1,060, D999.15 @ 1,288, Part 3 summary 1,852,848       |
+| Backup drill                   | **Done** — PITR restore `the-fork-db-drill-20260612` (snapshot @ 2026-06-12T15:22:13Z) |
+| 2-week pilot clock             | **Started** 2026-06-12T16:48:00Z — ends 2026-06-26                                     |
+
 
 ### Production admin ops (disk-backed)
 
@@ -98,22 +102,24 @@ curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_MASTER_KEY" \
 
 #### 2026-06-12T16:16:00Z — Cutover, schema, RAG, backup drill
 
+
+| Gate                          | Result                                                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Schema                        | `chunks.embedding` = `vector(256)`                                                                                                                     |
+| Cutover dry-run (prod volume) | 3 users, 6 projects, 56 documents, 165 chunks would migrate (not 81 users — that was local `./data`)                                                   |
+| Cutover execute               | Inserted 56 documents, 141 chunks (24 orphan chunks skipped — missing `documents` rows)                                                                |
+| Re-index                      | `project-reindex` on `3f6f28b2` → 8 chunks indexed                                                                                                     |
+| Diriyah BOQ RAG               | `POST /v1/rag/search` retrieves chunk `3f6f28b2:76e63ed2:23` with D999.14 @ 1,060.00 and D999.15 @ 1,288.00; chunk `:50` has Part 3 total 1,852,848.00 |
+| Backup drill                  | PITR restore to `the-fork-db-drill-20260612` succeeded; scratch DB `available` (pre-cutover snapshot — expect documents/chunks = 0 vs live 56/141)     |
+
+
+#### 2026-06-12T16:48:00Z — Sentry + pilot clock start
+
 | Gate | Result |
 |------|--------|
-| Schema | `chunks.embedding` = `vector(256)` |
-| Cutover dry-run (prod volume) | 3 users, 6 projects, 56 documents, 165 chunks would migrate (not 81 users — that was local `./data`) |
-| Cutover execute | Inserted 56 documents, 141 chunks (24 orphan chunks skipped — missing `documents` rows) |
-| Re-index | `project-reindex` on `3f6f28b2` → 8 chunks indexed |
-| Diriyah BOQ RAG | `POST /v1/rag/search` retrieves chunk `3f6f28b2:76e63ed2:23` with D999.14 @ 1,060.00 and D999.15 @ 1,288.00; chunk `:50` has Part 3 total 1,852,848.00 |
-| Backup drill | PITR restore to `the-fork-db-drill-20260612` succeeded; scratch DB `available` (pre-cutover snapshot — expect documents/chunks = 0 vs live 56/141) |
-
-**Sentry (open):** No `SENTRY_AUTH_TOKEN` in agent environment — create project in Sentry UI, set `SENTRY_DSN` on Render, redeploy, then `POST /v1/admin/debug/sentry-smoke`.
-
-**Ops auth:** `CEREBRUM_MASTER_KEY` set on Render for admin endpoints (rotate after pilot setup).
-
-#### Pilot clock
-
-Starts when Sentry smoke passes. Target end: **2026-06-26** (2 weeks after clock start).
+| `SENTRY_DSN` | Set on Render (`python-fastapi` / ingest.us.sentry.io) |
+| Sentry smoke | `POST /v1/admin/debug/sentry-smoke` → event `d28cfe07de4b485bbcc6a5e616eb7a07` |
+| Pilot clock | **Started** — target end **2026-06-26** (2 weeks uptime) |
 
 ## 5. Pilot exit criteria (brief)
 
@@ -126,4 +132,5 @@ Starts when Sentry smoke passes. Target end: **2026-06-26** (2 weeks after clock
 
 - Keep legacy `DATA_DIR/*.db` until pilot sign-off
 - To roll back app only: unset `DATABASE_URL` and restart (SQLite fallback at
-  `DATA_DIR/the_fork.db` — empty until re-migrated)
+`DATA_DIR/the_fork.db` — empty until re-migrated)
+
