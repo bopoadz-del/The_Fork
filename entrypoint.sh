@@ -33,11 +33,13 @@ if [ -n "${DATABASE_URL:-}" ] && [[ "${DATABASE_URL}" == postgresql* ]]; then
 fi
 
 UVICORN_ARGS=(--host 0.0.0.0 --port "$PORT" --no-access-log --timeout-keep-alive 65)
+# REDIS_URL backs shared sessions/rate limits; worker count is separate.
+# Render starter (512Mi) OOMs with 2 workers + model2vec — default 1.
+WORKERS="${UVICORN_WORKERS:-1}"
 if [ -n "$REDIS_URL" ]; then
-  echo "🔀 REDIS_URL set — starting with 2 workers"
-  UVICORN_ARGS+=(--workers 2)
-else
-  UVICORN_ARGS+=(--workers 1)
+  echo "🔀 REDIS_URL set — Redis session/rate-limit backend active"
 fi
+echo "👷 uvicorn workers: ${WORKERS}"
+UVICORN_ARGS+=(--workers "$WORKERS")
 
 exec uvicorn app.main:app "${UVICORN_ARGS[@]}"
