@@ -111,18 +111,22 @@ if FAILED_BLOCKS:
         len(FAILED_BLOCKS), len(_BLOCK_SPECS), ", ".join(sorted(FAILED_BLOCKS)),
     )
 
+from app.core.domain_kit_loader import active_kit_ids as _active_kit_ids
+
 if _legacy_boot():
     logger.info("block registry: legacy boot (%d blocks)", len(BLOCK_REGISTRY))
 else:
-    from app.core.domain_kit_loader import active_kit_ids
-
     logger.info(
         "block registry: virgin boot (%d generic + %d kit blocks)",
         len(_GENERIC_BLOCK_SPECS),
         len(BLOCK_REGISTRY) - len(_GENERIC_BLOCK_SPECS),
     )
-    if active_kit_ids():
-        logger.info("active domain kits: %s", ", ".join(active_kit_ids()))
+
+_kits = _active_kit_ids()
+if _kits:
+    logger.info("active domain kits: %s", ", ".join(_kits))
+else:
+    logger.info("active domain kits: none")
 
 
 def get_block(name: str):

@@ -23,6 +23,8 @@ from typing import Dict, List
 
 import pytest
 
+from tests.conftest import requires_construction_kit
+
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -267,6 +269,7 @@ def test_model_cached_on_instance(isolated_data_dir, monkeypatch):
 # ── learning_engine integration ───────────────────────────────────────────
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_train_router_via_learning_engine_block(isolated_data_dir):
     """The user-facing entrypoint: hit learning_engine.execute() with
@@ -284,6 +287,7 @@ async def test_train_router_via_learning_engine_block(isolated_data_dir):
     assert le._state["models"]["router"]["sha256"]
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_predict_route_via_learning_engine_block(isolated_data_dir):
     from app.blocks import BLOCK_REGISTRY
@@ -297,6 +301,7 @@ async def test_predict_route_via_learning_engine_block(isolated_data_dir):
     assert inner["action"]
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_route_metrics_includes_self_correction_caveat(isolated_data_dir):
     """route_metrics must surface the "not yet self-correcting" caveat —
@@ -315,6 +320,7 @@ async def test_route_metrics_includes_self_correction_caveat(isolated_data_dir):
 # ── smart_orchestrator integration ────────────────────────────────────────
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_orchestrator_learned_mode_uses_classifier(isolated_data_dir):
     """When routing_mode=learned and the model is loaded with high
@@ -340,6 +346,7 @@ async def test_orchestrator_learned_mode_uses_classifier(isolated_data_dir):
         assert inner["matched_actions"][0]["source"] == "learned"
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_orchestrator_falls_back_when_no_model(isolated_data_dir):
     """With learned mode but no trained model, orchestrator silently falls
@@ -364,6 +371,7 @@ async def test_orchestrator_falls_back_when_no_model(isolated_data_dir):
     )
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_orchestrator_learned_mode_matches_keyword_mode_when_unsure(isolated_data_dir):
     """The stricter form of the no-regression promise: in learned mode with
@@ -386,6 +394,7 @@ async def test_orchestrator_learned_mode_matches_keyword_mode_when_unsure(isolat
     assert keyword_env["result"]["action_queue"] == learned_env["result"]["action_queue"]
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_no_regression_with_keyword_fallback(isolated_data_dir, monkeypatch):
     """The testable form of "never regress on what worked": when the ML
@@ -426,6 +435,7 @@ async def test_no_regression_with_keyword_fallback(isolated_data_dir, monkeypatc
     assert "boq_process" in inner["action_queue"]
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_learned_mode_records_routing_decisions(isolated_data_dir):
     """Every learned-mode dispatch (or its keyword fallback when model is
@@ -515,6 +525,7 @@ def test_train_invalid_feature_mode_raises(isolated_data_dir):
         train(feature_mode="bogus_method")
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_learning_engine_block_accepts_feature_mode(isolated_data_dir, monkeypatch):
     """The block-level dispatcher must forward feature_mode through the
@@ -558,6 +569,7 @@ def test_embedding_vectorizer_is_stateless(isolated_data_dir, monkeypatch):
     )
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_keyword_mode_does_not_record(isolated_data_dir):
     """When routing_mode is the default (keyword), we don't pollute the

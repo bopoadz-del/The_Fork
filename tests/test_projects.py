@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.conftest import requires_construction_kit
 
 H = {"Authorization": "Bearer cb_dev_key"}
 
@@ -136,6 +137,7 @@ def test_progress_blocked_when_not_ready(client):
     assert "baseline_schedule" in body["missing"]
 
 
+@requires_construction_kit
 def test_progress_runs_when_ready(client):
     proj = _new_project(client)
     pid = proj["id"]

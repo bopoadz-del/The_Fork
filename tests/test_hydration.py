@@ -18,6 +18,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from tests.conftest import requires_construction_kit
+
 
 # ── DATA_DIR isolation fixture ─────────────────────────────────────────────
 
@@ -290,6 +292,7 @@ def test_scheduler_hour_clamped_to_valid_range(monkeypatch):
 # ── Registry sanity (post-merge) ───────────────────────────────────────────
 
 
+@requires_construction_kit
 def test_standalone_hydration_block_is_retired():
     """After the merge into learning_engine, there is no `hydration` block —
     only the `hydrate` operation on learning_engine."""
@@ -303,6 +306,7 @@ def test_standalone_hydration_block_is_retired():
     )
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_hydrate_operation_on_learning_engine(isolated_data_dir, monkeypatch):
     """The merged path: call the public learning_engine block with operation=hydrate."""
@@ -889,6 +893,7 @@ async def test_hydration_writes_back_to_agent_facts(isolated_data_dir, monkeypat
     assert any("concrete" in a.lower() for a in payload["asks"])
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_hydration_records_friction_patterns_on_learning_engine(
     isolated_data_dir, monkeypatch, tmp_path

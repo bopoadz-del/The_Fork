@@ -3,6 +3,7 @@
 import pytest
 
 from app.prompts.codegen_system import build_codegen_prompt
+from tests.conftest import requires_construction_kit
 
 
 def test_prompt_states_the_result_contract():
@@ -225,11 +226,13 @@ from app.blocks import BLOCK_REGISTRY, get_block
 from app.blocks.formula_executor import FormulaExecutorBlock
 
 
+@requires_construction_kit
 def test_v2_is_registered():
     assert "formula_executor_v2" in BLOCK_REGISTRY
     assert get_block("formula_executor_v2") is FormulaExecutorV2Block
 
 
+@requires_construction_kit
 def test_legacy_block_still_registered_under_old_key():
     # The old key keeps working — chains referencing it must not break.
     assert "formula_executor" in BLOCK_REGISTRY

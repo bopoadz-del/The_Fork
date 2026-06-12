@@ -11,6 +11,16 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - profile: virgin
+            cerebrum_virgin: "true"
+            cerebrum_domain_kits: ""
+          - profile: production-like
+            cerebrum_virgin: "false"
+            cerebrum_domain_kits: "construction"
+    name: test (${{ matrix.profile }})
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,6 +66,8 @@ jobs:
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data
+          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
+          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
 
       - name: Diff coverage (per-PR gate on lines changed)
         # Runs only on pull_request events. Compares coverage.xml against

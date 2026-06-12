@@ -9,6 +9,8 @@ from typing import Dict
 
 import pytest
 
+from tests.conftest import listable_block_count, requires_construction_kit
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -31,6 +33,10 @@ class TestRegistry:
         assert isinstance(BLOCK_REGISTRY, dict) and BLOCK_REGISTRY
         assert callable(get_block)
         assert callable(get_all_blocks)
+
+    @requires_construction_kit
+    def test_boq_processor_in_registry(self):
+        from app.blocks import BLOCK_REGISTRY, get_block
         assert get_block("boq_processor") is BLOCK_REGISTRY["boq_processor"]
 
 
@@ -472,8 +478,9 @@ class TestAPIEndpoints:
         # Response is {"blocks": [...], "total": N, "categories": {...}}
         blocks = data["blocks"] if isinstance(data, dict) and "blocks" in data else data
         # /blocks excludes containers (which belong to Block Store)
-        assert len(blocks) >= 30
+        assert len(blocks) >= listable_block_count()
 
+    @requires_construction_kit
     @pytest.mark.asyncio
     async def test_execute_endpoint_boq(self, client):
         """POST /execute drives boq_processor through the real HTTP layer (auth + routing).

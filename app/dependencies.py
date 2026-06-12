@@ -69,7 +69,14 @@ def _wire_block_dependencies(instance, block_class, name: str = None):
 
 def get_block_instance(block_name: str) -> Any:
     if block_name not in block_instances:
-        block_class = BLOCK_REGISTRY[block_name]
+        block_class = BLOCK_REGISTRY.get(block_name)
+        if block_class is None:
+            detail = (
+                f"{block_name} kit not enabled — set CEREBRUM_DOMAIN_KITS"
+                if block_name == "construction"
+                else f"Block '{block_name}' is not loaded in the current boot profile"
+            )
+            raise HTTPException(status_code=503, detail=detail)
         block_instances[block_name] = _create_block_instance(block_class)
         _wire_block_dependencies(block_instances[block_name], block_class, block_name)
     return block_instances[block_name]

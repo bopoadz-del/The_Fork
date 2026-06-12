@@ -2,7 +2,7 @@
 
 import pytest
 from unittest.mock import patch
-from app.blocks import OneDriveBlock
+from app.blocks.onedrive import OneDriveBlock
 
 
 @pytest.fixture

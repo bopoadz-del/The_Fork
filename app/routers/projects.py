@@ -15,7 +15,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import BaseModel
 
 from app.core import audit, doc_index, file_crypto, projects as store
-from app.blocks import BLOCK_REGISTRY
+from app.blocks import BLOCK_REGISTRY, get_block
 from app.dependencies import (
     require_user,
     block_instances,
@@ -319,7 +319,13 @@ async def project_progress(
 
     container = block_instances.get("construction")
     if container is None:
-        container = _create_block_instance(BLOCK_REGISTRY["construction"])
+        construction_cls = get_block("construction")
+        if construction_cls is None:
+            raise HTTPException(
+                status_code=503,
+                detail="construction kit not enabled — set CEREBRUM_DOMAIN_KITS",
+            )
+        container = _create_block_instance(construction_cls)
         block_instances["construction"] = container
 
     params = req.model_dump()

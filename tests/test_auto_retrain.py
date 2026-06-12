@@ -14,6 +14,10 @@ import json
 
 import pytest
 
+from tests.conftest import construction_kit_markers
+
+pytestmark = construction_kit_markers
+
 
 @pytest.fixture
 def isolated_data_dir(tmp_path, monkeypatch):

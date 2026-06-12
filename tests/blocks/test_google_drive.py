@@ -2,7 +2,7 @@
 
 import pytest
 from unittest.mock import patch
-from app.blocks import GoogleDriveBlock
+from app.blocks.google_drive import GoogleDriveBlock
 
 
 @pytest.fixture

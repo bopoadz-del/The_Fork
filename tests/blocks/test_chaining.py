@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import patch
 from app.blocks import PDFBlock, OCRBlock, ChatBlock
+from tests.conftest import requires_extended_boot
 
 
 @pytest.mark.asyncio
@@ -76,6 +77,7 @@ async def test_pdf_to_ocr_to_chat_chain():
     print(f"   Chat processing time: {chat_result['processing_time_ms']}ms")
 
 
+@requires_extended_boot
 @pytest.mark.asyncio
 async def test_standardized_response_format():
     """Test that all blocks return identical standardized response format."""

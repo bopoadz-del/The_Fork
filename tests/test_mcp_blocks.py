@@ -3,8 +3,16 @@
 import pytest
 
 from app.blocks import BLOCK_REGISTRY
+from tests.conftest import is_construction_kit_enabled, is_extended_boot
+
+pytestmark = [
+    pytest.mark.extended_boot,
+    pytest.mark.skipif(not is_extended_boot(), reason="requires CEREBRUM_VIRGIN=false"),
+]
 
 
+@pytest.mark.construction_kit
+@pytest.mark.skipif(not is_construction_kit_enabled(), reason="requires CEREBRUM_DOMAIN_KITS=construction")
 @pytest.mark.asyncio
 async def test_mcp_adapter_lists_every_block_except_itself():
     block = BLOCK_REGISTRY["mcp_adapter"]()

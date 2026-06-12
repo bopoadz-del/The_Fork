@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.conftest import requires_construction_kit
 from app.core.artifacts import (
     code_artifact,
     make_artifact,
@@ -85,6 +86,7 @@ def test_text_is_fallback_only():
 
 # ── /v1/execute attaches artifacts ──────────────────────────────────────────
 
+@requires_construction_kit
 def test_execute_response_carries_artifacts(client, monkeypatch):
     # formula_executor now delegates to the LLM-backed v2 block (Reasoning
     # Engine Plan 4). Mock the LLM seam so this plumbing test stays
