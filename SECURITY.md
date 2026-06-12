@@ -1,5 +1,11 @@
 # Security Policy
 
+## Dependency vulnerabilities
+
+Open Dependabot alerts that cannot be cleared by a semver bump are documented in
+[`deploy/DEPENDENCY_RISKS.md`](deploy/DEPENDENCY_RISKS.md) with acceptance rationale
+and GitHub dismiss comments.
+
 ## Supported Versions
 
 Use this section to tell people about which versions of your project are
