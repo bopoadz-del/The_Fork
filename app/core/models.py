@@ -124,3 +124,66 @@ class Workflow(Base):
     )
     steps: Mapped[list] = mapped_column(JSON, nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class Conversation(Base):
+    """conversations table — see the_fork_schema.sql."""
+
+    __tablename__ = "conversations"
+    __table_args__ = (
+        Index("idx_conversations_agent_updated", "agent_name", "updated_at"),
+        Index("idx_conversations_project_updated", "project_id", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    agent_name: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class Message(Base):
+    """messages table — see the_fork_schema.sql."""
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('user', 'assistant', 'system')",
+            name="ck_messages_role",
+        ),
+        Index("idx_messages_conv", "conversation_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class AgentFact(Base):
+    """agent_facts table — see the_fork_schema.sql.
+
+    Project-less scope is stored as NULL in the DB; the public API uses ''.
+    """
+
+    __tablename__ = "agent_facts"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_name", "project_id", "key", name="uq_agent_facts_scope_key"
+        ),
+        Index("idx_agent_facts_agent_project", "agent_name", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    agent_name: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    conversation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)

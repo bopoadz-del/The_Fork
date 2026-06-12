@@ -2,16 +2,21 @@
 
 Phase C4 — Stream C: persistent agent memory.
 
-SQLite-backed, stdlib only — no new dependency.
-Mirrors the conventions in app/core/projects.py exactly.
+SQLAlchemy-backed via app.core.db — unified The Fork schema.
 """
 
+from __future__ import annotations
+
 import os
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from sqlalchemy import delete, select, update
+
+from app.core.db import SessionLocal, engine, get_database_url
+from app.core.models import AgentFact, Conversation, Message
 
 _lock = threading.Lock()
 _initialized = False
@@ -21,86 +26,67 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _db_path() -> str:
-    """Resolve the DB path from DATA_DIR at call time (so tests can relocate it)."""
-    data_dir = os.getenv("DATA_DIR", "./data")
-    try:
-        os.makedirs(data_dir, exist_ok=True)
-    except OSError:
-        import tempfile
-        data_dir = tempfile.gettempdir()
-    return os.path.join(data_dir, "agent_memory.db")
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def _project_id_to_db(project_id: Optional[str]) -> Optional[str]:
+    """Map API project_id ('' or None) to NULL in the DB."""
+    if project_id is None or project_id == "":
+        return None
+    return project_id
+
+
+def _fact_project_id_from_db(project_id: Optional[str]) -> str:
+    """Map DB NULL back to '' for agent-fact API compatibility."""
+    return project_id if project_id is not None else ""
+
+
+def _conversation_as_dict(conversation: Conversation) -> Dict[str, Any]:
+    return {
+        "id": conversation.id,
+        "agent_name": conversation.agent_name,
+        "project_id": conversation.project_id,
+        "title": conversation.title,
+        "created_at": conversation.created_at,
+        "updated_at": conversation.updated_at,
+    }
+
+
+def _message_as_dict(message: Message) -> Dict[str, Any]:
+    return {
+        "id": message.id,
+        "conversation_id": message.conversation_id,
+        "role": message.role,
+        "content": message.content,
+        "created_at": message.created_at,
+    }
+
+
+def _agent_fact_as_dict(fact: AgentFact) -> Dict[str, Any]:
+    return {
+        "id": fact.id,
+        "agent_name": fact.agent_name,
+        "project_id": _fact_project_id_from_db(fact.project_id),
+        "conversation_id": fact.conversation_id,
+        "key": fact.key,
+        "value": fact.value,
+        "updated_at": fact.updated_at,
+    }
 
 
 def init_db() -> None:
     """Create the schema if absent. Idempotent — safe to call on every startup."""
     global _initialized
     with _lock:
-        with _connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id           TEXT PRIMARY KEY,
-                    agent_name   TEXT NOT NULL,
-                    project_id   TEXT,
-                    title        TEXT,
-                    created_at   TEXT NOT NULL,
-                    updated_at   TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS messages (
-                    id              TEXT PRIMARY KEY,
-                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                    role            TEXT NOT NULL,
-                    content         TEXT NOT NULL,
-                    created_at      TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_messages_conv
-                    ON messages(conversation_id, created_at);
-                CREATE TABLE IF NOT EXISTS agent_facts (
-                    id              TEXT PRIMARY KEY,
-                    agent_name      TEXT NOT NULL,
-                    project_id      TEXT NOT NULL DEFAULT '',
-                    conversation_id TEXT,
-                    key             TEXT NOT NULL,
-                    value           TEXT NOT NULL,
-                    updated_at      TEXT NOT NULL,
-                    UNIQUE(agent_name, project_id, key)
-                );
-                """
-            )
-            # Migrate a pre-existing agent_facts table that predates project
-            # scoping (UNIQUE(agent_name, key), no project_id column). The
-            # constraint change needs a table rebuild; legacy rows become
-            # project-less ('').
-            cols = {r[1] for r in conn.execute("PRAGMA table_info(agent_facts)")}
-            if "project_id" not in cols:
-                conn.executescript(
-                    """
-                    ALTER TABLE agent_facts RENAME TO _agent_facts_old;
-                    CREATE TABLE agent_facts (
-                        id              TEXT PRIMARY KEY,
-                        agent_name      TEXT NOT NULL,
-                        project_id      TEXT NOT NULL DEFAULT '',
-                        conversation_id TEXT,
-                        key             TEXT NOT NULL,
-                        value           TEXT NOT NULL,
-                        updated_at      TEXT NOT NULL,
-                        UNIQUE(agent_name, project_id, key)
-                    );
-                    INSERT INTO agent_facts
-                        (id, agent_name, project_id, conversation_id, key, value, updated_at)
-                        SELECT id, agent_name, '', conversation_id, key, value, updated_at
-                        FROM _agent_facts_old;
-                    DROP TABLE _agent_facts_old;
-                    """
-                )
+        _ensure_sqlite_parent_dir()
+        Conversation.__table__.create(bind=engine, checkfirst=True)
+        Message.__table__.create(bind=engine, checkfirst=True)
+        AgentFact.__table__.create(bind=engine, checkfirst=True)
         _initialized = True
 
 
@@ -118,53 +104,57 @@ def get_or_create_conversation(
 ) -> Dict[str, Any]:
     """Return the existing conversation row or create it with the given id. Idempotent."""
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
-        ).fetchone()
-        if row:
-            existing = dict(row)
+    db_project_id = _project_id_to_db(project_id)
+    with SessionLocal() as session:
+        conversation = session.get(Conversation, conversation_id)
+        if conversation:
+            existing = _conversation_as_dict(conversation)
             # Hygiene: backfill a NULL project_id when a real one is now known.
             # Never overwrite a non-NULL stored value (would re-tenant the row).
-            if existing.get("project_id") is None and project_id is not None:
+            if existing.get("project_id") is None and db_project_id is not None:
                 with _lock:
-                    conn.execute(
-                        "UPDATE conversations SET project_id = ?, updated_at = ? "
-                        "WHERE id = ? AND project_id IS NULL",
-                        (project_id, _now(), conversation_id),
+                    now = _now()
+                    session.execute(
+                        update(Conversation)
+                        .where(
+                            Conversation.id == conversation_id,
+                            Conversation.project_id.is_(None),
+                        )
+                        .values(project_id=db_project_id, updated_at=now)
                     )
-                    conn.commit()
-                existing["project_id"] = project_id
+                    session.commit()
+                    session.refresh(conversation)
+                return _conversation_as_dict(conversation)
             return existing
-    # Not found — create it
+
     now = _now()
-    with _lock, _connect() as conn:
-        # Double-check inside the lock to guard against races
-        row = conn.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
-        ).fetchone()
-        if row:
-            return dict(row)
-        conn.execute(
-            "INSERT INTO conversations (id, agent_name, project_id, title, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (conversation_id, agent_name, project_id, None, now, now),
-        )
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
-        ).fetchone()
-    return dict(row)
+    with _lock:
+        with SessionLocal() as session:
+            conversation = session.get(Conversation, conversation_id)
+            if conversation:
+                return _conversation_as_dict(conversation)
+            session.add(
+                Conversation(
+                    id=conversation_id,
+                    agent_name=agent_name,
+                    project_id=db_project_id,
+                    title=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.commit()
+            return _conversation_as_dict(
+                session.get(Conversation, conversation_id)  # type: ignore[arg-type]
+            )
 
 
 def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
     """Return the conversation row for the given id, or None if it does not exist."""
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
-        ).fetchone()
-    return dict(row) if row else None
+    with SessionLocal() as session:
+        conversation = session.get(Conversation, conversation_id)
+    return _conversation_as_dict(conversation) if conversation else None
 
 
 def list_conversations(
@@ -172,27 +162,28 @@ def list_conversations(
     project_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     _ensure_db()
-    query = "SELECT * FROM conversations WHERE 1=1"
-    params: List[Any] = []
-    if agent_name is not None:
-        query += " AND agent_name = ?"
-        params.append(agent_name)
-    if project_id is not None:
-        query += " AND project_id = ?"
-        params.append(project_id)
-    query += " ORDER BY updated_at DESC"
-    with _connect() as conn:
-        rows = conn.execute(query, params).fetchall()
-    return [dict(r) for r in rows]
+    with SessionLocal() as session:
+        stmt = select(Conversation).order_by(Conversation.updated_at.desc())
+        if agent_name is not None:
+            stmt = stmt.where(Conversation.agent_name == agent_name)
+        if project_id is not None:
+            stmt = stmt.where(
+                Conversation.project_id == _project_id_to_db(project_id)
+            )
+        rows = session.scalars(stmt).all()
+    return [_conversation_as_dict(c) for c in rows]
 
 
 def delete_conversation(conversation_id: str) -> bool:
     _ensure_db()
-    with _lock, _connect() as conn:
-        cur = conn.execute(
-            "DELETE FROM conversations WHERE id = ?", (conversation_id,)
-        )
-        return cur.rowcount > 0
+    with _lock:
+        with SessionLocal() as session:
+            conversation = session.get(Conversation, conversation_id)
+            if not conversation:
+                return False
+            session.delete(conversation)
+            session.commit()
+            return True
 
 
 def clear_conversation(conversation_id: str) -> Dict[str, int]:
@@ -207,20 +198,22 @@ def clear_conversation(conversation_id: str) -> Dict[str, int]:
     conversation returns zeros without raising.
     """
     _ensure_db()
-    with _lock, _connect() as conn:
-        msgs = conn.execute(
-            "DELETE FROM messages WHERE conversation_id = ?",
-            (conversation_id,),
-        ).rowcount
-        facts = conn.execute(
-            "DELETE FROM agent_facts WHERE conversation_id = ?",
-            (conversation_id,),
-        ).rowcount
-        # Bump updated_at so the UI can detect the clear via list_conversations.
-        conn.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (_now(), conversation_id),
-        )
+    with _lock:
+        with SessionLocal() as session:
+            msgs = session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            ).rowcount
+            facts = session.execute(
+                delete(AgentFact).where(
+                    AgentFact.conversation_id == conversation_id
+                )
+            ).rowcount
+            session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation_id)
+                .values(updated_at=_now())
+            )
+            session.commit()
     return {"messages": int(msgs or 0), "facts": int(facts or 0)}
 
 
@@ -231,40 +224,39 @@ def append_message(conversation_id: str, role: str, content: str) -> Dict[str, A
     _ensure_db()
     mid = str(uuid.uuid4())
     now = _now()
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (mid, conversation_id, role, content, now),
-        )
-        conn.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (now, conversation_id),
-        )
-    with _connect() as conn:
-        row = conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
-    return dict(row)
+    with _lock:
+        with SessionLocal() as session:
+            session.add(
+                Message(
+                    id=mid,
+                    conversation_id=conversation_id,
+                    role=role,
+                    content=content,
+                    created_at=now,
+                )
+            )
+            session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation_id)
+                .values(updated_at=now)
+            )
+            session.commit()
+    with SessionLocal() as session:
+        message = session.get(Message, mid)
+    return _message_as_dict(message)  # type: ignore[arg-type]
 
 
 def get_messages(conversation_id: str, limit: int = 40) -> List[Dict[str, Any]]:
     """Return messages oldest-first. If limit is set, return the most recent `limit` rows, still oldest-first."""
     _ensure_db()
-    with _connect() as conn:
-        # Fetch the most recent `limit` rows by (created_at DESC, rowid DESC),
-        # then re-order them oldest-first for the caller.
-        rows = conn.execute(
-            "SELECT id, conversation_id, role, content, created_at,"
-            "       rowid AS _rid"
-            " FROM messages WHERE conversation_id = ?"
-            " ORDER BY created_at DESC, rowid DESC LIMIT ?",
-            (conversation_id, limit),
-        ).fetchall()
-    # Reverse to get oldest-first
-    rows = list(reversed(rows))
-    return [
-        {k: row[k] for k in ("id", "conversation_id", "role", "content", "created_at")}
-        for row in rows
-    ]
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(limit)
+        ).all()
+    return [_message_as_dict(m) for m in reversed(rows)]
 
 
 # ── agent facts ───────────────────────────────────────────────────────────────
@@ -283,26 +275,48 @@ def set_agent_fact(
     project-less conversation uses the '' scope.
     """
     _ensure_db()
-    project_id = project_id or ""
-    fid = str(uuid.uuid4())
+    api_project_id = project_id or ""
+    db_project_id = _project_id_to_db(api_project_id)
     now = _now()
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO agent_facts "
-            "(id, agent_name, project_id, conversation_id, key, value, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(agent_name, project_id, key) DO UPDATE SET "
-            "value=excluded.value, conversation_id=excluded.conversation_id, "
-            "updated_at=excluded.updated_at",
-            (fid, agent_name, project_id, conversation_id, key, value, now),
+    with _lock:
+        with SessionLocal() as session:
+            stmt = select(AgentFact).where(
+                AgentFact.agent_name == agent_name,
+                AgentFact.key == key,
+            )
+            if db_project_id is None:
+                stmt = stmt.where(AgentFact.project_id.is_(None))
+            else:
+                stmt = stmt.where(AgentFact.project_id == db_project_id)
+            existing = session.scalars(stmt).one_or_none()
+            if existing:
+                existing.value = value
+                existing.conversation_id = conversation_id
+                existing.updated_at = now
+            else:
+                session.add(
+                    AgentFact(
+                        id=str(uuid.uuid4()),
+                        agent_name=agent_name,
+                        project_id=db_project_id,
+                        conversation_id=conversation_id,
+                        key=key,
+                        value=value,
+                        updated_at=now,
+                    )
+                )
+            session.commit()
+    with SessionLocal() as session:
+        stmt = select(AgentFact).where(
+            AgentFact.agent_name == agent_name,
+            AgentFact.key == key,
         )
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM agent_facts "
-            "WHERE agent_name = ? AND project_id = ? AND key = ?",
-            (agent_name, project_id, key),
-        ).fetchone()
-    return dict(row)
+        if db_project_id is None:
+            stmt = stmt.where(AgentFact.project_id.is_(None))
+        else:
+            stmt = stmt.where(AgentFact.project_id == db_project_id)
+        fact = session.scalars(stmt).one()
+    return _agent_fact_as_dict(fact)
 
 
 def list_agent_facts(
@@ -310,10 +324,16 @@ def list_agent_facts(
 ) -> List[Dict[str, Any]]:
     """List an agent's facts for one project scope ('' = project-less)."""
     _ensure_db()
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM agent_facts "
-            "WHERE agent_name = ? AND project_id = ? ORDER BY key",
-            (agent_name, project_id or ""),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    db_project_id = _project_id_to_db(project_id or "")
+    with SessionLocal() as session:
+        stmt = (
+            select(AgentFact)
+            .where(AgentFact.agent_name == agent_name)
+            .order_by(AgentFact.key)
+        )
+        if db_project_id is None:
+            stmt = stmt.where(AgentFact.project_id.is_(None))
+        else:
+            stmt = stmt.where(AgentFact.project_id == db_project_id)
+        rows = session.scalars(stmt).all()
+    return [_agent_fact_as_dict(f) for f in rows]
