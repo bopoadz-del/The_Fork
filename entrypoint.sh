@@ -26,7 +26,7 @@ command -v ODAFileConverter >/dev/null 2>&1 || echo "⚠️  ODAFileConverter no
 
 if [ -n "${DATABASE_URL:-}" ] && [[ "${DATABASE_URL}" == postgresql* ]]; then
   echo "🗄️  DATABASE_URL set — running alembic upgrade head"
-  if ! alembic upgrade head; then
+  if ! python -m alembic upgrade head; then
     echo "❌ alembic upgrade failed — refusing to start with a stale schema"
     exit 1
   fi
