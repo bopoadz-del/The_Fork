@@ -58,6 +58,20 @@ Copy `.env.example` → `.env` and set at minimum:
 ./scripts/pilot_smoke.sh
 ```
 
+## Current status (2026-06-12)
+
+| Item | Status |
+|------|--------|
+| Render web (`the-fork`) | Live — 45 blocks, construction kit on |
+| Postgres `the-fork-db` (PG 16) | Provisioned; `DATABASE_URL` set (internal) |
+| Alembic on boot | `entrypoint.sh` runs `python -m alembic upgrade head` |
+| `REDIS_URL` | `cerebrum-redis` resumed and wired (shared rate limits; **1 worker** on 512Mi plan) |
+| `UVICORN_WORKERS` | `1` on Render starter (set `2` only after RAM upgrade — 2 workers OOM at 512Mi) |
+| `SENTRY_DSN` | **Not set** — operator must add from Sentry project settings |
+| SQLite → Postgres cutover | Migration script ready (PR #36 merged); **not run on prod `DATA_DIR` yet** |
+| Doc re-index / Diriyah E2E | Pending empty `the-fork-db` |
+| 2-week uptime / backup drill | Not started |
+
 ## 5. Pilot exit criteria (brief)
 
 - 2 weeks uptime with zero data-loss incidents
