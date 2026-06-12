@@ -132,7 +132,7 @@ def retrieve_with_filter(
     query_vec = embedder.encode([query])[0]
     store = get_store(dim=embedder.dim)
     over_fetch = max(k * 4, 20)
-    raw = store.search(project_id, query_vec, k=over_fetch)
+    raw = store.search(project_id, query_vec, k=over_fetch, query_text=query)
 
     kept: List[Chunk] = []
     noise_dropped = 0
