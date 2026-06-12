@@ -166,6 +166,24 @@ class Message(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class UsageRun(Base):
+    """runs table — see the_fork_schema.sql (usage tracker)."""
+
+    __tablename__ = "runs"
+    __table_args__ = (Index("idx_runs_user_created", "user_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    estimated_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class AgentFact(Base):
     """agent_facts table — see the_fork_schema.sql.
 

@@ -1,7 +1,7 @@
 """LLM usage + soft-cap tracker.
 
 Records every LLM round-trip (`prompt_tokens`, `completion_tokens`,
-estimated cost) to ``${DATA_DIR}/usage.db`` and lets the runtime block
+estimated cost) to the unified The Fork database and lets the runtime block
 calls once a per-user daily budget is exceeded.
 
 Wired in two places:
@@ -15,51 +15,46 @@ Wired in two places:
 Cost model is a hardcoded per-provider+model rate table. Free-tier Groq
 models are recorded at $0 — total_tokens still tracked so we can warn
 before hitting Groq's daily TPD cap.
+
+SQLAlchemy-backed via app.core.db — unified The Fork schema.
 """
 from __future__ import annotations
 
 import os
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func, select
+
+from app.core.db import SessionLocal, engine, get_database_url
+from app.core.models import UsageRun
 
 _LOCK = threading.RLock()
 
 
 def _db_path() -> str:
-    return os.path.join(os.getenv("DATA_DIR", "./data"), "usage.db")
+    """SQLite file path for the unified DB (test / debug helper)."""
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        return url[len("sqlite:///") :]
+    raise RuntimeError("usage_tracker _db_path() requires a SQLite DATABASE_URL")
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
 
 def init_db() -> None:
-    os.makedirs(os.path.dirname(_db_path()) or ".", exist_ok=True)
-    with _LOCK, _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS runs (
-                id                 TEXT PRIMARY KEY,
-                user_id            TEXT,
-                agent_name         TEXT,
-                provider           TEXT,
-                model              TEXT,
-                prompt_tokens      INTEGER,
-                completion_tokens  INTEGER,
-                total_tokens       INTEGER,
-                estimated_cost_usd REAL,
-                created_at         TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_user_created ON runs(user_id, created_at)")
+    """Create the runs schema if absent. Idempotent — safe on every startup."""
+    with _LOCK:
+        _ensure_sqlite_parent_dir()
+        UsageRun.__table__.create(bind=engine, checkfirst=True)
 
 
 # Per-provider pricing per 1M tokens loaded from config/llm_pricing.json
@@ -122,15 +117,23 @@ def record(
     tt = int(usage.get("total_tokens") or (pt + ct))
     cost = _estimate_cost(provider, model, pt, ct)
     init_db()
-    with _LOCK, _connect() as conn:
-        conn.execute(
-            "INSERT INTO runs (id, user_id, agent_name, provider, model, "
-            "prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), user_id or "", agent_name or "",
-             provider, model, pt, ct, tt, cost,
-             datetime.now(timezone.utc).isoformat()),
-        )
+    with _LOCK:
+        with SessionLocal() as session:
+            session.add(
+                UsageRun(
+                    id=str(uuid.uuid4()),
+                    user_id=user_id or "",
+                    agent_name=agent_name or "",
+                    provider=provider,
+                    model=model,
+                    prompt_tokens=pt,
+                    completion_tokens=ct,
+                    total_tokens=tt,
+                    estimated_cost_usd=cost,
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            session.commit()
 
 
 def daily_total(user_id: Optional[str], day: Optional[str] = None) -> Dict[str, float]:
@@ -139,22 +142,17 @@ def daily_total(user_id: Optional[str], day: Optional[str] = None) -> Dict[str, 
     if day is None:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     init_db()
-    with _LOCK, _connect() as conn:
-        if user_id is None:
-            row = conn.execute(
-                "SELECT COALESCE(SUM(total_tokens),0) AS t, "
-                "COALESCE(SUM(estimated_cost_usd),0.0) AS c "
-                "FROM runs WHERE substr(created_at,1,10) = ?",
-                (day,),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COALESCE(SUM(total_tokens),0) AS t, "
-                "COALESCE(SUM(estimated_cost_usd),0.0) AS c "
-                "FROM runs WHERE user_id = ? AND substr(created_at,1,10) = ?",
-                (user_id, day),
-            ).fetchone()
-    return {"tokens": int(row["t"]), "cost_usd": float(row["c"])}
+    day_expr = func.substr(UsageRun.created_at, 1, 10)
+    stmt = select(
+        func.coalesce(func.sum(UsageRun.total_tokens), 0),
+        func.coalesce(func.sum(UsageRun.estimated_cost_usd), 0.0),
+    ).where(day_expr == day)
+    if user_id is not None:
+        stmt = stmt.where(UsageRun.user_id == user_id)
+    with _LOCK:
+        with SessionLocal() as session:
+            tokens, cost = session.execute(stmt).one()
+    return {"tokens": int(tokens), "cost_usd": float(cost)}
 
 
 def is_over_cap(user_id: Optional[str], cap_usd: float) -> bool:
@@ -169,33 +167,31 @@ def history(user_id: Optional[str], days: int = 7) -> List[Dict[str, Any]]:
     """Return per-day totals + breakdowns for the last ``days`` days."""
     init_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-    with _LOCK, _connect() as conn:
-        if user_id is None:
-            rows = conn.execute(
-                "SELECT substr(created_at,1,10) AS day, agent_name, provider, model, "
-                "SUM(total_tokens) AS tokens, SUM(estimated_cost_usd) AS cost "
-                "FROM runs WHERE substr(created_at,1,10) >= ? "
-                "GROUP BY day, agent_name, provider, model "
-                "ORDER BY day DESC",
-                (cutoff,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT substr(created_at,1,10) AS day, agent_name, provider, model, "
-                "SUM(total_tokens) AS tokens, SUM(estimated_cost_usd) AS cost "
-                "FROM runs WHERE user_id = ? AND substr(created_at,1,10) >= ? "
-                "GROUP BY day, agent_name, provider, model "
-                "ORDER BY day DESC",
-                (user_id, cutoff),
-            ).fetchall()
+    day_expr = func.substr(UsageRun.created_at, 1, 10)
+    stmt = select(
+        day_expr.label("day"),
+        UsageRun.agent_name,
+        UsageRun.provider,
+        UsageRun.model,
+        func.sum(UsageRun.total_tokens).label("tokens"),
+        func.sum(UsageRun.estimated_cost_usd).label("cost"),
+    ).where(day_expr >= cutoff)
+    if user_id is not None:
+        stmt = stmt.where(UsageRun.user_id == user_id)
+    stmt = stmt.group_by(
+        day_expr, UsageRun.agent_name, UsageRun.provider, UsageRun.model
+    ).order_by(day_expr.desc())
+    with _LOCK:
+        with SessionLocal() as session:
+            rows = session.execute(stmt).all()
     return [
         {
-            "day": r["day"],
-            "agent_name": r["agent_name"],
-            "provider": r["provider"],
-            "model": r["model"],
-            "tokens": int(r["tokens"]),
-            "cost_usd": round(float(r["cost"]), 6),
+            "day": r.day,
+            "agent_name": r.agent_name,
+            "provider": r.provider,
+            "model": r.model,
+            "tokens": int(r.tokens),
+            "cost_usd": round(float(r.cost), 6),
         }
         for r in rows
     ]
