@@ -369,3 +369,146 @@ def _legacy_sync_generate_unused():
     """Stub kept to preserve the import surface for the deleted sync path —
     intentionally never called. Real entrypoint is the async job above."""
     return None
+
+
+@router.post("/v1/admin/debug/migrate-sqlite")
+def admin_migrate_sqlite(
+    dry_run: bool = Query(True, description="Count rows only; no Postgres writes"),
+    execute: bool = Query(False, description="Run idempotent migration (overrides dry_run)"),
+    auth: dict = Depends(require_api_key),
+):
+    """Run SQLite→Postgres migration against the live DATA_DIR volume.
+
+  One-off Render jobs cannot mount the service disk; this endpoint runs inside
+  the web process so cutover dry-run / execute work on production.
+    """
+    _require_admin(auth)
+
+    if execute:
+        dry_run = False
+
+    from pathlib import Path
+    from sqlalchemy import create_engine
+
+    from scripts.migrate_sqlite_to_pg import migrate
+
+    data_dir = Path(os.getenv("DATA_DIR", "data")).resolve()
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    if not db_url:
+        raise HTTPException(status_code=503, detail="DATABASE_URL not configured")
+    if not data_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"DATA_DIR not found: {data_dir}")
+
+    engine = create_engine(db_url, pool_pre_ping=True)
+    try:
+        counts = migrate(engine, data_dir, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001 — operator diagnostic
+        raise HTTPException(status_code=500, detail=f"migration failed: {exc}") from exc
+
+    # Persist dry-run output for pilot-preflight when operators poll without re-running.
+    if dry_run:
+        log_path = data_dir / "pilot_dry_run.log"
+        try:
+            lines = [f"Migration summary (would migrate):"]
+            for table, n in counts.items():
+                lines.append(f"  {table}: {n}")
+            log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    return {
+        "dry_run": dry_run,
+        "data_dir": str(data_dir),
+        "counts": counts,
+    }
+
+
+@router.get("/v1/admin/debug/pilot-preflight")
+def admin_pilot_preflight(auth: dict = Depends(require_api_key)):
+    """Postgres schema + row-count snapshot for pilot cutover / re-index gates."""
+    _require_admin(auth)
+
+    import os
+    from sqlalchemy import create_engine, text
+
+    out: Dict[str, Any] = {
+        "sentry_enabled": bool(os.getenv("SENTRY_DSN", "").strip()),
+        "database_url_set": bool(os.getenv("DATABASE_URL", "").strip()),
+        "data_dir": os.getenv("DATA_DIR", "data"),
+    }
+
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    if not db_url:
+        out["postgres"] = {"error": "DATABASE_URL unset"}
+        return out
+
+    try:
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            emb = conn.execute(
+                text(
+                    """
+                    SELECT format_type(a.atttypid, a.atttypmod)
+                    FROM pg_attribute a
+                    JOIN pg_class t ON a.attrelid = t.oid
+                    WHERE t.relname = 'chunks'
+                      AND a.attname = 'embedding'
+                      AND NOT a.attisdropped
+                    """
+                )
+            ).scalar()
+            counts = {}
+            for table in (
+                "users",
+                "projects",
+                "documents",
+                "chunks",
+                "conversations",
+                "messages",
+            ):
+                counts[table] = conn.execute(
+                    text(f"SELECT COUNT(*) FROM {table}")
+                ).scalar()
+            out["postgres"] = {
+                "chunks_embedding_type": emb,
+                "embedding_dim_ok": emb == "vector(256)",
+                "row_counts": counts,
+            }
+    except Exception as exc:  # noqa: BLE001 — diagnostic only
+        out["postgres"] = {"error": f"{type(exc).__name__}: {exc}"}
+
+    data_dir = out["data_dir"]
+    dry_log = os.path.join(data_dir, "pilot_dry_run.log")
+    if os.path.isfile(dry_log):
+        try:
+            with open(dry_log, encoding="utf-8") as f:
+                out["sqlite_dry_run_log"] = f.read()[-8000:]
+        except Exception as exc:  # noqa: BLE001
+            out["sqlite_dry_run_log_error"] = str(exc)
+
+    return out
+
+
+@router.post("/v1/admin/debug/sentry-smoke")
+def admin_sentry_smoke(auth: dict = Depends(require_api_key)):
+    """Raise a tagged test exception so Sentry capture can be verified pre-cutover."""
+    _require_admin(auth)
+
+    import os
+
+    if not os.getenv("SENTRY_DSN", "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="SENTRY_DSN not configured — set env and redeploy before smoke test",
+        )
+
+    import sentry_sdk
+
+    event_id = sentry_sdk.capture_exception(
+        RuntimeError("pilot sentry-smoke: intentional test exception (safe to ignore)")
+    )
+    return {
+        "status": "captured",
+        "event_id": event_id,
+        "message": "Check Sentry Issues for pilot sentry-smoke event",
+    }
