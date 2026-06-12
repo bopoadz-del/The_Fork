@@ -10,14 +10,14 @@ does not claim controls that are not in the code.
 | Data | Location | Notes |
 |------|----------|-------|
 | Uploaded documents | `DATA_DIR` (default `./data`) | Original files, UUID-prefixed |
-| Project & document records | `DATA_DIR/projects.db` (SQLite) | Metadata, not file contents |
-| Project memory (facts) | `DATA_DIR/projects.db` | Durable extracted facts |
+| App persistence (users, projects, RAG, etc.) | `DATABASE_URL` when set (PostgreSQL + pgvector), else `DATA_DIR/the_fork.db` (SQLite) | Unified schema via Alembic migration 0001 |
 | Custom document types | `DATA_DIR/custom_document_types.json` | |
-| Saved workflows | `DATA_DIR/projects.db` | |
 | Audit log | `DATA_DIR/audit.log` | Append-only JSONL |
 
-There is **no external database and no third-party data processor.** Everything
-stays on the host running the app.
+When `DATABASE_URL` points at managed Postgres, relational data leaves the app
+host; uploaded document **files** still live under `DATA_DIR` unless you mount
+object storage separately. There is no third-party data processor for chat
+inference beyond the LLM providers you configure.
 
 ## Encryption at rest
 
