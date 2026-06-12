@@ -5,6 +5,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+import app.core.projects as projects_mod
+
 
 @pytest.fixture
 def users_db(monkeypatch, tmp_path):
@@ -62,5 +64,27 @@ def test_delete_user_with_projects_blocked(users_db):
         with pytest.raises(IntegrityError):
             session.execute(
                 text("DELETE FROM users WHERE id = :uid"), {"uid": uid}
+            )
+            session.commit()
+
+
+def test_delete_user_with_projects_blocked_unified_schema(users_db, monkeypatch, tmp_path):
+    """projects.user_id ON DELETE RESTRICT via projects.init_db() schema."""
+    users_mod, db_mod = users_db
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    importlib.reload(db_mod)
+    pm = importlib.reload(projects_mod)
+    pm._initialized = False
+    users_mod._initialized = False
+    pm.init_db()
+
+    owner = users_mod.create_user("owner2@example.com", "secret-pw")
+    pm.create_project("Owned project", user_id=owner["id"])
+
+    with db_mod.SessionLocal() as session:
+        with pytest.raises(IntegrityError):
+            session.execute(
+                text("DELETE FROM users WHERE id = :uid"), {"uid": owner["id"]}
             )
             session.commit()
