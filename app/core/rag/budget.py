@@ -9,44 +9,43 @@ injector degrades to ``K=2`` for the remaining turns of the day.
 Day rollover is implicit: callers pass ``day=utc.strftime("%Y-%m-%d")``
 and a fresh row materialises on the first read of a new date.
 
-Schema lives in its own SQLite file at ``${DATA_DIR}/rag/budget.db``
-so wipes are local and the audit DB stays focused.
+SQLAlchemy-backed via app.core.db — unified The Fork schema.
 """
 from __future__ import annotations
 
 import os
-import sqlite3
 import threading
-from contextlib import closing
 from typing import Dict
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+from app.core.db import SessionLocal, engine, get_database_url
+from app.core.models import RagBudget
+
 _LOCK = threading.RLock()
+_initialized = False
+_initialized_for_url: str | None = None
 
 
-def _db_path() -> str:
-    base = os.getenv("DATA_DIR", "./data")
-    d = os.path.join(base, "rag")
-    os.makedirs(d, exist_ok=True)
-    return os.path.join(d, "budget.db")
-
-
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
 
 def _ensure_db() -> None:
-    with _LOCK, closing(_connect()) as conn, conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rag_budget (
-                day       TEXT PRIMARY KEY,
-                consumed  INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
+    global _initialized, _initialized_for_url
+    url = get_database_url()
+    with _LOCK:
+        if not _initialized or _initialized_for_url != url:
+            _ensure_sqlite_parent_dir()
+            RagBudget.__table__.create(bind=engine, checkfirst=True)
+            _initialized = True
+            _initialized_for_url = url
 
 
 def _budget_value() -> int:
@@ -57,14 +56,25 @@ def _budget_value() -> int:
     return v if v >= 0 else 500000
 
 
+def _consume_stmt(day: str, tokens: int):
+    values = {"day": day, "consumed": int(tokens)}
+    if get_database_url().startswith("postgresql"):
+        ins = pg_insert(RagBudget).values(**values)
+    else:
+        ins = sqlite_insert(RagBudget).values(**values)
+    return ins.on_conflict_do_update(
+        index_elements=[RagBudget.day],
+        set_={"consumed": RagBudget.consumed + ins.excluded.consumed},
+    )
+
+
 def snapshot(day: str) -> Dict[str, object]:
     """Return the day's current budget state without mutating it."""
     _ensure_db()
-    with _LOCK, closing(_connect()) as conn, conn:
-        row = conn.execute(
-            "SELECT consumed FROM rag_budget WHERE day = ?", (day,)
-        ).fetchone()
-    consumed = int(row["consumed"]) if row else 0
+    with _LOCK:
+        with SessionLocal() as session:
+            row = session.get(RagBudget, day)
+    consumed = int(row.consumed) if row else 0
     budget = _budget_value()
     return {
         "day": day,
@@ -80,9 +90,7 @@ def consume(day: str, tokens: int) -> None:
     if tokens <= 0:
         return
     _ensure_db()
-    with _LOCK, closing(_connect()) as conn, conn:
-        conn.execute(
-            "INSERT INTO rag_budget (day, consumed) VALUES (?, ?) "
-            "ON CONFLICT(day) DO UPDATE SET consumed = consumed + excluded.consumed",
-            (day, int(tokens)),
-        )
+    with _LOCK:
+        with SessionLocal() as session:
+            session.execute(_consume_stmt(day, tokens))
+            session.commit()

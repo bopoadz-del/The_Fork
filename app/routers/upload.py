@@ -156,6 +156,23 @@ async def upload_v1_endpoint(
 # Document Engine Ingest Endpoint
 # ---------------------------------------------------------------------------
 
+async def _run_document_engine_block(saved_paths: dict, output_format: str = "json") -> dict:
+    """Run the document_engine platform block on decrypted file paths."""
+    if "document_engine" not in block_instances:
+        block_instances["document_engine"] = _create_block_instance(BLOCK_REGISTRY["document_engine"])
+
+    block = block_instances["document_engine"]
+    result = await block.process({
+        "pdf_path": saved_paths.get("pdf"),
+        "docx_path": saved_paths.get("docx"),
+        "xlsx_path": saved_paths.get("xlsx"),
+    }, {"output_format": output_format})
+
+    if result.get("status") == "error":
+        raise HTTPException(500, result.get("error", "Document engine failed"))
+    return result
+
+
 class IngestResponse(BaseModel):
     status: str
     documents_parsed: int
@@ -225,50 +242,20 @@ async def ingest(
             for key, p in saved_paths.items()
         }
 
-        # --- Layer 1-3: Run pipeline ---
-        from blocks.document_engine.main import parse_all
-        from blocks.document_engine.reasoner import DocumentReasoner
-        from blocks.document_engine.mapper import DocumentMapper
-        import yaml
-
-        config_path = os.path.join(DATA_DIR, "..", "blocks", "document_engine", "config.yaml")
-        config_path = os.path.abspath(config_path)
-        if not os.path.exists(config_path):
-            # Fallback: resolve from project root
-            config_path = os.path.join(os.path.dirname(__file__), "..", "..", "blocks", "document_engine", "config.yaml")
-            config_path = os.path.abspath(config_path)
-
-        if os.path.exists(config_path):
-            with open(config_path, "r") as f:
-                full_config = yaml.safe_load(f)
-            config = full_config.get("document_engine", full_config)
-        else:
-            config = {}
-
-        documents = parse_all(saved_paths, config)
-
-        reasoner = DocumentReasoner(config)
-        reasoned = reasoner.reason(documents)
-
-        mapper = DocumentMapper(config)
-        structured = mapper.map_to_structured(reasoned)
-
-        result = structured.to_dict()
-        result["status"] = "success"
-        result["documents_parsed"] = len(documents)
+        result = await _run_document_engine_block(saved_paths, output_format)
 
         if output_format == "yaml":
-            import json
+            import yaml as yaml_lib
             from fastapi.responses import PlainTextResponse
             return PlainTextResponse(
-                content=structured.to_yaml(),
+                content=yaml_lib.dump(result, sort_keys=False, allow_unicode=True),
                 media_type="application/x-yaml",
-                headers={"X-Documents-Parsed": str(len(documents))}
+                headers={"X-Documents-Parsed": str(result.get("documents_parsed", 0))},
             )
 
         return {
             "status": "success",
-            "documents_parsed": len(documents),
+            "documents_parsed": result.get("documents_parsed", 0),
             "glossary_count": len(result.get("glossary", {})),
             "requirements_count": len(result.get("requirements", [])),
             "constraints_count": len(result.get("constraints", [])),
@@ -343,19 +330,7 @@ async def ingest_via_block(
             for key, p in saved_paths.items()
         }
 
-        # Resolve or create the document_engine block instance
-        if "document_engine" not in block_instances:
-            block_instances["document_engine"] = _create_block_instance(BLOCK_REGISTRY["document_engine"])
-
-        block = block_instances["document_engine"]
-        result = await block.process({
-            "pdf_path": saved_paths.get("pdf"),
-            "docx_path": saved_paths.get("docx"),
-            "xlsx_path": saved_paths.get("xlsx"),
-        }, {"output_format": output_format})
-
-        if result.get("status") == "error":
-            raise HTTPException(500, result.get("error", "Document engine failed"))
+        result = await _run_document_engine_block(saved_paths, output_format)
 
         if output_format == "yaml":
             from fastapi.responses import PlainTextResponse

@@ -6,15 +6,21 @@ A Project is the backbone the platform was missing: documents are no longer
 processed in isolation, and project-level analytics (progress tracking, earned
 value) stay inert until the project is genuinely set up.
 
-SQLite-backed, stdlib only — no new dependency.
+SQLAlchemy-backed via app.core.db — unified The Fork schema.
 """
 
+from __future__ import annotations
+
 import os
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from sqlalchemy import delete, select
+
+from app.core.db import SessionLocal, engine, get_database_url
+from app.core.models import Document, Project, ProjectFact
 
 # ── document roles that feed the readiness gate ─────────────────────────────
 ROLE_BASELINE = "baseline_schedule"
@@ -31,86 +37,64 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _db_path() -> str:
-    """Resolve the DB path from DATA_DIR at call time (so tests can relocate it)."""
-    data_dir = os.getenv("DATA_DIR", "./data")
-    try:
-        os.makedirs(data_dir, exist_ok=True)
-    except OSError:
-        import tempfile
-        data_dir = tempfile.gettempdir()
-    return os.path.join(data_dir, "projects.db")
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def _project_as_dict(project: Project) -> Dict[str, Any]:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "client": project.client,
+        "status": project.status,
+        "aconex_connected": bool(project.aconex_connected),
+        "user_id": project.user_id,
+        "created_at": project.created_at,
+    }
+
+
+def _document_as_dict(document: Document) -> Dict[str, Any]:
+    return {
+        "id": document.id,
+        "project_id": document.project_id,
+        "original_name": document.original_name,
+        "stored_as": document.stored_as,
+        "file_path": document.file_path,
+        "doc_type": document.doc_type,
+        "doc_role": document.doc_role,
+        "size": document.size,
+        "uploaded_at": document.uploaded_at,
+        "content_sha256": document.content_sha256,
+    }
+
+
+def _fact_as_dict(fact: ProjectFact) -> Dict[str, Any]:
+    return {
+        "id": fact.id,
+        "project_id": fact.project_id,
+        "key": fact.key,
+        "value": fact.value,
+        "source_document": fact.source_document,
+        "confidence": fact.confidence,
+        "updated_at": fact.updated_at,
+    }
 
 
 def init_db() -> None:
     """Create the schema if absent. Idempotent — safe to call on every startup."""
     global _initialized
     with _lock:
-        with _connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS projects (
-                    id               TEXT PRIMARY KEY,
-                    name             TEXT NOT NULL,
-                    client           TEXT,
-                    status           TEXT NOT NULL DEFAULT 'active',
-                    aconex_connected INTEGER NOT NULL DEFAULT 0,
-                    user_id          TEXT NOT NULL DEFAULT 'system',
-                    created_at       TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS documents (
-                    id            TEXT PRIMARY KEY,
-                    project_id    TEXT NOT NULL
-                                  REFERENCES projects(id) ON DELETE CASCADE,
-                    original_name TEXT NOT NULL,
-                    stored_as     TEXT,
-                    file_path     TEXT,
-                    doc_type      TEXT NOT NULL DEFAULT 'document',
-                    doc_role      TEXT NOT NULL DEFAULT 'other',
-                    size          INTEGER NOT NULL DEFAULT 0,
-                    uploaded_at   TEXT NOT NULL,
-                    content_sha256 TEXT
-                );
-                CREATE TABLE IF NOT EXISTS project_facts (
-                    id              TEXT PRIMARY KEY,
-                    project_id      TEXT NOT NULL
-                                    REFERENCES projects(id) ON DELETE CASCADE,
-                    key             TEXT NOT NULL,
-                    value           TEXT NOT NULL,
-                    source_document TEXT,
-                    confidence      REAL,
-                    updated_at      TEXT NOT NULL,
-                    UNIQUE(project_id, key)
-                );
-                """
-            )
-            # Migration for legacy DBs that don't have the user_id column yet.
-            cols = [r[1] for r in conn.execute(
-                "PRAGMA table_info(projects)"
-            ).fetchall()]
-            if "user_id" not in cols:
-                conn.execute(
-                    "ALTER TABLE projects ADD COLUMN user_id TEXT"
-                )
-                conn.execute(
-                    "UPDATE projects SET user_id = 'system' WHERE user_id IS NULL"
-                )
-            # Migration for legacy DBs that don't have the content_sha256 column
-            # on documents yet. Idempotent — only runs the ALTER if absent.
-            cols = [r[1] for r in conn.execute(
-                "PRAGMA table_info(documents)"
-            ).fetchall()]
-            if "content_sha256" not in cols:
-                conn.execute(
-                    "ALTER TABLE documents ADD COLUMN content_sha256 TEXT"
-                )
+        from app.core.users import init_db as init_users_db
+
+        init_users_db()
+        _ensure_sqlite_parent_dir()
+        Project.__table__.create(bind=engine, checkfirst=True)
+        Document.__table__.create(bind=engine, checkfirst=True)
+        ProjectFact.__table__.create(bind=engine, checkfirst=True)
         _initialized = True
 
 
@@ -161,31 +145,33 @@ def classify_doc_role(filename: str) -> str:
 def create_project(name: str, client: Optional[str] = None, user_id: str = "system") -> Dict[str, Any]:
     _ensure_db()
     pid = str(uuid.uuid4())[:8]
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO projects (id, name, client, status, aconex_connected, user_id, created_at) "
-            "VALUES (?, ?, ?, 'active', 0, ?, ?)",
-            (pid, name, client, user_id, _now()),
-        )
+    with _lock:
+        with SessionLocal() as session:
+            session.add(
+                Project(
+                    id=pid,
+                    name=name,
+                    client=client,
+                    status="active",
+                    aconex_connected=False,
+                    user_id=user_id,
+                    created_at=_now(),
+                )
+            )
+            session.commit()
     return get_project(pid)
 
 
 def list_projects(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     _ensure_db()
-    with _connect() as conn:
+    with SessionLocal() as session:
+        stmt = select(Project).order_by(Project.created_at.desc())
         if user_id is not None:
-            rows = conn.execute(
-                "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC",
-                (user_id,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM projects ORDER BY created_at DESC"
-            ).fetchall()
+            stmt = stmt.where(Project.user_id == user_id)
+        rows = session.scalars(stmt).all()
     out = []
-    for r in rows:
-        p = dict(r)
-        p["aconex_connected"] = bool(p["aconex_connected"])
+    for project in rows:
+        p = _project_as_dict(project)
         p["readiness"] = compute_readiness(p["id"])
         out.append(p)
     return out
@@ -193,16 +179,13 @@ def list_projects(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
 
 def get_project(project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM projects WHERE id = ?", (project_id,)
-        ).fetchone()
-    if not row:
+    with SessionLocal() as session:
+        project = session.get(Project, project_id)
+    if not project:
         return None
-    if user_id is not None and row["user_id"] != user_id:
+    if user_id is not None and project.user_id != user_id:
         return None
-    proj = dict(row)
-    proj["aconex_connected"] = bool(proj["aconex_connected"])
+    proj = _project_as_dict(project)
     proj["documents"] = list_documents(project_id)
     proj["readiness"] = compute_readiness(project_id)
     return proj
@@ -211,30 +194,35 @@ def get_project(project_id: str, user_id: Optional[str] = None) -> Optional[Dict
 def project_owner(project_id: str) -> Optional[str]:
     """Return the user_id that owns the project, or None if the project doesn't exist."""
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT user_id FROM projects WHERE id = ?", (project_id,)
-        ).fetchone()
-    return row["user_id"] if row else None
+    with SessionLocal() as session:
+        project = session.get(Project, project_id)
+    return project.user_id if project else None
 
 
 def delete_project(project_id: str) -> bool:
     """Delete a project and (via ON DELETE CASCADE) all its document rows."""
     _ensure_db()
-    with _lock, _connect() as conn:
-        cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-        return cur.rowcount > 0
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            session.delete(project)
+            session.commit()
+            return True
 
 
 def set_aconex(project_id: str, connected: bool) -> bool:
     """Set the Aconex connection flag. Stub for the full connector (Roadmap V2)."""
     _ensure_db()
-    with _lock, _connect() as conn:
-        cur = conn.execute(
-            "UPDATE projects SET aconex_connected = ? WHERE id = ?",
-            (1 if connected else 0, project_id),
-        )
-        return cur.rowcount > 0
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            project.aconex_connected = connected
+            session.commit()
+            return True
 
 
 # ── documents ───────────────────────────────────────────────────────────────
@@ -253,18 +241,27 @@ def add_document(
     did = str(uuid.uuid4())[:8]
     doc_type = classify_doc_type(original_name)
     doc_role = role if role in VALID_ROLES else classify_doc_role(original_name)
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO documents "
-            "(id, project_id, original_name, stored_as, file_path, doc_type, "
-            " doc_role, size, uploaded_at, content_sha256) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (did, project_id, original_name, stored_as, file_path,
-             doc_type, doc_role, size, _now(), content_sha256),
-        )
-    with _connect() as conn:
-        row = conn.execute("SELECT * FROM documents WHERE id = ?", (did,)).fetchone()
-    return dict(row)
+    with _lock:
+        with SessionLocal() as session:
+            session.add(
+                Document(
+                    id=did,
+                    project_id=project_id,
+                    original_name=original_name,
+                    stored_as=stored_as,
+                    file_path=file_path,
+                    doc_type=doc_type,
+                    doc_role=doc_role,
+                    size=size,
+                    uploaded_at=_now(),
+                    content_sha256=content_sha256,
+                )
+            )
+            session.commit()
+    with SessionLocal() as session:
+        document = session.get(Document, did)
+    assert document is not None
+    return _document_as_dict(document)
 
 
 def find_document_by_sha(
@@ -277,32 +274,35 @@ def find_document_by_sha(
     if not content_sha256:
         return None
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM documents WHERE project_id = ? AND content_sha256 = ? "
-            "ORDER BY uploaded_at LIMIT 1",
-            (project_id, content_sha256),
-        ).fetchone()
-    return dict(row) if row else None
+    with SessionLocal() as session:
+        document = session.scalars(
+            select(Document)
+            .where(
+                Document.project_id == project_id,
+                Document.content_sha256 == content_sha256,
+            )
+            .order_by(Document.uploaded_at)
+            .limit(1)
+        ).first()
+    return _document_as_dict(document) if document else None
 
 
 def list_documents(project_id: str) -> List[Dict[str, Any]]:
     _ensure_db()
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM documents WHERE project_id = ? ORDER BY uploaded_at",
-            (project_id,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(Document)
+            .where(Document.project_id == project_id)
+            .order_by(Document.uploaded_at)
+        ).all()
+    return [_document_as_dict(document) for document in rows]
 
 
 def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM documents WHERE id = ?", (doc_id,)
-        ).fetchone()
-    return dict(row) if row else None
+    with SessionLocal() as session:
+        document = session.get(Document, doc_id)
+    return _document_as_dict(document) if document else None
 
 
 def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
@@ -311,8 +311,12 @@ def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
     doc = get_document(doc_id)
     if not doc:
         return None
-    with _lock, _connect() as conn:
-        conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document:
+                session.delete(document)
+                session.commit()
     return doc
 
 
@@ -321,14 +325,17 @@ def purge_documents_older_than(days: int) -> List[Dict[str, Any]]:
     (Roadmap V2 · Epic 6 — data retention)."""
     _ensure_db()
     from datetime import timedelta
+
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM documents WHERE uploaded_at < ?", (cutoff,)
-        ).fetchall()
-        purged = [dict(r) for r in rows]
-    with _lock, _connect() as conn:
-        conn.execute("DELETE FROM documents WHERE uploaded_at < ?", (cutoff,))
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(Document).where(Document.uploaded_at < cutoff)
+        ).all()
+        purged = [_document_as_dict(document) for document in rows]
+    with _lock:
+        with SessionLocal() as session:
+            session.execute(delete(Document).where(Document.uploaded_at < cutoff))
+            session.commit()
     return purged
 
 
@@ -339,11 +346,9 @@ def compute_readiness(project_id: str) -> Dict[str, Any]:
     schedule, at least one daily and one weekly report, and Aconex connected."""
     docs = list_documents(project_id)
     roles = [d["doc_role"] for d in docs]
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT aconex_connected FROM projects WHERE id = ?", (project_id,)
-        ).fetchone()
-    aconex = bool(row["aconex_connected"]) if row else False
+    with SessionLocal() as session:
+        project = session.get(Project, project_id)
+    aconex = bool(project.aconex_connected) if project else False
 
     baseline = ROLE_BASELINE in roles
     daily = roles.count(ROLE_DAILY)
@@ -380,38 +385,57 @@ def set_fact(
 ) -> Optional[Dict[str, Any]]:
     """Upsert a durable fact for a project (one row per project+key)."""
     _ensure_db()
-    fid = str(uuid.uuid4())[:8]
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO project_facts "
-            "(id, project_id, key, value, source_document, confidence, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(project_id, key) DO UPDATE SET "
-            "value=excluded.value, source_document=excluded.source_document, "
-            "confidence=excluded.confidence, updated_at=excluded.updated_at",
-            (fid, project_id, key, str(value), source_document, confidence, _now()),
-        )
+    now = _now()
+    with _lock:
+        with SessionLocal() as session:
+            existing = session.scalars(
+                select(ProjectFact).where(
+                    ProjectFact.project_id == project_id,
+                    ProjectFact.key == key,
+                )
+            ).one_or_none()
+            if existing:
+                existing.value = str(value)
+                existing.source_document = source_document
+                existing.confidence = confidence
+                existing.updated_at = now
+            else:
+                session.add(
+                    ProjectFact(
+                        id=str(uuid.uuid4())[:8],
+                        project_id=project_id,
+                        key=key,
+                        value=str(value),
+                        source_document=source_document,
+                        confidence=confidence,
+                        updated_at=now,
+                    )
+                )
+            session.commit()
     return get_fact(project_id, key)
 
 
 def get_fact(project_id: str, key: str) -> Optional[Dict[str, Any]]:
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM project_facts WHERE project_id = ? AND key = ?",
-            (project_id, key),
-        ).fetchone()
-    return dict(row) if row else None
+    with SessionLocal() as session:
+        fact = session.scalars(
+            select(ProjectFact).where(
+                ProjectFact.project_id == project_id,
+                ProjectFact.key == key,
+            )
+        ).one_or_none()
+    return _fact_as_dict(fact) if fact else None
 
 
 def list_facts(project_id: str) -> List[Dict[str, Any]]:
     _ensure_db()
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM project_facts WHERE project_id = ? ORDER BY key",
-            (project_id,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(ProjectFact)
+            .where(ProjectFact.project_id == project_id)
+            .order_by(ProjectFact.key)
+        ).all()
+    return [_fact_as_dict(fact) for fact in rows]
 
 
 def search_facts(project_id: str, query: str) -> List[Dict[str, Any]]:
@@ -428,9 +452,16 @@ def search_facts(project_id: str, query: str) -> List[Dict[str, Any]]:
 
 def delete_fact(project_id: str, key: str) -> bool:
     _ensure_db()
-    with _lock, _connect() as conn:
-        cur = conn.execute(
-            "DELETE FROM project_facts WHERE project_id = ? AND key = ?",
-            (project_id, key),
-        )
-        return cur.rowcount > 0
+    with _lock:
+        with SessionLocal() as session:
+            fact = session.scalars(
+                select(ProjectFact).where(
+                    ProjectFact.project_id == project_id,
+                    ProjectFact.key == key,
+                )
+            ).one_or_none()
+            if not fact:
+                return False
+            session.delete(fact)
+            session.commit()
+            return True

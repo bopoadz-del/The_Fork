@@ -12,8 +12,10 @@ from __future__ import annotations
 import pytest
 
 from app.routers.chat import _with_domain_hint
+from tests.conftest import requires_construction_kit
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_hint_prepended_when_message_clearly_about_boq():
     """A message with strong BOQ keywords should get a Bill-of-Quantities hint."""
@@ -34,6 +36,7 @@ async def test_no_hint_when_message_is_pure_smalltalk():
     assert out == msg
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_hint_for_specification_keywords():
     msg = "Check this specification against ACI 318 compliance."
@@ -101,6 +104,7 @@ def test_generative_intents_includes_wbs_and_workflow():
     assert "intelligent_workflow" in GENERATIVE_INTENTS
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_classify_wbs_message_routes_to_heavy_reasoning():
     """The user's 'create a 200 activities schedule' should classify as a

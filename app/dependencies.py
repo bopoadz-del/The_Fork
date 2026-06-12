@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import logging
 import os
-import sys
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, HTTPException
@@ -17,11 +16,9 @@ from app.core import users as users_store
 
 logger = logging.getLogger(__name__)
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # HAL initialization
 try:
-    from blocks.hal.src.detector import HALBlock
+    from app.infra.hal import HALBlock
     _hal = HALBlock()
 except Exception as e:
     logger.warning("HALBlock not available during startup: %s", e)
@@ -69,7 +66,14 @@ def _wire_block_dependencies(instance, block_class, name: str = None):
 
 def get_block_instance(block_name: str) -> Any:
     if block_name not in block_instances:
-        block_class = BLOCK_REGISTRY[block_name]
+        block_class = BLOCK_REGISTRY.get(block_name)
+        if block_class is None:
+            detail = (
+                f"{block_name} kit not enabled — set CEREBRUM_DOMAIN_KITS"
+                if block_name == "construction"
+                else f"Block '{block_name}' is not loaded in the current boot profile"
+            )
+            raise HTTPException(status_code=503, detail=detail)
         block_instances[block_name] = _create_block_instance(block_class)
         _wire_block_dependencies(block_instances[block_name], block_class, block_name)
     return block_instances[block_name]
@@ -79,7 +83,7 @@ def get_block_instance(block_name: str) -> Any:
 _memory_block = None
 
 try:
-    from blocks.memory.src.block import MemoryBlock
+    from app.infra.memory import MemoryBlock
 
     def get_memory_block():
         global _memory_block
@@ -99,7 +103,7 @@ except Exception as e:
 _monitoring_block = None
 
 try:
-    from blocks.monitoring.src.block import MonitoringBlock
+    from app.infra.monitoring import MonitoringBlock
 
     def get_monitoring_block():
         global _monitoring_block
@@ -120,7 +124,7 @@ except Exception as e:
 _auth_block = None
 
 try:
-    from blocks.auth.src.block import AuthBlock
+    from app.infra.auth import AuthBlock
 
     def get_auth_block():
         global _auth_block

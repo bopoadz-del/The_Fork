@@ -28,6 +28,30 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
+def _init_sentry() -> bool:
+    """Initialize Sentry when SENTRY_DSN is set. No-op otherwise."""
+    dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not dsn:
+        return False
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[
+            StarletteIntegration(),
+            FastApiIntegration(),
+        ],
+        environment=os.getenv("ENV", os.getenv("ENVIRONMENT", "production")),
+        send_default_pii=False,
+    )
+    return True
+
+
+_SENTRY_ENABLED = _init_sentry()
+
 from app.blocks import BLOCK_REGISTRY
 from app.dependencies import block_instances, _create_block_instance, init_blocks
 from app.routers import (
@@ -122,6 +146,8 @@ async def lifespan(app: FastAPI):
     init_doc_index_db()
     from app.core.hydration_store import init_db as init_hydration_db
     init_hydration_db()
+    from app.core import rate_limit as _rate_limit_startup
+    logger.info("Rate limiter backend: %s", _rate_limit_startup.init_rate_limiter())
     from app.core.session_store import get_session_store
     from app.routers import project as project_router
     app.state.project_store = get_session_store()
@@ -227,7 +253,18 @@ async def rate_limit_middleware(request: Request, call_next):
             content={"status": "error",
                      "error": "Rate limit exceeded — too many requests."},
         )
-    return await call_next(request)
+    response = await call_next(request)
+    if (
+        _SENTRY_ENABLED
+        and response.status_code >= 500
+        and not getattr(request.state, "sentry_captured", False)
+    ):
+        import sentry_sdk
+        sentry_sdk.capture_message(
+            f"5xx response: {request.method} {request.url.path} ({response.status_code})",
+            level="error",
+        )
+    return response
 
 
 # ── Unified error envelope ────────────────────────────────────────────────
@@ -268,7 +305,11 @@ def _envelope(status: int, message: str, code: str | None = None, details=None):
 
 
 @app.exception_handler(StarletteHTTPException)
-async def _http_exception_handler(_request: Request, exc: StarletteHTTPException):
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if _SENTRY_ENABLED and exc.status_code >= 500:
+        import sentry_sdk
+        sentry_sdk.capture_exception(exc)
+        request.state.sentry_captured = True
     detail = exc.detail
     if isinstance(detail, dict):
         msg = str(detail.get("message") or detail.get("error") or detail.get("detail") or "")
@@ -291,6 +332,10 @@ async def _validation_exception_handler(_request: Request, exc: RequestValidatio
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    if _SENTRY_ENABLED:
+        import sentry_sdk
+        sentry_sdk.capture_exception(exc)
+        request.state.sentry_captured = True
     # Never leak internal stack traces in the response — log them, return generic.
     return JSONResponse(
         status_code=500,

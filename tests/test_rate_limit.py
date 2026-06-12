@@ -9,7 +9,7 @@ from app.core import rate_limit
 
 def test_check_and_record_allows_then_blocks(monkeypatch):
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "5")
-    rate_limit._buckets.clear()
+    rate_limit.reset_for_tests()
 
     ident = "unit-test-id"
     assert all(rate_limit.check_and_record(ident) for _ in range(5))
@@ -19,13 +19,13 @@ def test_check_and_record_allows_then_blocks(monkeypatch):
 
 def test_disabled_when_limit_is_zero(monkeypatch):
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "0")
-    rate_limit._buckets.clear()
+    rate_limit.reset_for_tests()
     assert all(rate_limit.check_and_record("anything") for _ in range(100))
 
 
 def test_identities_have_independent_budgets(monkeypatch):
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
-    rate_limit._buckets.clear()
+    rate_limit.reset_for_tests()
 
     assert rate_limit.check_and_record("caller-A")
     assert rate_limit.check_and_record("caller-A")
@@ -37,7 +37,7 @@ def test_identities_have_independent_budgets(monkeypatch):
 def test_middleware_returns_429_over_the_limit(monkeypatch):
     """The HTTP middleware throttles a caller regardless of auth type."""
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "3")
-    rate_limit._buckets.clear()
+    rate_limit.reset_for_tests()
 
     with TestClient(app) as c:
         headers = {"Authorization": "Bearer rate-limit-probe-token"}

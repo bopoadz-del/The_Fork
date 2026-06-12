@@ -18,6 +18,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from tests.conftest import requires_construction_kit
+
 
 # ── DATA_DIR isolation fixture ─────────────────────────────────────────────
 
@@ -35,15 +37,41 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     # Reset module-level init flags so the fresh DATA_DIR actually gets a schema
     from app.core import agent_memory as _am
+    from app.core import hydration_store as _hs
     from app.core import projects as _proj
     if hasattr(_am, "_initialized"):
         _am._initialized = False
+    if hasattr(_hs, "_initialized"):
+        _hs._initialized = False
+    if hasattr(_hs, "_initialized_for_url"):
+        _hs._initialized_for_url = None
     if hasattr(_proj, "_initialized"):
         _proj._initialized = False
     yield tmp_path
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _ensure_project_row(project_id: str) -> None:
+    """Stub project row for hydration_runs FK (unified schema)."""
+    from app.core import projects as projects_store, users as users_mod
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+
+    projects_store.init_db()
+    users_mod.ensure_user_exists("system")
+    with SessionLocal() as session:
+        if session.get(Project, project_id) is None:
+            session.add(
+                Project(
+                    id=project_id,
+                    name=project_id,
+                    user_id="system",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            session.commit()
 
 
 def _seed_conversation(project_id: str, ts: str, user_msg: str, assistant_msg: str) -> str:
@@ -55,6 +83,7 @@ def _seed_conversation(project_id: str, ts: str, user_msg: str, assistant_msg: s
     import uuid as _uuid
     from app.core import agent_memory
 
+    _ensure_project_row(project_id)
     agent_memory.init_db()
     original = agent_memory._now
     agent_memory._now = lambda: ts  # type: ignore[assignment]
@@ -78,6 +107,7 @@ def _seed_conversation(project_id: str, ts: str, user_msg: str, assistant_msg: s
 def test_store_init_and_roundtrip(isolated_data_dir):
     from app.core import hydration_store
 
+    _ensure_project_row("p1")
     hydration_store.init_db()
     rid = hydration_store.record_run(
         run_date="2026-05-26",
@@ -101,6 +131,7 @@ def test_store_init_and_roundtrip(isolated_data_dir):
 def test_store_scope_validation(isolated_data_dir):
     from app.core import hydration_store
 
+    _ensure_project_row("p1")
     hydration_store.init_db()
     with pytest.raises(ValueError):
         hydration_store.record_run(
@@ -290,6 +321,7 @@ def test_scheduler_hour_clamped_to_valid_range(monkeypatch):
 # ── Registry sanity (post-merge) ───────────────────────────────────────────
 
 
+@requires_construction_kit
 def test_standalone_hydration_block_is_retired():
     """After the merge into learning_engine, there is no `hydration` block —
     only the `hydrate` operation on learning_engine."""
@@ -303,6 +335,7 @@ def test_standalone_hydration_block_is_retired():
     )
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_hydrate_operation_on_learning_engine(isolated_data_dir, monkeypatch):
     """The merged path: call the public learning_engine block with operation=hydrate."""
@@ -343,8 +376,10 @@ def _make_dropbox_file(tmp_path, project_id: str, filename: str, content: bytes 
 def _make_project(name: str = "test-project") -> str:
     """Create a real project row and return its generated id."""
     from app.core import projects as projects_store
+    from app.core import users as users_mod
 
     projects_store.init_db()
+    users_mod.ensure_user_exists("u1")
     p = projects_store.create_project(name=name, user_id="u1")
     return p["id"]
 
@@ -889,6 +924,7 @@ async def test_hydration_writes_back_to_agent_facts(isolated_data_dir, monkeypat
     assert any("concrete" in a.lower() for a in payload["asks"])
 
 
+@requires_construction_kit
 @pytest.mark.asyncio
 async def test_hydration_records_friction_patterns_on_learning_engine(
     isolated_data_dir, monkeypatch, tmp_path

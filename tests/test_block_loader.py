@@ -38,8 +38,15 @@ def test_loader_isolates_a_broken_block():
 
 def test_class_reexports_still_work():
     """`from app.blocks import XBlock` keeps working for loaded blocks."""
-    from app.blocks import ChatBlock, LocalDriveBlock, VectorSearchBlock
+    from app.blocks import ChatBlock, VectorSearchBlock
 
     assert ChatBlock is BLOCK_REGISTRY["chat"]
-    assert LocalDriveBlock is BLOCK_REGISTRY["local_drive"]
     assert VectorSearchBlock is BLOCK_REGISTRY["vector_search"]
+    if "local_drive" in BLOCK_REGISTRY:
+        from app.blocks import LocalDriveBlock
+
+        assert LocalDriveBlock is BLOCK_REGISTRY["local_drive"]
+    else:
+        from app.blocks.local_drive import LocalDriveBlock
+
+        assert LocalDriveBlock.__name__ == "LocalDriveBlock"

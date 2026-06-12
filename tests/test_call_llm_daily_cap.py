@@ -50,19 +50,41 @@ def fresh_usage_db(monkeypatch):
 
 def _seed_usage(user_id: str, cost_usd: float):
     """Insert a runs row attributed to today so daily_total() returns it."""
-    from app.core import usage_tracker
     from datetime import datetime, timezone
+
+    from app.core import usage_tracker
+    from app.core.db import SessionLocal, get_database_url
+    from app.core.models import UsageRun
+
     usage_tracker.init_db()
-    with sqlite3.connect(usage_tracker._db_path()) as conn:
-        conn.execute(
-            "INSERT INTO runs (id, user_id, agent_name, provider, model, "
-            "prompt_tokens, completion_tokens, total_tokens, "
-            "estimated_cost_usd, created_at) VALUES "
-            "(?, ?, 'x', 'groq', 'm', 0, 0, 0, ?, ?)",
-            ("seed-" + user_id, user_id, cost_usd,
-             datetime.now(timezone.utc).isoformat()),
+    now = datetime.now(timezone.utc).isoformat()
+    if get_database_url().startswith("sqlite"):
+        with sqlite3.connect(usage_tracker._db_path()) as conn:
+            conn.execute(
+                "INSERT INTO runs (id, user_id, agent_name, provider, model, "
+                "prompt_tokens, completion_tokens, total_tokens, "
+                "estimated_cost_usd, created_at) VALUES "
+                "(?, ?, 'x', 'groq', 'm', 0, 0, 0, ?, ?)",
+                ("seed-" + user_id, user_id, cost_usd, now),
+            )
+            conn.commit()
+        return
+    with SessionLocal() as session:
+        session.add(
+            UsageRun(
+                id="seed-" + user_id,
+                user_id=user_id,
+                agent_name="x",
+                provider="groq",
+                model="m",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                estimated_cost_usd=cost_usd,
+                created_at=now,
+            )
         )
-        conn.commit()
+        session.commit()
 
 
 # ── short-circuit when over cap ──────────────────────────────────────────────

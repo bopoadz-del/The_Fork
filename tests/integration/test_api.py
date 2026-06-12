@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from tests.conftest import listable_block_count
 
 client = TestClient(app, headers={"Authorization": "Bearer cb_dev_key"})
 
@@ -23,8 +24,8 @@ class TestAPIEndpoints:
         data = response.json()
         assert "blocks" in data
         assert "total" in data
-        # count grows as new blocks are added — just ensure minimum
-        assert data["total"] >= 23
+        # count tracks boot mode (virgin generic vs kit / extended platform)
+        assert data["total"] >= listable_block_count()
         
         # Check that vector_search is included
         block_names = [b["name"] for b in data["blocks"]]
@@ -167,9 +168,17 @@ class TestChainEndpoint:
         assert response.status_code in [200, 422]
 
 
+@pytest.mark.extended_boot
 class TestDriveEndpoints:
-    """Tests for drive-specific endpoints."""
-    
+    """Tests for drive-specific endpoints (extended platform boot only)."""
+
+    @pytest.fixture(autouse=True)
+    def _require_extended_boot(self):
+        from tests.conftest import is_extended_boot
+
+        if not is_extended_boot():
+            pytest.skip("requires CEREBRUM_VIRGIN=false")
+
     def test_local_drive_list(self):
         """Test local drive via execute endpoint."""
         response = client.post("/execute", json={

@@ -1,17 +1,22 @@
 """User accounts store — Stream A (User Accounts & Multi-Tenancy).
 
-SQLite-backed, stdlib only. Mirrors app/core/projects.py DB conventions.
+SQLAlchemy-backed via app.core.db. Mirrors legacy store API.
 A singleton 'system' user is auto-created; legacy API keys resolve to it.
 """
 import hashlib
 import hmac
 import os
 import secrets
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from app.core.db import SessionLocal, engine, get_database_url
+from app.core.models import User
 
 SYSTEM_USER_ID = "system"
 
@@ -25,48 +30,46 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _db_path() -> str:
-    """Resolve the DB path from DATA_DIR at call time (so tests can relocate it)."""
-    data_dir = os.getenv("DATA_DIR", "./data")
-    try:
-        os.makedirs(data_dir, exist_ok=True)
-    except OSError:
-        import tempfile
-        data_dir = tempfile.gettempdir()
-    return os.path.join(data_dir, "users.db")
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def _as_dict(user: User) -> Dict[str, Any]:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "password_hash": user.password_hash,
+        "salt": user.salt,
+        "display_name": user.display_name,
+        "role": user.role,
+        "created_at": user.created_at,
+    }
 
 
 def init_db() -> None:
     """Create the users schema if absent; auto-create the system user."""
     global _initialized
     with _lock:
-        with _connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id            TEXT PRIMARY KEY,
-                    email         TEXT NOT NULL UNIQUE,
-                    password_hash TEXT,
-                    salt          TEXT,
-                    display_name  TEXT,
-                    role          TEXT NOT NULL DEFAULT 'user',
-                    created_at    TEXT NOT NULL
-                );
-                """
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO users "
-                "(id, email, password_hash, salt, display_name, role, created_at) "
-                "VALUES (?, ?, NULL, NULL, ?, 'admin', ?)",
-                (SYSTEM_USER_ID, "system@local", "System", _now()),
-            )
+        _ensure_sqlite_parent_dir()
+        User.__table__.create(bind=engine, checkfirst=True)
+        with SessionLocal() as session:
+            if session.get(User, SYSTEM_USER_ID) is None:
+                session.add(
+                    User(
+                        id=SYSTEM_USER_ID,
+                        email="system@local",
+                        password_hash=None,
+                        salt=None,
+                        display_name="System",
+                        role="admin",
+                        created_at=_now(),
+                    )
+                )
+                session.commit()
         _initialized = True
 
 
@@ -75,22 +78,46 @@ def _ensure_db() -> None:
         init_db()
 
 
+def ensure_user_exists(
+    user_id: str,
+    *,
+    email: Optional[str] = None,
+    display_name: Optional[str] = None,
+    role: str = "user",
+) -> None:
+    """Idempotently ensure a user row exists (satisfies projects.user_id FK)."""
+    _ensure_db()
+    with SessionLocal() as session:
+        if session.get(User, user_id) is not None:
+            return
+        session.add(
+            User(
+                id=user_id,
+                email=(email or f"{user_id}@local").lower(),
+                password_hash=None,
+                salt=None,
+                display_name=display_name or user_id,
+                role=role,
+                created_at=_now(),
+            )
+        )
+        session.commit()
+
+
 def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
-    return dict(row) if row else None
+    with SessionLocal() as session:
+        user = session.get(User, user_id)
+    return _as_dict(user) if user else None
 
 
 def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     _ensure_db()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM users WHERE email = ?", ((email or "").lower(),)
-        ).fetchone()
-    return dict(row) if row else None
+    with SessionLocal() as session:
+        user = session.scalars(
+            select(User).where(User.email == (email or "").lower())
+        ).one_or_none()
+    return _as_dict(user) if user else None
 
 
 # ── password hashing (PBKDF2-HMAC-SHA256, stdlib only) ──────────────────────
@@ -132,14 +159,24 @@ def create_user(
         raise ValueError(f"email '{email}' is already registered")
     uid = str(uuid.uuid4())[:8]
     creds = hash_password(password)
-    with _lock, _connect() as conn:
+    with _lock:
+        session = SessionLocal()
         try:
-            conn.execute(
-                "INSERT INTO users (id, email, password_hash, salt, "
-                "display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (uid, email, creds["hash"], creds["salt"],
-                 display_name or email, role, _now()),
+            session.add(
+                User(
+                    id=uid,
+                    email=email,
+                    password_hash=creds["hash"],
+                    salt=creds["salt"],
+                    display_name=display_name or email,
+                    role=role,
+                    created_at=_now(),
+                )
             )
-        except sqlite3.IntegrityError:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
             raise ValueError(f"email '{email}' is already registered")
+        finally:
+            session.close()
     return _public(get_user_by_id(uid))

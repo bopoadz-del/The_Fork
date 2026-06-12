@@ -11,6 +11,16 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - profile: virgin
+            cerebrum_virgin: "true"
+            cerebrum_domain_kits: ""
+          - profile: production-like
+            cerebrum_virgin: "false"
+            cerebrum_domain_kits: "construction"
+    name: test (${{ matrix.profile }})
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,6 +66,8 @@ jobs:
         env:
           ENV: testing
           DATA_DIR: ${{ runner.temp }}/data
+          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
+          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
 
       - name: Diff coverage (per-PR gate on lines changed)
         # Runs only on pull_request events. Compares coverage.xml against
@@ -89,6 +101,58 @@ jobs:
             diff-cover.html
             diff-cover.md
           retention-days: 14
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: thefork
+          POSTGRES_PASSWORD: thefork
+          POSTGRES_DB: thefork
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://thefork:thefork@localhost:5432/thefork
+      PYTEST_USE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system deps for OCR + PDF
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Apply Alembic schema
+        run: alembic upgrade head
+
+      - name: Run tests (PostgreSQL)
+        run: >
+          pytest tests/ -v --tb=short --ignore=tests/browser
+          --cov=app --cov-report=term-missing --cov-fail-under=25
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data
+          CEREBRUM_VIRGIN: "true"
+          CEREBRUM_DOMAIN_KITS: ""
+          RAG_EMBEDDING_MODEL: fake
 
   browser-tests:
     runs-on: ubuntu-latest

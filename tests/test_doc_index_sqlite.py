@@ -7,7 +7,15 @@ import sys
 import threading
 import time
 
+import pytest
+
 from app.core import doc_index
+from tests.conftest import _postgres_test_mode
+
+pytestmark = pytest.mark.skipif(
+    _postgres_test_mode(),
+    reason="SQLite-specific doc_index concurrency tests",
+)
 
 
 # ── Cross-process worker (module-level so multiprocessing.Process can pickle it) ──

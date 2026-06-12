@@ -25,26 +25,39 @@ Public API
 * ``_data_dir() -> str``
     DATA_DIR env at call time, with tempfile fallback.
 
-The index is persisted in a dedicated SQLite DB (one JSON row per project),
+The index is persisted in the unified The Fork DB (one JSON row per project),
 so the read-modify-write in ``index_document`` runs in a real transaction —
 concurrent updates, including across worker processes, serialise instead of
 overwriting each other.
+
+SQLAlchemy-backed via app.core.db — unified The Fork schema.
 """
+
+from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import copy
 import json
 import os
 import re
 import sqlite3
 import tempfile
 import threading
-from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import zlib
+
+from sqlalchemy import delete, insert, select, text, update
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.core import file_crypto
 from app.core import projects as _projects
+from app.core.db import SessionLocal, engine, get_database_url, get_engine
+from app.core.models import DocIndex, Project
 
 # Image extensions — Stream F runs OCR on these to make scanned drawings /
 # photos searchable. They are SUPPORTED (not "unsupported_type") even when OCR
@@ -65,6 +78,8 @@ _PDF_OCR_THRESHOLD = 30
 # SQLite BEGIN IMMEDIATE transaction in _update_index; this lock just avoids
 # threads in one process contending on the DB lock unnecessarily.
 _INDEX_LOCK = threading.RLock()
+_initialized = False
+_initialized_for_url: str | None = None
 
 
 # ── sync → async bridge ────────────────────────────────────────────────────────
@@ -136,22 +151,17 @@ def _data_dir() -> str:
     return data_dir
 
 
-def _db_path() -> str:
-    """Path to the SQLite DB holding every project's index."""
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+
+def _legacy_db_path() -> str:
+    """Pre-unified layout: dedicated SQLite file under DATA_DIR."""
     return os.path.join(_data_dir(), "doc_index.db")
-
-
-def _connect() -> sqlite3.Connection:
-    """Open the index DB, ensuring the schema exists (idempotent, cheap)."""
-    conn = sqlite3.connect(_db_path(), timeout=30.0)
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS doc_index ("
-        "project_id TEXT PRIMARY KEY, "
-        "index_json TEXT NOT NULL, "
-        "updated_at TEXT NOT NULL)"
-    )
-    conn.commit()
-    return conn
 
 
 def _legacy_index_dir() -> str:
@@ -374,62 +384,226 @@ def chunk_text_with_overlap(
 
 # ── index persistence ─────────────────────────────────────────────────────────
 
+def _index_from_row(row: DocIndex | None) -> Optional[Dict[str, Any]]:
+    if row is None:
+        return None
+    data = row.index_json
+    return data if isinstance(data, dict) else None
+
+
+def _ensure_project_row(project_id: str, session: Session) -> None:
+    """Satisfy doc_index.project_id FK when tests or legacy imports use bare ids."""
+    if session.get(Project, project_id) is not None:
+        return
+    session.add(
+        Project(
+            id=project_id,
+            name=project_id,
+            client=None,
+            status="active",
+            aconex_connected=False,
+            user_id="system",
+            created_at=_now(),
+        )
+    )
+    session.flush()
+
+
+def _ensure_project_row_on_conn(conn: Connection, project_id: str) -> None:
+    """FK helper for the SQLite BEGIN IMMEDIATE connection path."""
+    exists = conn.execute(
+        select(Project.id).where(Project.id == project_id)
+    ).scalar_one_or_none()
+    if exists is not None:
+        return
+    conn.execute(
+        insert(Project).values(
+            id=project_id,
+            name=project_id,
+            client=None,
+            status="active",
+            aconex_connected=False,
+            user_id="system",
+            created_at=_now(),
+        )
+    )
+
+
+def _import_legacy_json_indexes(session: Session) -> None:
+    """Import pre-SQLite data/doc_index/<pid>.json files once."""
+    legacy = _legacy_index_dir()
+    if not os.path.isdir(legacy):
+        return
+    for fn in os.listdir(legacy):
+        if not fn.endswith(".json"):
+            continue
+        pid = fn[:-5]
+        if session.get(DocIndex, pid) is not None:
+            continue
+        try:
+            with open(os.path.join(legacy, fn), "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        _ensure_project_row(pid, session)
+        session.add(
+            DocIndex(project_id=pid, index_json=data, updated_at=_now())
+        )
+
+
+def _import_legacy_sqlite_db(session: Session) -> None:
+    """Import rows from the legacy dedicated doc_index.db file once."""
+    path = _legacy_db_path()
+    if not os.path.isfile(path):
+        return
+    with sqlite3.connect(path, timeout=30.0) as leg:
+        for pid, index_json, updated_at in leg.execute(
+            "SELECT project_id, index_json, updated_at FROM doc_index"
+        ):
+            if session.get(DocIndex, pid) is not None:
+                continue
+            try:
+                data = json.loads(index_json)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            _ensure_project_row(pid, session)
+            session.add(
+                DocIndex(
+                    project_id=pid,
+                    index_json=data,
+                    updated_at=updated_at or _now(),
+                )
+            )
+
+
 def init_db() -> None:
-    """Ensure the schema exists and import any legacy on-disk JSON indexes.
+    """Ensure the schema exists and import any legacy on-disk indexes.
 
     Pre-SQLite deployments stored each index as data/doc_index/<pid>.json.
-    Those are imported once (rows already present are left untouched); the
-    files themselves are left in place, harmless.
+    Pre-unified deployments used data/doc_index.db. Both are imported once
+    per database URL (rows already present are left untouched); source files
+    are left in place.
     """
-    with _INDEX_LOCK, closing(_connect()) as conn:
-        legacy = _legacy_index_dir()
-        if os.path.isdir(legacy):
-            for fn in os.listdir(legacy):
-                if not fn.endswith(".json"):
-                    continue
-                pid = fn[:-5]
-                if conn.execute(
-                    "SELECT 1 FROM doc_index WHERE project_id = ?", (pid,)
-                ).fetchone():
-                    continue
-                try:
-                    with open(os.path.join(legacy, fn), "r", encoding="utf-8") as fh:
-                        data = json.load(fh)
-                except (OSError, json.JSONDecodeError):
-                    continue
-                conn.execute(
-                    "INSERT INTO doc_index (project_id, index_json, updated_at) "
-                    "VALUES (?, ?, ?)",
-                    (pid, json.dumps(data, ensure_ascii=False), _now()),
-                )
-        conn.commit()
+    global _initialized, _initialized_for_url
+    url = get_database_url()
+    with _INDEX_LOCK:
+        from app.core.projects import init_db as init_projects_db
+
+        init_projects_db()
+        _ensure_sqlite_parent_dir()
+        DocIndex.__table__.create(bind=engine, checkfirst=True)
+        if _initialized_for_url != url:
+            with SessionLocal() as session:
+                _import_legacy_json_indexes(session)
+                _import_legacy_sqlite_db(session)
+                session.commit()
+            _initialized_for_url = url
+        _initialized = True
+
+
+def _ensure_db() -> None:
+    url = get_database_url()
+    if not _initialized or _initialized_for_url != url:
+        init_db()
 
 
 def _load_index(project_id: str) -> Optional[Dict[str, Any]]:
     """Read the stored index for ``project_id``. Returns None if absent."""
-    with closing(_connect()) as conn:
-        row = conn.execute(
-            "SELECT index_json FROM doc_index WHERE project_id = ?", (project_id,)
-        ).fetchone()
-    if row is None:
-        return None
-    try:
-        return json.loads(row[0])
-    except (json.JSONDecodeError, TypeError):
-        return None
+    _ensure_db()
+    with SessionLocal() as session:
+        return _index_from_row(session.get(DocIndex, project_id))
 
 
 def _write_index(project_id: str, data: Dict[str, Any]) -> None:
     """Replace the stored index for ``project_id`` (a full-rebuild write)."""
-    with _INDEX_LOCK, closing(_connect()) as conn:
-        conn.execute(
-            "INSERT INTO doc_index (project_id, index_json, updated_at) "
-            "VALUES (?, ?, ?) "
-            "ON CONFLICT(project_id) DO UPDATE SET "
-            "index_json = excluded.index_json, updated_at = excluded.updated_at",
-            (project_id, json.dumps(data, ensure_ascii=False), _now()),
+    with _INDEX_LOCK:
+        _ensure_db()
+        now = _now()
+        with SessionLocal() as session:
+            _ensure_project_row(project_id, session)
+            row = session.get(DocIndex, project_id)
+            if row is None:
+                session.add(
+                    DocIndex(project_id=project_id, index_json=data, updated_at=now)
+                )
+            else:
+                row.index_json = data
+                row.updated_at = now
+                flag_modified(row, "index_json")
+            session.commit()
+
+
+def _apply_index_mutation(
+    session: Session,
+    project_id: str,
+    mutate: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+    *,
+    lock_row: bool,
+) -> Dict[str, Any]:
+    if lock_row:
+        row = session.scalar(
+            select(DocIndex)
+            .where(DocIndex.project_id == project_id)
+            .with_for_update()
         )
-        conn.commit()
+    else:
+        row = session.get(DocIndex, project_id)
+    current_raw = _index_from_row(row)
+    current = copy.deepcopy(current_raw) if current_raw is not None else None
+    updated = mutate(current)
+    now = _now()
+    _ensure_project_row(project_id, session)
+    if row is None:
+        session.add(
+            DocIndex(project_id=project_id, index_json=updated, updated_at=now)
+        )
+    else:
+        row.index_json = updated
+        row.updated_at = now
+        flag_modified(row, "index_json")
+    return updated
+
+
+def _load_index_json_from_conn(
+    conn: Connection, project_id: str
+) -> Optional[Dict[str, Any]]:
+    data = conn.execute(
+        select(DocIndex.index_json).where(DocIndex.project_id == project_id)
+    ).scalar_one_or_none()
+    return data if isinstance(data, dict) else None
+
+
+def _update_index_on_sqlite_conn(
+    conn: Connection,
+    project_id: str,
+    mutate: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+) -> Dict[str, Any]:
+    current = _load_index_json_from_conn(conn, project_id)
+    updated = mutate(current)
+    now = _now()
+    _ensure_project_row_on_conn(conn, project_id)
+    row_exists = conn.execute(
+        select(DocIndex.project_id).where(DocIndex.project_id == project_id)
+    ).scalar_one_or_none()
+    if row_exists is None:
+        conn.execute(
+            insert(DocIndex).values(
+                project_id=project_id,
+                index_json=updated,
+                updated_at=now,
+            )
+        )
+    else:
+        conn.execute(
+            update(DocIndex)
+            .where(DocIndex.project_id == project_id)
+            .values(index_json=updated, updated_at=now)
+        )
+    return updated
 
 
 def _update_index(
@@ -438,37 +612,38 @@ def _update_index(
 ) -> Dict[str, Any]:
     """Atomic read-modify-write of a project's index.
 
-    Runs ``mutate(current_or_None) -> new_index`` inside a single SQLite write
-    transaction (BEGIN IMMEDIATE), so two concurrent updates — even from
-    separate worker processes — serialise rather than overwrite each other.
+    Runs ``mutate(current_or_None) -> new_index`` inside a single write
+    transaction (BEGIN IMMEDIATE on SQLite), so two concurrent updates —
+    even from separate worker processes — serialise rather than overwrite
+    each other.
     """
-    with _INDEX_LOCK, closing(_connect()) as conn:
-        conn.isolation_level = None  # take manual control of the transaction
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = conn.execute(
-                "SELECT index_json FROM doc_index WHERE project_id = ?",
-                (project_id,),
-            ).fetchone()
-            current: Optional[Dict[str, Any]] = None
-            if row is not None:
+    with _INDEX_LOCK:
+        _ensure_db()
+        eng = get_engine()
+        dialect = eng.dialect.name
+        if dialect == "sqlite":
+            with eng.connect() as conn:
+                conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
                 try:
-                    current = json.loads(row[0])
-                except (json.JSONDecodeError, TypeError):
-                    current = None
-            updated = mutate(current)
-            conn.execute(
-                "INSERT INTO doc_index (project_id, index_json, updated_at) "
-                "VALUES (?, ?, ?) "
-                "ON CONFLICT(project_id) DO UPDATE SET "
-                "index_json = excluded.index_json, updated_at = excluded.updated_at",
-                (project_id, json.dumps(updated, ensure_ascii=False), _now()),
-            )
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-    return updated
+                    updated = _update_index_on_sqlite_conn(conn, project_id, mutate)
+                    conn.exec_driver_sql("COMMIT")
+                except BaseException:
+                    conn.exec_driver_sql("ROLLBACK")
+                    raise
+            return updated
+
+        with SessionLocal() as session:
+            with session.begin():
+                # FOR UPDATE does not lock missing rows; advisory lock serialises
+                # concurrent first-time inserts for the same project_id.
+                lock_key = zlib.crc32(project_id.encode("utf-8")) & 0x7FFFFFFF
+                session.execute(
+                    text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key}
+                )
+                return _apply_index_mutation(
+                    session, project_id, mutate, lock_row=True
+                )
 
 
 def _ext_of(filename: str) -> str:
@@ -656,9 +831,13 @@ def index_document(
 
 def invalidate_project(project_id: str) -> None:
     """Delete the stored index for ``project_id`` (next access rebuilds it)."""
-    with _INDEX_LOCK, closing(_connect()) as conn:
-        conn.execute("DELETE FROM doc_index WHERE project_id = ?", (project_id,))
-        conn.commit()
+    with _INDEX_LOCK:
+        _ensure_db()
+        with SessionLocal() as session:
+            session.execute(
+                delete(DocIndex).where(DocIndex.project_id == project_id)
+            )
+            session.commit()
 
 
 # ── search ────────────────────────────────────────────────────────────────────

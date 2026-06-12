@@ -6,9 +6,15 @@ from app.core import users as users_mod
 
 @pytest.fixture
 def users(monkeypatch, tmp_path):
-    """Relocate the users DB into a tmp dir and reload the module."""
+    """Relocate the unified DB into a tmp dir and reload store modules."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    return importlib.reload(users_mod)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    import app.core.db as db_mod
+
+    importlib.reload(db_mod)
+    reloaded = importlib.reload(users_mod)
+    reloaded._initialized = False
+    return reloaded
 
 
 def test_init_creates_system_user(users):

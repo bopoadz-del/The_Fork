@@ -7,8 +7,18 @@ from app.core import projects as projects_mod
 @pytest.fixture
 def store(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    import app.core.db as db_mod
+    import app.core.users as users_mod
+
+    importlib.reload(db_mod)
+    importlib.reload(users_mod)
+    users_mod._initialized = False
     pm = importlib.reload(projects_mod)
+    pm._initialized = False
     pm.init_db()
+    for uid in ("alice", "bob", "carol"):
+        users_mod.ensure_user_exists(uid)
     return pm
 
 

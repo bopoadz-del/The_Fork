@@ -3,6 +3,7 @@
 import pytest
 
 from app.schemas.execution_plan import ExecutionPlan, PlanStep
+from tests.conftest import requires_construction_kit
 
 
 def test_plan_step_defaults():
@@ -237,6 +238,7 @@ async def test_reasoner_reports_step_failure():
     assert out["status"] in ("error", "partial")
 
 
+@requires_construction_kit
 def test_reasoner_is_registered():
     assert "project_reasoner" in BLOCK_REGISTRY
     assert get_block("project_reasoner") is ProjectReasonerBlock

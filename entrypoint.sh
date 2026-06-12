@@ -24,4 +24,12 @@ echo "📡 Listening on 0.0.0.0:$PORT (HARDWARE=$HARDWARE)"
 
 command -v ODAFileConverter >/dev/null 2>&1 || echo "⚠️  ODAFileConverter not on PATH — drawing_qto will reject .dwg uploads with a guidance error"
 
-exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --no-access-log
+UVICORN_ARGS=(--host 0.0.0.0 --port "$PORT" --no-access-log --timeout-keep-alive 65)
+if [ -n "$REDIS_URL" ]; then
+  echo "🔀 REDIS_URL set — starting with 2 workers"
+  UVICORN_ARGS+=(--workers 2)
+else
+  UVICORN_ARGS+=(--workers 1)
+fi
+
+exec uvicorn app.main:app "${UVICORN_ARGS[@]}"

@@ -11,48 +11,16 @@ import uuid
 
 
 class ConfigAccessor(dict):
-    """Dict subclass that provides attribute access for legacy test compatibility."""
-    
-    _DEFAULT_OUTPUTS = {
-        "chat": ["text", "stream"],
-        "code": ["result", "analysis"],
-        "voice": ["text", "audio"],
-        "web": ["content", "data"],
-        "image": ["description", "image"],
-        "search": ["results"],
-        "translate": ["translated_text"],
-        "pdf": ["text", "tables"],
-        "ocr": ["text"],
-        "vector_search": ["results", "embeddings"],
-        "zvec": ["embeddings", "classifications"],
-        "google_drive": ["file_id", "metadata"],
-        "onedrive": ["file_id", "metadata"],
-        "local_drive": ["file_path", "metadata"],
-        "android_drive": ["uri", "metadata"],
-    }
-    
-    _REQUIRES_API_KEY = {"chat", "google_drive", "onedrive", "search"}
-    
+    """Dict subclass with attribute access for block config keys."""
+
     def __init__(self, block, user_config):
         super().__init__(user_config)
         self._block = block
-    
+
     def __getattr__(self, name):
         if name == "version":
             block_version = getattr(self._block, "version", None)
-            # Legacy test compatibility for pdf block
-            if getattr(self._block, "name", None) == "pdf":
-                return "1.1"
             return block_version or self.get("version", "1.0")
-        if name == "supported_outputs":
-            block_name = getattr(self._block, "name", None)
-            if block_name in self._DEFAULT_OUTPUTS:
-                return self._DEFAULT_OUTPUTS[block_name]
-            fields = getattr(self._block, "ui_schema", {}).get("output", {}).get("fields", [])
-            return [f.get("name") for f in fields if "name" in f]
-        if name == "requires_api_key":
-            block_name = getattr(self._block, "name", None)
-            return block_name in self._REQUIRES_API_KEY
         return self.get(name)
 
 

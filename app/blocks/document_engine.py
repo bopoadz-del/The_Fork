@@ -128,20 +128,19 @@ class DocumentEngineBlock(UniversalBlock):
     async def _run_pipeline(self, file_paths: Dict) -> Dict:
         """Run the 3-layer pipeline on already-decrypted plaintext paths."""
         try:
-            from blocks.document_engine.main import parse_all
-            from blocks.document_engine.reasoner import DocumentReasoner
-            from blocks.document_engine.mapper import DocumentMapper
-            from blocks.document_engine.parsers.pdf_parser import PDFParser
-            from blocks.document_engine.parsers.docx_parser import DOCXParser
-            from blocks.document_engine.parsers.xlsx_parser import XLSXParser
+            from app.document_engine.main import parse_all
+            from app.document_engine.reasoner import DocumentReasoner
+            from app.document_engine.mapper import DocumentMapper
+            from app.document_engine.parsers.pdf_parser import PDFParser, PDFDocument
+            from app.document_engine.parsers.docx_parser import DOCXParser
+            from app.document_engine.parsers.xlsx_parser import XLSXParser
             import yaml
 
-            # Load config
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            config_path = os.path.join(project_root, "blocks", "document_engine", "config.yaml")
-            if not os.path.exists(config_path):
-                config_path = os.path.join(os.path.dirname(__file__), "..", "..", "blocks", "document_engine", "config.yaml")
-                config_path = os.path.abspath(config_path)
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                "document_engine",
+                "config.yaml",
+            )
 
             if os.path.exists(config_path):
                 with open(config_path, "r") as f:
@@ -184,7 +183,6 @@ class DocumentEngineBlock(UniversalBlock):
                         pdf_text = ocr_text
 
                 if pdf_text is not None:
-                    from blocks.document_engine.parsers.pdf_parser import PDFDocument
                     doc = PDFDocument(source=file_paths["pdf"], text=pdf_text)
                     documents.append(doc)
                 else:

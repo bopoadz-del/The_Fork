@@ -3,7 +3,7 @@
 import pytest
 import os
 import tempfile
-from app.blocks import LocalDriveBlock
+from app.blocks.local_drive import LocalDriveBlock
 
 
 @pytest.fixture

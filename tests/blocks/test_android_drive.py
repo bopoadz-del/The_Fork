@@ -1,7 +1,7 @@
 """Tests for Android Drive Block."""
 
 import pytest
-from app.blocks import AndroidDriveBlock
+from app.blocks.android_drive import AndroidDriveBlock
 
 
 @pytest.fixture

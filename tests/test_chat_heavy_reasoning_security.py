@@ -59,8 +59,11 @@ async def test_heavy_reasoning_drops_project_id_when_caller_does_not_own_it(
     silently drop the unowned project_id (no 403 — that would create
     an oracle for probing valid ids)."""
     from app.core import projects as projects_store
+    from app.core import users as users_mod
     from app.routers import chat as chat_router
 
+    users_mod.ensure_user_exists("user-A")
+    users_mod.ensure_user_exists("user-B")
     # Tenant A owns the project; user-B is the attacker.
     proj = projects_store.create_project("Tenant A project", user_id="user-A")
     pid = proj["id"]
@@ -106,8 +109,10 @@ async def test_heavy_reasoning_keeps_project_id_when_caller_owns_it(
     pass through. Without this, the security fix could over-redact and
     break the feature for the actual owner."""
     from app.core import projects as projects_store
+    from app.core import users as users_mod
     from app.routers import chat as chat_router
 
+    users_mod.ensure_user_exists("user-A")
     proj = projects_store.create_project("Owner's project", user_id="user-A")
     pid = proj["id"]
 
