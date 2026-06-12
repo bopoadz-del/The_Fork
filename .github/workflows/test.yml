@@ -120,6 +120,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql+psycopg://thefork:thefork@localhost:5432/thefork
+      PYTEST_USE_POSTGRES: "1"
     steps:
       - uses: actions/checkout@v4
 

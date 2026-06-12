@@ -39,6 +39,11 @@ _existing = os.environ.get("DATA_DIR", "")
 if not _existing or os.path.abspath(_existing) == os.path.abspath("./data"):
     os.environ["DATA_DIR"] = _TEST_DATA_DIR
 
+# Default suite uses isolated SQLite (the_fork.db under temp DATA_DIR).
+# CI job test-postgres sets PYTEST_USE_POSTGRES=1 and DATABASE_URL explicitly.
+if os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() not in ("1", "true", "yes"):
+    os.environ.pop("DATABASE_URL", None)
+
 def is_extended_boot() -> bool:
     """Legacy platform boot — extended blocks (drives, MCP, etc.) are loaded."""
     return os.getenv("CEREBRUM_VIRGIN", "true").strip().lower() in ("0", "false", "no")
