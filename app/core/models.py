@@ -7,7 +7,9 @@ from sqlalchemy import (
     CheckConstraint,
     Float,
     ForeignKey,
+    Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -101,3 +103,24 @@ class ProjectFact(Base):
     source_document: Mapped[str | None] = mapped_column(String, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class Workflow(Base):
+    """workflows table — see the_fork_schema.sql."""
+
+    __tablename__ = "workflows"
+    __table_args__ = (
+        Index("idx_workflows_owner_created", "owner_id", "created_at"),
+        Index("idx_workflows_project_created", "project_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    owner_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    steps: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)

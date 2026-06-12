@@ -1,69 +1,64 @@
 """Saved workflows — Roadmap V2 · Epic 7 (power-user chaining).
 
 The chain mechanism already works but was JSON/dev-only. This makes chains
-first-class: name them, save them, re-run them. SQLite-backed (shares the
-projects DB), scoped to an owner and optionally to a project.
+first-class: name them, save them, re-run them. SQLAlchemy-backed (shares the
+unified The Fork DB), scoped to an owner and optionally to a project.
 """
 
-import json
+from __future__ import annotations
+
 import os
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import delete, select
+
+from app.core.db import SessionLocal, engine, get_database_url
+from app.core.models import Workflow
+
 _lock = threading.Lock()
 _initialized = False
 
 
-def _db_path() -> str:
-    data_dir = os.getenv("DATA_DIR", "./data")
-    try:
-        os.makedirs(data_dir, exist_ok=True)
-    except OSError:
-        import tempfile
-        data_dir = tempfile.gettempdir()
-    return os.path.join(data_dir, "projects.db")
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    return conn
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+
+def _workflow_as_dict(workflow: Workflow) -> Dict[str, Any]:
+    return {
+        "id": workflow.id,
+        "name": workflow.name,
+        "project_id": workflow.project_id,
+        "owner_id": workflow.owner_id,
+        "steps": workflow.steps,
+        "created_at": workflow.created_at,
+    }
 
 
 def init_db() -> None:
     global _initialized
-    with _lock, _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS workflows (
-                id         TEXT PRIMARY KEY,
-                name       TEXT NOT NULL,
-                project_id TEXT,
-                owner_id   TEXT,
-                steps      TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        # Migrate a pre-existing table created before owner scoping existed.
-        cols = {r["name"] for r in conn.execute("PRAGMA table_info(workflows)")}
-        if "owner_id" not in cols:
-            conn.execute("ALTER TABLE workflows ADD COLUMN owner_id TEXT")
-    _initialized = True
+    with _lock:
+        from app.core.projects import init_db as init_projects_db
+
+        init_projects_db()
+        _ensure_sqlite_parent_dir()
+        Workflow.__table__.create(bind=engine, checkfirst=True)
+        _initialized = True
 
 
 def _ensure() -> None:
     if not _initialized:
         init_db()
-
-
-def _row(r: sqlite3.Row) -> Dict[str, Any]:
-    w = dict(r)
-    w["steps"] = json.loads(w["steps"])
-    return w
 
 
 def save_workflow(
@@ -74,13 +69,19 @@ def save_workflow(
 ) -> Dict[str, Any]:
     _ensure()
     wid = str(uuid.uuid4())[:8]
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO workflows (id, name, project_id, owner_id, steps, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (wid, name, project_id, owner_id, json.dumps(steps),
-             datetime.now(timezone.utc).isoformat()),
-        )
+    with _lock:
+        with SessionLocal() as session:
+            session.add(
+                Workflow(
+                    id=wid,
+                    name=name,
+                    project_id=project_id,
+                    owner_id=owner_id,
+                    steps=steps,
+                    created_at=_now(),
+                )
+            )
+            session.commit()
     return get_workflow(wid, owner_id=owner_id)
 
 
@@ -90,17 +91,13 @@ def get_workflow(
     """Fetch a workflow. When ``owner_id`` is given, a workflow owned by a
     different user is treated as not found (tenant isolation)."""
     _ensure()
-    with _connect() as conn:
-        if owner_id is not None:
-            row = conn.execute(
-                "SELECT * FROM workflows WHERE id = ? AND owner_id = ?",
-                (workflow_id, owner_id),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM workflows WHERE id = ?", (workflow_id,)
-            ).fetchone()
-    return _row(row) if row else None
+    with SessionLocal() as session:
+        workflow = session.get(Workflow, workflow_id)
+        if not workflow:
+            return None
+        if owner_id is not None and workflow.owner_id != owner_id:
+            return None
+        return _workflow_as_dict(workflow)
 
 
 def list_workflows(
@@ -109,34 +106,25 @@ def list_workflows(
     """List workflows. When ``owner_id`` is given, only that owner's
     workflows are returned."""
     _ensure()
-    clauses: List[str] = []
-    params: List[Any] = []
-    if owner_id is not None:
-        clauses.append("owner_id = ?")
-        params.append(owner_id)
-    if project_id:
-        clauses.append("project_id = ?")
-        params.append(project_id)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    with _connect() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM workflows{where} ORDER BY created_at DESC", params
-        ).fetchall()
-    return [_row(r) for r in rows]
+    with SessionLocal() as session:
+        stmt = select(Workflow).order_by(Workflow.created_at.desc())
+        if owner_id is not None:
+            stmt = stmt.where(Workflow.owner_id == owner_id)
+        if project_id:
+            stmt = stmt.where(Workflow.project_id == project_id)
+        rows = session.scalars(stmt).all()
+    return [_workflow_as_dict(w) for w in rows]
 
 
 def delete_workflow(workflow_id: str, owner_id: Optional[str] = None) -> bool:
     """Delete a workflow. When ``owner_id`` is given, a workflow owned by a
     different user is not deleted (returns False)."""
     _ensure()
-    with _lock, _connect() as conn:
-        if owner_id is not None:
-            cur = conn.execute(
-                "DELETE FROM workflows WHERE id = ? AND owner_id = ?",
-                (workflow_id, owner_id),
-            )
-        else:
-            cur = conn.execute(
-                "DELETE FROM workflows WHERE id = ?", (workflow_id,)
-            )
-        return cur.rowcount > 0
+    with _lock:
+        with SessionLocal() as session:
+            stmt = delete(Workflow).where(Workflow.id == workflow_id)
+            if owner_id is not None:
+                stmt = stmt.where(Workflow.owner_id == owner_id)
+            result = session.execute(stmt)
+            session.commit()
+            return result.rowcount > 0
