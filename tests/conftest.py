@@ -43,6 +43,9 @@ if not _existing or os.path.abspath(_existing) == os.path.abspath("./data"):
 # CI job test-postgres sets PYTEST_USE_POSTGRES=1 and DATABASE_URL explicitly.
 if os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() not in ("1", "true", "yes"):
     os.environ.pop("DATABASE_URL", None)
+else:
+    # model2vec is 256-dim; pgvector schema is 384 — use fake embedder in PG CI.
+    os.environ.setdefault("RAG_EMBEDDING_MODEL", "fake")
 
 def is_extended_boot() -> bool:
     """Legacy platform boot — extended blocks (drives, MCP, etc.) are loaded."""
@@ -89,6 +92,58 @@ def requires_construction_kit(func):
 def requires_extended_boot(func):
     func = pytest.mark.extended_boot(func)
     return _EXTENDED_BOOT_SKIP(func)
+
+
+def _postgres_test_mode() -> bool:
+    return os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() in ("1", "true", "yes")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_postgres_db():
+    """Truncate unified schema between tests when running against PostgreSQL CI."""
+    if not _postgres_test_mode():
+        yield
+        return
+
+    from sqlalchemy import text
+
+    from app.core.db import get_engine
+
+    tables = (
+        "chunks",
+        "rag_budget",
+        "hydration_runs",
+        "runs",
+        "doc_index",
+        "agent_facts",
+        "messages",
+        "conversations",
+        "workflows",
+        "project_facts",
+        "documents",
+        "projects",
+        "users",
+    )
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "TRUNCATE TABLE "
+                + ", ".join(tables)
+                + " RESTART IDENTITY CASCADE"
+            )
+        )
+
+    from app.core import users as users_store
+
+    users_store._initialized = False  # noqa: SLF001
+    users_store.init_db()
+
+    from app.core.rag import embeddings as _emb, vector_store as _vs
+
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+
+    yield
 
 
 @pytest.fixture

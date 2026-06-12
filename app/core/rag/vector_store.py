@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
 from threading import Lock
 from typing import List, Optional, Set
 
 import numpy as np
-from sqlalchemy import delete, func, select
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import cast, delete, func, select
+from sqlalchemy.orm import Session
 
 from app.core.db import _engine_for_url, _session_factory_for_url, get_database_url
-from app.core.models import RagChunk
+from app.core.models import EMBEDDING_DIM, Document, Project, RagChunk
 
 # ── Public types ──────────────────────────────────────────────────────────
 
@@ -143,6 +146,40 @@ class VectorStore:
     def _session_factory(self):
         return _session_factory_for_url(self._database_url)
 
+    def _ensure_fk_parents(self, session: Session, project_id: str, doc_id: str) -> None:
+        """Satisfy chunks FK on PostgreSQL when tests use bare project/doc ids."""
+        if not self._use_pgvector:
+            return
+        if session.get(Project, project_id) is None:
+            session.add(
+                Project(
+                    id=project_id,
+                    name=project_id,
+                    client=None,
+                    status="active",
+                    aconex_connected=False,
+                    user_id="system",
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            session.flush()
+        if session.get(Document, doc_id) is None:
+            session.add(
+                Document(
+                    id=doc_id,
+                    project_id=project_id,
+                    original_name=doc_id,
+                    stored_as=None,
+                    file_path=None,
+                    doc_type="document",
+                    doc_role="other",
+                    size=0,
+                    uploaded_at=datetime.now(timezone.utc).isoformat(),
+                    content_sha256=None,
+                )
+            )
+            session.flush()
+
     # ── Writes ───────────────────────────────────────────────────────────
 
     def upsert_chunks(
@@ -176,6 +213,7 @@ class VectorStore:
         now = _now()
         with self._lock:
             with self._session_factory()() as session:
+                self._ensure_fk_parents(session, project_id, doc_id)
                 session.execute(
                     delete(RagChunk).where(
                         RagChunk.project_id == project_id,
@@ -244,7 +282,9 @@ class VectorStore:
         self, project_id: str, query_vec: np.ndarray, k: int
     ) -> List[Chunk]:
         q_list = query_vec.tolist()
-        distance = RagChunk.embedding.cosine_distance(q_list)
+        # EmbeddingVector is a TypeDecorator; cast to Vector for pgvector ops.
+        vec_col = cast(RagChunk.embedding, Vector(EMBEDDING_DIM))
+        distance = vec_col.cosine_distance(q_list)
         score_expr = (1 - distance).label("score")
         stmt = (
             select(

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import copy
 import json
 import os
 import re
@@ -46,9 +47,12 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, insert, select, update
+import zlib
+
+from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core import file_crypto
 from app.core import projects as _projects
@@ -529,6 +533,7 @@ def _write_index(project_id: str, data: Dict[str, Any]) -> None:
             else:
                 row.index_json = data
                 row.updated_at = now
+                flag_modified(row, "index_json")
             session.commit()
 
 
@@ -547,7 +552,8 @@ def _apply_index_mutation(
         )
     else:
         row = session.get(DocIndex, project_id)
-    current = _index_from_row(row)
+    current_raw = _index_from_row(row)
+    current = copy.deepcopy(current_raw) if current_raw is not None else None
     updated = mutate(current)
     now = _now()
     _ensure_project_row(project_id, session)
@@ -558,6 +564,7 @@ def _apply_index_mutation(
     else:
         row.index_json = updated
         row.updated_at = now
+        flag_modified(row, "index_json")
     return updated
 
 
@@ -628,6 +635,12 @@ def _update_index(
 
         with SessionLocal() as session:
             with session.begin():
+                # FOR UPDATE does not lock missing rows; advisory lock serialises
+                # concurrent first-time inserts for the same project_id.
+                lock_key = zlib.crc32(project_id.encode("utf-8")) & 0x7FFFFFFF
+                session.execute(
+                    text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key}
+                )
                 return _apply_index_mutation(
                     session, project_id, mutate, lock_row=True
                 )

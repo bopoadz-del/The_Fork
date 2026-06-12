@@ -41,9 +41,16 @@ def _project_id_to_db(project_id: Optional[str]) -> Optional[str]:
     return project_id
 
 
+def _fact_project_id_to_db(project_id: Optional[str]) -> str:
+    """Agent facts use '' for project-less scope (schema NOT NULL DEFAULT '')."""
+    if project_id is None or project_id == "":
+        return ""
+    return project_id
+
+
 def _fact_project_id_from_db(project_id: Optional[str]) -> str:
-    """Map DB NULL back to '' for agent-fact API compatibility."""
-    return project_id if project_id is not None else ""
+    """Map DB NULL/'' back to '' for agent-fact API compatibility."""
+    return project_id if project_id else ""
 
 
 def _conversation_as_dict(conversation: Conversation) -> Dict[str, Any]:
@@ -275,19 +282,15 @@ def set_agent_fact(
     project-less conversation uses the '' scope.
     """
     _ensure_db()
-    api_project_id = project_id or ""
-    db_project_id = _project_id_to_db(api_project_id)
+    db_project_id = _fact_project_id_to_db(project_id)
     now = _now()
     with _lock:
         with SessionLocal() as session:
             stmt = select(AgentFact).where(
                 AgentFact.agent_name == agent_name,
                 AgentFact.key == key,
+                AgentFact.project_id == db_project_id,
             )
-            if db_project_id is None:
-                stmt = stmt.where(AgentFact.project_id.is_(None))
-            else:
-                stmt = stmt.where(AgentFact.project_id == db_project_id)
             existing = session.scalars(stmt).one_or_none()
             if existing:
                 existing.value = value
@@ -307,15 +310,13 @@ def set_agent_fact(
                 )
             session.commit()
     with SessionLocal() as session:
-        stmt = select(AgentFact).where(
-            AgentFact.agent_name == agent_name,
-            AgentFact.key == key,
-        )
-        if db_project_id is None:
-            stmt = stmt.where(AgentFact.project_id.is_(None))
-        else:
-            stmt = stmt.where(AgentFact.project_id == db_project_id)
-        fact = session.scalars(stmt).one()
+        fact = session.scalars(
+            select(AgentFact).where(
+                AgentFact.agent_name == agent_name,
+                AgentFact.key == key,
+                AgentFact.project_id == db_project_id,
+            )
+        ).one()
     return _agent_fact_as_dict(fact)
 
 
@@ -324,16 +325,15 @@ def list_agent_facts(
 ) -> List[Dict[str, Any]]:
     """List an agent's facts for one project scope ('' = project-less)."""
     _ensure_db()
-    db_project_id = _project_id_to_db(project_id or "")
+    db_project_id = _fact_project_id_to_db(project_id)
     with SessionLocal() as session:
         stmt = (
             select(AgentFact)
-            .where(AgentFact.agent_name == agent_name)
+            .where(
+                AgentFact.agent_name == agent_name,
+                AgentFact.project_id == db_project_id,
+            )
             .order_by(AgentFact.key)
         )
-        if db_project_id is None:
-            stmt = stmt.where(AgentFact.project_id.is_(None))
-        else:
-            stmt = stmt.where(AgentFact.project_id == db_project_id)
         rows = session.scalars(stmt).all()
     return [_agent_fact_as_dict(f) for f in rows]

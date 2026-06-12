@@ -1,0 +1,91 @@
+{
+  "checkName": "tests / test-postgres",
+  "providerCheckId": "81033430066",
+  "headSha": "6cebefd3c66a0480859b3de2a6f52ae93a1cc990",
+  "status": "failure",
+  "summary": "PostgreSQL CI job fails because the new Alembic unified schema enforces constraints that SQLite-only code paths never hit: agent_facts NOT NULL vs NULL project-less scope, doc_index concurrent INSERT races without row-level locks on missing rows, and chunks FK requirements absent from the ORM-backed SQLite path.",
+  "failureThemes": [
+    {
+      "id": "agent_facts_null_project_id",
+      "title": "agent_facts project_id NOT NULL violation",
+      "rootCause": "Schema/code mismatch after unified PostgreSQL migration. the_fork_schema.sql defines agent_facts.project_id as TEXT NOT NULL DEFAULT '', but agent_memory._project_id_to_db() maps project-less scope ('' / None) to SQL NULL and the ORM model marks project_id nullable=True. SQLite tests create tables via ORM (nullable column) and pass; Alembic on Postgres applies NOT NULL and rejects inserts from set_agent_fact() without project_id.",
+      "evidence": [
+        "CI log: null value in column project_id of relation agent_facts (scout, home_city, Dubai)",
+        "the_fork_schema.sql line 130: project_id TEXT NOT NULL DEFAULT ''",
+        "agent_memory.py _project_id_to_db maps '' -> None; set_agent_fact inserts project_id=None",
+        "Reproduced locally: tests/test_agent_memory.py::test_set_agent_fact_upsert fails on Postgres"
+      ],
+      "implicatedFiles": [
+        "app/core/agent_memory.py",
+        "app/core/models.py",
+        "the_fork_schema.sql",
+        "alembic/versions/0001_initial_schema.py"
+      ],
+      "affectedTests": [
+        "tests/test_agent_memory.py::test_set_agent_fact_upsert",
+        "tests/test_agent_runtime_c5.py (remember_fact / chat_stream paths)",
+        "tests/test_hardening.py::test_agent_facts_are_project_scoped (indirect)"
+      ],
+      "recommendedFix": "Align project-less scope storage: either persist '' (matching schema DEFAULT) in agent_memory and ORM, or change the_fork_schema.sql to allow NULL project_id and update the unique index semantics. Prefer '' to match existing UNIQUE(agent_name, project_id, key) behavior on Postgres."
+    },
+    {
+      "id": "doc_index_duplicate_pkey",
+      "title": "doc_index concurrent INSERT unique violation",
+      "rootCause": "PostgreSQL _update_index path uses SELECT FOR UPDATE, which does not lock when the doc_index row is absent. Concurrent writers (cross-process test with spawn) both observe row=None and attempt INSERT, causing duplicate key on doc_index_pkey. SQLite path uses BEGIN IMMEDIATE which serializes writers; Postgres path lacks equivalent mutual exclusion for first-row creation.",
+      "evidence": [
+        "CI log: duplicate key value violates unique constraint doc_index_pkey for project_id=p-xproc",
+        "doc_index.py _apply_index_mutation: with_for_update on missing row, then session.add on row is None",
+        "Reproduced locally: tests/test_doc_index_sqlite.py::test_cross_process_concurrent_writes_serialise fails on Postgres"
+      ],
+      "implicatedFiles": [
+        "app/core/doc_index.py",
+        "the_fork_schema.sql"
+      ],
+      "affectedTests": [
+        "tests/test_doc_index_sqlite.py::test_cross_process_concurrent_writes_serialise",
+        "tests/test_doc_index_sqlite.py::test_concurrent_updates_do_not_lose_entries",
+        "tests/test_doc_index_sqlite.py::test_update_index_is_read_modify_write"
+      ],
+      "recommendedFix": "Use INSERT ... ON CONFLICT (project_id) DO UPDATE for Postgres upserts, or acquire pg_advisory_xact_lock(hashtext(project_id)) before read-modify-write when the row may not exist."
+    },
+    {
+      "id": "chunks_foreign_key",
+      "title": "chunks FK violation on bare test project/doc ids",
+      "rootCause": "PostgreSQL schema enforces chunks.project_id -> projects.id and chunks.doc_id -> documents.id FKs (the_fork_schema.sql). RagChunk ORM intentionally omits FKs for SQLite test convenience. vector_store.upsert_chunks inserts rows without ensuring parent project/document rows exist—works on SQLite, fails on Postgres.",
+      "evidence": [
+        "CI log: chunks_project_id_fkey for proj_x, proj_doc, proj_chat, proj_route",
+        "models.py RagChunk comment: ORM omits FK constraints so SQLite test DBs accept arbitrary ids",
+        "doc_index.py has _ensure_project_row helper but vector_store.py does not",
+        "Reproduced locally: tests/test_rag.py::test_retriever_retrieve_happy_path fails on Postgres"
+      ],
+      "implicatedFiles": [
+        "app/core/rag/vector_store.py",
+        "app/core/models.py",
+        "the_fork_schema.sql"
+      ],
+      "affectedTests": [
+        "tests/test_rag.py (index_chunks / retrieve / chat RAG / route tests)",
+        "tests/test_doc_index.py::test_index_document_incremental (RAG hook path)"
+      ],
+      "recommendedFix": "On PostgreSQL writes, ensure stub Project and Document parent rows exist before upsert_chunks (mirror doc_index._ensure_project_row), or add a shared db helper used by vector_store and doc_index."
+    },
+    {
+      "id": "postgres_healthcheck_noise",
+      "title": "role root does not exist (healthcheck)",
+      "rootCause": "Incidental Postgres service health-check noise in CI logs; not a test assertion failure and unrelated to application schema.",
+      "evidence": [
+        "CI log excerpt marks as FATAL healthcheck noise, likely unrelated"
+      ],
+      "implicatedFiles": [],
+      "affectedTests": [],
+      "recommendedFix": "No action required for application code."
+    }
+  ],
+  "overallClassification": {
+    "diffRelation": "direct_regression",
+    "flakeAssessment": "not_flaky",
+    "recommendedAction": "fix_product_code",
+    "confidence": "high"
+  },
+  "notes": "Full Postgres pytest run reproduces 37 failures locally; primary themes above account for the CI-logged IntegrityErrors. Remaining failures (hydration KeyError, conversation_history_api, call_llm_daily_cap) likely stem from shared Postgres state / missing test isolation under PYTEST_USE_POSTGRES and warrant separate follow-up."
+}

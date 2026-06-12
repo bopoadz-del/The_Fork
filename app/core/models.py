@@ -295,7 +295,8 @@ class RagChunk(Base):
 class AgentFact(Base):
     """agent_facts table — see the_fork_schema.sql.
 
-    Project-less scope is stored as NULL in the DB; the public API uses ''.
+    Project-less scope is stored as '' (NOT NULL per schema); the public API
+    also uses ''.
     """
 
     __tablename__ = "agent_facts"
@@ -308,7 +309,7 @@ class AgentFact(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     agent_name: Mapped[str] = mapped_column(String, nullable=False)
-    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    project_id: Mapped[str] = mapped_column(String, nullable=False, default="")
     conversation_id: Mapped[str | None] = mapped_column(String, nullable=True)
     key: Mapped[str] = mapped_column(String, nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)

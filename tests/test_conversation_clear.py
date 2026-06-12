@@ -10,6 +10,8 @@ hallucinated assistant turns (the "fake CPM table" failure mode).
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -122,7 +124,7 @@ def test_clear_rejects_nonworkspace_cid_belonging_to_other_project(client):
     rejected as 404."""
     a = _new_project(client, "X Holder")
     b = _new_project(client, "X Foreigner")
-    foreign_cid = "free-form-cid-123"
+    foreign_cid = f"free-form-{uuid.uuid4().hex}"
     _seed_conversation(foreign_cid, b["id"])
 
     r = client.post(f"/v1/projects/{a['id']}/conversations/{foreign_cid}/clear", headers=H)

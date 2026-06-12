@@ -152,6 +152,7 @@ jobs:
           DATA_DIR: ${{ runner.temp }}/data
           CEREBRUM_VIRGIN: "true"
           CEREBRUM_DOMAIN_KITS: ""
+          RAG_EMBEDDING_MODEL: fake
 
   browser-tests:
     runs-on: ubuntu-latest
