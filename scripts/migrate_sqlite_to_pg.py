@@ -169,6 +169,11 @@ def _existing_project_ids(pg: Connection) -> set[str]:
     return {str(r[0]) for r in rows}
 
 
+def _existing_document_ids(pg: Connection) -> set[str]:
+    rows = pg.execute(text("SELECT id FROM documents")).fetchall()
+    return {str(r[0]) for r in rows}
+
+
 def _user_rows_from_sqlite(data_dir: Path) -> list[sqlite3.Row]:
     seen: dict[str, sqlite3.Row] = {}
     for path in (_sqlite_path(data_dir, "users.db"), _unified_db_path(data_dir)):
@@ -300,6 +305,18 @@ def _migrate_projects(
     counts["projects"] = inserted
 
 
+def _document_rows_from_sqlite(data_dir: Path) -> list[sqlite3.Row]:
+    """Collect documents from legacy ``projects.db`` and unified ``the_fork.db``."""
+    seen: dict[str, sqlite3.Row] = {}
+    for path in (_sqlite_path(data_dir, "projects.db"), _unified_db_path(data_dir)):
+        with _sqlite_conn(path) as conn:
+            if conn is None:
+                continue
+            for row in _fetch_rows(conn, "documents"):
+                seen[str(row["id"])] = row
+    return list(seen.values())
+
+
 def _migrate_documents(
     pg: Connection,
     data_dir: Path,
@@ -308,49 +325,54 @@ def _migrate_documents(
     counts: dict[str, int],
     **_kwargs: Any,
 ) -> None:
-    path = _sqlite_path(data_dir, "projects.db")
-    with _sqlite_conn(path) as conn:
-        if conn is None:
-            counts["documents"] = 0
-            return
-        rows = _fetch_rows(conn, "documents")
-        inserted = 0
-        for row in rows:
-            params = {
-                "id": row["id"],
-                "project_id": row["project_id"],
-                "original_name": row["original_name"],
-                "stored_as": row["stored_as"],
-                "file_path": row["file_path"],
-                "doc_type": row["doc_type"] or "document",
-                "doc_role": row["doc_role"] or "other",
-                "size": int(row["size"] or 0),
-                "uploaded_at": row["uploaded_at"],
-                "content_sha256": row["content_sha256"]
-                if "content_sha256" in row.keys()
-                else None,
-            }
-            if dry_run:
-                inserted += 1
-                continue
-            result = pg.execute(
-                text(
-                    """
-                    INSERT INTO documents (
-                        id, project_id, original_name, stored_as, file_path,
-                        doc_type, doc_role, size, uploaded_at, content_sha256
-                    ) VALUES (
-                        :id, :project_id, :original_name, :stored_as, :file_path,
-                        :doc_type, :doc_role, :size, :uploaded_at, :content_sha256
-                    )
-                    ON CONFLICT (id) DO NOTHING
-                    """
-                ),
-                params,
-            )
-            if result.rowcount:
-                inserted += 1
-        counts["documents"] = inserted
+    rows = _document_rows_from_sqlite(data_dir)
+    if not rows:
+        counts["documents"] = 0
+        return
+    if dry_run:
+        known_projects = {str(r["id"]) for r in _project_rows_from_sqlite(data_dir)}
+    else:
+        known_projects = _existing_project_ids(pg)
+    inserted = 0
+    for row in rows:
+        project_id = row["project_id"]
+        if project_id and str(project_id) not in known_projects:
+            continue
+        params = {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "original_name": row["original_name"],
+            "stored_as": row["stored_as"],
+            "file_path": row["file_path"],
+            "doc_type": row["doc_type"] or "document",
+            "doc_role": row["doc_role"] or "other",
+            "size": int(row["size"] or 0),
+            "uploaded_at": row["uploaded_at"],
+            "content_sha256": row["content_sha256"]
+            if "content_sha256" in row.keys()
+            else None,
+        }
+        if dry_run:
+            inserted += 1
+            continue
+        result = pg.execute(
+            text(
+                """
+                INSERT INTO documents (
+                    id, project_id, original_name, stored_as, file_path,
+                    doc_type, doc_role, size, uploaded_at, content_sha256
+                ) VALUES (
+                    :id, :project_id, :original_name, :stored_as, :file_path,
+                    :doc_type, :doc_role, :size, :uploaded_at, :content_sha256
+                )
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            params,
+        )
+        if result.rowcount:
+            inserted += 1
+    counts["documents"] = inserted
 
 
 def _migrate_project_facts(
@@ -800,13 +822,20 @@ def _migrate_chunks(
             counts["chunks"] = 0
             return
         rows = _fetch_rows(conn, "chunks")
+        if dry_run:
+            known_docs = {str(r["id"]) for r in _document_rows_from_sqlite(data_dir)}
+        else:
+            known_docs = _existing_document_ids(pg)
         inserted = 0
         for row in rows:
+            doc_id = row["doc_id"]
+            if doc_id and str(doc_id) not in known_docs:
+                continue
             embedding = _unpack_embedding(row["embedding"])
             params = {
                 "chunk_id": row["chunk_id"],
                 "project_id": row["project_id"],
-                "doc_id": row["doc_id"],
+                "doc_id": doc_id,
                 "chunk_index": int(row["chunk_index"]),
                 "text": row["text"],
                 "embedding": _vector_literal(embedding),
