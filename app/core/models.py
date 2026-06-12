@@ -166,6 +166,20 @@ class Message(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class DocIndex(Base):
+    """doc_index table — per-project text index blob (see the_fork_schema.sql)."""
+
+    __tablename__ = "doc_index"
+
+    project_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    index_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class UsageRun(Base):
     """runs table — see the_fork_schema.sql (usage tracker)."""
 

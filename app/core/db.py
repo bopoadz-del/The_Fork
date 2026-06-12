@@ -39,6 +39,8 @@ DATABASE_URL: str = get_database_url()
 def _engine_kwargs(url: str) -> dict[str, Any]:
     if url.startswith("postgresql"):
         return {"pool_size": 10, "pool_pre_ping": True}
+    if url.startswith("sqlite"):
+        return {"connect_args": {"timeout": 30.0}}
     return {}
 
 
