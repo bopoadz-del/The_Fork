@@ -7,7 +7,8 @@ data migrated from an existing `./data` tree.
 ## Prerequisites
 
 - Postgres 16 with **pgvector** (Render Postgres, Supabase, or `docker compose up`)
-- `REDIS_URL` for multi-worker (`start.sh` uses 2 workers when set)
+- `UVICORN_WORKERS` for uvicorn worker count (default `1`; sole worker knob)
+- `REDIS_URL` optional — shared sessions/rate limits when using multiple workers
 - `SENTRY_DSN` for error tracking (optional but recommended for pilot)
 - Construction kit: `CEREBRUM_VIRGIN=false` and `CEREBRUM_DOMAIN_KITS=construction`
 
@@ -45,7 +46,8 @@ Copy `.env.example` → `.env` and set at minimum:
 | `CEREBRUM_VIRGIN` | `false` |
 | `CEREBRUM_DOMAIN_KITS` | `construction` |
 | `DATA_DIR` | Persistent volume for uploads |
-| `REDIS_URL` | Shared Redis for 2 workers |
+| `UVICORN_WORKERS` | `1` on Render starter; `2` only after RAM upgrade |
+| `REDIS_URL` | Shared Redis for sessions/rate limits (optional) |
 | `SENTRY_DSN` | Project DSN |
 | `RAG_EMBEDDING_MODEL` | **Unset** on Render (model2vec 256-dim default) or `minishlab/potion-base-8M` |
 
@@ -65,8 +67,8 @@ Copy `.env.example` → `.env` and set at minimum:
 | Render web (`the-fork`) | Live — 45 blocks, construction kit on |
 | Postgres `the-fork-db` (PG 16) | Provisioned; `DATABASE_URL` set (internal) |
 | Alembic on boot | `entrypoint.sh` runs `python -m alembic upgrade head` |
-| `REDIS_URL` | `cerebrum-redis` resumed and wired (shared rate limits; **1 worker** on 512Mi plan) |
-| `UVICORN_WORKERS` | `1` on Render starter (set `2` only after RAM upgrade — 2 workers OOM at 512Mi) |
+| `UVICORN_WORKERS` | `1` on Render starter (sole worker knob; `2` OOMs at 512Mi) |
+| `REDIS_URL` | `cerebrum-redis` resumed (shared rate limits when workers > 1) |
 | `SENTRY_DSN` | **Not set** — operator must add from Sentry project settings |
 | SQLite → Postgres cutover | Migration script ready (PR #36 merged); **not run on prod `DATA_DIR` yet** |
 | Doc re-index / Diriyah E2E | Pending empty `the-fork-db` |
