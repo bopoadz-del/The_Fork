@@ -44,6 +44,50 @@ async def test_offline_template_when_no_provider_available(monkeypatch):
     assert "ollama" in text.lower() or "llama" in text.lower()
 
 
+@pytest.mark.asyncio
+async def test_ollama_primary_path_calls_cloud_without_api_key(monkeypatch):
+    """LLM_PROVIDER=ollama must hit _call_cloud even when env_key is empty."""
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "http://my-pc.tunnel.cf")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    calls: list[dict] = []
+
+    async def fake_call(
+        self,
+        message,
+        model,
+        max_tokens,
+        temperature,
+        stream,
+        api_key,
+        cfg,
+        **kwargs,
+    ):
+        calls.append({"api_key": api_key, "url": cfg["url"], "model": model})
+        return {
+            "status": "success",
+            "text": "hello from ollama",
+            "provider": "ollama",
+            "model": model,
+        }
+
+    monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
+
+    block = ChatBlock()
+    result = await block.process("hi", {"stream": False, "model": "deepseek-chat"})
+
+    assert result["status"] == "success"
+    assert result["text"] == "hello from ollama"
+    assert len(calls) == 1
+    assert calls[0]["api_key"] == ""
+    assert calls[0]["url"] == "http://my-pc.tunnel.cf/v1/chat/completions"
+    assert calls[0]["model"] == "qwen3-coder:480b-cloud"
+
+
 def test_chat_block_source_has_no_forbidden_provider_names():
     """Provider names removed per platform direction — they must not return."""
 

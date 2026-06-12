@@ -197,10 +197,21 @@ class ChatBlock(TypedBlock):
         # block route and the agent path.
         from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
         cfg = _llm_config()
-        provider_key = os.getenv(cfg["env_key"])
+        # Ollama has no API key (env_key=""). Treat it as configured so we hit
+        # _call_cloud with the normalised /v1/chat/completions URL — same as
+        # app.agents.runtime._call_llm when LLM_PROVIDER=ollama.
+        if cfg["provider"] == "ollama":
+            provider_key = ""
+            cloud_ready = True
+        elif cfg["env_key"]:
+            provider_key = os.getenv(cfg["env_key"])
+            cloud_ready = bool(provider_key)
+        else:
+            provider_key = None
+            cloud_ready = False
         primary_error = None
 
-        if provider_key:
+        if cloud_ready:
             # Agent configs (and this block's default) pin "deepseek-chat".
             # When the active provider is NOT DeepSeek, remap that
             # placeholder onto the provider's default model. An explicit
