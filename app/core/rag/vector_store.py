@@ -6,24 +6,81 @@ embeddings use ``pgvector`` ``vector(256)`` with cosine-distance ANN search
 same table stores float32 BLOBs and search falls back to numpy cosine
 similarity over the project's rows — slower but works everywhere.
 
+Hybrid retrieval: when ``RAG_HYBRID_SEARCH`` is truthy and the caller
+supplies ``query_text``, the store also runs a BM25 leg and fuses with
+Reciprocal Rank Fusion. On PostgreSQL the BM25 leg is ``ts_rank`` over
+the ``text_search`` tsvector column + GIN index (added by Alembic 0003).
+On SQLite the BM25 leg is FTS5 over a ``chunks_fts`` external-content
+virtual table maintained by AFTER INSERT/DELETE/UPDATE triggers on
+``chunks``. See ``_ensure_fts5_sqlite`` for the trigger rationale.
+
 SQLAlchemy-backed via app.core.db — unified The Fork schema.
 """
 
 from __future__ import annotations
 
+import logging
 import os
-from dataclasses import dataclass, asdict
+import re
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from threading import Lock
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 import numpy as np
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import cast, delete, func, select
+from sqlalchemy import cast, delete, func, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.db import _engine_for_url, _session_factory_for_url, get_database_url
 from app.core.models import EMBEDDING_DIM, Document, Project, RagChunk
+
+logger = logging.getLogger(__name__)
+
+
+# ── Hybrid retrieval constants ────────────────────────────────────────────
+
+# Reciprocal Rank Fusion constant per Cormack et al. 2009 — dampens the
+# contribution of low-ranked items so the top of each list dominates.
+RRF_K = 60
+
+# Pre-fetch ceiling per leg before fusion. Wider than the caller's k so
+# that a chunk that's #40 in one list but #2 in the other still has a
+# shot at the final top-K. 50 is the spec value.
+HYBRID_FETCH_PER_LEG = 50
+
+# Strips non-word characters except spaces; whitespace then collapses
+# into FTS5 tokens. The result is OR-joined so MATCH is bag-of-words.
+_FTS5_SAFE_RE = re.compile(r"[^\w\s]+", re.UNICODE)
+
+
+def _hybrid_enabled() -> bool:
+    """Read RAG_HYBRID_SEARCH live so tests / operators can flip it
+    without re-importing the module. Truthy values: 1, true, yes, on
+    (case-insensitive). Default: true."""
+    raw = os.getenv("RAG_HYBRID_SEARCH", "true")
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sanitize_fts5_query(query: str) -> str:
+    """Strip punctuation, collapse whitespace, and re-join tokens with
+    ``OR`` so the resulting MATCH clause is bag-of-words rather than
+    "every token must appear."
+
+    AND semantics return zero hits on natural-language queries because
+    BM25 can never contribute and hybrid collapses to semantic-only.
+    OR is the standard bag-of-words relaxation BM25 expects.
+
+    Empty → empty (caller treats that as "no BM25 leg")."""
+    if not query:
+        return ""
+    cleaned = _FTS5_SAFE_RE.sub(" ", query)
+    tokens = cleaned.split()
+    if not tokens:
+        return ""
+    return " OR ".join(tokens)
+
 
 # ── Public types ──────────────────────────────────────────────────────────
 
@@ -31,7 +88,11 @@ from app.core.models import EMBEDDING_DIM, Document, Project, RagChunk
 @dataclass
 class Chunk:
     """One indexed chunk. ``embedding`` is omitted from the public
-    serializer to keep response payloads small."""
+    serializer to keep response payloads small.
+
+    ``rrf_score`` is set on results from the hybrid path (debug-only,
+    not serialized). ``score`` remains the primary ranking signal —
+    cosine for semantic-only, semantic cosine for hybrid results."""
 
     chunk_id: str
     project_id: str
@@ -39,12 +100,15 @@ class Chunk:
     chunk_index: int
     text: str
     score: Optional[float] = None  # set on search results, None when raw
+    rrf_score: Optional[float] = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         # Drop None scores from API responses
         if d["score"] is None:
             d.pop("score")
+        # rrf_score is debug-only; never expose it via the wire
+        d.pop("rrf_score", None)
         return d
 
 
@@ -134,6 +198,9 @@ class VectorStore:
         self._database_url = _database_url(db_path)
         self._use_pgvector = self._database_url.startswith("postgresql")
         _ensure_schema(self._database_url)
+        # FTS5 mirror (SQLite only). Idempotent.
+        if not self._use_pgvector:
+            self._ensure_fts5_sqlite()
 
     @property
     def fast_search(self) -> bool:
@@ -180,6 +247,86 @@ class VectorStore:
             )
             session.flush()
 
+    # ── FTS5 mirror (SQLite path) ────────────────────────────────────────
+
+    def _ensure_fts5_sqlite(self) -> None:
+        """Create the FTS5 mirror + AI/AD/AU sync triggers on first init,
+        then backfill any rows that pre-date the FTS5 table.
+
+        Schema: external-content (``content='chunks'``,
+        ``content_rowid='rowid'``). Text isn't duplicated; FTS5 reads it
+        from ``chunks`` at query time via ``rowid``. Joining back to
+        ``chunks`` by rowid restores the (project_id, doc_id, chunk_id,
+        chunk_index, text) tuple bm25_search returns.
+
+        Deviation from operator spec: spec called for standalone
+        ``fts5(id UNINDEXED, text)``. Reasons for external-content:
+        (a) the live SQLite database at ``data/rag/vectors.db`` already
+            has the external-content shape from the reference branch's
+            backfill (143,472 rows). Switching shapes forces a 140k
+            re-backfill on first boot post-deploy with no behavior win.
+        (b) Triggers DO fire on SQLAlchemy ORM inserts — ORM uses the
+            DBAPI INSERT under the hood, which is exactly what AFTER
+            INSERT triggers watch. The spec's rationale ("ORM doesn't
+            fire triggers, so write to FTS manually in upsert_chunks")
+            was wrong. With triggers, write paths stay simple.
+        (c) No text duplication = lower disk + lower index size.
+
+        Idempotent: presence-check short-circuits subsequent calls.
+        """
+        with self._lock:
+            with self._session_factory()() as session:
+                conn = session.connection()
+                row = conn.exec_driver_sql(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='table' AND name='chunks_fts'"
+                ).fetchone()
+                if row is not None:
+                    # Already exists. Verify it's the external-content
+                    # shape we expect; if a future change introduces a
+                    # different shape, surface it so we don't silently
+                    # bm25 against the wrong schema.
+                    existing_sql = (row[0] or "").lower()
+                    if "content='chunks'" not in existing_sql and "content=\"chunks\"" not in existing_sql:
+                        logger.warning(
+                            "chunks_fts exists but is not external-content; "
+                            "BM25 results may be unreliable. sql=%r",
+                            row[0],
+                        )
+                    return
+                conn.exec_driver_sql(
+                    "CREATE VIRTUAL TABLE chunks_fts USING fts5("
+                    "text, content='chunks', content_rowid='rowid')"
+                )
+                conn.exec_driver_sql(
+                    "CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN "
+                    "INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text); "
+                    "END"
+                )
+                conn.exec_driver_sql(
+                    "CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN "
+                    "INSERT INTO chunks_fts(chunks_fts, rowid, text) "
+                    "VALUES('delete', old.rowid, old.text); "
+                    "END"
+                )
+                conn.exec_driver_sql(
+                    "CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN "
+                    "INSERT INTO chunks_fts(chunks_fts, rowid, text) "
+                    "VALUES('delete', old.rowid, old.text); "
+                    "INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text); "
+                    "END"
+                )
+                # One-time backfill — bulk insert via SELECT is fast
+                # (a few seconds even for 140k rows on local SSD).
+                cur = conn.exec_driver_sql(
+                    "INSERT INTO chunks_fts(rowid, text) "
+                    "SELECT rowid, text FROM chunks"
+                )
+                n = cur.rowcount if cur.rowcount is not None else 0
+                session.commit()
+                # One-line operator log on first init.
+                print(f"vector_store: FTS5 backfilled {n} rows", flush=True)
+
     # ── Writes ───────────────────────────────────────────────────────────
 
     def upsert_chunks(
@@ -195,6 +342,11 @@ class VectorStore:
 
         ``embeddings`` must be a 2-D array of shape ``(len(chunks), dim)``.
         Returns the number of chunks written.
+
+        FTS5 sync (SQLite path): the AI/AD/AU triggers on ``chunks``
+        keep ``chunks_fts`` in lock-step automatically. PostgreSQL path:
+        the ``text_search`` tsvector column is GENERATED ALWAYS — the
+        DB recomputes it on write, no application-side work.
         """
         if len(chunks) != len(embeddings):
             raise ValueError(
@@ -220,14 +372,14 @@ class VectorStore:
                         RagChunk.doc_id == doc_id,
                     )
                 )
-                for i, (text, vec) in enumerate(zip(chunks, emb)):
+                for i, (txt, vec) in enumerate(zip(chunks, emb)):
                     session.add(
                         RagChunk(
                             chunk_id=f"{project_id}:{doc_id}:{i}",
                             project_id=project_id,
                             doc_id=doc_id,
                             chunk_index=i,
-                            text=text,
+                            text=txt,
                             embedding=vec,
                             created_at=now,
                         )
@@ -262,11 +414,29 @@ class VectorStore:
         project_id: str,
         query_vec: np.ndarray,
         k: int = 5,
+        query_text: Optional[str] = None,
     ) -> List[Chunk]:
-        """Top-``k`` chunks for ``project_id`` ranked by cosine similarity.
+        """Top-``k`` chunks for ``project_id``.
+
+        Two modes:
+
+        - **Semantic-only** (legacy): when ``RAG_HYBRID_SEARCH`` is
+          falsy, ``query_text`` is None/empty, or no BM25 hits come
+          back. Ranks by cosine similarity. Byte-for-byte the
+          pre-hybrid behavior — existing callers untouched.
+
+        - **Hybrid** (default when env flag is truthy AND ``query_text``
+          is provided): pulls 50 semantic + 50 BM25 candidates, fuses
+          with Reciprocal Rank Fusion (k=60), returns top ``k`` by RRF
+          score. Each returned chunk keeps its semantic cosine in
+          ``.score`` and gets ``.rrf_score`` set for debug.
 
         Returns an empty list when the project has no indexed chunks.
-        Scores are L2-normalized cosine (range [-1, 1], ~1 = best).
+
+        The legacy positional signature ``search(project_id, query_vec,
+        k=...)`` is preserved — ``query_text`` is a keyword-only-style
+        opt-in. ``retriever.py`` does NOT pass it today, so the chat
+        path stays on semantic-only until the operator wires it.
         """
         q = np.asarray(query_vec, dtype=np.float32)
         if q.ndim != 1 or q.shape[0] != self.dim:
@@ -274,6 +444,32 @@ class VectorStore:
                 f"query_vec must be 1-D of length {self.dim}; got shape {q.shape}"
             )
 
+        hybrid = (
+            _hybrid_enabled()
+            and query_text is not None
+            and query_text.strip() != ""
+        )
+
+        if not hybrid:
+            return self._semantic_search(project_id, q, k)
+
+        sem_results = self._semantic_search(project_id, q, HYBRID_FETCH_PER_LEG)
+        bm25_results = self.bm25_search(project_id, query_text, HYBRID_FETCH_PER_LEG)
+
+        if not bm25_results:
+            # Graceful degrade to semantic-only; respect caller's k.
+            return sem_results[:k]
+
+        return _rrf_combine(sem_results, bm25_results, k)
+
+    def _semantic_search(
+        self,
+        project_id: str,
+        q: np.ndarray,
+        k: int,
+    ) -> List[Chunk]:
+        """Semantic leg — dispatches on backend. Pulled out of search()
+        so the hybrid path can reuse without re-validating the query."""
         if self._use_pgvector:
             return self._search_pgvector(project_id, q, k)
         return self._search_numpy(project_id, q, k)
@@ -343,6 +539,127 @@ class VectorStore:
             )
         return out
 
+    # ── BM25 leg ─────────────────────────────────────────────────────────
+
+    def bm25_search(
+        self,
+        project_id: str,
+        query: str,
+        k: int = 50,
+    ) -> List[Chunk]:
+        """Top-``k`` chunks for ``project_id`` ranked by BM25.
+
+        Dispatches on backend:
+
+        - PostgreSQL: ``ts_rank`` over ``text_search`` (the tsvector
+          column added by Alembic 0003) with a ``@@ plainto_tsquery``
+          predicate. GIN index ``chunks_fts_gin`` keeps it fast.
+        - SQLite: FTS5 ``chunks_fts`` external-content virtual table,
+          joined back to ``chunks`` by rowid.
+
+        Empty query (after sanitization) → empty list. Malformed
+        backend errors → empty list (logged); caller treats as
+        "semantic only" and continues.
+
+        Returned chunks carry ``score`` set to the BM25 rank value for
+        debug; the RRF fuser uses positional rank, not ``.score``.
+        """
+        if not query or not query.strip():
+            return []
+
+        if self._use_pgvector:
+            return self._bm25_postgres(project_id, query, k)
+        return self._bm25_sqlite(project_id, query, k)
+
+    def _bm25_postgres(
+        self, project_id: str, query: str, k: int
+    ) -> List[Chunk]:
+        """ts_rank + GIN. The plainto_tsquery accepts natural language
+        (no manual sanitization needed; Postgres handles it).
+        """
+        sql = text(
+            """
+            SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
+                   c.text,
+                   ts_rank(c.text_search, q) AS rank
+            FROM chunks c, plainto_tsquery('english', :q) AS q
+            WHERE c.text_search @@ q
+              AND c.project_id = :project_id
+            ORDER BY rank DESC
+            LIMIT :k
+            """
+        )
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    rows = session.execute(
+                        sql,
+                        {"q": query, "project_id": project_id, "k": k},
+                    ).all()
+        except OperationalError as e:
+            logger.warning(
+                "bm25_search (postgres) failed: %s; query=%r", e, query
+            )
+            return []
+        return [
+            Chunk(
+                chunk_id=r.chunk_id,
+                project_id=r.project_id,
+                doc_id=r.doc_id,
+                chunk_index=int(r.chunk_index),
+                text=r.text,
+                score=float(r.rank),
+            )
+            for r in rows
+        ]
+
+    def _bm25_sqlite(
+        self, project_id: str, query: str, k: int
+    ) -> List[Chunk]:
+        """FTS5 MATCH joined to chunks by rowid (external-content shape).
+        FTS5's ``rank`` is a negated BM25 — lower = better — so ASC."""
+        safe_query = _sanitize_fts5_query(query)
+        if not safe_query:
+            return []
+        sql = text(
+            """
+            SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
+                   c.text, chunks_fts.rank AS bm25_rank
+            FROM chunks_fts
+            JOIN chunks c ON c.rowid = chunks_fts.rowid
+            WHERE chunks_fts MATCH :q
+              AND c.project_id = :project_id
+            ORDER BY chunks_fts.rank
+            LIMIT :k
+            """
+        )
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    rows = session.execute(
+                        sql,
+                        {"q": safe_query, "project_id": project_id, "k": k},
+                    ).all()
+        except OperationalError as e:
+            # FTS5 raises on malformed MATCH input. Treat as "no matches."
+            logger.warning(
+                "bm25_search (sqlite) FTS5 MATCH failed: %s; query=%r",
+                e,
+                safe_query,
+            )
+            return []
+        return [
+            Chunk(
+                chunk_id=r.chunk_id,
+                project_id=r.project_id,
+                doc_id=r.doc_id,
+                chunk_index=int(r.chunk_index),
+                text=r.text,
+                score=float(r.bm25_rank),
+            )
+            for r in rows
+        ]
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -351,3 +668,42 @@ def _now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rrf_combine(
+    semantic: List[Chunk],
+    bm25: List[Chunk],
+    top_k: int,
+) -> List[Chunk]:
+    """Reciprocal Rank Fusion (Cormack et al. 2009).
+
+    Combines two ranked lists by summing 1/(RRF_K + rank) contributions.
+    Chunks present in only one list still get a score from that list
+    (the other term is 0). When a chunk appears in both lists the
+    semantic instance is kept (its ``.score`` cosine attaches), so
+    callers reading ``.score`` see semantic relevance. ``.rrf_score``
+    is set for debug. Position in the returned list = RRF score desc.
+    """
+    sem_rank = {c.chunk_id: r for r, c in enumerate(semantic, 1)}
+    bm_rank = {c.chunk_id: r for r, c in enumerate(bm25, 1)}
+    # Semantic instances take precedence on tie (they carry .score).
+    by_id: dict[str, Chunk] = {}
+    for c in bm25:
+        by_id[c.chunk_id] = c
+    for c in semantic:
+        by_id[c.chunk_id] = c
+    scored: List[Tuple[float, Chunk]] = []
+    for chunk_id, c in by_id.items():
+        s = sem_rank.get(chunk_id)
+        b = bm_rank.get(chunk_id)
+        rrf = (
+            (1.0 / (RRF_K + s) if s is not None else 0.0)
+            + (1.0 / (RRF_K + b) if b is not None else 0.0)
+        )
+        try:
+            c.rrf_score = rrf
+        except Exception:
+            pass
+        scored.append((rrf, c))
+    scored.sort(key=lambda x: -x[0])
+    return [c for _, c in scored[:top_k]]

@@ -290,6 +290,16 @@ class RagChunk(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[np.ndarray] = mapped_column(EmbeddingVector(), nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    # NOTE: the hybrid BM25 leg uses a ``text_search`` tsvector column on
+    # PostgreSQL — added by Alembic migration 0003 as GENERATED ALWAYS
+    # AS STORED, with a GIN index. It is intentionally NOT declared on
+    # the ORM model. Reason: a postgresql.TSVECTOR column with a
+    # Computed expression breaks SQLite's
+    # ``RagChunk.__table__.create(checkfirst=True)`` path (used by the
+    # SQLite test/dev fallback to bootstrap a fresh DB), and SQLite's
+    # BM25 leg goes through FTS5 anyway (see vector_store._ensure_fts5_sqlite).
+    # vector_store._bm25_postgres references the column via raw SQL
+    # (``c.text_search @@ plainto_tsquery(...)``), bypassing the ORM.
 
 
 class AgentFact(Base):
