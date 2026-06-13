@@ -79,8 +79,7 @@ anthropic>=0.40.0
 SpeechRecognition>=3.10.0
 gTTS>=2.5.0
 
-# Translation
-deep-translator>=1.11.0
+# Translation — Google Translate via requests (no deep-translator package; PYSEC-2022-252)
 
 # Google Drive service account
 google-auth>=2.23.0

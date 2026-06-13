@@ -158,6 +158,8 @@ class RecommendationTemplateBlock(UniversalBlock):
     layer = 3
     tags = ["domain", "construction", "recommendations", "rules", "templates", "reporting"]
     requires = []
+    skip_input_validation_actions = ["list_rules"]
+    required_input_one_of = ["variance_data", "rule_key"]
 
     default_config = {
         "max_recommendations": 20,

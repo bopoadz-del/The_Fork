@@ -14,7 +14,8 @@ class AndroidDriveBlock(UniversalBlock):
     layer = 4
     tags = ["integration", "storage", "mobile"]
     requires = []
-    
+    allow_empty_input = True
+
     ui_schema = {
         "input": {
             "type": "file",

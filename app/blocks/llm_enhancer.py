@@ -15,6 +15,8 @@ class LLMEnhancerBlock(UniversalBlock):
     layer = 2
     tags = ["ai", "core", "llm", "enhancer"]
     requires = ["chat"]
+    required_input_one_of = ["text", "input", "message"]
+    skip_input_validation_actions = ["health_check"]
 
     default_config = {
         "default_provider": "deepseek",

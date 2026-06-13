@@ -5,23 +5,9 @@ All blocks inherit from this. No more dual systems.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 import time
 import uuid
-
-
-class ConfigAccessor(dict):
-    """Dict subclass with attribute access for block config keys."""
-
-    def __init__(self, block, user_config):
-        super().__init__(user_config)
-        self._block = block
-
-    def __getattr__(self, name):
-        if name == "version":
-            block_version = getattr(self._block, "version", None)
-            return block_version or self.get("version", "1.0")
-        return self.get(name)
 
 
 class UniversalBlock(ABC):
@@ -47,6 +33,24 @@ class UniversalBlock(ABC):
     # Optional
     default_config: Dict = {}
     author: str = ""
+
+    # Optional declarative input contract (JSON Schema dict or Schema object).
+    # When set, execute() validates before process(). TypedBlock subclasses
+    # use the same hook via validate_input().
+    input_schema: Any = None
+
+    # Lightweight opt-in for UniversalBlock subclasses: require these keys
+    # on the adapted input dict (params are also checked).
+    required_input_fields: ClassVar[List[str]] = []
+
+    # Require at least one of these keys (after adapt_input merge).
+    required_input_one_of: ClassVar[List[str]] = []
+
+    # Skip required-field checks when action/operation matches.
+    skip_input_validation_actions: ClassVar[List[str]] = []
+
+    # Blocks that accept empty input by design (orchestrators, stubs).
+    allow_empty_input: ClassVar[bool] = False
 
     # Whether the agent runtime should auto-validate this block's result
     # by running each numeric in the response through validation_pipeline.
@@ -90,7 +94,7 @@ class UniversalBlock(ABC):
     def __init__(self, hal_block=None, config: Dict = None):
         """Initialize with HAL and config"""
         self.hal = hal_block
-        self.config = ConfigAccessor(self, {**self.default_config, **(config or {})})
+        self.config = {**self.default_config, **(config or {})}
         
         # Execution stats
         self.execution_count = 0
@@ -106,6 +110,91 @@ class UniversalBlock(ABC):
     def get_dep(self, name: str) -> Optional[Any]:
         """Get a wired dependency"""
         return self._dependencies.get(name)
+
+    def _prepare_block_input(self, input_data: Any, params: Dict) -> Any:
+        """Merge params, then adapt to the block's expected input shape."""
+        if input_data is None and params:
+            input_data = params
+        elif isinstance(input_data, dict) and isinstance(params, dict):
+            input_data = {**params, **input_data}
+        from app.core.input_adapter import adapt_input
+        return adapt_input(input_data, self)
+
+    def _input_validation_failure(
+        self,
+        errors: List[str],
+        request_id: str,
+        params: Dict,
+        start: float,
+    ) -> Dict:
+        return {
+            "block": self.name,
+            "request_id": request_id,
+            "status": "error",
+            "result": {"error": "Input validation failed", "details": errors},
+            "confidence": 0.0,
+            "source_id": f"{self.name}-{request_id}",
+            "metadata": {
+                "version": self.version,
+                "validation_errors": errors,
+                **params,
+            },
+            "processing_time_ms": int((time.time() - start) * 1000),
+        }
+
+    def _validate_block_input(self, input_data: Any, params: Dict) -> Optional[Dict[str, Any]]:
+        """Return a validation result dict when input_schema is set on TypedBlock."""
+        schema = getattr(self, "input_schema", None)
+        if not schema:
+            return None
+        if hasattr(self, "validate_input"):
+            return self.validate_input(input_data)
+        return None
+
+    def _should_skip_input_validation(self, params: Dict, input_data: Any = None) -> bool:
+        if getattr(self, "allow_empty_input", False):
+            return True
+        skipped = getattr(self, "skip_input_validation_actions", None) or []
+        data = input_data if isinstance(input_data, dict) else {}
+        action = (
+            (params or {}).get("action")
+            or (params or {}).get("operation")
+            or data.get("action")
+            or data.get("operation")
+        )
+        return action in skipped
+
+    def _validate_required_fields(self, input_data: Any, params: Dict) -> List[str]:
+        """Check required_input_fields and required_input_one_of."""
+        if self._should_skip_input_validation(params, input_data):
+            return []
+        data = input_data if isinstance(input_data, dict) else {}
+        params = params or {}
+        errors: List[str] = []
+
+        one_of = getattr(self, "required_input_one_of", None) or []
+        if one_of:
+            found = False
+            for field in one_of:
+                val = data.get(field)
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    val = params.get(field)
+                if val is not None and not (isinstance(val, str) and not val.strip()):
+                    found = True
+                    break
+            if not found:
+                errors.append(
+                    f"At least one of {one_of} is required"
+                )
+
+        fields = getattr(self, "required_input_fields", None) or []
+        for field in fields:
+            val = data.get(field)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                val = params.get(field)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                errors.append(f"Missing required field: '{field}'")
+        return errors
     
     @abstractmethod
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
@@ -117,6 +206,21 @@ class UniversalBlock(ABC):
         start = time.time()
         request_id = str(uuid.uuid4())[:12]
         params = params or {}
+
+        input_data = self._prepare_block_input(input_data, params)
+
+        schema_validation = self._validate_block_input(input_data, params)
+        if schema_validation is not None and not schema_validation.get("valid", True):
+            return self._input_validation_failure(
+                schema_validation.get("errors") or ["Invalid input"],
+                request_id,
+                params,
+                start,
+            )
+
+        field_errors = self._validate_required_fields(input_data, params)
+        if field_errors:
+            return self._input_validation_failure(field_errors, request_id, params, start)
         
         try:
             result = await self.process(input_data, params)
