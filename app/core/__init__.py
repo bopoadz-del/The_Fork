@@ -3,7 +3,7 @@
 from .block import BaseBlock, BlockConfig
 from .chain import Chain, chain
 from .client import CerebrumClient
-from .universal_base import UniversalBlock, UniversalContainer, ConfigAccessor
+from .universal_base import UniversalBlock, UniversalContainer
 from .typed_block import TypedBlock
 from .schema_registry import (
     SchemaRegistry, registry, get_registry,
@@ -26,7 +26,6 @@ __all__ = [
     # Universal
     "UniversalBlock",
     "UniversalContainer",
-    "ConfigAccessor",
     # Typed
     "TypedBlock",
     # Registry

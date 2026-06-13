@@ -17,6 +17,8 @@ class WebhookBlock(UniversalBlock):
     requires = []
     layer = 5  # Integration layer
     tags = ["webhook", "http", "integration"]
+    allow_empty_input = True
+    skip_input_validation_actions = ["list", "register", "send", "trigger"]
     default_config = {
         "timeout": 30,
         "retries": 3,

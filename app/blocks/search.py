@@ -68,6 +68,7 @@ class SearchBlock(UniversalBlock):
     layer = 3
     tags = ["domain", "search", "web"]
     requires = []
+    required_input_one_of = ["query", "text", "input"]
 
     ui_schema = {
         "input": {

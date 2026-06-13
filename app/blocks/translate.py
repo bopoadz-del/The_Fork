@@ -1,7 +1,9 @@
-"""Translate Block - deep-translator (Google Translate, no API key)"""
+"""Translate Block - Google Translate via public HTTP API (no API key)."""
 
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
+
+import requests
 
 from app.core.universal_base import UniversalBlock
 
@@ -13,6 +15,8 @@ _LANG_CODES = {
     "vietnamese": "vi", "indonesian": "id", "malay": "ms", "ukrainian": "uk",
 }
 
+_GTX_URL = "https://translate.googleapis.com/translate_a/single"
+
 
 def _normalize_lang(lang: str) -> str:
     if not lang:
@@ -21,21 +25,32 @@ def _normalize_lang(lang: str) -> str:
     return _LANG_CODES.get(l, l)
 
 
-def _translate_sync(text: str, source: str, target: str) -> tuple[str, str]:
-    from deep_translator import GoogleTranslator, single_detection
+def _google_translate_request(text: str, source: str, target: str) -> Tuple[str, str]:
+    """Call the same public endpoint deep-translator used (no third-party package)."""
+    params = {
+        "client": "gtx",
+        "sl": source,
+        "tl": target,
+        "dt": "t",
+        "q": text,
+    }
+    resp = requests.get(_GTX_URL, params=params, timeout=30)
+    resp.raise_for_status()
+    payload = resp.json()
+    segments = payload[0] if payload else []
+    translated = "".join(part[0] for part in segments if part and part[0])
     detected = source
-    if source == "auto":
-        try:
-            detected = single_detection(text[:200], api_key=None)
-        except Exception:
-            detected = "unknown"
-    translator = GoogleTranslator(source=source, target=target)
-    translated = translator.translate(text)
+    if source == "auto" and len(payload) > 2 and payload[2]:
+        detected = payload[2]
     return translated, detected
 
 
+def _translate_sync(text: str, source: str, target: str) -> tuple[str, str]:
+    return _google_translate_request(text, source, target)
+
+
 class TranslateBlock(UniversalBlock):
-    """Multi-language translation via Google Translate (deep-translator, no API key)"""
+    """Multi-language translation via Google Translate (HTTP, no API key)"""
 
     auto_validate = False
     name = "translate"
@@ -44,6 +59,7 @@ class TranslateBlock(UniversalBlock):
     layer = 3
     tags = ["domain", "nlp", "translation"]
     requires = []
+    required_input_one_of = ["text", "input"]
 
     # Canonical text key for chain unwrapping — overrides the orchestrator's
     # global priority list. Without this, a translate -> chat chain leans on
@@ -81,7 +97,12 @@ class TranslateBlock(UniversalBlock):
         if isinstance(input_data, str):
             text = input_data
         elif isinstance(input_data, dict):
-            text = input_data.get("text") or input_data.get("input") or ""
+            text = (
+                input_data.get("text")
+                or input_data.get("input")
+                or input_data.get("message")
+                or ""
+            )
         text = text.strip()
 
         if not text:

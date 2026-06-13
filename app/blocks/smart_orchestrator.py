@@ -163,6 +163,7 @@ class SmartOrchestratorBlock(UniversalBlock):
     layer = 2
     tags = ["infrastructure", "construction", "orchestration", "routing", "nlp"]
     requires = []
+    allow_empty_input = True
 
     default_config = {
         "max_actions": 5,
