@@ -1,6 +1,7 @@
 """Translate Block - Google Translate via public HTTP API (no API key)."""
 
 import asyncio
+import time
 from typing import Any, Dict, Tuple
 
 import requests
@@ -16,6 +17,11 @@ _LANG_CODES = {
 }
 
 _GTX_URL = "https://translate.googleapis.com/translate_a/single"
+_MAX_TEXT_LEN = 5000
+_REQUEST_TIMEOUT = 30
+_MAX_RETRIES = 3
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_USER_AGENT = "CerebrumBlocks/2.0 (translate; +https://github.com/bopoadz-del/The_Fork)"
 
 
 def _normalize_lang(lang: str) -> str:
@@ -25,8 +31,30 @@ def _normalize_lang(lang: str) -> str:
     return _LANG_CODES.get(l, l)
 
 
+def _parse_google_response(payload: Any, source: str) -> Tuple[str, str]:
+    """Extract translated text and detected language from Google GTX JSON."""
+    if not isinstance(payload, list) or not payload:
+        raise ValueError("Unexpected translate response shape")
+
+    segments = payload[0] if payload[0] else []
+    translated = "".join(part[0] for part in segments if part and part[0])
+    if not translated.strip():
+        raise ValueError("Empty translation in response")
+
+    detected = source
+    if source == "auto" and len(payload) > 2 and payload[2]:
+        detected = payload[2]
+    return translated, detected
+
+
+def _mock_translate(text: str, source: str, target: str) -> Tuple[str, str]:
+    """Deterministic offline translation for tests and CI (provider=mock)."""
+    detected = "en" if source == "auto" else source
+    return f"[{target}] {text}", detected
+
+
 def _google_translate_request(text: str, source: str, target: str) -> Tuple[str, str]:
-    """Call the same public endpoint deep-translator used (no third-party package)."""
+    """Call the public GTX endpoint (same path deep-translator used)."""
     params = {
         "client": "gtx",
         "sl": source,
@@ -34,18 +62,54 @@ def _google_translate_request(text: str, source: str, target: str) -> Tuple[str,
         "dt": "t",
         "q": text,
     }
-    resp = requests.get(_GTX_URL, params=params, timeout=30)
-    resp.raise_for_status()
-    payload = resp.json()
-    segments = payload[0] if payload else []
-    translated = "".join(part[0] for part in segments if part and part[0])
-    detected = source
-    if source == "auto" and len(payload) > 2 and payload[2]:
-        detected = payload[2]
-    return translated, detected
+    headers = {"User-Agent": _USER_AGENT}
+    last_error = "Translation request failed"
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            resp = requests.get(
+                _GTX_URL,
+                params=params,
+                headers=headers,
+                timeout=_REQUEST_TIMEOUT,
+            )
+            if resp.status_code in _RETRYABLE_STATUS:
+                last_error = f"Translation service unavailable (HTTP {resp.status_code})"
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                resp.raise_for_status()
+
+            resp.raise_for_status()
+            return _parse_google_response(resp.json(), source)
+
+        except requests.Timeout as exc:
+            last_error = "Translation request timed out"
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise TimeoutError(last_error) from exc
+
+        except requests.RequestException as exc:
+            last_error = f"Translation request failed: {exc}"
+            if attempt < _MAX_RETRIES - 1 and (
+                isinstance(exc, requests.ConnectionError)
+                or (getattr(exc, "response", None) is not None
+                    and exc.response.status_code in _RETRYABLE_STATUS)
+            ):
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(last_error) from exc
+
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    raise RuntimeError(last_error)
 
 
-def _translate_sync(text: str, source: str, target: str) -> tuple[str, str]:
+def _translate_sync(text: str, source: str, target: str, *, use_mock: bool = False) -> tuple[str, str]:
+    if use_mock:
+        return _mock_translate(text, source, target)
     return _google_translate_request(text, source, target)
 
 
@@ -105,21 +169,23 @@ class TranslateBlock(UniversalBlock):
             )
         text = text.strip()
 
-        if not text:
-            return {"status": "error", "error": "Text is required"}
-
         if params.get("operation") == "languages":
             return {"status": "success", "languages": _LANG_CODES}
 
+        if not text:
+            return {"status": "error", "error": "Text is required"}
+
         target = _normalize_lang(params.get("target") or params.get("target_language") or "es")
         source = _normalize_lang(params.get("source") or params.get("source_language") or "auto")
+        use_mock = params.get("provider") == "mock"
 
         try:
             loop = asyncio.get_event_loop()
             translated, detected = await loop.run_in_executor(
-                None, _translate_sync, text[:5000], source, target
+                None,
+                lambda: _translate_sync(text[:_MAX_TEXT_LEN], source, target, use_mock=use_mock),
             )
-            return {
+            result = {
                 "status": "success",
                 "original": text,
                 "translated": translated,
@@ -127,5 +193,10 @@ class TranslateBlock(UniversalBlock):
                 "target_language": target,
                 "char_count": len(text),
             }
+            if use_mock:
+                result["provider"] = "mock"
+            return result
+        except TimeoutError as e:
+            return {"status": "error", "error": str(e), "target": target, "retryable": True}
         except Exception as e:
             return {"status": "error", "error": str(e), "target": target}
