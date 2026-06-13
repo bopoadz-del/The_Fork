@@ -15,10 +15,21 @@ from app.core.action_router import (
 )
 from app.dependencies import require_user
 from app.dependencies import block_instances
+from app.infra.monitoring import capture_llm_transport_failure, get_request_id
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _report_sse_llm_failure(error_message: str, *, path: str) -> None:
+    """Surface dead-tunnel LLM failures to Sentry from the SSE wrapper (not runtime internals)."""
+    capture_llm_transport_failure(
+        str(error_message),
+        request_id=get_request_id(),
+        path=path,
+        provider="ollama",
+    )
 
 
 class ChatRequest(BaseModel):
@@ -92,7 +103,7 @@ async def _stream_from_heavy_reasoning(
     the key is per-user; ``anon`` fallback is acceptable because this
     route already requires ``auth: dict = Depends(require_user)``.
     """
-    yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'mode': 'heavy_reasoning'})}\n\n"
+    yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'mode': 'heavy_reasoning', 'request_id': get_request_id()})}\n\n"
 
     # Tenant gate: drop project_id when the caller doesn't own it.
     # Looked up once here so the agent's tool calls inherit a None
@@ -168,7 +179,8 @@ async def _stream_from_heavy_reasoning(
 
     if result.get("status") == "error":
         err = result.get("error") or "Heavy reasoning failed"
-        yield f"data: {json.dumps({'type': 'error', 'message': err})}\n\n"
+        _report_sse_llm_failure(str(err), path="/v1/chat/stream")
+        yield f"data: {json.dumps({'type': 'error', 'message': err, 'request_id': get_request_id()})}\n\n"
         return
 
     # Stream the final answer in word chunks so the UI's existing
@@ -192,6 +204,7 @@ async def _stream_from_heavy_reasoning(
         "mode": "heavy_reasoning",
         "iterations": result.get("iterations", 0),
         "tools_used": tools_used,
+        "request_id": get_request_id(),
     }
     yield f"data: {json.dumps(end_event)}\n\n"
 
@@ -342,6 +355,7 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
         raise HTTPException(500, "Chat block not available")
 
     async def event_stream():
+        rid = get_request_id()
         try:
             if "chat" not in block_instances:
                 block_instances["chat"] = BLOCK_REGISTRY["chat"]()
@@ -358,21 +372,30 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
                 async for token in stream_gen:
                     # Support both raw strings and JSON-encoded error objects
                     if isinstance(token, str) and token.startswith('{"type": "error"'):
+                        try:
+                            err_payload = json.loads(token)
+                            _report_sse_llm_failure(
+                                err_payload.get("message") or token,
+                                path="/chat/stream",
+                            )
+                        except json.JSONDecodeError:
+                            _report_sse_llm_failure(token, path="/chat/stream")
                         yield f"data: {token}\n\n"
                         return
-                    yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'content': token, 'request_id': rid})}\n\n"
             else:
                 # Fallback: simulate streaming
                 text = result.get("result", {}).get("text", "")
                 words = text.split()
                 for word in words:
-                    yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'content': word + ' ', 'request_id': rid})}\n\n"
                     await asyncio.sleep(0.05)
 
-            yield f"data: {json.dumps({'type': 'end', 'complete': True})}\n\n"
+            yield f"data: {json.dumps({'type': 'end', 'complete': True, 'request_id': rid})}\n\n"
 
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            _report_sse_llm_failure(str(e), path="/chat/stream")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'request_id': rid})}\n\n"
 
     return StreamingResponse(
         event_stream(),
@@ -476,7 +499,8 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     full_prompt = await _with_domain_hint(full_prompt)
 
     async def event_stream():
-        yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
+        rid = get_request_id()
+        yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'request_id': rid})}\n\n"
 
         try:
             if "chat" not in block_instances:
@@ -497,7 +521,8 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                     or inner_err.get("error")
                     or "Chat block returned an error"
                 )
-                yield f"data: {json.dumps({'type': 'error', 'message': err_msg})}\n\n"
+                _report_sse_llm_failure(err_msg, path="/v1/chat/stream")
+                yield f"data: {json.dumps({'type': 'error', 'message': err_msg, 'request_id': rid})}\n\n"
                 return
 
             inner = result.get("result", {}) if isinstance(result, dict) else {}
@@ -505,24 +530,38 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             if stream_gen:
                 async for token in stream_gen:
                     if isinstance(token, str) and token.startswith('{"type": "error"'):
+                        try:
+                            err_payload = json.loads(token)
+                            _report_sse_llm_failure(
+                                err_payload.get("message") or token,
+                                path="/v1/chat/stream",
+                            )
+                        except json.JSONDecodeError:
+                            _report_sse_llm_failure(token, path="/v1/chat/stream")
                         yield f"data: {token}\n\n"
                         return
-                    yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'content': token, 'request_id': rid})}\n\n"
                     await asyncio.sleep(0.01)
             else:
                 text = inner.get("text", "")
                 if not text:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'No response from chat — set DEEPSEEK_API_KEY, or run a local model (Ollama / llama.cpp) so the offline fallback can serve a reply.'})}\n\n"
+                    err_msg = (
+                        "No response from chat — set DEEPSEEK_API_KEY, or run a local model "
+                        "(Ollama / llama.cpp) so the offline fallback can serve a reply."
+                    )
+                    _report_sse_llm_failure(err_msg, path="/v1/chat/stream")
+                    yield f"data: {json.dumps({'type': 'error', 'message': err_msg, 'request_id': rid})}\n\n"
                     return
                 words = text.split()
                 for word in words:
-                    yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'content': word + ' ', 'request_id': rid})}\n\n"
                     await asyncio.sleep(0.05)
 
-            yield f"data: {json.dumps({'type': 'end', 'complete': True})}\n\n"
+            yield f"data: {json.dumps({'type': 'end', 'complete': True, 'request_id': rid})}\n\n"
 
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            _report_sse_llm_failure(str(e), path="/v1/chat/stream")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'request_id': rid})}\n\n"
 
     return StreamingResponse(
         event_stream(),

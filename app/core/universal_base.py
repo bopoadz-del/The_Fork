@@ -239,6 +239,12 @@ class UniversalBlock(ABC):
         execution_time = int((time.time() - start) * 1000)
         self.execution_count += 1
         self.total_execution_time += execution_time
+
+        try:
+            from app.infra.monitoring import record_block_execution
+            record_block_execution(self.name, execution_time, status)
+        except Exception:
+            pass
         
         return {
             "block": self.name,
