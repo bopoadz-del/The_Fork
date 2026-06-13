@@ -26,31 +26,18 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 load_dotenv()
 
+from app.infra.monitoring import (
+    configure_structured_logging,
+    init_sentry,
+    observability_middleware,
+    sentry_enabled,
+)
+
+configure_structured_logging()
 logger = logging.getLogger(__name__)
 
 
-def _init_sentry() -> bool:
-    """Initialize Sentry when SENTRY_DSN is set. No-op otherwise."""
-    dsn = os.getenv("SENTRY_DSN", "").strip()
-    if not dsn:
-        return False
-    import sentry_sdk
-    from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.starlette import StarletteIntegration
-
-    sentry_sdk.init(
-        dsn=dsn,
-        integrations=[
-            StarletteIntegration(),
-            FastApiIntegration(),
-        ],
-        environment=os.getenv("ENV", os.getenv("ENVIRONMENT", "production")),
-        send_default_pii=False,
-    )
-    return True
-
-
-_SENTRY_ENABLED = _init_sentry()
+_SENTRY_ENABLED = init_sentry()  # noqa: F841 — init side effect only
 
 from app.blocks import BLOCK_REGISTRY
 from app.dependencies import block_instances, _create_block_instance, init_blocks
@@ -216,7 +203,7 @@ from app.core import jwt_auth as _jwt_auth
 
 _RATE_LIMIT_EXEMPT_PREFIXES = ("/static", "/dashboard", "/assets")
 _RATE_LIMIT_EXEMPT_EXACT = {
-    "/", "/health", "/v1/health", "/docs", "/redoc", "/openapi.json",
+    "/", "/health", "/v1/health", "/v1/metrics", "/docs", "/redoc", "/openapi.json",
 }
 
 
@@ -239,6 +226,11 @@ def _rate_limit_identity(request: Request) -> str:
 
 
 @app.middleware("http")
+async def observability_middleware_wrapper(request: Request, call_next):
+    return await observability_middleware(request, call_next)
+
+
+@app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     path = request.url.path
     if (
@@ -255,7 +247,7 @@ async def rate_limit_middleware(request: Request, call_next):
         )
     response = await call_next(request)
     if (
-        _SENTRY_ENABLED
+        sentry_enabled()
         and response.status_code >= 500
         and not getattr(request.state, "sentry_captured", False)
     ):
@@ -306,7 +298,7 @@ def _envelope(status: int, message: str, code: str | None = None, details=None):
 
 @app.exception_handler(StarletteHTTPException)
 async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
-    if _SENTRY_ENABLED and exc.status_code >= 500:
+    if sentry_enabled() and exc.status_code >= 500:
         import sentry_sdk
         sentry_sdk.capture_exception(exc)
         request.state.sentry_captured = True
@@ -332,7 +324,7 @@ async def _validation_exception_handler(_request: Request, exc: RequestValidatio
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
-    if _SENTRY_ENABLED:
+    if sentry_enabled():
         import sentry_sdk
         sentry_sdk.capture_exception(exc)
         request.state.sentry_captured = True
