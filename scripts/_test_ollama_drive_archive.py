@@ -13,9 +13,12 @@ import sys
 import time
 from typing import List
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO = os.path.dirname(_HERE)
 os.environ.setdefault("RAG_EMBEDDING_MODEL", "minishlab/potion-base-8M")
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault("DATA_DIR", os.path.join(_REPO, "data"))
+if _REPO not in sys.path:
+    sys.path.insert(0, _REPO)
 
 import requests
 
