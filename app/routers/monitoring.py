@@ -8,6 +8,7 @@ from app.dependencies import (
     get_monitoring_block,
     require_api_key,
 )
+from app.infra.monitoring import block_metrics
 from app.routers.health import health_v1
 
 router = APIRouter()
@@ -20,6 +21,12 @@ class RecordMetricsRequest(BaseModel):
     latency_ms: float = 0
     success: bool = True
     error_type: Optional[str] = None
+
+
+@router.get("/v1/metrics")
+def get_block_metrics():
+    """Read-only per-block execution timings (from UniversalBlock.execute)."""
+    return block_metrics.snapshot()
 
 
 @router.get("/v1/leaderboard")

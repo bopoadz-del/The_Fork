@@ -1,5 +1,304 @@
+"""Platform observability utilities and provider monitoring block."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sys
+import threading
+import uuid
+from contextvars import ContextVar
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+from starlette.requests import Request
+from starlette.responses import Response
+
+logger = logging.getLogger(__name__)
+
+request_id_ctx: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+_sentry_enabled = False
+_structured_logging_enabled = False
+
+# Dead-tunnel / DNS / connect failures when calling local Ollama or cloud LLM APIs.
+_LLM_TRANSPORT_MARKERS = (
+    "name or service not known",
+    "errno -2",
+    "gaierror",
+    "not reachable at",
+    "connecterror",
+    "connection refused",
+    "failed to resolve",
+    "temporary failure in name resolution",
+    "getaddrinfo failed",
+    "ollama not reachable",
+    "ollama request timed out",
+)
+
+
+class JsonLogFormatter(logging.Formatter):
+    """Emit one JSON object per log line for Render/log-drain ingestion."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: Dict[str, Any] = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        ctx_rid = request_id_ctx.get()
+        if ctx_rid:
+            payload["request_id"] = ctx_rid
+        for key in (
+            "request_id",
+            "path",
+            "method",
+            "event",
+            "block",
+            "duration_ms",
+            "provider",
+            "failure_class",
+        ):
+            val = getattr(record, key, None)
+            if val is not None:
+                payload[key] = val
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str)
+
+
+def configure_structured_logging() -> bool:
+    """Enable JSON logging in production (or when STRUCTURED_LOGS=true)."""
+    global _structured_logging_enabled
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
+    mode = os.getenv("STRUCTURED_LOGS", "auto").strip().lower()
+    use_json = mode == "true" or (mode == "auto" and env in ("prod", "production"))
+    if not use_json:
+        _structured_logging_enabled = False
+        return False
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonLogFormatter())
+    root = logging.getLogger()
+    root.handlers = [handler]
+    if root.level == logging.NOTSET:
+        root.setLevel(logging.INFO)
+    _structured_logging_enabled = True
+    return True
+
+
+def structured_logging_enabled() -> bool:
+    return _structured_logging_enabled
+
+
+def init_sentry() -> bool:
+    """Initialize Sentry when SENTRY_DSN is set. No-op otherwise."""
+    global _sentry_enabled
+    dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not dsn:
+        _sentry_enabled = False
+        return False
+
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[
+            StarletteIntegration(),
+            FastApiIntegration(),
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        ],
+        environment=os.getenv("ENV", os.getenv("ENVIRONMENT", "production")),
+        send_default_pii=False,
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0") or 0),
+    )
+    _sentry_enabled = True
+    return True
+
+
+def sentry_enabled() -> bool:
+    return _sentry_enabled
+
+
+def get_request_id() -> str:
+    rid = request_id_ctx.get()
+    if rid:
+        return rid
+    rid = str(uuid.uuid4())[:12]
+    request_id_ctx.set(rid)
+    return rid
+
+
+def current_ollama_url() -> str:
+    return os.getenv("OLLAMA_URL", "http://localhost:11434")
+
+
+def is_llm_transport_failure(message: str) -> bool:
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(marker in lowered for marker in _LLM_TRANSPORT_MARKERS)
+
+
+def capture_llm_transport_failure(
+    error_message: str,
+    *,
+    request_id: Optional[str] = None,
+    path: Optional[str] = None,
+    provider: str = "ollama",
+) -> Optional[str]:
+    """Report dead-tunnel / DNS / connect LLM failures to Sentry with endpoint context."""
+    if not is_llm_transport_failure(error_message):
+        return None
+
+    rid = request_id or get_request_id()
+    endpoint_ctx = {
+        "OLLAMA_URL": current_ollama_url(),
+        "LOCAL_LLM_MODEL": os.getenv("LOCAL_LLM_MODEL", ""),
+    }
+    logger.error(
+        "llm_transport_failure",
+        extra={
+            "request_id": rid,
+            "path": path,
+            "provider": provider,
+            "failure_class": "llm_transport",
+            "event": "llm_transport_failure",
+        },
+    )
+
+    if not _sentry_enabled:
+        return None
+
+    import sentry_sdk
+
+    with sentry_sdk.push_scope() as scope:
+        scope.set_tag("failure_class", "llm_transport")
+        scope.set_tag("provider", provider)
+        scope.set_tag("request_id", rid)
+        if path:
+            scope.set_tag("http_path", path)
+        scope.set_context("llm_endpoint", endpoint_ctx)
+        return sentry_sdk.capture_message(
+            f"LLM transport failure ({provider}): {error_message[:500]}",
+            level="error",
+        )
+
+
+class BlockMetricsRegistry:
+    """In-process rolling stats from UniversalBlock.execute() timings."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stats: Dict[str, Dict[str, Any]] = {}
+
+    def record(self, block_name: str, duration_ms: int, status: str) -> None:
+        if not block_name:
+            return
+        with self._lock:
+            entry = self._stats.setdefault(
+                block_name,
+                {
+                    "execution_count": 0,
+                    "total_ms": 0,
+                    "error_count": 0,
+                    "last_ms": 0,
+                    "last_status": status,
+                },
+            )
+            entry["execution_count"] += 1
+            entry["total_ms"] += duration_ms
+            entry["last_ms"] = duration_ms
+            entry["last_status"] = status
+            if status == "error":
+                entry["error_count"] += 1
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            blocks: Dict[str, Dict[str, Any]] = {}
+            for name, entry in self._stats.items():
+                count = entry["execution_count"]
+                blocks[name] = {
+                    "execution_count": count,
+                    "avg_ms": round(entry["total_ms"] / count, 2) if count else 0.0,
+                    "last_ms": entry["last_ms"],
+                    "error_count": entry["error_count"],
+                    "last_status": entry["last_status"],
+                }
+            return {
+                "blocks": blocks,
+                "tracked_blocks": len(blocks),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+
+
+block_metrics = BlockMetricsRegistry()
+
+
+def record_block_execution(block_name: str, duration_ms: int, status: str) -> None:
+    try:
+        block_metrics.record(block_name, duration_ms, status)
+    except Exception:
+        logger.debug("block_metrics.record failed for %s", block_name, exc_info=True)
+
+
+def get_observability_health_payload() -> Dict[str, Any]:
+    snap = block_metrics.snapshot()
+    return {
+        "observability": {
+            "sentry_enabled": sentry_enabled(),
+            "structured_logging": structured_logging_enabled(),
+            "request_tracing": True,
+        },
+        "block_metrics": snap["blocks"],
+    }
+
+
+async def observability_middleware(request: Request, call_next) -> Response:
+    """Assign/propagate request_id and emit structured access logs."""
+    incoming = request.headers.get("X-Request-ID", "").strip()
+    rid = incoming or str(uuid.uuid4())[:12]
+    token = request_id_ctx.set(rid)
+    request.state.request_id = rid
+    start = datetime.now(timezone.utc)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+    except Exception:
+        logger.exception(
+            "request_failed",
+            extra={
+                "request_id": rid,
+                "path": request.url.path,
+                "method": request.method,
+                "event": "request_failed",
+            },
+        )
+        raise
+    finally:
+        duration_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+        logger.info(
+            "request_complete",
+            extra={
+                "request_id": rid,
+                "path": request.url.path,
+                "method": request.method,
+                "duration_ms": duration_ms,
+                "event": "request_complete",
+            },
+        )
+        request_id_ctx.reset(token)
+
+
+# ── Provider monitoring block (Lego layer) ────────────────────────────────
+
 from app.infra.lego_base import LegoBlock
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 import time
 import statistics
 from collections import deque, defaultdict

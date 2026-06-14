@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from app.blocks import BLOCK_REGISTRY, FAILED_BLOCKS
 from app.dependencies import block_instances, MONITORING_AVAILABLE, get_monitoring_block
+from app.infra.monitoring import get_observability_health_payload
 
 router = APIRouter()
 
@@ -41,8 +42,10 @@ def stats():
 
 @router.get("/v1/health")
 def health_v1():
-    """Health check (v1 API)."""
-    return health()
+    """Health check (v1 API) with observability enrichment."""
+    payload = health()
+    payload.update(get_observability_health_payload())
+    return payload
 
 
 @router.get("/v1/system/health")
