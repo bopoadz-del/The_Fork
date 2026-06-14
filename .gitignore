@@ -69,7 +69,8 @@ claudebot/KEYS.md
 /data/
 .playwright-mcp/
 
-# wrangler / Cloudflare Workers local state
+# wrangler files
 .wrangler
 .dev.vars*
 !.dev.vars.example
+!.env.example
