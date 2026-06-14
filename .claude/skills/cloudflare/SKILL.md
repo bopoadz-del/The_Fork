@@ -1,6 +1,6 @@
 ---
 name: cloudflare
-description: Use when configuring Cloudflare DNS, Account API tokens, or custom domains for Render (e.g. theshovel.ai → the-fork.onrender.com). Cloudflare uses API tokens only — not Global API Key or Origin CA Key.
+description: Use when configuring Cloudflare DNS, tunnels, Account API tokens, or custom domains for Render (e.g. theshovel.ai → the-fork.onrender.com). Prefer API token + CNAME; alternative is cloudflared tunnel login (no API token).
 ---
 
 # Cloudflare (DNS + API tokens)
@@ -176,7 +176,28 @@ curl -sS "https://cloudflare-dns.com/dns-query?name=theshovel.ai&type=CNAME" \
 | `409 domain already exists` | www created automatically with apex | Only POST apex once |
 | API Keys page shows Global API Key | Legacy UI | Ignore; use Account API tokens instead |
 
-## One-shot script (theshovel.ai → Render)
+## Alternative: cloudflared tunnel login (no API token)
+
+When API token copy/paste is blocked, use the **cloudflared CLI cert** instead. This authorizes tunnel + DNS route operations via browser OAuth — no `cfat_` secret needed.
+
+### 1. Login (one-time, browser)
+
+```bash
+cloudflared tunnel login
+```
+
+Opens a URL like `https://dash.cloudflare.com/argotunnel?...` — click **Authorize**, select zone **theshovel.ai**. Writes `~/.cloudflared/cert.pem`.
+
+### 2. Route via named tunnel → Render (requires tunnel process running)
+
+```bash
+bash .claude/skills/cloudflare/setup-theshovel-tunnel.sh
+cloudflared tunnel --config ~/.cloudflared/config-theshovel.yml run theshovel
+```
+
+**Caveat:** Render custom-domain SSL verification expects **direct CNAME** to `the-fork.onrender.com`. Tunnel routing proxies through Cloudflare (`*.cfargotunnel.com`). Prefer direct CNAME when possible.
+
+### Preferred: direct CNAME (Render-verified SSL)
 
 ```bash
 export CLOUDFLARE_API_TOKEN='cfat_…'   # from "Your API Token", NOT account ID
