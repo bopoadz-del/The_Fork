@@ -106,6 +106,7 @@ class SymPyReasoningBlock(UniversalBlock):
     layer = 3
     tags = ["domain", "construction", "reasoning", "math", "symbolic", "sympy"]
     requires = []
+    allow_empty_input = True
 
     default_config = {
         "variance_threshold_pct": 10.0,

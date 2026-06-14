@@ -15,7 +15,7 @@ from enum import Enum
 import time
 import uuid
 
-from .universal_base import UniversalBlock, ConfigAccessor
+from .universal_base import UniversalBlock
 
 
 class ContentType(Enum):
@@ -346,62 +346,18 @@ class TypedBlock(UniversalBlock):
     
     async def execute(self, input_data: Any, params: Dict = None) -> Dict:
         """
-        Execute with input validation and output validation.
-        
-        Overrides UniversalBlock.execute to add schema validation while
-        maintaining full backward compatibility.
+        Execute with input validation (via UniversalBlock.execute) and
+        optional output schema warnings.
         """
-        start = time.time()
-        request_id = str(uuid.uuid4())[:12]
-        params = params or {}
-        
-        # Merge params into input_data when input is null/empty (backward compat)
-        if input_data is None and params:
-            input_data = params
-        elif isinstance(input_data, dict) and isinstance(params, dict):
-            # Merge params into input, with input taking precedence
-            merged = {**params, **input_data}
-            input_data = merged
-        
-        # Auto-adapt input to expected format (strings → dicts, etc.)
-        from app.core.input_adapter import adapt_input
-        input_data = adapt_input(input_data, self)
-        
-        # Validate input if schema defined
-        if self.input_schema:
-            input_validation = self.validate_input(input_data)
-            if not input_validation["valid"]:
-                # Input validation failed - return error
-                return {
-                    "block": self.name,
-                    "request_id": request_id,
-                    "status": "error",
-                    "result": {"error": "Input validation failed", "details": input_validation["errors"]},
-                    "confidence": 0.0,
-                    "source_id": f"{self.name}-{request_id}",
-                    "metadata": {
-                        "version": self.version,
-                        "validation_errors": input_validation["errors"],
-                        **params
-                    },
-                    "processing_time_ms": int((time.time() - start) * 1000)
-                }
-            # Use potentially transformed data
-            input_data = input_validation["data"]
-        
-        # Call parent execute (runs process)
         result = await super().execute(input_data, params)
-        
-        # Validate output if schema defined
+
         if self.output_schema:
             output_validation = self.validate_output(result)
             if not output_validation["valid"]:
-                # Output validation failed - add warning but don't fail
-                # (existing blocks may not conform yet)
                 if "metadata" not in result:
                     result["metadata"] = {}
                 result["metadata"]["output_validation_warnings"] = output_validation["errors"]
-        
+
         return result
     
     def get_schema_info(self) -> Dict[str, Any]:

@@ -52,6 +52,7 @@ class ChatBlock(TypedBlock):
 
     accepted_input_types = ["Text", "TextContent", "ChatMessage"]
     produced_output_types = ["Text", "TextContent", "ChatMessage"]
+    required_input_one_of = ["text", "message"]
 
     # Canonical text key for chain unwrapping. ChatBlock returns either
     # ``{"text": "..."}`` (DeepSeek path) or ``{"response": "..."}`` (local

@@ -8,8 +8,14 @@ import sys
 
 import numpy as np
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO = os.path.dirname(_HERE)
+_DATA_DIR = os.path.abspath(os.environ.setdefault("DATA_DIR", os.path.join(_REPO, "data")))
+VECTORS_DB = os.path.join(_DATA_DIR, "rag", "vectors.db")
+
 os.environ.setdefault("RAG_EMBEDDING_MODEL", "minishlab/potion-base-8M")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _REPO not in sys.path:
+    sys.path.insert(0, _REPO)
 
 from app.core.rag.embeddings import get_embedder
 from app.core.rag.vector_store import get_store
@@ -29,7 +35,7 @@ QUERIES_ALL = {
 embedder = get_embedder()
 store = get_store(dim=embedder.dim)
 
-con = sqlite3.connect("data/rag/vectors.db")
+con = sqlite3.connect(VECTORS_DB)
 BS = chr(92)
 
 

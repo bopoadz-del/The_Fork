@@ -44,13 +44,19 @@ import urllib.request
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
+# Repo-root + DATA_DIR resolution (same pattern as smoke_hybrid_retrieval /
+# _probe_hybrid_vs_vector.py — cwd-independent on Linux and Windows).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO = os.path.dirname(_HERE)
+_DATA_DIR = os.path.abspath(os.environ.setdefault("DATA_DIR", os.path.join(_REPO, "data")))
+
 # ── Config ────────────────────────────────────────────────────────────────
 OLLAMA_URL = "http://127.0.0.1:11434"
 PRIMARY_MODEL = "qwen3-coder:480b-cloud"
 FALLBACK_MODEL = "qwen2.5:7b-instruct"
-VECTORS_DB = r"C:\Users\shimm\The_Fork\data\rag\vectors.db"
-OUT_PATH = r"C:\Users\shimm\The_Fork\data\learning\training_scenarios_drive_archive.jsonl"
-STATE_PATH = r"C:\Users\shimm\The_Fork\data\logs\scenario_gen_state_drive_archive.json"
+VECTORS_DB = os.path.join(_DATA_DIR, "rag", "vectors.db")
+OUT_PATH = os.path.join(_DATA_DIR, "learning", "training_scenarios_drive_archive.jsonl")
+STATE_PATH = os.path.join(_DATA_DIR, "logs", "scenario_gen_state_drive_archive.json")
 TARGET_SCENARIOS = 500
 PER_DOC_CAP = 3
 MIN_CHUNK_CHARS = 250
