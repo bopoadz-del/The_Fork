@@ -14,7 +14,7 @@ export default function AppHeader({ breadcrumb }: AppHeaderProps) {
       <div className="app-header__inner">
         <div className="app-header__brand">
           <span className="brand-mark">TF</span>
-          <span className="brand-name">The Fork</span>
+          <span className="brand-name">The Shovel</span>
         </div>
 
         {breadcrumb && (
