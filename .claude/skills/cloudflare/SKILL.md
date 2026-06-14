@@ -13,15 +13,41 @@ Authorization: Bearer <API_TOKEN>
 
 Never use `X-Auth-Key` / `X-Auth-Email` unless you are explicitly maintaining a legacy integration.
 
+## Official auth model (from Cloudflare docs)
+
+Per [Make API calls](https://developers.cloudflare.com/fundamentals/api/how-to/make-api-calls/):
+
+1. **Every request** uses one header: `Authorization: Bearer <API_TOKEN>`
+2. **Account ID / Zone ID** (32 hex) go in **URLs or query params** — never as Bearer
+3. **Token secret** is shown **once** on create; copy from **"Your API Token"** (below the yellow warning)
+
+Example from Cloudflare docs:
+
+```bash
+export ZONE_ID='f2ea6707005a4da1af1b431202e96ac5'      # identifier in path
+export CLOUDFLARE_API_TOKEN='YQSn-xWAQiiEh9qM58wZNnyQS7FUdoqGIUAbrh7T'  # Bearer secret
+
+curl "https://api.cloudflare.com/client/v4/zones/$ZONE_ID" \
+  --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+```
+
+Verify before any work:
+
+```bash
+curl "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+  --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+# success: true, status: active
+```
+
 ## Do not confuse these three fields
 
-On the "Token created successfully" modal and the dashboard URL, Cloudflare shows **different identifiers**. Only one of them authenticates API calls.
+On the "Token created successfully" modal, Cloudflare shows **Account ID** in one box and **Your API Token** in a separate box below. Only the latter is Bearer auth.
 
 | Field | Example | Used for API auth? |
 |-------|---------|-------------------|
 | **Token name** | `steep-queen-72db` | No — human label only |
 | **Account ID** | `f698312569a008255d809d9d48c41dfd` (also in URL: `dash.cloudflare.com/<account_id>/...`) | No — path/query identifier |
-| **API token secret** | `cfat_…` or `cfut_…` (40+ chars; shown **once** under "Your API Token") | **Yes** |
+| **API token secret** | `cfat_…` or `cfut_…` or 40-char alphanumeric (shown **once** under "Your API Token") | **Yes** |
 
 Combining token name + account ID does **not** work. Cloudflare returns `6111 Invalid format for Authorization header` for account IDs and names.
 
@@ -150,9 +176,19 @@ curl -sS "https://cloudflare-dns.com/dns-query?name=theshovel.ai&type=CNAME" \
 | `409 domain already exists` | www created automatically with apex | Only POST apex once |
 | API Keys page shows Global API Key | Legacy UI | Ignore; use Account API tokens instead |
 
+## One-shot script (theshovel.ai → Render)
+
+```bash
+export CLOUDFLARE_API_TOKEN='cfat_…'   # from "Your API Token", NOT account ID
+bash .claude/skills/cloudflare/setup-theshovel-dns.sh
+```
+
 ## References
 
+- [Create API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)
+- [Make API calls](https://developers.cloudflare.com/fundamentals/api/how-to/make-api-calls/)
 - [Account API tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)
 - [Token formats (`cfat_` / `cfut_`)](https://developers.cloudflare.com/fundamentals/api/get-started/token-formats/)
+- [Create DNS record API](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/create/)
 - [Cloudflare DNS for Render](https://render.com/docs/configure-cloudflare-dns)
 - [Render custom domains API](https://api-docs.render.com/reference/create-custom-domain)
