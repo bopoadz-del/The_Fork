@@ -1,0 +1,87 @@
+"""Verify bim_extractor parses a known IFC sample and produces expected counts.
+
+The fixture ``tests/fixtures/sample_office.ifc`` is a 2-storey building generated
+by ``scripts/_make_sample_ifc.py``. Re-run that script to regenerate after any
+ifcopenshell schema changes.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+
+import pytest
+
+from app.blocks.bim_extractor import BIMExtractorBlock
+
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sample_office.ifc")
+
+
+def _run(input_data, params=None):
+    block = BIMExtractorBlock()
+    return asyncio.get_event_loop().run_until_complete(block.process(input_data, params))
+
+
+def test_extracts_elements_from_sample_ifc():
+    assert os.path.exists(FIXTURE), (
+        f"missing fixture {FIXTURE}; run `python scripts/_make_sample_ifc.py`"
+    )
+    result = _run({"file_path": FIXTURE})
+    assert result["status"] == "success", result.get("error")
+    assert result["ifc_schema"] == "IFC4"
+    # Counts the fixture script writes — keep them in sync.
+    assert result["element_count"] >= 26  # walls(8) + slabs(2) + columns(4) + beams(2) + doors(2) + windows(2) + storeys(2) + spaces(2) + pipe + duct + light
+    q = result["quantities"]
+    assert q["walls"]["count"] == 8
+    assert q["slabs"]["count"] == 2
+    assert q["columns"]["count"] == 4
+    assert q["beams"]["count"] == 2
+    assert q["doors"]["count"] == 2
+    assert q["windows"]["count"] == 2
+    assert q["storeys"]["count"] == 2
+    storey_names = {s.get("name") for s in result["storeys"]}
+    assert storey_names == {"Ground Floor", "Level 1"}
+
+
+def test_rejects_non_ifc_extension(tmp_path):
+    not_ifc = tmp_path / "not_an_ifc.xlsx"
+    not_ifc.write_bytes(b"PK\x03\x04")  # xlsx magic header
+    result = _run({"file_path": str(not_ifc)})
+    assert result["status"] == "error"
+    assert "must be an .ifc" in result["error"].lower() or ".ifc" in result["error"]
+
+
+def test_missing_file_path():
+    result = _run({})
+    assert result["status"] == "error"
+    assert "no file_path" in result["error"].lower() or "requires" in result["error"].lower()
+
+
+def test_file_not_found():
+    result = _run({"file_path": "/tmp/this_file_does_not_exist_xyz.ifc"})
+    assert result["status"] == "error"
+    assert "not found" in result["error"].lower()
+
+
+def test_nwd_returns_actionable_error(tmp_path):
+    """A .nwd upload must NOT just say 'unsupported' — the operator needs to
+    know the file is Autodesk-proprietary and how to convert it."""
+    nwd = tmp_path / "model.nwd"
+    nwd.write_bytes(b"\x00" * 32)
+    result = _run({"file_path": str(nwd)})
+    assert result["status"] == "error"
+    assert result["format_extension"] == ".nwd"
+    assert result["required_format"] == ".ifc"
+    msg = result["error"].lower()
+    assert "navisworks" in msg
+    assert "ifc" in msg
+
+
+def test_rvt_returns_actionable_error(tmp_path):
+    rvt = tmp_path / "model.rvt"
+    rvt.write_bytes(b"\x00" * 32)
+    result = _run({"file_path": str(rvt)})
+    assert result["status"] == "error"
+    assert result["format_extension"] == ".rvt"
+    msg = result["error"].lower()
+    assert "revit" in msg
+    assert "export" in msg and "ifc" in msg

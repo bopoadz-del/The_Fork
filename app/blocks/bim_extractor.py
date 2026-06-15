@@ -38,7 +38,7 @@ IFC_CATEGORY_MAP: Dict[str, str] = {
 class BIMExtractorBlock(UniversalBlock):
     auto_validate = False
     name = "bim_extractor"
-    version = "1.0.0"
+    version = "1.1.0"
     description = "Extract building elements, quantities, and clash report from IFC BIM models"
     layer = 3
     tags = ["domain", "construction", "bim", "ifc", "quantities", "clash"]
@@ -51,11 +51,30 @@ class BIMExtractorBlock(UniversalBlock):
         "max_elements": 10000,
     }
 
+    # Proprietary formats this block does NOT parse natively. Each is mapped to
+    # the conversion / SDK path the operator needs to take, so the chat
+    # response is actionable instead of a vague "unsupported".
+    _PROPRIETARY_FORMATS = {
+        ".nwd": (
+            "Navisworks Document (.nwd) is Autodesk-proprietary. Convert to IFC "
+            "(in Navisworks: File > Export > IFC) or use the Autodesk Platform "
+            "Services Model Derivative API to convert. Then upload the .ifc."
+        ),
+        ".rvt": (
+            "Revit (.rvt) is Autodesk-proprietary. Export from Revit as IFC "
+            "(File > Export > IFC, IFC 4 or IFC 2x3) and upload the .ifc file."
+        ),
+        ".nwc": (
+            "Navisworks Cache (.nwc) is Autodesk-proprietary. Open in Navisworks "
+            "and export as IFC."
+        ),
+    }
+
     ui_schema = {
         "input": {
             "type": "file",
             "accept": [".ifc"],
-            "placeholder": "Upload IFC BIM model...",
+            "placeholder": "Upload IFC BIM model (.rvt/.nwd: export to IFC first)...",
         },
         "output": {
             "type": "table",
@@ -82,8 +101,25 @@ class BIMExtractorBlock(UniversalBlock):
             return {"status": "error", "error": "No file_path provided — requires an IFC file"}
         if not os.path.exists(file_path):
             return {"status": "error", "error": f"File not found: {file_path}"}
-        if not file_path.lower().endswith(".ifc"):
-            return {"status": "error", "error": "File must be an .ifc IFC model"}
+
+        ext = os.path.splitext(str(file_path).lower())[1]
+        # Helpful, actionable error for known proprietary formats — instead of
+        # returning a vague "unsupported" string when the operator uploads an
+        # .rvt or .nwd. Maps each to the conversion path needed to get to IFC.
+        if ext in self._PROPRIETARY_FORMATS:
+            return {
+                "status": "error",
+                "error": self._PROPRIETARY_FORMATS[ext],
+                "format_extension": ext,
+                "required_format": ".ifc",
+            }
+        if ext != ".ifc":
+            return {
+                "status": "error",
+                "error": f"File must be an .ifc IFC model (got '{ext}')",
+                "format_extension": ext,
+                "required_format": ".ifc",
+            }
 
         try:
             import ifcopenshell
