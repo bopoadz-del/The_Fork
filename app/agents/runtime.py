@@ -44,6 +44,101 @@ MAX_TOOL_ITERATIONS = 12  # hard cap so a runaway loop can't burn budget; raised
 MAX_HISTORY_TURNS = 20
 MAX_DELEGATION_DEPTH = 3  # how deep agent → agent delegation may recurse
 
+# Blocks whose inputs reference a user-uploaded file. When the LLM passes a
+# bare filename (e.g. "DGII - Infra-1 - Demolition BOQ.pdf") instead of the
+# stored file_path, the block's os.path.exists() always fails. The runtime
+# resolves the bare name to the document's actual on-disk path before
+# dispatching to the block. See _resolve_block_file_input.
+_FILE_CONSUMING_BLOCKS = {
+    "boq_processor",
+    "spec_analyzer",
+    "primavera_parser",
+    "drawing_qto",
+    "bim",
+    "bim_extractor",
+    "document_engine",
+    "image",
+    "file_hasher",
+}
+
+
+def _resolve_file_path(project_id: str, raw: Any) -> Any:
+    """Resolve a bare filename to the project's stored absolute file_path.
+
+    Returns ``raw`` unchanged if:
+      - ``raw`` is empty or not a string;
+      - ``raw`` is already an absolute path that exists;
+      - no matching document is found.
+
+    Otherwise looks up the project's documents (via ``projects.list_documents``)
+    and returns the document's ``file_path`` when the name matches.
+
+    Matching is tried in two passes:
+      1. Exact match on ``original_name`` (case-insensitive).
+      2. Substring match either way (case-insensitive). This handles the
+         common case where the LLM truncates or rewords the filename.
+    """
+    if not raw or not isinstance(raw, str):
+        return raw
+    if not project_id:
+        return raw
+    import os as _os
+    try:
+        if _os.path.isabs(raw) and _os.path.exists(raw):
+            return raw
+    except (TypeError, ValueError):
+        return raw
+    try:
+        from app.core import projects as _projects
+        docs = _projects.list_documents(project_id) or []
+    except Exception:
+        return raw
+
+    needle = _os.path.basename(str(raw)).strip().lower()
+    if not needle:
+        return raw
+
+    # Pass 1: exact (case-insensitive) match on original_name.
+    for doc in docs:
+        on = (doc.get("original_name") or "").strip().lower()
+        if on and on == needle:
+            fp = doc.get("file_path") or ""
+            if fp and _os.path.exists(fp):
+                return fp
+
+    # Pass 2: substring match either direction (handles the LLM truncating
+    # or rewording the filename slightly).
+    for doc in docs:
+        on = (doc.get("original_name") or "").strip().lower()
+        if on and (needle in on or on in needle):
+            fp = doc.get("file_path") or ""
+            if fp and _os.path.exists(fp):
+                return fp
+
+    return raw
+
+
+def _resolve_block_file_input(project_id: str, payload: Any) -> Any:
+    """Apply :func:`_resolve_file_path` to any ``file_path`` / bare-string
+    inputs in a block's ``input`` or ``params`` payload.
+
+    The block-input contract is loose — sometimes it's a string (just the
+    filename), sometimes a dict with ``file_path``, sometimes nested under
+    other keys. We walk one shallow level and fix any field that looks like
+    a file reference, leaving everything else untouched.
+    """
+    if payload is None:
+        return payload
+    if isinstance(payload, str):
+        return _resolve_file_path(project_id, payload)
+    if isinstance(payload, dict):
+        out = dict(payload)
+        for key in ("file_path", "filepath", "path", "input", "file"):
+            if key in out and isinstance(out[key], str):
+                out[key] = _resolve_file_path(project_id, out[key])
+        return out
+    return payload
+
 
 # ── Anti-hallucination: scrub prior assistant turns that contain WBS/BOQ
 # markdown tables. When conversation history carries a previously-emitted
@@ -1718,6 +1813,15 @@ class Agent:
         instance = block_instances.get(name) or _create_block_instance(name)
         block_input = args.get("input")
         block_params = args.get("params") or {}
+        # File-consuming blocks: the LLM typically supplies just the filename
+        # (e.g. 'DGII - Infra-1 - Demolition BOQ.pdf') because that is what the
+        # user said. The block then calls os.path.exists on a bare filename
+        # which always fails on the deployed disk, producing
+        # 'File not found: <name>'. Resolve to the absolute file_path of the
+        # uploaded document for this project before dispatch.
+        if name in _FILE_CONSUMING_BLOCKS and project_id:
+            block_input = _resolve_block_file_input(project_id, block_input)
+            block_params = _resolve_block_file_input(project_id, block_params)
         try:
             result = await instance.execute(block_input, block_params)
             envelope = {"name": name, "ok": True, "result": result}

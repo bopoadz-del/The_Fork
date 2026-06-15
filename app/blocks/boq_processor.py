@@ -1,16 +1,16 @@
-"""BOQ Processor Block - Parse Excel/CSV Bills of Quantities into structured line items"""
+"""BOQ Processor Block - Parse Excel/CSV/PDF Bills of Quantities into structured line items"""
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
 
 
 class BOQProcessorBlock(UniversalBlock):
     name = "boq_processor"
-    version = "1.0.0"
-    description = "Parse Excel/CSV Bills of Quantities into structured quantities and cost breakdown"
+    version = "1.1.0"
+    description = "Parse Excel/CSV/PDF Bills of Quantities into structured quantities and cost breakdown"
     layer = 3
-    tags = ["domain", "construction", "boq", "quantities", "excel"]
+    tags = ["domain", "construction", "boq", "quantities", "excel", "pdf"]
     requires = []
 
     default_config = {
@@ -21,8 +21,8 @@ class BOQProcessorBlock(UniversalBlock):
     ui_schema = {
         "input": {
             "type": "file",
-            "accept": [".xlsx", ".xls", ".csv"],
-            "placeholder": "Upload BOQ spreadsheet (.xlsx or .csv)...",
+            "accept": [".xlsx", ".xls", ".csv", ".pdf"],
+            "placeholder": "Upload BOQ spreadsheet (.xlsx, .csv) or BOQ PDF...",
         },
         "output": {
             "type": "table",
@@ -55,7 +55,7 @@ class BOQProcessorBlock(UniversalBlock):
 
         file_path = data.get("file_path") or params.get("file_path") or data.get("text") or data.get("input") or (input_data if isinstance(input_data, str) else "")
         if not file_path:
-            return {"status": "error", "error": "No file_path provided. Requires an .xlsx or .csv BOQ file path."}
+            return {"status": "error", "error": "No file_path provided. Requires an .xlsx, .csv, or .pdf BOQ file path."}
         if not os.path.exists(str(file_path)):
             return {"status": "error", "error": f"File not found: {file_path}"}
 
@@ -70,15 +70,17 @@ class BOQProcessorBlock(UniversalBlock):
                     return await self._parse_csv(plain_path, params)
                 elif ext in (".xlsx", ".xls"):
                     return await self._parse_excel(plain_path, params)
+                elif ext == ".pdf":
+                    return await self._parse_pdf(plain_path, params)
                 else:
                     return {
                         "status": "error",
-                        "error": f"Unsupported format: {ext}. Use .xlsx or .csv",
+                        "error": f"Unsupported format: {ext}. Use .xlsx, .csv, or .pdf",
                     }
         except ImportError as e:
             return {
                 "status": "error",
-                "error": f"Missing dependency: {e}. Run: pip install pandas openpyxl",
+                "error": f"Missing dependency: {e}. Run: pip install pandas openpyxl pdfplumber",
             }
         except Exception as e:
             return {"status": "error", "error": f"Parse error: {e}"}
@@ -93,6 +95,113 @@ class BOQProcessorBlock(UniversalBlock):
         sheet = params.get("sheet_name", 0)
         df = pd.read_excel(file_path, sheet_name=sheet, engine="openpyxl")
         return self._process_dataframe(df, params)
+
+    async def _parse_pdf(self, file_path: str, params: Dict) -> Dict:
+        """Extract tabular BOQ data from a PDF via pdfplumber.
+
+        Walks every page, calls ``page.extract_tables()``, treats row 0 of each
+        table as a header, then groups tables by header signature so
+        continuation pages with identical headers concatenate into a single
+        DataFrame. The largest such group is treated as the BOQ and dispatched
+        to ``_process_dataframe`` (the same path Excel/CSV use), so the column
+        aliasing in ``_resolve_columns`` works for any BOQ table format.
+
+        Returns the standard BOQ result (item_count, total_cost, line_items,
+        cost_breakdown). If no extractable tables are found (e.g. a pure-image
+        scanned PDF that wasn't OCR'd first), surfaces a clear error pointing
+        to that limitation.
+        """
+        import pdfplumber
+        import pandas as pd
+
+        # Group tables by a canonical "shape" key built from normalized headers
+        # so continuation pages merge naturally.
+        groups: Dict[Tuple[str, ...], List[List[List[str]]]] = {}
+        primary_headers_for: Dict[Tuple[str, ...], List[str]] = {}
+        page_table_count = 0
+
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                try:
+                    tables = page.extract_tables() or []
+                except Exception:
+                    continue
+                for tbl in tables:
+                    if not tbl or len(tbl) < 2:
+                        continue
+                    headers_raw = [(str(c or "").strip()) for c in tbl[0]]
+                    if not any(headers_raw):
+                        continue
+                    n_cols = len(headers_raw)
+                    if n_cols < 2:
+                        continue
+                    # Canonical shape key: tuple of normalized header tokens so
+                    # tables across pages with identical structure merge.
+                    key = tuple(self._normalize_col(h) for h in headers_raw)
+                    norm_rows: List[List[str]] = []
+                    for row in tbl[1:]:
+                        if row is None:
+                            continue
+                        cells = [(str(c) if c is not None else "") for c in row]
+                        if len(cells) < n_cols:
+                            cells = cells + [""] * (n_cols - len(cells))
+                        elif len(cells) > n_cols:
+                            cells = cells[:n_cols]
+                        if not any(s.strip() for s in cells):
+                            continue  # blank row
+                        norm_rows.append(cells)
+                    if not norm_rows:
+                        continue
+                    groups.setdefault(key, []).extend(norm_rows)
+                    primary_headers_for.setdefault(key, headers_raw)
+                    page_table_count += 1
+
+        if not groups:
+            # pdfplumber found no tabular structure. This is normal for scanned
+            # BOQ PDFs where OCR captured the text but page layout doesn't yield
+            # a clean table grid. Return per-page text so the caller (typically
+            # an LLM agent) can extract line items from the raw OCR text.
+            page_texts: List[Dict[str, Any]] = []
+            with pdfplumber.open(file_path) as pdf:
+                for i, page in enumerate(pdf.pages, 1):
+                    try:
+                        t = (page.extract_text() or "").strip()
+                    except Exception:
+                        t = ""
+                    if t:
+                        page_texts.append({"page": i, "text": t})
+            if page_texts:
+                return {
+                    "status": "partial",
+                    "source_format": "pdf",
+                    "note": (
+                        "PDF has no clean tabular structure (likely scanned). "
+                        "Returning raw page text — pass to an LLM for BOQ line-item extraction."
+                    ),
+                    "page_count": len(page_texts),
+                    "page_texts": page_texts,
+                }
+            return {
+                "status": "error",
+                "error": (
+                    "No extractable tables or text found in this PDF. The file "
+                    "may be a pure-image scan that hasn't been OCR'd. Run OCR "
+                    "first or re-upload as .xlsx/.csv."
+                ),
+            }
+
+        # Pick the largest group as the BOQ; other groups (smaller summary
+        # tables, headers/footers picked up as tables) are ignored.
+        best_key = max(groups.keys(), key=lambda k: len(groups[k]))
+        df = pd.DataFrame(groups[best_key], columns=primary_headers_for[best_key])
+
+        result = self._process_dataframe(df, params)
+        # Surface PDF-specific diagnostics so the caller knows we used the PDF path.
+        if isinstance(result, dict):
+            result.setdefault("source_format", "pdf")
+            result["pdf_tables_total"] = page_table_count
+            result["pdf_tables_used"] = len(groups[best_key])
+        return result
 
     @staticmethod
     def _normalize_col(name: str) -> str:
