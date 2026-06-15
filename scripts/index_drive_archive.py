@@ -108,6 +108,8 @@ INCLUDE_KEYWORDS = [
     "contract", "subcontract", "submittal", "rfi", "nce", "variation",
     "change order", "as-built", "commissioning", "data center", "data centre",
     "mechanical", "electrical", "plumbing", "hvac", "building", "floorplan",
+    "road", "concrete", "asphalt", "pavement", "earthworks", "bridge",
+    "tunnel", "scaned", "scanned",
 ]
 
 # Path-component substrings that, if present, exclude the file outright.
