@@ -16,15 +16,26 @@ class ConstructionBoqMixin:
     async def _process_bill_of_materials(self, input_data: Any, params: Dict) -> Dict:
         """A BOM is a BOQ in everything but name — same shape (line items,
         quantities, units, rates). Delegate to boq_processor, which already
-        knows how to parse Excel/CSV/PDF bills."""
+        knows how to parse Excel/CSV/PDF bills.
+
+        Forwards ``project_id`` in params so boq_processor can resolve a bare
+        filename to the project's stored file_path. Without this, the LLM
+        passing just the document name (e.g. "Demolition BOQ.pdf") causes
+        boq_processor's ``os.path.exists`` check to fail and surface "File
+        not found" through the chat.
+        """
         data = input_data if isinstance(input_data, dict) else {}
-        p = params or {}
+        p = dict(params or {})
         file_path = (
             data.get("file_path") if isinstance(data, dict) else None
         ) or p.get("file_path") or (input_data if isinstance(input_data, str) else None)
         block = self._resolve_block("boq_processor")
         if block is None:
             return {"status": "error", "doc_type": "bom", "error": "boq_processor block unavailable"}
+        # Make sure project_id is in params (it normally is, but data may also
+        # carry it from synthetic agent calls).
+        if "project_id" not in p and isinstance(data, dict) and data.get("project_id"):
+            p["project_id"] = data["project_id"]
         result = await block.process({"file_path": file_path} if file_path else data, p)
         if isinstance(result, dict):
             result.setdefault("doc_type", "bom")

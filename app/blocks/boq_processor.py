@@ -5,6 +5,50 @@ from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
 
 
+def _resolve_via_project(project_id: str, raw: str) -> str:
+    """Map a bare filename to the project's stored absolute file_path.
+
+    Layered fallback for callers that hand us a filename instead of a path
+    (the LLM typically does this -- it knows the original document name from
+    the user, not the disk location). Returns the input unchanged if no
+    matching document is found or the project store isn't reachable.
+    """
+    if not raw or not project_id or not isinstance(raw, str):
+        return raw
+    try:
+        if os.path.isabs(raw) and os.path.exists(raw):
+            return raw
+    except (TypeError, ValueError):
+        return raw
+    try:
+        from app.core import projects as _projects
+        docs = _projects.list_documents(project_id) or []
+    except Exception:
+        return raw
+
+    needle = os.path.basename(str(raw)).strip().lower()
+    if not needle:
+        return raw
+
+    # Pass 1: exact (case-insensitive) match.
+    for doc in docs:
+        on = (doc.get("original_name") or "").strip().lower()
+        if on and on == needle:
+            fp = doc.get("file_path") or ""
+            if fp and os.path.exists(fp):
+                return fp
+
+    # Pass 2: substring match either direction (LLM truncations / rewordings).
+    for doc in docs:
+        on = (doc.get("original_name") or "").strip().lower()
+        if on and (needle in on or on in needle):
+            fp = doc.get("file_path") or ""
+            if fp and os.path.exists(fp):
+                return fp
+
+    return raw
+
+
 class BOQProcessorBlock(UniversalBlock):
     name = "boq_processor"
     version = "1.1.0"
@@ -56,6 +100,20 @@ class BOQProcessorBlock(UniversalBlock):
         file_path = data.get("file_path") or params.get("file_path") or data.get("text") or data.get("input") or (input_data if isinstance(input_data, str) else "")
         if not file_path:
             return {"status": "error", "error": "No file_path provided. Requires an .xlsx, .csv, or .pdf BOQ file path."}
+
+        # LLM callers typically pass a bare filename ("Demolition BOQ.pdf") rather
+        # than the stored absolute path. Try to resolve that against the project's
+        # uploaded documents before failing with "File not found".
+        if not os.path.exists(str(file_path)):
+            project_id = (
+                params.get("project_id")
+                or (data.get("project_id") if isinstance(data, dict) else None)
+            )
+            if project_id:
+                resolved = _resolve_via_project(str(project_id), str(file_path))
+                if resolved and resolved != file_path and os.path.exists(resolved):
+                    file_path = resolved
+
         if not os.path.exists(str(file_path)):
             return {"status": "error", "error": f"File not found: {file_path}"}
 
