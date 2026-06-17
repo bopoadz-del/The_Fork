@@ -1071,6 +1071,17 @@ function WorkspaceRail({ project, documents, readinessMode: mode, onDocumentAdde
         />
       </div>
 
+      {/* Quick Analyses — deterministic block buttons. Each runs an
+          uploaded file through a specific construction block via
+          /v1/execute. No agent, no tool selection, no LLM dependency. */}
+      <div className="rail-section">
+        <div className="rail-section__title">Quick Analyses</div>
+        <QuickAnalysisPanel
+          projectId={project.id}
+          onDocumentAdded={onDocumentAdded}
+        />
+      </div>
+
       {/* Google Drive — B5 */}
       <div className="rail-section">
         <div className="rail-section__title">Google Drive</div>
@@ -1080,6 +1091,202 @@ function WorkspaceRail({ project, documents, readinessMode: mode, onDocumentAdde
         />
       </div>
     </aside>
+  )
+}
+
+// ── QuickAnalysisPanel ─────────────────────────────────────────────────────
+// Deterministic block-execution buttons. For each construction action the
+// pilot needs (BOQ extract, BIM parse, drawing QTO, schedule parse) we wire
+// a file picker → upload to project → POST /v1/execute on the returned
+// file_path → display the formatted result. This path does NOT go through
+// the chat router's intent classifier or the agent's tool-selection loop,
+// so it works reliably regardless of LLM strength.
+
+interface QuickAnalysisPanelProps {
+  projectId: string
+  onDocumentAdded: (doc: DocumentRecord) => void
+}
+
+interface ActionDef {
+  key: 'boq' | 'bim' | 'qto' | 'schedule'
+  label: string
+  hint: string
+  accept: string
+  block: string
+  /** Optional ETA hint surfaced on the busy state (large scanned PDFs etc.). */
+  longRunningNote?: string
+}
+
+const QUICK_ACTIONS: ActionDef[] = [
+  {
+    key: 'boq',
+    label: 'Extract BOQ',
+    hint: 'BOQ PDF / Excel / CSV',
+    accept: '.pdf,.xlsx,.xls,.csv',
+    block: 'boq_processor',
+    longRunningNote: 'Scanned BOQs run OCR — can take several minutes',
+  },
+  {
+    key: 'bim',
+    label: 'Parse BIM',
+    hint: 'IFC model',
+    accept: '.ifc',
+    block: 'bim_extractor',
+  },
+  {
+    key: 'qto',
+    label: 'Extract Quantities (Drawing)',
+    hint: 'Vector PDF / DXF',
+    accept: '.pdf,.dxf,.dwg',
+    block: 'drawing_qto',
+  },
+  {
+    key: 'schedule',
+    label: 'Parse Schedule',
+    hint: 'Primavera XER / XML',
+    accept: '.xer,.xml,.mpp',
+    block: 'primavera_parser',
+  },
+]
+
+type ActionState =
+  | { tag: 'idle' }
+  | { tag: 'busy'; phase: 'uploading' | 'analyzing' }
+  | { tag: 'done'; result: Record<string, unknown> }
+  | { tag: 'error'; message: string }
+
+function QuickAnalysisPanel({ projectId, onDocumentAdded }: QuickAnalysisPanelProps) {
+  const [states, setStates] = useState<Record<string, ActionState>>(() =>
+    Object.fromEntries(QUICK_ACTIONS.map((a) => [a.key, { tag: 'idle' as const }]))
+  )
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+
+  const setState = (key: string, s: ActionState) => {
+    setStates((prev) => ({ ...prev, [key]: s }))
+  }
+
+  async function runAction(action: ActionDef, file: File) {
+    setState(action.key, { tag: 'busy', phase: 'uploading' })
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const uploadResp = await apiPostForm<{ document: DocumentRecord & { file_path?: string } }>(
+        `/v1/projects/${projectId}/documents`,
+        form,
+      )
+      onDocumentAdded(uploadResp.document)
+      const filePath = uploadResp.document.file_path
+      if (!filePath) {
+        setState(action.key, { tag: 'error', message: 'Upload succeeded but no file_path returned.' })
+        return
+      }
+      setState(action.key, { tag: 'busy', phase: 'analyzing' })
+      const execResp = await apiPost<{ result?: Record<string, unknown>; status?: string; error?: string }>(
+        '/v1/execute',
+        {
+          block: action.block,
+          input: { file_path: filePath },
+          params: { project_id: projectId },
+        },
+      )
+      if (execResp.error) {
+        setState(action.key, { tag: 'error', message: execResp.error })
+        return
+      }
+      setState(action.key, { tag: 'done', result: execResp.result ?? execResp as Record<string, unknown> })
+    } catch (err) {
+      const msg = err instanceof ApiError
+        ? `HTTP ${err.status}: ${err.message}`
+        : err instanceof Error ? err.message : 'Action failed'
+      setState(action.key, { tag: 'error', message: msg })
+    }
+  }
+
+  function summarize(actionKey: string, result: Record<string, unknown>): string {
+    const get = (k: string) => result[k]
+    if (actionKey === 'bim') {
+      const q = (get('quantities') as Record<string, { count?: number }>) || {}
+      const cats = ['walls', 'slabs', 'columns', 'beams', 'doors', 'windows', 'storeys']
+        .map((k) => q[k] ? `${k}=${q[k].count}` : null)
+        .filter(Boolean)
+        .join(', ')
+      const schema = get('ifc_schema')
+      const elem = get('element_count')
+      return `${schema} · ${elem} elements · ${cats}`
+    }
+    if (actionKey === 'boq') {
+      const status = String(get('status') ?? 'unknown')
+      const pages = get('page_count') ?? (Array.isArray(get('page_texts')) ? (get('page_texts') as unknown[]).length : 0)
+      const rows = Array.isArray(get('rows')) ? (get('rows') as unknown[]).length : null
+      return `status=${status}${pages ? ` · ${pages} pages` : ''}${rows != null ? ` · ${rows} rows` : ''}`
+    }
+    if (actionKey === 'qto') {
+      const m = get('measurements_count') ?? 0
+      const a = get('areas_count') ?? 0
+      const pages = get('pages_inspected') ?? 0
+      return `${pages} pages · ${m} measurements · ${a} areas`
+    }
+    if (actionKey === 'schedule') {
+      const acts = Array.isArray(get('activities')) ? (get('activities') as unknown[]).length : 0
+      const wbs = Array.isArray(get('wbs')) ? (get('wbs') as unknown[]).length : 0
+      return `${acts} activities · ${wbs} WBS rows`
+    }
+    return 'see details'
+  }
+
+  return (
+    <div className="quick-analysis">
+      <ul className="quick-analysis__list">
+        {QUICK_ACTIONS.map((action) => {
+          const state = states[action.key] ?? { tag: 'idle' as const }
+          return (
+            <li key={action.key} className="quick-analysis__row">
+              <div className="quick-analysis__head">
+                <button
+                  type="button"
+                  className="btn btn--ghost quick-analysis__btn"
+                  onClick={() => inputRefs.current[action.key]?.click()}
+                  disabled={state.tag === 'busy'}
+                  title={action.hint}
+                >
+                  {state.tag === 'busy' ? `${state.phase}…` : action.label}
+                </button>
+                <input
+                  ref={(el) => { inputRefs.current[action.key] = el }}
+                  type="file"
+                  accept={action.accept}
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) void runAction(action, f)
+                    e.target.value = ''
+                  }}
+                />
+              </div>
+              <div className="quick-analysis__hint">{action.hint}</div>
+              {state.tag === 'busy' && action.longRunningNote && state.phase === 'analyzing' && (
+                <div className="quick-analysis__note">{action.longRunningNote}</div>
+              )}
+              {state.tag === 'done' && (
+                <details className="quick-analysis__result">
+                  <summary className="quick-analysis__summary">
+                    {summarize(action.key, state.result)}
+                  </summary>
+                  <pre className="quick-analysis__json">
+                    {JSON.stringify(state.result, null, 2).slice(0, 4000)}
+                  </pre>
+                </details>
+              )}
+              {state.tag === 'error' && (
+                <div className="quick-analysis__error" role="alert">
+                  {state.message}
+                </div>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
   )
 }
 
