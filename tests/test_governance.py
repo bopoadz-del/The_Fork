@@ -62,6 +62,28 @@ def test_delete_project_purges_files(client):
     assert client.get(f"/v1/projects/{pid}", headers=H).status_code == 404
 
 
+def test_project_cascade_audits_each_document(client):
+    """Regression guard for the 'BOQ disappeared with no explanation'
+    failure mode. When a project delete cascades through its documents,
+    each document removal must leave its OWN audit row — not just a
+    single ``project.deleted`` summary. Without per-doc rows there's
+    no forensic trail of which specific docs the cascade swept."""
+    pid, doc_id = _project_with_doc(client)
+    r = client.delete(f"/v1/projects/{pid}", headers=H)
+    assert r.status_code == 200
+    entries = audit.read_audit(project_id=pid)
+    cascade_events = [
+        e for e in entries
+        if e.get("event") == "document.deleted"
+        and e.get("document_id") == doc_id
+        and e.get("reason") == "project_cascade"
+    ]
+    assert cascade_events, (
+        f"expected a 'document.deleted' audit row with reason='project_cascade' "
+        f"for doc {doc_id}; got events={[e.get('event') for e in entries]}"
+    )
+
+
 def test_delete_missing_document_404(client):
     pid, _ = _project_with_doc(client)
     assert client.delete(
@@ -85,6 +107,55 @@ def test_purge_is_noop_without_retention(client):
     r = client.post("/v1/governance/purge", headers=H)
     assert r.status_code == 200
     assert r.json()["status"] == "skipped"
+
+
+def test_governance_purge_audits_each_document(client, monkeypatch):
+    """Counterpart guard for the bulk-purge path. The summary
+    ``governance.purge`` row records only a count — for forensics each
+    purged document must also get its own ``document.deleted`` row with
+    reason='governance_purge'."""
+    # Make the retention window so short that the doc-just-uploaded is
+    # already past it: 0 days, i.e. purge-everything.
+    pid, doc_id = _project_with_doc(client)
+    monkeypatch.setenv("DATA_RETENTION_DAYS", "0")
+    # Re-set to a positive value below the document's age in microseconds —
+    # effectively zero. The endpoint reads the env var at call-time.
+    # We need a value > 0 to enter the purge branch; the test
+    # documents.uploaded_at is "now" so we backdate via the env var.
+    # Simpler: set retention_days to a tiny positive integer and override
+    # the cutoff comparison by directly calling the store with days=0
+    # bypassing the endpoint guard. Below we go through the HTTP path with
+    # a 1-day window but stamp the doc's uploaded_at as 2 days ago.
+    from app.core import projects as store
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import update
+    backdate = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    with store.SessionLocal() as session:
+        session.execute(
+            update(store.Document)
+            .where(store.Document.id == doc_id)
+            .values(uploaded_at=backdate)
+        )
+        session.commit()
+    monkeypatch.setenv("DATA_RETENTION_DAYS", "1")
+
+    r = client.post("/v1/governance/purge", headers=H)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "purged"
+    assert body["documents_purged"] >= 1
+
+    entries = audit.read_audit(project_id=pid)
+    purge_events = [
+        e for e in entries
+        if e.get("event") == "document.deleted"
+        and e.get("document_id") == doc_id
+        and e.get("reason") == "governance_purge"
+    ]
+    assert purge_events, (
+        f"expected a 'document.deleted' audit row with reason='governance_purge' "
+        f"for doc {doc_id}; got events={[e.get('event') for e in entries]}"
+    )
 
 
 # ── encryption at rest (Roadmap V2 · Epic 6 follow-up) ──────────────────────
