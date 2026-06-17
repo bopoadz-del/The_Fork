@@ -236,6 +236,12 @@ GENERATIVE_INTENTS = frozenset({
     "bim_analysis",
     "bim_clash_detection",
     "bim_extractor",
+    # Drawing quantity take-off — real tool dispatch, not RAG-only prose.
+    # Without this, "extract quantities from the floor plan" stays on the
+    # fast chat path and the model has no way to read the DXF/vector PDF,
+    # so it refuses to answer instead of calling drawing_qto. Surfaced as
+    # the lone FAIL in QA v3 (2026-06-17).
+    "drawing_qto",
     # Contracts / Claims (real document synthesis)
     "claims_builder",
     "rfi_generator",
