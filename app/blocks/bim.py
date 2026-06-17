@@ -13,7 +13,7 @@ class BIMBlock(UniversalBlock):
     
     auto_validate = False
     name = "bim"
-    version = "1.0.0"
+    version = "1.1.0"
     # Original `requires = ["config", "storage", "vector", "pdf", "ocr"]`
     # referenced four blocks (`config`, `storage`, `vector`, `database`) that
     # don't exist in BLOCK_REGISTRY — the platform moved to a direct-file-path
@@ -90,9 +90,17 @@ class BIMBlock(UniversalBlock):
         
         return True
     
+    # Set of action names this block dispatches. Anything outside this set
+    # is rejected with a status:error + a list of valid actions, so
+    # callers (and agents) see a complete contract instead of a bare error.
+    _KNOWN_ACTIONS = frozenset({
+        "index_folder", "parse_ifc", "extract_dwg_metadata",
+        "process_pdf", "get_elements", "spatial_query", "compare_versions",
+    })
+
     async def process(self, input_data: Dict, params: Dict = None) -> Dict:
         action = (params or {}).get("action") or (input_data.get("action") if isinstance(input_data, dict) else None)
-        
+
         if action == "index_folder":
             return await self._index_folder(input_data)
         elif action == "parse_ifc":
@@ -107,8 +115,15 @@ class BIMBlock(UniversalBlock):
             return await self._spatial_query(input_data)
         elif action == "compare_versions":
             return await self._compare_versions_real(input_data)
-        
-        return {"error": f"Unknown action: {action}"}
+
+        return {
+            "status": "error",
+            "error": (
+                f"Unknown action: {action!r}. "
+                f"Valid actions: {sorted(self._KNOWN_ACTIONS)}."
+            ),
+            "valid_actions": sorted(self._KNOWN_ACTIONS),
+        }
     
     async def _index_folder(self, data: Dict) -> Dict:
         """Walk `folder_path` on disk, parse every supported BIM file's headers,
@@ -124,7 +139,10 @@ class BIMBlock(UniversalBlock):
         project_id = data.get("project_id")
         folder_path = data.get("folder_path")
         if not folder_path or not os.path.isdir(folder_path):
-            return {"error": f"folder_path required and must be a directory (got {folder_path!r})"}
+            return {
+                "status": "error",
+                "error": f"folder_path required and must be a directory (got {folder_path!r})",
+            }
 
         bim_files: List[Dict] = []
         for entry in os.scandir(folder_path):
@@ -175,6 +193,7 @@ class BIMBlock(UniversalBlock):
             "total_files": len(bim_files),
         }
         return {
+            "status": "success",
             "project_id": project_id,
             "indexed": len(bim_files),
             "by_type": self._count_by_type(bim_files),
@@ -190,7 +209,10 @@ class BIMBlock(UniversalBlock):
         """
         path = file_info.get("path") or file_info.get("file_path")
         if not path or not os.path.exists(path):
-            return {"error": f"file_path required and must exist (got {path!r})"}
+            return {
+                "status": "error",
+                "error": f"file_path required and must exist (got {path!r})",
+            }
         try:
             import ifcopenshell
             from app.core.file_crypto import open_plaintext
@@ -227,6 +249,7 @@ class BIMBlock(UniversalBlock):
             self._ifc_cache[path] = cache_entry
 
             return {
+                "status": "success",
                 "description": f"IFC Model: {project.Name if project else 'Unknown'}",
                 "schema": ifc_file.schema,
                 "project_name": project.Name if project else None,
@@ -238,12 +261,16 @@ class BIMBlock(UniversalBlock):
             }
         except ImportError:
             return {
+                "status": "error",
+                "error": "ifcopenshell not installed (pip install ifcopenshell).",
                 "description": "IFC Model (ifcopenshell not installed)",
                 "schema": "IFC2X3 (assumed)",
                 "extracted": False,
             }
         except Exception as e:
             return {
+                "status": "error",
+                "error": f"IFC parse error: {str(e)}",
                 "description": f"IFC Model (parse error: {str(e)})",
                 "extracted": False,
             }
@@ -256,25 +283,52 @@ class BIMBlock(UniversalBlock):
         import os
         file_path = data.get("file_path")
         if not file_path or not os.path.exists(file_path):
-            return {"error": f"file_path required and must exist (got {file_path!r})"}
+            return {
+                "status": "error",
+                "error": f"file_path required and must exist (got {file_path!r})",
+            }
         element_types = data.get("element_types", ["IfcWall", "IfcDoor", "IfcWindow"])
 
         extractor = self.get_dep("bim_extractor")
         if extractor is None:
-            return {"error": "bim_extractor block not available"}
+            return {
+                "status": "error",
+                "error": "bim_extractor block not available — domain kit may not be loaded.",
+            }
         result = await extractor.process(
             {"file_path": file_path},
             {"element_types": element_types},
         )
         if result.get("status") == "error":
-            return {"error": result.get("error", "bim_extractor failed")}
-        # Reshape bim_extractor's response into this method's contract.
-        elements = result.get("elements", [])
+            return {
+                "status": "error",
+                "error": result.get("error", "bim_extractor failed"),
+            }
+        # bim_extractor's `building_elements` is the canonical list; older
+        # callers expect `elements`. bim_extractor does NOT honour the
+        # `element_types` filter, so apply it here — otherwise the caller's
+        # filter is silently dropped and they get the full element list.
+        all_elements = result.get("building_elements", []) or result.get("elements", [])
+        if element_types:
+            wanted = {t.lower() for t in element_types}
+            elements = [
+                e for e in all_elements
+                if str(e.get("ifc_type", "")).lower() in wanted
+            ]
+            filter_applied = sorted(element_types)
+        else:
+            elements = all_elements
+            filter_applied = None
         return {
+            "status": "success",
             "file": file_path,
             "elements": elements,
             "count": len(elements),
-            "schema": result.get("schema") or result.get("project_info", {}).get("schema"),
+            "total_elements_in_file": len(all_elements),
+            "element_types_filter": filter_applied,
+            "schema": result.get("ifc_schema")
+                or result.get("schema")
+                or result.get("project_info", {}).get("schema"),
         }
     
     async def _extract_dwg_metadata(self, file_info: Dict) -> Dict:
@@ -315,21 +369,31 @@ class BIMBlock(UniversalBlock):
         import os
         file_path = data.get("file_path")
         if not file_path or not os.path.exists(file_path):
-            return {"error": f"file_path required and must exist (got {file_path!r})"}
+            return {
+                "status": "error",
+                "error": f"file_path required and must exist (got {file_path!r})",
+            }
 
         # Delegate to document_engine, which does PDF → text-layer → OCR
         # fallback. Use it via the wired dep so we share the platform's
         # singleton (and its already-wired pdf+ocr).
         engine = self.get_dep("document_engine")
         if engine is None:
-            return {"error": "document_engine block not available"}
+            return {
+                "status": "error",
+                "error": "document_engine block not available — extraction stack not wired.",
+            }
         eng_result = await engine.process({}, {"pdf_path": file_path})
         if eng_result.get("status") == "error":
-            return {"error": eng_result.get("error", "document_engine failed")}
+            return {
+                "status": "error",
+                "error": eng_result.get("error", "document_engine failed"),
+            }
 
         text = (eng_result.get("raw_text") or "").strip()
         drawing_info = self._extract_drawing_info(text)
         return {
+            "status": "success",
             "file": file_path,
             "text": text[:5000],
             "pages": (eng_result.get("documents_parsed") or 0),
@@ -455,25 +519,47 @@ class BIMBlock(UniversalBlock):
         }
     
     async def _compare_versions_real(self, data: Dict) -> Dict:
-        """Compare two versions of same file"""
+        """Compare two versions of same file. Both paths must parse — if
+        either side fails the action surfaces the failure instead of
+        silently computing a diff against zero (the prior behaviour:
+        ``old_count = old_data.get("count", 0)`` swallowed every parse
+        error and reported it as ``old_count = 0`` plus a misleading
+        change_percent value)."""
         old_path = data.get("old_version")
         new_path = data.get("new_version")
-        
-        # Parse both
+        if not old_path or not new_path:
+            return {
+                "status": "error",
+                "error": "Both 'old_version' and 'new_version' file_paths required.",
+            }
+
         old_data = await self._parse_ifc_real({"file_path": old_path, "element_types": ["IfcWall"]})
+        if old_data.get("status") == "error":
+            return {
+                "status": "error",
+                "error": f"old_version parse failed: {old_data.get('error')}",
+                "old_version": old_path,
+                "new_version": new_path,
+            }
         new_data = await self._parse_ifc_real({"file_path": new_path, "element_types": ["IfcWall"]})
-        
-        # Compare element counts
+        if new_data.get("status") == "error":
+            return {
+                "status": "error",
+                "error": f"new_version parse failed: {new_data.get('error')}",
+                "old_version": old_path,
+                "new_version": new_path,
+            }
+
         old_count = old_data.get("count", 0)
         new_count = new_data.get("count", 0)
-        
         return {
+            "status": "success",
             "old_version": old_path,
             "new_version": new_path,
             "old_count": old_count,
             "new_count": new_count,
             "difference": new_count - old_count,
-            "change_percent": ((new_count - old_count) / old_count * 100) if old_count > 0 else 0
+            "change_percent": ((new_count - old_count) / old_count * 100) if old_count > 0 else 0,
         }
     
     def _count_by_type(self, files: List[Dict]) -> Dict:
