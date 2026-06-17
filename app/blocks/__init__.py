@@ -51,7 +51,6 @@ _EXTENDED_PLATFORM_SPECS: List[Tuple[str, str, str]] = [
     ("mcp_adapter",         "app.blocks.mcp_adapter",          "MCPAdapterBlock"),
     ("mcp_consumer",        "app.blocks.mcp_consumer",         "MCPConsumerBlock"),
     ("sandbox",             "app.blocks.sandbox",              "SandboxBlock"),
-    ("traffic_manager",     "app.blocks.traffic_manager",      "TrafficManagerBlock"),
     ("webhook",             "app.blocks.webhook",              "WebhookBlock"),
 ]
 

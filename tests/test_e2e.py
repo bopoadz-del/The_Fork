@@ -407,13 +407,6 @@ class TestInfrastructureBlocks:
             os.unlink(f.name)
 
     @pytest.mark.asyncio
-    async def test_traffic_manager(self):
-        from app.blocks.traffic_manager import TrafficManagerBlock
-        b = TrafficManagerBlock()
-        r = await b.execute({}, {"action": "status"})
-        assert "status" in r
-
-    @pytest.mark.asyncio
     async def test_async_processor(self):
         from app.blocks.async_processor import AsyncProcessorBlock
         b = AsyncProcessorBlock()
