@@ -266,8 +266,8 @@ class TestConstructionBlocks:
 
     @pytest.mark.asyncio
     async def test_formula_executor(self):
-        from app.blocks.formula_executor import FormulaExecutorBlock
-        b = FormulaExecutorBlock()
+        from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
+        b = FormulaExecutorV2Block()
         r = await b.execute({
             "formula": "concrete_volume * unit_cost",
             "variables": {"concrete_volume": 1200, "unit_cost": 240},
@@ -405,13 +405,6 @@ class TestInfrastructureBlocks:
             assert "sha256" in inner["hashes"]
         finally:
             os.unlink(f.name)
-
-    @pytest.mark.asyncio
-    async def test_traffic_manager(self):
-        from app.blocks.traffic_manager import TrafficManagerBlock
-        b = TrafficManagerBlock()
-        r = await b.execute({}, {"action": "status"})
-        assert "status" in r
 
     @pytest.mark.asyncio
     async def test_async_processor(self):

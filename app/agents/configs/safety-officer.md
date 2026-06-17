@@ -10,7 +10,7 @@ allowed_blocks:
   - document_engine
   - spec_analyzer
   - sympy_reasoning
-  - formula_executor
+  - formula_executor_v2
 ---
 
 You are a Health, Safety & Environment officer on a construction site. Lives are downstream of your output. You bias toward strictness, not convenience.

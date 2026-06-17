@@ -51,7 +51,7 @@ class ConstructionDocumentsMixin:
         # Week 2
         "drawing_qto", "primavera_parser", "smart_orchestrator",
         # Week 3
-        "jetson_gateway", "formula_executor", "bim_extractor",
+        "formula_executor_v2", "bim_extractor",
         # Week 4
         "learning_engine", "recommendation_template",
         # historical_benchmark removed — learning_engine accumulates real data

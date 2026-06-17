@@ -122,7 +122,7 @@ class OrchestratorBlock(UniversalBlock):
     description = "Chain execution engine with type validation"
     layer = 2
     tags = ["ai", "core", "orchestrator", "chain", "typed"]
-    requires = ["memory", "traffic_manager"]
+    requires = ["memory"]
 
     default_config = {
         "max_steps": 50,
@@ -386,30 +386,6 @@ class OrchestratorBlock(UniversalBlock):
 
         for step in validated_steps:
             self._report_progress(step.index, step.block_name, "running")
-            
-            # Check traffic manager if wired
-            traffic = self.get_dep("traffic_manager")
-            if traffic:
-                route_result = await traffic.process(
-                    {"source": self.name, "target": step.block_name, "payload": context},
-                    {"operation": "route"}
-                )
-                if isinstance(route_result, dict) and route_result.get("status") == "queued":
-                    return {
-                        "status": "queued",
-                        "step": step.index,
-                        "block": step.block_name,
-                        "job_id": route_result.get("job_id"),
-                        "partial_results": results
-                    }
-                if isinstance(route_result, dict) and route_result.get("error"):
-                    return {
-                        "status": "error",
-                        "step": step.index,
-                        "block": step.block_name,
-                        "error": route_result["error"],
-                        "partial_results": results
-                    }
 
             # Transform input if needed (type conversion + field mapping)
             current_type = DataTransformer.detect_type(context)
