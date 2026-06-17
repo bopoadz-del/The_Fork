@@ -35,10 +35,20 @@ IFC_CATEGORY_MAP: Dict[str, str] = {
 }
 
 
+_CATEGORY_ITEM_CAP = 200
+_ELEMENT_CAP = 500
+_SPACE_CAP = 50
+
+_CLASH_DISCLAIMER = (
+    "basic (bounding-box — not geometric intersection. Verify critical "
+    "clashes in Navisworks Clash Detective or Solibri)"
+)
+
+
 class BIMExtractorBlock(UniversalBlock):
     auto_validate = False
     name = "bim_extractor"
-    version = "1.1.0"
+    version = "1.2.0"
     description = "Extract building elements, quantities, and clash report from IFC BIM models"
     layer = 3
     tags = ["domain", "construction", "bim", "ifc", "quantities", "clash"]
@@ -142,8 +152,8 @@ class BIMExtractorBlock(UniversalBlock):
         extract_props = params.get("extract_properties", self.config.get("extract_properties", True))
         run_clash = params.get("run_clash_detection", self.config.get("run_clash_detection", True))
 
-        building_elements, quantities, duplicate_subtypes_skipped = self._extract_elements(
-            model, ifc_util, max_el, extract_props
+        building_elements, quantities, duplicate_subtypes_skipped, quantities_truncated = (
+            self._extract_elements(model, ifc_util, max_el, extract_props)
         )
         project_info = self._extract_project_info(model)
         storeys = self._extract_storeys(model)
@@ -152,18 +162,30 @@ class BIMExtractorBlock(UniversalBlock):
         if run_clash:
             clash_report = self._basic_clash_report(model, building_elements)
 
-        # Cap the returned `building_elements` list for response-size sanity,
-        # but expose enough metadata for callers to detect the truncation.
-        _ELEM_CAP = 500
-        _SPACE_CAP = 50
-        building_elements_capped = building_elements[:_ELEM_CAP]
+        # Cap response payload so a 50k-element model can't blow up the chat
+        # context. Each cap fires independently; the top-level ``truncated``
+        # flag is a single signal callers can read without inspecting every
+        # sub-object.
+        building_elements_capped = building_elements[:_ELEMENT_CAP]
         spaces_capped = spaces[:_SPACE_CAP]
+        building_elements_truncated = len(building_elements) > _ELEMENT_CAP
+        spaces_truncated = len(spaces) > _SPACE_CAP
+        clash_truncated = bool(clash_report.get("pair_cap_reached"))
+
+        any_truncated = (
+            bool(quantities_truncated)
+            or building_elements_truncated
+            or spaces_truncated
+            or clash_truncated
+        )
+
         return {
             "status": "success",
             "building_elements": building_elements_capped,
-            "building_elements_truncated": len(building_elements) > _ELEM_CAP,
-            "spaces_truncated": len(spaces) > _SPACE_CAP,
+            "building_elements_truncated": building_elements_truncated,
+            "spaces_truncated": spaces_truncated,
             "quantities": quantities,
+            "quantities_truncated": list(quantities_truncated),
             "clash_report": clash_report,
             "project_info": project_info,
             "storeys": storeys,
@@ -172,11 +194,17 @@ class BIMExtractorBlock(UniversalBlock):
             "element_count_returned": len(building_elements_capped),
             "duplicate_subtypes_skipped": duplicate_subtypes_skipped,
             "ifc_schema": model.schema,
+            "truncated": any_truncated,
+            "truncation_caps": {
+                "category_item_cap": _CATEGORY_ITEM_CAP,
+                "building_elements_cap": _ELEMENT_CAP,
+                "spaces_cap": _SPACE_CAP,
+            },
         }
 
     def _extract_elements(
         self, model, ifc_util, max_el: int, extract_props: bool
-    ) -> Tuple[List[Dict], Dict, int]:
+    ) -> Tuple[List[Dict], Dict, int, List[str]]:
         elements: List[Dict] = []
         quantities: Dict[str, Any] = {
             cat: {"count": 0, "items": []}
@@ -205,11 +233,21 @@ class BIMExtractorBlock(UniversalBlock):
                 el_data = self._element_to_dict(el, category, ifc_util, extract_props)
                 elements.append(el_data)
                 quantities[category]["count"] += 1
-                if len(quantities[category]["items"]) < 20:
+                if len(quantities[category]["items"]) < _CATEGORY_ITEM_CAP:
                     quantities[category]["items"].append(el_data)
 
         quantities = {k: v for k, v in quantities.items() if v["count"] > 0}
-        return elements, quantities, duplicate_subtypes_skipped
+        # Per-category items array is capped at _CATEGORY_ITEM_CAP. Surface
+        # which categories actually hit the cap so the caller knows what was
+        # dropped instead of inferring it.
+        quantities_truncated = [
+            cat for cat, v in quantities.items()
+            if v["count"] > len(v["items"])
+        ]
+        for cat in quantities_truncated:
+            quantities[cat]["truncated"] = True
+            quantities[cat]["items_returned"] = len(quantities[cat]["items"])
+        return elements, quantities, duplicate_subtypes_skipped, quantities_truncated
 
     def _element_to_dict(self, el, category: str, ifc_util, extract_props: bool) -> Dict:
         el_dict: Dict = {
@@ -400,6 +438,7 @@ class BIMExtractorBlock(UniversalBlock):
             "clash_count": clash_count,
             "clashes": clashes,
             "detection_method": "aabb_intersection",
+            "detection_method_disclaimer": _CLASH_DISCLAIMER,
             "tolerance_mm": float(self.config.get("clash_tolerance_mm", 10.0)),
             "elements_analyzed": len(boxes),
             "elements_without_geometry": skipped_no_geom,
@@ -463,6 +502,7 @@ class BIMExtractorBlock(UniversalBlock):
             "clash_count": clash_count,
             "clashes": clashes,
             "detection_method": "name_duplicate_fallback",
+            "detection_method_disclaimer": _CLASH_DISCLAIMER,
             "note": (
                 "ifcopenshell.geom not available — using name-duplicate heuristic. "
                 "This catches mis-labelled duplicates but NOT real geometric clashes. "

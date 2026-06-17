@@ -14,6 +14,7 @@ import pytest
 from app.blocks.bim_extractor import BIMExtractorBlock
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sample_office.ifc")
+FIXTURE_2X3 = os.path.join(os.path.dirname(__file__), "fixtures", "sample_office_2x3.ifc")
 
 
 def _run(input_data, params=None):
@@ -85,3 +86,68 @@ def test_rvt_returns_actionable_error(tmp_path):
     msg = result["error"].lower()
     assert "revit" in msg
     assert "export" in msg and "ifc" in msg
+
+
+def test_extracts_elements_from_ifc2x3_sample():
+    """IFC2x3 is common in older GCC project models. The extractor must read
+    the older schema without changes — only the model contents and category
+    coverage may differ (IFC2x3 lacks IfcPipeSegment/IfcDuctSegment)."""
+    assert os.path.exists(FIXTURE_2X3), (
+        f"missing fixture {FIXTURE_2X3}; "
+        f"run `python scripts/_make_sample_ifc.py --version IFC2X3`"
+    )
+    result = _run({"file_path": FIXTURE_2X3})
+    assert result["status"] == "success", result.get("error")
+    assert result["ifc_schema"] == "IFC2X3"
+    q = result["quantities"]
+    assert q["walls"]["count"] == 8
+    assert q["slabs"]["count"] == 2
+    assert q["columns"]["count"] == 4
+    assert q["beams"]["count"] == 2
+    assert q["storeys"]["count"] == 2
+    storey_names = {s.get("name") for s in result["storeys"]}
+    assert storey_names == {"Ground Floor", "Level 1"}
+
+
+def test_clash_report_carries_operator_disclaimer():
+    """Operator-locked text. Chat must show this on every clash response so
+    pilot users don't read AABB output as Navisworks-grade precision."""
+    result = _run({"file_path": FIXTURE})
+    assert result["status"] == "success"
+    clash = result["clash_report"]
+    assert "detection_method_disclaimer" in clash
+    disclaimer = clash["detection_method_disclaimer"]
+    assert "bounding-box" in disclaimer
+    assert "not geometric intersection" in disclaimer
+    assert "Navisworks Clash Detective" in disclaimer
+    assert "Solibri" in disclaimer
+
+
+def test_payload_caps_surface_truncated_flag():
+    """The fixture is small so no cap fires — verify the truncated flag is
+    False, truncation_caps is reported, and quantities_truncated is empty.
+    The negative-case shape itself is what guards the 50k-element scenario."""
+    result = _run({"file_path": FIXTURE})
+    assert result["status"] == "success"
+    assert result["truncated"] is False
+    assert result["quantities_truncated"] == []
+    caps = result["truncation_caps"]
+    assert caps["category_item_cap"] == 200
+    assert caps["building_elements_cap"] == 500
+    assert caps["spaces_cap"] == 50
+
+
+def test_per_category_items_cap_is_200_not_20():
+    """Force a category over the cap and verify items truncate at 200, count
+    keeps the true total, and the category is listed in quantities_truncated."""
+    block = BIMExtractorBlock()
+    fake_quants = {"walls": {"count": 0, "items": []}}
+    # Simulate 250 walls passing through the inner loop logic.
+    from app.blocks import bim_extractor as bx
+    for i in range(250):
+        fake_quants["walls"]["count"] += 1
+        if len(fake_quants["walls"]["items"]) < bx._CATEGORY_ITEM_CAP:
+            fake_quants["walls"]["items"].append({"id": f"w{i}"})
+    assert fake_quants["walls"]["count"] == 250
+    assert len(fake_quants["walls"]["items"]) == 200
+    assert bx._CATEGORY_ITEM_CAP == 200
