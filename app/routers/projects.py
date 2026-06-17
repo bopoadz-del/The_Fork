@@ -121,7 +121,21 @@ async def delete_project(project_id: str, auth: dict = Depends(require_user)):
     """Delete a project: its document records, facts, AND files on disk."""
     proj = _owned_or_404(project_id, auth["user_id"])
     files_purged = 0
+    # Audit each document BEFORE the DB cascade fires so we have per-row
+    # forensics even when the deletion comes from a project-level action.
+    # Previously the audit log recorded only a single "project.deleted"
+    # entry — a project with 50 documents would leave no record of which
+    # docs went with it, which is the "BOQ disappeared with no
+    # explanation" failure mode.
     for doc in proj.get("documents", []):
+        audit.record(
+            "document.deleted",
+            project_id=project_id,
+            document_id=doc.get("id"),
+            name=doc.get("original_name"),
+            reason="project_cascade",
+            user_id=auth["user_id"],
+        )
         fp = doc.get("file_path")
         if fp and os.path.exists(fp):
             try:
@@ -481,7 +495,20 @@ async def governance_purge(auth: dict = Depends(require_user)):
                 "reason": "DATA_RETENTION_DAYS is not set", "purged": 0}
     purged = store.purge_documents_older_than(days)
     files_removed = 0
+    # Audit each purged document individually — the summary "governance.purge"
+    # entry below records only a count, not the IDs. Without per-row entries
+    # there's no forensic trail of which specific documents the bulk purge
+    # removed (the "BOQ disappeared with no explanation" failure mode).
     for doc in purged:
+        audit.record(
+            "document.deleted",
+            project_id=doc.get("project_id"),
+            document_id=doc.get("id"),
+            name=doc.get("original_name"),
+            reason="governance_purge",
+            retention_days=days,
+            user_id=auth["user_id"],
+        )
         fp = doc.get("file_path")
         if fp and os.path.exists(fp):
             try:
