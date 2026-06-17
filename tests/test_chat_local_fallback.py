@@ -88,6 +88,113 @@ async def test_ollama_primary_path_calls_cloud_without_api_key(monkeypatch):
     assert calls[0]["model"] == "qwen3-coder:480b-cloud"
 
 
+@pytest.mark.asyncio
+async def test_call_cloud_omits_authorization_header_when_api_key_empty(monkeypatch):
+    """Regression guard for the Ollama-empty-Bearer bug.
+
+    When LLM_PROVIDER=ollama, ``_llm_config()`` returns ``env_key=""`` and the
+    chat block passes ``api_key=""`` to ``_call_cloud``. httpx raises
+    ``ValueError: Illegal header value b'Bearer '`` if we then send
+    ``Authorization: Bearer `` with an empty value — silently breaking the
+    entire fast chat path under Ollama.
+
+    The fix mirrors ``runtime.py`` line 1525: omit the Authorization header
+    entirely when api_key is empty. This test pins that behaviour by
+    intercepting the httpx POST and asserting the absent header.
+    """
+
+    import httpx
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None, **kwargs):
+            captured["url"] = url
+            captured["headers"] = dict(headers or {})
+            return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    block = ChatBlock()
+    result = await block._call_cloud(
+        message="hi",
+        model="qwen3-coder:480b-cloud",
+        max_tokens=64,
+        temperature=0.2,
+        stream=False,
+        api_key="",
+        cfg={"provider": "ollama", "url": "http://my-pc.tunnel.cf/v1/chat/completions"},
+    )
+
+    assert result["status"] == "success"
+    headers = captured["headers"]
+    assert "Content-Type" in headers
+    # The empty-Bearer regression: header MUST be absent when api_key is empty.
+    assert "Authorization" not in headers, (
+        f"Authorization header must be omitted when api_key is empty (Ollama path); "
+        f"got headers={headers}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_cloud_includes_bearer_when_api_key_set(monkeypatch):
+    """Counterpart: DeepSeek/Groq path must still send the Bearer token."""
+
+    import httpx
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None, **kwargs):
+            captured["headers"] = dict(headers or {})
+            return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    block = ChatBlock()
+    await block._call_cloud(
+        message="hi",
+        model="deepseek-chat",
+        max_tokens=64,
+        temperature=0.2,
+        stream=False,
+        api_key="sk-xxx",
+        cfg={"provider": "deepseek", "url": "https://api.deepseek.com/v1/chat/completions"},
+    )
+
+    assert captured["headers"].get("Authorization") == "Bearer sk-xxx"
+
+
 def test_chat_block_source_has_no_forbidden_provider_names():
     """Provider names removed per platform direction — they must not return."""
 

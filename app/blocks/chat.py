@@ -350,13 +350,20 @@ class ChatBlock(TypedBlock):
         if stream:
             async def _stream_generator():
                 async with httpx.AsyncClient(timeout=60.0) as client:
+                    # Ollama's OAI-compatible endpoint requires NO auth. Passing
+                    # an empty Bearer header makes httpx raise
+                    # "Illegal header value b'Bearer '" before the request even
+                    # leaves the client — silently breaking the entire fast chat
+                    # path under LLM_PROVIDER=ollama. Match the runtime's
+                    # convention (runtime.py:1525) and omit the header when
+                    # api_key is empty.
+                    cloud_headers = {"Content-Type": "application/json"}
+                    if api_key:
+                        cloud_headers["Authorization"] = f"Bearer {api_key}"
                     async with client.stream(
                         "POST",
                         url,
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json",
-                        },
+                        headers=cloud_headers,
                         json={
                             "model": model,
                             "messages": messages,
@@ -395,13 +402,15 @@ class ChatBlock(TypedBlock):
             }
 
         try:
+            # Same Ollama-empty-Bearer guard as the stream branch above
+            # (runtime.py:1525 sets the precedent).
+            cloud_headers = {"Content-Type": "application/json"}
+            if api_key:
+                cloud_headers["Authorization"] = f"Bearer {api_key}"
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     url,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=cloud_headers,
                     json={
                         "model": model,
                         "messages": messages,
