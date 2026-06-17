@@ -499,6 +499,12 @@ def init_db() -> None:
         if _initialized_for_url != url:
             with SessionLocal() as session:
                 _import_legacy_json_indexes(session)
+                # Flush pending DocIndex rows so the SQLite-migration's
+                # ``session.get(DocIndex, pid)`` dedupe check can see them.
+                # Without this, both migrations independently add a row for
+                # any project_id present in both legacy sources, and the
+                # final commit fails with the UNIQUE constraint.
+                session.flush()
                 _import_legacy_sqlite_db(session)
                 session.commit()
             _initialized_for_url = url
