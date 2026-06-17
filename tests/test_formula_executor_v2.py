@@ -219,11 +219,10 @@ async def test_v2_cache_survives_a_full_store_round_trip():
 
 
 # --------------------------------------------------------------------------
-# Task 5: Deprecation wrapper + block registration
+# Task 5: Block registration (legacy v1 wrapper removed per audit)
 # --------------------------------------------------------------------------
 
 from app.blocks import BLOCK_REGISTRY, get_block
-from app.blocks.formula_executor import FormulaExecutorBlock
 
 
 @requires_construction_kit
@@ -233,13 +232,7 @@ def test_v2_is_registered():
 
 
 @requires_construction_kit
-def test_legacy_block_still_registered_under_old_key():
-    # The old key keeps working — chains referencing it must not break.
-    assert "formula_executor" in BLOCK_REGISTRY
-
-
-@pytest.mark.asyncio
-async def test_legacy_block_delegates_to_v2():
-    # The legacy block is now a wrapper; it must hold a v2 delegate.
-    legacy = FormulaExecutorBlock()
-    assert isinstance(legacy._v2, FormulaExecutorV2Block)
+def test_legacy_v1_name_no_longer_registered():
+    # Audit cleanup: the v1 wrapper was deleted. The "formula_executor" key
+    # must not come back. Callers should target "formula_executor_v2".
+    assert "formula_executor" not in BLOCK_REGISTRY

@@ -7,7 +7,7 @@ temperature: 0.3
 max_tokens: 8192
 allowed_blocks:
   - sympy_reasoning
-  - formula_executor
+  - formula_executor_v2
   - construction
   - boq_processor
   - drawing_qto
@@ -29,7 +29,7 @@ You have these tools. They are real. You MUST call them for the work below:
 - `drawing_qto` — extract quantity takeoff from drawing PDFs/DWGs. Returns extracted measurements and computed quantities.
 - `spec_analyzer` — extract specifications, materials, and methods from spec documents.
 - `sympy_reasoning` — symbolic variance math (qty_drawing minus qty_boq, % variance, dollar impact, cost reconciliation).
-- `formula_executor` — direct arithmetic (durations, productivity rates, manpower histograms from activity lists).
+- `formula_executor_v2` — direct arithmetic (durations, productivity rates, manpower histograms from activity lists).
 - `validation_pipeline` — run dimensional / physical / empirical checks on any numeric result before reporting it.
 - `recommendation_template` — generate structured recommendations from a variance / risk / change-order finding.
 - `historical_benchmark` — look up productivity benchmarks (man-hours per m3 concrete, per m2 formwork, per ton rebar) for labour estimates.
@@ -41,7 +41,7 @@ These phrases are direct instructions to call a tool. Calling the tool is the ri
 | User asks for | You MUST call |
 |---|---|
 | "construction schedule", "WBS", "activity list", "Gantt", "schedule with N activities", "critical path", "programme" | `generate_wbs` once |
-| "manpower histogram", "labour histogram", "resource histogram" | `generate_wbs` first, then `formula_executor` to convert activity durations into manpower |
+| "manpower histogram", "labour histogram", "resource histogram" | `generate_wbs` first, then `formula_executor_v2` to convert activity durations into manpower |
 | "BOQ", "bill of quantities", "quantity takeoff", "extract quantities" | `boq_processor` and/or `drawing_qto` |
 | "cost estimate", "budget", "cost breakdown" | `boq_processor` then `sympy_reasoning` for the rollup |
 | "variance", "compare BOQ to drawings", "discrepancy" | `boq_processor` + `drawing_qto` + `sympy_reasoning` |
@@ -125,4 +125,4 @@ Delegate to `smart-orchestrator` ONLY when the user gives an imperative for some
 - Never present a rough table of round numbers (10, 20, 30) as if it came from a real estimate. Tool output looks specific; round prose numbers signal hallucination.
 - Always respond in plain, well-structured prose for the answer portion. Never emit tool-call markup as user-visible text.
 - One tool call per concept is usually enough. Don't chain `generate_wbs` twice on the same brief — the second call returns the same activities.
-- For multi-step deliverables, narrate the steps as you go: "Calling generate_wbs with target_count=250, project_type=data_center... done, 250 activities, 18-month programme. Now calling formula_executor to roll up manpower per week..."
+- For multi-step deliverables, narrate the steps as you go: "Calling generate_wbs with target_count=250, project_type=data_center... done, 250 activities, 18-month programme. Now calling formula_executor_v2 to roll up manpower per week..."

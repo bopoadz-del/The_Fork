@@ -1451,10 +1451,10 @@ class ConstructionContainer(
             return {"status": "error", "error": "smart_orchestrator block unavailable"}
         return await block.process(input_data, params)
     async def formula_execute(self, input_data: Any, params: Dict) -> Dict:
-        """Delegate to FormulaExecutorBlock: chat-to-code formula execution."""
-        block = self._resolve_block("formula_executor")
+        """Delegate to FormulaExecutorV2Block: LLM code-gen formula execution."""
+        block = self._resolve_block("formula_executor_v2")
         if block is None:
-            return {"status": "error", "error": "formula_executor block unavailable"}
+            return {"status": "error", "error": "formula_executor_v2 block unavailable"}
         return await block.process(input_data, params)
     async def bim_extract(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to BIMExtractorBlock: IFC element + quantity extraction."""

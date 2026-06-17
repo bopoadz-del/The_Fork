@@ -266,8 +266,8 @@ class TestConstructionBlocks:
 
     @pytest.mark.asyncio
     async def test_formula_executor(self):
-        from app.blocks.formula_executor import FormulaExecutorBlock
-        b = FormulaExecutorBlock()
+        from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
+        b = FormulaExecutorV2Block()
         r = await b.execute({
             "formula": "concrete_volume * unit_cost",
             "variables": {"concrete_volume": 1200, "unit_cost": 240},
