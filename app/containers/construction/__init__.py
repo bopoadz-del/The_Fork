@@ -1450,12 +1450,6 @@ class ConstructionContainer(
         if block is None:
             return {"status": "error", "error": "smart_orchestrator block unavailable"}
         return await block.process(input_data, params)
-    async def jetson_dispatch(self, input_data: Any, params: Dict) -> Dict:
-        """Delegate to JetsonGatewayBlock: edge dispatch."""
-        block = self._resolve_block("jetson_gateway")
-        if block is None:
-            return {"status": "error", "error": "jetson_gateway block unavailable"}
-        return await block.process(input_data, params)
     async def formula_execute(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to FormulaExecutorBlock: chat-to-code formula execution."""
         block = self._resolve_block("formula_executor")

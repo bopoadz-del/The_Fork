@@ -27,7 +27,6 @@ _KIT_BLOCK_SPECS: Dict[str, List[Tuple[str, str, str]]] = {
         ("project_reasoner", "app.blocks.project_reasoner", "ProjectReasonerBlock"),
         ("sympy_reasoning", "app.blocks.sympy_reasoning", "SymPyReasoningBlock"),
         ("smart_orchestrator", "app.blocks.smart_orchestrator", "SmartOrchestratorBlock"),
-        ("jetson_gateway", "app.blocks.jetson_gateway", "JetsonGatewayBlock"),
         ("learning_engine", "app.blocks.learning_engine", "LearningEngineBlock"),
         ("recommendation_template", "app.blocks.recommendation_template", "RecommendationTemplateBlock"),
     ],
