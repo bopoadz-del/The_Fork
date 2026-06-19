@@ -387,15 +387,29 @@ async def drive_import(project_id: str, req: DriveImportRequest,
     result = await GoogleDriveBlock().process(
         req.file_id, {"operation": "download", "access_token": access_token})
 
-    # Folder auto-redirect (PR #85). The Drive picker UI lets users click
-    # "Add" on folder rows, sending a folder file_id to this single-file
-    # endpoint. Detect that and transparently call the recursive
-    # folder-import flow so the user gets the intuitive behaviour
-    # ("Add" on a folder = "add everything in the folder").
+    # Folder detection (PR #86 — revises PR #85). The Drive picker UI
+    # lets users click "Add" on folder rows. PR #85 auto-redirected the
+    # call to drive_index_folder but big folders blow past Render's
+    # ~100s edge timeout, leaving the user with an opaque 502 HTML page.
+    # Return a structured 400 instead so the frontend can show
+    # "this is a folder" and offer a recursive-import button. The
+    # explicit endpoint at /v1/projects/<id>/drive/index-folder still
+    # works for callers that want that flow.
     if result.get("status") == "error" and result.get("is_folder"):
-        folder_req = DriveIndexFolderRequest(folder_id=req.file_id)
-        return await drive_index_folder(
-            project_id, folder_req, background_tasks, auth,
+        raise HTTPException(
+            400,
+            {
+                "code": "IS_FOLDER",
+                "message": result.get("error"),
+                "file_id": req.file_id,
+                "name": result.get("name", ""),
+                "hint": (
+                    "Open the folder to browse into it and Add individual "
+                    "files. Or POST /v1/projects/<id>/drive/index-folder "
+                    "with this folder_id to recursively import (slow for "
+                    "large folders)."
+                ),
+            },
         )
 
     if result.get("status") != "success":
