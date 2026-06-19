@@ -4,6 +4,7 @@ import logging
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .helpers import _safe_float, _safe_iso_date
@@ -391,16 +392,44 @@ class ConstructionScheduleMixin:
         transcriptions = []
         for voice_file in voice_notes:
             voice_block = self.get_dep("voice")
-            if voice_block:
-                try:
-                    result = await voice_block.execute({"audio_path": voice_file}, {"action": "transcribe"})
-                    transcriptions.append({
-                        "file": Path(voice_file).name,
-                        "text": result.get("text", ""),
-                        "timestamp": result.get("segments", [{}])[0].get("start", 0)
-                    })
-                except Exception:
-                    transcriptions.append({"file": Path(voice_file).name, "text": "", "timestamp": 0})
+            if not voice_block:
+                logger.warning("voice block unavailable — skipping voice note %s", voice_file)
+                transcriptions.append({"file": Path(voice_file).name, "text": "", "timestamp": 0,
+                                       "error": "voice block unavailable"})
+                continue
+            try:
+                # Pass the audio location under `text` per the operator
+                # contract: voice 2.1+ treats `text` as a file path on STT
+                # when it exists on disk (this also covers the platform's
+                # InputAdapter, which wraps a positional string into
+                # {"text": "<path>"} for blocks that don't have a typed
+                # file_path schema field). Pre-2.1 the caller sent
+                # `audio_path` which voice silently dropped, producing
+                # empty transcripts in daily site reports — this is the
+                # regression-guard call site.
+                envelope = await voice_block.execute(
+                    {"text": voice_file}, {"action": "transcribe"}
+                )
+                # `execute()` wraps the block's process() return under
+                # `result`; unwrap to read status / text. Tolerate the
+                # legacy shape where the block returned the dict directly.
+                inner = envelope.get("result", envelope) if isinstance(envelope, dict) else {}
+                if inner.get("status") == "error":
+                    err = inner.get("error", "transcription failed")
+                    logger.warning("voice transcription failed for %s: %s", voice_file, err)
+                    transcriptions.append({"file": Path(voice_file).name, "text": "",
+                                           "timestamp": 0, "error": err})
+                    continue
+                transcriptions.append({
+                    "file": Path(voice_file).name,
+                    "text": inner.get("text", ""),
+                    "timestamp": inner.get("segments", [{}])[0].get("start", 0)
+                                if inner.get("segments") else 0,
+                })
+            except Exception as exc:
+                logger.exception("voice block raised on %s", voice_file)
+                transcriptions.append({"file": Path(voice_file).name, "text": "",
+                                       "timestamp": 0, "error": str(exc)})
     
         weather = await self._fetch_weather(site_location, date) if site_location else {}
     
