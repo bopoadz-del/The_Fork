@@ -1,4 +1,11 @@
-"""Smart Orchestrator Block - 39-action keyword router for construction workflows"""
+"""Smart Orchestrator Block - 52-action keyword router for construction workflows.
+
+The runtime action list is built by prepending PROCEDURE_ROUTING_ADDITIONS
+(17 procedure-specific actions, PRC-301..PRC-606) to the in-file ACTION_PATTERNS
+list (41 entries). Six action names appear in both lists; their keyword
+lists are MERGED at scoring time so neither source loses coverage.
+Net unique actions: 17 + (41 - 6) = 52.
+"""
 
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -158,8 +165,8 @@ PARALLEL_GROUPS: Dict[str, List[str]] = {
 class SmartOrchestratorBlock(UniversalBlock):
     auto_validate = False
     name = "smart_orchestrator"
-    version = "1.0.0"
-    description = "39-action construction keyword router: maps user messages to action queues with parallel execution hints"
+    version = "1.1.0"
+    description = "52-action construction keyword router: maps user messages to action queues with parallel execution hints"
     layer = 2
     tags = ["infrastructure", "construction", "orchestration", "routing", "nlp"]
     requires = []
@@ -366,18 +373,31 @@ class SmartOrchestratorBlock(UniversalBlock):
             action = FILE_TYPE_MAP[file_type]
             scores[action] = scores.get(action, 0.0) + 0.8
 
+        # Build the runtime keyword view by MERGING duplicate action names.
+        # Pre-1.1.0 the matcher skipped any ACTION_PATTERNS entry whose
+        # action name had already been seen — that silently dropped the
+        # second occurrence's keyword list. Real example: PROCEDURE_ROUTING
+        # owns `safety_compliance_audit` with PRC-406 / HSE / stop-work /
+        # near-miss keywords, while smart_orchestrator's own list adds the
+        # everyday phrasings `safety`, `hse`, `osha`, `ppe`, `toolbox`,
+        # `risk assessment`, `hazard`. The skip dropped all seven, so
+        # "any safety concerns?" never routed to safety_compliance_audit.
+        # Merging guarantees every keyword from every source is matched.
+        merged_patterns: Dict[str, List[str]] = {}
+        for action, keywords in ACTION_PATTERNS:
+            existing = merged_patterns.setdefault(action, [])
+            for kw in keywords:
+                if kw not in existing:
+                    existing.append(kw)
+
         # Keyword matching — uses word-boundary regex (see _matches_keyword).
         # Pure substring matching was unsafe: 2-char keys like "co" matched
         # "concrete", "compliance", "cost"; "qa" matched "quantity"; etc.
-        seen_actions = set()
-        for action, keywords in ACTION_PATTERNS:
-            if action in seen_actions:
-                continue
+        for action, keywords in merged_patterns.items():
             for kw in keywords:
                 if _matches_keyword(kw, message):
                     weight = len(kw.split()) * 0.2  # multi-word keywords score higher
                     scores[action] = scores.get(action, 0.0) + weight
-            seen_actions.add(action)
 
         threshold = float(self.config.get("confidence_threshold", 0.3))
         results = [
@@ -385,9 +405,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                 "action": action,
                 "confidence": round(min(score, 1.0), 3),
                 "keywords_matched": [
-                    kw for kw in next(
-                        (kws for a, kws in ACTION_PATTERNS if a == action), []
-                    )
+                    kw for kw in merged_patterns.get(action, [])
                     if _matches_keyword(kw, message)
                 ],
             }
