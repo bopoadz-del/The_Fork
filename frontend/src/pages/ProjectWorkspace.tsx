@@ -32,8 +32,19 @@ interface DocumentRecord {
 interface DriveFile {
   id: string
   name: string
-  mimeType?: string
-  modifiedTime?: string
+  /** Backend returns `mime_type` (snake_case). Used to render folder
+   * rows differently. */
+  mime_type?: string
+  /** Convenience boolean populated by the backend listing endpoint —
+   * true when mime_type === application/vnd.google-apps.folder. */
+  is_folder?: boolean
+  modified?: string
+}
+
+interface FolderCrumb {
+  /** '' represents the top of the user's Drive (My Drive root). */
+  id: string
+  name: string
 }
 
 interface DriveStatus {
@@ -841,6 +852,36 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
   const [searchError, setSearchError] = useState<string | null>(null)
   const [importingId, setImportingId] = useState<string | null>(null)
   const [importErrors, setImportErrors] = useState<Record<string, string>>({})
+  /** Breadcrumb stack — last entry is the currently-open folder. Empty
+   * means the picker isn't in browse mode (search-results view or
+   * idle). */
+  const [folderStack, setFolderStack] = useState<FolderCrumb[]>([])
+
+  /** Open a Drive folder (or My Drive root when id=''), refresh the
+   * file list, and update the breadcrumb stack. `push=true` means we're
+   * descending; `push=false` means we're clicking a crumb to go back. */
+  async function openFolder(folder: FolderCrumb, push: boolean) {
+    setSearchError(null)
+    setDriveFiles([])
+    setSearching(true)
+    try {
+      const url = folder.id
+        ? `/v1/drive/files?folder_id=${encodeURIComponent(folder.id)}`
+        : '/v1/drive/files'
+      const resp = await apiGet<{ files: DriveFile[] }>(url)
+      setDriveFiles(resp.files)
+      setHasSearched(true)
+      setFolderStack((prev) =>
+        push
+          ? [...prev, folder]
+          : prev.slice(0, prev.findIndex((c) => c.id === folder.id) + 1),
+      )
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : 'Drive browse failed.')
+    } finally {
+      setSearching(false)
+    }
+  }
 
   // Load Drive status on mount
   useEffect(() => {
@@ -962,27 +1003,79 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
         >
           {searching ? '…' : 'Search'}
         </button>
+        <button
+          type="button"
+          className="btn btn--ghost drive-search__browse"
+          disabled={searching}
+          onClick={() => void openFolder({ id: '', name: 'My Drive' }, true)}
+          aria-label="Browse my Drive"
+        >
+          Browse
+        </button>
       </form>
       {searchError && <p className="drive-search__error" role="alert">{searchError}</p>}
+      {folderStack.length > 0 && (
+        <nav className="drive-breadcrumbs" aria-label="Drive folder navigation">
+          <button
+            type="button"
+            className="drive-breadcrumb"
+            onClick={() => { setFolderStack([]); setDriveFiles([]); setHasSearched(false) }}
+          >
+            ↑ Back to search
+          </button>
+          {folderStack.map((crumb, i) => (
+            <span key={crumb.id || `crumb-${i}`}>
+              <span className="drive-breadcrumb-sep"> / </span>
+              <button
+                type="button"
+                className="drive-breadcrumb"
+                onClick={() => void openFolder(crumb, false)}
+                disabled={i === folderStack.length - 1 || searching}
+              >
+                {crumb.name}
+              </button>
+            </span>
+          ))}
+        </nav>
+      )}
       {driveFiles.length > 0 && (
         <ul className="drive-file-list" aria-label="Google Drive files">
           {driveFiles.map((file) => (
-            <li key={file.id} className="drive-file-row">
-              <span className="drive-file-row__name" title={file.name}>{file.name}</span>
+            <li
+              key={file.id}
+              className={`drive-file-row${file.is_folder ? ' drive-file-row--folder' : ''}`}
+            >
+              <span className="drive-file-row__name" title={file.name}>
+                {file.is_folder && (
+                  <span className="drive-file-row__folder-marker">[folder]</span>
+                )}
+                {file.is_folder ? ' ' : ''}{file.name}
+              </span>
               <div className="drive-file-row__actions">
                 {importErrors[file.id] && (
                   <span className="drive-file-row__error" role="alert">
                     {importErrors[file.id]}
                   </span>
                 )}
-                <button
-                  type="button"
-                  className="btn btn--ghost drive-file-row__add"
-                  disabled={importingId === file.id}
-                  onClick={() => void handleImport(file)}
-                >
-                  {importingId === file.id ? '…' : 'Add'}
-                </button>
+                {file.is_folder ? (
+                  <button
+                    type="button"
+                    className="btn btn--ghost drive-file-row__open"
+                    disabled={searching}
+                    onClick={() => void openFolder({ id: file.id, name: file.name }, true)}
+                  >
+                    Open
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn--ghost drive-file-row__add"
+                    disabled={importingId === file.id}
+                    onClick={() => void handleImport(file)}
+                  >
+                    {importingId === file.id ? '…' : 'Add'}
+                  </button>
+                )}
               </div>
             </li>
           ))}
