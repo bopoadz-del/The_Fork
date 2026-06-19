@@ -169,15 +169,19 @@ def test_orchestrator_can_delegate():
 
 
 def test_reasoning_blocks_broadened():
-    """construction-pm, contracts-manager, safety-officer, smart-orchestrator all have sympy_reasoning and formula_executor."""
+    """construction-pm, contracts-manager, safety-officer, smart-orchestrator
+    all carry sympy_reasoning and formula_executor_v2 (the LLM-driven
+    code-gen successor to formula_executor v1, which PR #72 deleted).
+    """
     load_agents()
     for agent_name in ("construction-pm", "contracts-manager", "safety-officer", "smart-orchestrator"):
         agent = AGENT_REGISTRY[agent_name]
         assert "sympy_reasoning" in agent.allowed_blocks, (
             f"{agent_name} missing sympy_reasoning"
         )
-        assert "formula_executor" in agent.allowed_blocks, (
-            f"{agent_name} missing formula_executor"
+        assert "formula_executor_v2" in agent.allowed_blocks, (
+            f"{agent_name} missing formula_executor_v2 "
+            f"(allowed_blocks={agent.allowed_blocks!r})"
         )
 
 
@@ -186,7 +190,9 @@ def test_project_assistant_loads():
     construction toolkit so the UI's primary chat agent can actually
     call generate_wbs / boq_processor / drawing_qto / spec_analyzer
     instead of describing what it could do in prose. sympy_reasoning
-    + formula_executor are kept for calculation paths."""
+    + formula_executor_v2 are kept for calculation paths
+    (PR #72 deleted formula_executor v1; v2 is the LLM-driven
+    code-gen replacement)."""
     agents = load_agents()
 
     # New agent is present
@@ -195,7 +201,7 @@ def test_project_assistant_loads():
     pa = agents["project-assistant"]
     assert pa.can_delegate is True, "project-assistant.can_delegate should be True"
     required = {
-        "sympy_reasoning", "formula_executor",
+        "sympy_reasoning", "formula_executor_v2",
         "construction",       # exposes generate_wbs synthetic tool
         "boq_processor", "drawing_qto", "spec_analyzer",
         "validation_pipeline", "recommendation_template",
