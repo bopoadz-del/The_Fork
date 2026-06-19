@@ -386,6 +386,18 @@ async def drive_import(project_id: str, req: DriveImportRequest,
     from app.blocks.google_drive import GoogleDriveBlock
     result = await GoogleDriveBlock().process(
         req.file_id, {"operation": "download", "access_token": access_token})
+
+    # Folder auto-redirect (PR #85). The Drive picker UI lets users click
+    # "Add" on folder rows, sending a folder file_id to this single-file
+    # endpoint. Detect that and transparently call the recursive
+    # folder-import flow so the user gets the intuitive behaviour
+    # ("Add" on a folder = "add everything in the folder").
+    if result.get("status") == "error" and result.get("is_folder"):
+        folder_req = DriveIndexFolderRequest(folder_id=req.file_id)
+        return await drive_index_folder(
+            project_id, folder_req, background_tasks, auth,
+        )
+
     if result.get("status") != "success":
         raise HTTPException(502, result.get("error", "Drive download failed."))
 

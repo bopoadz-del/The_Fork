@@ -182,6 +182,28 @@ class GoogleDriveBlock(UniversalBlock):
                     meta_json = meta.json()
                     mime = meta_json.get("mimeType", "")
 
+                    # Folder check (operator brief 2026-06-19, PR #85).
+                    # The Drive picker UI lets the user click "Add" on
+                    # folder rows too, sending the folder's file_id here.
+                    # Folders have no downloadable content; the right
+                    # action is to call /v1/projects/{id}/drive/index-folder
+                    # instead. Surface a structured error the frontend can
+                    # use to either auto-redirect or render a clear prompt.
+                    if mime == "application/vnd.google-apps.folder":
+                        return {
+                            "status": "error",
+                            "error": (
+                                f"'{meta_json.get('name','?')}' is a Drive folder, not a file. "
+                                f"Use the folder-import flow (/v1/projects/<id>/drive/index-folder) "
+                                f"to recursively pull every supported file in it."
+                            ),
+                            "operation": "download",
+                            "file_id": file_id,
+                            "mime_type": mime,
+                            "is_folder": True,
+                            "name": meta_json.get("name", ""),
+                        }
+
                     # Shortcut handling (operator brief 2026-06-19, PR #83).
                     # `application/vnd.google-apps.shortcut` files don't
                     # have downloadable content of their own — they point
