@@ -30,13 +30,17 @@ WORKDIR /app
 # Runtime system libs (OpenGL/glib for image processing; curl for healthcheck;
 # tesseract + Arabic language pack so Arabic BOQ pages OCR correctly per
 # FOLLOW-UP #93 — without ara, PyMuPDF's CMAP-less Arabic text becomes
-# mojibake and downstream chunks lose ground truth for rate-points).
+# mojibake and downstream chunks lose ground truth for rate-points;
+# ffmpeg so pydub can decode WebM/MP3/m4a/Ogg uploads from the browser
+# push-to-talk path — without it, voice 2.2's STT returns an
+# "install ffmpeg" error on every non-WAV recording).
 # No "|| true" — a missing dependency must fail the build, not surface later
 # as a runtime crash on first import.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     curl \
+    ffmpeg \
     tesseract-ocr \
     tesseract-ocr-ara \
     tesseract-ocr-eng \
