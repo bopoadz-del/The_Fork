@@ -491,10 +491,92 @@ class Agent:
         - ``search_project_documents`` — only when ``project_id`` is set.
         - ``delegate_to_agent`` — only when ``self.can_delegate``.
         """
+        # File-consuming blocks need an explicit `file_path` schema so the
+        # LLM can't emit the call with empty args. Without this, the agent
+        # called e.g. boq_processor with {} after search_project_documents,
+        # got "No file_path provided", and deflected to the user. The
+        # runtime's _resolve_block_file_input then maps the bare filename
+        # to the encrypted stored path, so the agent only needs to pass
+        # the original_name string it saw from search_project_documents.
+        _FILE_TOOL_SCHEMAS = {
+            "boq_processor": {
+                "description": (
+                    "Extract structured Bill of Quantities from an uploaded "
+                    "xlsx/csv/pdf file. Returns line items with quantities, "
+                    "rates, amounts, and totals. The file_path must be the "
+                    "exact original_name of a document returned by "
+                    "search_project_documents — never guess paths."
+                ),
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "The document's original_name (e.g. "
+                            "'DGII - Infra-1 - Demolition BOQ.pdf'). MUST come "
+                            "from a prior search_project_documents call."
+                        ),
+                    },
+                },
+                "required": ["file_path"],
+            },
+            "drawing_qto": {
+                "description": (
+                    "Extract quantity takeoff from a drawing file "
+                    "(DXF/DWG/PDF). Returns measured areas, lengths, counts. "
+                    "The file_path must be the exact original_name returned by "
+                    "search_project_documents — never guess paths."
+                ),
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "The drawing's original_name (e.g. "
+                            "'tower_b_floor_plan.dxf'). MUST come from a prior "
+                            "search_project_documents call."
+                        ),
+                    },
+                },
+                "required": ["file_path"],
+            },
+            "spec_analyzer": {
+                "description": (
+                    "Extract specifications, grades, standards, and methods "
+                    "from a specification document. file_path must be the "
+                    "original_name from search_project_documents — never guess."
+                ),
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "The spec doc's original_name. MUST come from a "
+                            "prior search_project_documents call."
+                        ),
+                    },
+                },
+                "required": ["file_path"],
+            },
+        }
+
         tools = []
         for block_name in self.allowed_blocks:
             block_class = BLOCK_REGISTRY.get(block_name)
             if not block_class:
+                continue
+            # File-consuming blocks get a typed schema with required file_path.
+            override = _FILE_TOOL_SCHEMAS.get(block_name)
+            if override:
+                tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": block_name,
+                        "description": override["description"],
+                        "parameters": {
+                            "type": "object",
+                            "properties": override["properties"],
+                            "required": override["required"],
+                        },
+                    },
+                })
                 continue
             description = (getattr(block_class, "description", "") or f"Block: {block_name}")[:1024]
             tools.append({
@@ -1811,8 +1893,17 @@ class Agent:
             }
 
         instance = block_instances.get(name) or _create_block_instance(name)
-        block_input = args.get("input")
-        block_params = args.get("params") or {}
+        # File-consuming blocks get an explicit `file_path` schema (see
+        # _FILE_TOOL_SCHEMAS above in tool_definitions). When the LLM
+        # responds to that schema it emits `{"file_path": "<name>"}` at
+        # the top level — NOT nested under input/params. Detect that
+        # shape and synthesize the block's expected envelope.
+        if name in _FILE_CONSUMING_BLOCKS and "file_path" in args and "input" not in args:
+            block_input = {"file_path": args.get("file_path")}
+            block_params = {k: v for k, v in args.items() if k != "file_path"}
+        else:
+            block_input = args.get("input")
+            block_params = args.get("params") or {}
         # File-consuming blocks: the LLM typically supplies just the filename
         # (e.g. 'DGII - Infra-1 - Demolition BOQ.pdf') because that is what the
         # user said. The block then calls os.path.exists on a bare filename
