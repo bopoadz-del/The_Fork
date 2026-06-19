@@ -399,7 +399,30 @@ class SmartOrchestratorBlock(UniversalBlock):
                     weight = len(kw.split()) * 0.2  # multi-word keywords score higher
                     scores[action] = scores.get(action, 0.0) + weight
 
+        # Per-action gate-1 threshold (operator brief 2026-06-19, PR #80).
+        # GENERATIVE_INTENTS — the actions that legitimately need a heavy-
+        # reasoning dispatch (generate_wbs, bim_analysis, drawing_qto, ...)
+        # — clear gate-1 at a relaxed 0.2 floor so single-word matches like
+        # the bare "wbs" in "generate a WBS for a 10-floor tower" surface
+        # in matched_actions for action_router.needs_planning to evaluate.
+        # Non-generative actions keep the historical 0.3 to suppress thin
+        # matches that would just add noise to the action_queue.
+        #
+        # Local import to avoid the runtime → action_router cycle: the
+        # routing helper in app.agents.runtime imports action_router, which
+        # imports nothing from app.blocks; loading GENERATIVE_INTENTS at
+        # module top would invert that ordering and break the agent runtime
+        # boot path.
+        from app.core.action_router import GENERATIVE_INTENTS
+
         threshold = float(self.config.get("confidence_threshold", 0.3))
+        generative_threshold = float(
+            self.config.get("generative_confidence_threshold", 0.2)
+        )
+
+        def _gate_for(action: str) -> float:
+            return generative_threshold if action in GENERATIVE_INTENTS else threshold
+
         results = [
             {
                 "action": action,
@@ -410,7 +433,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                 ],
             }
             for action, score in sorted(scores.items(), key=lambda x: x[1], reverse=True)
-            if score >= threshold
+            if score >= _gate_for(action)
         ]
         return results
 
