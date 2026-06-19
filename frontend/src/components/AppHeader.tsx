@@ -1,4 +1,5 @@
 import { useAuth } from '../auth/AuthContext'
+import ThemeToggle from '../theme/ThemeToggle'
 import './AppHeader.css'
 
 interface AppHeaderProps {
@@ -24,6 +25,7 @@ export default function AppHeader({ breadcrumb }: AppHeaderProps) {
         )}
 
         <div className="app-header__user">
+          <ThemeToggle />
           {user && (
             <>
               <span className="app-header__email">{user.email}</span>

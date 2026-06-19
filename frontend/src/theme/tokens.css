@@ -1,0 +1,85 @@
+/* Design tokens — operator spec 2026-06-19 UI redesign.
+ *
+ * Two token sets in one place:
+ *   1. The new operator-spec tokens (--bg-base, --bg-surface, ...). New
+ *      layout components and the global Inter design language use these.
+ *   2. Aliases for the legacy index.css names (--bg, --surface, --text,
+ *      ...). Existing components (project list, login, header, the
+ *      existing workspace.css classes the refactored ProjectWorkspace
+ *      still references) continue to work and inherit dark mode for free.
+ *
+ * Dark theme just overrides the new tokens; the aliases re-derive
+ * automatically through var(--bg-base) etc.
+ */
+
+:root {
+  /* New tokens — operator spec */
+  --bg-base: #f9f9f8;
+  --bg-surface: #ffffff;
+  --bg-panel: #f4f4f2;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b7280;
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --border: #e5e7eb;
+
+  /* Derived */
+  --accent-hover: color-mix(in srgb, var(--accent) 85%, black);
+  --accent-light: color-mix(in srgb, var(--accent) 10%, transparent);
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.06), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.12);
+
+  --radius-input: 8px;
+  --radius-card: 12px;
+  --radius-bubble: 20px;
+
+  /* Legacy alias map — keeps the pre-redesign components themed correctly
+   * without forcing a class-name sweep across the codebase. */
+  --bg: var(--bg-base);
+  --surface: var(--bg-surface);
+  --surface-2: var(--bg-panel);
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-subtle: var(--text-secondary);
+  --border-light: var(--border);
+  --accent-text: var(--accent-fg);
+
+  /* Inter is the operator-preferred typeface; the legacy --font-sans
+   * declared in index.css remains IBM Plex Sans as a fallback for
+   * existing surfaces that explicitly call var(--font-sans). New
+   * components reference --font-display below. */
+  --font-display: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+[data-theme="dark"] {
+  --bg-base: #0f0f0f;
+  --bg-surface: #1a1a1a;
+  --bg-panel: #141414;
+  --text-primary: #f5f5f5;
+  --text-secondary: #9ca3af;
+  --accent: #3b82f6;
+  --accent-fg: #ffffff;
+  --border: #2a2a2a;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+}
+
+/* Make sure the document fills the viewport — fixes the empty-space
+ * bug below the chat in the old layout. The workspace shell adds
+ * height: 100vh; overflow: hidden on top of this. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  /* Keep IBM Plex Sans available for legacy surfaces that opt in. */
+}
