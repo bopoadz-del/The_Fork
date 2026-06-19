@@ -1,0 +1,113 @@
+.chat-composer {
+  padding: 0 var(--space-5) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-display);
+}
+
+.chat-composer__attach-status {
+  margin: 0 4px;
+  padding: 6px 10px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  border-radius: var(--radius-input);
+  font-size: 12px;
+}
+
+.chat-composer__card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-composer__textarea {
+  border: 0;
+  outline: none;
+  resize: none;
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 1.5;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 4px;
+  min-height: 28px;
+  max-height: 180px;
+}
+
+.chat-composer__textarea::placeholder {
+  color: var(--text-secondary);
+}
+
+.chat-composer__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-composer__tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.chat-composer__tool:hover:not(:disabled) {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.chat-composer__tool:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-composer__tool--rec {
+  color: #dc2626;
+}
+
+.chat-composer__spacer {
+  flex: 1 1 0;
+}
+
+.chat-composer__hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.chat-composer__send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-input);
+  background: var(--accent);
+  color: var(--accent-fg);
+  cursor: pointer;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.chat-composer__send:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.chat-composer__send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

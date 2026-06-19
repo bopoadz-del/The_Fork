@@ -1,0 +1,58 @@
+/* 3-column workspace shell.
+ *
+ * Viewport-height fix: outer container is 100vh + overflow hidden, body
+ * is flex column (header on top, body row below). The chat list inside
+ * main owns the scrollbar.
+ */
+.workspace-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+}
+
+.workspace-shell__header {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.workspace-shell__body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.workspace-shell__left {
+  flex: 0 0 240px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.workspace-shell__main {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-base);
+}
+
+.workspace-shell__right {
+  flex: 0 0 300px;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+/* Mobile: collapse side panels into icon rails. Components inside can
+ * detect this and render as rails; the shell just gives them less room. */
+@media (max-width: 768px) {
+  .workspace-shell__left,
+  .workspace-shell__right {
+    flex-basis: 56px;
+  }
+}

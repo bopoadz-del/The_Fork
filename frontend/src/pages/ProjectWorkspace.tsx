@@ -1,12 +1,22 @@
-/* ProjectWorkspace — project detail + streaming chat (B4) + documents/Drive (B5) */
+/* ProjectWorkspace — project detail + streaming chat + documents/Drive.
+ *
+ * Post-redesign coordinator: state, SSE wiring, and inline DocumentsPanel +
+ * DrivePanel definitions live here. The visual shell (3-column layout, panels,
+ * chat bubbles/composer/sources) come from layout/, chat/, and documents/.
+ */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import AppHeader from '../components/AppHeader'
 import { type Project } from './ProjectCard'
 import { apiGet, apiPost, apiPostForm, ApiError } from '../lib/api'
 import { getToken } from '../lib/token'
+import WorkspaceShell from '../layout/WorkspaceShell'
+import LeftPanel from '../layout/LeftPanel'
+import RightPanel from '../layout/RightPanel'
+import ChatList from '../chat/ChatList'
+import ChatComposer from '../chat/ChatComposer'
+import SourcesList from '../chat/SourcesList'
+import DocumentGraph from '../documents/DocumentGraph'
 import './pages.css'
 import './workspace.css'
 
@@ -164,13 +174,8 @@ function readinessMode(
   return 'ready'
 }
 
-function readinessModeLabel(mode: ReadinessMode): string {
-  switch (mode) {
-    case 'setting-up': return 'Setting up...'
-    case 'ai-unavailable': return 'AI unavailable'
-    case 'ready': return 'Ready'
-  }
-}
+// readinessModeLabel removed during redesign — the rail badge no longer
+// surfaces this label. Tooltip still in use for the composer disabled state.
 
 function readinessModeTooltip(mode: ReadinessMode): string {
   switch (mode) {
@@ -227,441 +232,6 @@ function friendlyErrorMessage(raw: string): string {
     return 'Request was cancelled.'
   }
   return 'Something went wrong. Please try again.'
-}
-
-// ── ChatMessage bubble ─────────────────────────────────────────────────────
-
-interface ChatMessageBubbleProps {
-  message: ChatMessage
-  onDownload?: () => void
-}
-
-function ChatMessageBubble({ message, onDownload }: ChatMessageBubbleProps) {
-  const isUser = message.role === 'user'
-  if (message.error) {
-    return (
-      <div className="chat-error-bubble" role="alert">
-        <svg
-          className="chat-error-bubble__icon"
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-          <line x1="12" y1="9" x2="12" y2="13" />
-          <line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-        <span className="chat-error-bubble__text">
-          {message.content || 'Something went wrong. Please try again.'}
-        </span>
-      </div>
-    )
-  }
-  return (
-    <div className={`chat-message chat-message--${message.role}`}>
-      <div className="chat-message__avatar" aria-hidden="true">
-        {isUser ? 'U' : 'TF'}
-      </div>
-      <div className="chat-message__bubble">
-        {message.toolStatus && (
-          <div className="chat-tool-status" aria-live="polite">
-            {message.toolStatus}
-          </div>
-        )}
-        <div className="chat-message__content">
-          {isUser ? (
-            <span className="chat-message__text">{message.content}</span>
-          ) : message.streaming && !message.content ? (
-            <span className="chat-typing" aria-label="Assistant is thinking">
-              <span className="chat-typing__dot" />
-              <span className="chat-typing__dot" />
-              <span className="chat-typing__dot" />
-            </span>
-          ) : (
-            <div className="chat-message__markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {message.content}
-              </ReactMarkdown>
-              {message.streaming && <span className="chat-cursor" aria-hidden="true" />}
-            </div>
-          )}
-        </div>
-        {message.role === 'assistant' && !message.streaming && message.content && onDownload && (
-          <button
-            type="button"
-            className="chat-message__download"
-            onClick={onDownload}
-            title="Download this message as a Word document"
-            aria-label="Download as Word document"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            Download
-          </button>
-        )}
-        {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
-          <details className="chat-message__sources">
-            <summary className="chat-message__sources-summary">
-              <span className="chat-message__sources-chevron" aria-hidden="true" />
-              Sources ({message.sources.length})
-            </summary>
-            <ul className="chat-message__sources-list">
-              {message.sources.map((s, i) => (
-                <li key={i} className="chat-message__sources-row">
-                  <span className="chat-message__sources-doc">
-                    <svg
-                      className="chat-message__sources-icon"
-                      viewBox="0 0 24 24"
-                      width="14"
-                      height="14"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                    </svg>
-                    <span className="chat-message__sources-name" title={s.doc_name || s.doc_id}>
-                      {s.doc_name || s.doc_id}
-                    </span>
-                    {s.page_or_section && (
-                      <span className="chat-message__sources-loc">{s.page_or_section}</span>
-                    )}
-                  </span>
-                  <span className="chat-message__sources-tail">
-                    <span className="chat-message__sources-score">{s.score.toFixed(2)}</span>
-                    <span className={`chat-message__sources-badge chat-message__sources-badge--${s.confidence.toLowerCase()}`}>
-                      {s.confidence}
-                    </span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── ChatComposer ───────────────────────────────────────────────────────────
-
-interface ChatComposerProps {
-  onSend: (text: string) => void
-  disabled: boolean
-  /** Tooltip shown on the send button when disabled by external state (not just empty text) */
-  disabledReason?: string
-  projectId: string
-  onAttached?: (docName: string) => void
-  onClear?: () => void
-  hasHistory?: boolean
-}
-
-function ChatComposer({ onSend, disabled, disabledReason, projectId, onAttached, onClear, hasHistory }: ChatComposerProps) {
-  const [text, setText] = useState('')
-  const [uploading, setUploading] = useState(false)
-  const [attachStatus, setAttachStatus] = useState<string | null>(null)
-  const [recording, setRecording] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const cameraInputRef = useRef<HTMLInputElement>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      submit()
-    }
-  }
-
-  function submit() {
-    const trimmed = text.trim()
-    if (!trimmed || disabled) return
-    onSend(trimmed)
-    setText('')
-    if (textareaRef.current) textareaRef.current.style.height = 'auto'
-  }
-
-  function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    setText(e.target.value)
-    const el = e.target
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`
-  }
-
-  async function uploadFile(file: File, role = 'other') {
-    setUploading(true)
-    setAttachStatus(`Uploading ${file.name}…`)
-    try {
-      const token = getToken() || ''
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('role', role)
-      const res = await fetch(`${API_BASE}/v1/projects/${projectId}/documents`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
-      })
-      if (!res.ok) {
-        const errBody = await res.text()
-        setAttachStatus(`Upload failed (${res.status}): ${errBody.slice(0, 120)}`)
-        return
-      }
-      const body = await res.json()
-      const docName = body?.document?.original_name || file.name
-      setAttachStatus(`Attached: ${docName}`)
-      onAttached?.(docName)
-      setText((prev) => (prev ? `${prev}\n` : '') + `[attached: ${docName}] `)
-      setTimeout(() => setAttachStatus(null), 4000)
-    } catch (err) {
-      setAttachStatus(`Upload error: ${(err as Error).message}`)
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  async function startVoiceRecording() {
-    if (recording) return
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mr = new MediaRecorder(stream)
-      audioChunksRef.current = []
-      mr.ondataavailable = (ev) => {
-        if (ev.data.size > 0) audioChunksRef.current.push(ev.data)
-      }
-      mr.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop())
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-        const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })
-        await uploadFile(file, 'other')
-      }
-      mediaRecorderRef.current = mr
-      mr.start()
-      setRecording(true)
-      setAttachStatus('Recording — click Stop to finish')
-    } catch (err) {
-      setAttachStatus(`Mic blocked: ${(err as Error).message}`)
-    }
-  }
-
-  function stopVoiceRecording() {
-    mediaRecorderRef.current?.stop()
-    mediaRecorderRef.current = null
-    setRecording(false)
-  }
-
-  return (
-    <div className="chat-composer">
-      {attachStatus && (
-        <p className="chat-composer__attach-status" aria-live="polite">{attachStatus}</p>
-      )}
-      <div className="chat-composer__inner">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          style={{ display: 'none' }}
-          accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg,.webp,.tif,.tiff,.dxf,.ifc,.xer,.mp3,.wav,.webm,.mp4"
-          onChange={(e) => {
-            const files = e.target.files
-            if (files) Array.from(files).forEach((f) => uploadFile(f))
-            e.target.value = ''
-          }}
-        />
-        <input
-          ref={cameraInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) uploadFile(f)
-            e.target.value = ''
-          }}
-        />
-        <button
-          type="button"
-          className="chat-composer__attach"
-          title="Attach file"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || uploading}
-          aria-label="Attach file"
-        >
-          Attach
-        </button>
-        <button
-          type="button"
-          className="chat-composer__attach"
-          title="Take photo"
-          onClick={() => cameraInputRef.current?.click()}
-          disabled={disabled || uploading}
-          aria-label="Take photo"
-        >
-          Photo
-        </button>
-        <button
-          type="button"
-          className={`chat-composer__attach ${recording ? 'chat-composer__attach--recording' : ''}`}
-          title={recording ? 'Stop recording' : 'Voice note'}
-          onClick={() => (recording ? stopVoiceRecording() : startVoiceRecording())}
-          disabled={disabled || uploading}
-          aria-label={recording ? 'Stop recording' : 'Record voice'}
-        >
-          {recording ? 'Stop' : 'Voice'}
-        </button>
-        {onClear && hasHistory && (
-          <button
-            type="button"
-            className="chat-composer__attach"
-            title="Clear chat history (cannot be undone)"
-            onClick={() => onClear()}
-            disabled={disabled || uploading}
-            aria-label="Clear chat history"
-          >
-            Clear
-          </button>
-        )}
-        <textarea
-          ref={textareaRef}
-          className="chat-composer__textarea"
-          value={text}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask about your project documents..."
-          disabled={disabled}
-          rows={1}
-          aria-label="Chat message"
-        />
-        <button
-          type="button"
-          className="chat-composer__send"
-          onClick={submit}
-          disabled={disabled || !text.trim()}
-          aria-label="Send message"
-          title={disabled && disabledReason ? disabledReason : undefined}
-        >
-          ↑
-        </button>
-      </div>
-      <p className="chat-composer__hint">
-        Enter to send &middot; Shift+Enter for new line
-      </p>
-    </div>
-  )
-}
-
-// ── ChatThread ─────────────────────────────────────────────────────────────
-
-interface ChatThreadProps {
-  messages: ChatMessage[]
-  documentCount: number
-  onSuggestion: (text: string) => void
-  suggestionsDisabled: boolean
-  onDownloadMessage?: (assistantIndex: number) => void
-}
-
-const EMPTY_SUGGESTIONS = [
-  'What is the IT load specification?',
-  'Summarise the key BOQ items',
-  'What are the main project risks?',
-]
-
-function ChatThread({ messages, documentCount, onSuggestion, suggestionsDisabled, onDownloadMessage }: ChatThreadProps) {
-  const bottomRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  if (messages.length === 0) {
-    const docLabel =
-      documentCount === 0
-        ? 'No documents indexed yet for this project'
-        : documentCount === 1
-          ? 'I have access to 1 document in this project'
-          : `I have access to ${documentCount} documents in this project`
-    return (
-      <div className="chat-empty">
-        <svg
-          className="chat-empty__art"
-          viewBox="0 0 96 96"
-          width="96"
-          height="96"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M14 28h28l6 8h34v44a4 4 0 0 1-4 4H18a4 4 0 0 1-4-4V28z" />
-          <path d="M28 50h40M28 60h40M28 70h28" />
-          <path d="M58 14l8 4 8-4v18l-8 4-8-4z" opacity="0.55" />
-        </svg>
-        <p className="chat-empty__heading">Ask anything about your project</p>
-        <p className="chat-empty__hint">{docLabel}</p>
-        <div className="chat-empty__chips" role="group" aria-label="Suggested questions">
-          {EMPTY_SUGGESTIONS.map((suggestion) => (
-            <button
-              type="button"
-              key={suggestion}
-              className="chat-empty__chip"
-              disabled={suggestionsDisabled}
-              onClick={() => onSuggestion(suggestion)}
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  // Build assistant-message index lookup (position within assistant messages
-  // only) so the download button can request the right one from the server.
-  let assistantSeen = 0
-  return (
-    <div className="chat-thread" role="log" aria-live="polite" aria-label="Conversation">
-      {messages.map((msg) => {
-        let downloadHandler: (() => void) | undefined
-        if (msg.role === 'assistant' && !msg.streaming && !msg.error && msg.content) {
-          const idx = assistantSeen
-          assistantSeen += 1
-          if (onDownloadMessage) {
-            downloadHandler = () => onDownloadMessage(idx)
-          }
-        } else if (msg.role === 'assistant') {
-          assistantSeen += 1
-        }
-        return <ChatMessageBubble key={msg.id} message={msg} onDownload={downloadHandler} />
-      })}
-      <div ref={bottomRef} />
-    </div>
-  )
 }
 
 // ── DocumentsPanel ─────────────────────────────────────────────────────────
@@ -1085,94 +655,6 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
         <p className="drive-no-results">No files found.</p>
       )}
     </div>
-  )
-}
-
-// ── WorkspaceRail ──────────────────────────────────────────────────────────
-
-interface RailProps {
-  project: ProjectDetail
-  documents: DocumentRecord[]
-  readinessMode: ReadinessMode
-  onDocumentAdded: (doc: DocumentRecord) => void
-  onDocumentRemoved: (docId: string) => void
-}
-
-function WorkspaceRail({ project, documents, readinessMode: mode, onDocumentAdded, onDocumentRemoved }: RailProps) {
-  const modeLabel = readinessModeLabel(mode)
-  const tooltip = readinessModeTooltip(mode)
-
-  return (
-    <aside className="workspace-rail" aria-label="Project details">
-      {/* Metadata */}
-      <div className="rail-section">
-        <div className="rail-section__title">Project</div>
-
-        <div className="rail-meta-row">
-          <span className="rail-meta-label">Name</span>
-          <span className="rail-meta-value">{project.name}</span>
-        </div>
-
-        {project.client && (
-          <div className="rail-meta-row">
-            <span className="rail-meta-label">Client</span>
-            <span className="rail-meta-value">{project.client}</span>
-          </div>
-        )}
-
-        <div className="rail-meta-row">
-          <span className="rail-meta-label">Status</span>
-          <span className="rail-meta-value">{project.status}</span>
-        </div>
-
-        <div className="rail-meta-row">
-          <span className="rail-meta-label">Created</span>
-          <span className="rail-meta-value">{formatDate(project.created_at)}</span>
-        </div>
-
-        <div className="rail-meta-row">
-          <span className="rail-meta-label">ID</span>
-          <span className="rail-meta-value mono">{project.id}</span>
-        </div>
-
-        <div className="rail-meta-row">
-          <span className="rail-meta-label">Readiness</span>
-          <span
-            className={`readiness-badge readiness-badge--${mode}`}
-            title={tooltip || undefined}
-            aria-label={tooltip ? `${modeLabel}. ${tooltip}` : modeLabel}
-          >
-            <span className="readiness-badge__dot" aria-hidden="true" />
-            {modeLabel}
-          </span>
-        </div>
-      </div>
-
-      {/* Documents — B5 */}
-      <div className="rail-section">
-        <div className="rail-section__title">
-          Documents
-          {documents.length > 0 && (
-            <span className="rail-section__count">{documents.length}</span>
-          )}
-        </div>
-        <DocumentsPanel
-          projectId={project.id}
-          documents={documents}
-          onDocumentAdded={onDocumentAdded}
-          onDocumentRemoved={onDocumentRemoved}
-        />
-      </div>
-
-      {/* Google Drive — B5 */}
-      <div className="rail-section">
-        <div className="rail-section__title">Google Drive</div>
-        <DrivePanel
-          projectId={project.id}
-          onDocumentAdded={onDocumentAdded}
-        />
-      </div>
-    </aside>
   )
 }
 
@@ -1621,14 +1103,40 @@ export default function ProjectWorkspace() {
   const composerIsBlocked = composerBlocked(mode)
   const composerBlockedReason = composerIsBlocked ? readinessModeTooltip(mode) : undefined
 
-  return (
-    <div className="workspace-shell">
-      <AppHeader breadcrumb={breadcrumb} />
+  // Latest assistant message's sources drive the right-panel SourcesList and
+  // the DocumentGraph "cited" highlight. Falls back to undefined when the
+  // last message is the user, an error bubble, or has no sources yet.
+  const latestAssistant = [...messages].reverse().find(
+    (m) => m.role === 'assistant' && !m.error,
+  )
+  const latestSources = latestAssistant?.sources ?? []
+  const citedDocIds = latestSources.map((s) => s.doc_id)
+  void mode  // mode used inside left panel via DocumentsPanel/onClear hooks below
 
-      <div className="workspace-body">
-        {/* Primary conversation column */}
-        <div className="workspace-chat">
-          <ChatThread
+  return (
+    <WorkspaceShell
+      header={<AppHeader breadcrumb={breadcrumb} />}
+      left={
+        <LeftPanel
+          documents={
+            <DocumentsPanel
+              projectId={id ?? ''}
+              documents={documents}
+              onDocumentAdded={handleDocumentAdded}
+              onDocumentRemoved={handleDocumentRemoved}
+            />
+          }
+          drive={
+            <DrivePanel
+              projectId={id ?? ''}
+              onDocumentAdded={handleDocumentAdded}
+            />
+          }
+        />
+      }
+      main={
+        <div className="workspace-main">
+          <ChatList
             messages={messages}
             documentCount={documents.length}
             onSuggestion={(text) => void handleSend(text)}
@@ -1697,16 +1205,27 @@ export default function ProjectWorkspace() {
             }}
           />
         </div>
-
-        {/* Right rail — project metadata + documents + Drive (B5) */}
-        <WorkspaceRail
-          project={project}
-          documents={documents}
-          readinessMode={mode}
-          onDocumentAdded={handleDocumentAdded}
-          onDocumentRemoved={handleDocumentRemoved}
+      }
+      right={
+        <RightPanel
+          sources={
+            <SourcesList
+              sources={latestSources}
+              streaming={latestAssistant?.streaming}
+            />
+          }
+          graph={
+            <DocumentGraph
+              documents={documents.map((d) => ({
+                id: d.id,
+                original_name: d.original_name,
+                doc_type: d.doc_type,
+              }))}
+              citedDocIds={citedDocIds}
+            />
+          }
         />
-      </div>
-    </div>
+      }
+    />
   )
 }
