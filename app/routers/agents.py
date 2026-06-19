@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agents import AGENT_REGISTRY, get_agent
+from app.agents.runtime import select_agent_for_message
 from app.core import agent_memory
 from app.core import projects as store
 from app.dependencies import require_user
@@ -148,6 +149,16 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     if req.model:
         agent = _agent_with_override(agent, model=req.model)
 
+    # PR #78 — smart_orchestrator routing gate. Real user chat traffic must
+    # pass through the keyword router. When the message classifies as a
+    # generative intent at sufficient confidence, redirect to heavy-reasoning
+    # so the tool-call loop runs the requested pipeline instead of producing
+    # prose. Pass-through cases (small talk, low confidence, already on
+    # heavy-reasoning) return the original agent unchanged with classification
+    # metadata in `routing` for observability. Kill-switch:
+    # SMART_ORCH_ROUTING_DISABLED=true. See app/agents/runtime.py for the gate.
+    agent, routing = await select_agent_for_message(req.message, agent)
+
     result = await agent.chat(
         req.message,
         history=req.history,
@@ -159,6 +170,10 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     # Echo conversation_id back so the client can resume the conversation.
     if req.conversation_id is not None:
         result["conversation_id"] = req.conversation_id
+
+    # Surface the routing decision so callers can render a "routed to ..."
+    # badge or log it. Always present, with reason set even on pass-through.
+    result["routing"] = routing
 
     return result
 
@@ -196,7 +211,19 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     if model:
         agent = _agent_with_override(agent, model=model)
 
+    # PR #78 — smart_orchestrator routing gate. See agent_chat above for the
+    # full design rationale. Run BEFORE we enter the StreamingResponse so the
+    # redirect happens synchronously and the `route` event is the very first
+    # thing the client sees (right after start).
+    agent, routing = await select_agent_for_message(message, agent)
+
     async def event_stream():
+        # Emit the routing decision as the first event so the UI can render
+        # a "routed to heavy-reasoning because <reason>" badge. Always
+        # emitted, even on pass-through, so the front-end has uniform
+        # observability. Type is "route" (new) — clients that don't know
+        # the event ignore it harmlessly per SSE conventions.
+        yield f"data: {json.dumps({'type': 'route', **routing})}\n\n"
         try:
             async for evt in agent.chat_stream(
                 message,

@@ -2016,6 +2016,161 @@ def get_agent(name: str) -> Optional[Agent]:
     return AGENT_REGISTRY.get(name)
 
 
+# ── Smart-orchestrator routing gate ─────────────────────────────────────────
+# Pre-PR-#78, the production chat path bypassed smart_orchestrator entirely:
+# the React UI calls /v1/agents/project-assistant/chat/stream which lands
+# directly on Agent.chat_stream() with no keyword-routing consultation. The
+# only place smart_orchestrator was consulted was /v1/chat/stream — a route
+# the React frontend never hits.
+#
+# The fix is `select_agent_for_message`: a thin helper the agents-router
+# calls BEFORE dispatching to Agent.chat()/chat_stream(). When the user's
+# message classifies as a needs_planning intent (e.g. "create a 200-activity
+# schedule" → generate_wbs at confidence >= 0.4), and the caller asked for
+# anything OTHER than heavy-reasoning, the helper redirects to the
+# heavy-reasoning agent so the tool-call loop actually runs the requested
+# pipeline instead of producing prose.
+#
+# Design constraints from the operator:
+#   * Real user traffic must pass through smart_orchestrator (this gate).
+#   * Internal delegation (runtime.py:_run_tool_call → target.chat) must
+#     NOT re-route — the parent agent already made the decision and a
+#     sub-agent invocation shouldn't be hijacked. The agents-router never
+#     hits the delegation path, so the gate-at-router-only design is
+#     sufficient; we don't need an extra _depth check here.
+#   * Test paths must not break. Tests that POST to /v1/agents/.../chat
+#     will see the gate. Tests that call Agent.chat() directly (most
+#     unit tests) skip it entirely. The gate is also kill-switchable via
+#     SMART_ORCH_ROUTING_DISABLED=true for fast prod rollback.
+
+_SMART_ORCH_BLOCK_CACHE: Optional[Any] = None
+
+
+def _get_smart_orchestrator_block() -> Optional[Any]:
+    """Lazy-load and cache a SmartOrchestratorBlock instance.
+
+    Returns None if the block isn't registered (e.g. running without the
+    construction kit) so the caller can fall back to the no-op routing
+    decision (pass-through to the requested agent)."""
+    global _SMART_ORCH_BLOCK_CACHE
+    if _SMART_ORCH_BLOCK_CACHE is not None:
+        return _SMART_ORCH_BLOCK_CACHE
+    try:
+        from app.blocks import BLOCK_REGISTRY
+        cls = BLOCK_REGISTRY.get("smart_orchestrator")
+        if cls is None:
+            return None
+        _SMART_ORCH_BLOCK_CACHE = cls()
+        return _SMART_ORCH_BLOCK_CACHE
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _routing_disabled() -> bool:
+    """Kill-switch read at every call so Render env-var flips take effect
+    without a restart."""
+    return os.getenv("SMART_ORCH_ROUTING_DISABLED", "").strip().lower() in ("1", "true", "yes")
+
+
+async def select_agent_for_message(
+    user_message: str,
+    requested_agent: Agent,
+) -> tuple[Agent, Dict[str, Any]]:
+    """Decide which agent should actually handle this message.
+
+    Returns ``(final_agent, routing_info)``. ``routing_info`` is a dict
+    suitable for emitting as an SSE event so the client can see the
+    routing decision. Shape::
+
+        {
+            "requested": "project-assistant",
+            "final": "heavy-reasoning",
+            "action": "generate_wbs",
+            "confidence": 0.8,
+            "reason": "needs_planning",
+        }
+
+    Pass-through cases (``final == requested``):
+      * The kill-switch ``SMART_ORCH_ROUTING_DISABLED`` is set.
+      * smart_orchestrator isn't registered (no construction kit loaded).
+      * Message is empty / whitespace.
+      * Top action confidence is below the routing threshold.
+      * Top action is not in ``GENERATIVE_INTENTS`` (i.e. small talk / Q&A).
+      * The requested agent is already ``heavy-reasoning``.
+      * ``heavy-reasoning`` isn't registered in AGENT_REGISTRY.
+
+    Each pass-through still populates ``routing_info`` with the
+    classification result so the caller can observe what would have
+    happened, and so the UI can show a "stayed on" badge if it wants.
+    """
+    info: Dict[str, Any] = {
+        "requested": requested_agent.name,
+        "final": requested_agent.name,
+        "action": None,
+        "confidence": 0.0,
+        "reason": "no-op",
+    }
+
+    if _routing_disabled():
+        info["reason"] = "routing_disabled_env"
+        return requested_agent, info
+
+    if not user_message or not user_message.strip():
+        info["reason"] = "empty_message"
+        return requested_agent, info
+
+    block = _get_smart_orchestrator_block()
+    if block is None:
+        info["reason"] = "smart_orchestrator_not_registered"
+        return requested_agent, info
+
+    try:
+        result = await block.process({"user_message": user_message})
+    except Exception as exc:  # noqa: BLE001
+        # Routing is a best-effort enhancement; a classifier crash must
+        # never break chat. Pass through with the error logged so the
+        # operator can see it in Sentry/logs without a user-visible
+        # failure.
+        _LOG.warning("smart_orchestrator classification failed: %s", exc)
+        info["reason"] = "classifier_error"
+        info["error"] = str(exc)[:200]
+        return requested_agent, info
+
+    # Local import to avoid the runtime → action_router cycle that exists
+    # because action_router consumes smart_orchestrator output and lives
+    # in app.core (which runtime.py doesn't import at module top).
+    from app.core.action_router import (
+        best_action,
+        needs_planning,
+    )
+
+    action, confidence = best_action(result)
+    info["action"] = action
+    info["confidence"] = confidence
+
+    if not needs_planning(action, confidence):
+        info["reason"] = "below_routing_gate"
+        return requested_agent, info
+
+    # Already on the heavy path — no redirect needed.
+    if requested_agent.name == "heavy-reasoning":
+        info["reason"] = "already_heavy_reasoning"
+        return requested_agent, info
+
+    heavy = AGENT_REGISTRY.get("heavy-reasoning")
+    if heavy is None:
+        info["reason"] = "heavy_reasoning_not_registered"
+        return requested_agent, info
+
+    info["final"] = heavy.name
+    info["reason"] = "needs_planning"
+    _LOG.info(
+        "smart_orch routing: %s -> %s (action=%s, confidence=%.2f)",
+        requested_agent.name, heavy.name, action, confidence,
+    )
+    return heavy, info
+
+
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
 
