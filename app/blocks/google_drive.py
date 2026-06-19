@@ -1,10 +1,13 @@
 """Google Drive Block - real OAuth 2.0 + Drive API (service account or user token)"""
 
 import json
+import logging
 import os
 from typing import Any, Dict
 
 from app.core.universal_base import UniversalBlock
+
+_LOG = logging.getLogger(__name__)
 
 _SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 _OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -203,11 +206,28 @@ class GoogleDriveBlock(UniversalBlock):
                     "size_bytes": len(content),
                     "content_base64": __import__("base64").b64encode(content).decode(),
                 }
-            except Exception:
+            except httpx.HTTPStatusError as e:
+                # Google Drive returned non-2xx — surface the status + body
+                # so the caller can act on it (token expired -> reconnect,
+                # 404 -> file moved, 403 -> permission, 429 -> back off).
+                _LOG.warning(
+                    "drive download HTTP %s for file_id=%s: %s",
+                    e.response.status_code, file_id, e.response.text[:200],
+                )
                 return {
                     "status": "error",
-                    "error": "Unable to download Google Drive file at this time.",
+                    "error": f"Drive download failed: HTTP {e.response.status_code} — {e.response.text[:200]}",
                     "operation": "download",
+                    "file_id": file_id,
+                    "http_status": e.response.status_code,
+                }
+            except Exception as e:  # noqa: BLE001
+                _LOG.exception("drive download crashed for file_id=%s", file_id)
+                return {
+                    "status": "error",
+                    "error": f"Drive download crashed: {type(e).__name__}: {e}",
+                    "operation": "download",
+                    "file_id": file_id,
                 }
 
         return {"status": "error", "error": f"Unknown operation: {operation}. Use: auth, list, download"}
