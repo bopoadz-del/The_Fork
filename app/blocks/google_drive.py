@@ -176,10 +176,31 @@ class GoogleDriveBlock(UniversalBlock):
                     meta = await client.get(
                         f"{_DRIVE_API}/files/{file_id}",
                         headers={"Authorization": f"Bearer {access_token}"},
-                        params={"fields": "mimeType,name"},
+                        params={"fields": "mimeType,name,shortcutDetails"},
                     )
                     meta.raise_for_status()
-                    mime = meta.json().get("mimeType", "")
+                    meta_json = meta.json()
+                    mime = meta_json.get("mimeType", "")
+
+                    # Shortcut handling (operator brief 2026-06-19, PR #83).
+                    # `application/vnd.google-apps.shortcut` files don't
+                    # have downloadable content of their own — they point
+                    # at another file. Drive returns `shortcutDetails`
+                    # carrying the real `targetId` and `targetMimeType`.
+                    # Re-target the download at the real file.
+                    if mime == "application/vnd.google-apps.shortcut":
+                        sd = meta_json.get("shortcutDetails") or {}
+                        target_id = sd.get("targetId")
+                        target_mime = sd.get("targetMimeType") or ""
+                        if not target_id:
+                            return {
+                                "status": "error",
+                                "error": "Drive shortcut has no targetId; original file may have been deleted.",
+                                "operation": "download",
+                                "file_id": file_id,
+                            }
+                        file_id = target_id
+                        mime = target_mime
                     target = drive_mime.export_target(mime)
                     if target is not None:
                         # Known native type — use the operator-curated export
