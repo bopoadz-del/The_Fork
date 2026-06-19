@@ -182,13 +182,33 @@ class GoogleDriveBlock(UniversalBlock):
                     mime = meta.json().get("mimeType", "")
                     target = drive_mime.export_target(mime)
                     if target is not None:
+                        # Known native type — use the operator-curated export
+                        # mapping (Doc -> .docx, Sheet -> .xlsx, etc.).
                         export_mime, exported_ext = target
                         resp = await client.get(
                             f"{_DRIVE_API}/files/{file_id}/export",
                             headers={"Authorization": f"Bearer {access_token}"},
                             params={"mimeType": export_mime},
                         )
+                    elif drive_mime.is_native(mime):
+                        # Unknown native type (form/site/shortcut/script/…
+                        # any application/vnd.google-apps.* not in
+                        # NATIVE_EXPORTS). Google rejects alt=media on
+                        # every native type with HTTP 403 "Only files with
+                        # binary content can be downloaded. Use Export with
+                        # Docs Editors files." — so default to PDF export
+                        # which Drive accepts for nearly every Docs-Editors
+                        # type. The operator hit this 2026-06-19 on a file
+                        # the picker labelled as a PDF but Drive served as
+                        # a native Google Doc.
+                        export_mime, exported_ext = "application/pdf", ".pdf"
+                        resp = await client.get(
+                            f"{_DRIVE_API}/files/{file_id}/export",
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            params={"mimeType": export_mime},
+                        )
                     else:
+                        # Binary file — direct download.
                         exported_ext = None
                         resp = await client.get(
                             f"{_DRIVE_API}/files/{file_id}",
