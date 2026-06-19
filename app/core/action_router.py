@@ -212,6 +212,16 @@ HINT_CONFIDENCE_THRESHOLD = 0.4
 # word keyword matches reach the heavy-reasoning path.
 ROUTING_CONFIDENCE_THRESHOLD = 0.4
 
+# Gate-2 for actions in GENERATIVE_INTENTS only. Operator brief PR #80:
+# the global 0.4 threshold made the literal phrasing "generate a WBS for
+# a 10-floor tower" unreachable — the single matched keyword "wbs" scores
+# 0.2 (1 word), gets boosted past gate-1 by the matching relaxed gate in
+# smart_orchestrator._match_actions, but used to be blocked here. Lowered
+# to 0.2 so generative intents route from sparse phrasings; non-generative
+# matches still need 0.4 (preserved by leaving ROUTING_CONFIDENCE_THRESHOLD
+# as the global constant for any caller that consults it directly).
+GENERATIVE_ROUTING_THRESHOLD = 0.2
+
 # Generative intents — the ones that require multi-step reasoning or
 # synthesis. Keep this list short and only include actions whose answer
 # legitimately needs tool calls, NOT every action that has a hint.
@@ -255,16 +265,19 @@ def needs_planning(action: Optional[str], confidence: float) -> bool:
     """True iff this orchestrator classification warrants the heavy-reasoning
     agent path instead of the fast single-shot chat block.
 
-    Both gates must clear: confidence above ROUTING_CONFIDENCE_THRESHOLD AND
-    action in the GENERATIVE_INTENTS whitelist. Ambiguous classifications
-    fall through to the fast path with a domain hint — better to be fast and
-    decent than to spend 10 seconds on what was actually small talk.
+    Uses the relaxed GENERATIVE_ROUTING_THRESHOLD (0.2) rather than the
+    global ROUTING_CONFIDENCE_THRESHOLD (0.4) so sparse generative
+    phrasings like "generate a WBS for a 10-floor tower" route to
+    heavy-reasoning. The whitelist (GENERATIVE_INTENTS) does the safety
+    work: non-generative actions still return False even at high
+    confidence. Ambiguous classifications fall through to the fast path
+    with a domain hint.
     """
     if not action:
         return False
-    if confidence < ROUTING_CONFIDENCE_THRESHOLD:
+    if action not in GENERATIVE_INTENTS:
         return False
-    return action in GENERATIVE_INTENTS
+    return confidence >= GENERATIVE_ROUTING_THRESHOLD
 
 
 def hint_for_action(action: str) -> Optional[str]:
