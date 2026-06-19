@@ -231,14 +231,18 @@ class GoogleDriveBlock(UniversalBlock):
                 # so the caller can act on it (token expired -> reconnect,
                 # 404 -> file moved, 403 -> permission, 429 -> back off).
                 _LOG.warning(
-                    "drive download HTTP %s for file_id=%s: %s",
-                    e.response.status_code, file_id, e.response.text[:200],
+                    "drive download HTTP %s for file_id=%s mime=%s: %s",
+                    e.response.status_code, file_id, mime, e.response.text[:200],
                 )
                 return {
                     "status": "error",
-                    "error": f"Drive download failed: HTTP {e.response.status_code} — {e.response.text[:200]}",
+                    "error": (
+                        f"Drive download failed: HTTP {e.response.status_code} "
+                        f"(mime={mime!r}) — {e.response.text[:200]}"
+                    ),
                     "operation": "download",
                     "file_id": file_id,
+                    "mime_type": mime,
                     "http_status": e.response.status_code,
                 }
             except Exception as e:  # noqa: BLE001
