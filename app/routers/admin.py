@@ -595,31 +595,26 @@ def admin_corpus_collections(
             }
 
             if folder_breakdown and doc_count >= folder_breakdown_min:
-                # Group documents by first '/' segment of original_name. Drive
-                # imports tend to carry the source folder as the leading
-                # path component (e.g. "200-Project Controls Procedures/...").
-                # Documents without a '/' fall into the "(no folder)" bucket.
-                folder_rows = conn.execute(
-                    text(
-                        """
-                        SELECT
-                            CASE
-                                WHEN original_name LIKE '%/%'
-                                THEN substr(original_name, 1, instr(original_name, '/') - 1)
-                                ELSE '(no folder)'
-                            END AS folder,
-                            COUNT(*) AS docs
-                        FROM documents
-                        WHERE project_id = :pid
-                        GROUP BY folder
-                        ORDER BY docs DESC
-                        LIMIT 50
-                        """
-                    ),
+                # Group documents by first '/' segment of original_name.
+                # SQLite has instr(); Postgres has strpos(). PR #91's first
+                # cut used instr() and 500'd on prod Postgres. Do the
+                # grouping in Python — bounded by docs-per-project (a few
+                # thousand at most for the largest corpus), so a single
+                # full scan + Counter is fine and dialect-portable.
+                from collections import Counter
+                name_rows = conn.execute(
+                    text("SELECT original_name FROM documents WHERE project_id = :pid"),
                     {"pid": pid},
                 ).fetchall()
+                buckets: "Counter[str]" = Counter()
+                for (name,) in name_rows:
+                    if name and "/" in name:
+                        buckets[name.split("/", 1)[0]] += 1
+                    else:
+                        buckets["(no folder)"] += 1
                 entry["by_top_folder"] = [
-                    {"folder": r[0], "docs": int(r[1])} for r in folder_rows
+                    {"folder": folder, "docs": n}
+                    for folder, n in buckets.most_common(50)
                 ]
 
             collections.append(entry)
