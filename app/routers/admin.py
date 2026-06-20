@@ -512,3 +512,125 @@ def admin_sentry_smoke(auth: dict = Depends(require_api_key)):
         "event_id": event_id,
         "message": "Check Sentry Issues for pilot sentry-smoke event",
     }
+
+
+@router.get("/v1/admin/corpus/collections")
+def admin_corpus_collections(
+    folder_breakdown: bool = Query(
+        True,
+        description="Include top-folder breakdown for project_ids whose document "
+                    "count exceeds folder_breakdown_min (default 50).",
+    ),
+    folder_breakdown_min: int = Query(
+        50,
+        ge=1,
+        description="Minimum doc count before a project_id gets the folder breakdown.",
+    ),
+    auth: dict = Depends(require_api_key),
+):
+    """Per-project_id corpus inventory.
+
+    For each project_id in the corpus, returns:
+      * documents — count of rows in the `documents` table.
+      * chunks    — count of rows in the `chunks` (RAG vector store) table.
+      * by_top_folder — first '/'-segment of `original_name`, sorted by doc
+        count desc. Only emitted for project_ids with >= folder_breakdown_min
+        documents (avoids 200 single-doc tiles for ad-hoc projects).
+
+    Read-only. Issues one COUNT(*) per project + one GROUP BY for folder
+    breakdown — bounded by the number of distinct project_ids. Designed
+    for the 70 GB drive_archive corpus where the operator needs to see
+    what's actually in there grouped by source folder.
+
+    Works on both Postgres production and SQLite dev / pilot.
+    """
+    _require_admin(auth)
+
+    import os
+    from sqlalchemy import create_engine, text
+
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    if not db_url:
+        # SQLite fallback — match the app's default resolution
+        data_dir = os.getenv("DATA_DIR", "data")
+        db_path = os.path.join(data_dir, "the_fork.db")
+        db_url = f"sqlite:///{db_path}"
+
+    engine = create_engine(db_url)
+    collections: List[Dict[str, Any]] = []
+
+    with engine.connect() as conn:
+        # Distinct project_ids — union of documents + chunks tables. A
+        # project_id can exist in chunks without documents (legacy
+        # imports), so we collect both sides.
+        try:
+            project_ids = {
+                row[0]
+                for row in conn.execute(text("SELECT DISTINCT project_id FROM documents"))
+            }
+            project_ids.update(
+                row[0]
+                for row in conn.execute(text("SELECT DISTINCT project_id FROM chunks"))
+            )
+        except Exception as exc:  # noqa: BLE001 — diagnostic
+            raise HTTPException(
+                status_code=500,
+                detail=f"Corpus query failed: {type(exc).__name__}: {exc}",
+            )
+
+        for pid in sorted(project_ids):
+            doc_count = conn.execute(
+                text("SELECT COUNT(*) FROM documents WHERE project_id = :pid"),
+                {"pid": pid},
+            ).scalar() or 0
+            chunk_count = conn.execute(
+                text("SELECT COUNT(*) FROM chunks WHERE project_id = :pid"),
+                {"pid": pid},
+            ).scalar() or 0
+
+            entry: Dict[str, Any] = {
+                "project_id": pid,
+                "documents": int(doc_count),
+                "chunks": int(chunk_count),
+            }
+
+            if folder_breakdown and doc_count >= folder_breakdown_min:
+                # Group documents by first '/' segment of original_name. Drive
+                # imports tend to carry the source folder as the leading
+                # path component (e.g. "200-Project Controls Procedures/...").
+                # Documents without a '/' fall into the "(no folder)" bucket.
+                folder_rows = conn.execute(
+                    text(
+                        """
+                        SELECT
+                            CASE
+                                WHEN original_name LIKE '%/%'
+                                THEN substr(original_name, 1, instr(original_name, '/') - 1)
+                                ELSE '(no folder)'
+                            END AS folder,
+                            COUNT(*) AS docs
+                        FROM documents
+                        WHERE project_id = :pid
+                        GROUP BY folder
+                        ORDER BY docs DESC
+                        LIMIT 50
+                        """
+                    ),
+                    {"pid": pid},
+                ).fetchall()
+                entry["by_top_folder"] = [
+                    {"folder": r[0], "docs": int(r[1])} for r in folder_rows
+                ]
+
+            collections.append(entry)
+
+    # Largest first so the eye lands on drive_archive immediately when it
+    # exists.
+    collections.sort(key=lambda c: (-c["chunks"], -c["documents"], c["project_id"]))
+
+    return {
+        "collections": collections,
+        "total_project_ids": len(collections),
+        "total_documents": sum(c["documents"] for c in collections),
+        "total_chunks": sum(c["chunks"] for c in collections),
+    }
