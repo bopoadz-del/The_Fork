@@ -757,14 +757,10 @@ export default function ProjectWorkspace() {
     setDocuments((prev) => [...prev, doc])
   }, [])
 
-  // PR #101: DocumentsPanel no longer rendered in the shell, so this
-  // callback has no caller. Kept for the next PR (project-detail view)
-  // that re-surfaces document management.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // PR #104: DocumentsPanel is back in the LeftPanel — handler used again.
   const handleDocumentRemoved = useCallback((docId: string) => {
     setDocuments((prev) => prev.filter((d) => d.id !== docId))
   }, [])
-  void handleDocumentRemoved
 
   // Cleanup on unmount
   useEffect(() => () => { abortRef.current?.abort() }, [])
@@ -1124,12 +1120,65 @@ export default function ProjectWorkspace() {
   const citedDocIds = latestSources.map((s) => s.doc_id)
   void mode  // mode used inside left panel via DocumentsPanel/onClear hooks below
 
-  // PR #101 / Quarry redesign: DocumentsPanel + DrivePanel no longer
-  // live in the left rail. Drive opens from the ChatComposer's + popover
-  // (Google Drive item) and renders here as a modal. DocumentsPanel is
-  // not surfaced in the Quarry shell — its functionality (list / delete
-  // / status badges) is deferred to the next PR's project-detail view.
-  void DocumentsPanel  // referenced via state-driven modal below
+  // PR #104: DocumentsPanel is back, rendered as a slot inside LeftPanel
+  // (between Projects and Conversation). Conversation Clear + Export
+  // handlers are also lifted out so the LeftPanel can drive them directly
+  // without duplicating fetch wiring. Drive still opens as a modal from
+  // the ChatComposer's + popover.
+
+  async function exportConversation() {
+    if (!id || !conversationId) return
+    const token = getToken() || ''
+    try {
+      const res = await fetch(
+        `${API_BASE}/v1/projects/${id}/conversations/${conversationId}/export?format=docx`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        alert(`Export failed (${res.status}): ${detail.slice(0, 200)}`)
+        return
+      }
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      const objUrl = URL.createObjectURL(blob)
+      a.href = objUrl
+      const cd = res.headers.get('Content-Disposition') || ''
+      const m = /filename="?([^";]+)"?/.exec(cd)
+      a.download = m?.[1] || `the-fork-${conversationId.slice(0, 8)}.docx`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(objUrl)
+    } catch (err) {
+      alert(`Export error: ${(err as Error).message}`)
+    }
+  }
+
+  async function clearConversation() {
+    if (!id || !conversationId) return
+    if (!window.confirm(
+      'Clear this conversation? The chat history on the server will be wiped. This cannot be undone.',
+    )) return
+    try {
+      const token = getToken() || ''
+      const res = await fetch(
+        `${API_BASE}/v1/projects/${id}/conversations/${conversationId}/clear`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: '{}',
+        },
+      )
+      if (!res.ok) {
+        alert(`Clear failed (${res.status})`)
+        return
+      }
+      setMessages([])
+    } catch (err) {
+      alert(`Clear failed: ${(err as Error).message}`)
+    }
+  }
 
   return (
     <>
@@ -1137,7 +1186,21 @@ export default function ProjectWorkspace() {
       header={<AppHeader breadcrumb={breadcrumb} />}
       rightExpanded={rightExpanded}
       left={
-        <LeftPanel activeProjectId={id} activeProjectName={projectName} />
+        <LeftPanel
+          activeProjectId={id}
+          activeProjectName={projectName}
+          messageCount={messages.length}
+          onExportConversation={exportConversation}
+          onClearConversation={clearConversation}
+          documents={
+            <DocumentsPanel
+              projectId={id ?? ''}
+              documents={documents}
+              onDocumentAdded={handleDocumentAdded}
+              onDocumentRemoved={handleDocumentRemoved}
+            />
+          }
+        />
       }
       main={
         <div className="workspace-main">
@@ -1182,33 +1245,7 @@ export default function ProjectWorkspace() {
             projectId={id ?? ''}
             hasHistory={messages.length > 0}
             onOpenDrive={() => setDriveModalOpen(true)}
-            onClear={async () => {
-              if (!id || !conversationId) return
-              if (!window.confirm(
-                'Clear this conversation? The chat history on the server will be wiped. This cannot be undone.',
-              )) return
-              try {
-                const token = getToken() || ''
-                const res = await fetch(
-                  `${API_BASE}/v1/projects/${id}/conversations/${conversationId}/clear`,
-                  {
-                    method: 'POST',
-                    headers: {
-                      Authorization: `Bearer ${token}`,
-                      'Content-Type': 'application/json',
-                    },
-                    body: '{}',
-                  },
-                )
-                if (!res.ok) {
-                  alert(`Clear failed (${res.status})`)
-                  return
-                }
-                setMessages([])
-              } catch (err) {
-                alert(`Clear failed: ${(err as Error).message}`)
-              }
-            }}
+            onClear={clearConversation}
           />
         </div>
       }

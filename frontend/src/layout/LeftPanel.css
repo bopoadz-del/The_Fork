@@ -118,3 +118,57 @@
   background: var(--bg-surface-alt);
   color: var(--text-primary);
 }
+
+/* ── PR #104 — slot for the inlined DocumentsPanel ────────────────── */
+.left-panel__slot {
+  /* DocumentsPanel renders its own card frame; this slot just gives it
+   * the right horizontal padding so it visually aligns with the
+   * project list items. */
+  padding: 0 2px;
+}
+
+/* ── PR #104 — Conversation actions ───────────────────────────────── */
+.left-panel__convo-summary {
+  margin: 0 0 8px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.left-panel__convo-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px;
+}
+
+.left-panel__convo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.left-panel__convo-btn:hover {
+  background: var(--bg-surface-alt);
+  border-color: var(--border);
+}
+
+.left-panel__convo-btn--danger {
+  color: #b04230;
+}
+
+.left-panel__convo-btn--danger:hover {
+  background: rgba(176, 66, 48, 0.08);
+  border-color: rgba(176, 66, 48, 0.3);
+}
