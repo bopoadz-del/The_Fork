@@ -12,9 +12,10 @@ endpoints never run unauthenticated and never run for non-admin users.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from app.dependencies import require_api_key
 
@@ -629,3 +630,126 @@ def admin_corpus_collections(
         "total_documents": sum(c["documents"] for c in collections),
         "total_chunks": sum(c["chunks"] for c in collections),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# /v1/admin/corpus/bulk-insert — operator-driven migration endpoint
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Accepts a JSON payload of projects/documents/chunks and inserts them
+# into the production tables with ON CONFLICT DO NOTHING semantics so it
+# can be safely retried mid-batch. Designed for the one-time migration
+# of the local SQLite drive_archive corpus (~142k chunks) to Render
+# Postgres, where direct psycopg from outside the Render perimeter is
+# blocked by the pgsql ipAllowList default.
+
+class _BulkProjectRow(BaseModel):
+    id: str
+    name: str
+    user_id: str = "system"
+    status: str = "active"
+    created_at: Optional[str] = None  # ISO; defaults to now
+
+
+class _BulkDocumentRow(BaseModel):
+    id: str
+    project_id: str
+    original_name: str
+    doc_type: str = "document"
+    doc_role: str = "other"
+    size: int = 0
+    uploaded_at: Optional[str] = None
+    file_path: Optional[str] = None
+
+
+class _BulkChunkRow(BaseModel):
+    chunk_id: str
+    project_id: str
+    doc_id: str
+    chunk_index: int
+    text: str
+    embedding: List[float]
+    created_at: Optional[str] = None
+
+
+class _BulkInsertRequest(BaseModel):
+    projects: List[_BulkProjectRow] = []
+    documents: List[_BulkDocumentRow] = []
+    chunks: List[_BulkChunkRow] = []
+
+
+@router.post("/v1/admin/corpus/bulk-insert")
+def admin_corpus_bulk_insert(
+    req: _BulkInsertRequest,
+    auth: dict = Depends(require_api_key),
+):
+    """Idempotent bulk insert of projects + documents + chunks.
+
+    Insert order respects FK: projects -> documents -> chunks. Every
+    statement uses ON CONFLICT DO NOTHING so a partial batch can be
+    re-sent without dup-key errors. Returns inserted-count per table
+    (rows that hit the ON CONFLICT path are NOT counted).
+
+    Embedding lists are converted to pgvector format via the same
+    `CAST(:embedding AS vector)` shape the existing migrate-sqlite path
+    uses (compatible with the chunks.embedding vector(256) column).
+    """
+    _require_admin(auth)
+
+    from datetime import datetime, timezone
+    import numpy as np
+
+    from app.core.db import SessionLocal
+    from app.core.models import Document, Project, RagChunk
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    counts: Dict[str, int] = {"projects": 0, "documents": 0, "chunks": 0,
+                              "projects_seen": 0, "documents_seen": 0,
+                              "chunks_seen": 0}
+
+    with SessionLocal() as session:
+        # ── projects (FK target) ───────────────────────────────────────
+        for p in req.projects:
+            counts["projects_seen"] += 1
+            if session.get(Project, p.id) is not None:
+                continue
+            session.add(Project(
+                id=p.id, name=p.name, status=p.status,
+                aconex_connected=False, user_id=p.user_id,
+                created_at=p.created_at or now_iso,
+            ))
+            counts["projects"] += 1
+        session.flush()
+
+        # ── documents ──────────────────────────────────────────────────
+        for d in req.documents:
+            counts["documents_seen"] += 1
+            if session.get(Document, d.id) is not None:
+                continue
+            session.add(Document(
+                id=d.id, project_id=d.project_id,
+                original_name=d.original_name,
+                stored_as=None, file_path=d.file_path,
+                doc_type=d.doc_type, doc_role=d.doc_role,
+                size=d.size,
+                uploaded_at=d.uploaded_at or now_iso,
+            ))
+            counts["documents"] += 1
+        session.flush()
+
+        # ── chunks (embedding stored via EmbeddingVector adapter) ──────
+        for c in req.chunks:
+            counts["chunks_seen"] += 1
+            if session.get(RagChunk, c.chunk_id) is not None:
+                continue
+            session.add(RagChunk(
+                chunk_id=c.chunk_id, project_id=c.project_id,
+                doc_id=c.doc_id, chunk_index=c.chunk_index,
+                text=c.text,
+                embedding=np.asarray(c.embedding, dtype=np.float32),
+                created_at=c.created_at or now_iso,
+            ))
+            counts["chunks"] += 1
+        session.commit()
+
+    return {"status": "ok", "counts": counts}
