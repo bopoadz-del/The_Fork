@@ -4,6 +4,7 @@ import ProtectedRoute from './auth/ProtectedRoute'
 import Login from './pages/Login'
 import Projects from './pages/Projects'
 import ProjectWorkspace from './pages/ProjectWorkspace'
+import AdminPage from './pages/AdminPage'
 import { ThemeProvider } from './theme/ThemeContext'
 
 export default function App() {
@@ -26,6 +27,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <ProjectWorkspace />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute>
+                  <AdminPage />
                 </ProtectedRoute>
               }
             />
