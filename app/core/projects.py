@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text as sqla_text
 
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.models import Document, Project, ProjectFact
@@ -54,6 +54,7 @@ def _project_as_dict(project: Project) -> Dict[str, Any]:
         "aconex_connected": bool(project.aconex_connected),
         "user_id": project.user_id,
         "created_at": project.created_at,
+        "is_approved": bool(getattr(project, "is_approved", True)),
     }
 
 
@@ -85,7 +86,14 @@ def _fact_as_dict(fact: ProjectFact) -> Dict[str, Any]:
 
 
 def init_db() -> None:
-    """Create the schema if absent. Idempotent — safe to call on every startup."""
+    """Create the schema if absent. Idempotent — safe to call on every startup.
+
+    Also runs lightweight in-place column patches for legacy SQLite
+    databases that were created before recent migrations landed. Prod
+    Postgres applies the same changes via Alembic; this branch keeps
+    local dev / fresh test environments self-healing without requiring
+    an explicit `alembic upgrade head` run.
+    """
     global _initialized
     with _lock:
         from app.core.users import init_db as init_users_db
@@ -95,7 +103,43 @@ def init_db() -> None:
         Project.__table__.create(bind=engine, checkfirst=True)
         Document.__table__.create(bind=engine, checkfirst=True)
         ProjectFact.__table__.create(bind=engine, checkfirst=True)
+        _patch_legacy_columns()
         _initialized = True
+
+
+def _patch_legacy_columns() -> None:
+    """Add columns to legacy tables when they're missing.
+
+    SQLite only — Postgres deployments are managed by Alembic. This
+    function exists because checkfirst=True on Table.create() does NOT
+    add new columns to existing tables; we have to ALTER manually for
+    dev environments + tests.
+
+    Currently handles:
+      * projects.is_approved (Alembic 0004)
+    """
+    url = get_database_url()
+    if not url.startswith("sqlite"):
+        return  # Postgres is migration-managed.
+    try:
+        with engine.connect() as conn:
+            cols = {row[1] for row in conn.execute(
+                sqla_text("PRAGMA table_info(projects)")
+            )}
+            if "is_approved" not in cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE projects "
+                    "ADD COLUMN is_approved BOOLEAN NOT NULL DEFAULT 1"
+                ))
+                conn.commit()
+    except Exception:
+        # Don't crash boot on a dev-environment patch failure — the
+        # next call to a feature that needs the column will surface
+        # the real error with a clearer stack.
+        import logging
+        logging.getLogger(__name__).warning(
+            "projects.is_approved column patch skipped", exc_info=True,
+        )
 
 
 def _ensure_db() -> None:
@@ -142,9 +186,28 @@ def classify_doc_role(filename: str) -> str:
 
 # ── projects ────────────────────────────────────────────────────────────────
 
-def create_project(name: str, client: Optional[str] = None, user_id: str = "system") -> Dict[str, Any]:
+def create_project(
+    name: str,
+    client: Optional[str] = None,
+    user_id: str = "system",
+    *,
+    is_approved: bool = True,
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a project row.
+
+    PR A: ``is_approved`` defaults to True for both user-created and
+    admin-created flows. The approve-from-Drive endpoint also passes
+    True explicitly. A future "detected but pending" code path can
+    pass False to create a candidate row that's hidden from the user
+    rail until an admin flips it.
+
+    ``project_id`` lets a caller pre-supply the id (used by the
+    approve-from-Drive flow so the slug is human-friendly instead of
+    a random hex).
+    """
     _ensure_db()
-    pid = str(uuid.uuid4())[:8]
+    pid = project_id or str(uuid.uuid4())[:8]
     with _lock:
         with SessionLocal() as session:
             session.add(
@@ -155,6 +218,7 @@ def create_project(name: str, client: Optional[str] = None, user_id: str = "syst
                     status="active",
                     aconex_connected=False,
                     user_id=user_id,
+                    is_approved=is_approved,
                     created_at=_now(),
                 )
             )
