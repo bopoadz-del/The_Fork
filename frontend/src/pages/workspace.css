@@ -1226,3 +1226,64 @@
   max-width: 760px;
   margin: 0 auto;
 }
+
+/* ── PR #101 / Quarry — generic modal scaffold for Drive picker ── */
+.ws-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 32, 23, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.ws-modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ws-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.ws-modal__title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  color: var(--text-secondary);
+}
+
+.ws-modal__close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.ws-modal__close:hover {
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
+}
+
+.ws-modal__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 18px;
+}

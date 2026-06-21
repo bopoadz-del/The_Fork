@@ -1,14 +1,13 @@
 /* WorkspaceShell — 3-column flex container for the workspace page.
  *
- * Layout:
- *   ┌────────────┬──────────────────────┬────────────┐
- *   │ LeftPanel  │    main (chat)       │ RightPanel │
- *   │  240 px    │    flex 1            │   300 px   │
- *   └────────────┴──────────────────────┴────────────┘
+ * Quarry design 2026-06-21 — 250 left + flexible center + 360 right.
+ * The shell exposes a ``rightExpanded`` prop that flips a data
+ * attribute on the root; the WorkspaceShell.css promotes the right
+ * panel to a full-width overlay covering main + left when set. The
+ * RightPanel's expand button is the typical trigger but any caller
+ * can drive the state.
  *
- * Mobile (<768px): both panels collapse into icon rails. The actual
- * collapse is owned by LeftPanel / RightPanel via internal state; the
- * shell just lets them shrink. See MobileRail for the rail UI.
+ * Mobile (<768px): both side panels collapse to 56px icon rails.
  */
 import { type ReactNode } from 'react'
 import './WorkspaceShell.css'
@@ -19,11 +18,15 @@ interface Props {
   right: ReactNode
   /** Top bar — AppHeader with theme toggle slot. */
   header: ReactNode
+  /** When true, the right panel covers the full body area as an overlay. */
+  rightExpanded?: boolean
 }
 
-export default function WorkspaceShell({ header, left, main, right }: Props) {
+export default function WorkspaceShell({
+  header, left, main, right, rightExpanded = false,
+}: Props) {
   return (
-    <div className="workspace-shell">
+    <div className="workspace-shell" data-right-expanded={rightExpanded ? 'true' : 'false'}>
       <div className="workspace-shell__header">{header}</div>
       <div className="workspace-shell__body">
         <aside className="workspace-shell__left" aria-label="Project navigation">{left}</aside>

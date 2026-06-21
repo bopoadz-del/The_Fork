@@ -1,58 +1,88 @@
-/* LeftPanel — 240px desktop sidebar.
+/* LeftPanel — Quarry design 2026-06-21.
  *
- * Sections:
- *   • Projects — link back to the projects list.
- *   • Documents (existing DocumentsPanel) — uploaded / Drive-imported files
- *     with delete, status badges, file-type chips. Reusing the existing
- *     component preserves PR #87 and earlier behaviour without re-styling
- *     the file rows.
- *   • Drive — the Drive picker (folder nav from PR #87) for adding new docs.
- *   • Chat history — placeholder section (post-pilot).
+ * Sections, top-to-bottom:
+ *   • Brand: "The Shovel"
+ *   • PROJECTS — stub list (Demolition active + sample names + New Project).
+ *     Real data wiring deferred to PR #92 (project-scoping work).
+ *   • CHAT HISTORY — stub list with "Current session".
+ *     Real per-project history wiring deferred to PR #92.
+ *   • Sign out — at the bottom (auth context provides it).
  *
- * Each section is a card; sections separated by 12px gap. The chat-history
- * placeholder is rendered as a subtle "Coming soon" tile so the section
- * structure is visible from day one.
+ * Documents + Drive panels used to live here in the PR #90 layout.
+ * They've moved to the ChatComposer's + popover so the left rail stays
+ * focused on navigation (per the Quarry design).
  */
-import { type ReactNode } from 'react'
-import { FolderOpen, MessagesSquare } from 'lucide-react'
+import { Plus, LogOut } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
 import './LeftPanel.css'
 
 interface Props {
-  /** Documents card content (existing DocumentsPanel rendered by caller). */
-  documents: ReactNode
-  /** Drive picker content (existing DrivePanel rendered by caller). */
-  drive: ReactNode
+  /** Active project's display name. Highlighted in the projects list. */
+  activeProjectName?: string
 }
 
-export default function LeftPanel({ documents, drive }: Props) {
+/** Stub project list — pre-PR-92 placeholders matching the Quarry design.
+ *  Will be replaced with real `/v1/projects` data once project scoping
+ *  + per-project chat history land. */
+const STUB_PROJECTS = ['Demolition', 'Ha Long Xai', 'Hon Mon Island']
+
+export default function LeftPanel({ activeProjectName }: Props) {
+  const { logout } = useAuth()
+  const activeName = activeProjectName ?? STUB_PROJECTS[0]
+
   return (
     <div className="left-panel">
+      <div className="left-panel__brand">
+        <span className="left-panel__brand-text">The Shovel</span>
+      </div>
+
       <section className="left-panel__section">
-        <header className="left-panel__section-head">
-          <FolderOpen size={14} />
-          <span>Projects</span>
-        </header>
-        <Link to="/" className="left-panel__nav-link">
-          All projects
-        </Link>
+        <header className="left-panel__section-head">Projects</header>
+        <ul className="left-panel__list">
+          {STUB_PROJECTS.map((name) => (
+            <li key={name}>
+              <Link
+                to="/"
+                className={
+                  'left-panel__list-item' +
+                  (name === activeName ? ' left-panel__list-item--active' : '')
+                }
+              >
+                {name}
+              </Link>
+            </li>
+          ))}
+          <li>
+            <Link to="/" className="left-panel__new-project">
+              <Plus size={14} />
+              <span>New Project</span>
+            </Link>
+          </li>
+        </ul>
       </section>
 
       <section className="left-panel__section">
-        {documents}
+        <header className="left-panel__section-head">Chat history</header>
+        <ul className="left-panel__list">
+          <li>
+            <span className="left-panel__list-item left-panel__list-item--active">
+              Current session
+            </span>
+          </li>
+        </ul>
       </section>
 
-      <section className="left-panel__section">
-        {drive}
-      </section>
-
-      <section className="left-panel__section">
-        <header className="left-panel__section-head">
-          <MessagesSquare size={14} />
-          <span>Chat history</span>
-        </header>
-        <p className="left-panel__placeholder">Past conversations will appear here.</p>
-      </section>
+      <div className="left-panel__footer">
+        <button
+          type="button"
+          className="left-panel__signout"
+          onClick={() => logout()}
+        >
+          <LogOut size={14} />
+          <span>Sign out</span>
+        </button>
+      </div>
     </div>
   )
 }

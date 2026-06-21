@@ -1,16 +1,21 @@
-/* ChatComposer — floating input bar pinned to the bottom of the main
- * column. Behaviour preserved exactly from the pre-redesign component:
- *   • textarea auto-grows up to 180px
- *   • Enter sends; Shift+Enter newline
- *   • Attach (file picker), Photo (camera), Voice (MediaRecorder webm)
- *   • Optional Clear button when chat history exists
- *   • Upload status surfaces via attachStatus toast above the input
+/* ChatComposer — Quarry design 2026-06-21.
  *
- * The new visual treatment is a card pinned to the bottom of the
- * scrollable chat area — not full-bleed.
+ * Changes vs PR #90:
+ *   • The three inline icon buttons (Attach / Photo / Voice) collapse
+ *     into a single "+" button that opens a popover with four options:
+ *     Attach file · Google Drive · Photo · Voice.
+ *   • The send button stays right-aligned with the ArrowUp glyph.
+ *   • Optional Clear button still surfaces only when hasHistory.
+ *
+ * All file upload + voice recording behavior is preserved byte-for-byte;
+ * the popover items dispatch to the same handlers as the old buttons.
+ * Google Drive item invokes the parent-supplied onOpenDrive callback so
+ * ProjectWorkspace can surface its DrivePanel as a modal.
  */
-import { useRef, useState } from 'react'
-import { Mic, MicOff, Paperclip, Camera, RotateCcw, ArrowUp } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  Plus, Paperclip, Camera, Mic, MicOff, RotateCcw, ArrowUp, Cloud,
+} from 'lucide-react'
 import { getToken } from '../lib/token'
 import './ChatComposer.css'
 
@@ -24,20 +29,45 @@ interface Props {
   onAttached?: (docName: string) => void
   onClear?: () => void
   hasHistory?: boolean
+  /** Open the Google Drive picker (parent renders DrivePanel as a modal). */
+  onOpenDrive?: () => void
 }
 
 export default function ChatComposer({
-  onSend, disabled, disabledReason, projectId, onAttached, onClear, hasHistory,
+  onSend, disabled, disabledReason, projectId,
+  onAttached, onClear, hasHistory, onOpenDrive,
 }: Props) {
   const [text, setText] = useState('')
   const [uploading, setUploading] = useState(false)
   const [attachStatus, setAttachStatus] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
+  const [popoverOpen, setPopoverOpen] = useState(false)
+
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+  const popoverRootRef = useRef<HTMLDivElement>(null)
+
+  // Close popover on outside click + Escape
+  useEffect(() => {
+    if (!popoverOpen) return
+    function onDown(ev: MouseEvent) {
+      if (popoverRootRef.current && !popoverRootRef.current.contains(ev.target as Node)) {
+        setPopoverOpen(false)
+      }
+    }
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === 'Escape') setPopoverOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [popoverOpen])
 
   function submit() {
     const trimmed = text.trim()
@@ -110,7 +140,7 @@ export default function ChatComposer({
       mediaRecorderRef.current = mr
       mr.start()
       setRecording(true)
-      setAttachStatus('Recording — click Stop to finish')
+      setAttachStatus('Recording — click + then Voice again to stop')
     } catch (err) {
       setAttachStatus(`Mic blocked: ${(err as Error).message}`)
     }
@@ -120,6 +150,27 @@ export default function ChatComposer({
     mediaRecorderRef.current?.stop()
     mediaRecorderRef.current = null
     setRecording(false)
+  }
+
+  function pickAttach() {
+    setPopoverOpen(false)
+    fileInputRef.current?.click()
+  }
+
+  function pickPhoto() {
+    setPopoverOpen(false)
+    cameraInputRef.current?.click()
+  }
+
+  function pickDrive() {
+    setPopoverOpen(false)
+    onOpenDrive?.()
+  }
+
+  function pickVoice() {
+    setPopoverOpen(false)
+    if (recording) stopVoiceRecording()
+    else startVoiceRecording()
   }
 
   return (
@@ -166,36 +217,65 @@ export default function ChatComposer({
         />
 
         <div className="chat-composer__row">
-          <button
-            type="button"
-            className="chat-composer__tool"
-            title="Attach file"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={disabled || uploading}
-            aria-label="Attach file"
-          >
-            <Paperclip size={16} />
-          </button>
-          <button
-            type="button"
-            className="chat-composer__tool"
-            title="Take photo"
-            onClick={() => cameraInputRef.current?.click()}
-            disabled={disabled || uploading}
-            aria-label="Take photo"
-          >
-            <Camera size={16} />
-          </button>
-          <button
-            type="button"
-            className={`chat-composer__tool${recording ? ' chat-composer__tool--rec' : ''}`}
-            title={recording ? 'Stop recording' : 'Voice note'}
-            onClick={() => (recording ? stopVoiceRecording() : startVoiceRecording())}
-            disabled={disabled || uploading}
-            aria-label={recording ? 'Stop recording' : 'Record voice'}
-          >
-            {recording ? <MicOff size={16} /> : <Mic size={16} />}
-          </button>
+          <div className="chat-composer__plus-wrap" ref={popoverRootRef}>
+            <button
+              type="button"
+              className={`chat-composer__plus${popoverOpen ? ' chat-composer__plus--open' : ''}`}
+              title="Attach or record"
+              onClick={() => setPopoverOpen((v) => !v)}
+              disabled={disabled || uploading}
+              aria-haspopup="menu"
+              aria-expanded={popoverOpen}
+              aria-label="Open attachment menu"
+            >
+              <Plus size={16} />
+            </button>
+            {popoverOpen && (
+              <div className="chat-composer__popover" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="chat-composer__popover-item"
+                  onClick={pickAttach}
+                >
+                  <Paperclip size={14} />
+                  <span>Attach file</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="chat-composer__popover-item"
+                  onClick={pickDrive}
+                  disabled={!onOpenDrive}
+                >
+                  <Cloud size={14} />
+                  <span>Google Drive</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="chat-composer__popover-item"
+                  onClick={pickPhoto}
+                >
+                  <Camera size={14} />
+                  <span>Photo</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={
+                    'chat-composer__popover-item' +
+                    (recording ? ' chat-composer__popover-item--rec' : '')
+                  }
+                  onClick={pickVoice}
+                >
+                  {recording ? <MicOff size={14} /> : <Mic size={14} />}
+                  <span>{recording ? 'Stop recording' : 'Voice'}</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {onClear && hasHistory && (
             <button
               type="button"

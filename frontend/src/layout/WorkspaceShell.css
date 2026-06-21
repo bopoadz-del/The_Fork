@@ -1,8 +1,13 @@
-/* 3-column workspace shell.
+/* 3-column workspace shell — Quarry palette.
  *
- * Viewport-height fix: outer container is 100vh + overflow hidden, body
- * is flex column (header on top, body row below). The chat list inside
- * main owns the scrollbar.
+ * Layout (per Quarry design): 250px left + flexible center + 360px right.
+ * Outer container is 100vh + overflow hidden; chat list inside main owns
+ * the scrollbar.
+ *
+ * When the right panel is in "expanded overlay" mode the shell stamps a
+ * data-right-expanded="true" attribute on itself; the right panel CSS
+ * picks that up and becomes a full-viewport overlay covering main +
+ * left.
  */
 .workspace-shell {
   height: 100vh;
@@ -24,11 +29,12 @@
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
+  position: relative; /* parent for right-panel overlay anchor */
 }
 
 .workspace-shell__left {
-  flex: 0 0 240px;
-  background: var(--bg-panel);
+  flex: 0 0 250px;
+  background: var(--bg-panel-left);
   border-right: 1px solid var(--border);
   overflow-y: auto;
 }
@@ -42,14 +48,25 @@
 }
 
 .workspace-shell__right {
-  flex: 0 0 300px;
-  background: var(--bg-panel);
+  flex: 0 0 360px;
+  background: var(--bg-panel-right);
   border-left: 1px solid var(--border);
   overflow-y: auto;
 }
 
-/* Mobile: collapse side panels into icon rails. Components inside can
- * detect this and render as rails; the shell just gives them less room. */
+/* Right-panel expanded overlay mode — toggled by the ↗ button in the
+ * RightPanel header. The panel covers the whole body area (left + main),
+ * the rest stays in the DOM but visually hidden behind. */
+.workspace-shell[data-right-expanded="true"] .workspace-shell__right {
+  position: absolute;
+  inset: 0;
+  flex-basis: 100%;
+  z-index: 20;
+  background: var(--bg-panel-right);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Mobile: collapse side panels into icon rails. */
 @media (max-width: 768px) {
   .workspace-shell__left,
   .workspace-shell__right {
