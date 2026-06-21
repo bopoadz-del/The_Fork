@@ -144,6 +144,10 @@ def test_retrieve_drops_noise_before_top_k(monkeypatch):
     monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
     monkeypatch.setattr(ret, "_doc_name_for_id", fake_doc_name, raising=False)
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    # Scope this test to the single-project path so the active-project
+    # noise count isn't doubled by the general-knowledge merge. The GK
+    # merge is covered by ``test_retrieve_merges_general_knowledge``.
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
 
     # K=2 - if noise weren't filtered we'd get 2 chunks total
     # (noise + real), since noise scored highest. Filter must skip noise
@@ -152,6 +156,112 @@ def test_retrieve_drops_noise_before_top_k(monkeypatch):
     assert dropped == 1
     assert all("real" in c.text for c in chunks)
     assert len(chunks) == 2
+
+
+def test_retrieve_merges_general_knowledge(monkeypatch):
+    """PR #107: ``retrieve_with_filter`` queries the active project AND
+    each project listed in ``RAG_GENERAL_KNOWLEDGE_PROJECTS``, merges
+    results by score, and returns the top K with active-project chunks
+    winning ties (stable sort).
+
+    Without the GK merge, a GK chunk that semantically matches the
+    query (e.g. a procedure from ``training_material``) is invisible to
+    a project-scoped chat. With it, the GK chunk competes on equal
+    footing and surfaces when it's a better match.
+    """
+    from app.core.rag import retriever as ret
+    from app.core.rag.vector_store import Chunk
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        # Distinct chunks per project so we can prove the merge happened.
+        if project_id == "p_active":
+            return [
+                Chunk(chunk_id="ap1", project_id=project_id, doc_id="ap-doc",
+                      chunk_index=0, text="active project context", score=0.80),
+            ]
+        if project_id == "training_material":
+            return [
+                # GK chunk with HIGHER score than the active project's match —
+                # the merge must include + rank it above.
+                Chunk(chunk_id="gk1", project_id=project_id, doc_id="gk-doc",
+                      chunk_index=0, text="general procedure", score=0.92),
+                Chunk(chunk_id="gk2", project_id=project_id, doc_id="gk-doc",
+                      chunk_index=1, text="extra general", score=0.55),
+            ]
+        return []
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "real.pdf",
+                        raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+
+    chunks, dropped = ret.retrieve_with_filter("query", "p_active", k=3)
+    assert dropped == 0
+
+    # Merge must pull from BOTH projects.
+    project_ids = [c.project_id for c in chunks]
+    assert "p_active" in project_ids
+    assert "training_material" in project_ids
+
+    # Score order — GK 0.92 first, active 0.80 second, GK 0.55 third.
+    assert chunks[0].score == 0.92
+    assert chunks[0].project_id == "training_material"
+    assert chunks[1].score == 0.80
+    assert chunks[1].project_id == "p_active"
+    assert chunks[2].score == 0.55
+
+
+def test_retrieve_skips_gk_when_active_is_gk(monkeypatch):
+    """When the active project IS one of the GK projects, the retriever
+    must NOT query it twice. Otherwise the active project's chunks
+    would appear duplicated in the candidate pool.
+    """
+    from app.core.rag import retriever as ret
+    from app.core.rag.vector_store import Chunk
+
+    call_log: List[str] = []
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        call_log.append(project_id)
+        return [Chunk(chunk_id="c1", project_id=project_id, doc_id="d",
+                      chunk_index=0, text="content", score=0.7)]
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "real.pdf",
+                        raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+
+    ret.retrieve_with_filter("query", "training_material", k=3)
+    assert call_log == ["training_material"], (
+        f"expected exactly one search call; got {call_log}"
+    )
+
+
+def test_retrieve_gk_failure_does_not_break_primary(monkeypatch):
+    """A GK lookup that raises must not affect the active-project path.
+    The retriever logs and returns the active results as if GK was disabled.
+    """
+    from app.core.rag import retriever as ret
+    from app.core.rag.vector_store import Chunk
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        if project_id == "p_active":
+            return [Chunk(chunk_id="ap1", project_id=project_id, doc_id="ap",
+                          chunk_index=0, text="real", score=0.8)]
+        raise RuntimeError("training_material backend unavailable")
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "real.pdf",
+                        raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+
+    chunks, dropped = ret.retrieve_with_filter("query", "p_active", k=3)
+    assert dropped == 0
+    assert len(chunks) == 1
+    assert chunks[0].project_id == "p_active"
 
 
 def test_format_chunks_emits_doc_chunk_score_header():
