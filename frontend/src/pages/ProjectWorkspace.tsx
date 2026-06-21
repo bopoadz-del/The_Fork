@@ -677,6 +677,12 @@ export default function ProjectWorkspace() {
   // stream completes cleanly. Drives the rail badge's "AI unavailable" state.
   const [llmAvailable, setLlmAvailable] = useState(true)
 
+  // PR #101 / Quarry redesign:
+  //   rightExpanded — right panel covers main + left as a full-width overlay
+  //   driveModalOpen — DrivePanel rendered as a modal (opened from + popover)
+  const [rightExpanded, setRightExpanded] = useState(false)
+  const [driveModalOpen, setDriveModalOpen] = useState(false)
+
   // Stable conversation id tied to this project — persists across page reloads
   // so the backend agent memory carries context forward.
   const conversationId = id ? `ws-${id}` : null
@@ -751,9 +757,14 @@ export default function ProjectWorkspace() {
     setDocuments((prev) => [...prev, doc])
   }, [])
 
+  // PR #101: DocumentsPanel no longer rendered in the shell, so this
+  // callback has no caller. Kept for the next PR (project-detail view)
+  // that re-surfaces document management.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleDocumentRemoved = useCallback((docId: string) => {
     setDocuments((prev) => prev.filter((d) => d.id !== docId))
   }, [])
+  void handleDocumentRemoved
 
   // Cleanup on unmount
   useEffect(() => () => { abortRef.current?.abort() }, [])
@@ -1113,26 +1124,20 @@ export default function ProjectWorkspace() {
   const citedDocIds = latestSources.map((s) => s.doc_id)
   void mode  // mode used inside left panel via DocumentsPanel/onClear hooks below
 
+  // PR #101 / Quarry redesign: DocumentsPanel + DrivePanel no longer
+  // live in the left rail. Drive opens from the ChatComposer's + popover
+  // (Google Drive item) and renders here as a modal. DocumentsPanel is
+  // not surfaced in the Quarry shell — its functionality (list / delete
+  // / status badges) is deferred to the next PR's project-detail view.
+  void DocumentsPanel  // referenced via state-driven modal below
+
   return (
+    <>
     <WorkspaceShell
       header={<AppHeader breadcrumb={breadcrumb} />}
+      rightExpanded={rightExpanded}
       left={
-        <LeftPanel
-          documents={
-            <DocumentsPanel
-              projectId={id ?? ''}
-              documents={documents}
-              onDocumentAdded={handleDocumentAdded}
-              onDocumentRemoved={handleDocumentRemoved}
-            />
-          }
-          drive={
-            <DrivePanel
-              projectId={id ?? ''}
-              onDocumentAdded={handleDocumentAdded}
-            />
-          }
-        />
+        <LeftPanel activeProjectName={projectName} />
       }
       main={
         <div className="workspace-main">
@@ -1176,6 +1181,7 @@ export default function ProjectWorkspace() {
             disabledReason={composerBlockedReason}
             projectId={id ?? ''}
             hasHistory={messages.length > 0}
+            onOpenDrive={() => setDriveModalOpen(true)}
             onClear={async () => {
               if (!id || !conversationId) return
               if (!window.confirm(
@@ -1208,6 +1214,9 @@ export default function ProjectWorkspace() {
       }
       right={
         <RightPanel
+          title="Sources"
+          expanded={rightExpanded}
+          onToggleExpand={() => setRightExpanded((v) => !v)}
           sources={
             <SourcesList
               sources={latestSources}
@@ -1227,5 +1236,43 @@ export default function ProjectWorkspace() {
         />
       }
     />
+    {driveModalOpen && (
+      <div
+        className="ws-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Google Drive picker"
+        onClick={(ev) => {
+          if (ev.target === ev.currentTarget) setDriveModalOpen(false)
+        }}
+        onKeyDown={(ev) => {
+          if (ev.key === 'Escape') setDriveModalOpen(false)
+        }}
+      >
+        <div className="ws-modal">
+          <div className="ws-modal__head">
+            <span className="ws-modal__title">Google Drive</span>
+            <button
+              type="button"
+              className="ws-modal__close"
+              onClick={() => setDriveModalOpen(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
+          <div className="ws-modal__body">
+            <DrivePanel
+              projectId={id ?? ''}
+              onDocumentAdded={(doc) => {
+                handleDocumentAdded(doc)
+                setDriveModalOpen(false)
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }

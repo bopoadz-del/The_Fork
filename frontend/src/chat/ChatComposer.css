@@ -111,3 +111,88 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ── + button + popover (Quarry redesign) ───────────────────────────── */
+.chat-composer__plus-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.chat-composer__plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.chat-composer__plus:hover:not(:disabled) {
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.chat-composer__plus--open {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-composer__plus:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-composer__popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-composer__popover-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.chat-composer__popover-item:hover:not(:disabled) {
+  background: var(--accent-tint);
+}
+
+.chat-composer__popover-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.chat-composer__popover-item--rec {
+  color: #dc2626;
+}
