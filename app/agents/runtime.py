@@ -20,7 +20,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 import httpx
 
@@ -218,42 +218,137 @@ def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
     return any(p in text for p in _DELIVERABLE_PHRASES)
 
 
-def _build_sources_from_audit(audit_rec: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """From a rag_inject audit record, build the top-3 sources list for
-    the SSE end event. Resolves doc_id -> filename via projects.get_document.
-    Empty list when there are no chunks (fallback or non-RAG turn)."""
+_CITATION_RE = re.compile(
+    r"\[source:\s*([^\],]+?)(?:\s*,\s*chunks?\s+([\d,\s]+))?\]",
+    re.IGNORECASE,
+)
+
+
+def _normalise_filename(s: str) -> str:
+    """Normalize source filenames for cite-vs-chunk matching.
+
+    The model sometimes rewrites filenames with Unicode dashes
+    (en-dash, em-dash) or extra whitespace. Normalize both sides
+    before comparing so 'PRC-406_HSE…' (chunk text) matches
+    'PRC‑406_HSE…' (model output)."""
+    return (
+        (s or "")
+        .replace("‐", "-")  # hyphen
+        .replace("‑", "-")  # non-breaking hyphen
+        .replace("‒", "-")  # figure dash
+        .replace("–", "-")  # en dash
+        .replace("—", "-")  # em dash
+        .replace("−", "-")  # minus
+        .strip()
+        .lower()
+    )
+
+
+def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
+    """Pull (filename, chunk_index) pairs from the agent's final text.
+
+    Recognised patterns (case-insensitive):
+      [source: filename.pdf, chunk 65]
+      [source: filename.pdf, chunks 16, 34, 55]
+      [source: filename.pdf]  (no chunk → filename-only match)
+
+    Returns a list of pairs; chunk_index is -1 when the cite didn't
+    include a chunk number.
+    """
+    if not text:
+        return []
+    out: List[Tuple[str, int]] = []
+    for m in _CITATION_RE.finditer(text):
+        fname = m.group(1).strip()
+        nums_blob = m.group(2) or ""
+        if not nums_blob.strip():
+            out.append((fname, -1))
+            continue
+        for piece in nums_blob.split(","):
+            piece = piece.strip()
+            if piece.isdigit():
+                out.append((fname, int(piece)))
+    return out
+
+
+def _build_sources_from_audit(
+    audit_rec: Dict[str, Any],
+    final_text: str = "",
+) -> List[Dict[str, Any]]:
+    """Build the SSE end-event sources list.
+
+    Behaviour:
+      1. If ``final_text`` contains ``[source: ...]`` citations AND those
+         citations match chunks present in the audit record's injected
+         set, return ONLY those — they are what the agent actually
+         cited. The right-panel Sources tab then shows the operator
+         exactly the chunks behind the answer.
+      2. Otherwise (no citations parsed, or none match the injected
+         chunks), fall back to the top-3 retrieved chunks by score —
+         the pre-PR-110 behaviour. Preserves the old contract for the
+         qwen-style agents that don't emit ``[source: ...]`` markers.
+
+    Empty list when ``audit_rec`` has no chunks (fallback turn).
+    """
     chunks = (audit_rec or {}).get("chunks") or []
     if not chunks:
         return []
-    by_score = sorted(chunks, key=lambda c: -(c.get("score") or 0))[:3]
-    out: List[Dict[str, Any]] = []
+
     try:
         from app.core import projects as _projects
     except Exception:
         _projects = None
-    for c in by_score:
-        score = c.get("score") or 0.0
-        if score >= 0.75:
-            conf = "High"
-        elif score >= 0.5:
-            conf = "Medium"
-        else:
-            conf = "Low"
-        doc_name = ""
-        if _projects:
-            try:
-                d = _projects.get_document(c["doc_id"]) or {}
-                doc_name = d.get("original_name") or ""
-            except Exception:
-                doc_name = ""
-        out.append({
-            "doc_id": c["doc_id"],
+
+    def _doc_name(doc_id: str) -> str:
+        if not _projects:
+            return ""
+        try:
+            d = _projects.get_document(doc_id) or {}
+            return d.get("original_name") or ""
+        except Exception:
+            return ""
+
+    def _format(chunk_meta: Dict[str, Any], doc_name: str) -> Dict[str, Any]:
+        score = chunk_meta.get("score") or 0.0
+        conf = "High" if score >= 0.75 else "Medium" if score >= 0.5 else "Low"
+        return {
+            "doc_id": chunk_meta["doc_id"],
             "doc_name": doc_name,
-            "page_or_section": f"chunk #{c['chunk_index']}",
+            "page_or_section": f"chunk #{chunk_meta['chunk_index']}",
             "score": float(score),
             "confidence": conf,
-        })
-    return out
+        }
+
+    # 1) Try to extract citations from the agent's text first.
+    cites = _extract_cited_chunk_indexes(final_text)
+    if cites:
+        matched: List[Dict[str, Any]] = []
+        seen: set = set()
+        for cited_fname, cited_idx in cites:
+            cited_fname_n = _normalise_filename(cited_fname)
+            for c in chunks:
+                cidx = c.get("chunk_index")
+                doc_id = c.get("doc_id")
+                # chunk-index match (when provided) is the primary key —
+                # plus filename suffix-match (normalized) so a model
+                # that rewrote the dash style still resolves.
+                if cited_idx != -1 and cidx != cited_idx:
+                    continue
+                name = _doc_name(doc_id)
+                name_n = _normalise_filename(name)
+                if cited_fname_n and name_n and cited_fname_n not in name_n and name_n not in cited_fname_n:
+                    continue
+                key = (doc_id, cidx)
+                if key in seen:
+                    continue
+                seen.add(key)
+                matched.append(_format(c, name))
+        if matched:
+            return matched
+
+    # 2) Fallback: top-3 retrieved chunks by score.
+    by_score = sorted(chunks, key=lambda c: -(c.get("score") or 0))[:3]
+    return [_format(c, _doc_name(c["doc_id"])) for c in by_score]
 
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -1255,7 +1350,7 @@ class Agent:
                     yield {
                         "type": "end",
                         "iterations": iteration + 1,
-                        "sources": _build_sources_from_audit(_rag_audit),
+                        "sources": _build_sources_from_audit(_rag_audit, final_text),
                     }
                     return
 
@@ -1317,7 +1412,7 @@ class Agent:
             "type": "end",
             "iterations": MAX_TOOL_ITERATIONS,
             "forced_final": True,
-            "sources": _build_sources_from_audit(_rag_audit),
+            "sources": _build_sources_from_audit(_rag_audit, final_text),
         }
 
     # ── Internals ─────────────────────────────────────────────────────────
