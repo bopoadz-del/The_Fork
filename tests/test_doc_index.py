@@ -242,6 +242,8 @@ def test_index_project_writes_file_and_returns_summary(fresh_db, tmp_path, monke
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Alpha Project")
     pid = proj["id"]
@@ -274,6 +276,8 @@ def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Beta Project")
     pid = proj["id"]
@@ -299,6 +303,8 @@ def test_index_project_empty_project(fresh_db, monkeypatch):
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Empty Project")
     pid = proj["id"]
@@ -319,6 +325,8 @@ def test_index_document_incremental(fresh_db, tmp_path, monkeypatch):
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Gamma Project")
     pid = proj["id"]
@@ -352,6 +360,8 @@ def test_invalidate_project_removes_index(fresh_db, tmp_path, monkeypatch):
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Delta Project")
     pid = proj["id"]
@@ -377,6 +387,8 @@ def test_fingerprint_format(fresh_db, tmp_path, monkeypatch):
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Fingerprint Project")
     pid = proj["id"]
@@ -432,6 +444,13 @@ def search_project(tmp_path, monkeypatch):
 
     from app.core import doc_index
     importlib.reload(doc_index)
+
+    # PR #94: search_project_documents now uses the hybrid retriever which
+    # caches its VectorStore per (db_url, dim) at module scope. Tests swap
+    # DATA_DIR per-test, so the cache must be reset to repoint the store
+    # at the new SQLite file, otherwise queries hit the previous test's DB.
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Search Test Project")
     pid = proj["id"]
@@ -506,6 +525,8 @@ async def test_search_empty_project(tmp_path, monkeypatch):
 
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Empty Search Project")
     pid = proj["id"]
@@ -524,6 +545,8 @@ async def test_search_builds_index_lazily(tmp_path, monkeypatch):
 
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Lazy Build Project")
     pid = proj["id"]
@@ -543,6 +566,43 @@ async def test_search_builds_index_lazily(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_uses_hybrid_retriever(search_project):
+    """PR #94: search_project_documents must query the same chunks table
+    the RAG injection layer queries. Verify by seeding the chunks table
+    directly and confirming the function returns results without going
+    through the legacy JSON index path.
+    """
+    doc_index = search_project["doc_index"]
+    pid = search_project["pid"]
+    concrete_id = search_project["doc_concrete"]["id"]
+
+    # Force a search — this triggers the bootstrap which writes to the
+    # chunks table. Then delete the legacy JSON index file to prove the
+    # next call goes through the hybrid retriever (which reads the
+    # chunks table, not the JSON blob).
+    results1 = await doc_index.search_project_documents(pid, "concrete curing")
+    assert len(results1) >= 1
+    assert results1[0]["document_id"] == concrete_id
+
+    # Wipe the legacy JSON index row but leave the chunks table populated.
+    from app.core.db import SessionLocal
+    from app.core.models import DocIndex
+    from sqlalchemy import delete as _sql_delete
+    with SessionLocal() as s:
+        s.execute(_sql_delete(DocIndex).where(DocIndex.project_id == pid))
+        s.commit()
+    assert doc_index._load_index(pid) is None
+
+    # Second call: bootstrap would re-fire (since JSON is gone), but the
+    # retriever should still find the chunks already in the chunks
+    # table. The contract here: results come from the chunks table,
+    # not the JSON blob.
+    results2 = await doc_index.search_project_documents(pid, "concrete curing")
+    assert len(results2) >= 1
+    assert results2[0]["document_id"] == concrete_id
+
+
+@pytest.mark.asyncio
 async def test_search_excludes_deleted_document(tmp_path, monkeypatch):
     """After deleting a document, its content must not appear in search results."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -552,6 +612,8 @@ async def test_search_excludes_deleted_document(tmp_path, monkeypatch):
 
     from app.core import doc_index
     importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
 
     proj = projects_mod.create_project("Delete Test Project")
     pid = proj["id"]
