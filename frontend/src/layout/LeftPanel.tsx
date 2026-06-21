@@ -14,7 +14,7 @@
  *   • Sign out — bottom of rail.
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { Plus, LogOut, Download, RotateCcw } from 'lucide-react'
+import { Plus, LogOut, Download, RotateCcw, Settings } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { apiGet, ApiError } from '../lib/api'
@@ -194,6 +194,10 @@ export default function LeftPanel({
       )}
 
       <div className="left-panel__footer">
+        <Link to="/admin" className="left-panel__admin">
+          <Settings size={14} />
+          <span>Admin</span>
+        </Link>
         <button
           type="button"
           className="left-panel__signout"
