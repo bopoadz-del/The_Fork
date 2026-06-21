@@ -237,6 +237,16 @@ _CITATION_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# doc_id form gpt-oss also emits when it wants to be technically precise:
+#   [doc_id=3496d239, chunk 65, score 0.697]
+#   [doc_id=3496d239 chunk=65 score=0.697]    (the RAG-injection header style)
+# Match either separator style; capture (doc_id, chunk_index). The chunk
+# is REQUIRED here — a bare [doc_id=...] would be ambiguous.
+_CITATION_DOCID_RE = re.compile(
+    r"\[\s*doc_id\s*=\s*([0-9a-f]{4,})\s*[,;\s]+\s*chunk\s*=?\s*(\d+)",
+    re.IGNORECASE,
+)
+
 
 def _normalise_filename(s: str) -> str:
     """Normalize source filenames for cite-vs-chunk matching.
@@ -272,8 +282,8 @@ def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
     if not text:
         return []
     out: List[Tuple[str, int]] = []
-    # Try both regexes — bracketed [source: ...] AND bracketless
-    # "Source: ..." line-prefix form (the variant gpt-oss emits).
+    # Two filename-keyed regexes — bracketed [source: ...] + bracketless
+    # "Source: ..." line-prefix.
     for regex in (_CITATION_RE, _CITATION_LINE_RE):
         for m in regex.finditer(text):
             fname = m.group(1).strip().rstrip(".")
@@ -285,6 +295,14 @@ def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
                 piece = piece.strip()
                 if piece.isdigit():
                     out.append((fname, int(piece)))
+    # doc_id-keyed regex — gpt-oss emits [doc_id=X chunk=N score=Y] when
+    # being technical. We capture (doc_id-as-filename-token, chunk_index)
+    # — the doc_id will be looked up against the injected chunks'
+    # doc_id field directly, bypassing the filename match.
+    for m in _CITATION_DOCID_RE.finditer(text):
+        doc_id = m.group(1).strip()
+        chunk_idx = int(m.group(2))
+        out.append((doc_id, chunk_idx))
     return out
 
 
@@ -341,25 +359,39 @@ def _build_sources_from_audit(
     if cites:
         matched: List[Dict[str, Any]] = []
         seen: set = set()
-        for cited_fname, cited_idx in cites:
-            cited_fname_n = _normalise_filename(cited_fname)
+        # Set of injected doc_ids for the doc-id-keyed citation branch.
+        injected_doc_ids = {c.get("doc_id") for c in chunks}
+
+        for cited_token, cited_idx in cites:
+            cited_token_n = _normalise_filename(cited_token)
+            # Branch A: doc-id-keyed cite. ``cited_token`` matches one of
+            # the audit's doc_ids directly (gpt-oss [doc_id=X chunk=N]
+            # form). Use that as the primary match.
+            doc_id_match = cited_token if cited_token in injected_doc_ids else None
+
             for c in chunks:
                 cidx = c.get("chunk_index")
                 doc_id = c.get("doc_id")
-                # chunk-index match (when provided) is the primary key —
-                # plus filename suffix-match (normalized) so a model
-                # that rewrote the dash style still resolves.
+                # chunk-index match (when provided) is the primary key.
                 if cited_idx != -1 and cidx != cited_idx:
                     continue
-                name = _doc_name(doc_id)
-                name_n = _normalise_filename(name)
-                if cited_fname_n and name_n and cited_fname_n not in name_n and name_n not in cited_fname_n:
-                    continue
+                # If the cite was doc-id-keyed, require doc_id match.
+                if doc_id_match is not None:
+                    if doc_id != doc_id_match:
+                        continue
+                else:
+                    # Filename-keyed cite — require filename suffix-match
+                    # (normalized) so a model that rewrote the dash
+                    # style still resolves.
+                    name = _doc_name(doc_id)
+                    name_n = _normalise_filename(name)
+                    if cited_token_n and name_n and cited_token_n not in name_n and name_n not in cited_token_n:
+                        continue
                 key = (doc_id, cidx)
                 if key in seen:
                     continue
                 seen.add(key)
-                matched.append(_format(c, name))
+                matched.append(_format(c, _doc_name(doc_id)))
         if matched:
             return matched
 
