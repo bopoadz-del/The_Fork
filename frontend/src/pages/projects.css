@@ -253,9 +253,104 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   width: 100%;
-  max-width: 420px;
+  max-width: 520px;
   padding: var(--space-8);
+  max-height: 88vh;
+  overflow-y: auto;
 }
+
+/* PR C — tabbed source picker (Blank | From Drive folder). */
+.modal__tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+.modal__tab {
+  border: 0;
+  background: transparent;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--transition), border-color var(--transition);
+}
+.modal__tab:hover:not(:disabled) { color: var(--text); }
+.modal__tab--active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.modal__tab:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.modal__drive-search {
+  display: flex;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+}
+.modal__drive-search .form-input { flex: 1 1 auto; }
+
+.modal__drive-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.modal__drive-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.modal__drive-result:last-child { border-bottom: 0; }
+.modal__drive-result:hover { background: var(--surface-2); }
+.modal__drive-result-mark {
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.modal__drive-picked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.form-hint {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.form-hint--alert {
+  color: var(--danger);
+  background: rgba(185, 28, 28, 0.06);
+  border: 1px solid rgba(185, 28, 28, 0.2);
+  padding: 8px 10px;
+  border-radius: var(--radius);
+}
+.form-hint a { color: inherit; text-decoration: underline; }
 
 .modal__header {
   display: flex;

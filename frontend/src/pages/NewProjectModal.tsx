@@ -1,5 +1,14 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { apiPost } from '../lib/api'
+/* NewProjectModal — Blank or From-Drive-folder creation.
+ *
+ * PR C: adds a "From Drive folder" mode beside the blank-create form.
+ * The user picks a Drive folder (search or browse) and the modal POSTs
+ * /v1/projects/from-drive, which creates a user-owned project with
+ * origin='user_drive_import' and queues the recursive import in the
+ * background. The owner can then refresh the project page to see
+ * documents land as they index.
+ */
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { apiGet, apiPost, ApiError } from '../lib/api'
 import type { Project } from './ProjectCard'
 
 interface NewProjectModalProps {
@@ -19,51 +28,124 @@ interface CreateProjectResponse {
   documents?: unknown
 }
 
+interface DriveStatus {
+  configured: boolean
+  connected: boolean
+  email?: string
+}
+
+interface DriveFile {
+  id: string
+  name: string
+  is_folder?: boolean
+  mime_type?: string
+}
+
+type Mode = 'blank' | 'drive'
+
 export default function NewProjectModal({ onClose, onCreated }: NewProjectModalProps) {
+  const [mode, setMode] = useState<Mode>('blank')
+
+  // Shared
   const [name, setName] = useState('')
   const [client, setClient] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Drive picker state
+  const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null)
+  const [folderQuery, setFolderQuery] = useState('')
+  const [folderResults, setFolderResults] = useState<DriveFile[]>([])
+  const [browsing, setBrowsing] = useState(false)
+  const [pickedFolder, setPickedFolder] = useState<DriveFile | null>(null)
+
   const overlayRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
 
-  // Focus name field on mount
-  useEffect(() => {
-    nameRef.current?.focus()
-  }, [])
+  useEffect(() => { nameRef.current?.focus() }, [mode])
 
-  // Close on Escape
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [onClose])
+
+  // Load Drive status lazily when the user switches to the Drive tab.
+  useEffect(() => {
+    if (mode !== 'drive' || driveStatus !== null) return
+    void apiGet<DriveStatus>('/v1/drive/status')
+      .then(setDriveStatus)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Drive status check failed.'))
+  }, [mode, driveStatus])
 
   function handleBackdropClick(e: React.MouseEvent<HTMLDivElement>) {
     if (e.target === overlayRef.current) onClose()
   }
 
+  async function searchFolders(e?: FormEvent) {
+    e?.preventDefault()
+    setBrowsing(true); setError(null); setFolderResults([])
+    try {
+      // Filter to folders only — mimeType filter happens server-side in
+      // /v1/drive/files when the q param includes the folder mime.
+      const q = folderQuery.trim()
+      const url = q
+        ? `/v1/drive/files?q=${encodeURIComponent(q)}&folders_only=true`
+        : '/v1/drive/files?folders_only=true'
+      const resp = await apiGet<{ files: DriveFile[] }>(url)
+      // Client-side guard in case the backend ignores folders_only.
+      const folders = resp.files.filter((f) => f.is_folder)
+      setFolderResults(folders)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Drive folder search failed.')
+    } finally { setBrowsing(false) }
+  }
+
+  // Auto-load top-level folders when entering the Drive tab + connected.
+  useEffect(() => {
+    if (mode !== 'drive' || !driveStatus?.connected) return
+    if (folderResults.length === 0 && !browsing) {
+      void searchFolders()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, driveStatus?.connected])
+
+  const canSubmit = useMemo(() => {
+    if (submitting) return false
+    if (!name.trim()) return false
+    if (mode === 'drive' && !pickedFolder) return false
+    return true
+  }, [submitting, name, mode, pickedFolder])
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return
-
-    setSubmitting(true)
-    setError(null)
-
+    if (!canSubmit) return
+    setSubmitting(true); setError(null)
     try {
-      const body: { name: string; client?: string } = { name: name.trim() }
-      if (client.trim()) body.client = client.trim()
-
-      const project = await apiPost<CreateProjectResponse>('/v1/projects', body)
-      onCreated(project as Project)
+      if (mode === 'blank') {
+        const body: { name: string; client?: string } = { name: name.trim() }
+        if (client.trim()) body.client = client.trim()
+        const project = await apiPost<CreateProjectResponse>('/v1/projects', body)
+        onCreated(project as Project)
+      } else {
+        if (!pickedFolder) throw new Error('Pick a Drive folder first.')
+        const body = {
+          folder_id: pickedFolder.id,
+          name: name.trim(),
+          ...(client.trim() ? { client: client.trim() } : {}),
+        }
+        const resp = await apiPost<{ project: CreateProjectResponse }>(
+          '/v1/projects/from-drive', body,
+        )
+        onCreated(resp.project as Project)
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred.')
-    } finally {
-      setSubmitting(false)
-    }
+      if (err instanceof ApiError && err.status === 409) {
+        setError('Google Drive is not connected for your account. Connect it on the Admin page first.')
+      } else {
+        setError(err instanceof Error ? err.message : 'An unexpected error occurred.')
+      }
+    } finally { setSubmitting(false) }
   }
 
   return (
@@ -84,22 +166,37 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
             onClick={onClose}
             aria-label="Close"
             disabled={submitting}
-          >
-            ×
-          </button>
+          >×</button>
+        </div>
+
+        <div className="modal__tabs" role="tablist" aria-label="Project source">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'blank'}
+            className={'modal__tab' + (mode === 'blank' ? ' modal__tab--active' : '')}
+            onClick={() => setMode('blank')}
+            disabled={submitting}
+          >Blank</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'drive'}
+            className={'modal__tab' + (mode === 'drive' ? ' modal__tab--active' : '')}
+            onClick={() => setMode('drive')}
+            disabled={submitting}
+          >From Drive folder</button>
         </div>
 
         <form onSubmit={handleSubmit} noValidate>
           <div className="form-field">
-            <label className="form-label" htmlFor="proj-name">
-              Project name
-            </label>
+            <label className="form-label" htmlFor="proj-name">Project name</label>
             <input
               id="proj-name"
               ref={nameRef}
               className="form-input"
               type="text"
-              placeholder="e.g. North Tower Fit-out"
+              placeholder={mode === 'drive' ? 'Defaults from picked folder' : 'e.g. North Tower Fit-out'}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -110,8 +207,7 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
 
           <div className="form-field">
             <label className="form-label" htmlFor="proj-client">
-              Client
-              <span className="form-label--optional">(optional)</span>
+              Client <span className="form-label--optional">(optional)</span>
             </label>
             <input
               id="proj-client"
@@ -125,10 +221,80 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
             />
           </div>
 
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
+          {mode === 'drive' && (
+            <div className="form-field">
+              <label className="form-label">Drive folder</label>
+
+              {driveStatus && !driveStatus.connected && (
+                <p className="form-hint form-hint--alert">
+                  Google Drive is not connected. Connect it from <a href="/admin">/admin</a>,
+                  then come back.
+                </p>
+              )}
+
+              {driveStatus?.connected && (
+                <>
+                  <div className="modal__drive-search">
+                    <input
+                      type="search"
+                      className="form-input"
+                      placeholder="Search folder name…"
+                      value={folderQuery}
+                      onChange={(e) => setFolderQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void searchFolders() } }}
+                      disabled={browsing || submitting}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn--ghost"
+                      onClick={() => void searchFolders()}
+                      disabled={browsing || submitting}
+                    >{browsing ? '…' : 'Search'}</button>
+                  </div>
+
+                  {pickedFolder && (
+                    <div className="modal__drive-picked">
+                      Picked: <strong>{pickedFolder.name}</strong>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--small"
+                        onClick={() => setPickedFolder(null)}
+                        disabled={submitting}
+                      >Change</button>
+                    </div>
+                  )}
+
+                  {!pickedFolder && folderResults.length > 0 && (
+                    <ul className="modal__drive-results">
+                      {folderResults.map((f) => (
+                        <li key={f.id}>
+                          <button
+                            type="button"
+                            className="modal__drive-result"
+                            onClick={() => {
+                              setPickedFolder(f)
+                              if (!name.trim()) setName(f.name)
+                            }}
+                            disabled={submitting}
+                          >
+                            <span className="modal__drive-result-mark">[folder]</span>
+                            <span>{f.name}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {!pickedFolder && !browsing && folderResults.length === 0 && (
+                    <p className="form-hint">No folders found yet — try a search above.</p>
+                  )}
+                </>
+              )}
             </div>
+          )}
+
+          {error && (
+            <div className="form-error" role="alert">{error}</div>
           )}
 
           <div className="form-actions">
@@ -137,15 +303,15 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
               className="btn btn--ghost"
               onClick={onClose}
               disabled={submitting}
-            >
-              Cancel
-            </button>
+            >Cancel</button>
             <button
               type="submit"
               className="btn btn--primary"
-              disabled={submitting || !name.trim()}
+              disabled={!canSubmit}
             >
-              {submitting ? 'Creating…' : 'Create project'}
+              {submitting
+                ? (mode === 'drive' ? 'Creating + queueing import…' : 'Creating…')
+                : (mode === 'drive' ? 'Create from Drive folder' : 'Create project')}
             </button>
           </div>
         </form>
