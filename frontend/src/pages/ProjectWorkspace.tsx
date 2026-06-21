@@ -1137,7 +1137,7 @@ export default function ProjectWorkspace() {
       header={<AppHeader breadcrumb={breadcrumb} />}
       rightExpanded={rightExpanded}
       left={
-        <LeftPanel activeProjectName={projectName} />
+        <LeftPanel activeProjectId={id} activeProjectName={projectName} />
       }
       main={
         <div className="workspace-main">
