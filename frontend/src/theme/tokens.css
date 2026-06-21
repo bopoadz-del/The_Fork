@@ -1,3 +1,8 @@
+/* Quarry typefaces: Albert Sans for UI, IBM Plex Mono for code / IDs / numbers.
+ * Loaded via Google Fonts so the first paint has the right family even
+ * when the operator's system doesn't ship it. */
+@import url('https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
 /* Quarry palette — operator-supplied design 2026-06-21.
  *
  * Warm earth tones: stone, sand, terracotta. Replaces the blue/grey
@@ -56,7 +61,8 @@
   --border-light: var(--border-soft);
   --accent-text: var(--accent-fg);
 
-  --font-display: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Albert Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
 [data-theme="dark"] {

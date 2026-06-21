@@ -33,7 +33,7 @@
 }
 
 .workspace-shell__left {
-  flex: 0 0 250px;
+  flex: 0 0 240px;
   background: var(--bg-panel-left);
   border-right: 1px solid var(--border);
   overflow-y: auto;
