@@ -43,9 +43,18 @@ ALLOWED_DOC_EXTENSIONS = {
 }
 
 
-def _owned_or_404(project_id: str, user_id: str):
-    """Load a project the caller owns, or 404 (never leak existence)."""
-    proj = store.get_project(project_id, user_id=user_id)
+def _owned_or_404(project_id: str, user_id: str, *, read_only: bool = False):
+    """Load a project the caller can access, or 404 (never leak existence).
+
+    PR D — when ``read_only=True``, non-owners are also allowed to load
+    admin-approved platform projects (origin='admin_drive_approved' +
+    is_approved=True). Used by the read-only GET handler so users can
+    open shared platform projects without owning them. Mutating
+    handlers must use the default (owner-only).
+    """
+    proj = store.get_project(
+        project_id, user_id=user_id, include_admin_approved=read_only,
+    )
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
     return proj
@@ -181,8 +190,25 @@ async def create_project_from_drive(
 
 @router.get("/v1/projects")
 async def list_projects(auth: dict = Depends(require_user)):
-    """List all projects with their readiness state."""
-    return {"projects": store.list_projects(user_id=auth["user_id"])}
+    """List projects visible to the caller.
+
+    PR D visibility model:
+      * Admins see every project — they need the full picture to
+        approve, re-index, and delete.
+      * Non-admins see their own projects PLUS the admin-curated
+        platform projects (origin='admin_drive_approved' AND
+        is_approved=True). Other users' personal projects stay hidden.
+      * ``is_approved=False`` rows never appear for non-owners — the
+        column is reserved for future "detected but pending" candidates.
+    """
+    role = (auth.get("role") or "user").lower()
+    if role == "admin":
+        rows = store.list_projects()  # full set
+    else:
+        rows = store.list_projects(
+            user_id=auth["user_id"], include_admin_approved=True,
+        )
+    return {"projects": rows}
 
 
 @router.get("/v1/projects/{project_id}")
@@ -193,7 +219,7 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
     a "Not indexed" badge for docs the extractor failed on (count == 0)
     without making N extra round-trips.
     """
-    proj = _owned_or_404(project_id, auth["user_id"])
+    proj = _owned_or_404(project_id, auth["user_id"], read_only=True)
     try:
         from app.core import doc_index as _doc_index
         index = _doc_index._load_index(project_id)  # noqa: SLF001 — internal use
