@@ -7,23 +7,6 @@
   color: var(--text-primary);
 }
 
-/* ── Resize handle ────────────────────────────────────────────────── */
-.right-panel__resize {
-  position: absolute;
-  top: 0;
-  left: -3px;
-  width: 6px;
-  height: 100%;
-  cursor: ew-resize;
-  background: transparent;
-  transition: background 120ms ease;
-  z-index: 5;
-}
-
-.right-panel__resize:hover {
-  background: var(--accent-tint);
-}
-
 /* ── Header (tabs + actions) ──────────────────────────────────────── */
 .right-panel__header {
   flex: 0 0 auto;
@@ -33,17 +16,6 @@
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-panel-right);
-}
-
-.right-panel__drag {
-  display: inline-flex;
-  align-items: center;
-  cursor: grab;
-  color: var(--text-tertiary);
-}
-
-.right-panel__drag:active {
-  cursor: grabbing;
 }
 
 .right-panel__tabs {
@@ -133,26 +105,4 @@
   color: var(--text-tertiary);
   font-size: 12.5px;
   line-height: 1.55;
-}
-
-/* ── Floating mode ────────────────────────────────────────────────── */
-.right-panel--floating {
-  position: fixed;
-  z-index: 35;
-  height: 70vh;
-  max-height: 720px;
-  background: var(--bg-panel-right);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-}
-
-.right-panel--floating .right-panel__header {
-  cursor: grab;
-}
-
-.right-panel--floating .right-panel__resize {
-  /* No resize handle in floating mode — width is bound to the saved value. */
-  display: none;
 }
