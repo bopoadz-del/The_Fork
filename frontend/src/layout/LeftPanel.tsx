@@ -2,11 +2,11 @@
  *
  * Sections, top-to-bottom:
  *   • Brand: "The Shovel"
- *   • PROJECTS — stub list (Demolition active + sample names + New Project).
- *     Real data wiring deferred to PR #92 (project-scoping work).
- *   • CHAT HISTORY — stub list with "Current session".
- *     Real per-project history wiring deferred to PR #92.
- *   • Sign out — at the bottom (auth context provides it).
+ *   • PROJECTS — empty-state until PR #102 wires /v1/projects + the
+ *     active-project highlight. No stub project names; the design's
+ *     example labels were never meant to ship as real content.
+ *   • CHAT HISTORY — empty-state until per-project history wiring lands.
+ *   • Sign out — bottom of rail.
  *
  * Documents + Drive panels used to live here in the PR #90 layout.
  * They've moved to the ChatComposer's + popover so the left rail stays
@@ -18,18 +18,14 @@ import { useAuth } from '../auth/AuthContext'
 import './LeftPanel.css'
 
 interface Props {
-  /** Active project's display name. Highlighted in the projects list. */
+  /** Active project's display name. Used by the Quarry header's
+   *  "ACTIVE PROJECT" label upstream; left rail just shows it as the
+   *  one entry in the Projects list until /v1/projects is wired. */
   activeProjectName?: string
 }
 
-/** Stub project list — pre-PR-92 placeholders matching the Quarry design.
- *  Will be replaced with real `/v1/projects` data once project scoping
- *  + per-project chat history land. */
-const STUB_PROJECTS = ['Demolition', 'Ha Long Xai', 'Hon Mon Island']
-
 export default function LeftPanel({ activeProjectName }: Props) {
   const { logout } = useAuth()
-  const activeName = activeProjectName ?? STUB_PROJECTS[0]
 
   return (
     <div className="left-panel">
@@ -39,38 +35,26 @@ export default function LeftPanel({ activeProjectName }: Props) {
 
       <section className="left-panel__section">
         <header className="left-panel__section-head">Projects</header>
-        <ul className="left-panel__list">
-          {STUB_PROJECTS.map((name) => (
-            <li key={name}>
-              <Link
-                to="/"
-                className={
-                  'left-panel__list-item' +
-                  (name === activeName ? ' left-panel__list-item--active' : '')
-                }
-              >
-                {name}
-              </Link>
+        {activeProjectName ? (
+          <ul className="left-panel__list">
+            <li>
+              <span className="left-panel__list-item left-panel__list-item--active">
+                {activeProjectName}
+              </span>
             </li>
-          ))}
-          <li>
-            <Link to="/" className="left-panel__new-project">
-              <Plus size={14} />
-              <span>New Project</span>
-            </Link>
-          </li>
-        </ul>
+          </ul>
+        ) : (
+          <p className="left-panel__empty">No projects yet.</p>
+        )}
+        <Link to="/" className="left-panel__new-project">
+          <Plus size={14} />
+          <span>New project</span>
+        </Link>
       </section>
 
       <section className="left-panel__section">
         <header className="left-panel__section-head">Chat history</header>
-        <ul className="left-panel__list">
-          <li>
-            <span className="left-panel__list-item left-panel__list-item--active">
-              Current session
-            </span>
-          </li>
-        </ul>
+        <p className="left-panel__empty">No conversations yet.</p>
       </section>
 
       <div className="left-panel__footer">
