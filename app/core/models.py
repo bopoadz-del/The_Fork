@@ -18,6 +18,7 @@ from sqlalchemy import (
     TypeDecorator,
     UniqueConstraint,
     desc,
+    text as sa_text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -91,6 +92,14 @@ class Project(Base):
         default="system",
     )
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    # PR A — admin-approved-projects: true for user-created + admin-
+    # approved-from-Drive rows (the projects users should see); false
+    # for detected-but-not-yet-approved rows the admin still needs to
+    # rule on. Defaults to true so the column is safe to add to legacy
+    # rows + safe to omit on inserts from older code paths.
+    is_approved: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=sa_text("TRUE"),
+    )
 
 
 class Document(Base):
