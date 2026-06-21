@@ -108,6 +108,20 @@ def retrieve(
     return chunks
 
 
+def _general_knowledge_project_ids() -> List[str]:
+    """Project ids whose chunks count as cross-project general knowledge —
+    queried alongside the active project on every retrieval.
+
+    Configured via ``RAG_GENERAL_KNOWLEDGE_PROJECTS`` (comma-separated).
+    Defaults to ``training_material`` which holds the 8 procedure +
+    scanned-reference folders migrated in PR #93. Set to the empty
+    string to disable the merge (the retriever then queries the active
+    project only — the pre-PR-107 behavior).
+    """
+    raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
 def retrieve_with_filter(
     query: str,
     project_id: str,
@@ -115,10 +129,25 @@ def retrieve_with_filter(
 ) -> tuple:
     """Returns ``(chunks, noise_filtered_count)``.
 
-    Internally pulls ``max(k*4, 20)`` raw candidates from the vector
-    store so the noise filter has room to drop garbage without
-    starving the caller of K real results. The audit log records
-    ``noise_filtered_count`` so the regex can be tuned from data.
+    Pulls ``max(k*4, 20)`` raw candidates from the active project's
+    vector store, then ALSO pulls the same over-fetch from each
+    general-knowledge project (``training_material`` by default — see
+    ``_general_knowledge_project_ids``). The two candidate sets are
+    merged, re-ranked by vector score descending, noise-filtered, and
+    the top K returned.
+
+    Behaviour notes:
+      * The active project is queried first so its chunks appear
+        before GK chunks on equal scores (stable Python sort).
+      * GK projects equal to ``project_id`` are skipped (no
+        double-counting).
+      * A GK lookup failure NEVER breaks the primary query — it is
+        logged + the active-only results stand.
+      * When ``RAG_GENERAL_KNOWLEDGE_PROJECTS=""``, no GK lookup runs
+        and the retriever behaves as it did pre-PR-107.
+
+    The audit log records ``noise_filtered_count`` so the regex can be
+    tuned from data.
     """
     if not available():
         logger.debug("retrieve called but embedding stack not available; returning []")
@@ -132,11 +161,30 @@ def retrieve_with_filter(
     query_vec = embedder.encode([query])[0]
     store = get_store(dim=embedder.dim)
     over_fetch = max(k * 4, 20)
-    raw = store.search(project_id, query_vec, k=over_fetch, query_text=query)
+
+    # Active project (operator's own corpus — first so it wins ties).
+    raw_active = store.search(project_id, query_vec, k=over_fetch, query_text=query)
+
+    # General-knowledge projects (cross-project background context).
+    gk_ids = [pid for pid in _general_knowledge_project_ids() if pid != project_id]
+    raw_gk: List[Chunk] = []
+    for gk_pid in gk_ids:
+        try:
+            raw_gk.extend(store.search(gk_pid, query_vec, k=over_fetch, query_text=query))
+        except Exception as exc:  # noqa: BLE001 — never let GK break primary path
+            logger.warning(
+                "general-knowledge retrieval for %s failed: %s; primary results stand",
+                gk_pid, exc,
+            )
+
+    # Merge then sort by score desc. Python sort is stable so active-project
+    # chunks appear before GK chunks at identical scores.
+    combined: List[Chunk] = list(raw_active) + raw_gk
+    combined.sort(key=lambda c: -(c.score or 0))
 
     kept: List[Chunk] = []
     noise_dropped = 0
-    for c in raw:
+    for c in combined:
         name = _doc_name_for_id(c.doc_id)
         if _is_noise_filename(name):
             noise_dropped += 1
