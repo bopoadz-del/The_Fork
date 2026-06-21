@@ -703,6 +703,22 @@ def index_project(project_id: str) -> Dict[str, Any]:
         documents.append(entry)
         total_chunks += len(chunks)
 
+        # PR #94: mirror the RAG hook from ``index_document`` so the
+        # chunks table stays in sync with the JSON index. Without this,
+        # ``index_project`` left the chunks table empty and the new
+        # hybrid-retriever-backed ``search_project_documents`` returned
+        # nothing — even though the JSON index was fresh.
+        try:
+            from app.core.rag import retriever as _rag
+            if _rag.available() and chunks:
+                _rag.index_chunks(project_id, doc["id"], chunks)
+        except Exception as exc:  # noqa: BLE001 — RAG must never break primary indexing
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "RAG indexing skipped for %s during index_project: %s",
+                doc["id"], exc,
+            )
+
     index_data: Dict[str, Any] = {
         "project_id": project_id,
         "built_at": _now(),
@@ -857,126 +873,98 @@ async def search_project_documents(
 
     Each result is a dict: ``{document_id, filename, snippet, score}``.
 
-    Logic
-    -----
-    1. Lazy build — if no index on disk, build it first.
-    2. Self-heal staleness — compare DB documents against the index; re-index
-       any missing or fingerprint-mismatched docs; filter out docs that have
-       been deleted from the DB.
-    3. Flatten all chunks, rank by TF-IDF cosine similarity via ZvecBlock, keep
-       the best chunk per document, return ``top_k`` documents sorted by score.
+    PR #94: routes through the production hybrid retriever
+    (``app.core.rag.retriever.retrieve_with_filter`` — BM25 + vector RRF
+    over the ``chunks`` Postgres table) so the agent's tool sees the
+    SAME chunks the RAG injection layer sees. Pre-PR-94 this used a
+    separate TF-IDF-over-JSON-blobs path that did not query the migrated
+    drive_archive corpus, causing tool results to be empty while the
+    injected RAG context contained the right answer (PR #93 migration
+    surfaced the gap).
+
+    Best chunk per document is kept (so a ``top_k=5`` request returns up
+    to 5 distinct files, not 5 chunks from one file). Filenames are
+    resolved via ``_doc_name_for_id`` (the same helper the retriever
+    itself uses).
     """
-    from app.blocks.zvec import ZvecBlock  # local import avoids circular refs
-
-    # ── 1. Lazy build ─────────────────────────────────────────────────────────
-    index = _load_index(project_id)
-    if index is None:
-        index_project(project_id)
-        index = _load_index(project_id)
-    if index is None:
+    if not query or not query.strip():
         return []
 
-    # ── 2. Self-heal staleness ────────────────────────────────────────────────
-    db_docs = _projects.list_documents(project_id)
-    db_by_id: Dict[str, Any] = {d["id"]: d for d in db_docs}
+    # Hybrid retriever lives in app.core.rag.retriever; local import to
+    # keep app.core.doc_index importable when the RAG stack isn't fully
+    # wired (tests, minimal install).
+    from app.core.rag.retriever import retrieve_with_filter, _doc_name_for_id
 
-    # Index map: document_id → index entry (indexed documents)
-    idx_by_id: Dict[str, Any] = {
-        d["document_id"]: d for d in index.get("documents", [])
-    }
-    # Skipped map: document_id → skipped entry (known-unsupported documents)
-    skipped_by_id: Dict[str, Any] = {
-        s["document_id"]: s for s in index.get("skipped", [])
-    }
+    # Over-fetch chunks so we can still return ``top_k`` DISTINCT documents
+    # after the "best chunk per document" collapse below. 4x is enough
+    # for typical corpora where each doc has 2-10 chunks.
+    over_fetch = max(top_k * 4, 20)
 
-    needs_reload = False
+    def _query() -> List[Any]:
+        try:
+            chunks, _noise = retrieve_with_filter(query, project_id, k=over_fetch)
+            return chunks
+        except Exception:
+            return []
 
-    # Docs in DB that are missing from index or have stale fingerprint
-    for doc in db_docs:
-        did = doc["id"]
-        expected_fp = f"{doc['uploaded_at']}:{doc['size']}"
-        entry = idx_by_id.get(did)
-        if entry is None or entry.get("fingerprint") != expected_fp:
-            # Check if this doc is already in skipped with a matching fingerprint
-            # (known-unsupported file, no re-indexing needed)
-            skipped_entry = skipped_by_id.get(did)
-            if skipped_entry is not None and skipped_entry.get("fingerprint") == expected_fp:
-                continue  # already known-unsupported, skip redundant work
-            index_document(project_id, did)
-            needs_reload = True
-
-    if needs_reload:
-        fresh = _load_index(project_id)
-        if fresh is not None:
-            index = fresh
-
-    # ── 3. Gather chunks, filtering deleted docs ──────────────────────────────
-    all_chunks: List[str] = []
-    chunk_meta: List[tuple] = []  # (document_id, filename, ocr_low_quality)
-
-    for entry in index.get("documents", []):
-        did = entry["document_id"]
-        # Skip documents that no longer exist in the DB
-        if did not in db_by_id:
-            continue
-        low_quality = bool(entry.get("ocr_low_quality"))
-        for chunk in entry.get("chunks", []):
-            if chunk:
-                all_chunks.append(chunk)
-                chunk_meta.append((did, entry["filename"], low_quality))
-
-    # ── 4. No chunks → empty results ─────────────────────────────────────────
-    if not all_chunks:
+    chunks = _query()
+    # Lazy bootstrap: pre-PR-94 callers relied on the legacy code path
+    # to build the project index on first search. Preserve that contract
+    # for newly-uploaded projects (or anything pre-RAG-migration) by
+    # iterating documents through ``index_document`` once. That call (and
+    # not ``index_project``) is the one that fires ``_rag.index_chunks``,
+    # which populates the ``chunks`` table the hybrid retriever queries.
+    if not chunks and _load_index(project_id) is None:
+        try:
+            for doc in _projects.list_documents(project_id):
+                try:
+                    index_document(project_id, doc["id"])
+                except Exception:
+                    # Best-effort per-doc indexing; one failure shouldn't
+                    # abort the bootstrap for the rest of the project.
+                    continue
+        except Exception:
+            pass
+        chunks = _query()
+    if not chunks:
         return []
 
-    # ── 5. Rank via ZvecBlock ─────────────────────────────────────────────────
-    texts = [query] + all_chunks
-    try:
-        zvec_result = await ZvecBlock().process("", {
-            "operation": "similarity",
-            "texts": texts,
-        })
-    except Exception:
-        return []
-
-    if zvec_result.get("status") != "success":
-        return []
-    matrix = zvec_result.get("similarity_matrix")
-    if not matrix:
-        return []
-
-    # Row 0 = query row; columns 1..N are similarities to chunks
-    row0 = matrix[0]
-    chunk_scores = row0[1:]  # one score per chunk
-
-    # ── 6. Best chunk per document, sort, top_k ───────────────────────────────
-    best: Dict[str, dict] = {}  # document_id → {filename, chunk, score, ...}
-    for i, score in enumerate(chunk_scores):
-        did, fname, low_quality = chunk_meta[i]
-        if did not in best or score > best[did]["score"]:
-            best[did] = {
-                "document_id": did,
-                "filename": fname,
-                "chunk": all_chunks[i],
+    best: Dict[str, Dict[str, Any]] = {}
+    for c in chunks:
+        score = float(c.score or 0.0)
+        prev = best.get(c.doc_id)
+        if prev is None or score > prev["score"]:
+            best[c.doc_id] = {
+                "document_id": c.doc_id,
+                "filename": _doc_name_for_id(c.doc_id),
+                "chunk": c.text,
                 "score": score,
-                "ocr_low_quality": low_quality,
             }
 
-    ranked = sorted(best.values(), key=lambda x: x["score"], reverse=True)
-    ranked = ranked[:top_k]
+    ranked = sorted(best.values(), key=lambda x: x["score"], reverse=True)[:top_k]
 
-    # ── 7. Build output ───────────────────────────────────────────────────────
+    # Pull the OCR-low-quality flag from the JSON index (if present). The
+    # hybrid retriever's Chunk doesn't carry it; tests + UI need it for
+    # the "low-confidence OCR" badge on citations.
+    legacy_index = _load_index(project_id)
+    ocr_flag_by_doc: Dict[str, bool] = {}
+    if legacy_index is not None:
+        for entry in legacy_index.get("documents", []):
+            if entry.get("ocr_low_quality"):
+                ocr_flag_by_doc[entry["document_id"]] = True
+
     results: List[Dict[str, Any]] = []
     for item in ranked:
         snippet = " ".join(item["chunk"].split()[:50])
-        results.append({
+        result_row = {
             "document_id": item["document_id"],
             "filename": item["filename"],
             "snippet": snippet,
-            "score": round(float(item["score"]), 4),
-            "ocr_low_quality": bool(item.get("ocr_low_quality")),
-        })
-
+            "score": round(item["score"], 4),
+        }
+        if ocr_flag_by_doc.get(item["document_id"]):
+            result_row["ocr_low_quality"] = True
+        results.append(result_row)
     return results
 
 

@@ -307,15 +307,33 @@ def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
 
 def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
     """Delete a document row. Returns the deleted row (so the caller can
-    purge the file from disk), or None if it did not exist."""
+    purge the file from disk), or None if it did not exist.
+
+    Also deletes the document's chunks from the RagChunk table. Postgres
+    has an ON DELETE CASCADE FK so the cascade is implicit there; SQLite
+    (used by dev / tests) doesn't enforce FKs by default, so we delete
+    explicitly to keep search results consistent across backends. Without
+    this, a search after deletion can still surface chunks from the
+    removed document because the hybrid retriever queries the chunks
+    table directly.
+    """
     doc = get_document(doc_id)
     if not doc:
         return None
+    project_id = doc.get("project_id")
     with _lock:
         with SessionLocal() as session:
             document = session.get(Document, doc_id)
             if document:
                 session.delete(document)
+                if project_id:
+                    from app.core.models import RagChunk  # local: avoid circular
+                    session.execute(
+                        delete(RagChunk).where(
+                            RagChunk.project_id == project_id,
+                            RagChunk.doc_id == doc_id,
+                        )
+                    )
                 session.commit()
     return doc
 
