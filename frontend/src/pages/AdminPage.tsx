@@ -1,34 +1,44 @@
-/* AdminPage — operator-supplied requirement 2026-06-21.
+/* AdminPage — operator-supplied requirement 2026-06-21 + 2026-06-22.
  *
- * Single page mounted at /admin. Three first-class sections:
+ * Single page mounted at /admin. Four first-class sections:
  *
  *   1. Google Drive — the full Drive integration (connected account,
  *      browse, search, folder navigation, import). Drive is the pilot's
  *      project server; this is where it lives.
  *
- *   2. Project corpus status — table of every project with chunk count,
- *      document count, last indexed date, and a re-index trigger.
+ *   2. Detected from Drive — cascaded folder tree from /v1/admin/drive/scan
+ *      (PR A). Each candidate folder gets an "Approve as project" action
+ *      that POSTs /v1/admin/projects/approve-from-drive and creates a
+ *      row with origin='admin_drive_approved'.
  *
- *   3. Header — "Connected as: <email>" up top (not in the LeftPanel).
+ *   3. Approved projects — filtered to origin='admin_drive_approved'
+ *      (so chadi/bopo-style user-created rows do NOT appear here). Each
+ *      row carries documents + chunks counts plus Re-index and Delete.
+ *
+ *   4. Header — "Connected as: <email>" up top (not in the LeftPanel).
  *
  * No stubs, no "coming soon" placeholders. Wired to live backend
  * endpoints:
- *   GET  /v1/drive/status              → connection + email
- *   GET  /v1/drive/connect             → OAuth redirect
- *   POST /v1/drive/disconnect          → unlink
- *   GET  /v1/drive/files               → search / browse
- *   POST /v1/projects/{id}/drive/import → import a file into a project
- *   GET  /v1/projects                  → list of projects
- *   GET  /v1/admin/corpus/collections  → chunk/doc counts per project
- *   POST /v1/admin/debug/project-reindex → re-index a project
+ *   GET  /v1/drive/status                         → connection + email
+ *   GET  /v1/drive/connect                        → OAuth redirect
+ *   POST /v1/drive/disconnect                     → unlink
+ *   GET  /v1/drive/files                          → search / browse
+ *   POST /v1/projects/{id}/drive/import           → import file into project
+ *   GET  /v1/projects                             → all project rows
+ *   GET  /v1/admin/drive/scan                     → cascaded folder tree (PR A)
+ *   POST /v1/admin/projects/approve-from-drive    → approve folder (PR A)
+ *   GET  /v1/admin/corpus/collections             → chunk/doc counts
+ *   POST /v1/admin/debug/project-reindex          → re-index a project
+ *   DELETE /v1/projects/{id}                      → delete a project
  */
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   RefreshCw, FolderTree, Search, Plug, LogOut, ArrowLeft,
+  FolderSearch, CheckCircle2, Trash2, ChevronRight, ChevronDown,
 } from 'lucide-react'
 import AppHeader from '../components/AppHeader'
-import { apiGet, apiPost, ApiError } from '../lib/api'
+import { apiGet, apiPost, apiDelete, ApiError } from '../lib/api'
 import { getToken } from '../lib/token'
 import { useAuth } from '../auth/AuthContext'
 import './admin.css'
@@ -58,6 +68,8 @@ interface ProjectRow {
   name: string
   status?: string
   user_id?: string
+  is_approved?: boolean
+  origin?: string
 }
 
 interface CorpusCollection {
@@ -71,6 +83,22 @@ interface CorpusResponse {
   total_project_ids: number
   total_documents: number
   total_chunks: number
+}
+
+interface ScanFolder {
+  folder_id: string
+  name: string
+  direct_file_count: number
+  subfolder_count: number
+  is_candidate: boolean
+  children: ScanFolder[]
+}
+
+interface ScanResponse {
+  max_depth: number
+  root_file_count: number
+  candidates_total: number
+  tree: ScanFolder[]
 }
 
 export default function AdminPage() {
@@ -99,7 +127,9 @@ export default function AdminPage() {
 
         <DriveSection />
 
-        <CorpusSection onPickProject={(pid) => navigate(`/projects/${pid}`)} />
+        <DetectedFromDriveSection />
+
+        <ApprovedProjectsSection onPickProject={(pid) => navigate(`/projects/${pid}`)} />
 
         <footer className="admin-main__footer">
           <button
@@ -390,15 +420,179 @@ function DriveSection() {
   )
 }
 
-// ─── Corpus status section ──────────────────────────────────────────────
+// ─── Detected from Drive section ────────────────────────────────────────
+//
+// Renders /v1/admin/drive/scan as a collapsible cascaded tree. Folders
+// flagged is_candidate (direct_file_count > 0) get an Approve button
+// that POSTs /v1/admin/projects/approve-from-drive — the backend slugs
+// the folder name into a project id, creates the row with
+// origin='admin_drive_approved', and queues a recursive Drive import
+// in the background. The Approved projects section below then shows
+// the new row once it's created.
 
-function CorpusSection({ onPickProject }: { onPickProject: (id: string) => void }) {
+function DetectedFromDriveSection() {
+  const [scan, setScan] = useState<ScanResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [approvingId, setApprovingId] = useState<string | null>(null)
+  const [approvedFlash, setApprovedFlash] = useState<string | null>(null)
+  const [approveErrors, setApproveErrors] = useState<Record<string, string>>({})
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+
+  async function load() {
+    setLoading(true); setError(null)
+    try {
+      const resp = await apiGet<ScanResponse>('/v1/admin/drive/scan?max_depth=2')
+      setScan(resp)
+      // Auto-expand top-level by default; depth-2 stays collapsed unless clicked.
+      const next: Record<string, boolean> = {}
+      for (const f of resp.tree) next[f.folder_id] = true
+      setExpanded(next)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setError('Admin role required to scan Drive.')
+      } else if (err instanceof ApiError && err.status === 409) {
+        setError('Connect Google Drive in the section above before scanning.')
+      } else {
+        setError(err instanceof Error ? err.message : 'Drive scan failed.')
+      }
+    } finally { setLoading(false) }
+  }
+
+  useEffect(() => { void load() }, [])
+
+  async function handleApprove(folder: ScanFolder) {
+    const msg = `Approve "${folder.name}" as a platform project? `
+      + `This will import the ${folder.direct_file_count} file(s) `
+      + `directly in this folder (plus subfolder contents) and index them.`
+    if (!window.confirm(msg)) return
+    setApprovingId(folder.folder_id)
+    setApproveErrors((p) => { const n = { ...p }; delete n[folder.folder_id]; return n })
+    setApprovedFlash(null)
+    try {
+      const body = await apiPost<{ project: ProjectRow }>(
+        '/v1/admin/projects/approve-from-drive',
+        { folder_id: folder.folder_id, name: folder.name },
+      )
+      setApprovedFlash(
+        `Approved "${folder.name}" → project "${body.project.id}". `
+        + `Indexing runs in the background; see Approved projects below.`,
+      )
+    } catch (err) {
+      setApproveErrors((p) => ({
+        ...p, [folder.folder_id]: err instanceof Error ? err.message : 'Approve failed.',
+      }))
+    } finally { setApprovingId(null) }
+  }
+
+  function toggle(folderId: string) {
+    setExpanded((p) => ({ ...p, [folderId]: !p[folderId] }))
+  }
+
+  function renderFolder(folder: ScanFolder, depth: number) {
+    const open = !!expanded[folder.folder_id]
+    const hasChildren = folder.children.length > 0
+    return (
+      <li key={folder.folder_id} className="admin-tree__node" style={{ paddingLeft: `${depth * 16}px` }}>
+        <div className="admin-tree__row">
+          <button
+            type="button"
+            className="admin-tree__toggle"
+            onClick={() => toggle(folder.folder_id)}
+            disabled={!hasChildren}
+            aria-label={open ? 'Collapse' : 'Expand'}
+          >
+            {hasChildren ? (open ? <ChevronDown size={14} /> : <ChevronRight size={14} />)
+                         : <span className="admin-tree__leaf-mark" />}
+          </button>
+          <span className="admin-tree__name">{folder.name}</span>
+          <span className="admin-tree__counts">
+            {folder.direct_file_count} file{folder.direct_file_count === 1 ? '' : 's'}
+            {folder.subfolder_count > 0 && (
+              <>{' · '}{folder.subfolder_count} folder{folder.subfolder_count === 1 ? '' : 's'}</>
+            )}
+          </span>
+          <div className="admin-tree__actions">
+            {approveErrors[folder.folder_id] && (
+              <span className="admin-file__error">{approveErrors[folder.folder_id]}</span>
+            )}
+            {folder.is_candidate ? (
+              <button
+                type="button"
+                className="admin-btn admin-btn--primary admin-btn--small"
+                onClick={() => void handleApprove(folder)}
+                disabled={approvingId !== null}
+              >
+                {approvingId === folder.folder_id
+                  ? 'Approving…'
+                  : <><CheckCircle2 size={13} /><span>Approve</span></>}
+              </button>
+            ) : (
+              <span className="admin-tree__nocand">no direct files</span>
+            )}
+          </div>
+        </div>
+        {open && hasChildren && (
+          <ul className="admin-tree__children">
+            {folder.children.map((c) => renderFolder(c, depth + 1))}
+          </ul>
+        )}
+      </li>
+    )
+  }
+
+  return (
+    <section className="admin-section">
+      <header className="admin-section__head">
+        <FolderSearch size={16} />
+        <h2 className="admin-section__title">Detected from Drive</h2>
+        <button
+          type="button"
+          className="admin-btn admin-btn--ghost admin-btn--small"
+          onClick={() => void load()}
+          disabled={loading}
+          style={{ marginLeft: 'auto' }}
+        >
+          {loading ? 'Scanning…' : 'Rescan'}
+        </button>
+      </header>
+
+      <p className="admin-section__hint">
+        Top-level Drive folders the platform sees. Approve a folder to turn it into a
+        project — only its documents will be indexed and visible to users.
+      </p>
+
+      {error && <p className="admin-alert">{error}</p>}
+      {approvedFlash && <p className="admin-flash">{approvedFlash}</p>}
+
+      {!error && scan && scan.tree.length === 0 && !loading && (
+        <p className="admin-empty">No folders at Drive root.</p>
+      )}
+
+      {scan && scan.tree.length > 0 && (
+        <ul className="admin-tree">
+          {scan.tree.map((f) => renderFolder(f, 0))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+// ─── Approved projects section ──────────────────────────────────────────
+//
+// Filtered to origin='admin_drive_approved'. Operator requirement:
+// chadi/bopo-style user-created rows MUST NOT appear here — admin owns
+// the platform-canonical project list. Each row exposes Re-index and
+// Delete actions.
+
+function ApprovedProjectsSection({ onPickProject }: { onPickProject: (id: string) => void }) {
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [corpus, setCorpus] = useState<Record<string, CorpusCollection>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [reindexingId, setReindexingId] = useState<string | null>(null)
-  const [reindexFlash, setReindexFlash] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
 
   async function load() {
     setLoading(true); setError(null)
@@ -412,9 +606,9 @@ function CorpusSection({ onPickProject }: { onPickProject: (id: string) => void 
       for (const c of cResp.collections ?? []) map[c.project_id] = c
       setCorpus(map)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load corpus.'
+      const msg = err instanceof Error ? err.message : 'Failed to load approved projects.'
       setError(err instanceof ApiError && err.status === 403
-        ? 'Admin role required to view corpus status. You are logged in but not as an admin.'
+        ? 'Admin role required to view approved projects. You are logged in but not as an admin.'
         : msg)
     } finally { setLoading(false) }
   }
@@ -424,7 +618,7 @@ function CorpusSection({ onPickProject }: { onPickProject: (id: string) => void 
   async function handleReindex(p: ProjectRow) {
     if (!window.confirm(`Re-index "${p.name}"? This re-extracts text + rebuilds chunks for every document in this project.`)) return
     setReindexingId(p.id)
-    setReindexFlash(null)
+    setFlash(null)
     try {
       const token = getToken() || ''
       const res = await fetch(
@@ -433,26 +627,46 @@ function CorpusSection({ onPickProject }: { onPickProject: (id: string) => void 
       )
       if (!res.ok) {
         const detail = await res.text().catch(() => '')
-        setReindexFlash(`Re-index failed (${res.status}): ${detail.slice(0, 200)}`)
+        setFlash(`Re-index failed (${res.status}): ${detail.slice(0, 200)}`)
         return
       }
       const body = await res.json().catch(() => ({}))
-      setReindexFlash(
+      setFlash(
         `Re-indexed "${p.name}": ${body.indexed ?? '?'} documents, ` +
         `${body.skipped_unsupported ?? 0} skipped (unsupported), ` +
         `${body.total_chunks ?? '?'} chunks.`,
       )
       await load()
     } catch (err) {
-      setReindexFlash(`Re-index failed: ${(err as Error).message}`)
+      setFlash(`Re-index failed: ${(err as Error).message}`)
     } finally { setReindexingId(null) }
   }
+
+  async function handleDelete(p: ProjectRow) {
+    if (!window.confirm(
+      `Delete project "${p.name}"? This removes the project and all its documents + chunks. This cannot be undone.`,
+    )) return
+    setDeletingId(p.id)
+    setFlash(null)
+    try {
+      await apiDelete(`/v1/projects/${encodeURIComponent(p.id)}`)
+      setFlash(`Deleted "${p.name}".`)
+      await load()
+    } catch (err) {
+      setFlash(`Delete failed: ${(err as Error).message}`)
+    } finally { setDeletingId(null) }
+  }
+
+  // The filter that solves the operator's "no chadi no bopo" requirement.
+  // Only rows the admin explicitly approved via /v1/admin/projects/approve-from-drive
+  // make it into this table.
+  const approved = projects.filter((p) => (p.origin ?? 'user_create') === 'admin_drive_approved')
 
   return (
     <section className="admin-section">
       <header className="admin-section__head">
         <RefreshCw size={16} />
-        <h2 className="admin-section__title">Project corpus</h2>
+        <h2 className="admin-section__title">Approved projects</h2>
         <button
           type="button"
           className="admin-btn admin-btn--ghost admin-btn--small"
@@ -464,25 +678,30 @@ function CorpusSection({ onPickProject }: { onPickProject: (id: string) => void 
         </button>
       </header>
 
-      {error && <p className="admin-alert">{error}</p>}
-      {reindexFlash && <p className="admin-flash">{reindexFlash}</p>}
+      <p className="admin-section__hint">
+        Projects approved from a Drive folder. User-created personal projects
+        live on their owners' profiles and do not appear here.
+      </p>
 
-      {!error && projects.length === 0 && !loading && (
-        <p className="admin-empty">No projects yet. <Link to="/">Create one</Link>.</p>
+      {error && <p className="admin-alert">{error}</p>}
+      {flash && <p className="admin-flash">{flash}</p>}
+
+      {!error && approved.length === 0 && !loading && (
+        <p className="admin-empty">No approved projects yet. Approve a folder above to create one.</p>
       )}
 
-      {projects.length > 0 && (
+      {approved.length > 0 && (
         <table className="admin-corpus">
           <thead>
             <tr>
               <th>Project</th>
               <th className="num">Documents</th>
               <th className="num">Chunks</th>
-              <th className="num">Re-index</th>
+              <th className="num">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {projects.map((p) => {
+            {approved.map((p) => {
               const c = corpus[p.id]
               return (
                 <tr key={p.id}>
@@ -498,14 +717,23 @@ function CorpusSection({ onPickProject }: { onPickProject: (id: string) => void 
                   </td>
                   <td className="num">{c?.documents ?? 0}</td>
                   <td className="num">{c?.chunks ?? 0}</td>
-                  <td className="num">
+                  <td className="num admin-corpus__actions">
                     <button
                       type="button"
                       className="admin-btn admin-btn--ghost admin-btn--small"
                       onClick={() => void handleReindex(p)}
-                      disabled={reindexingId !== null}
+                      disabled={reindexingId !== null || deletingId !== null}
                     >
                       {reindexingId === p.id ? '…' : 'Re-index'}
+                    </button>
+                    <button
+                      type="button"
+                      className="admin-btn admin-btn--ghost admin-btn--small admin-btn--danger"
+                      onClick={() => void handleDelete(p)}
+                      disabled={reindexingId !== null || deletingId !== null}
+                      aria-label={`Delete ${p.name}`}
+                    >
+                      {deletingId === p.id ? '…' : <><Trash2 size={13} /><span>Delete</span></>}
                     </button>
                   </td>
                 </tr>
