@@ -1,4 +1,5 @@
 .right-panel {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -6,45 +7,112 @@
   color: var(--text-primary);
 }
 
+/* ── Resize handle ────────────────────────────────────────────────── */
+.right-panel__resize {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  background: transparent;
+  transition: background 120ms ease;
+  z-index: 5;
+}
+
+.right-panel__resize:hover {
+  background: var(--accent-tint);
+}
+
+/* ── Header (tabs + actions) ──────────────────────────────────────── */
 .right-panel__header {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 14px 16px 12px;
+  gap: 6px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel-right);
 }
 
-.right-panel__title {
-  font-size: 11.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+.right-panel__drag {
+  display: inline-flex;
+  align-items: center;
+  cursor: grab;
+  color: var(--text-tertiary);
+}
+
+.right-panel__drag:active {
+  cursor: grabbing;
+}
+
+.right-panel__tabs {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.right-panel__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.right-panel__tab {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
   color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  white-space: nowrap;
 }
 
-.right-panel__expand {
+.right-panel__tab:hover {
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
+}
+
+.right-panel__tab--active {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.right-panel__actions {
+  display: flex;
+  gap: 2px;
+}
+
+.right-panel__icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
-.right-panel__expand:hover {
+.right-panel__icon-btn:hover {
   background: var(--bg-surface-alt);
   color: var(--text-primary);
   border-color: var(--border-soft);
 }
 
+/* ── Body + sections ──────────────────────────────────────────────── */
 .right-panel__body {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -59,4 +127,32 @@
   border-radius: var(--radius-card);
   padding: 14px;
   box-shadow: var(--shadow-sm);
+}
+
+.right-panel__placeholder {
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+/* ── Floating mode ────────────────────────────────────────────────── */
+.right-panel--floating {
+  position: fixed;
+  z-index: 35;
+  height: 70vh;
+  max-height: 720px;
+  background: var(--bg-panel-right);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.right-panel--floating .right-panel__header {
+  cursor: grab;
+}
+
+.right-panel--floating .right-panel__resize {
+  /* No resize handle in floating mode — width is bound to the saved value. */
+  display: none;
 }
