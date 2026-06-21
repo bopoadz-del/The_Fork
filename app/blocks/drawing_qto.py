@@ -13,11 +13,14 @@ Coordinate-system note: pdfplumber returned y0 in PDF user-space
 to "bottom 15%" or sorted top-down has been flipped accordingly.
 """
 
+import logging
 import os
 import math
 import re
 from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
+
+_logger = logging.getLogger(__name__)
 
 
 # --- Discipline lookup ------------------------------------------------------
@@ -324,8 +327,12 @@ class DrawingQTOBlock(UniversalBlock):
         unit_factor = scale * to_metres_factor
 
         msp = doc.modelspace()
-        measurements, bulge_segments_count = self._extract_measurements(msp, unit_factor)
-        areas, hatch_hole_fallback = self._extract_areas(msp, unit_factor, layer_filter, min_area)
+        measurements, bulge_segments_count, len_diag = self._extract_measurements(
+            msp, unit_factor
+        )
+        areas, hatch_hole_fallback, area_diag = self._extract_areas(
+            msp, unit_factor, layer_filter, min_area
+        )
         volumes = self._estimate_volumes(areas, params)
         layers = list({e.dxf.layer for e in msp if hasattr(e.dxf, "layer")})
 
@@ -345,6 +352,18 @@ class DrawingQTOBlock(UniversalBlock):
             "input_units": doc.units,
             "to_metres_factor": to_metres_factor,
             "bulge_segments_count": bulge_segments_count,
+            # Surface silent-failure counters so a corrupt or partially-
+            # readable DXF doesn't ship as a confidently-low quantity total.
+            "bulge_fallbacks": len_diag.get("bulge_fallbacks", 0),
+            "entities_skipped": (
+                len_diag.get("entities_skipped", 0)
+                + area_diag.get("entities_skipped", 0)
+            ),
+            "hatches_skipped": area_diag.get("hatches_skipped", 0),
+            "entities_skipped_reasons": (
+                len_diag.get("entities_skipped_reasons", [])
+                + area_diag.get("entities_skipped_reasons", [])
+            ),
             "polyline_area_note": (
                 "Arc-bounded polygon area approximated as chord polygon area; "
                 "difference < 5% for typical bulges"
@@ -1306,14 +1325,29 @@ class DrawingQTOBlock(UniversalBlock):
         except Exception as e:
             return {"status": "error", "error": f"DWG conversion failed: {e}"}
 
-    def _extract_measurements(self, msp, unit_factor: float) -> Tuple[List[Dict], int]:
+    def _extract_measurements(self, msp, unit_factor: float) -> Tuple[List[Dict], int, Dict[str, Any]]:
         """``unit_factor`` converts raw drawing units straight to metres.
 
-        Returns (measurements, bulge_segments_count) so the caller can know
-        how many LWPOLYLINE segments were arc-faced vs straight chords.
+        Returns (measurements, bulge_segments_count, diagnostics) so the
+        caller can know how many LWPOLYLINE segments were arc-faced vs
+        straight chords AND which entities/bulge-arcs were silently dropped.
+
+        ``diagnostics`` is::
+
+            {
+                "bulge_fallbacks": int,   # bulge_to_arc threw; arc was collapsed to chord
+                "entities_skipped": int,
+                "entities_skipped_reasons": [
+                    {"etype": str, "layer": str, "error": str},
+                    ...
+                ],
+            }
         """
         results = []
         bulge_segments_count = 0
+        bulge_fallbacks = 0
+        entities_skipped = 0
+        entities_skipped_reasons: List[Dict[str, Any]] = []
         # Import bulge_to_arc lazily; only LWPOLYLINE with non-zero bulge needs it.
         try:
             from ezdxf.math import bulge_to_arc
@@ -1368,7 +1402,7 @@ class DrawingQTOBlock(UniversalBlock):
 
                     def seg_len(p_a, p_b):
                         # p_a is the start vertex (carries the bulge to p_b).
-                        nonlocal entity_bulge_segs
+                        nonlocal entity_bulge_segs, bulge_fallbacks
                         bulge = p_a[4] if len(p_a) >= 5 else 0.0
                         if bulge_to_arc is not None and abs(bulge) >= 1e-9:
                             try:
@@ -1377,8 +1411,18 @@ class DrawingQTOBlock(UniversalBlock):
                                 )
                                 entity_bulge_segs += 1
                                 return radius * abs(_end_a - _start_a)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                # bulge math blew up — fall back to chord, but
+                                # record it so the caller knows polyline length
+                                # is an under-estimate by some unknown amount.
+                                _logger.warning(
+                                    "drawing_qto: bulge_to_arc failed on layer=%s "
+                                    "(bulge=%s); falling back to chord: %s",
+                                    getattr(entity.dxf, "layer", "?"),
+                                    bulge,
+                                    exc,
+                                )
+                                bulge_fallbacks += 1
                         return math.dist((p_a[0], p_a[1]), (p_b[0], p_b[1]))
 
                     for i in range(len(pts) - 1):
@@ -1454,21 +1498,54 @@ class DrawingQTOBlock(UniversalBlock):
                             "layer": entity.dxf.layer,
                             "text": getattr(entity.dxf, "text", ""),
                         })
-            except Exception:
+            except Exception as exc:
+                layer = getattr(getattr(entity, "dxf", None), "layer", "?")
+                _logger.warning(
+                    "drawing_qto: skipped %s on layer=%s during length extract: %s",
+                    etype, layer, exc,
+                )
+                entities_skipped += 1
+                if len(entities_skipped_reasons) < 50:
+                    # Cap reasons list — a corrupt DXF can produce thousands of
+                    # identical errors; the counter remains accurate.
+                    entities_skipped_reasons.append({
+                        "etype": etype,
+                        "layer": str(layer),
+                        "error": str(exc),
+                    })
                 continue
-        return results, bulge_segments_count
+        diagnostics = {
+            "bulge_fallbacks": bulge_fallbacks,
+            "entities_skipped": entities_skipped,
+            "entities_skipped_reasons": entities_skipped_reasons,
+        }
+        return results, bulge_segments_count, diagnostics
 
     def _extract_areas(
         self, msp, unit_factor: float, layer_filter: List[str], min_area: float
-    ) -> Tuple[List[Dict], bool]:
+    ) -> Tuple[List[Dict], bool, Dict[str, Any]]:
         """``unit_factor`` converts raw drawing units straight to metres.
 
-        Returns (areas, hatch_hole_fallback). hatch_hole_fallback is True if
-        any HATCH path lacked readable path_type_flags so the caller is
-        warned that holes may have been added as positive area.
+        Returns (areas, hatch_hole_fallback, diagnostics). hatch_hole_fallback
+        is True if any HATCH path lacked readable path_type_flags so the
+        caller is warned that holes may have been added as positive area.
+
+        ``diagnostics`` is::
+
+            {
+                "entities_skipped": int,
+                "hatches_skipped": int,
+                "entities_skipped_reasons": [
+                    {"etype": str, "layer": str, "error": str},
+                    ...
+                ],
+            }
         """
         results = []
         hatch_hole_fallback = False
+        entities_skipped = 0
+        hatches_skipped = 0
+        entities_skipped_reasons: List[Dict[str, Any]] = []
         try:
             from shapely.geometry import Polygon
             use_shapely = True
@@ -1566,9 +1643,31 @@ class DrawingQTOBlock(UniversalBlock):
                                 ),
                                 "layer": layer,
                             })
-            except Exception:
+            except Exception as exc:
+                _logger.warning(
+                    "drawing_qto: skipped %s on layer=%s during area extract: %s",
+                    etype, layer, exc,
+                )
+                entities_skipped += 1
+                if etype == "HATCH":
+                    hatches_skipped += 1
+                if len(entities_skipped_reasons) < 50:
+                    entities_skipped_reasons.append({
+                        "etype": etype,
+                        "layer": str(layer),
+                        "error": str(exc),
+                    })
                 continue
-        return sorted(results, key=lambda x: x["area_m2"], reverse=True), hatch_hole_fallback
+        diagnostics = {
+            "entities_skipped": entities_skipped,
+            "hatches_skipped": hatches_skipped,
+            "entities_skipped_reasons": entities_skipped_reasons,
+        }
+        return (
+            sorted(results, key=lambda x: x["area_m2"], reverse=True),
+            hatch_hole_fallback,
+            diagnostics,
+        )
 
     def _estimate_volumes(self, areas: List[Dict], params: Dict) -> List[Dict]:
         # Default ceiling height comes from app.core.construction_constants

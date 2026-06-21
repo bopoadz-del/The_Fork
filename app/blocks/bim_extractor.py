@@ -1,9 +1,12 @@
 """BIM Extractor Block - Extract quantities, elements, and clash report from IFC BIM models"""
 
+import logging
 import os
 import math
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
+
+_logger = logging.getLogger(__name__)
 
 
 # IFC type → construction category mapping
@@ -152,9 +155,14 @@ class BIMExtractorBlock(UniversalBlock):
         extract_props = params.get("extract_properties", self.config.get("extract_properties", True))
         run_clash = params.get("run_clash_detection", self.config.get("run_clash_detection", True))
 
-        building_elements, quantities, duplicate_subtypes_skipped, quantities_truncated = (
-            self._extract_elements(model, ifc_util, max_el, extract_props)
-        )
+        (
+            building_elements,
+            quantities,
+            duplicate_subtypes_skipped,
+            quantities_truncated,
+            categories_skipped,
+            psets_failed,
+        ) = self._extract_elements(model, ifc_util, max_el, extract_props)
         project_info = self._extract_project_info(model)
         storeys = self._extract_storeys(model)
         spaces = self._extract_spaces(model)
@@ -193,6 +201,13 @@ class BIMExtractorBlock(UniversalBlock):
             "element_count": len(building_elements),
             "element_count_returned": len(building_elements_capped),
             "duplicate_subtypes_skipped": duplicate_subtypes_skipped,
+            # Categories whose model.by_type() raised — quantities for these
+            # IFC types are 0 in this result but the underlying model may
+            # contain them.
+            "categories_skipped": categories_skipped,
+            # Elements for which get_psets() raised — properties and pset-
+            # derived quantities (NetVolume, NetArea, etc.) are missing.
+            "psets_failed": psets_failed,
             "ifc_schema": model.schema,
             "truncated": any_truncated,
             "truncation_caps": {
@@ -204,7 +219,19 @@ class BIMExtractorBlock(UniversalBlock):
 
     def _extract_elements(
         self, model, ifc_util, max_el: int, extract_props: bool
-    ) -> Tuple[List[Dict], Dict, int, List[str]]:
+    ) -> Tuple[List[Dict], Dict, int, List[str], List[str], List[Dict[str, str]]]:
+        """Returns (elements, quantities, duplicate_subtypes_skipped,
+        quantities_truncated, categories_skipped, psets_failed).
+
+        ``categories_skipped`` lists IFC type strings for which
+        ``model.by_type()`` raised — those categories contributed zero rows
+        despite possibly existing in the file.
+
+        ``psets_failed`` lists ``{"global_id", "ifc_type", "error"}`` dicts
+        for elements where ``ifc_util.get_psets()`` raised. The element is
+        still returned (without the ``properties`` block) but the caller now
+        knows quantities derived from psets are incomplete.
+        """
         elements: List[Dict] = []
         quantities: Dict[str, Any] = {
             cat: {"count": 0, "items": []}
@@ -216,11 +243,19 @@ class BIMExtractorBlock(UniversalBlock):
         # (preferred) or step-id fallback to dedupe.
         seen_guids: set = set()
         duplicate_subtypes_skipped = 0
+        categories_skipped: List[str] = []
+        psets_failed: List[Dict[str, str]] = []
 
         for ifc_type, category in IFC_CATEGORY_MAP.items():
             try:
                 items = model.by_type(ifc_type)
-            except Exception:
+            except Exception as exc:
+                _logger.warning(
+                    "bim_extractor: model.by_type(%s) failed — dropping entire "
+                    "category from results: %s",
+                    ifc_type, exc,
+                )
+                categories_skipped.append(ifc_type)
                 continue
             for el in items:
                 if len(elements) >= max_el:
@@ -230,7 +265,9 @@ class BIMExtractorBlock(UniversalBlock):
                     duplicate_subtypes_skipped += 1
                     continue
                 seen_guids.add(key)
-                el_data = self._element_to_dict(el, category, ifc_util, extract_props)
+                el_data = self._element_to_dict(
+                    el, category, ifc_util, extract_props, psets_failed,
+                )
                 elements.append(el_data)
                 quantities[category]["count"] += 1
                 if len(quantities[category]["items"]) < _CATEGORY_ITEM_CAP:
@@ -247,9 +284,23 @@ class BIMExtractorBlock(UniversalBlock):
         for cat in quantities_truncated:
             quantities[cat]["truncated"] = True
             quantities[cat]["items_returned"] = len(quantities[cat]["items"])
-        return elements, quantities, duplicate_subtypes_skipped, quantities_truncated
+        return (
+            elements,
+            quantities,
+            duplicate_subtypes_skipped,
+            quantities_truncated,
+            categories_skipped,
+            psets_failed,
+        )
 
-    def _element_to_dict(self, el, category: str, ifc_util, extract_props: bool) -> Dict:
+    def _element_to_dict(
+        self,
+        el,
+        category: str,
+        ifc_util,
+        extract_props: bool,
+        psets_failed: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict:
         el_dict: Dict = {
             "id": el.GlobalId if hasattr(el, "GlobalId") else str(el.id()),
             "ifc_type": el.is_a(),
@@ -281,8 +332,22 @@ class BIMExtractorBlock(UniversalBlock):
                                       "Height", "Depth", "Thickness", "NetArea", "GrossArea"):
                             if qname in pset_vals and isinstance(pset_vals[qname], (int, float)):
                                 el_dict[qname.lower()] = pset_vals[qname]
-            except Exception:
-                pass
+            except Exception as exc:
+                # Silent before; the element still gets returned (id/name/etc.)
+                # but properties + pset-derived quantities are missing. Log
+                # and accumulate so the caller knows quantities are partial.
+                gid = el_dict.get("id", "?")
+                ifc_type = el_dict.get("ifc_type", "?")
+                _logger.warning(
+                    "bim_extractor: get_psets failed for %s (id=%s): %s",
+                    ifc_type, gid, exc,
+                )
+                if psets_failed is not None:
+                    psets_failed.append({
+                        "global_id": str(gid),
+                        "ifc_type": str(ifc_type),
+                        "error": str(exc),
+                    })
 
         # Material
         try:
