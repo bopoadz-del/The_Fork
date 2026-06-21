@@ -140,3 +140,45 @@ def test_build_sources_unicode_dash_matches(monkeypatch):
 def test_build_sources_empty_audit_returns_empty():
     out = _build_sources_from_audit({"chunks": []}, "any text")
     assert out == []
+
+
+# ── PR #111 — bracketless "Source:" prefix form (gpt-oss variant) ──────
+
+def test_extract_bracketless_line_form_single():
+    """gpt-oss sometimes emits 'Source: foo.pdf, chunk N.' on its own
+    line at the end of the answer, no brackets."""
+    txt = "Some answer body here.\nSource: PRC-406_HSE.pdf, chunk 65."
+    out = _extract_cited_chunk_indexes(txt)
+    assert ("PRC-406_HSE.pdf", 65) in out
+
+
+def test_extract_bracketless_at_start():
+    """Source: prefix at the very start of the string (no leading newline)."""
+    txt = "Source: vendor.pdf, chunk 4."
+    out = _extract_cited_chunk_indexes(txt)
+    assert ("vendor.pdf", 4) in out
+
+
+def test_extract_bracketless_multichunk():
+    txt = "See for detail.\nSources: vendor.pdf, chunks 16, 34, 55."
+    out = _extract_cited_chunk_indexes(txt)
+    assert ("vendor.pdf", 16) in out
+    assert ("vendor.pdf", 34) in out
+    assert ("vendor.pdf", 55) in out
+
+
+def test_build_sources_uses_bracketless_citation(monkeypatch):
+    """End-to-end: agent emits bracketless 'Source:' form; Sources panel
+    still surfaces the cited chunk, not the top retrieval slice."""
+    audit = _make_audit([
+        {"doc_id": "d1", "chunk_index": 0,  "score": 0.78},
+        {"doc_id": "d1", "chunk_index": 65, "score": 0.69},
+    ])
+    import sys, types
+    monkeypatch.setitem(sys.modules, "app.core.projects",
+                        types.SimpleNamespace(get_document=lambda did: {"original_name": "PRC-406_HSE.pdf"}))
+
+    text = "Answer body.\nSource: PRC-406_HSE.pdf, chunk 65."
+    out = _build_sources_from_audit(audit, text)
+    assert len(out) == 1
+    assert out[0]["page_or_section"] == "chunk #65"

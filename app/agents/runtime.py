@@ -219,7 +219,21 @@ def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
 
 
 _CITATION_RE = re.compile(
+    # Bracketed form: [source: file.pdf, chunk 65] / [source: file.pdf, chunks 16, 34, 55]
     r"\[source:\s*([^\],]+?)(?:\s*,\s*chunks?\s+([\d,\s]+))?\]",
+    re.IGNORECASE,
+)
+
+# Bracketless line form gpt-oss-style models also emit:
+#   Source: PRC-406_HSE.pdf, chunk 65.
+#   Sources: PRC-406_HSE.pdf, chunks 16, 34, 55.
+# Anchor on start-of-line or newline + "Source[s]:" prefix; stop at the
+# first period / newline / end-of-string so we don't swallow following
+# prose. Filename can contain dots (the .pdf extension); we accept any
+# char that isn't a comma, newline, or BRACKET, then strip the
+# trailing period below.
+_CITATION_LINE_RE = re.compile(
+    r"(?:^|\n)\s*Sources?:\s*([^,\n\[\]]+?)(?:\s*,\s*chunks?\s+([\d,\s]+?))?\s*(?:\.\s*(?:\n|$)|\n|$)",
     re.IGNORECASE,
 )
 
@@ -258,16 +272,19 @@ def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
     if not text:
         return []
     out: List[Tuple[str, int]] = []
-    for m in _CITATION_RE.finditer(text):
-        fname = m.group(1).strip()
-        nums_blob = m.group(2) or ""
-        if not nums_blob.strip():
-            out.append((fname, -1))
-            continue
-        for piece in nums_blob.split(","):
-            piece = piece.strip()
-            if piece.isdigit():
-                out.append((fname, int(piece)))
+    # Try both regexes — bracketed [source: ...] AND bracketless
+    # "Source: ..." line-prefix form (the variant gpt-oss emits).
+    for regex in (_CITATION_RE, _CITATION_LINE_RE):
+        for m in regex.finditer(text):
+            fname = m.group(1).strip().rstrip(".")
+            nums_blob = m.group(2) or ""
+            if not nums_blob.strip():
+                out.append((fname, -1))
+                continue
+            for piece in nums_blob.split(","):
+                piece = piece.strip()
+                if piece.isdigit():
+                    out.append((fname, int(piece)))
     return out
 
 
