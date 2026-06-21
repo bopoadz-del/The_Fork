@@ -182,3 +182,54 @@ def test_build_sources_uses_bracketless_citation(monkeypatch):
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1
     assert out[0]["page_or_section"] == "chunk #65"
+
+
+# ── PR #112 — [doc_id=X chunk=N] form (gpt-oss technical-precision style) ──
+
+def test_extract_doc_id_form_with_separators():
+    """gpt-oss sometimes emits [doc_id=3496d239, chunk 65, score 0.697]."""
+    txt = "see [doc_id=3496d239, chunk 65, score 0.697] for detail"
+    out = _extract_cited_chunk_indexes(txt)
+    assert ("3496d239", 65) in out
+
+
+def test_extract_doc_id_form_kv_separators():
+    """The RAG-injection header style: [doc_id=X chunk=N score=Y]."""
+    txt = "[doc_id=abc12345 chunk=4 score=0.81]"
+    out = _extract_cited_chunk_indexes(txt)
+    assert ("abc12345", 4) in out
+
+
+def test_build_sources_uses_doc_id_citation(monkeypatch):
+    """When the agent cites by [doc_id=X chunk=N], the panel surfaces
+    THAT chunk by direct doc_id match — bypasses the filename match
+    entirely (avoids name-mismatch fall-through)."""
+    audit = _make_audit([
+        {"doc_id": "3496d239", "chunk_index": 0,  "score": 0.78},
+        {"doc_id": "3496d239", "chunk_index": 4,  "score": 0.74},
+        {"doc_id": "3496d239", "chunk_index": 65, "score": 0.69},
+    ])
+    import sys, types
+    monkeypatch.setitem(sys.modules, "app.core.projects",
+                        types.SimpleNamespace(get_document=lambda did: {"original_name": "PRC-406_HSE.pdf"}))
+
+    text = "Per the procedure [doc_id=3496d239, chunk 65, score 0.697]."
+    out = _build_sources_from_audit(audit, text)
+    assert len(out) == 1
+    assert out[0]["page_or_section"] == "chunk #65"
+    assert out[0]["doc_id"] == "3496d239"
+
+
+def test_build_sources_doc_id_mismatch_falls_back(monkeypatch):
+    """Unknown doc_id in citation → no match → fall back to top-3."""
+    audit = _make_audit([
+        {"doc_id": "a", "chunk_index": 1, "score": 0.5},
+        {"doc_id": "a", "chunk_index": 2, "score": 0.6},
+    ])
+    import sys, types
+    monkeypatch.setitem(sys.modules, "app.core.projects",
+                        types.SimpleNamespace(get_document=lambda did: {"original_name": "x.pdf"}))
+
+    text = "[doc_id=unknown chunk=99]"
+    out = _build_sources_from_audit(audit, text)
+    assert len(out) == 2  # both chunks (only 2 injected, top-3 cap returns all)
