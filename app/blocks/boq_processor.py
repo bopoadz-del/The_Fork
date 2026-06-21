@@ -1,8 +1,11 @@
 """BOQ Processor Block - Parse Excel/CSV/PDF Bills of Quantities into structured line items"""
 
+import logging
 import os
 from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
+
+_logger = logging.getLogger(__name__)
 
 
 def _resolve_via_project(project_id: str, raw: str) -> str:
@@ -177,12 +180,28 @@ class BOQProcessorBlock(UniversalBlock):
         groups: Dict[Tuple[str, ...], List[List[List[str]]]] = {}
         primary_headers_for: Dict[Tuple[str, ...], List[str]] = {}
         page_table_count = 0
+        # Track pages we silently dropped so the caller knows the BOQ totals
+        # may be incomplete. Previously these failures were swallowed, which
+        # turned a partial-parse into a wrong client deliverable.
+        pages_skipped = 0
+        pages_skipped_reasons: List[Dict[str, Any]] = []
 
         with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
+            for page_index, page in enumerate(pdf.pages, 1):
                 try:
                     tables = page.extract_tables() or []
-                except Exception:
+                except Exception as exc:
+                    _logger.warning(
+                        "boq_processor: page %s extract_tables failed: %s",
+                        page_index,
+                        exc,
+                    )
+                    pages_skipped += 1
+                    pages_skipped_reasons.append({
+                        "page": page_index,
+                        "stage": "extract_tables",
+                        "error": str(exc),
+                    })
                     continue
                 for tbl in tables:
                     if not tbl or len(tbl) < 2:
@@ -224,7 +243,18 @@ class BOQProcessorBlock(UniversalBlock):
                 for i, page in enumerate(pdf.pages, 1):
                     try:
                         t = (page.extract_text() or "").strip()
-                    except Exception:
+                    except Exception as exc:
+                        _logger.warning(
+                            "boq_processor: page %s extract_text failed: %s",
+                            i,
+                            exc,
+                        )
+                        pages_skipped += 1
+                        pages_skipped_reasons.append({
+                            "page": i,
+                            "stage": "extract_text",
+                            "error": str(exc),
+                        })
                         t = ""
                     if t:
                         page_texts.append({"page": i, "text": t})
@@ -238,6 +268,8 @@ class BOQProcessorBlock(UniversalBlock):
                     ),
                     "page_count": len(page_texts),
                     "page_texts": page_texts,
+                    "pages_skipped": pages_skipped,
+                    "pages_skipped_reasons": pages_skipped_reasons,
                 }
             return {
                 "status": "error",
@@ -246,6 +278,8 @@ class BOQProcessorBlock(UniversalBlock):
                     "may be a pure-image scan that hasn't been OCR'd. Run OCR "
                     "first or re-upload as .xlsx/.csv."
                 ),
+                "pages_skipped": pages_skipped,
+                "pages_skipped_reasons": pages_skipped_reasons,
             }
 
         # Pick the largest group as the BOQ; other groups (smaller summary
@@ -259,6 +293,10 @@ class BOQProcessorBlock(UniversalBlock):
             result.setdefault("source_format", "pdf")
             result["pdf_tables_total"] = page_table_count
             result["pdf_tables_used"] = len(groups[best_key])
+            # Surface dropped pages so callers can flag the BOQ total as
+            # potentially incomplete instead of silently shipping a low number.
+            result["pages_skipped"] = pages_skipped
+            result["pages_skipped_reasons"] = pages_skipped_reasons
         return result
 
     @staticmethod

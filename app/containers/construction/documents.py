@@ -1259,6 +1259,7 @@ class ConstructionDocumentsMixin:
         # priced line items the procurement pipeline can use directly.
         boq_items = []
         boq_summary = {}
+        boq_extract_error = ""
         if is_xlsx:
             boq_block = BLOCK_REGISTRY.get("boq_processor")
             if boq_block:
@@ -1273,8 +1274,22 @@ class ConstructionDocumentsMixin:
                             "currency": boq_result.get("currency", "USD"),
                             "sections": boq_result.get("sections", []),
                         }
-                except Exception:
-                    pass
+                    else:
+                        # Non-success result — capture so the panel can show
+                        # a real reason instead of "BOQ loaded" with 0 items.
+                        boq_extract_error = (
+                            boq_result.get("error")
+                            or f"BOQ processor returned status={boq_result.get('status')!r}"
+                        )
+                        logger.warning(
+                            "documents: boq_processor returned non-success for %s: %s",
+                            file_path, boq_extract_error,
+                        )
+                except Exception as exc:
+                    logger.exception(
+                        "documents: boq_processor.execute raised for %s", file_path,
+                    )
+                    boq_extract_error = f"BOQ extraction failed: {exc}"
 
         # Heuristic doc_type: schedule/contract/specification/drawing based on
         # filename and parsed content (consistent with _classify_document).
@@ -1323,6 +1338,10 @@ class ConstructionDocumentsMixin:
             "quantities": quantities,
             "boq_summary": boq_summary,
             "boq_items": boq_items,
+            # Empty string when no error; populated with the failure reason
+            # so callers can surface "Failed to read: ..." in the BOQ panel
+            # instead of rendering an empty "BOQ loaded" panel.
+            "boq_extract_error": boq_extract_error,
             "risks": risks,
             "specifications": [r for r in requirements if isinstance(r, dict)][:50],
             "equipment_specs": equipment_specs,
@@ -1574,8 +1593,15 @@ class ConstructionDocumentsMixin:
                             "preview": [list(r)[:8] for r in rows[:5]],
                         })
                     xlsx_summary["sheets"] = sheet_summaries
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Previously silent — turned a corrupt/locked .xlsx into
+                    # an empty "Schedule (Excel)" panel with no error signal.
+                    # Now surface the failure so the UI can show why.
+                    logger.warning(
+                        "auto_pipeline: openpyxl load_workbook failed for %s: %s",
+                        file_path, exc,
+                    )
+                    xlsx_summary["xlsx_error"] = f"Failed to read workbook: {exc}"
                 downstream["schedule"] = xlsx_summary
                 panels.append({
                     "type": "schedule",
