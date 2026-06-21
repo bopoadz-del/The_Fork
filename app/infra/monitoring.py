@@ -259,7 +259,14 @@ def get_observability_health_payload() -> Dict[str, Any]:
 
 
 async def observability_middleware(request: Request, call_next) -> Response:
-    """Assign/propagate request_id and emit structured access logs."""
+    """Assign/propagate request_id and emit structured access logs.
+
+    PR #98: also bumps the Prometheus request counter so the new
+    ``/metrics`` endpoint exposes survivable per-method/per-status
+    request totals (the in-memory ``block_metrics`` resets on restart
+    + per worker; this counter is the same per-process limitation but
+    is intended as the seed for cumulative scraping).
+    """
     incoming = request.headers.get("X-Request-ID", "").strip()
     rid = incoming or str(uuid.uuid4())[:12]
     token = request_id_ctx.set(rid)
@@ -268,8 +275,10 @@ async def observability_middleware(request: Request, call_next) -> Response:
     try:
         response = await call_next(request)
         response.headers["X-Request-ID"] = rid
+        _bump_prometheus_request_counter(request.method, response.status_code)
         return response
     except Exception:
+        _bump_prometheus_request_counter(request.method, 500)
         logger.exception(
             "request_failed",
             extra={
@@ -293,6 +302,31 @@ async def observability_middleware(request: Request, call_next) -> Response:
             },
         )
         request_id_ctx.reset(token)
+
+
+# ── Prometheus counter (PR #98) ───────────────────────────────────────────
+# Lazy import so the module stays importable in environments where
+# prometheus-client isn't installed (e.g. a minimal CI tier). When the
+# library is present, every request increments by (method, status).
+_PROM_REQUESTS_TOTAL = None
+
+
+def _bump_prometheus_request_counter(method: str, status: int) -> None:
+    global _PROM_REQUESTS_TOTAL
+    if _PROM_REQUESTS_TOTAL is None:
+        try:
+            from prometheus_client import Counter
+            _PROM_REQUESTS_TOTAL = Counter(
+                "the_fork_requests_total",
+                "Total HTTP requests handled by the FastAPI app",
+                ["method", "status"],
+            )
+        except Exception:
+            return
+    try:
+        _PROM_REQUESTS_TOTAL.labels(method=method, status=str(status)).inc()
+    except Exception:
+        pass
 
 
 # ── Provider monitoring block (Lego layer) ────────────────────────────────

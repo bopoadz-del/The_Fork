@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.dependencies import (
@@ -14,6 +14,24 @@ from app.routers.health import health_v1
 router = APIRouter()
 
 
+@router.get("/metrics")
+def prometheus_metrics() -> Response:
+    """Prometheus text-format exposition (PR #98).
+
+    Intentionally unauthenticated — Prometheus scrapers typically don't
+    auth, and the counters exposed here are non-sensitive request/
+    response totals (method + status label set). Sensitive operational
+    data stays behind /v1/metrics (admin-gated). When prometheus-client
+    isn't installed, returns an empty 503 so the dev environment doesn't
+    refuse to import this router.
+    """
+    try:
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    except Exception:
+        raise HTTPException(status_code=503, detail="prometheus-client not installed")
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 class RecordMetricsRequest(BaseModel):
     """Typed body for a provider-call metric. Only these fields reach the
     monitoring block — no arbitrary client dict is splatted into execute()."""
@@ -24,8 +42,16 @@ class RecordMetricsRequest(BaseModel):
 
 
 @router.get("/v1/metrics")
-def get_block_metrics():
-    """Read-only per-block execution timings (from UniversalBlock.execute)."""
+def get_block_metrics(auth: dict = Depends(require_api_key)):
+    """Per-block execution timings (from UniversalBlock.execute).
+
+    Admin-only — the snapshot exposes execution counts, latencies, and
+    error counts per block, which is operational data not safe to
+    return to anonymous callers. PR #98 added the auth gate after the
+    pilot-readiness audit flagged it. For unauthenticated scraping use
+    the Prometheus ``/metrics`` endpoint instead, which intentionally
+    exposes a narrower counter set.
+    """
     return block_metrics.snapshot()
 
 

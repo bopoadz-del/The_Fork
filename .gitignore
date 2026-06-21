@@ -73,3 +73,8 @@ claudebot/KEYS.md
 .wrangler
 .dev.vars*
 !.dev.vars.example
+
+# Dead Chroma vector DB directory (PR #98 — Chroma never wired in app/;
+# unified retriever is pgvector via app.core.rag.vector_store). Block
+# accidental re-commit of any local chroma scratch files.
+data/chroma_db/

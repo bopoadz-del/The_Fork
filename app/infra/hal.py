@@ -134,7 +134,7 @@ class HALBlock:
         """Get block recommendations based on hardware"""
         recs = {
             "chat_provider": "deepseek",  # Default to cheapest
-            "vector_backend": "chroma",   # Default
+            "vector_backend": "pgvector",  # The Fork uses Postgres pgvector
             "use_local_embeddings": False,
             "use_local_ocr": False,
             "max_concurrent_requests": 10,

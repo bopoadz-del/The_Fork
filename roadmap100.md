@@ -1,6 +1,12 @@
 # Cerebrum — Roadmap to 100% Operational
 
-_Last updated: 2026-05-04_
+> **ARCHIVED 2026-06-21.** This document describes the pre-platform
+> Cerebrum Blocks fork (28 blocks, no React frontend, no hosted
+> deploy, no agents, no RAG). The platform has since grown into
+> The Fork — see [README.md](README.md) for current state. Kept
+> here for historical reference; do not use as a current spec.
+
+_Last updated: 2026-05-04 (now archived)_
 
 ---
 
