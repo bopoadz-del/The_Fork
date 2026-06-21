@@ -54,6 +54,8 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
 
   // Drive picker state
   const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null)
+  const [driveStatusLoading, setDriveStatusLoading] = useState(false)
+  const [driveStatusError, setDriveStatusError] = useState<string | null>(null)
   const [folderQuery, setFolderQuery] = useState('')
   const [folderResults, setFolderResults] = useState<DriveFile[]>([])
   const [browsing, setBrowsing] = useState(false)
@@ -71,12 +73,28 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
   }, [onClose])
 
   // Load Drive status lazily when the user switches to the Drive tab.
+  // The driveStatusLoading flag gates the UI between three states:
+  //   * loading=true                 → "Checking Drive…" placeholder
+  //   * driveStatusError truthy      → inline error + Retry button
+  //   * driveStatus loaded           → picker OR not-connected hint
+  // Without this, a null driveStatus rendered as empty space under the
+  // "Drive folder" label (see PR D bridge test) which read as broken.
   useEffect(() => {
-    if (mode !== 'drive' || driveStatus !== null) return
-    void apiGet<DriveStatus>('/v1/drive/status')
-      .then(setDriveStatus)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Drive status check failed.'))
-  }, [mode, driveStatus])
+    if (mode !== 'drive' || driveStatus !== null || driveStatusLoading) return
+    setDriveStatusLoading(true)
+    setDriveStatusError(null)
+    apiGet<DriveStatus>('/v1/drive/status')
+      .then((s) => setDriveStatus(s))
+      .catch((err) => setDriveStatusError(
+        err instanceof Error ? err.message : 'Drive status check failed.',
+      ))
+      .finally(() => setDriveStatusLoading(false))
+  }, [mode, driveStatus, driveStatusLoading])
+
+  function retryDriveStatus() {
+    setDriveStatusError(null)
+    setDriveStatus(null)  // resets the gate so the effect fires again
+  }
 
   function handleBackdropClick(e: React.MouseEvent<HTMLDivElement>) {
     if (e.target === overlayRef.current) onClose()
@@ -224,6 +242,22 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
           {mode === 'drive' && (
             <div className="form-field">
               <label className="form-label">Drive folder</label>
+
+              {driveStatusLoading && (
+                <p className="form-hint">Checking Drive connection…</p>
+              )}
+
+              {!driveStatusLoading && driveStatusError && (
+                <p className="form-hint form-hint--alert">
+                  Could not check Drive status: {driveStatusError}{' '}
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--small"
+                    onClick={retryDriveStatus}
+                    disabled={submitting}
+                  >Retry</button>
+                </p>
+              )}
 
               {driveStatus && !driveStatus.connected && (
                 <p className="form-hint form-hint--alert">
