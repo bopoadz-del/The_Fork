@@ -73,7 +73,27 @@ async def _refresh_request(refresh_token: str) -> Dict[str, Any]:
             "grant_type": "refresh_token",
         })
     if resp.status_code != 200:
-        raise DriveAuthError(f"Token refresh failed (HTTP {resp.status_code})")
+        # Surface Google's actual reason — usually one of:
+        #   invalid_grant + "Token has been expired or revoked"  → testing-mode
+        #       7-day expiry, user revoked, password change, or 6mo unused
+        #   invalid_client                                       → wrong creds
+        # Helps the operator distinguish "publish OAuth consent screen" from
+        # "rotate credentials" without log-diving.
+        google_reason = ""
+        try:
+            body = resp.json()
+            google_reason = (
+                body.get("error_description")
+                or body.get("error")
+                or ""
+            )
+        except Exception:
+            google_reason = (resp.text or "")[:200]
+        raise DriveAuthError(
+            f"Token refresh failed (HTTP {resp.status_code}: {google_reason})"
+            if google_reason
+            else f"Token refresh failed (HTTP {resp.status_code})"
+        )
     return resp.json()
 
 
