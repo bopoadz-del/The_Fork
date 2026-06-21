@@ -58,6 +58,23 @@ class CreateProjectRequest(BaseModel):
     client: Optional[str] = None
 
 
+class CreateProjectFromDriveRequest(BaseModel):
+    """PR C — user-facing variant of approve-from-drive.
+
+    Lets any authenticated user create a personal project from a Drive
+    folder they own (not just admins from a scanned cascade). The
+    created row is owned by the calling user and stamped
+    origin='user_drive_import' so admins can distinguish it from their
+    own 'admin_drive_approved' rows and from blank 'user_create' rows.
+    """
+    folder_id: str
+    name: str
+    client: Optional[str] = None
+    max_files: int = 500
+    max_depth: int = 6
+    role: str = "other"
+
+
 class ConnectorRequest(BaseModel):
     connected: bool = True
 
@@ -82,6 +99,84 @@ async def create_project(req: CreateProjectRequest, auth: dict = Depends(require
     proj = store.create_project(name, (req.client or "").strip() or None, user_id=auth["user_id"])
     audit.record("project.created", project_id=proj["id"], name=name, user_id=auth["user_id"])
     return proj
+
+
+@router.post("/v1/projects/from-drive", status_code=201)
+async def create_project_from_drive(
+    req: CreateProjectFromDriveRequest,
+    background_tasks: BackgroundTasks,
+    auth: dict = Depends(require_user),
+):
+    """Create a user-owned project seeded from a Drive folder.
+
+    Mirrors /v1/admin/projects/approve-from-drive but:
+      * Open to any authenticated user (no admin gate).
+      * Project row is owned by the caller, not the admin.
+      * origin='user_drive_import' (not 'admin_drive_approved').
+
+    Validates Drive auth eagerly (fails fast 409 if not connected),
+    slugs the project name with a uniqueness suffix, persists the row,
+    and queues the recursive Drive folder walk as a background task —
+    the import progresses asynchronously; the response returns once
+    the row is on disk so the UI can navigate into the new project
+    immediately.
+    """
+    import re
+    from app.core import drive_auth
+    from app.routers.admin import _run_drive_folder_import
+
+    folder_id = (req.folder_id or "").strip()
+    name = (req.name or "").strip()
+    if not folder_id:
+        raise HTTPException(400, "folder_id is required")
+    if not name:
+        raise HTTPException(400, "name is required")
+
+    try:
+        await drive_auth.get_access_token(auth["user_id"])
+    except drive_auth.DriveNotConnected:
+        raise HTTPException(409, "Google Drive is not connected for your account.")
+    except drive_auth.DriveAuthError as e:
+        raise HTTPException(409, f"{e} Reconnect Google Drive.")
+
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:48] or "project"
+    if store.get_project(slug) is not None:
+        suffix = 2
+        while store.get_project(f"{slug}_{suffix}") is not None:
+            suffix += 1
+        slug = f"{slug}_{suffix}"
+
+    proj = store.create_project(
+        name=name,
+        client=(req.client or "").strip() or None,
+        user_id=auth["user_id"],
+        is_approved=True,
+        project_id=slug,
+        origin="user_drive_import",
+    )
+    audit.record(
+        "project.created_from_drive",
+        project_id=proj["id"], name=name, user_id=auth["user_id"],
+        folder_id=folder_id,
+    )
+
+    background_tasks.add_task(
+        _run_drive_folder_import,
+        project_id=slug, user_id=auth["user_id"],
+        folder_id=folder_id, max_files=req.max_files,
+        max_depth=req.max_depth, role=req.role,
+    )
+
+    return {
+        "status": "queued",
+        "project": proj,
+        "import": {
+            "folder_id": folder_id,
+            "max_files": req.max_files,
+            "max_depth": req.max_depth,
+            "role": req.role,
+        },
+    }
 
 
 @router.get("/v1/projects")
