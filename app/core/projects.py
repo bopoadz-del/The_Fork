@@ -241,12 +241,42 @@ def create_project(
     return get_project(pid)
 
 
-def list_projects(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_projects(
+    user_id: Optional[str] = None,
+    *,
+    include_admin_approved: bool = False,
+) -> List[Dict[str, Any]]:
+    """List projects.
+
+    PR D — visibility model:
+      * When ``user_id`` is None: every row (admin / internal use only).
+      * When ``user_id`` is set + ``include_admin_approved=False``: rows
+        owned by the caller only (legacy behaviour).
+      * When ``user_id`` is set + ``include_admin_approved=True``: rows
+        owned by the caller PLUS rows where origin='admin_drive_approved'
+        AND is_approved=True (the platform-wide canonical projects).
+        ``is_approved=False`` rows are hidden from non-owners regardless
+        of origin — defensive against future "detected but not yet
+        approved" rows that could otherwise leak.
+    """
+    from sqlalchemy import or_, and_
+
     _ensure_db()
     with SessionLocal() as session:
         stmt = select(Project).order_by(Project.created_at.desc())
         if user_id is not None:
-            stmt = stmt.where(Project.user_id == user_id)
+            if include_admin_approved:
+                stmt = stmt.where(
+                    or_(
+                        Project.user_id == user_id,
+                        and_(
+                            Project.origin == "admin_drive_approved",
+                            Project.is_approved.is_(True),
+                        ),
+                    )
+                )
+            else:
+                stmt = stmt.where(Project.user_id == user_id)
         rows = session.scalars(stmt).all()
     out = []
     for project in rows:
@@ -256,14 +286,32 @@ def list_projects(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     return out
 
 
-def get_project(project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def get_project(
+    project_id: str,
+    user_id: Optional[str] = None,
+    *,
+    include_admin_approved: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Load a project the caller can access.
+
+    PR D — non-owners may also read admin-approved platform projects
+    when ``include_admin_approved=True``. ``is_approved=False`` rows
+    stay owner-only regardless of origin (defensive — admins shouldn't
+    leak detected-but-pending candidates to users).
+    """
     _ensure_db()
     with SessionLocal() as session:
         project = session.get(Project, project_id)
     if not project:
         return None
     if user_id is not None and project.user_id != user_id:
-        return None
+        allowed = (
+            include_admin_approved
+            and getattr(project, "origin", "user_create") == "admin_drive_approved"
+            and bool(getattr(project, "is_approved", True))
+        )
+        if not allowed:
+            return None
     proj = _project_as_dict(project)
     proj["documents"] = list_documents(project_id)
     proj["readiness"] = compute_readiness(project_id)
