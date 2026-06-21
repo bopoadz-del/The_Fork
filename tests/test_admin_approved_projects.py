@@ -60,6 +60,23 @@ def test_create_project_with_is_approved_false():
         projects_mod.delete_project(p["id"])
 
 
+def test_project_default_origin_is_user_create(fresh_project):
+    """PR B — every project surfaces an origin; new ones default to
+    user_create so the admin page's origin='admin_drive_approved' filter
+    correctly excludes them."""
+    assert fresh_project["origin"] == "user_create"
+
+
+def test_create_project_with_explicit_origin():
+    p = projects_mod.create_project(
+        name="Drive Approved", origin="admin_drive_approved",
+    )
+    try:
+        assert p["origin"] == "admin_drive_approved"
+    finally:
+        projects_mod.delete_project(p["id"])
+
+
 def test_v1_projects_returns_is_approved(client, fresh_project):
     resp = client.get("/v1/projects")
     assert resp.status_code == 200
@@ -137,6 +154,7 @@ def test_approve_from_drive_creates_row_and_slugs_name(client, monkeypatch):
     assert project["is_approved"] is True
     assert project["user_id"] == "system"
     assert project["id"] == "dg2_infra_pack_1"
+    assert project["origin"] == "admin_drive_approved"
     try:
         projects_mod.delete_project(project["id"])
     except Exception:

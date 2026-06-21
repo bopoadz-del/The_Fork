@@ -995,6 +995,7 @@ async def admin_approve_from_drive(
         user_id=auth["user_id"],
         is_approved=True,
         project_id=slug,
+        origin="admin_drive_approved",
     )
 
     # Queue the recursive import as a background task.

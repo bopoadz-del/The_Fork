@@ -100,6 +100,14 @@ class Project(Base):
     is_approved: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=sa_text("TRUE"),
     )
+    # PR B — discriminates how the project came into being. Admin page
+    # filters on origin='admin_drive_approved' so user-created rows
+    # (chadi, bopo, etc.) don't show in the admin's approved list.
+    # Values: 'user_create' | 'admin_drive_approved' | 'user_drive_import'.
+    origin: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="user_create",
+        server_default=sa_text("'user_create'"),
+    )
 
 
 class Document(Base):

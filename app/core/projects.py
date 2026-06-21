@@ -55,6 +55,7 @@ def _project_as_dict(project: Project) -> Dict[str, Any]:
         "user_id": project.user_id,
         "created_at": project.created_at,
         "is_approved": bool(getattr(project, "is_approved", True)),
+        "origin": getattr(project, "origin", "user_create") or "user_create",
     }
 
 
@@ -117,6 +118,7 @@ def _patch_legacy_columns() -> None:
 
     Currently handles:
       * projects.is_approved (Alembic 0004)
+      * projects.origin       (Alembic 0005)
     """
     url = get_database_url()
     if not url.startswith("sqlite"):
@@ -130,6 +132,12 @@ def _patch_legacy_columns() -> None:
                 conn.execute(sqla_text(
                     "ALTER TABLE projects "
                     "ADD COLUMN is_approved BOOLEAN NOT NULL DEFAULT 1"
+                ))
+                conn.commit()
+            if "origin" not in cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE projects "
+                    "ADD COLUMN origin TEXT NOT NULL DEFAULT 'user_create'"
                 ))
                 conn.commit()
     except Exception:
@@ -193,6 +201,7 @@ def create_project(
     *,
     is_approved: bool = True,
     project_id: Optional[str] = None,
+    origin: str = "user_create",
 ) -> Dict[str, Any]:
     """Create a project row.
 
@@ -201,6 +210,11 @@ def create_project(
     True explicitly. A future "detected but pending" code path can
     pass False to create a candidate row that's hidden from the user
     rail until an admin flips it.
+
+    PR B: ``origin`` records how the row was created. The admin page
+    filters on origin='admin_drive_approved' so user-created rows
+    don't appear in the admin's approved list. Allowed values:
+    'user_create' (default), 'admin_drive_approved', 'user_drive_import'.
 
     ``project_id`` lets a caller pre-supply the id (used by the
     approve-from-Drive flow so the slug is human-friendly instead of
@@ -219,6 +233,7 @@ def create_project(
                     aconex_connected=False,
                     user_id=user_id,
                     is_approved=is_approved,
+                    origin=origin,
                     created_at=_now(),
                 )
             )
