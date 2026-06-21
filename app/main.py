@@ -203,7 +203,13 @@ from app.core import jwt_auth as _jwt_auth
 
 _RATE_LIMIT_EXEMPT_PREFIXES = ("/static", "/dashboard", "/assets")
 _RATE_LIMIT_EXEMPT_EXACT = {
-    "/", "/health", "/v1/health", "/v1/metrics", "/docs", "/redoc", "/openapi.json",
+    # PR #98: /v1/metrics removed — it returns per-block execution counts +
+    # latencies + error counts, which is operational data we should not
+    # leak to anonymous callers. /metrics (Prometheus exposition) stays in
+    # the exempt list because Prometheus scrapers typically don't auth and
+    # the counter set there is intentionally limited to non-sensitive
+    # request/response totals.
+    "/", "/health", "/v1/health", "/metrics", "/docs", "/redoc", "/openapi.json",
 }
 
 
