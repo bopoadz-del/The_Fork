@@ -1,19 +1,20 @@
-/* LeftPanel — Quarry design 2026-06-21.
- *
- * PR #103 — real projects list. Fetches /v1/projects on mount.
+/* LeftPanel — Quarry design, wired to real backend (PR #104).
  *
  * Sections, top-to-bottom:
  *   • Brand: "The Shovel"
- *   • PROJECTS — real list from /v1/projects, with the active project
- *     highlighted. Empty state when the user has none yet. "New project"
- *     link below the list deep-links to / (Projects page) where the
- *     creation modal lives.
- *   • CHAT HISTORY — empty state until per-project history wiring lands
- *     (next PR).
+ *   • PROJECTS — real list from /v1/projects, active row highlighted.
+ *   • DOCUMENTS — the active project's uploaded files. Slot-rendered
+ *     so the existing DocumentsPanel (in ProjectWorkspace) provides
+ *     upload + delete + status. Hidden when no project is active.
+ *   • CONVERSATION — what the backend actually supports: ONE per
+ *     project, addressed by ws-{projectId}. Shows message count +
+ *     Export + Clear actions wired to the existing handlers. There
+ *     is no multi-thread history API today, so the section is named
+ *     for what it is, not what it isn't.
  *   • Sign out — bottom of rail.
  */
-import { useEffect, useState } from 'react'
-import { Plus, LogOut } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Plus, LogOut, Download, RotateCcw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { apiGet, ApiError } from '../lib/api'
@@ -29,12 +30,23 @@ interface ProjectsResponse {
 }
 
 interface Props {
-  /** Active project's id — drives the highlight in the Projects list. */
+  /** Active project id — drives Projects highlight + visibility of Documents
+   *  and Conversation sections. */
   activeProjectId?: string
-  /** Active project's display name — used as a fallback first-render label
-   *  while the /v1/projects fetch is in flight so the active row never
-   *  flashes "(unknown project)". */
+  /** Active project name — used as the fallback active row while the
+   *  /v1/projects fetch is in flight. */
   activeProjectName?: string
+  /** DocumentsPanel rendered by the caller (ProjectWorkspace) so the
+   *  existing upload + delete wiring is reused. Optional: render the
+   *  Documents section only when both this and activeProjectId are set. */
+  documents?: ReactNode
+  /** Number of messages in the active conversation. Drives the "X messages"
+   *  label and gates the Export + Clear actions. */
+  messageCount?: number
+  /** Export the active conversation as a docx. */
+  onExportConversation?: () => void
+  /** Clear the active conversation server-side + reset the UI. */
+  onClearConversation?: () => void
 }
 
 type LoadState =
@@ -42,7 +54,14 @@ type LoadState =
   | { tag: 'error'; message: string }
   | { tag: 'loaded'; projects: ProjectRow[] }
 
-export default function LeftPanel({ activeProjectId, activeProjectName }: Props) {
+export default function LeftPanel({
+  activeProjectId,
+  activeProjectName,
+  documents,
+  messageCount,
+  onExportConversation,
+  onClearConversation,
+}: Props) {
   const { logout } = useAuth()
   const [state, setState] = useState<LoadState>({ tag: 'loading' })
 
@@ -67,8 +86,6 @@ export default function LeftPanel({ activeProjectId, activeProjectName }: Props)
 
   function renderProjectsBody() {
     if (state.tag === 'loading') {
-      // While loading, if we know the active project's name, show it
-      // optimistically so the rail doesn't flicker.
       if (activeProjectId && activeProjectName) {
         return (
           <ul className="left-panel__list">
@@ -82,15 +99,12 @@ export default function LeftPanel({ activeProjectId, activeProjectName }: Props)
       }
       return <p className="left-panel__empty">Loading…</p>
     }
-
     if (state.tag === 'error') {
       return <p className="left-panel__empty">Couldn't load projects.</p>
     }
-
     if (state.projects.length === 0) {
       return <p className="left-panel__empty">No projects yet.</p>
     }
-
     return (
       <ul className="left-panel__list">
         {state.projects.map((p) => {
@@ -114,6 +128,9 @@ export default function LeftPanel({ activeProjectId, activeProjectName }: Props)
     )
   }
 
+  const showDocsSection = !!activeProjectId && !!documents
+  const showConvoSection = !!activeProjectId
+
   return (
     <div className="left-panel">
       <div className="left-panel__brand">
@@ -129,10 +146,52 @@ export default function LeftPanel({ activeProjectId, activeProjectName }: Props)
         </Link>
       </section>
 
-      <section className="left-panel__section">
-        <header className="left-panel__section-head">Chat history</header>
-        <p className="left-panel__empty">No conversations yet.</p>
-      </section>
+      {showDocsSection && (
+        <section className="left-panel__section">
+          <header className="left-panel__section-head">Documents</header>
+          <div className="left-panel__slot">{documents}</div>
+        </section>
+      )}
+
+      {showConvoSection && (
+        <section className="left-panel__section">
+          <header className="left-panel__section-head">Conversation</header>
+          {messageCount && messageCount > 0 ? (
+            <>
+              <p className="left-panel__convo-summary">
+                {messageCount} message{messageCount === 1 ? '' : 's'} in the
+                current thread.
+              </p>
+              <div className="left-panel__convo-actions">
+                {onExportConversation && (
+                  <button
+                    type="button"
+                    className="left-panel__convo-btn"
+                    onClick={onExportConversation}
+                    title="Export this conversation as a .docx file"
+                  >
+                    <Download size={13} />
+                    <span>Export</span>
+                  </button>
+                )}
+                {onClearConversation && (
+                  <button
+                    type="button"
+                    className="left-panel__convo-btn left-panel__convo-btn--danger"
+                    onClick={onClearConversation}
+                    title="Clear server-side history (cannot be undone)"
+                  >
+                    <RotateCcw size={13} />
+                    <span>Clear</span>
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="left-panel__empty">No messages yet. Start the chat.</p>
+          )}
+        </section>
+      )}
 
       <div className="left-panel__footer">
         <button
