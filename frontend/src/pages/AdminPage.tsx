@@ -104,6 +104,10 @@ interface ScanResponse {
 export default function AdminPage() {
   const navigate = useNavigate()
   const { logout } = useAuth()
+  // Bumped every time a Drive folder is approved. ApprovedProjectsSection
+  // re-fetches when this changes so the new row appears without a manual
+  // Refresh click — fix for "I approved 2 and nothing showed" (PR F).
+  const [refreshKey, setRefreshKey] = useState(0)
 
   return (
     <div className="admin-page">
@@ -127,9 +131,12 @@ export default function AdminPage() {
 
         <DriveSection />
 
-        <DetectedFromDriveSection />
+        <DetectedFromDriveSection onApproved={() => setRefreshKey((k) => k + 1)} />
 
-        <ApprovedProjectsSection onPickProject={(pid) => navigate(`/projects/${pid}`)} />
+        <ApprovedProjectsSection
+          refreshKey={refreshKey}
+          onPickProject={(pid) => navigate(`/projects/${pid}`)}
+        />
 
         <footer className="admin-main__footer">
           <button
@@ -430,7 +437,7 @@ function DriveSection() {
 // in the background. The Approved projects section below then shows
 // the new row once it's created.
 
-function DetectedFromDriveSection() {
+function DetectedFromDriveSection({ onApproved }: { onApproved?: () => void }) {
   const [scan, setScan] = useState<ScanResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -438,6 +445,13 @@ function DetectedFromDriveSection() {
   const [approvedFlash, setApprovedFlash] = useState<string | null>(null)
   const [approveErrors, setApproveErrors] = useState<Record<string, string>>({})
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  // Two-step confirm: first click flips the button to "Click again to
+  // confirm" for 5s, second click within that window fires the approve.
+  // Replaces native window.confirm(), which silently no-ops if the
+  // browser throttles dialogs (the symptom from the "I approved 2 and
+  // nothing showed" report).
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [approvedIds, setApprovedIds] = useState<Set<string>>(new Set())
 
   async function load() {
     setLoading(true); setError(null)
@@ -461,11 +475,21 @@ function DetectedFromDriveSection() {
 
   useEffect(() => { void load() }, [])
 
+  function handleApproveClick(folder: ScanFolder) {
+    // First click on a folder: arm the confirm state for 5 seconds.
+    // Second click within that window: actually fire the approve.
+    if (confirmingId !== folder.folder_id) {
+      setConfirmingId(folder.folder_id)
+      window.setTimeout(() => {
+        setConfirmingId((cur) => (cur === folder.folder_id ? null : cur))
+      }, 5000)
+      return
+    }
+    setConfirmingId(null)
+    void handleApprove(folder)
+  }
+
   async function handleApprove(folder: ScanFolder) {
-    const msg = `Approve "${folder.name}" as a platform project? `
-      + `This will import the ${folder.direct_file_count} file(s) `
-      + `directly in this folder (plus subfolder contents) and index them.`
-    if (!window.confirm(msg)) return
     setApprovingId(folder.folder_id)
     setApproveErrors((p) => { const n = { ...p }; delete n[folder.folder_id]; return n })
     setApprovedFlash(null)
@@ -474,10 +498,14 @@ function DetectedFromDriveSection() {
         '/v1/admin/projects/approve-from-drive',
         { folder_id: folder.folder_id, name: folder.name },
       )
+      setApprovedIds((p) => new Set(p).add(folder.folder_id))
       setApprovedFlash(
         `Approved "${folder.name}" → project "${body.project.id}". `
-        + `Indexing runs in the background; see Approved projects below.`,
+        + `Indexing runs in the background; the row appears in Approved projects below.`,
       )
+      // Tell the parent so the Approved Projects table re-fetches and
+      // the new row appears without a manual Refresh click.
+      onApproved?.()
     } catch (err) {
       setApproveErrors((p) => ({
         ...p, [folder.folder_id]: err instanceof Error ? err.message : 'Approve failed.',
@@ -517,16 +545,29 @@ function DetectedFromDriveSection() {
               <span className="admin-file__error">{approveErrors[folder.folder_id]}</span>
             )}
             {folder.is_candidate ? (
-              <button
-                type="button"
-                className="admin-btn admin-btn--primary admin-btn--small"
-                onClick={() => void handleApprove(folder)}
-                disabled={approvingId !== null}
-              >
-                {approvingId === folder.folder_id
-                  ? 'Approving…'
-                  : <><CheckCircle2 size={13} /><span>Approve</span></>}
-              </button>
+              approvedIds.has(folder.folder_id) ? (
+                <span className="admin-tree__approved-flag">
+                  <CheckCircle2 size={13} /> Approved
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={
+                    'admin-btn admin-btn--small '
+                    + (confirmingId === folder.folder_id
+                        ? 'admin-btn--danger'
+                        : 'admin-btn--primary')
+                  }
+                  onClick={() => handleApproveClick(folder)}
+                  disabled={approvingId !== null}
+                >
+                  {approvingId === folder.folder_id
+                    ? 'Approving…'
+                    : confirmingId === folder.folder_id
+                      ? 'Click again to confirm'
+                      : <><CheckCircle2 size={13} /><span>Approve</span></>}
+                </button>
+              )
             ) : (
               <span className="admin-tree__nocand">no direct files</span>
             )}
@@ -585,7 +626,13 @@ function DetectedFromDriveSection() {
 // the platform-canonical project list. Each row exposes Re-index and
 // Delete actions.
 
-function ApprovedProjectsSection({ onPickProject }: { onPickProject: (id: string) => void }) {
+function ApprovedProjectsSection({
+  onPickProject,
+  refreshKey = 0,
+}: {
+  onPickProject: (id: string) => void
+  refreshKey?: number
+}) {
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [corpus, setCorpus] = useState<Record<string, CorpusCollection>>({})
   const [loading, setLoading] = useState(true)
@@ -613,7 +660,9 @@ function ApprovedProjectsSection({ onPickProject }: { onPickProject: (id: string
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { void load() }, [])
+  // Re-fetch when the parent bumps refreshKey (a Drive approve just
+  // landed) so the new row appears without a manual click.
+  useEffect(() => { void load() }, [refreshKey])
 
   async function handleReindex(p: ProjectRow) {
     if (!window.confirm(`Re-index "${p.name}"? This re-extracts text + rebuilds chunks for every document in this project.`)) return

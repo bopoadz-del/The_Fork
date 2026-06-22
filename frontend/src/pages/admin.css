@@ -325,6 +325,14 @@
   color: var(--text-tertiary);
   font-style: italic;
 }
+.admin-tree__approved-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: #2a6f4f;
+  font-weight: 500;
+}
 .admin-tree__children {
   list-style: none;
   margin: 0;
