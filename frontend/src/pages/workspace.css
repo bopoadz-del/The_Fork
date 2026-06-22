@@ -3,16 +3,13 @@
    Uses design tokens from index.css
    ───────────────────────────────────────────── */
 
-/* ── Workspace Shell ── */
-.workspace-shell {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-  background: var(--bg);
-  overflow: hidden;
-}
+/* ── Workspace Shell ──
+ * PR G — removed duplicate `.workspace-shell` rule that shadowed the
+ * canonical definition in layout/WorkspaceShell.css. The two used to
+ * race; whichever loaded last won, and the resulting overflow:hidden
+ * (instead of overflow:clip) let the browser scroll the shell
+ * programmatically on descendant focus — the bottom-half-white symptom.
+ * Single source of truth lives in WorkspaceShell.css now. */
 
 /* Workspace body: fills remaining height below the header */
 .workspace-body {
