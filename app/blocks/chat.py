@@ -509,9 +509,17 @@ class ChatBlock(TypedBlock):
     ) -> Dict:
         try:
             messages = self._build_messages(message, system_prompt)
+            # When OLLAMA_API_KEY is set (Ollama Cloud path) send it as
+            # a Bearer token. Self-hosted Ollama leaves the env unset
+            # and we send no auth header — preserves the legacy path.
+            headers = {}
+            api_key = os.getenv("OLLAMA_API_KEY", "").strip()
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     f"{base_url.rstrip('/')}/api/chat",
+                    headers=headers,
                     json={
                         "model": model,
                         "messages": messages,

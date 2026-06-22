@@ -433,9 +433,13 @@ def _llm_config() -> Dict[str, str]:
         Cloudflare Tunnel / Tailscale / VPS URL so the Render deploy can
         reach your self-hosted Ollama.
 
-    Ollama uses an empty ``env_key`` because the local API has no auth
-    requirement; the caller passes an empty string as the bearer token
-    and Ollama ignores it.
+    Ollama can run in two modes:
+      * Self-hosted (localhost / your tunnel) — no auth required.
+        ``env_key`` is empty so the caller skips the Bearer header.
+      * Ollama Cloud (https://ollama.com) — Bearer-token auth via
+        ``OLLAMA_API_KEY``. When that env var is set we expose env_key
+        so the downstream auth path adds the header just like Groq
+        or DeepSeek.
     """
     provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
     if not provider:
@@ -452,7 +456,7 @@ def _llm_config() -> Dict[str, str]:
         return {
             "provider": "ollama",
             "url": url,
-            "env_key": "",  # no auth
+            "env_key": "OLLAMA_API_KEY" if os.getenv("OLLAMA_API_KEY") else "",
             "default_model": os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
         }
     if provider == "groq":
@@ -902,7 +906,7 @@ class Agent:
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check entirely. The empty bearer token sent later is ignored
         # by Ollama's OAI-compatible endpoint.
-        if cfg["provider"] != "ollama":
+        if cfg["env_key"]:
             api_key = api_key or os.getenv(cfg["env_key"])
             if not api_key:
                 return {
@@ -1273,7 +1277,7 @@ class Agent:
         cfg = _llm_config()
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check. The empty bearer is ignored by Ollama's OAI endpoint.
-        if cfg["provider"] != "ollama":
+        if cfg["env_key"]:
             api_key = api_key or os.getenv(cfg["env_key"])
             if not api_key:
                 _LOG.warning("chat_stream: missing %s — yielding error", cfg["env_key"])
