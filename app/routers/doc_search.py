@@ -33,9 +33,16 @@ async def search_documents(
     and cross-tenant projects).
     """
     # Ownership check — scoped to the calling user.
-    proj = store.get_project(project_id, user_id=auth["user_id"])
+    # Document search is read-only, so admin-approved platform projects (and
+    # the master-corpus alias backed by one) are visible to non-owners.
+    proj = store.get_project(project_id, user_id=auth["user_id"], include_admin_approved=True)
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
+
+    # Pilot: resolve the master-corpus alias so search queries the backing
+    # source corpus (e.g. dar_al_arkan_master -> projects_folder). Chat already
+    # does this resolution in app.routers.agents; document search must match.
+    search_project_id = store._master_corpus_source(project_id) or project_id
 
     # Validate query
     if not q or not q.strip():
@@ -44,13 +51,13 @@ async def search_documents(
     # Clamp top_k to valid range
     top_k = max(1, min(25, top_k))
 
-    # Perform search (lazy-builds index if needed)
-    results = await doc_index.search_project_documents(project_id, q.strip(), top_k)
+    # Perform search against the resolved project id (lazy-builds index if needed)
+    results = await doc_index.search_project_documents(search_project_id, q.strip(), top_k)
 
-    # Count skipped/unsupported docs from the index (built by the search above)
+    # Count skipped/unsupported docs from the resolved index
     skipped_count = 0
     try:
-        index = doc_index._load_index(project_id)
+        index = doc_index._load_index(search_project_id)
         if index is not None:
             skipped_count = len(index.get("skipped", []))
     except Exception:

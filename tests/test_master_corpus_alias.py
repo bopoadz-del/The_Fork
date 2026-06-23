@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core import projects as projects_mod
+from app.core import users as users_mod
 from app.dependencies import require_user
 
 
@@ -204,3 +205,90 @@ def test_admin_list_keeps_incomplete_approved_shells(client):
         assert shell["id"] in ids
     finally:
         projects_mod.delete_project(shell["id"])
+
+
+# ── Alias document-search resolution ──────────────────────────────────────────
+
+
+def test_master_corpus_alias_document_search_resolves_to_source(client, monkeypatch):
+    """GET /v1/projects/{alias}/documents/search must query the source corpus."""
+    captured = {}
+
+    async def fake_search(project_id, query, top_k=5):
+        captured["project_id"] = project_id
+        captured["query"] = query
+        return [
+            {
+                "document_id": "doc-master-1",
+                "filename": "Master Budget.xlsx",
+                "snippet": "budget row",
+                "score": 0.99,
+            }
+        ]
+
+    monkeypatch.setattr(
+        "app.routers.doc_search.doc_index.search_project_documents",
+        fake_search,
+    )
+    monkeypatch.setattr("app.routers.doc_search.doc_index._load_index", lambda pid: None)
+
+    resp = client.get(
+        f"/v1/projects/{projects_mod.MASTER_CORPUS_PROJECT_ID}/documents/search",
+        params={"q": "budget", "top_k": 3},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["project_id"] == projects_mod.MASTER_CORPUS_PROJECT_ID
+    assert body["count"] == 1
+    assert captured["project_id"] == projects_mod.MASTER_CORPUS_SOURCE_PROJECT_ID
+    assert captured["query"] == "budget"
+
+
+def test_normal_project_document_search_uses_original_id(client, monkeypatch):
+    """Non-alias projects must keep using their own project_id for search."""
+    captured = {}
+
+    async def fake_search(project_id, query, top_k=5):
+        captured["project_id"] = project_id
+        return []
+
+    monkeypatch.setattr(
+        "app.routers.doc_search.doc_index.search_project_documents",
+        fake_search,
+    )
+    monkeypatch.setattr("app.routers.doc_search.doc_index._load_index", lambda pid: None)
+
+    # Create a real user so project ownership FK succeeds and the search
+    # endpoint can resolve ownership for a non-alias project.
+    user = users_mod.create_user(
+        "normal-owner@local", "password", role="user"
+    )
+
+    def fake_owner():
+        return {"user_id": user["id"], "role": "user"}
+
+    app.dependency_overrides[require_user] = fake_owner
+
+    normal = projects_mod.create_project(
+        name="Normal Project",
+        user_id=user["id"],
+    )
+    try:
+        resp = client.get(
+            f"/v1/projects/{normal['id']}/documents/search",
+            params={"q": "anything"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert captured["project_id"] == normal["id"]
+    finally:
+        projects_mod.delete_project(normal["id"])
+        # Restore admin auth for subsequent tests in this module.
+        def fake_admin():
+            return {"user_id": "pilot-admin", "role": "admin"}
+
+        app.dependency_overrides[require_user] = fake_admin
+
+
+def test_document_search_for_missing_project_returns_404(client):
+    resp = client.get("/v1/projects/does-not-exist/documents/search", params={"q": "test"})
+    assert resp.status_code == 404
