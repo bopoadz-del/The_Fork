@@ -224,3 +224,70 @@ def test_build_sources_doc_id_mismatch_falls_back(monkeypatch):
     text = "[doc_id=unknown chunk=99]"
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 2  # both chunks (only 2 injected, top-3 cap returns all)
+
+
+# ── P0A: smart-quote / inline / prose citation hardening ────────────────
+
+def test_extract_smart_quote_source_inline():
+    """Model emits Source: “File Name.xlsx”, which says..."""
+    txt = 'Source: "Diff BOQ Qty Vs Modified Qty.xlsx", which lists PVC pipe sizes.'
+    out = _extract_cited_chunk_indexes(txt)
+    assert any("Diff BOQ Qty Vs Modified Qty.xlsx" in fname for fname, _ in out)
+
+
+def test_extract_smart_quote_source_with_chunk():
+    txt = 'Source: “PRC-302_Risk Management.pdf”, chunk 8.'
+    out = _extract_cited_chunk_indexes(txt)
+    assert ("PRC-302_Risk Management.pdf", 8) in out
+
+
+def test_extract_filename_with_spaces_and_punctuation(monkeypatch):
+    """A filename containing spaces, commas (when no chunk suffix), and
+    typographic quotes still resolves to the injected chunk."""
+    audit = _make_audit([
+        {"doc_id": "d1", "chunk_index": 0, "score": 0.8},
+    ])
+    _stub_get_document(monkeypatch, "Diff BOQ Qty Vs Modified Qty.xlsx")
+
+    text = 'Source: “Diff BOQ Qty Vs Modified Qty.xlsx”, which lists PVC sizes.'
+    out = _build_sources_from_audit(audit, text)
+    assert len(out) == 1
+    assert out[0]["doc_name"] == "Diff BOQ Qty Vs Modified Qty.xlsx"
+
+
+def test_build_sources_emits_fallback_when_citation_unparseable(monkeypatch):
+    """If the model mentions a filename but the formal parser cannot map it
+    and the text does not match any injected doc_name, the top-3 retrieved
+    chunks must still be emitted so the right panel never goes empty."""
+    audit = _make_audit([
+        {"doc_id": "d1", "chunk_index": 0, "score": 0.9},
+        {"doc_id": "d2", "chunk_index": 3, "score": 0.7},
+        {"doc_id": "d3", "chunk_index": 5, "score": 0.6},
+    ])
+    _stub_get_document(monkeypatch, "Real Document.pdf")
+
+    text = "The answer is based on some external document not in the project."
+    out = _build_sources_from_audit(audit, text)
+    assert len(out) == 3
+    assert [c["page_or_section"] for c in out] == ["chunk #0", "chunk #3", "chunk #5"]
+
+
+def test_build_sources_uses_filename_mention_fallback(monkeypatch):
+    """If the model names an injected document in prose without a formal
+    citation marker, the right panel should still surface that document's
+    highest-scoring chunk."""
+    audit = _make_audit([
+        {"doc_id": "d1", "chunk_index": 0, "score": 0.9},
+        {"doc_id": "d2", "chunk_index": 3, "score": 0.7},
+    ])
+
+    def doc_lookup(did):
+        return {"original_name": "Diff BOQ Qty Vs Modified Qty.xlsx"} if did == "d1" else {"original_name": "Other.pdf"}
+
+    monkeypatch.setattr("app.core.projects.get_document", doc_lookup)
+
+    text = "The storm-water pipe sizes come from Diff BOQ Qty Vs Modified Qty.xlsx."
+    out = _build_sources_from_audit(audit, text)
+    assert len(out) == 1
+    assert out[0]["doc_name"] == "Diff BOQ Qty Vs Modified Qty.xlsx"
+    assert out[0]["page_or_section"] == "chunk #0"

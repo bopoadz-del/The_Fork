@@ -218,22 +218,35 @@ def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
     return any(p in text for p in _DELIVERABLE_PHRASES)
 
 
+# Bracketed form: [source: file.pdf, chunk 65] / [source: file.pdf, chunks 16, 34, 55]
+# Capture the entire bracket contents; _parse_source_tail extracts the
+# filename and optional chunk suffix. This lets filenames contain commas
+# without the regex engine swallowing the chunk suffix into group 1.
 _CITATION_RE = re.compile(
-    # Bracketed form: [source: file.pdf, chunk 65] / [source: file.pdf, chunks 16, 34, 55]
-    r"\[source:\s*([^\],]+?)(?:\s*,\s*chunks?\s+([\d,\s]+))?\]",
+    r"\[source:\s*(.+?)\s*\]",
     re.IGNORECASE,
 )
 
 # Bracketless line form gpt-oss-style models also emit:
 #   Source: PRC-406_HSE.pdf, chunk 65.
 #   Sources: PRC-406_HSE.pdf, chunks 16, 34, 55.
-# Anchor on start-of-line or newline + "Source[s]:" prefix; stop at the
-# first period / newline / end-of-string so we don't swallow following
-# prose. Filename can contain dots (the .pdf extension); we accept any
-# char that isn't a comma, newline, or BRACKET, then strip the
-# trailing period below.
+#   Source: “Diff BOQ Qty Vs Modified Qty.xlsx”, which lists ...
+# Anchor on start-of-line or newline + "Source[s]:" prefix; capture the
+# rest of the line up to a sentence terminator. The post-capture parsing
+# strips quotes and extracts an optional ", chunk(s) ..." suffix.
 _CITATION_LINE_RE = re.compile(
-    r"(?:^|\n)\s*Sources?:\s*([^,\n\[\]]+?)(?:\s*,\s*chunks?\s+([\d,\s]+?))?\s*(?:\.\s*(?:\n|$)|\n|$)",
+    r"(?:^|\n)\s*Sources?:\s*(.+?)(?=\.\s*(?:\n|$)|\n|$)",
+    re.IGNORECASE,
+)
+
+# Quoted inline source mention (smart or straight quotes):
+#   Source: “File Name.xlsx”, ...
+#   Source: "File Name.xlsx", ...
+#   Source: 'File Name.xlsx', ...
+_CITATION_QUOTED_RE = re.compile(
+    r"(?:^|\n|\s)Sources?:\s*([\"'“""])"""  # opening quote
+    r"([^\"'”'\"\n]+?)"""
+    r"\1""",
     re.IGNORECASE,
 )
 
@@ -251,10 +264,9 @@ _CITATION_DOCID_RE = re.compile(
 def _normalise_filename(s: str) -> str:
     """Normalize source filenames for cite-vs-chunk matching.
 
-    The model sometimes rewrites filenames with Unicode dashes
-    (en-dash, em-dash) or extra whitespace. Normalize both sides
-    before comparing so 'PRC-406_HSE…' (chunk text) matches
-    'PRC‑406_HSE…' (model output)."""
+    Handles Unicode dashes, typographic quotes, surrounding whitespace,
+    and trailing punctuation so the model's rewritten filenames still
+    resolve to the stored original_name."""
     return (
         (s or "")
         .replace("‐", "-")  # hyphen
@@ -263,9 +275,48 @@ def _normalise_filename(s: str) -> str:
         .replace("–", "-")  # en dash
         .replace("—", "-")  # em dash
         .replace("−", "-")  # minus
-        .strip()
+        .replace("“", "\"")
+        .replace("”", "\"")
+        .replace("‘", "'")
+        .replace("’", "'")
+        .strip(" \"'\n\t.")
         .lower()
     )
+
+
+def _strip_source_quotes(s: str) -> str:
+    """Remove matching surrounding quotes (smart/straight)."""
+    s = s.strip()
+    for open_q, close_q in (("“", "”"), ('"', '"'), ("'", "'"), ("‘", "'")):
+        if s.startswith(open_q) and s.endswith(close_q):
+            return s[1:-1].strip()
+    return s
+
+
+def _parse_source_tail(tail: str) -> Tuple[str, str]:
+    """Split a source mention into filename and optional chunk-number blob.
+
+    Examples:
+      "File.xlsx, chunk 8"        -> ("File.xlsx", "8")
+      "File.xlsx, chunks 1, 2"    -> ("File.xlsx", "1, 2")
+      "File.xlsx, which says..."  -> ("File.xlsx", "")
+      "File.xlsx"                 -> ("File.xlsx", "")
+    """
+    tail = tail.strip()
+    # Try to peel a trailing ", chunk(s) ..." suffix.
+    chunk_suffix = re.search(r",\s*chunks?\s+([\d,\s]+)$", tail, re.IGNORECASE)
+    if chunk_suffix:
+        fname = tail[: chunk_suffix.start()].strip()
+        return _strip_source_quotes(fname), chunk_suffix.group(1)
+    # No chunk suffix. Trim any trailing prose clause after a comma.
+    if "," in tail:
+        # Heuristic: the first comma followed by a lowercase/prose word marks
+        # the start of a clause (", which lists..."). Keep only the filename.
+        idx = tail.find(",")
+        rest = tail[idx + 1 :].lstrip()
+        if rest and (rest[0].islower() or rest.startswith("which") or rest.startswith("found") or rest.startswith("see")):
+            tail = tail[:idx].strip()
+    return _strip_source_quotes(tail), ""
 
 
 def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
@@ -274,7 +325,9 @@ def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
     Recognised patterns (case-insensitive):
       [source: filename.pdf, chunk 65]
       [source: filename.pdf, chunks 16, 34, 55]
-      [source: filename.pdf]  (no chunk → filename-only match)
+      Source: filename.pdf, chunk 65.
+      Source: “filename.pdf”, which ...
+      [doc_id=abc123, chunk 4]
 
     Returns a list of pairs; chunk_index is -1 when the cite didn't
     include a chunk number.
@@ -282,27 +335,37 @@ def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
     if not text:
         return []
     out: List[Tuple[str, int]] = []
-    # Two filename-keyed regexes — bracketed [source: ...] + bracketless
-    # "Source: ..." line-prefix.
-    for regex in (_CITATION_RE, _CITATION_LINE_RE):
-        for m in regex.finditer(text):
-            fname = m.group(1).strip().rstrip(".")
-            nums_blob = m.group(2) or ""
-            if not nums_blob.strip():
-                out.append((fname, -1))
-                continue
+
+    for m in _CITATION_RE.finditer(text):
+        fname, nums_blob = _parse_source_tail(m.group(1))
+        if not nums_blob.strip():
+            out.append((fname, -1))
+        else:
             for piece in nums_blob.split(","):
                 piece = piece.strip()
                 if piece.isdigit():
                     out.append((fname, int(piece)))
-    # doc_id-keyed regex — gpt-oss emits [doc_id=X chunk=N score=Y] when
-    # being technical. We capture (doc_id-as-filename-token, chunk_index)
-    # — the doc_id will be looked up against the injected chunks'
-    # doc_id field directly, bypassing the filename match.
+
+    for m in _CITATION_LINE_RE.finditer(text):
+        fname, nums_blob = _parse_source_tail(m.group(1))
+        if not nums_blob.strip():
+            out.append((fname, -1))
+        else:
+            for piece in nums_blob.split(","):
+                piece = piece.strip()
+                if piece.isdigit():
+                    out.append((fname, int(piece)))
+
+    for m in _CITATION_QUOTED_RE.finditer(text):
+        fname = m.group(2).strip()
+        if fname:
+            out.append((fname, -1))
+
     for m in _CITATION_DOCID_RE.finditer(text):
         doc_id = m.group(1).strip()
         chunk_idx = int(m.group(2))
         out.append((doc_id, chunk_idx))
+
     return out
 
 
@@ -395,7 +458,25 @@ def _build_sources_from_audit(
         if matched:
             return matched
 
-    # 2) Fallback: top-3 retrieved chunks by score.
+    # 2) Filename-mention fallback: the model may have named a source in
+    #    prose without a formal citation marker. If any injected filename
+    #    appears in the answer, surface the highest-scoring chunk of that
+    #    document.
+    if final_text:
+        text_n = _normalise_filename(final_text)
+        mention_hits: List[Dict[str, Any]] = []
+        seen_mentions: set = set()
+        for c in sorted(chunks, key=lambda x: -(x.get("score") or 0)):
+            doc_id = c.get("doc_id")
+            name = _doc_name(doc_id)
+            name_n = _normalise_filename(name)
+            if name_n and name_n in text_n and doc_id not in seen_mentions:
+                seen_mentions.add(doc_id)
+                mention_hits.append(_format(c, name))
+        if mention_hits:
+            return mention_hits[:3]
+
+    # 3) Final fallback: top-3 retrieved chunks by score.
     by_score = sorted(chunks, key=lambda c: -(c.get("score") or 0))[:3]
     return [_format(c, _doc_name(c["doc_id"])) for c in by_score]
 
@@ -940,9 +1021,10 @@ class Agent:
         effective_history = _scrub_history(effective_history)
 
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
-        # Pre-iter-0 RAG injection. project-assistant only; returns None for
-        # other agents or when project_id is absent. Adds a system message
-        # AFTER the prompt + project context but BEFORE the latest user turn.
+        # Pre-iter-0 RAG injection. Runs for any project-scoped turn so that
+        # routing to heavy-reasoning (or another agent) does not strip project
+        # grounding. Adds a system message AFTER the prompt + project context
+        # but BEFORE the latest user turn.
         _rag_sys_msg, _rag_audit = rag_inject(
             user_message=user_message,
             project_id=project_id,
@@ -1310,9 +1392,10 @@ class Agent:
         effective_history = _scrub_history(effective_history)
 
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
-        # Pre-iter-0 RAG injection. project-assistant only; returns None for
-        # other agents or when project_id is absent. Adds a system message
-        # AFTER the prompt + project context but BEFORE the latest user turn.
+        # Pre-iter-0 RAG injection. Runs for any project-scoped turn so that
+        # routing to heavy-reasoning (or another agent) does not strip project
+        # grounding. Adds a system message AFTER the prompt + project context
+        # but BEFORE the latest user turn.
         _rag_sys_msg, _rag_audit = rag_inject(
             user_message=user_message,
             project_id=project_id,
@@ -1535,7 +1618,7 @@ class Agent:
             return None
         if not (original_text or "").strip():
             return None
-        # Only project-assistant gets RAG injection (see rag_inject:96).
+        # RAG injection is now project-driven (see rag_inject: project_id guard).
         # On any other agent the reverse-scan below would pick up the
         # agent-identity prompt or project context and "ground" the
         # answer in that — wrong by construction. Skip rewrite entirely.

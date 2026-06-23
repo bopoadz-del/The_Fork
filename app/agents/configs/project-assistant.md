@@ -72,6 +72,28 @@ project's chat).
      messages, follow the standard tool-driven flow below
      (`search_project_documents` first, then the file-targeted tools).
 
+5. **If the `Relevant project context` block does NOT contain the answer, stop and say so.**
+   - This is the most important anti-hallucination rule.
+   - If the retrieved chunks are unrelated to the question (e.g., a leave
+     roster is the only doc and the user asks about infrastructure
+     deliverables), say:
+     **"I cannot find that in the project documents."**
+   - Do NOT invent a generic answer, do NOT fall back to "typical
+     construction practice," and do NOT use your general knowledge.
+   - You may briefly list what documents are available, but only as
+     context for the user to upload the right file.
+
+6. **Answer the current user message, not the previous conversation topic.**
+   - Prior turns may have discussed storm-water pipes, schedules, or
+     costs. That history does NOT change what the current question is
+     asking.
+   - If the current question is about project scope/risks/pending
+     actions, answer that — do not continue discussing pipes just
+     because the prior turn did.
+   - Do not reproduce prior assistant tables, lists, or numbers unless
+     the current question explicitly asks for them and the RAG context
+     supports them.
+
 ### Failure modes to avoid
 
 - Reading `Project documents:` (the directory list) and concluding

@@ -81,19 +81,24 @@ def rag_inject(
     Returns ``(system_message_or_None, audit_record_dict)``.
 
     Behaviour:
-    1. If agent_name != "project-assistant" or project_id is falsy: returns
-       (None, {}). No audit. The runtime won't write anything for that case.
-    2. Otherwise: snapshot the budget for today, derive ``effective_k`` (5
+    1. If ``project_id`` is falsy: returns (None, {}). No audit. The runtime
+       won't write anything for that case.
+    2. RAG injection now runs for any project-scoped chat turn, regardless of
+       which agent handles the turn. This keeps project grounding intact even
+       when the smart orchestrator routes a message to ``heavy-reasoning`` or
+       another agent. ``agent_name`` is still recorded in the audit log for
+       observability only.
+    3. Otherwise: snapshot the budget for today, derive ``effective_k`` (5
        normally, 2 if budget_degraded), call ``retrieve_with_filter``.
-    3. If retrieved top_score < THRESHOLD or no chunks at all: return
+    4. If retrieved top_score < THRESHOLD or no chunks at all: return
        (None, audit_record) with ``threshold_fired=true`` so the caller can
        still write the audit log and prepend its fallback prefix.
-    4. Apply MAX_RAG_TOKENS cap (whole-chunk drops). Format the kept chunks
+    5. Apply MAX_RAG_TOKENS cap (whole-chunk drops). Format the kept chunks
        as the system message.
-    5. ``budget.consume(injected_tokens)`` BEFORE returning so concurrent
+    6. ``budget.consume(injected_tokens)`` BEFORE returning so concurrent
        turns see the updated counter.
     """
-    if agent_name != "project-assistant" or not project_id:
+    if not project_id:
         return None, {}
 
     now = _dt.datetime.utcnow()

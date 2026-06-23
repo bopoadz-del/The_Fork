@@ -412,9 +412,23 @@ def test_rag_inject_degrades_to_k2_when_budget_exhausted(monkeypatch, tmp_path):
     assert audit_rec["budget_degraded"] is True
 
 
-def test_rag_inject_skips_for_non_project_assistant_agent(monkeypatch, tmp_path):
+def test_rag_inject_runs_for_any_agent_when_project_id_present(monkeypatch, tmp_path):
+    """RAG injection is project-driven, not agent-driven. Even when the
+    smart orchestrator routes a project-scoped turn to heavy-reasoning,
+    the project context must still be injected."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
+
+    def fake_retrieve(query, project_id, k):
+        from app.core.rag.vector_store import Chunk
+        return ([
+            Chunk(chunk_id="c1", project_id=project_id, doc_id="d1",
+                  chunk_index=0, text="strong match content", score=0.80),
+        ], 0)
+
+    monkeypatch.setattr("app.core.rag.inject.retrieve_with_filter", fake_retrieve)
     from app.core.rag.inject import rag_inject
+
     sys_msg, audit_rec = rag_inject(
         user_message="hi",
         project_id="p1",
@@ -422,8 +436,11 @@ def test_rag_inject_skips_for_non_project_assistant_agent(monkeypatch, tmp_path)
         user_id="u1",
         agent_name="heavy-reasoning",
     )
-    assert sys_msg is None
-    assert audit_rec == {}
+    assert sys_msg is not None
+    assert sys_msg["role"] == "system"
+    assert "strong match" in sys_msg["content"]
+    assert audit_rec["project_id"] == "p1"
+    assert audit_rec["agent_name"] == "heavy-reasoning"
 
 
 def test_rag_inject_skips_when_project_id_missing(monkeypatch, tmp_path):
