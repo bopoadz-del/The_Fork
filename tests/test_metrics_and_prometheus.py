@@ -47,6 +47,18 @@ def test_v1_metrics_returns_snapshot_for_admin(client):
     assert isinstance(body, dict)  # snapshot shape — keyed by block name
 
 
+def test_v1_metrics_rejects_non_admin(client):
+    """Authenticated non-admin users must not access /v1/metrics."""
+    app.dependency_overrides[require_api_key] = lambda: {
+        "user_id": "test-user", "role": "user",
+    }
+    try:
+        resp = client.get("/v1/metrics")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 403
+
+
 def test_prometheus_endpoint_returns_text_format(client):
     """/metrics returns Prometheus text format with the right content type."""
     # First hit something that goes through the middleware so the counter

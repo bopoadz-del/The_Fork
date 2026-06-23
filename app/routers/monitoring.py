@@ -52,6 +52,8 @@ def get_block_metrics(auth: dict = Depends(require_api_key)):
     the Prometheus ``/metrics`` endpoint instead, which intentionally
     exposes a narrower counter set.
     """
+    if auth.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     return block_metrics.snapshot()
 
 

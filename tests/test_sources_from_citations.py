@@ -59,6 +59,14 @@ def _make_audit(chunks: list[dict]) -> dict:
     return {"chunks": chunks}
 
 
+def _stub_get_document(monkeypatch, original_name: str) -> None:
+    """Stub app.core.projects.get_document without relying on sys.modules."""
+    monkeypatch.setattr(
+        "app.core.projects.get_document",
+        lambda did: {"original_name": original_name},
+    )
+
+
 def test_build_sources_uses_cited_chunks_when_present(monkeypatch):
     """When the agent's text cites a specific chunk, the Sources list
     returns THAT chunk, not the top-3 by score."""
@@ -69,12 +77,7 @@ def test_build_sources_uses_cited_chunks_when_present(monkeypatch):
         {"doc_id": "d1", "chunk_index": 65, "score": 0.69},  # the actually-cited one
     ])
     # Stub the doc-name lookup so we don't need a real DB.
-    import app.agents.runtime as rt
-    import sys, types
-    fake_projects = types.SimpleNamespace(
-        get_document=lambda did: {"original_name": "PRC-406_HSE.pdf"},
-    )
-    monkeypatch.setitem(sys.modules, "app.core.projects", fake_projects)
+    _stub_get_document(monkeypatch, "PRC-406_HSE.pdf")
 
     text = "Per the procedure [source: PRC-406_HSE.pdf, chunk 65]."
     out = _build_sources_from_audit(audit, text)
@@ -95,9 +98,7 @@ def test_build_sources_falls_back_when_no_citations(monkeypatch):
         {"doc_id": "d1", "chunk_index": 18, "score": 0.77},
         {"doc_id": "d1", "chunk_index": 65, "score": 0.69},
     ])
-    import sys, types
-    monkeypatch.setitem(sys.modules, "app.core.projects",
-                        types.SimpleNamespace(get_document=lambda did: {"original_name": "x.pdf"}))
+    _stub_get_document(monkeypatch, "x.pdf")
 
     out = _build_sources_from_audit(audit, "answer with no citations")
     assert len(out) == 3
@@ -111,9 +112,7 @@ def test_build_sources_falls_back_when_citation_doesnt_match(monkeypatch):
     audit = _make_audit([
         {"doc_id": "d1", "chunk_index": 0, "score": 0.78},
     ])
-    import sys, types
-    monkeypatch.setitem(sys.modules, "app.core.projects",
-                        types.SimpleNamespace(get_document=lambda did: {"original_name": "x.pdf"}))
+    _stub_get_document(monkeypatch, "x.pdf")
 
     out = _build_sources_from_audit(audit, "see [source: other.pdf, chunk 99]")
     # Citation didn't match any injected chunk → fall back
@@ -127,9 +126,7 @@ def test_build_sources_unicode_dash_matches(monkeypatch):
     audit = _make_audit([
         {"doc_id": "d1", "chunk_index": 65, "score": 0.69},
     ])
-    import sys, types
-    monkeypatch.setitem(sys.modules, "app.core.projects",
-                        types.SimpleNamespace(get_document=lambda did: {"original_name": "PRC-406_HSE.pdf"}))
+    _stub_get_document(monkeypatch, "PRC-406_HSE.pdf")
 
     text = "see [source: PRC‑406_HSE.pdf, chunk 65]"  # NBH
     out = _build_sources_from_audit(audit, text)
@@ -174,9 +171,7 @@ def test_build_sources_uses_bracketless_citation(monkeypatch):
         {"doc_id": "d1", "chunk_index": 0,  "score": 0.78},
         {"doc_id": "d1", "chunk_index": 65, "score": 0.69},
     ])
-    import sys, types
-    monkeypatch.setitem(sys.modules, "app.core.projects",
-                        types.SimpleNamespace(get_document=lambda did: {"original_name": "PRC-406_HSE.pdf"}))
+    _stub_get_document(monkeypatch, "PRC-406_HSE.pdf")
 
     text = "Answer body.\nSource: PRC-406_HSE.pdf, chunk 65."
     out = _build_sources_from_audit(audit, text)
@@ -209,9 +204,7 @@ def test_build_sources_uses_doc_id_citation(monkeypatch):
         {"doc_id": "3496d239", "chunk_index": 4,  "score": 0.74},
         {"doc_id": "3496d239", "chunk_index": 65, "score": 0.69},
     ])
-    import sys, types
-    monkeypatch.setitem(sys.modules, "app.core.projects",
-                        types.SimpleNamespace(get_document=lambda did: {"original_name": "PRC-406_HSE.pdf"}))
+    _stub_get_document(monkeypatch, "PRC-406_HSE.pdf")
 
     text = "Per the procedure [doc_id=3496d239, chunk 65, score 0.697]."
     out = _build_sources_from_audit(audit, text)
@@ -226,9 +219,7 @@ def test_build_sources_doc_id_mismatch_falls_back(monkeypatch):
         {"doc_id": "a", "chunk_index": 1, "score": 0.5},
         {"doc_id": "a", "chunk_index": 2, "score": 0.6},
     ])
-    import sys, types
-    monkeypatch.setitem(sys.modules, "app.core.projects",
-                        types.SimpleNamespace(get_document=lambda did: {"original_name": "x.pdf"}))
+    _stub_get_document(monkeypatch, "x.pdf")
 
     text = "[doc_id=unknown chunk=99]"
     out = _build_sources_from_audit(audit, text)
