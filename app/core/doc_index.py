@@ -525,22 +525,14 @@ def _load_index(project_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _write_index(project_id: str, data: Dict[str, Any]) -> None:
-    """Replace the stored index for ``project_id`` (a full-rebuild write)."""
-    with _INDEX_LOCK:
-        _ensure_db()
-        now = _now()
-        with SessionLocal() as session:
-            _ensure_project_row(project_id, session)
-            row = session.get(DocIndex, project_id)
-            if row is None:
-                session.add(
-                    DocIndex(project_id=project_id, index_json=data, updated_at=now)
-                )
-            else:
-                row.index_json = data
-                row.updated_at = now
-                flag_modified(row, "index_json")
-            session.commit()
+    """Replace the stored index for ``project_id`` (a full-rebuild write).
+
+    Reuses ``_update_index`` so the full-rebuild path gets the same
+    cross-process serialization as incremental updates:
+    - SQLite: BEGIN IMMEDIATE
+    - Postgres: pg_advisory_xact_lock + SELECT FOR UPDATE
+    """
+    _update_index(project_id, lambda _current: data)
 
 
 def _apply_index_mutation(

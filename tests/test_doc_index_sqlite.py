@@ -116,6 +116,40 @@ def test_concurrent_updates_do_not_lose_entries(tmp_path, monkeypatch):
     assert got == sorted(f"d{i}" for i in range(8)), got
 
 
+def test_concurrent_full_rebuilds_serialise(tmp_path, monkeypatch):
+    """8 threads each replace the whole index concurrently — no crash or
+    torn write.  _write_index now delegates to _update_index, so this
+    exercises the same cross-process/cross-transaction serialization as
+    incremental updates (BEGIN IMMEDIATE on SQLite, advisory lock on Postgres).
+    """
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    def _rebuild(doc_id):
+        doc_index._write_index(
+            "p-rebuild",
+            {
+                "project_id": "p-rebuild",
+                "documents": [{"document_id": doc_id}],
+                "skipped": [],
+            },
+        )
+
+    threads = [threading.Thread(target=_rebuild, args=(f"d{i}",)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    idx = doc_index._load_index("p-rebuild")
+    assert idx is not None, "concurrent full rebuilds produced no index row"
+    # Each _write_index replaces the whole index, so the final state must be
+    # one complete write, not a torn mix of partial writes.
+    assert len(idx["documents"]) == 1, (
+        f"concurrent full rebuilds produced a torn index: {idx['documents']}"
+    )
+    assert idx["documents"][0]["document_id"].startswith("d")
+
+
 def test_cross_process_concurrent_writes_serialise(tmp_path, monkeypatch):
     """8 SUBPROCESSES each append one document concurrently — none is lost.
 
