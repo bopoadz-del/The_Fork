@@ -42,11 +42,17 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
       a stored row with NO ``project_id`` has no ownership binding → 404; a
       non-existent row is allowed (ad-hoc API conversation).
 
+    Pilot: the master-corpus alias is treated as an admin-approved platform
+    project for conversation access.
+
     Raises HTTPException(404) when access is denied.
     """
     if conversation_id.startswith(_WS_PREFIX):
         project_id = conversation_id[len(_WS_PREFIX):]
-        if store.get_project(project_id, user_id=auth["user_id"]) is None:
+        include_admin = project_id == store.MASTER_CORPUS_PROJECT_ID
+        if store.get_project(
+            project_id, user_id=auth["user_id"], include_admin_approved=include_admin
+        ) is None:
             raise HTTPException(404, "Conversation not found")
         return
 
@@ -140,8 +146,17 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     if req.conversation_id is not None:
         _enforce_conversation_access(req.conversation_id, auth)
 
+    # Pilot: resolve the master-corpus alias to its backing source corpus so
+    # retrieval and storage use the existing full-drive index without
+    # re-importing anything. The conversation id stays ``ws-{alias}``.
+    resolved_project_id = req.project_id
+    if req.project_id == store.MASTER_CORPUS_PROJECT_ID:
+        resolved_project_id = store.MASTER_CORPUS_SOURCE_PROJECT_ID
+
     # Defense in depth: if a project_id is provided, the caller must own it.
-    if req.project_id is not None:
+    # For the master-corpus alias, conversation access already gates the turn
+    # and the source corpus belongs to the system user.
+    if req.project_id is not None and req.project_id != store.MASTER_CORPUS_PROJECT_ID:
         project = store.get_project(req.project_id, user_id=auth["user_id"])
         if project is None:
             raise HTTPException(404, "Project not found")
@@ -162,7 +177,7 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     result = await agent.chat(
         req.message,
         history=req.history,
-        project_id=req.project_id,
+        project_id=resolved_project_id,
         conversation_id=req.conversation_id,
         user_id=auth["user_id"],
     )
@@ -203,13 +218,19 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
         _enforce_conversation_access(conversation_id, auth)
 
     # Defense in depth: if a project_id is provided, the caller must own it.
-    if project_id is not None:
+    # The master-corpus alias is gated by conversation access above.
+    if project_id is not None and project_id != store.MASTER_CORPUS_PROJECT_ID:
         project = store.get_project(project_id, user_id=auth["user_id"])
         if project is None:
             raise HTTPException(404, "Project not found")
 
     if model:
         agent = _agent_with_override(agent, model=model)
+
+    # Pilot: resolve the master-corpus alias to its backing source corpus.
+    resolved_project_id = project_id
+    if project_id == store.MASTER_CORPUS_PROJECT_ID:
+        resolved_project_id = store.MASTER_CORPUS_SOURCE_PROJECT_ID
 
     # PR #78 — smart_orchestrator routing gate. See agent_chat above for the
     # full design rationale. Run BEFORE we enter the StreamingResponse so the
@@ -228,7 +249,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
             async for evt in agent.chat_stream(
                 message,
                 history=history,
-                project_id=project_id,
+                project_id=resolved_project_id,
                 conversation_id=conversation_id,
                 user_id=auth["user_id"],
                 rag_debug=rag_debug,

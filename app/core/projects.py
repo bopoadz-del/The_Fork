@@ -22,6 +22,25 @@ from sqlalchemy import delete, select, text as sqla_text
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.models import Document, Project, ProjectFact
 
+# ── pilot master-corpus alias ───────────────────────────────────────────────
+# Per-project Drive approval/indexing is not pilot-ready. Expose the existing
+# full-drive corpus (currently stored under project_id "projects_folder") as a
+# single admin-visible pilot project without duplicating chunks or re-importing
+# Drive. This is a temporary alias; proper per-project trees come post-pilot.
+MASTER_CORPUS_PROJECT_ID = os.getenv("MASTER_CORPUS_PROJECT_ID", "dar_al_arkan_master")
+MASTER_CORPUS_SOURCE_PROJECT_ID = os.getenv(
+    "MASTER_CORPUS_SOURCE_PROJECT_ID", "projects_folder"
+)
+MASTER_CORPUS_NAME = os.getenv("MASTER_CORPUS_NAME", "Dar Al Arkan Master Corpus")
+
+
+def _master_corpus_source(project_id: Optional[str]) -> Optional[str]:
+    """Return the backing project_id for a master-corpus alias, if any."""
+    if project_id == MASTER_CORPUS_PROJECT_ID:
+        return MASTER_CORPUS_SOURCE_PROJECT_ID
+    return None
+
+
 # ── document roles that feed the readiness gate ─────────────────────────────
 ROLE_BASELINE = "baseline_schedule"
 ROLE_DAILY = "daily_report"
@@ -258,6 +277,9 @@ def list_projects(
         ``is_approved=False`` rows are hidden from non-owners regardless
         of origin — defensive against future "detected but not yet
         approved" rows that could otherwise leak.
+
+    Pilot: if the master-corpus source project is visible to the caller,
+    the virtual ``dar_al_arkan_master`` alias is appended to the list.
     """
     from sqlalchemy import or_, and_
 
@@ -283,6 +305,16 @@ def list_projects(
         p = _project_as_dict(project)
         p["readiness"] = compute_readiness(p["id"])
         out.append(p)
+
+    # Expose the pilot master-corpus alias when the backing corpus is visible.
+    master = get_project(
+        MASTER_CORPUS_PROJECT_ID,
+        user_id=user_id,
+        include_admin_approved=include_admin_approved,
+    )
+    if master is not None:
+        out.append(master)
+
     return out
 
 
@@ -298,23 +330,44 @@ def get_project(
     when ``include_admin_approved=True``. ``is_approved=False`` rows
     stay owner-only regardless of origin (defensive — admins shouldn't
     leak detected-but-pending candidates to users).
+
+    Pilot: a virtual master-corpus project (default ``dar_al_arkan_master``)
+    is backed by the existing full-drive corpus (default ``projects_folder``).
+    It appears as a first-class project without duplicating chunks.
     """
     _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
     with SessionLocal() as session:
-        project = session.get(Project, project_id)
+        project = session.get(Project, source_id)
     if not project:
         return None
+    is_alias = source_id != project_id
     if user_id is not None and project.user_id != user_id:
-        allowed = (
-            include_admin_approved
-            and getattr(project, "origin", "user_create") == "admin_drive_approved"
-            and bool(getattr(project, "is_approved", True))
-        )
+        if is_alias:
+            # The master-corpus alias is treated as an admin-approved platform
+            # project: visible to any authenticated user when the caller asks
+            # for platform projects, otherwise owner-only.
+            allowed = include_admin_approved and bool(
+                getattr(project, "is_approved", True)
+            )
+        else:
+            allowed = (
+                include_admin_approved
+                and getattr(project, "origin", "user_create") == "admin_drive_approved"
+                and bool(getattr(project, "is_approved", True))
+            )
         if not allowed:
             return None
     proj = _project_as_dict(project)
-    proj["documents"] = list_documents(project_id)
-    proj["readiness"] = compute_readiness(project_id)
+    # Virtual master-corpus project: expose alias id/name but keep the source
+    # corpus behind it.
+    if source_id != project_id:
+        proj["id"] = project_id
+        proj["name"] = MASTER_CORPUS_NAME
+        proj["origin"] = "admin_drive_approved"
+        proj["is_approved"] = True
+    proj["documents"] = list_documents(source_id)
+    proj["readiness"] = compute_readiness(source_id)
     return proj
 
 
@@ -416,10 +469,11 @@ def find_document_by_sha(
 
 def list_documents(project_id: str) -> List[Dict[str, Any]]:
     _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
     with SessionLocal() as session:
         rows = session.scalars(
             select(Document)
-            .where(Document.project_id == project_id)
+            .where(Document.project_id == source_id)
             .order_by(Document.uploaded_at)
         ).all()
     return [_document_as_dict(document) for document in rows]
@@ -489,10 +543,11 @@ def purge_documents_older_than(days: int) -> List[Dict[str, Any]]:
 def compute_readiness(project_id: str) -> Dict[str, Any]:
     """A project is 'ready' for progress tracking only once it has a baseline
     schedule, at least one daily and one weekly report, and Aconex connected."""
-    docs = list_documents(project_id)
+    source_id = _master_corpus_source(project_id) or project_id
+    docs = list_documents(source_id)
     roles = [d["doc_role"] for d in docs]
     with SessionLocal() as session:
-        project = session.get(Project, project_id)
+        project = session.get(Project, source_id)
     aconex = bool(project.aconex_connected) if project else False
 
     baseline = ROLE_BASELINE in roles
