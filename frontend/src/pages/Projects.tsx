@@ -110,11 +110,21 @@ export default function Projects() {
         )}
 
         {state.tag === 'loaded' && state.projects.length > 0 && (
-          <div className="projects-grid">
-            {state.projects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
-            ))}
-          </div>
+          <>
+            {state.projects.some((p) => p.is_master_corpus) && (
+              <div className="pilot-banner" role="note">
+                <strong>Pilot tip:</strong> Ask questions inside{' '}
+                <em>Dar Al Arkan Master Corpus</em> and filter by package in
+                your prompt, e.g. “Answer only from DG2 Infra Pack 1 documents.”
+                Individual project shells are still being indexed.
+              </div>
+            )}
+            <div className="projects-grid">
+              {state.projects.map((project) => (
+                <ProjectCard key={project.id} project={project} />
+              ))}
+            </div>
+          </>
         )}
       </main>
 

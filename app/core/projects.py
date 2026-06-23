@@ -75,6 +75,7 @@ def _project_as_dict(project: Project) -> Dict[str, Any]:
         "created_at": project.created_at,
         "is_approved": bool(getattr(project, "is_approved", True)),
         "origin": getattr(project, "origin", "user_create") or "user_create",
+        "is_master_corpus": False,
     }
 
 
@@ -304,6 +305,7 @@ def list_projects(
     for project in rows:
         p = _project_as_dict(project)
         p["readiness"] = compute_readiness(p["id"])
+        p["document_count"] = len(list_documents(p["id"]))
         out.append(p)
 
     # Expose the pilot master-corpus alias when the backing corpus is visible.
@@ -313,7 +315,11 @@ def list_projects(
         include_admin_approved=include_admin_approved,
     )
     if master is not None:
-        out.append(master)
+        master["is_master_corpus"] = True
+        master["document_count"] = len(list_documents(MASTER_CORPUS_SOURCE_PROJECT_ID))
+        # Pilot: the master corpus is the canonical starting point, so it
+        # always appears first regardless of creation date.
+        out.insert(0, master)
 
     return out
 
@@ -366,7 +372,9 @@ def get_project(
         proj["name"] = MASTER_CORPUS_NAME
         proj["origin"] = "admin_drive_approved"
         proj["is_approved"] = True
+        proj["is_master_corpus"] = True
     proj["documents"] = list_documents(source_id)
+    proj["document_count"] = len(proj["documents"])
     proj["readiness"] = compute_readiness(source_id)
     return proj
 

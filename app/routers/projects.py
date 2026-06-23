@@ -25,6 +25,12 @@ from app.dependencies import (
 router = APIRouter()
 
 DATA_DIR = os.getenv("DATA_DIR", "./data")
+# Pilot guardrail: approved Drive projects with this many or fewer indexed
+# documents are treated as incomplete shells and suppressed from non-admin
+# project lists so pilot users land on the master corpus instead.
+PILOT_INCOMPLETE_SHELL_DOC_THRESHOLD = int(
+    os.getenv("PILOT_INCOMPLETE_SHELL_DOC_THRESHOLD", "1")
+)
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
 except PermissionError:
@@ -208,6 +214,16 @@ async def list_projects(auth: dict = Depends(require_user)):
         rows = store.list_projects(
             user_id=auth["user_id"], include_admin_approved=True,
         )
+        # Pilot: hide incomplete approved shells from non-admins so they
+        # gravitate to the Dar Al Arkan Master Corpus.
+        rows = [
+            r for r in rows
+            if not (
+                r.get("origin") == "admin_drive_approved"
+                and not r.get("is_master_corpus")
+                and r.get("document_count", 0) <= PILOT_INCOMPLETE_SHELL_DOC_THRESHOLD
+            )
+        ]
     return {"projects": rows}
 
 

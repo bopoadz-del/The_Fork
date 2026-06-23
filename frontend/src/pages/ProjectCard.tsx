@@ -11,6 +11,9 @@ export interface Project {
   created_at: string
   readiness?: unknown
   documents?: unknown
+  origin?: string
+  document_count?: number
+  is_master_corpus?: boolean
 }
 
 interface ProjectCardProps {
@@ -50,8 +53,18 @@ function readinessHint(readiness: unknown): string | null {
   return 'Readiness available'
 }
 
+function isIncompleteShell(project: Project): boolean {
+  return (
+    project.origin === 'admin_drive_approved' &&
+    !project.is_master_corpus &&
+    (project.document_count ?? 0) <= 1
+  )
+}
+
 export default function ProjectCard({ project }: ProjectCardProps) {
   const hint = readinessHint(project.readiness)
+  const master = project.is_master_corpus
+  const incomplete = isIncompleteShell(project)
 
   return (
     <Link
@@ -59,7 +72,7 @@ export default function ProjectCard({ project }: ProjectCardProps) {
       className="project-card-link"
       aria-label={`Open project ${project.name}`}
     >
-      <div className="project-card">
+      <div className={`project-card ${master ? 'project-card--master' : ''} ${incomplete ? 'project-card--incomplete' : ''}`}>
         <div className="project-card__top">
           <span className="project-card__id">{project.id}</span>
           <span className={`project-card__status ${statusClass(project.status)}`}>
@@ -67,7 +80,19 @@ export default function ProjectCard({ project }: ProjectCardProps) {
           </span>
         </div>
 
-        <div className="project-card__name">{project.name}</div>
+        <div className="project-card__name">
+          {project.name}
+          {master && (
+            <span className="project-card__badge project-card__badge--master">
+              Master Corpus
+            </span>
+          )}
+          {incomplete && (
+            <span className="project-card__badge project-card__badge--warning">
+              Incomplete shell
+            </span>
+          )}
+        </div>
 
         {project.client && (
           <div className="project-card__client">{project.client}</div>

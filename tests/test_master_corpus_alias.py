@@ -143,3 +143,64 @@ def test_non_admin_cannot_see_master_corpus_alias(client, monkeypatch):
     resp = client.get(f"/v1/projects/{projects_mod.MASTER_CORPUS_PROJECT_ID}")
     assert resp.status_code == 200
     assert resp.json()["name"] == projects_mod.MASTER_CORPUS_NAME
+
+
+# ── P0C pilot guardrail tests ───────────────────────────────────────────────
+
+
+def test_list_projects_sorts_master_corpus_first(client):
+    resp = client.get("/v1/projects")
+    assert resp.status_code == 200
+    projects = resp.json()["projects"]
+    assert projects[0]["id"] == projects_mod.MASTER_CORPUS_PROJECT_ID
+    assert projects[0]["is_master_corpus"] is True
+
+
+def test_master_corpus_exposes_document_count(client):
+    resp = client.get("/v1/projects")
+    assert resp.status_code == 200
+    master = next(
+        (p for p in resp.json()["projects"] if p["id"] == projects_mod.MASTER_CORPUS_PROJECT_ID),
+        None,
+    )
+    assert master is not None
+    assert master["document_count"] == 1
+
+
+def test_non_admin_list_hides_incomplete_approved_shells(client, monkeypatch):
+    def fake_user():
+        return {"user_id": "regular-user", "role": "user"}
+
+    app.dependency_overrides[require_user] = fake_user
+
+    shell = projects_mod.create_project(
+        name="Empty Approved Shell",
+        user_id="system",
+        is_approved=True,
+        origin="admin_drive_approved",
+    )
+    try:
+        resp = client.get("/v1/projects")
+        assert resp.status_code == 200
+        ids = {p["id"] for p in resp.json()["projects"]}
+        assert projects_mod.MASTER_CORPUS_PROJECT_ID in ids
+        assert shell["id"] not in ids
+    finally:
+        projects_mod.delete_project(shell["id"])
+
+
+def test_admin_list_keeps_incomplete_approved_shells(client):
+    shell = projects_mod.create_project(
+        name="Empty Approved Shell Admin",
+        user_id="system",
+        is_approved=True,
+        origin="admin_drive_approved",
+    )
+    try:
+        resp = client.get("/v1/projects")
+        assert resp.status_code == 200
+        ids = {p["id"] for p in resp.json()["projects"]}
+        assert projects_mod.MASTER_CORPUS_PROJECT_ID in ids
+        assert shell["id"] in ids
+    finally:
+        projects_mod.delete_project(shell["id"])

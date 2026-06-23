@@ -119,6 +119,22 @@
   gap: var(--space-4);
 }
 
+/* ── Pilot banner ── */
+.pilot-banner {
+  background: rgba(30, 95, 168, 0.08);
+  border: 1px solid rgba(30, 95, 168, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-6);
+}
+
+.pilot-banner strong {
+  font-weight: 600;
+}
+
 /* ── Project card ── */
 .project-card-link {
   display: block;
@@ -148,6 +164,40 @@
 .project-card-link:hover .project-card {
   box-shadow: var(--shadow);
   border-color: var(--accent);
+}
+
+.project-card--master {
+  border-color: var(--accent);
+  background: rgba(30, 95, 168, 0.04);
+}
+
+.project-card--incomplete {
+  opacity: 0.85;
+  border-style: dashed;
+}
+
+.project-card__badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  margin-left: var(--space-2);
+  vertical-align: middle;
+}
+
+.project-card__badge--master {
+  background: rgba(30, 95, 168, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(30, 95, 168, 0.25);
+}
+
+.project-card__badge--warning {
+  background: rgba(185, 28, 28, 0.08);
+  color: var(--danger);
+  border: 1px solid rgba(185, 28, 28, 0.2);
 }
 
 .project-card__top {
