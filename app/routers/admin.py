@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.dependencies import require_api_key
@@ -943,7 +943,7 @@ class _ApproveFromDriveRequest(BaseModel):
 @router.post("/v1/admin/projects/approve-from-drive", status_code=201)
 async def admin_approve_from_drive(
     req: _ApproveFromDriveRequest,
-    background_tasks=None,  # FastAPI will inject; see param below
+    background_tasks: BackgroundTasks,
     auth: dict = Depends(require_api_key),
 ):
     """Create a project row + queue recursive Drive-folder import.
@@ -999,22 +999,12 @@ async def admin_approve_from_drive(
     )
 
     # Queue the recursive import as a background task.
-    if background_tasks is None:
-        # When called outside a FastAPI request (tests), run inline.
-        # In production, FastAPI injects via the `BackgroundTasks` dep.
-        import asyncio
-        asyncio.create_task(_run_drive_folder_import(
-            project_id=slug, user_id=auth["user_id"],
-            folder_id=req.folder_id, max_files=req.max_files,
-            max_depth=req.max_depth, role=req.role,
-        ))
-    else:
-        background_tasks.add_task(
-            _run_drive_folder_import,
-            project_id=slug, user_id=auth["user_id"],
-            folder_id=req.folder_id, max_files=req.max_files,
-            max_depth=req.max_depth, role=req.role,
-        )
+    background_tasks.add_task(
+        _run_drive_folder_import,
+        project_id=slug, user_id=auth["user_id"],
+        folder_id=req.folder_id, max_files=req.max_files,
+        max_depth=req.max_depth, role=req.role,
+    )
 
     return {
         "status": "queued",
@@ -1061,37 +1051,29 @@ async def _run_drive_folder_import(
     try:
         # Delay-import to avoid pulling Drive deps at module-load time.
         from app.routers import drive as drive_router
+        from app.core import drive_auth
+        from fastapi import BackgroundTasks as _BG
 
-        # The route function expects a Request-like signature but the
-        # underlying _walk_folder helper is what we want. Look for it,
-        # else fall back to invoking the public route's body manually.
-        if hasattr(drive_router, "_walk_drive_folder_into_project"):
-            await drive_router._walk_drive_folder_into_project(
-                project_id=project_id, user_id=user_id,
-                folder_id=folder_id, max_files=max_files,
-                max_depth=max_depth, role=role,
-            )
-        else:
-            # Public route — synthesize a request payload.
-            from app.routers.drive import DriveIndexFolderRequest
-            from fastapi import BackgroundTasks as _BG
-            req = DriveIndexFolderRequest(
-                folder_id=folder_id, max_files=max_files,
-                max_depth=max_depth, role=role,
-            )
-            _bg = _BG()
-            await drive_router.drive_index_folder(
-                project_id=project_id, req=req,
-                background_tasks=_bg,
-                auth={"user_id": user_id, "role": "admin"},
-            )
-            # If the route uses its own background tasks for indexing,
-            # drain them inline so this background worker waits for them.
-            for task in _bg.tasks:
-                if asyncio.iscoroutinefunction(task.func):
-                    await task.func(*task.args, **task.kwargs)
-                else:
-                    task.func(*task.args, **task.kwargs)
+        access_token = await drive_auth.get_access_token(user_id)
+        _bg = _BG()
+        await drive_router._walk_drive_folder_into_project(
+            project_id=project_id,
+            user_id=user_id,
+            access_token=access_token,
+            folder_id=folder_id,
+            max_files=max_files,
+            max_depth=max_depth,
+            role=role,
+            background_tasks=_bg,
+        )
+        # Drain indexing tasks inline so the worker doesn't exit before
+        # chunks are written. This keeps the admin "documents/chunks" counters
+        # consistent once the import finishes.
+        for task in _bg.tasks:
+            if asyncio.iscoroutinefunction(task.func):
+                await task.func(*task.args, **task.kwargs)
+            else:
+                task.func(*task.args, **task.kwargs)
     except Exception as exc:
         log.exception("approve-from-drive: import failed project=%s folder=%s: %s",
                       project_id, folder_id, exc)

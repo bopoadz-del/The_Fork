@@ -229,48 +229,129 @@ async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
     except drive_auth.DriveAuthError as e:
         raise HTTPException(409, f"{e} Reconnect Google Drive.")
 
-    allowed = set(ext.lower() for ext in (req.include_extensions or ALLOWED_DOC_EXTENSIONS))
+    result = await _walk_drive_folder_into_project(
+        project_id=project_id,
+        user_id=auth["user_id"],
+        access_token=access_token,
+        folder_id=req.folder_id,
+        max_files=req.max_files,
+        max_depth=req.max_depth,
+        role=req.role,
+        background_tasks=background_tasks,
+        include_extensions=req.include_extensions,
+    )
+    return result
+
+
+async def _walk_drive_folder_into_project(
+    *,
+    project_id: str,
+    user_id: str,
+    access_token: str,
+    folder_id: str | None,
+    max_files: int = 100,
+    max_depth: int = 4,
+    role: str = "other",
+    background_tasks: BackgroundTasks | None = None,
+    include_extensions: list[str] | None = None,
+) -> Dict[str, Any]:
+    """Recursively import every supported file under ``folder_id`` into
+    ``project_id``.
+
+    This is the shared engine behind both the user-facing
+    ``POST /v1/projects/{id}/drive/index-folder`` route and the admin
+    ``approve-from-drive`` background worker. It walks the Drive tree using
+    OAuth ``access_token``, paginates through large folders, and asks Drive to
+    include items from shared drives so approved project folders that live on a
+    shared drive still recurse correctly.
+    """
+    allowed = set(ext.lower() for ext in (include_extensions or ALLOWED_DOC_EXTENSIONS))
     folder_mt = "application/vnd.google-apps.folder"
     imported: list[Dict[str, Any]] = []
     skipped: list[Dict[str, Any]] = []
 
     async def _list_folder(client: httpx.AsyncClient, fid: str) -> list[Dict[str, Any]]:
         q = f"'{fid}' in parents and trashed=false"
-        r = await client.get(
-            f"{_DRIVE_API}/files",
-            headers={"Authorization": f"Bearer {access_token}"},
-            params={"q": q, "pageSize": 200, "orderBy": "folder,name",
-                    "fields": "files(id,name,mimeType,size,parents)"},
-        )
-        r.raise_for_status()
-        return r.json().get("files", [])
+        out: list[Dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            params: Dict[str, Any] = {
+                "q": q,
+                "pageSize": 200,
+                "orderBy": "folder,name",
+                "fields": "nextPageToken, files(id,name,mimeType,size,parents)",
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            r = await client.get(
+                f"{_DRIVE_API}/files",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params,
+            )
+            r.raise_for_status()
+            payload = r.json()
+            out.extend(payload.get("files", []))
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+        return out
 
     async def _download_bytes(client: httpx.AsyncClient, file_id: str, mime: str, name: str):
         """Native Google Docs/Sheets/Slides need /export?mimeType=...; everything
         else uses ?alt=media. Returns (bytes, exported_extension)."""
         from app.core import drive_mime
+
+        meta = await client.get(
+            f"{_DRIVE_API}/files/{file_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"fields": "mimeType,name,shortcutDetails", "supportsAllDrives": "true"},
+        )
+        meta.raise_for_status()
+        meta_json = meta.json()
+        mime = meta_json.get("mimeType", mime)
+        name = meta_json.get("name", name) or name
+
+        # Follow Drive shortcuts so approved folders that contain shortcuts to
+        # documents still import the target file.
+        if mime == "application/vnd.google-apps.shortcut":
+            sd = meta_json.get("shortcutDetails") or {}
+            target_id = sd.get("targetId")
+            target_mime = sd.get("targetMimeType") or ""
+            if not target_id:
+                raise ValueError("shortcut has no target")
+            file_id = target_id
+            mime = target_mime
+
         target = drive_mime.export_target(mime)
         if target is not None:
             export_mime, ext = target
             r = await client.get(
                 f"{_DRIVE_API}/files/{file_id}/export",
                 headers={"Authorization": f"Bearer {access_token}"},
-                params={"mimeType": export_mime},
+                params={"mimeType": export_mime, "supportsAllDrives": "true"},
             )
             r.raise_for_status()
             return r.content, ext
         r = await client.get(
             f"{_DRIVE_API}/files/{file_id}",
             headers={"Authorization": f"Bearer {access_token}"},
-            params={"alt": "media"},
+            params={"alt": "media", "supportsAllDrives": "true"},
         )
         r.raise_for_status()
         return r.content, os.path.splitext(name)[1].lower()
 
+    def _schedule_index(doc_id: str) -> None:
+        if background_tasks is not None:
+            background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc_id)
+        else:
+            doc_index.maybe_eager_index(project_id, doc_id)
+
     async with httpx.AsyncClient(timeout=60) as client:
-        start = req.folder_id or "root"
+        start = folder_id or "root"
         stack: list[tuple[str, int]] = [(start, 0)]
-        while stack and len(imported) < req.max_files:
+        while stack and len(imported) < max_files:
             fid, depth = stack.pop(0)
             try:
                 children = await _list_folder(client, fid)
@@ -278,11 +359,11 @@ async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
                 skipped.append({"folder_id": fid, "reason": f"list failed: {str(e)[:80]}"})
                 continue
             for child in children:
-                if len(imported) >= req.max_files:
+                if len(imported) >= max_files:
                     skipped.append({"name": child.get("name"), "reason": "max_files cap"})
                     continue
                 if child.get("mimeType") == folder_mt:
-                    if depth + 1 <= req.max_depth:
+                    if depth + 1 <= max_depth:
                         stack.append((child["id"], depth + 1))
                     else:
                         skipped.append({"name": child.get("name"), "reason": "max_depth cap"})
@@ -337,9 +418,9 @@ async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
                                          content_sha256=content_sha)
                 audit.record("document.added", project_id=project_id,
                              document_id=doc["id"], name=stored_basename,
-                             size=len(raw_bytes), user_id=auth["user_id"],
+                             size=len(raw_bytes), user_id=user_id,
                              source="drive_walker")
-                background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
+                _schedule_index(doc["id"])
                 imported.append({
                     "drive_id": child["id"],
                     "name": stored_basename,
