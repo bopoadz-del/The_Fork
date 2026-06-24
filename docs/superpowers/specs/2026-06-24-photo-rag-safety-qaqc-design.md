@@ -221,6 +221,25 @@ All tests mock the live LLM and live Grounding DINO calls. Real model invocation
 - Confirm Label Studio is installable on the PC (free OSS, `pip install label-studio`) or prefer Roboflow / CVAT
 - During Phase 0 survey, decide final V1 class list once detection counts are visible
 
+## Execution Postscript — 2026-06-24
+
+The implementation diverged from the brainstormed spec during execution; recording here so future sessions and reviewers see ground truth rather than the original aspirations:
+
+**Source corpus pivot.** Operator's 206-photo `construction-3-001.zip` was insufficient as the sole training corpus (sample read showed dominant PPE compliance + zero visible concrete defects). Operator approved pivot to public-dataset augmentation, one labelled dataset per V1 class. License gating was operator-waived ("don't worry about license").
+
+**V1 shipped 5 classes, not 7.** `fall_hazard_unprotected` and `rebar_exposed_defect` were deferred because clean public sources within the 1 GB disk budget could not be located in the available time. V1 active classes:
+- `no_hardhat` (id 0) — `keremberke/hard-hat-detection` (HF)
+- `no_high_vis_vest` (id 1) — `keremberke/construction-safety-object-detection` (HF, only ~32 NO-vest examples in source)
+- `concrete_crack` (id 3) — Ultralytics `crack-seg.zip` (polygon→bbox)
+- `concrete_honeycomb` (id 4) — `jdkuhnke/HiC` HiCIS/web subset (GitHub API)
+- `rebar_correct_inspection` (id 5) — `tsrobcvai/ROI-1555` (HF, LabelMe polygon)
+
+**Multi-round training pattern.** Operator requested "set by set stop at 1 giga, train and delete" disk-management. Implemented as `scripts/run_safety_qaqc_round.py` round driver: merge → train → save weights → delete. **Side effect:** each round produces an independent class-subset model (YOLO re-init head when class count changes). The final V_final round retrained from yolov8n.pt on all 5 simultaneously — that is the canonical V1 model.
+
+**Class swap for V2.** Per operator 2026-06-24, `rebar_exposed_defect` (id 6) is permanently inactive; ID 6 stays reserved per the stable-ID rule. `bulging_concrete` (id 22) takes its slot in the V2 active set. V2 will train 7 classes (the 5 V1 + `fall_hazard_unprotected` + `bulging_concrete`).
+
+**Held-out test split (new).** `scripts/merge_training_corpus.py --test-per-class N` reserves N images per class as never-seen test set; `scripts/run_safety_qaqc_round.py --test-per-class N` runs `model.val()` on it after training. Added 2026-06-24 after the operator pointed out we should have done this from V1.
+
 ## Phase Sequencing
 
 | Phase | What ships | Operator action required |
