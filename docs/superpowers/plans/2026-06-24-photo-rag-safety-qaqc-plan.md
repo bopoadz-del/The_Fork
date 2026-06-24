@@ -12,6 +12,7 @@
 
 - Python interpreter: `.venv/Scripts/python.exe` (Windows PowerShell)
 - No emojis in any code, comment, commit message, log line, UI string, or test fixture (operator hard rule)
+- **Subagents MUST stage only the files named in their task's commit step.** NEVER `git add -A`, `git add .`, or `git commit -am`. The working tree contains in-flight work from a parallel Claude session as of 2026-06-24 (see Task 2.3 guardrail); a blanket `add` would sweep that work into the wrong commit.
 - Image block input key is `file_path` (NOT legacy `image_path`); `safety_detector` follows the same contract
 - New image-block mode name is `safety_qaqc` (snake_case)
 - `doc_index.kind="photo"` is the discriminator for photo rows; `kind="text"` is the default for everything else
@@ -678,6 +679,8 @@ git commit -m "feat(safety): Grounding DINO survey script for Phase 0 class lock
 4. Review `data/training/photo_survey.json`. For each class in `per_class`, check `photos_with_at_least_one`:
    - **≥30** → class stays `active: true`
    - **<30** → flip to `active: false` and set `weights_version: null`
+
+   **Dataset honesty:** 30 examples per class is the activation FLOOR for V1, not a quality target. Industry rule-of-thumb for a robust YOLO fine-tune is 150–200 examples per class, and the ship gate of mAP@0.5 ≥ 0.3 is barely-functional. V1's real deliverable is the **end-to-end pipeline** (label → train → infer → export → RAG-serve), not a production-grade detector. Expect noticeable false positives and missed detections; Phase 3's active-learning loop is what closes the quality gap once the platform's upload pathway feeds more labelled data over time.
 
 5. Edit `app/blocks/safety_classes.json` accordingly. Re-run `pytest tests/test_safety_classes.py` to confirm the registry still validates.
 
@@ -1533,6 +1536,12 @@ git commit -m "feat(image): add safety_qaqc mode that delegates to SafetyDetecto
 ---
 
 ### Task 2.3: Construction container — compose YOLO output with hazard/defect verdict methods
+
+**PRE-TASK GUARDRAIL (do this before Step 1):** As of 2026-06-24 the working tree had uncommitted changes in `app/containers/construction/__init__.py` and `documents.py` from a parallel Claude session: an `image_path` → `file_path` keyword rename in 5 image-block call sites, plus a `jetson_dispatch` stub, plus an accompanying test at `tests/test_construction_photo_detection.py`. Those changes are a genuine bug fix that this task BUILDS ON.
+
+Run `git status --short app/containers/construction/ tests/test_construction_photo_detection.py` first:
+- If the files show as `M` (modified) or `??` (untracked) — the parallel session's work is still uncommitted. **STOP and surface this to the operator.** Ask: "Is the parallel-session work on `image_path` → `file_path` rename + jetson_dispatch + test_construction_photo_detection.py ready to commit, or should I proceed with the implementer subagent assuming I'll commit it as part of this task?"
+- If clean — proceed; the rename has already landed.
 
 **Files:**
 - Modify: `app/containers/construction/__init__.py` (add `_classes_to_hazards` + `_classes_to_defects`)
