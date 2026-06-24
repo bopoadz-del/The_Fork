@@ -53,7 +53,13 @@ def detect_with_dino(image_path: Path, class_names: List[str]) -> List[Dict]:
     name_lookup = {name.replace("_", " "): name for name in class_names}
     out = []
     for box, score, label in zip(results["boxes"], results["scores"], results["labels"]):
-        canon = name_lookup.get(label, label.replace(" ", "_"))
+        canon = name_lookup.get(label)
+        if canon is None:
+            # DINO's open-vocab decoder occasionally bleeds across adjacent
+            # period-separated prompts, yielding labels like "no hardhat re
+            # no plastic cap" that aren't any single requested class. Drop
+            # them; counting them would be guesswork.
+            continue
         out.append({"class": canon, "confidence": float(score), "bbox": [float(x) for x in box.tolist()]})
     return out
 
