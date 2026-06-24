@@ -433,6 +433,57 @@ class ConstructionContainer(
     def _get_historical_benchmark_block(self):
         """Resolve the historical_benchmark block — DI first, registry fallback."""
         return self._resolve_block("historical_benchmark")
+    # YOLO class -> (severity, hazard_type) for safety_compliance_audit
+    _YOLO_SAFETY_SEVERITY = {
+        "no_hardhat": ("critical", "no_hardhat"),
+        "no_high_vis_vest": ("critical", "no_high_vis_vest"),
+        "fall_hazard_unprotected": ("critical", "fall_hazard_unprotected"),
+    }
+    # YOLO class -> (severity, defect_label) for qa_qc_inspection
+    _YOLO_QAQC_DEFECT = {
+        "concrete_crack": ("major", "concrete_crack"),
+        "concrete_honeycomb": ("major", "concrete_honeycomb"),
+        "rebar_exposed_defect": ("major", "rebar_exposed_defect"),
+        "bulging_concrete": ("major", "bulging_concrete"),
+    }
+
+    def _classes_to_hazards(self, safety_qaqc: List[Dict]) -> List[Dict]:
+        """Map fine-tuned-YOLO safety_qaqc output to hazard dicts that match
+        the shape _parse_safety_hazards produces. Drops classes that aren't
+        in the safety severity map (e.g. concrete defects, rebar inspection)."""
+        out = []
+        for entry in safety_qaqc or []:
+            mapping = self._YOLO_SAFETY_SEVERITY.get(entry.get("class"))
+            if not mapping:
+                continue
+            severity, hazard_type = mapping
+            out.append({
+                "type": hazard_type,
+                "description": f"YOLO: {entry.get('class')}",
+                "severity": severity,
+                "source": "yolo",
+                "confidence": float(entry.get("confidence", 0.0)),
+            })
+        return out
+
+    def _classes_to_defects(self, safety_qaqc: List[Dict]) -> List[Dict]:
+        """Map fine-tuned-YOLO safety_qaqc output to defect dicts matching
+        _parse_defects' shape. Drops non-defect classes (PPE, correct rebar)."""
+        out = []
+        for entry in safety_qaqc or []:
+            mapping = self._YOLO_QAQC_DEFECT.get(entry.get("class"))
+            if not mapping:
+                continue
+            severity, label = mapping
+            out.append({
+                "keyword": entry.get("class"),
+                "description": label,
+                "severity": severity,
+                "source": "yolo",
+                "confidence": float(entry.get("confidence", 0.0)),
+            })
+        return out
+
     def _parse_safety_hazards(self, text: str) -> List[Dict]:
         hazards = []
         hazard_patterns = [
