@@ -36,11 +36,14 @@ def main() -> int:
                    help="Prior round's .pt to transfer-learn from")
     p.add_argument("--keep-data", action="store_true",
                    help="Skip the post-train delete (debug only)")
+    p.add_argument("--test-per-class", type=int, default=0,
+                   help="Hold out N images per class as test set; eval on it post-training")
     args = p.parse_args()
 
     repo = Path(__file__).resolve().parents[1]
     external = repo / "data" / "training" / "external"
     labels_final = repo / "data" / "training" / "labels_final"
+    test_set_dir = repo / "data" / "training" / "test"
     models_dir = repo / "data" / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
 
@@ -50,6 +53,8 @@ def main() -> int:
         "--external-dir", str(external),
         "--out-dir", str(labels_final),
     ]
+    if args.test_per_class > 0:
+        merge_cmd.extend(["--test-per-class", str(args.test_per_class), "--test-dir", str(test_set_dir)])
     if _run(merge_cmd) != 0:
         print("merge failed", file=sys.stderr)
         return 1
@@ -89,6 +94,31 @@ def main() -> int:
         print(f"WARNING: expected best.pt not found at {best}", file=sys.stderr)
         return 1
 
+    if args.test_per_class > 0:
+        test_yaml = test_set_dir / "test.yaml"
+        if test_yaml.is_file():
+            print(f"\n=== Round {args.round}: held-out test eval on {test_yaml} ===\n")
+            eval_model = YOLO(str(dst))
+            test_metrics = eval_model.val(data=str(test_yaml), split="val", project=str(repo / "runs" / "detect"),
+                                          name=f"round{args.round}_test", exist_ok=True, verbose=True)
+            test_summary = {
+                "mAP_0.5": float(test_metrics.box.map50),
+                "mAP_0.5:0.95": float(test_metrics.box.map),
+                "per_class": {
+                    name: {"precision": float(test_metrics.box.p[i]),
+                           "recall": float(test_metrics.box.r[i]),
+                           "mAP_0.5": float(test_metrics.box.maps[i])}
+                    for i, name in test_metrics.names.items()
+                },
+            }
+            test_summary_path = repo / "data" / "training" / f"test_eval_r{args.round}.json"
+            test_summary_path.parent.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            test_summary_path.write_text(_json.dumps(test_summary, indent=2), encoding="utf-8")
+            print(f"held-out test eval written to {test_summary_path}")
+        else:
+            print(f"no test.yaml at {test_yaml} (test_per_class was set but merge didn't write one)", file=sys.stderr)
+
     if not args.keep_data:
         for child in external.iterdir():
             if child.is_dir():
@@ -96,7 +126,9 @@ def main() -> int:
                 child.mkdir(exist_ok=True)
         if labels_final.is_dir():
             shutil.rmtree(labels_final, ignore_errors=True)
-        print("training data deleted; disk freed")
+        if test_set_dir.is_dir():
+            shutil.rmtree(test_set_dir, ignore_errors=True)
+        print("training + test data deleted; disk freed")
 
     return 0
 

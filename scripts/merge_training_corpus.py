@@ -65,9 +65,8 @@ def _list_pairs(class_dir: Path) -> List[Tuple[Path, Path]]:
     return pairs
 
 
-def merge(external_dir: Path, out_dir: Path) -> Dict:
+def merge(external_dir: Path, out_dir: Path, test_per_class: int = 0, test_dir: Path | None = None) -> Dict:
     active = list(get_active_classes())
-    active_by_id = {c.id: c for c in active}
     yolo_id_for = {c.id: i for i, c in enumerate(active)}
     yolo_names = [c.name for c in active]
 
@@ -79,6 +78,12 @@ def merge(external_dir: Path, out_dir: Path) -> Dict:
         (out_dir / "images" / split).mkdir(parents=True, exist_ok=True)
         (out_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
 
+    if test_per_class > 0:
+        if test_dir is None:
+            test_dir = out_dir.parent / "test"
+        (test_dir / "images" / "test").mkdir(parents=True, exist_ok=True)
+        (test_dir / "labels" / "test").mkdir(parents=True, exist_ok=True)
+
     rng = random.Random(_SEED)
     per_class_counts: Dict[str, Dict[str, int]] = {}
     sources_manifest: List[Dict] = []
@@ -89,13 +94,19 @@ def merge(external_dir: Path, out_dir: Path) -> Dict:
 
         pairs = _list_pairs(class_dir)
         if not pairs:
-            per_class_counts[class_name] = {"train": 0, "val": 0, "total": 0}
+            per_class_counts[class_name] = {"train": 0, "val": 0, "test": 0, "total": 0}
             continue
 
         rng.shuffle(pairs)
-        split_at = max(1, int(len(pairs) * (1 - _VAL_FRACTION)))
-        train_pairs = pairs[:split_at]
-        val_pairs = pairs[split_at:]
+
+        # Pull held-out test images FIRST so they never leak into train/val.
+        test_take = min(test_per_class, max(0, len(pairs) - 30))  # leave at least 30 for train/val
+        test_pairs = pairs[:test_take]
+        remaining = pairs[test_take:]
+
+        split_at = max(1, int(len(remaining) * (1 - _VAL_FRACTION)))
+        train_pairs = remaining[:split_at]
+        val_pairs = remaining[split_at:]
 
         for split, split_pairs in (("train", train_pairs), ("val", val_pairs)):
             for img, lbl in split_pairs:
@@ -104,9 +115,17 @@ def merge(external_dir: Path, out_dir: Path) -> Dict:
                 shutil.copy2(img, dst_img)
                 _rewrite_label_with_class_id(lbl, dst_lbl, our_yolo_id)
 
+        if test_pairs and test_dir is not None:
+            for img, lbl in test_pairs:
+                dst_img = test_dir / "images" / "test" / f"{class_name}__{img.name}"
+                dst_lbl = test_dir / "labels" / "test" / f"{class_name}__{img.stem}.txt"
+                shutil.copy2(img, dst_img)
+                _rewrite_label_with_class_id(lbl, dst_lbl, our_yolo_id)
+
         per_class_counts[class_name] = {
             "train": len(train_pairs),
             "val": len(val_pairs),
+            "test": len(test_pairs),
             "total": len(pairs),
         }
 
@@ -129,6 +148,18 @@ def merge(external_dir: Path, out_dir: Path) -> Dict:
         encoding="utf-8",
     )
 
+    test_yaml_path = None
+    if test_per_class > 0 and test_dir is not None:
+        test_yaml = test_dir / "test.yaml"
+        test_yaml.write_text(
+            f"path: {test_dir.resolve().as_posix()}\n"
+            "train: images/test\n"  # YOLO requires a 'train' field even for val-only use
+            "val: images/test\n"
+            f"names: {yolo_names}\n",
+            encoding="utf-8",
+        )
+        test_yaml_path = str(test_yaml)
+
     sources_json = out_dir / "sources.json"
     sources_json.write_text(json.dumps({
         "active_classes": [{"id": c.id, "name": c.name, "yolo_idx": yolo_id_for[c.id]} for c in active],
@@ -136,10 +167,12 @@ def merge(external_dir: Path, out_dir: Path) -> Dict:
         "sources": sources_manifest,
         "split_seed": _SEED,
         "val_fraction": _VAL_FRACTION,
+        "test_per_class": test_per_class,
     }, indent=2), encoding="utf-8")
 
     return {
         "data_yaml": str(data_yaml),
+        "test_yaml": test_yaml_path,
         "sources_json": str(sources_json),
         "per_class_counts": per_class_counts,
         "active_classes": yolo_names,
@@ -167,8 +200,12 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--external-dir", type=Path, default=Path("data/training/external"))
     p.add_argument("--out-dir", type=Path, default=Path("data/training/labels_final"))
+    p.add_argument("--test-per-class", type=int, default=0,
+                   help="Hold out N images per class as test set (never seen by train/val)")
+    p.add_argument("--test-dir", type=Path, default=None,
+                   help="Where to write the held-out test set (default: <out-dir>/../test/)")
     args = p.parse_args()
-    result = merge(args.external_dir, args.out_dir)
+    result = merge(args.external_dir, args.out_dir, args.test_per_class, args.test_dir)
     print(json.dumps(result, indent=2))
     return 0
 
