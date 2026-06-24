@@ -49,18 +49,40 @@ def test_upgrade_creates_photo_chunks_and_photos_tables(stamped_sqlite_engine, a
 
 def test_upgrade_does_not_modify_chunks_or_doc_index(stamped_sqlite_engine, alembic_cfg):
     # The point of this migration: avoid touching existing tables.
-    # Insert sentinel rows; verify they survive untouched.
+    # Insert sentinel rows into both doc_index and chunks; verify they survive untouched.
     with stamped_sqlite_engine.begin() as conn:
         conn.execute(text("CREATE TABLE doc_index (project_id TEXT PRIMARY KEY, index_json TEXT, updated_at TEXT)"))
         conn.execute(text("INSERT INTO doc_index VALUES ('p1', '{}', '2026-06-24')"))
+        conn.execute(text(
+            "CREATE TABLE chunks ("
+            "chunk_id TEXT PRIMARY KEY, "
+            "project_id TEXT NOT NULL, "
+            "doc_id TEXT NOT NULL, "
+            "chunk_index INTEGER NOT NULL, "
+            "text TEXT NOT NULL, "
+            "embedding BLOB, "
+            "created_at TEXT NOT NULL"
+            ")"
+        ))
+        conn.execute(text(
+            "INSERT INTO chunks VALUES ('c1', 'p1', 'd1', 0, 'hello', NULL, '2026-06-24')"
+        ))
     command.upgrade(alembic_cfg, "0006")
     insp = inspect(stamped_sqlite_engine)
+    # doc_index must be untouched
     doc_index_cols = {c["name"] for c in insp.get_columns("doc_index")}
     assert "kind" not in doc_index_cols  # explicitly NOT added
     assert "photo_metadata" not in doc_index_cols
     with stamped_sqlite_engine.begin() as conn:
         row = conn.execute(text("SELECT project_id FROM doc_index WHERE project_id = 'p1'")).fetchone()
     assert row is not None  # untouched
+    # chunks must also be untouched
+    chunks_cols = {c["name"] for c in insp.get_columns("chunks")}
+    assert "kind" not in chunks_cols
+    assert "photo_metadata" not in chunks_cols
+    with stamped_sqlite_engine.begin() as conn:
+        crow = conn.execute(text("SELECT chunk_id FROM chunks WHERE chunk_id = 'c1'")).fetchone()
+    assert crow is not None  # sentinel row survives
 
 
 def test_downgrade_drops_both_new_tables(stamped_sqlite_engine, alembic_cfg):
