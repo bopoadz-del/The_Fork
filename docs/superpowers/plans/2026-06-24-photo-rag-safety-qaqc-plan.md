@@ -15,7 +15,7 @@
 - **Subagents MUST stage only the files named in their task's commit step.** NEVER `git add -A`, `git add .`, or `git commit -am`. The working tree contains in-flight work from a parallel Claude session as of 2026-06-24 (see Task 2.3 guardrail); a blanket `add` would sweep that work into the wrong commit.
 - Image block input key is `file_path` (NOT legacy `image_path`); `safety_detector` follows the same contract
 - New image-block mode name is `safety_qaqc` (snake_case)
-- `doc_index.kind="photo"` is the discriminator for photo rows; `kind="text"` is the default for everything else
+- Photo chunks live in a new dedicated `photo_chunks` table (parallel to `chunks`). The existing `chunks` table is NOT modified — `chunks.embedding` is NOT NULL and `chunks.text_search` is a generated tsvector, both of which break if photo rows with no embedding are inserted
 - `project_id` stays `null` for construction-3-001.zip rows — never inferred from pixels (see `feedback-no-assumptions.md`)
 - Class IDs in `safety_classes.json` are stable forever; once assigned, never reused
 - Active subset of classes is renumbered 0..N-1 at training time via a class-map JSON stored alongside the weights
@@ -34,10 +34,10 @@
 **Created in Phase 0:**
 - `app/blocks/safety_classes.json` — 33-class registry (the data)
 - `app/blocks/safety_classes.py` — loader + validator (the code)
-- `alembic/versions/0006_doc_index_photo_metadata.py` — migration
+- `alembic/versions/0006_photo_chunks_and_photos.py` — migration (creates two NEW tables; does NOT modify existing `chunks` table)
 - `scripts/survey_photo_corpus.py` — Phase 0 survey tool
 - `tests/test_safety_classes.py`
-- `tests/test_migration_0006_doc_index_photo.py`
+- `tests/test_migration_0006_photo_chunks.py`
 - `tests/test_survey_photo_corpus.py`
 
 **Created in Phase 1:**
@@ -298,24 +298,37 @@ git commit -m "feat(safety): add 33-class registry for safety + QA/QC detection"
 
 ---
 
-### Task 0.2: Alembic migration 0006 (doc_index.kind + photos table)
+### Task 0.2: Alembic migration 0006 (photo_chunks + photos tables)
 
 **Files:**
-- Create: `alembic/versions/0006_doc_index_photo_metadata.py`
-- Test: `tests/test_migration_0006_doc_index_photo.py`
+- Create: `alembic/versions/0006_photo_chunks_and_photos.py`
+- Test: `tests/test_migration_0006_photo_chunks.py`
+
+**Background — why two new tables, not modifications:**
+The original spec wrongly named `doc_index` as the chunk-level table. In reality:
+- `doc_index` = per-project JSONB blob (PK `project_id`), NOT chunks.
+- `chunks` = per-chunk RAG table with `text + embedding vector(256) NOT NULL + text_search tsvector` (generated, immutable).
+
+Adding kind-discriminated photo rows to `chunks` would require either embeddings for photos (out of scope V1: spec says "no vector embedding for photos in V1") or making `embedding` nullable (schema change with broader downstream impact). The clean path is a separate `photo_chunks` table that the retriever queries alongside `chunks`.
 
 **Interfaces:**
-- Consumes: existing `doc_index` table from prior migrations
+- Consumes: nothing (creates new tables)
 - Produces:
-  - `doc_index` gets two new columns: `kind TEXT NOT NULL DEFAULT 'text'` and `photo_metadata` (JSONB on Postgres, TEXT on SQLite)
+  - New `photo_chunks` table: `chunk_id TEXT PRIMARY KEY` (= sha256 for V1, one row per photo), `project_id TEXT NULL` (populated in Phase 3 only), `sha256 TEXT NOT NULL`, `caption TEXT NOT NULL`, `photo_metadata` (JSONB on Postgres / TEXT on SQLite), `created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`, UNIQUE(sha256)
   - New `photos` table: `sha256 TEXT PRIMARY KEY`, `content_type TEXT NOT NULL`, `size_bytes INTEGER NOT NULL`, `bytes BYTEA NOT NULL` (Postgres) / `BLOB NOT NULL` (SQLite), `uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`
-  - Migration is reversible (downgrade drops the photos table + the two columns)
+  - Migration is reversible (downgrade drops both tables)
+  - Existing `chunks` and `doc_index` tables are NOT modified
+
+(FTS5 virtual table for SQLite photo BM25 + GIN index for Postgres are added in Task 2.7's `vector_store` extension, not in this migration.)
+
+**Test-infrastructure note (from the prior attempt at this task):** the project's `alembic/env.py` reads `DATABASE_URL` at import time from `app.core.db`, so passing `cfg.set_main_option("sqlalchemy.url", ...)` is ignored. Also, migration `0001` is Postgres-only (uses `CREATE EXTENSION vector` and `pg_catalog` queries) so cannot be applied to a fresh SQLite DB. Use a `monkeypatch.setenv("DATABASE_URL", ...)` + `importlib.reload(app.core.db)` + pre-seeded `alembic_version` table + `command.stamp(cfg, "0005")` approach. Look at any other migration tests in `tests/` for the project's actual pattern and mirror it.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_migration_0006_doc_index_photo.py
+# tests/test_migration_0006_photo_chunks.py
 """Round-trip migration 0006 on a fresh in-memory SQLite database."""
+import importlib
 import os
 import tempfile
 
@@ -326,54 +339,68 @@ from sqlalchemy import create_engine, inspect, text
 
 
 @pytest.fixture
-def sqlite_url():
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    yield f"sqlite:///{path}"
-    os.unlink(path)
+def sqlite_url(tmp_path, monkeypatch):
+    db = tmp_path / "test.db"
+    url = f"sqlite:///{db}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    import app.core.db as db_mod
+    importlib.reload(db_mod)
+    yield url
+    importlib.reload(db_mod)
 
 
 @pytest.fixture
-def alembic_cfg(sqlite_url):
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", sqlite_url)
-    return cfg
-
-
-def test_upgrade_adds_kind_column_and_photos_table(alembic_cfg, sqlite_url):
-    command.upgrade(alembic_cfg, "0006")
+def stamped_sqlite_engine(sqlite_url):
+    """Create a SQLite DB with alembic_version stamped at 0005 (skipping the
+    Postgres-only early migrations). Lets us test forward-from-0005 without
+    needing pgvector."""
     engine = create_engine(sqlite_url)
-    insp = inspect(engine)
-    doc_index_cols = {c["name"] for c in insp.get_columns("doc_index")}
-    assert "kind" in doc_index_cols
-    assert "photo_metadata" in doc_index_cols
-    assert "photos" in insp.get_table_names()
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"))
+        conn.execute(text("INSERT INTO alembic_version VALUES ('0005')"))
+    return engine
+
+
+@pytest.fixture
+def alembic_cfg():
+    return Config("alembic.ini")
+
+
+def test_upgrade_creates_photo_chunks_and_photos_tables(stamped_sqlite_engine, alembic_cfg):
+    command.upgrade(alembic_cfg, "0006")
+    insp = inspect(stamped_sqlite_engine)
+    tables = set(insp.get_table_names())
+    assert "photo_chunks" in tables
+    assert "photos" in tables
+    pc_cols = {c["name"] for c in insp.get_columns("photo_chunks")}
+    assert pc_cols >= {"chunk_id", "project_id", "sha256", "caption", "photo_metadata", "created_at"}
     photos_cols = {c["name"] for c in insp.get_columns("photos")}
     assert photos_cols >= {"sha256", "content_type", "size_bytes", "bytes", "uploaded_at"}
 
 
-def test_upgrade_backfills_kind_text_for_existing_rows(alembic_cfg, sqlite_url):
-    command.upgrade(alembic_cfg, "0005")
-    engine = create_engine(sqlite_url)
-    with engine.begin() as conn:
-        conn.execute(text(
-            "INSERT INTO doc_index (project_id, doc_id, chunk_index, content) VALUES (:p, :d, :i, :c)"
-        ), {"p": "test", "d": "doc1", "i": 0, "c": "hello"})
+def test_upgrade_does_not_modify_chunks_or_doc_index(stamped_sqlite_engine, alembic_cfg):
+    # The point of this migration: avoid touching existing tables.
+    # Insert sentinel rows; verify they survive untouched.
+    with stamped_sqlite_engine.begin() as conn:
+        conn.execute(text("CREATE TABLE doc_index (project_id TEXT PRIMARY KEY, index_json TEXT, updated_at TEXT)"))
+        conn.execute(text("INSERT INTO doc_index VALUES ('p1', '{}', '2026-06-24')"))
     command.upgrade(alembic_cfg, "0006")
-    with engine.begin() as conn:
-        row = conn.execute(text("SELECT kind FROM doc_index WHERE doc_id = 'doc1'")).fetchone()
-    assert row[0] == "text"
+    insp = inspect(stamped_sqlite_engine)
+    doc_index_cols = {c["name"] for c in insp.get_columns("doc_index")}
+    assert "kind" not in doc_index_cols  # explicitly NOT added
+    assert "photo_metadata" not in doc_index_cols
+    with stamped_sqlite_engine.begin() as conn:
+        row = conn.execute(text("SELECT project_id FROM doc_index WHERE project_id = 'p1'")).fetchone()
+    assert row is not None  # untouched
 
 
-def test_downgrade_drops_photos_table(alembic_cfg, sqlite_url):
+def test_downgrade_drops_both_new_tables(stamped_sqlite_engine, alembic_cfg):
     command.upgrade(alembic_cfg, "0006")
     command.downgrade(alembic_cfg, "0005")
-    engine = create_engine(sqlite_url)
-    insp = inspect(engine)
-    assert "photos" not in insp.get_table_names()
-    doc_index_cols = {c["name"] for c in insp.get_columns("doc_index")}
-    assert "kind" not in doc_index_cols
-    assert "photo_metadata" not in doc_index_cols
+    insp = inspect(stamped_sqlite_engine)
+    tables = set(insp.get_table_names())
+    assert "photo_chunks" not in tables
+    assert "photos" not in tables
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -390,8 +417,8 @@ Confirm: the file uses `op.get_bind().dialect.name` to branch SQLite vs Postgres
 - [ ] **Step 4: Write the migration**
 
 ```python
-# alembic/versions/0006_doc_index_photo_metadata.py
-"""doc_index kind + photo_metadata + photos table
+# alembic/versions/0006_photo_chunks_and_photos.py
+"""photo_chunks + photos tables
 
 Revision ID: 0006
 Revises: 0005
@@ -414,13 +441,15 @@ def upgrade() -> None:
     dialect = bind.dialect.name
 
     if dialect == "postgresql":
-        op.add_column(
-            "doc_index",
-            sa.Column("kind", sa.Text(), nullable=False, server_default=sa.text("'text'")),
-        )
-        op.add_column(
-            "doc_index",
-            sa.Column("photo_metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        op.create_table(
+            "photo_chunks",
+            sa.Column("chunk_id", sa.Text(), primary_key=True),
+            sa.Column("project_id", sa.Text(), nullable=True),
+            sa.Column("sha256", sa.Text(), nullable=False),
+            sa.Column("caption", sa.Text(), nullable=False),
+            sa.Column("photo_metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+            sa.Column("created_at", sa.TIMESTAMP(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+            sa.UniqueConstraint("sha256", name="uq_photo_chunks_sha256"),
         )
         op.create_table(
             "photos",
@@ -431,9 +460,16 @@ def upgrade() -> None:
             sa.Column("uploaded_at", sa.TIMESTAMP(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         )
     else:
-        with op.batch_alter_table("doc_index") as batch:
-            batch.add_column(sa.Column("kind", sa.Text(), nullable=False, server_default=sa.text("'text'")))
-            batch.add_column(sa.Column("photo_metadata", sa.Text(), nullable=True))
+        op.create_table(
+            "photo_chunks",
+            sa.Column("chunk_id", sa.Text(), primary_key=True),
+            sa.Column("project_id", sa.Text(), nullable=True),
+            sa.Column("sha256", sa.Text(), nullable=False),
+            sa.Column("caption", sa.Text(), nullable=False),
+            sa.Column("photo_metadata", sa.Text(), nullable=False),
+            sa.Column("created_at", sa.TIMESTAMP(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+            sa.UniqueConstraint("sha256", name="uq_photo_chunks_sha256"),
+        )
         op.create_table(
             "photos",
             sa.Column("sha256", sa.Text(), primary_key=True),
@@ -446,15 +482,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("photos")
-    bind = op.get_bind()
-    dialect = bind.dialect.name
-    if dialect == "postgresql":
-        op.drop_column("doc_index", "photo_metadata")
-        op.drop_column("doc_index", "kind")
-    else:
-        with op.batch_alter_table("doc_index") as batch:
-            batch.drop_column("photo_metadata")
-            batch.drop_column("kind")
+    op.drop_table("photo_chunks")
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
@@ -465,8 +493,8 @@ Expected: 3 passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add alembic/versions/0006_doc_index_photo_metadata.py tests/test_migration_0006_doc_index_photo.py
-git commit -m "feat(db): migration 0006 adds doc_index.kind + photo_metadata + photos table"
+git add alembic/versions/0006_photo_chunks_and_photos.py tests/test_migration_0006_photo_chunks.py
+git commit -m "feat(db): migration 0006 creates photo_chunks + photos tables"
 ```
 
 ---
@@ -1955,7 +1983,7 @@ git commit -m "feat(safety): batch inference script produces photo_metadata.json
 - Consumes: existing admin auth dependency (find via `grep -r "require_admin\|admin_role\|admin_only" app/routers`); existing DB session dependency (find via `grep -rn "get_db_session\|get_session\|get_async_session" app/`)
 - Produces:
   - `POST /v1/admin/photo-bytes/{sha256}` — multipart upload, body field name `file`, max 25 MB, content-type kept as-is. Idempotent: existing sha256 returns 200 with `{stored: false, sha256: ...}`.
-  - `POST /v1/admin/photo-import` — body is text/plain JSONL stream. Validates each row has `sha256`. Rejects rows whose `sha256` is not present in `photos` table. Inserts into `doc_index` with `kind='photo'`, `content=row.caption`, `doc_id=sha256`, `chunk_index=0`, `project_id` left null. Idempotent on `(doc_id, chunk_index)`.
+  - `POST /v1/admin/photo-import` — body is text/plain JSONL stream. Validates each row has `sha256`. Rejects rows whose `sha256` is not present in `photos` table. Inserts into `photo_chunks` with `chunk_id=sha256`, `project_id=row.project_id` (null for V1 zip), `sha256=row.sha256`, `caption=row.caption`, `photo_metadata=json.dumps(row)` (or jsonb-cast on Postgres). Idempotent on `sha256` (UNIQUE constraint).
   - Response: `{inserted: N, skipped_duplicate: M, rejected_no_bytes: K, errors: [...]}`
 
 - [ ] **Step 1: Write the failing test**
@@ -2124,20 +2152,21 @@ async def photo_import(
             rejected += 1
             continue
         existing = await db.execute(
-            text("SELECT 1 FROM doc_index WHERE doc_id = :d AND chunk_index = 0"),
-            {"d": sha},
+            text("SELECT 1 FROM photo_chunks WHERE sha256 = :s"),
+            {"s": sha},
         )
         if existing.first() is not None:
             skipped += 1
             continue
         await db.execute(
             text(
-                "INSERT INTO doc_index (project_id, doc_id, chunk_index, content, kind, photo_metadata) "
-                "VALUES (:p, :d, 0, :c, 'photo', :m)"
+                "INSERT INTO photo_chunks (chunk_id, project_id, sha256, caption, photo_metadata) "
+                "VALUES (:cid, :p, :s, :c, :m)"
             ),
             {
+                "cid": sha,
                 "p": row.get("project_id"),
-                "d": sha,
+                "s": sha,
                 "c": row.get("caption") or "Site photo.",
                 "m": json.dumps(row),
             },
@@ -2276,18 +2305,20 @@ git commit -m "feat(photos): GET /v1/photos/{sha256} serves bytes from photos ta
 
 ---
 
-### Task 2.7: RAG retriever — photo-chunk content adapter
+### Task 2.7: RAG retriever — add photo_chunks BM25 leg
 
 **Files:**
-- Modify: `app/core/rag/retriever.py` — where chunks get their `content` for return to caller, add a branch for `kind='photo'` rows
+- Modify: `app/core/rag/vector_store.py` — add a parallel BM25 leg over `photo_chunks` (Postgres tsquery on `to_tsvector('english', caption)`; SQLite via new `photo_chunks_fts` FTS5 virtual table built the same way as `chunks_fts`)
+- Modify: `app/core/rag/retriever.py` — merge photo BM25 results into the returned chunk list with `kind` field
 - Test: `tests/test_retriever_photo_chunks.py`
 
 **Interfaces:**
-- Consumes: `doc_index` rows with `kind='photo'` from Task 2.5
+- Consumes: `photo_chunks` rows from Task 2.5
 - Produces:
-  - When a retrieval result row has `kind='photo'`, the returned chunk's `content` becomes: `caption + "\nClasses: " + comma-joined class names` (so BM25 + downstream LLM can match on class names too)
-  - When `kind='text'` or NULL, behavior unchanged
-  - Citation/source object for photo rows includes `photo_url: f"/v1/photos/{sha256}"` and `thumbnail_url: photo_url + "?w=256"` (thumbnail handler isn't built in V1; the URL is informational)
+  - Retrieval results include both text chunks (`kind="text"`) and photo chunks (`kind="photo"`)
+  - Each photo chunk carries: `content` = caption + `"\nClasses: "` + comma-joined class names from photo_metadata, `kind="photo"`, `photo_url=f"/v1/photos/{sha256}"`, `thumbnail_url=photo_url + "?w=256"` (thumbnail handler isn't built in V1; URL is informational)
+  - When the existing BM25 leg returns N text chunks and photo BM25 returns M photo chunks, the merged top_k drops the lowest-scoring across both sets (one global ranking)
+  - SQLite path creates `photo_chunks_fts` lazily on first query (mirroring `chunks_fts` lazy init); Postgres uses an ad-hoc `to_tsvector` query (the GIN index added in Task 0.2 makes this fast)
 
 - [ ] **Step 1: Inspect retriever to learn current shape**
 
@@ -2315,10 +2346,10 @@ async def test_retrieve_includes_photo_chunks_with_class_names(db_session, retri
     })
     await db_session.execute(
         text(
-            "INSERT INTO doc_index (project_id, doc_id, chunk_index, content, kind, photo_metadata) "
-            "VALUES (NULL, :d, 0, :c, 'photo', :m)"
+            "INSERT INTO photo_chunks (chunk_id, project_id, sha256, caption, photo_metadata) "
+            "VALUES (:cid, NULL, :s, :c, :m)"
         ),
-        {"d": sha, "c": "Site photo showing 1 safety issue(s): no_hardhat.", "m": photo_metadata},
+        {"cid": sha, "s": sha, "c": "Site photo showing 1 safety issue(s): no_hardhat.", "m": photo_metadata},
     )
     await db_session.commit()
 
@@ -2334,31 +2365,41 @@ async def test_retrieve_includes_photo_chunks_with_class_names(db_session, retri
 Run: `.venv/Scripts/python.exe -m pytest tests/test_retriever_photo_chunks.py -v`
 Expected: KeyError on `kind` or `photo_url` — adapter missing
 
-- [ ] **Step 4: Modify the retriever**
+- [ ] **Step 4: Add the photo_chunks BM25 leg**
 
-Locate the function that converts DB rows to retrieval-result dicts. Add this branch where rows are post-processed:
+In `app/core/rag/vector_store.py`, after the existing `_bm25_postgres` / `_bm25_sqlite` (FTS5) functions, add a parallel `_bm25_postgres_photos` / `_bm25_sqlite_photos`:
+
+- Postgres version: `SELECT chunk_id, sha256, caption, photo_metadata, ts_rank_cd(to_tsvector('english', caption), q) AS score FROM photo_chunks c, plainto_tsquery('english', :q) AS q WHERE to_tsvector('english', caption) @@ q ORDER BY score DESC LIMIT :k`
+- SQLite version: build `photo_chunks_fts` virtual table on first call via `_ensure_fts5_photos_sqlite` (mirror `_ensure_fts5_sqlite` exactly); then SELECT against it.
+
+In `app/core/rag/retriever.py`, where the existing `retrieve_with_filter` (or equivalent top-level function) calls BM25, also call the photo BM25 leg, and merge results:
 
 ```python
-def _photo_content(row) -> str:
+def _photo_chunk_to_result(row) -> dict:
     meta = row.photo_metadata
     if isinstance(meta, str):
         meta = json.loads(meta)
     meta = meta or {}
-    caption = meta.get("caption", "")
+    caption = meta.get("caption", row.caption)
     class_names = [d.get("class") for d in meta.get("safety_qaqc") or [] if d.get("class")]
-    if class_names:
-        return f"{caption}\nClasses: {', '.join(class_names)}"
-    return caption
+    content = f"{caption}\nClasses: {', '.join(class_names)}" if class_names else caption
+    return {
+        "kind": "photo",
+        "content": content,
+        "photo_url": f"/v1/photos/{row.sha256}",
+        "thumbnail_url": f"/v1/photos/{row.sha256}?w=256",
+        "score": float(row.score),
+        "sha256": row.sha256,
+    }
 
-
-# In the row-to-dict adapter:
-if row.kind == "photo":
-    enriched["content"] = _photo_content(row)
-    enriched["photo_url"] = f"/v1/photos/{row.doc_id}"
-    enriched["thumbnail_url"] = f"/v1/photos/{row.doc_id}?w=256"
+# After existing BM25 returns text_results:
+photo_rows = await _bm25_photos(query, top_k)
+photo_results = [_photo_chunk_to_result(r) for r in photo_rows]
+text_results = [{**r, "kind": "text"} for r in text_results]  # tag the existing leg
+merged = sorted(text_results + photo_results, key=lambda r: -r["score"])[:top_k]
 ```
 
-The exact attribute/field names depend on the retriever's existing dict shape — adapt to fit. SELECT query must include the new `kind` and `photo_metadata` columns.
+The exact attribute/field names depend on the retriever's existing dict shape — adapt to fit.
 
 - [ ] **Step 5: Run test to verify it passes**
 

@@ -42,13 +42,13 @@ Add construction site photos to The Fork's RAG so the platform can retrieve them
 | `export_to_render.py` | `scripts/` | Phase 2b. Streams JSONL to Render admin endpoint with bearer auth, idempotent on SHA-256. |
 | `app/blocks/safety_detector.py` | new module | Loads + serves the fine-tuned YOLO. Used by `infer_photo_metadata.py` on PC; registered in the block registry but unused at runtime in V1 (Phase 3 activation). |
 | `app/routers/admin_photos.py` | new router | `POST /v1/admin/photo-import`: accepts JSONL of photo metadata, idempotent. Admin-auth gated. |
-| Alembic migration `0006_doc_index_photo_metadata.py` | `alembic/versions/` | Adds `kind TEXT NOT NULL DEFAULT 'text'` to `doc_index`. Adds nullable `photo_metadata JSONB`. Creates new `photos` table (`sha256` PK, `content_type`, `size_bytes`, `bytes BYTEA`, `uploaded_at`). SQLite + Postgres branches. |
+| Alembic migration `0006_photo_chunks_and_photos.py` | `alembic/versions/` | Creates `photo_chunks` table (`chunk_id` PK = sha256, `project_id` nullable, `sha256`, `caption`, `photo_metadata` JSONB, `created_at`) AND `photos` table (`sha256` PK, `content_type`, `size_bytes`, `bytes BYTEA`, `uploaded_at`). SQLite + Postgres branches. **Does NOT modify the existing `chunks` table** (chunks has NOT NULL `embedding` + `tsvector`; V1 photos have no embedding). |
 
 ## Components (extended)
 
 - **`app/blocks/image.py`** — gains a `safety_qaqc` mode that delegates to `safety_detector`. Returns existing PIL + Tesseract + COCO output PLUS the fine-tuned model's bbox + class output. Uses the canonical `file_path` input key (the construction container's call sites were renamed from the legacy `image_path` key in a separate concurrent change — `safety_detector` must follow the same contract).
 - **`app/containers/construction/__init__.py` and `documents.py`** — existing methods `safety_compliance_audit()` and `qa_qc_inspection()` already convert image-block output into hazard / defect lists with severity. Those methods stay. The new `safety_detector` produces typed class labels (e.g. `no_hardhat`) that compose into the same hazard / defect format these methods consume, replacing the brittle keyword-greping path on description text. Net effect: stronger detection signal flowing into the same downstream verdict logic.
-- **`app/core/rag/retriever.py`** — when retrieving, `kind="photo"` chunks have a `content` field built from caption + class label names; citation includes original photo URL + thumbnail. No retriever rewrite; just a content-source adapter.
+- **`app/core/rag/retriever.py`** + **`app/core/rag/vector_store.py`** — current BM25 leg queries the `chunks` table. Extend so that after the existing BM25 over `chunks` runs, a parallel BM25 query runs over `photo_chunks` (caption text), and results from both merge into the same returned chunk list with `kind` set to `"text"` or `"photo"`. Photo chunks carry `photo_url=f"/v1/photos/{sha256}"` and the full `photo_metadata` blob. No embedding/vector leg for photos in V1. Postgres uses tsquery on `to_tsvector('english', caption)`; SQLite uses a new `photo_chunks_fts` FTS5 virtual table built the same way as `chunks_fts`.
 
 ## Data Flow
 
@@ -75,7 +75,7 @@ data/training/eval_v1.json
 data/training/photo_metadata.jsonl
         |
         v  export_to_render.py           (Phase 2b, HTTPS POST)
-Render Postgres: doc_index rows (kind="photo")
+Render Postgres: photo_chunks rows + photos rows
         |
         v  RAG retrieval                 (Phase 2c, automatic)
 queries matching class names return photo chunks with bbox metadata
@@ -139,9 +139,30 @@ queries matching class names return photo chunks with bbox metadata
 ## RAG Integration on Render
 
 **Migration `0006`:**
-- `ALTER TABLE doc_index ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'`
-- `ALTER TABLE doc_index ADD COLUMN photo_metadata JSONB` (Postgres) / `TEXT` (SQLite, JSON-encoded)
-- Backfill: existing rows get `kind='text'` via the DEFAULT.
+
+Creates two NEW tables; does NOT touch the existing `chunks` table (its `embedding` is NOT NULL + has a generated `text_search` tsvector — adding a kind-discriminated photo row would break both invariants).
+
+```sql
+CREATE TABLE photo_chunks (
+    chunk_id        TEXT PRIMARY KEY,            -- = sha256 (one chunk per photo in V1)
+    project_id      TEXT NULL,                   -- nullable; populated in Phase 3
+    sha256          TEXT NOT NULL,               -- references photos.sha256
+    caption         TEXT NOT NULL,
+    photo_metadata  JSONB NOT NULL,              -- TEXT (JSON-encoded) on SQLite
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (sha256)
+);
+
+CREATE TABLE photos (
+    sha256        TEXT PRIMARY KEY,
+    content_type  TEXT NOT NULL,
+    size_bytes    INTEGER NOT NULL,
+    bytes         BYTEA NOT NULL,                -- BLOB / LargeBinary on SQLite
+    uploaded_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+Postgres branch additionally creates a GIN index on `to_tsvector('english', caption)` for BM25; SQLite branch creates a `photo_chunks_fts` FTS5 virtual table mirroring the `chunks_fts` pattern (handled by `vector_store._ensure_fts5_sqlite` extension in Task 2.7, not in the migration itself).
 
 **Two endpoints (used in sequence by `export_to_render.py`):**
 
@@ -149,12 +170,12 @@ queries matching class names return photo chunks with bbox metadata
 2. `POST /v1/admin/photo-import` — JSONL metadata.
    - Auth: bearer token, admin role only (uses existing admin middleware).
    - Body: JSONL stream of `photo_metadata` rows.
-   - Behavior: idempotent on `sha256`. New rows inserted with `kind='photo'`, `content` = templated caption, `photo_metadata` = full JSON blob. Existing rows with same `sha256` are skipped (no overwrite — operator must explicitly delete + re-import to update). Rejects rows whose `sha256` has no corresponding bytes in the `photos` table (ordering enforced).
+   - Behavior: idempotent on `sha256`. New rows inserted into `photo_chunks` with `chunk_id=sha256`, `project_id=row.project_id` (null for V1 zip), `sha256=row.sha256`, `caption=row.caption`, `photo_metadata=row` (full JSON blob). Existing rows with same `sha256` are skipped (no overwrite — operator must explicitly delete + re-import to update). Rejects rows whose `sha256` has no corresponding bytes in the `photos` table (ordering enforced).
    - Response: `{inserted: N, skipped_duplicate: M, rejected_no_bytes: K, errors: [...]}`
 
 The exporter script uploads bytes for every photo first (skipping already-present sha256s), then posts the JSONL. Order matters because the metadata import refuses rows whose bytes don't yet exist on Render — preventing dangling references.
 
-**Retriever change:** when a query matches any of the V1 active class names (literal substring match against the caption), photo chunks are returned in retrieval results alongside text chunks. Standard BM25 ranking applies. No vector embedding for photos in V1.
+**Retriever change:** after the existing BM25 leg over the `chunks` table returns, a parallel BM25 query runs over `photo_chunks` (caption text). Results from both legs merge into a single returned chunk list with `kind` set to `"text"` or `"photo"`. BM25 score scale is consistent across both legs (same tsquery / FTS5 mechanism). No vector embedding for photos in V1.
 
 **Citation format:** `[photo IMG-20230523-WA0009.jpg: no_hardhat (0.87), concrete_honeycomb (0.74)]` with a link to the photo (served via existing `/v1/files/{sha256}` endpoint — extended to serve the photo bytes, or a new `/v1/photos/{sha256}` if cleaner).
 
@@ -177,7 +198,7 @@ The exporter script uploads bytes for every photo first (skipping already-presen
 | `tests/test_label_format_roundtrip.py` | unit | Label Studio JSON → YOLO txt → re-import to LS keeps bboxes bit-identical |
 | `tests/test_train_safety_qaqc_tinyset.py` | smoke | 5-photo, 1-class, 1-epoch training run produces a `.pt` file under 60s |
 | `tests/test_infer_photo_metadata.py` | smoke | Run pipeline on 1 fixture image, assert output schema matches |
-| `tests/test_admin_photo_import.py` | integration | POST JSONL → query `doc_index` → photo row present with `kind='photo'` |
+| `tests/test_admin_photo_import.py` | integration | POST JSONL → query `photo_chunks` → photo row present |
 | `tests/test_retriever_finds_photos.py` | integration | Insert photo with `concrete_crack` in caption → query "show me cracks" → photo in top-K |
 
 All tests mock the live LLM and live Grounding DINO calls. Real model invocation is reserved for manual smoke tests on the operator's PC.
