@@ -77,11 +77,12 @@ async def test_dry_run_does_not_call_http(photos_and_jsonl, tmp_path):
                                   source_zip="z", project_id=None, dry_run=True)
     ac.assert_not_called()
     assert result["prepared"] == 1
-    assert result["uploaded_bytes"] == 0
 
 
 @pytest.mark.asyncio
-async def test_full_export_uploads_bytes_then_metadata(photos_and_jsonl, tmp_path):
+async def test_export_posts_metadata_only_no_bytes(photos_and_jsonl, tmp_path):
+    """Architecture correction: export pushes ONLY metadata to /v1/admin/photo-import.
+    Raw photo bytes do not go to Render."""
     photos, jsonl = photos_and_jsonl
     state = tmp_path / "state.json"
 
@@ -92,10 +93,7 @@ async def test_full_export_uploads_bytes_then_metadata(photos_and_jsonl, tmp_pat
         r = AsyncMock()
         r.status_code = 200
         r.raise_for_status = lambda: None
-        if "/photo-bytes/" in url:
-            r.json = lambda: {"stored": True, "sha256": url.rsplit("/", 1)[1]}
-        else:
-            r.json = lambda: {"inserted": 1, "skipped_duplicate": 0, "rejected_no_bytes": 0, "errors": []}
+        r.json = lambda: {"inserted": 1, "skipped_duplicate": 0, "errors": []}
         return r
 
     fake_client = AsyncMock()
@@ -106,38 +104,8 @@ async def test_full_export_uploads_bytes_then_metadata(photos_and_jsonl, tmp_pat
         result = await run_export(jsonl, photos, "https://render.test", "tok", state,
                                   source_zip="z", project_id=None, dry_run=False)
 
-    assert any("/photo-bytes/" in u for u in posted_urls)
-    assert any("/photo-import" in u for u in posted_urls)
-    bytes_idx = next(i for i, u in enumerate(posted_urls) if "/photo-bytes/" in u)
-    import_idx = next(i for i, u in enumerate(posted_urls) if "/photo-import" in u)
-    assert bytes_idx < import_idx
-    assert result["import_result"]["inserted"] == 1
-
-
-@pytest.mark.asyncio
-async def test_resume_skips_uploaded_sha256s(photos_and_jsonl, tmp_path):
-    photos, jsonl = photos_and_jsonl
-    state = tmp_path / "state.json"
-    sha = hashlib.sha256((photos / "a.jpg").read_bytes()).hexdigest()
-    state.write_text(json.dumps({"uploaded_sha256s": [sha]}), encoding="utf-8")
-
-    posted_urls = []
-
-    async def fake_post(url, **kwargs):
-        posted_urls.append(url)
-        r = AsyncMock()
-        r.status_code = 200
-        r.raise_for_status = lambda: None
-        r.json = lambda: {"inserted": 0, "skipped_duplicate": 1, "rejected_no_bytes": 0, "errors": []}
-        return r
-
-    fake_client = AsyncMock()
-    fake_client.post = fake_post
-
-    with patch("scripts.export_to_render.httpx.AsyncClient") as ac:
-        ac.return_value.__aenter__.return_value = fake_client
-        await run_export(jsonl, photos, "https://render.test", "tok", state,
-                         source_zip="z", project_id=None, dry_run=False)
-
+    # No /photo-bytes/ calls — that endpoint is gone.
     assert not any("/photo-bytes/" in u for u in posted_urls)
-    assert any("/photo-import" in u for u in posted_urls)
+    # One /photo-import call.
+    assert sum(1 for u in posted_urls if "/photo-import" in u) == 1
+    assert result["import_result"]["inserted"] == 1

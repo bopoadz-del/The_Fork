@@ -778,6 +778,13 @@ class VectorStore:
         content = caption
         if class_names:
             content = f"{caption}\nClasses: {', '.join(class_names)}"
+        # photo_url comes from the metadata blob's source_url field if the
+        # caller knew it at import time (e.g. project upload pathway); else
+        # None. Render does NOT serve photo bytes itself - they live at the
+        # original source (operator PC, Drive, project upload destination).
+        source_url: Optional[str] = None
+        if isinstance(meta, dict):
+            source_url = meta.get("source_url") or meta.get("photo_url")
         return Chunk(
             chunk_id=r.chunk_id,
             project_id=r.project_id or "",
@@ -787,7 +794,7 @@ class VectorStore:
             score=float(getattr(r, "rank", None) or getattr(r, "bm25_rank", 0.0)),
             kind="photo",
             sha256=r.sha256,
-            photo_url=f"/v1/photos/{r.sha256}",
+            photo_url=source_url,
             photo_metadata=meta if isinstance(meta, dict) else None,
         )
 

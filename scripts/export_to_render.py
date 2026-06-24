@@ -1,11 +1,12 @@
-"""Push photo bytes + V2 detection metadata to Render's photo RAG.
+"""Push V2 detection metadata to Render's photo RAG.
 
-Uses two admin endpoints (see app/routers/admin_photos.py):
-  1. POST /v1/admin/photo-bytes/{sha256} -- multipart upload, idempotent
-  2. POST /v1/admin/photo-import         -- text/plain JSONL stream
+Architecture correction (post-0007): raw photo bytes do NOT go to Render.
+Photos belong at the user's source (operator's PC, Drive, project upload
+destination). Render holds only the detection metadata in photo_chunks
+so the RAG retriever can surface photos by class-name query.
 
-Resumable via state file: tracks SHA-256s already uploaded so an
-interrupted run resumes without redoing network work.
+ONE admin endpoint:
+  POST /v1/admin/photo-import -- text/plain JSONL stream
 
 Input JSONL is the output of ``scripts/test_model_on_corpus.py``:
   {"filename": "...", "detections": [{"class": str, "conf": float, "bbox": [...]}]}
@@ -199,38 +200,14 @@ async def run_export(
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    uploaded_count = 0
-    skipped_count = 0
-    failed_uploads: List[str] = []
-
     async with httpx.AsyncClient(timeout=120, headers=headers) as client:
-        for i, (img_path, row) in enumerate(augmented_rows, start=1):
-            sha = row["sha256"]
-            if sha in uploaded:
-                skipped_count += 1
-                continue
-            url = f"{base_url}/v1/admin/photo-bytes/{sha}"
-            try:
-                with img_path.open("rb") as fp:
-                    files = {"file": (img_path.name, fp, _content_type_for(img_path))}
-                    r = await _post_with_retries(client, url, files=files)
-                body = r.json()
-                if body.get("stored") is True:
-                    uploaded_count += 1
-                else:
-                    skipped_count += 1
-                uploaded.add(sha)
-                state["uploaded_sha256s"] = sorted(uploaded)
-                _save_state(state_file, state)
-                if i % 20 == 0 or i == len(augmented_rows):
-                    print(f"  bytes upload progress: {i}/{len(augmented_rows)}")
-            except Exception as exc:
-                failed_uploads.append(f"{img_path.name}: {exc}")
-                print(f"  upload FAILED for {img_path.name}: {exc}", file=sys.stderr)
-
-        successful = [r for path, r in augmented_rows if r["sha256"] in uploaded]
-        body = "\n".join(json.dumps(r) for r in successful) + "\n"
-        print(f"\nposting {len(successful)} metadata rows to /v1/admin/photo-import ...")
+        # Metadata-only. Raw photo bytes belong at the user's source
+        # (operator's PC, Drive, project upload destination); Render only
+        # holds detection metadata in photo_chunks. The augmented rows
+        # carry sha256 (for dedup + future cross-reference) and a
+        # source_url field when the caller knows it.
+        body = "\n".join(json.dumps(r) for _path, r in augmented_rows) + "\n"
+        print(f"\nposting {len(augmented_rows)} metadata rows to /v1/admin/photo-import ...")
         r = await _post_with_retries(
             client,
             f"{base_url}/v1/admin/photo-import",
@@ -241,10 +218,7 @@ async def run_export(
 
     summary = {
         "prepared": len(augmented_rows),
-        "bytes_newly_uploaded": uploaded_count,
-        "bytes_skipped_already_present": skipped_count,
         "import_result": import_result,
-        "failed_uploads": failed_uploads,
     }
     print("\n=== summary ===")
     print(json.dumps(summary, indent=2))

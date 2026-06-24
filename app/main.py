@@ -358,8 +358,6 @@ from app.routers import usage as usage_router  # noqa: E402
 app.include_router(usage_router.router)
 from app.routers import admin_photos as admin_photos_router  # noqa: E402
 app.include_router(admin_photos_router.router)
-from app.routers import photos as photos_router  # noqa: E402
-app.include_router(photos_router.router)
 app.include_router(doc_search.router)
 app.include_router(rag_router.router)
 app.include_router(redline.router)
