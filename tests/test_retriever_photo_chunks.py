@@ -66,13 +66,43 @@ def test_bm25_search_photos_finds_class_name(store_with_photos):
     assert "no_hardhat" in results[0].text
 
 
-def test_bm25_search_photos_returns_photo_url(store_with_photos):
-    results = store_with_photos.bm25_search_photos("concrete crack", k=5)
-    assert len(results) >= 1
-    sha = "b" * 64
+def test_bm25_search_photos_uses_source_url_from_metadata(sqlite_url):
+    """photo_url is pulled from photo_metadata.source_url when present;
+    Render does NOT serve photo bytes itself."""
+    engine = create_engine(sqlite_url)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE photo_chunks (
+                chunk_id TEXT PRIMARY KEY,
+                project_id TEXT,
+                sha256 TEXT NOT NULL,
+                caption TEXT NOT NULL,
+                photo_metadata TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(sha256)
+            )
+        """))
+        sha = "d" * 64
+        conn.execute(
+            text("INSERT INTO photo_chunks (chunk_id, project_id, sha256, caption, photo_metadata) "
+                 "VALUES (:c, NULL, :s, :cap, :m)"),
+            {"c": sha, "s": sha, "cap": "Site photo with concrete spalling.",
+             "m": json.dumps({"source_url": "https://drive.google.com/file/d/abc",
+                              "safety_qaqc": []})},
+        )
+    store = VectorStore(db_path=sqlite_url.replace("sqlite:///", ""), dim=256)
+    results = store.bm25_search_photos("spalling", k=5)
     matched = [r for r in results if r.sha256 == sha]
     assert matched
-    assert matched[0].photo_url == f"/v1/photos/{sha}"
+    assert matched[0].photo_url == "https://drive.google.com/file/d/abc"
+
+
+def test_bm25_search_photos_no_source_url_returns_none(store_with_photos):
+    """When metadata has no source_url, photo_url stays None."""
+    results = store_with_photos.bm25_search_photos("no hardhat", k=5)
+    matched = [r for r in results if r.sha256 == ("a" * 64)]
+    assert matched
+    assert matched[0].photo_url is None
 
 
 def test_bm25_search_photos_project_scope(store_with_photos):
@@ -97,8 +127,9 @@ def test_photo_chunk_serializes_with_kind(store_with_photos):
     results = store_with_photos.bm25_search_photos("no hardhat", k=1)
     d = results[0].to_dict()
     assert d["kind"] == "photo"
-    assert d["photo_url"] == f"/v1/photos/{'a' * 64}"
     assert "sha256" in d
+    # photo_url is None unless metadata had source_url; field still present
+    assert "photo_url" in d
 
 
 def test_text_chunk_strips_photo_fields():
