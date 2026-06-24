@@ -342,6 +342,26 @@ class ImageBlock(UniversalBlock):
                 except Exception as e:
                     detection_error = str(e)
 
+            # Optional safety/QA-QC tier — fine-tuned YOLO from a
+            # safety_qaqc_v*.pt checkpoint. Only runs when mode=safety_qaqc
+            # is explicitly requested AND SAFETY_DETECTOR_WEIGHTS env var
+            # points at a usable .pt. Failures are non-fatal.
+            safety_qaqc: List[Dict[str, Any]] = []
+            safety_qaqc_error: Optional[str] = None
+            safety_qaqc_used = False
+            if params.get("mode") == "safety_qaqc":
+                from app.blocks.safety_detector import default_detector
+                detector = default_detector()
+                if detector is not None:
+                    try:
+                        safety_qaqc = detector.detect(
+                            Path(file_path),
+                            conf_threshold=float(params.get("safety_qaqc_conf", 0.25)),
+                        )
+                        safety_qaqc_used = True
+                    except Exception as e:
+                        safety_qaqc_error = str(e)
+
             description = self._compose_local_summary(
                 operation=operation, meta=meta, ocr_text=ocr_text, ocr_conf=ocr_conf, ocr_error=ocr_error,
             )
@@ -353,14 +373,21 @@ class ImageBlock(UniversalBlock):
                 summary = _summarize_detections(detections)
                 top = ", ".join(f"{n} × {c}" for n, c in list(summary.items())[:5])
                 description = f"{description}\n\n**Detected**: {top}"
+            if safety_qaqc:
+                safety_summary = ", ".join(
+                    f"{d['class']} ({d['confidence']:.2f})" for d in safety_qaqc[:5]
+                )
+                description = f"{description}\n\n**Safety/QA-QC**: {safety_summary}"
 
             provider_parts = ["pil"]
             if ocr_text:
                 provider_parts.append("tesseract")
             if yolo_used:
                 provider_parts.append("yolo")
+            if safety_qaqc_used:
+                provider_parts.append("safety_qaqc")
 
-            return {
+            result = {
                 "status": "success",
                 "operation": operation,
                 "provider": "+".join(provider_parts),
@@ -370,8 +397,14 @@ class ImageBlock(UniversalBlock):
                 "metadata": meta,
                 "detections": detections,
                 "summary_by_class": _summarize_detections(detections) if detections else {},
-                **({"detection_error": detection_error} if detection_error else {}),
             }
+            if detection_error:
+                result["detection_error"] = detection_error
+            if params.get("mode") == "safety_qaqc":
+                result["safety_qaqc"] = safety_qaqc
+                if safety_qaqc_error:
+                    result["safety_qaqc_error"] = safety_qaqc_error
+            return result
 
         finally:
             if tmp_path:

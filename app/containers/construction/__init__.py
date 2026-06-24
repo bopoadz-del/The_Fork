@@ -1,6 +1,7 @@
 """Construction Container - Full AEC Industry Domain Container v3.1"""
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.universal_base import UniversalContainer
@@ -140,7 +141,7 @@ class ConstructionContainer(
         ocr_block = self.get_dep("ocr")
         if ocr_block:
             try:
-                ocr_result = await ocr_block.execute({"image_path": file_path}, {})
+                ocr_result = await ocr_block.execute({"file_path": file_path}, {})
                 text = ocr_result.get("result", {}).get("text", "")
                 measurements = self._extract_measurements_advanced(text, {})
                 specs = self._extract_specs_advanced(text)
@@ -432,6 +433,57 @@ class ConstructionContainer(
     def _get_historical_benchmark_block(self):
         """Resolve the historical_benchmark block — DI first, registry fallback."""
         return self._resolve_block("historical_benchmark")
+    # YOLO class -> (severity, hazard_type) for safety_compliance_audit
+    _YOLO_SAFETY_SEVERITY = {
+        "no_hardhat": ("critical", "no_hardhat"),
+        "no_high_vis_vest": ("critical", "no_high_vis_vest"),
+        "fall_hazard_unprotected": ("critical", "fall_hazard_unprotected"),
+    }
+    # YOLO class -> (severity, defect_label) for qa_qc_inspection
+    _YOLO_QAQC_DEFECT = {
+        "concrete_crack": ("major", "concrete_crack"),
+        "concrete_honeycomb": ("major", "concrete_honeycomb"),
+        "rebar_exposed_defect": ("major", "rebar_exposed_defect"),
+        "bulging_concrete": ("major", "bulging_concrete"),
+    }
+
+    def _classes_to_hazards(self, safety_qaqc: List[Dict]) -> List[Dict]:
+        """Map fine-tuned-YOLO safety_qaqc output to hazard dicts that match
+        the shape _parse_safety_hazards produces. Drops classes that aren't
+        in the safety severity map (e.g. concrete defects, rebar inspection)."""
+        out = []
+        for entry in safety_qaqc or []:
+            mapping = self._YOLO_SAFETY_SEVERITY.get(entry.get("class"))
+            if not mapping:
+                continue
+            severity, hazard_type = mapping
+            out.append({
+                "type": hazard_type,
+                "description": f"YOLO: {entry.get('class')}",
+                "severity": severity,
+                "source": "yolo",
+                "confidence": float(entry.get("confidence", 0.0)),
+            })
+        return out
+
+    def _classes_to_defects(self, safety_qaqc: List[Dict]) -> List[Dict]:
+        """Map fine-tuned-YOLO safety_qaqc output to defect dicts matching
+        _parse_defects' shape. Drops non-defect classes (PPE, correct rebar)."""
+        out = []
+        for entry in safety_qaqc or []:
+            mapping = self._YOLO_QAQC_DEFECT.get(entry.get("class"))
+            if not mapping:
+                continue
+            severity, label = mapping
+            out.append({
+                "keyword": entry.get("class"),
+                "description": label,
+                "severity": severity,
+                "source": "yolo",
+                "confidence": float(entry.get("confidence", 0.0)),
+            })
+        return out
+
     def _parse_safety_hazards(self, text: str) -> List[Dict]:
         hazards = []
         hazard_patterns = [
@@ -497,6 +549,10 @@ class ConstructionContainer(
     async def carbon_footprint_calculator(self, input_data: Any, params: Dict) -> Dict:
         """Calculate embodied carbon footprint. Delegates to generate_carbon_report."""
         return await self.generate_carbon_report(input_data, params)
+
+    async def jetson_dispatch(self, input_data: Any, params: Dict) -> Dict:
+        """Jetson/edge dispatch stub — not implemented in this release."""
+        return {"status": "error", "error": "jetson_dispatch is not implemented"}
     def _get_maintenance_tasks(self, system_type: str) -> List[tuple]:
         tasks = {
             "mechanical": [
@@ -630,7 +686,7 @@ class ConstructionContainer(
         if image_block:
             try:
                 result = await image_block.execute(
-                    {"image_path": photo_path},
+                    {"file_path": photo_path},
                     {"prompt": "Identify: trade/work activity, equipment, materials, safety conditions, progress indicators, headcount estimate"}
                 )
                 return {

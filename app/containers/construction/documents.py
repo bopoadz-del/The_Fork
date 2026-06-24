@@ -550,16 +550,29 @@ class ConstructionDocumentsMixin:
         if image_block:
             try:
                 analysis = await image_block.execute(
-                    {"image_path": photo_path},
-                    {"prompt": safety_prompts.get(audit_type, safety_prompts["general"])}
+                    {"file_path": photo_path},
+                    {"prompt": safety_prompts.get(audit_type, safety_prompts["general"]),
+                     "mode": "safety_qaqc"}
                 )
-                desc = analysis.get("result", {}).get("description", "")
+                result_body = analysis.get("result", {})
+                desc = result_body.get("description", "")
+                safety_qaqc = result_body.get("safety_qaqc") or []
             except Exception:
                 desc = ""
+                safety_qaqc = []
         else:
             desc = ""
-    
+            safety_qaqc = []
+
         hazards_found = self._parse_safety_hazards(desc)
+        # Compose YOLO-derived hazards on top; dedup by hazard type to avoid
+        # double-counting when text and vision both flag the same issue.
+        yolo_hazards = self._classes_to_hazards(safety_qaqc)
+        seen_types = {h["type"] for h in hazards_found}
+        for yh in yolo_hazards:
+            if yh["type"] not in seen_types:
+                hazards_found.append(yh)
+                seen_types.add(yh["type"])
         return {
             "photo": Path(photo_path).name,
             "hazards_detected": len(hazards_found),
@@ -1691,16 +1704,28 @@ class ConstructionDocumentsMixin:
         if image_block:
             try:
                 analysis = await image_block.execute(
-                    {"image_path": file_path},
-                    {"prompt": defect_prompts.get(inspection_type, defect_prompts["general"])}
+                    {"file_path": file_path},
+                    {"prompt": defect_prompts.get(inspection_type, defect_prompts["general"]),
+                     "mode": "safety_qaqc"}
                 )
-                desc = analysis.get("result", {}).get("description", "")
+                result_body = analysis.get("result", {})
+                desc = result_body.get("description", "")
+                safety_qaqc = result_body.get("safety_qaqc") or []
             except Exception:
                 desc = ""
+                safety_qaqc = []
         else:
             desc = ""
-    
+            safety_qaqc = []
+
         defects = self._parse_defects(desc)
+        # Compose YOLO-derived defects on top; dedup by description.
+        yolo_defects = self._classes_to_defects(safety_qaqc)
+        seen_descs = {d["description"] for d in defects}
+        for yd in yolo_defects:
+            if yd["description"] not in seen_descs:
+                defects.append(yd)
+                seen_descs.add(yd["description"])
         compliance = self._check_compliance(defects, inspection_type)
     
         return {
@@ -1758,7 +1783,7 @@ class ConstructionDocumentsMixin:
         if image_block:
             try:
                 photo_analysis = await image_block.execute(
-                    {"image_path": photo_path},
+                    {"file_path": photo_path},
                     {"prompt": f"Identify construction elements at {location}: walls, columns, beams, slabs, openings, MEP rough-ins"}
                 )
                 detected = photo_analysis.get("result", {}).get("objects", [])

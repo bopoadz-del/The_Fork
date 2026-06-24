@@ -33,6 +33,8 @@ from sqlalchemy import cast, delete, func, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+import json as json_lib
+
 from app.core.db import _engine_for_url, _session_factory_for_url, get_database_url
 from app.core.models import EMBEDDING_DIM, Document, Project, RagChunk
 
@@ -101,6 +103,12 @@ class Chunk:
     text: str
     score: Optional[float] = None  # set on search results, None when raw
     rrf_score: Optional[float] = field(default=None, repr=False, compare=False)
+    # ── photo_chunks fields (kind="photo") ─────────────────────────────
+    # text chunks keep kind="text" and the photo fields default to None.
+    kind: str = "text"
+    sha256: Optional[str] = None
+    photo_url: Optional[str] = None
+    photo_metadata: Optional[dict] = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -109,6 +117,11 @@ class Chunk:
             d.pop("score")
         # rrf_score is debug-only; never expose it via the wire
         d.pop("rrf_score", None)
+        # Drop photo fields for plain text chunks to keep payloads small
+        if d.get("kind") == "text":
+            d.pop("sha256", None)
+            d.pop("photo_url", None)
+            d.pop("photo_metadata", None)
         return d
 
 
@@ -659,6 +672,165 @@ class VectorStore:
             )
             for r in rows
         ]
+
+    # ── photo_chunks BM25 leg (V2) ────────────────────────────────────────
+    #
+    # Queries the photo_chunks table (migration 0006) the same way the text
+    # leg queries chunks. Photo chunks expose kind='photo' + sha256 +
+    # photo_url so downstream callers can render image citations alongside
+    # text citations from the same retrieval result list.
+
+    def bm25_search_photos(
+        self,
+        query: str,
+        k: int = 5,
+        project_id: Optional[str] = None,
+    ) -> List[Chunk]:
+        """Top-k photo chunks for a query.
+
+        ``project_id`` is None for V1 (photos uploaded without a project).
+        When provided, results are restricted to that project OR rows with
+        NULL project_id (the V1 zip's photos are visible everywhere until
+        Phase 3 backfills them).
+        """
+        if not query or not query.strip():
+            return []
+        if self._use_pgvector:
+            return self._bm25_photos_postgres(query, k, project_id)
+        return self._bm25_photos_sqlite(query, k, project_id)
+
+    def _bm25_photos_postgres(
+        self, query: str, k: int, project_id: Optional[str]
+    ) -> List[Chunk]:
+        proj_filter = "AND (pc.project_id IS NULL OR pc.project_id = :project_id)" if project_id else ""
+        sql = text(
+            f"""
+            SELECT pc.chunk_id, pc.project_id, pc.sha256, pc.caption, pc.photo_metadata,
+                   ts_rank(to_tsvector('english', pc.caption), q) AS rank
+            FROM photo_chunks pc, plainto_tsquery('english', :q) AS q
+            WHERE to_tsvector('english', pc.caption) @@ q
+              {proj_filter}
+            ORDER BY rank DESC
+            LIMIT :k
+            """
+        )
+        params = {"q": query, "k": k}
+        if project_id:
+            params["project_id"] = project_id
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    rows = session.execute(sql, params).all()
+        except OperationalError as e:
+            logger.warning("bm25_search_photos (postgres) failed: %s; query=%r", e, query)
+            return []
+        return [self._photo_row_to_chunk(r) for r in rows]
+
+    def _bm25_photos_sqlite(
+        self, query: str, k: int, project_id: Optional[str]
+    ) -> List[Chunk]:
+        self._ensure_photo_chunks_fts_sqlite()
+        safe_query = _sanitize_fts5_query(query)
+        if not safe_query:
+            return []
+        proj_filter = "AND (pc.project_id IS NULL OR pc.project_id = :project_id)" if project_id else ""
+        sql = text(
+            f"""
+            SELECT pc.chunk_id, pc.project_id, pc.sha256, pc.caption, pc.photo_metadata,
+                   photo_chunks_fts.rank AS bm25_rank
+            FROM photo_chunks_fts
+            JOIN photo_chunks pc ON pc.rowid = photo_chunks_fts.rowid
+            WHERE photo_chunks_fts MATCH :q
+              {proj_filter}
+            ORDER BY photo_chunks_fts.rank
+            LIMIT :k
+            """
+        )
+        params = {"q": safe_query, "k": k}
+        if project_id:
+            params["project_id"] = project_id
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    rows = session.execute(sql, params).all()
+        except OperationalError as e:
+            logger.warning("bm25_search_photos (sqlite) FTS5 MATCH failed: %s; query=%r",
+                           e, safe_query)
+            return []
+        return [self._photo_row_to_chunk(r) for r in rows]
+
+    def _photo_row_to_chunk(self, r) -> Chunk:
+        meta = r.photo_metadata
+        if isinstance(meta, str):
+            try:
+                meta = json_lib.loads(meta)
+            except Exception:
+                meta = None
+        # Caption + class-name keywords as the searchable text. Class names
+        # in the caption already make this BM25-discoverable; class-tag list
+        # adds redundancy for queries that use canonical underscored names.
+        caption = r.caption or ""
+        class_names: List[str] = []
+        if isinstance(meta, dict):
+            for d in (meta.get("safety_qaqc") or []):
+                if isinstance(d, dict) and d.get("class"):
+                    class_names.append(d["class"])
+        content = caption
+        if class_names:
+            content = f"{caption}\nClasses: {', '.join(class_names)}"
+        return Chunk(
+            chunk_id=r.chunk_id,
+            project_id=r.project_id or "",
+            doc_id=r.sha256,
+            chunk_index=0,
+            text=content,
+            score=float(getattr(r, "rank", None) or getattr(r, "bm25_rank", 0.0)),
+            kind="photo",
+            sha256=r.sha256,
+            photo_url=f"/v1/photos/{r.sha256}",
+            photo_metadata=meta if isinstance(meta, dict) else None,
+        )
+
+    def _ensure_photo_chunks_fts_sqlite(self) -> None:
+        """Lazy FTS5 virtual table for photo_chunks on SQLite. Mirrors
+        the ``chunks_fts`` external-content pattern used for text chunks."""
+        with self._lock:
+            with self._session_factory()() as session:
+                conn = session.connection()
+                row = conn.exec_driver_sql(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='photo_chunks_fts'"
+                ).fetchone()
+                if row is not None:
+                    return
+                conn.exec_driver_sql(
+                    "CREATE VIRTUAL TABLE photo_chunks_fts USING fts5("
+                    "caption, content='photo_chunks', content_rowid='rowid')"
+                )
+                conn.exec_driver_sql(
+                    "CREATE TRIGGER photo_chunks_ai AFTER INSERT ON photo_chunks BEGIN "
+                    "INSERT INTO photo_chunks_fts(rowid, caption) VALUES (new.rowid, new.caption); "
+                    "END"
+                )
+                conn.exec_driver_sql(
+                    "CREATE TRIGGER photo_chunks_ad AFTER DELETE ON photo_chunks BEGIN "
+                    "INSERT INTO photo_chunks_fts(photo_chunks_fts, rowid, caption) "
+                    "VALUES('delete', old.rowid, old.caption); "
+                    "END"
+                )
+                conn.exec_driver_sql(
+                    "CREATE TRIGGER photo_chunks_au AFTER UPDATE ON photo_chunks BEGIN "
+                    "INSERT INTO photo_chunks_fts(photo_chunks_fts, rowid, caption) "
+                    "VALUES('delete', old.rowid, old.caption); "
+                    "INSERT INTO photo_chunks_fts(rowid, caption) VALUES (new.rowid, new.caption); "
+                    "END"
+                )
+                # One-time backfill for existing rows
+                conn.exec_driver_sql(
+                    "INSERT INTO photo_chunks_fts(rowid, caption) "
+                    "SELECT rowid, caption FROM photo_chunks"
+                )
+                session.commit()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
