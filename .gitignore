@@ -78,3 +78,7 @@ claudebot/KEYS.md
 # unified retriever is pgvector via app.core.rag.vector_store). Block
 # accidental re-commit of any local chroma scratch files.
 data/chroma_db/
+
+# YOLO training artifacts (local-only)
+/runs/
+/yolov8n.pt
