@@ -177,9 +177,18 @@ def retrieve_with_filter(
                 gk_pid, exc,
             )
 
+    # Photo chunks (V2 — kind='photo'). BM25 over caption + class labels.
+    # V1 photos have project_id NULL, so they surface in every project's
+    # retrieval results until Phase 3 backfills project scope.
+    raw_photos: List[Chunk] = []
+    try:
+        raw_photos = store.bm25_search_photos(query, k=over_fetch, project_id=project_id)
+    except Exception as exc:  # noqa: BLE001 — never let photo leg break text retrieval
+        logger.warning("photo bm25 leg failed: %s; text-only results stand", exc)
+
     # Merge then sort by score desc. Python sort is stable so active-project
     # chunks appear before GK chunks at identical scores.
-    combined: List[Chunk] = list(raw_active) + raw_gk
+    combined: List[Chunk] = list(raw_active) + raw_gk + raw_photos
     combined.sort(key=lambda c: -(c.score or 0))
 
     kept: List[Chunk] = []
