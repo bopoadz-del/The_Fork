@@ -46,7 +46,7 @@ def detect_with_dino(image_path: Path, class_names: List[str]) -> List[Dict]:
 
     results = proc.post_process_grounded_object_detection(
         outputs, inputs.input_ids,
-        box_threshold=_BOX_THRESHOLD, text_threshold=_TEXT_THRESHOLD,
+        threshold=_BOX_THRESHOLD, text_threshold=_TEXT_THRESHOLD,
         target_sizes=[image.size[::-1]],
     )[0]
 
