@@ -550,7 +550,7 @@ class ConstructionDocumentsMixin:
         if image_block:
             try:
                 analysis = await image_block.execute(
-                    {"image_path": photo_path},
+                    {"file_path": photo_path},
                     {"prompt": safety_prompts.get(audit_type, safety_prompts["general"])}
                 )
                 desc = analysis.get("result", {}).get("description", "")
@@ -1691,7 +1691,7 @@ class ConstructionDocumentsMixin:
         if image_block:
             try:
                 analysis = await image_block.execute(
-                    {"image_path": file_path},
+                    {"file_path": file_path},
                     {"prompt": defect_prompts.get(inspection_type, defect_prompts["general"])}
                 )
                 desc = analysis.get("result", {}).get("description", "")
@@ -1758,7 +1758,7 @@ class ConstructionDocumentsMixin:
         if image_block:
             try:
                 photo_analysis = await image_block.execute(
-                    {"image_path": photo_path},
+                    {"file_path": photo_path},
                     {"prompt": f"Identify construction elements at {location}: walls, columns, beams, slabs, openings, MEP rough-ins"}
                 )
                 detected = photo_analysis.get("result", {}).get("objects", [])

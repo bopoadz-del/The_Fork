@@ -1,6 +1,7 @@
 """Construction Container - Full AEC Industry Domain Container v3.1"""
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.universal_base import UniversalContainer
@@ -140,7 +141,7 @@ class ConstructionContainer(
         ocr_block = self.get_dep("ocr")
         if ocr_block:
             try:
-                ocr_result = await ocr_block.execute({"image_path": file_path}, {})
+                ocr_result = await ocr_block.execute({"file_path": file_path}, {})
                 text = ocr_result.get("result", {}).get("text", "")
                 measurements = self._extract_measurements_advanced(text, {})
                 specs = self._extract_specs_advanced(text)
@@ -497,6 +498,10 @@ class ConstructionContainer(
     async def carbon_footprint_calculator(self, input_data: Any, params: Dict) -> Dict:
         """Calculate embodied carbon footprint. Delegates to generate_carbon_report."""
         return await self.generate_carbon_report(input_data, params)
+
+    async def jetson_dispatch(self, input_data: Any, params: Dict) -> Dict:
+        """Jetson/edge dispatch stub — not implemented in this release."""
+        return {"status": "error", "error": "jetson_dispatch is not implemented"}
     def _get_maintenance_tasks(self, system_type: str) -> List[tuple]:
         tasks = {
             "mechanical": [
@@ -630,7 +635,7 @@ class ConstructionContainer(
         if image_block:
             try:
                 result = await image_block.execute(
-                    {"image_path": photo_path},
+                    {"file_path": photo_path},
                     {"prompt": "Identify: trade/work activity, equipment, materials, safety conditions, progress indicators, headcount estimate"}
                 )
                 return {
