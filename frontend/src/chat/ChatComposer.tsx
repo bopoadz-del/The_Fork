@@ -98,8 +98,16 @@ export default function ChatComposer({
       const token = getToken() || ''
       const fd = new FormData()
       fd.append('file', file)
-      fd.append('role', role)
-      const res = await fetch(`${API_BASE}/v1/projects/${projectId}/documents`, {
+      // Photos attached via chat are question-context, not corpus
+      // material — route them to /v1/chat/analyze-photo so we don't
+      // require project ownership (shared admin-approved projects
+      // would 404 the documents endpoint).
+      const isImage = /\.(jpe?g|png|webp|tiff?|bmp|gif)$/i.test(file.name)
+      const endpoint = isImage
+        ? `${API_BASE}/v1/chat/analyze-photo`
+        : `${API_BASE}/v1/projects/${projectId}/documents`
+      if (!isImage) fd.append('role', role)
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: fd,
@@ -110,9 +118,7 @@ export default function ChatComposer({
         return
       }
       const body = await res.json()
-      const docName = body?.document?.original_name || file.name
-      // Surface V2 safety/QA-QC detections when the upload endpoint ran
-      // the image block inline on a photo.
+      const docName = body?.document?.original_name || body?.filename || file.name
       const sq = body?.safety_qaqc as { count: number; top: { class: string; confidence: number }[] } | undefined
       const detSummary = sq && sq.count > 0
         ? sq.top.map((d) => `${d.class}@${d.confidence.toFixed(2)}`).join(', ')
