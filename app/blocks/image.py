@@ -348,15 +348,18 @@ class ImageBlock(UniversalBlock):
                 except Exception as e:
                     detection_error = str(e)
 
-            # Optional safety/QA-QC tier — fine-tuned YOLO from a
-            # safety_qaqc_v*.pt checkpoint. Only runs when mode=safety_qaqc
-            # is explicitly requested AND SAFETY_DETECTOR_WEIGHTS env var
-            # points at a usable .pt. Failures are non-fatal.
+            # Optional safety/QA-QC tier — YOLO-Worldv2 with a baked
+            # prompt vocabulary (see app/blocks/safety_world_prompts.json
+            # and scripts/bake_world_model.py). Only runs when
+            # mode=safety_qaqc is explicitly requested AND
+            # SAFETY_WORLD_WEIGHTS env var points at a usable baked .pt.
+            # Failures are non-fatal. CLIP is NOT imported here -- the
+            # text vectors are reparameterized into the .pt at bake time.
             safety_qaqc: List[Dict[str, Any]] = []
             safety_qaqc_error: Optional[str] = None
             safety_qaqc_used = False
             if params.get("mode") == "safety_qaqc":
-                from app.blocks.safety_detector import default_detector
+                from app.blocks.safety_world_detector import default_detector
                 from app.core.file_crypto import open_plaintext
                 detector = default_detector()
                 if detector is not None:

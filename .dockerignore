@@ -14,7 +14,7 @@ node_modules
 frontend/node_modules
 frontend/.vite
 data
-!data/models/safety_qaqc_v1_r4.pt
+!data/models/safety_world_v2.onnx
 uploads
 logs
 *.log

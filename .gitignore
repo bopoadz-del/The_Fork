@@ -67,6 +67,9 @@ claudebot/KEYS.md
 # Anchored with leading slash so app/data/ (versioned content like the
 # procedures DB) is NOT swept up by this rule.
 /data/
+# ...except the Safety Observation AI v2 weights -- those ARE shipped.
+!/data/models/
+!/data/models/safety_world_v2.onnx
 .playwright-mcp/
 
 # wrangler / Cloudflare Workers local state
@@ -79,6 +82,12 @@ claudebot/KEYS.md
 # accidental re-commit of any local chroma scratch files.
 data/chroma_db/
 
-# YOLO training artifacts (local-only)
+# YOLO base/scratch artifacts (local-only). The BAKED .onnx we ship
+# lives at data/models/safety_world_v2.onnx and IS committed via the
+# /data/models/ exception above.
 /runs/
 /yolov8n.pt
+/yolov8s-world.pt
+/yolov8s-worldv2.pt
+/yolov8m-worldv2.pt
+/weights/

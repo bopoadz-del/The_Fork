@@ -119,17 +119,17 @@ export default function ChatComposer({
       }
       const body = await res.json()
       const docName = body?.document?.original_name || body?.filename || file.name
-      const sq = body?.safety_qaqc as { count: number; top: { class: string; confidence: number }[] } | undefined
-      const detSummary = sq && sq.count > 0
-        ? sq.top.map((d) => `${d.class}@${d.confidence.toFixed(2)}`).join(', ')
-        : ''
-      const statusMsg = detSummary
-        ? `Attached: ${docName} — detected ${sq!.count}: ${detSummary}`
+      // Safety Observation AI v2 returns tiered OBSERVATIONS, never
+      // "violations". Use observations[] verbatim so the LLM also reads
+      // them as observations rather than as a verdict.
+      const observations = (body?.observations as string[] | undefined) ?? []
+      const statusMsg = observations.length
+        ? `Attached: ${docName} -- ${observations.join('; ')}`
         : `Attached: ${docName}`
       setAttachStatus(statusMsg)
       onAttached?.(docName)
-      const inlineTag = detSummary
-        ? `[attached: ${docName} | safety_qaqc: ${detSummary}] `
+      const inlineTag = observations.length
+        ? `[attached: ${docName} | observations: ${observations.join('; ')}] `
         : `[attached: ${docName}] `
       setText((prev) => (prev ? `${prev}\n` : '') + inlineTag)
       setTimeout(() => setAttachStatus(null), 6000)

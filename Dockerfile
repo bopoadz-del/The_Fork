@@ -14,15 +14,20 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# V2 safety/QA-QC detector dependencies — CPU wheels only.
-# SAFETY_DETECTOR_WEIGHTS env var on Render points at the committed
-# data/models/safety_qaqc_v1_r4.pt that the runtime loads via
-# ultralytics YOLO(). Pinned to the same versions verified locally.
+# Safety Observation AI v2 detector dependencies -- CPU wheels only.
+# SAFETY_WORLD_WEIGHTS env var on Render points at the committed
+# data/models/safety_world_v2.onnx -- a YOLO-Worldv2-s checkpoint with
+# its prompt vocabulary reparameterized into the classifier head at
+# bake time, then exported to ONNX (see scripts/bake_world_model.py +
+# scripts/export_to_onnx steps). CLIP is NOT a runtime dep: the text
+# vectors are baked into the .onnx; ultralytics' YOLO() loader treats
+# it as a regular detector backed by onnxruntime.
 RUN pip install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         "torch==2.5.1" \
         "torchvision==0.20.1" \
-        "ultralytics==8.4.75"
+        "ultralytics==8.4.75" \
+        "onnxruntime==1.27.0"
 # Replace whatever opencv ultralytics pulled (opencv-python 4.13 has known
 # cv2.imdecode failures under numpy 2.x ABI) with the older, ABI-safe
 # headless 4.10.0.84. uninstall both packages first because pip treats
@@ -85,11 +90,11 @@ COPY . .
 # Replace the (gitignored) frontend/dist with the freshly built one.
 COPY --from=frontend /frontend/dist /app/frontend/dist
 
-# Copy V2 detector weights OUT of /app/data (which is a volume mount at
-# runtime — the volume overlay hides the image's content) to a stable,
-# non-volume location. SAFETY_DETECTOR_WEIGHTS on Render points here.
+# Copy detector weights OUT of /app/data (which is a volume mount at
+# runtime -- the volume overlay hides the image's content) to a stable,
+# non-volume location. SAFETY_WORLD_WEIGHTS on Render points here.
 RUN mkdir -p /app/models \
-    && cp /app/data/models/safety_qaqc_v1_r4.pt /app/models/safety_qaqc_v1_r4.pt
+    && cp /app/data/models/safety_world_v2.onnx /app/models/safety_world_v2.onnx
 
 # Run as an unprivileged user. /app/data (the persistent volume) and the app
 # tree must be owned by it so the process can write its DBs and uploads.
