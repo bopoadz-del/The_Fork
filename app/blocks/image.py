@@ -172,8 +172,14 @@ def _yolo_detect(
     error. Raises when ultralytics isn't installed; callers should
     gate with :func:`_yolo_available`.
     """
+    from app.core.file_crypto import open_plaintext
+
     model = _get_yolo_model(model_name)
-    results = model(file_path, conf=conf_threshold, verbose=False)
+    # Uploaded files are Fernet-encrypted at rest; decrypt to a temp path
+    # for ultralytics, which uses cv2.imread under the hood and would see
+    # the encrypted ciphertext as a broken JPEG.
+    with open_plaintext(file_path) as plain_path:
+        results = model(str(plain_path), conf=conf_threshold, verbose=False)
     detections: List[Dict[str, Any]] = []
     for result in results:
         boxes = getattr(result, "boxes", None)
@@ -351,13 +357,18 @@ class ImageBlock(UniversalBlock):
             safety_qaqc_used = False
             if params.get("mode") == "safety_qaqc":
                 from app.blocks.safety_detector import default_detector
+                from app.core.file_crypto import open_plaintext
                 detector = default_detector()
                 if detector is not None:
                     try:
-                        safety_qaqc = detector.detect(
-                            Path(file_path),
-                            conf_threshold=float(params.get("safety_qaqc_conf", 0.25)),
-                        )
+                        # Decrypt the at-rest-encrypted upload before
+                        # handing the path to ultralytics — same reason
+                        # _yolo_detect wraps with open_plaintext.
+                        with open_plaintext(file_path) as plain_path:
+                            safety_qaqc = detector.detect(
+                                Path(plain_path),
+                                conf_threshold=float(params.get("safety_qaqc_conf", 0.25)),
+                            )
                         safety_qaqc_used = True
                     except Exception as e:
                         safety_qaqc_error = str(e)
