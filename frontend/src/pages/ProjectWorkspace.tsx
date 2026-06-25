@@ -985,6 +985,7 @@ export default function ProjectWorkspace() {
               setLlmAvailable(false)
               setTimeout(() => {
                 setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
+                setLlmAvailable(true)
               }, 8000)
             }
           }
@@ -1016,6 +1017,7 @@ export default function ProjectWorkspace() {
           setLlmAvailable(false)
           setTimeout(() => {
             setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
+            setLlmAvailable(true)
           }, 8000)
           return
         }
@@ -1041,6 +1043,7 @@ export default function ProjectWorkspace() {
       setLlmAvailable(false)
       setTimeout(() => {
         setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
+        setLlmAvailable(true)
       }, 8000)
     } finally {
       clearReaderDeadline()

@@ -28,6 +28,7 @@ _KIT_BLOCK_SPECS: Dict[str, List[Tuple[str, str, str]]] = {
         ("smart_orchestrator", "app.blocks.smart_orchestrator", "SmartOrchestratorBlock"),
         ("learning_engine", "app.blocks.learning_engine", "LearningEngineBlock"),
         ("recommendation_template", "app.blocks.recommendation_template", "RecommendationTemplateBlock"),
+        ("historical_benchmark", "app.blocks.historical_benchmark", "HistoricalBenchmarkBlock"),
     ],
 }
 

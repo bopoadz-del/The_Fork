@@ -38,7 +38,7 @@ export default function ChatBubble({ message, onDownload }: Props) {
 
   return (
     <div className={`chat-bubble chat-bubble--${message.role}`}>
-      {!isUser && <div className="chat-bubble__avatar" aria-hidden="true">TF</div>}
+      {!isUser && <div className="chat-bubble__avatar" aria-hidden="true" title="The SHovel">TSH</div>}
 
       <div className="chat-bubble__body">
         {message.toolStatus && (

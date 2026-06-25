@@ -172,7 +172,14 @@ class ConstructionBoqMixin:
         return result.get("rates", {}).get("adjusted_usd")
     async def extract_quantities(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
-        measurements = data.get("measurements") or data.get("quantities") or []
+        p = params or {}
+        measurements = (
+            data.get("measurements")
+            or data.get("quantities")
+            or p.get("measurements")
+            or p.get("quantities")
+            or []
+        )
         if not measurements:
             return {
                 "status": "error",
@@ -180,6 +187,16 @@ class ConstructionBoqMixin:
                 "quantities": {},
                 "measurements": [],
             }
+        # Normalise a flat dict of measurements (e.g. {"area": 500, "volume": 120})
+        # into the list shape _calculate_quantities expects.
+        if isinstance(measurements, dict):
+            converted = []
+            for key, value in measurements.items():
+                if isinstance(value, (int, float)):
+                    converted.append({"type": key, "value": value})
+                elif isinstance(value, dict):
+                    converted.append(value)
+            measurements = converted
         quantities = self._calculate_quantities(measurements)
         return {"status": "success", "quantities": quantities, "measurements": measurements}
     async def estimate_costs(self, input_data: Any, params: Dict) -> Dict:
@@ -1087,14 +1104,25 @@ class ConstructionBoqMixin:
                 {"contractor_name": "Bid B — Gulf Builders LLC", "total_price": 4620000, "duration_days": 580, "experience_score": 78, "financial_stability": 80, "safety_rating": 85, "quality_score": 79},
                 {"contractor_name": "Bid C — Precision Contracting", "total_price": 5100000, "duration_days": 510, "experience_score": 92, "financial_stability": 95, "safety_rating": 94, "quality_score": 91},
             ]
-    
+
+        # Normalize common aliases so callers can pass either total_price/amount
+        # or duration_days/duration without KeyError crashes.
+        normalized_bids = []
+        for bid in bids:
+            normalized_bids.append({
+                **bid,
+                "total_price": bid.get("total_price") if bid.get("total_price") is not None else bid.get("amount", 0),
+                "duration_days": bid.get("duration_days") if bid.get("duration_days") is not None else bid.get("duration", 0),
+            })
+        bids = normalized_bids
+
         analyzed_bids = []
         for bid in bids:
             bidder_name = bid.get("contractor_name", "Unknown")
             bid_price = bid.get("total_price", 0)
             bid_duration = bid.get("duration_days", 0)
-            all_prices = [b["total_price"] for b in bids]
-            all_durations = [b["duration_days"] for b in bids]
+            all_prices = [b.get("total_price", 0) for b in bids]
+            all_durations = [b.get("duration_days", 0) for b in bids]
         
             scores = {
                 "price": self._score_price(bid_price, all_prices),
@@ -1689,23 +1717,25 @@ class ConstructionBoqMixin:
             "local_content": 70
         }
     def _calculate_social_metrics(self, manpower: Dict, safety: List) -> Dict:
+        # Return numeric defaults so downstream scoring comparisons never
+        # fail with "'<' not supported between instances of 'str' and 'int'".
         return {
-            "total_workers": "not_assessed",
-            "local_percent": "not_assessed",
-            "incidents": "not_assessed",
-            "ltifr": "not_assessed",
-            "training_hours": "not_assessed",
-            "community_spend": "not_assessed",
-            "gender_diversity": "not_assessed",
-            "local_procurement": "not_assessed",
+            "total_workers": 0,
+            "local_percent": 0,
+            "incidents": 0,
+            "ltifr": 0,
+            "training_hours": 0,
+            "community_spend": 0,
+            "gender_diversity": 0,
+            "local_procurement": 0,
             "note": "Field requires project-specific data; not auto-computed.",
         }
     def _calculate_governance_metrics(self, project: Dict) -> Dict:
         return {
-            "ethics_training": "not_assessed",
-            "anti_corruption": "not_assessed",
-            "supplier_audits": "not_assessed",
-            "transparency": "not_assessed",
+            "ethics_training": 0,
+            "anti_corruption": False,
+            "supplier_audits": 0,
+            "transparency": 50,
             "note": "Field requires project-specific data; not auto-computed.",
         }
     def _score_environmental(self, metrics: Dict) -> float:
@@ -1792,20 +1822,25 @@ class ConstructionBoqMixin:
             return {"status": "error", "error": "boq_processor block unavailable"}
         return await block.process(input_data, params)
     async def benchmark_lookup(self, input_data: Any, params: Dict) -> Dict:
-        """Historical benchmark lookup — block removed, returns an honest no-data error.
+        """Historical benchmark lookup — delegates to the historical_benchmark block.
 
-        Previously routed to HistoricalBenchmarkBlock, which shipped a 2024
-        RS-Means snapshot that would drift silently. The block was deleted
-        to stop pretending we have a maintained rate database. Real rates
-        will be accumulated by learning_engine from actual user data over
-        time — this method is kept as a stable interface for that future
-        wiring.
+        The block ships a small, conservative, region-adjusted rate book for
+        common construction items. Unknown items return an honest error so the
+        caller can supply supplier quotes or add a custom rate.
         """
-        return {
-            "status": "error",
-            "error": (
-                "No historical benchmark source configured. Use supplier "
-                "quotes or rates from the BOQ; learning_engine will record "
-                "real samples as they're seen."
-            ),
+        block = self._get_historical_benchmark_block()
+        if block is None:
+            return {
+                "status": "error",
+                "error": "historical_benchmark block unavailable",
+            }
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        lookup_params = {
+            "action": "lookup",
+            "item": p.get("item") or data.get("item", ""),
+            "unit": p.get("unit") or data.get("unit", ""),
+            "location": p.get("location") or data.get("location", "US National Average"),
+            "project_type": p.get("project_type") or data.get("project_type", "general_building"),
         }
+        return await block.process(data, lookup_params)

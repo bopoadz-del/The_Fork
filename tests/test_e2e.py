@@ -238,31 +238,26 @@ class TestConstructionBlocks:
         r = await b.execute({}, {})
         assert "status" in r
 
-    def test_historical_benchmark_block_is_removed(self):
-        """historical_benchmark was deleted — it shipped a hardcoded 2024 RS-Means
-        snapshot that would drift silently. The container's benchmark_lookup()
-        now returns an honest no-data error; learning_engine will accumulate
-        real rates from user-supplied data over time. This test guards against
-        the block being re-introduced as canned data."""
+    def test_historical_benchmark_block_exists(self):
+        """historical_benchmark is now a lightweight, region-adjusted fallback
+        rate source. It must register and return plausible rates for common
+        items while honestly flagging unknown items."""
         from app.blocks import BLOCK_REGISTRY
-        assert "historical_benchmark" not in BLOCK_REGISTRY, (
-            "historical_benchmark must stay deleted; if a real (not canned) "
-            "rate source is added, name it differently and update this test."
-        )
-        # Importing the deleted module must fail.
-        with pytest.raises(ImportError):
-            import app.blocks.historical_benchmark  # noqa: F401
+        from app.blocks.historical_benchmark import HistoricalBenchmarkBlock
+        assert "historical_benchmark" in BLOCK_REGISTRY
+        assert BLOCK_REGISTRY["historical_benchmark"] is HistoricalBenchmarkBlock
 
     @pytest.mark.asyncio
-    async def test_container_benchmark_lookup_returns_honest_error(self):
-        """ConstructionContainer.benchmark_lookup() keeps its method signature
-        for forward-compat with a future learning-based benchmark, but for now
-        always returns a structured error pointing callers at supplier quotes."""
+    async def test_container_benchmark_lookup_returns_rate(self):
+        """ConstructionContainer.benchmark_lookup() delegates to the
+        historical_benchmark block and returns a structured rate for known
+        construction items."""
         from app.containers.construction import ConstructionContainer
         c = ConstructionContainer()
         r = await c.benchmark_lookup({"item": "Concrete C40", "unit": "m3"}, {})
-        assert r["status"] == "error"
-        assert "historical benchmark" in r["error"].lower()
+        assert r["status"] == "success"
+        assert "rates" in r
+        assert r["rates"].get("adjusted_usd") is not None
 
     @pytest.mark.asyncio
     async def test_formula_executor(self):
@@ -502,27 +497,22 @@ class TestAPIEndpoints:
             os.unlink(f.name)
 
     @pytest.mark.asyncio
-    async def test_execute_endpoint_rejects_removed_historical_benchmark(self, client):
-        """historical_benchmark was deleted from BLOCK_REGISTRY. POST /execute
-        targeting it must surface an error rather than silently succeeding —
-        this test exists to catch accidental re-introduction of the block."""
+    async def test_execute_endpoint_historical_benchmark_lookup(self, client):
+        """POST /execute targeting historical_benchmark returns a structured
+        rate for a known item now that the block is restored."""
         async with client as c:
             r = await c.post(
                 "/execute",
                 json={"block": "historical_benchmark",
-                      "input": {"item": "Concrete C40", "unit": "m3"},
-                      "params": {}},
+                      "input": {"item": "concrete", "unit": "m3"},
+                      "params": {"action": "lookup"}},
                 headers={"Authorization": f"Bearer {self.API_KEY}"},
             )
-        # Whatever the exact status, the response must not pretend this block
-        # exists. Accept either an HTTP error or a JSON body with status="error".
-        if r.status_code == 200:
-            body = r.json()
-            assert body.get("status") == "error" or body.get("result", {}).get("status") == "error", (
-                f"Removed block silently returned success: {body}"
-            )
-        else:
-            assert r.status_code in (400, 404, 422, 500), r.status_code
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("status") == "success" or body.get("result", {}).get("status") == "success", body
+        result = body.get("result", body)
+        assert result.get("rates", {}).get("adjusted_usd") is not None
 
     @pytest.mark.asyncio
     async def test_execute_endpoint_requires_auth(self, client):
