@@ -68,7 +68,7 @@ async def test_analyze_operation_works_with_no_env_vars(monkeypatch):
         os.unlink(path)
 
     assert result["status"] == "success"
-    assert result["provider"] in {"pil", "pil+tesseract"}
+    assert result["provider"] in {"pil", "pil+tesseract", "pil+yolo"}
     assert "metadata" in result
     assert "description" in result
     # Description must not reference any cloud vision provider.

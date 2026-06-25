@@ -99,7 +99,7 @@ def test_execute_response_carries_artifacts(client, monkeypatch):
     monkeypatch.setattr(FormulaExecutorV2Block, "_call_llm", _fake_llm)
 
     r = client.post("/v1/execute", json={
-        "block": "formula_executor", "input": "2 + 2", "params": {},
+        "block": "formula_executor_v2", "input": "2 + 2", "params": {},
     }, headers=H)
     assert r.status_code == 200, r.text
     body = r.json()

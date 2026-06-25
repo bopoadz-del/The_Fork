@@ -25,7 +25,7 @@ FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sample_office.ifc
 
 def _run(input_data, params=None):
     block = BIMBlock(hal_block=None, config={})
-    return asyncio.get_event_loop().run_until_complete(block.process(input_data, params))
+    return asyncio.run(block.process(input_data, params))
 
 
 # ── Error shape: every failure path must surface status:error ───────────────
@@ -101,7 +101,7 @@ def test_parse_ifc_success_shape_on_real_fixture():
     if not os.path.exists(FIXTURE):
         pytest.skip(f"missing IFC fixture {FIXTURE}")
     block = _block_with_extractor()
-    r = asyncio.get_event_loop().run_until_complete(
+    r = asyncio.run(
         block.process({"file_path": FIXTURE}, {"action": "parse_ifc"})
     )
     assert r["status"] == "success", r.get("error")
@@ -121,7 +121,7 @@ def test_element_types_filter_is_honoured_on_real_fixture():
     block = _block_with_extractor()
 
     # First: unfiltered count
-    full = asyncio.get_event_loop().run_until_complete(
+    full = asyncio.run(
         block.process(
             {"file_path": FIXTURE, "element_types": []},
             {"action": "parse_ifc"},
@@ -132,7 +132,7 @@ def test_element_types_filter_is_honoured_on_real_fixture():
     assert full_count > 0
 
     # Then: ask only for IfcWall and assert the filter narrowed the list.
-    walls = asyncio.get_event_loop().run_until_complete(
+    walls = asyncio.run(
         block.process(
             {"file_path": FIXTURE, "element_types": ["IfcWall"]},
             {"action": "parse_ifc"},
@@ -154,7 +154,7 @@ def test_parse_ifc_without_extractor_returns_status_error():
     """When the bim_extractor dep isn't wired (kit not loaded), bim must
     surface a clean error rather than crash or silently no-op."""
     block = BIMBlock(hal_block=None, config={})
-    r = asyncio.get_event_loop().run_until_complete(
+    r = asyncio.run(
         block.process({"file_path": FIXTURE}, {"action": "parse_ifc"})
     )
     assert r["status"] == "error"

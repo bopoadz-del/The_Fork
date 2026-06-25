@@ -13,6 +13,9 @@ router = APIRouter()
 # Blocks that execute arbitrary code (subprocess / exec) — restricted to admin
 # callers so an ordinary authenticated user cannot get remote code execution
 # through the generic /execute endpoint.
+# Blocks that execute arbitrary code (subprocess / exec) — restricted to admin
+# callers so an ordinary authenticated user cannot get remote code execution
+# through the generic /execute endpoint.
 _PRIVILEGED_BLOCKS = {"code", "sandbox"}
 
 

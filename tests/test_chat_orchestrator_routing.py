@@ -76,6 +76,7 @@ async def test_domain_hint_failure_does_not_break_chat(monkeypatch):
 
 from app.core.action_router import (
     GENERATIVE_INTENTS,
+    GENERATIVE_ROUTING_THRESHOLD,
     ROUTING_CONFIDENCE_THRESHOLD,
     needs_planning,
 )
@@ -87,9 +88,11 @@ def test_needs_planning_requires_action():
 
 
 def test_needs_planning_requires_confidence_above_threshold():
-    # generate_wbs is in the whitelist but the score is too low.
-    assert needs_planning("generate_wbs", ROUTING_CONFIDENCE_THRESHOLD - 0.01) is False
-    assert needs_planning("generate_wbs", ROUTING_CONFIDENCE_THRESHOLD) is True
+    # generate_wbs is a generative intent; it uses the relaxed gate-2 threshold.
+    assert needs_planning("generate_wbs", GENERATIVE_ROUTING_THRESHOLD - 0.01) is False
+    assert needs_planning("generate_wbs", GENERATIVE_ROUTING_THRESHOLD) is True
+    # Non-generative actions still require the global threshold regardless of score.
+    assert needs_planning("health_check", ROUTING_CONFIDENCE_THRESHOLD) is False
 
 
 def test_needs_planning_requires_generative_action():

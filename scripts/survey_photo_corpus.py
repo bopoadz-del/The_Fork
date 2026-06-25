@@ -17,12 +17,18 @@ from typing import Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.blocks.safety_classes import load_class_registry  # noqa: E402
+_PROMPTS_PATH = Path(__file__).resolve().parents[1] / "app" / "blocks" / "safety_world_prompts.json"
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 _MODEL_ID = "IDEA-Research/grounding-dino-tiny"
 _BOX_THRESHOLD = 0.35
 _TEXT_THRESHOLD = 0.25
+
+
+def _load_prompts() -> List[str]:
+    """Load the live Safety Observation AI prompt vocabulary."""
+    data = json.loads(_PROMPTS_PATH.read_text(encoding="utf-8"))
+    return list(data["prompts"])
 
 
 def detect_with_dino(image_path: Path, class_names: List[str]) -> List[Dict]:
@@ -39,7 +45,8 @@ def detect_with_dino(image_path: Path, class_names: List[str]) -> List[Dict]:
     proc, model = detect_with_dino._cache
 
     image = Image.open(image_path).convert("RGB")
-    prompt = ". ".join(name.replace("_", " ") for name in class_names) + "."
+    # DINO prompt is the literal prompt phrases separated by periods.
+    prompt = ". ".join(class_names) + "."
     inputs = proc(images=image, text=prompt, return_tensors="pt")
     with torch.no_grad():
         outputs = model(**inputs)
@@ -50,7 +57,7 @@ def detect_with_dino(image_path: Path, class_names: List[str]) -> List[Dict]:
         target_sizes=[image.size[::-1]],
     )[0]
 
-    name_lookup = {name.replace("_", " "): name for name in class_names}
+    name_lookup = {name: name for name in class_names}
     out = []
     for box, score, label in zip(results["boxes"], results["scores"], results["labels"]):
         canon = name_lookup.get(label)
@@ -65,7 +72,7 @@ def detect_with_dino(image_path: Path, class_names: List[str]) -> List[Dict]:
 
 
 def survey_folder(folder: Path, output_json: Path) -> Dict:
-    class_names = [c.name for c in load_class_registry()]
+    class_names = _load_prompts()
     per_class = {n: {"detections": 0, "photos_with_at_least_one": 0} for n in class_names}
     per_photo: List[Dict] = []
 

@@ -80,6 +80,10 @@ def test_non_admin_sees_own_plus_admin_approved(client):
     approved = projects_mod.create_project(
         name="Platform", user_id="system", origin="admin_drive_approved",
     )
+    # Attach two documents so the pilot incomplete-shell filter (≤1 doc)
+    # does not suppress this approved project from the non-admin list.
+    projects_mod.add_document(approved["id"], "platform-brief.pdf")
+    projects_mod.add_document(approved["id"], "platform-spec.pdf")
     try:
         _override("user", "system")
         resp = client.get("/v1/projects")

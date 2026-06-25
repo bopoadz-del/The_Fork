@@ -21,7 +21,7 @@ from app.agents.runtime import Agent, AGENT_REGISTRY, select_agent_for_message
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _make_agent(name: str) -> Agent:

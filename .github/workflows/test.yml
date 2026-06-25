@@ -52,15 +52,15 @@ jobs:
       - name: Security scan
         run: python scripts/security_scan.py
 
-      - name: Run tests (excluding browser suite)
-        # --cov-fail-under is a regression FLOOR (current coverage ~28%);
+      - name: Run tests
+        # --cov-fail-under is a regression FLOOR (current coverage ~57%);
         # the global gate fails the job if coverage drops below it or if no
         # tests collect. The diff-cover step below catches the orthogonal
         # case: "PR adds 200 lines, tests 5" can stay above 25% global
         # coverage while ratcheting NEW code toward zero coverage.
         # --cov-report=xml emits coverage.xml for diff-cover to read.
         run: >
-          pytest tests/ -v --tb=short --ignore=tests/browser
+          pytest tests/ -v --tb=short
           --cov=app --cov-report=term-missing --cov-report=xml
           --cov-fail-under=25
         env:
@@ -145,7 +145,7 @@ jobs:
 
       - name: Run tests (PostgreSQL)
         run: >
-          pytest tests/ -v --tb=short --ignore=tests/browser
+          pytest tests/ -v --tb=short
           --cov=app --cov-report=term-missing --cov-fail-under=25
         env:
           ENV: testing
@@ -154,33 +154,3 @@ jobs:
           CEREBRUM_DOMAIN_KITS: ""
           RAG_EMBEDDING_MODEL: fake
 
-  browser-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install system deps for OCR + PDF
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq tesseract-ocr poppler-utils
-
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio
-
-      - name: Install Playwright Chromium + system libs
-        run: |
-          python -m playwright install --with-deps chromium
-
-      - name: Run browser tests
-        run: pytest tests/browser/ -v --tb=short
-        env:
-          ENV: development
-          DATA_DIR: ${{ runner.temp }}/data

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -21,9 +22,22 @@ from app.core.models import AgentFact, Conversation, Message
 _lock = threading.Lock()
 _initialized = False
 
+# Monotonic insertion counter so rows created within the same system-clock
+# tick still have a deterministic lexicographic order.
+_NOW_LOCK = threading.Lock()
+_NOW_COUNTER = 0
+
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    """ISO-8601 timestamp with a monotonic counter so consecutive inserts
+    sort deterministically (fixes message-order flakiness in tests)."""
+    global _NOW_COUNTER
+    with _NOW_LOCK:
+        _NOW_COUNTER += 1
+        counter = _NOW_COUNTER
+    ns = time.time_ns()
+    dt = datetime.fromtimestamp(ns / 1e9, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{ns % 1_000_000_000:09d}-{counter:010d}+00:00"
 
 
 def _ensure_sqlite_parent_dir() -> None:

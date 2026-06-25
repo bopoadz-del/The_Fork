@@ -36,7 +36,7 @@ from app.blocks.smart_orchestrator import SmartOrchestratorBlock
 
 def _run(message: str) -> dict:
     block = SmartOrchestratorBlock()
-    return asyncio.get_event_loop().run_until_complete(
+    return asyncio.run(
         block.process({"user_message": message})
     )
 

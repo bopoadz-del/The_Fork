@@ -18,6 +18,5 @@ data
 uploads
 logs
 *.log
-tests/browser
 .github
 *.md

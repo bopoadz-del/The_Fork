@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -726,8 +727,8 @@ def test_local_folders_env_parsing(monkeypatch):
     m = _parse_local_project_folders()
     assert m["p1"] == "/tmp/a"
     assert m["p2"] == "/tmp/b"
-    # Relative resolved to absolute
-    assert os.path.isabs(m["p3"]) and m["p3"].endswith("relative/path")
+    # Relative resolved to absolute (OS-normalised separator)
+    assert os.path.isabs(m["p3"]) and m["p3"].endswith(os.path.normpath("relative/path"))
     assert "malformed-entry" not in m
 
 
@@ -793,6 +794,7 @@ def test_local_folders_unconfigured_is_silent(monkeypatch, isolated_data_dir):
     assert count == 0 and errors == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks require elevated privileges on Windows")
 def test_local_folders_symlink_escape_blocked(tmp_path, monkeypatch, isolated_data_dir):
     """A symlink inside the configured folder that resolves outside it must
     NOT be attached — protects against `~/Documents/Project/leak -> /etc`."""

@@ -19,7 +19,7 @@ FIXTURE_2X3 = os.path.join(os.path.dirname(__file__), "fixtures", "sample_office
 
 def _run(input_data, params=None):
     block = BIMExtractorBlock()
-    return asyncio.get_event_loop().run_until_complete(block.process(input_data, params))
+    return asyncio.run(block.process(input_data, params))
 
 
 def test_extracts_elements_from_sample_ifc():

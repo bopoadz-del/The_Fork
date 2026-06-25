@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from threading import Lock
-from typing import List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from pgvector.sqlalchemy import Vector
@@ -673,12 +673,79 @@ class VectorStore:
             for r in rows
         ]
 
-    # photo_chunks BM25 leg was removed in migration 0008 -- the
-    # fine-tuned V1 R4 safety detector that produced its metadata was
-    # retired in favour of YOLO-Worldv2 with a baked prompt vocabulary
-    # (app/blocks/safety_world_detector.py). Chat-attached photos now
-    # flow through POST /v1/chat/analyze-photo and are not persisted as
-    # a searchable RAG corpus -- they are question-context.
+    def bm25_search_photos(
+        self,
+        query: str,
+        k: int = 5,
+        project_id: Optional[str] = None,
+    ) -> List[Chunk]:
+        """Search the ``photo_chunks`` table by caption keywords.
+
+        Returns photo chunks ordered by caption relevance. When ``project_id``
+        is supplied, global (NULL-project) photos are included plus photos
+        owned by that project; other projects' photos are excluded. If the
+        table does not exist (older deployments) an empty list is returned.
+        """
+        if not query or not query.strip():
+            return []
+
+        # Tokenise into SQL LIKE clauses (OR). Keeps the method usable on
+        # a plain SQLite table without requiring an FTS5 mirror.
+        tokens = [t for t in _FTS5_SAFE_RE.sub(" ", query).strip().split() if t]
+        if not tokens:
+            return []
+
+        project_filter = ""
+        params: Dict[str, Any] = {"k": k}
+        if project_id is not None:
+            project_filter = " AND (project_id IS NULL OR project_id = :project_id)"
+            params["project_id"] = project_id
+
+        like_clauses = " OR ".join(
+            f"caption LIKE :like_{i}" for i in range(len(tokens))
+        )
+        for i, tok in enumerate(tokens):
+            params[f"like_{i}"] = f"%{tok}%"
+
+        sql = text(
+            f"SELECT chunk_id, project_id, sha256, caption, photo_metadata "
+            f"FROM photo_chunks WHERE ({like_clauses}){project_filter} "
+            f"ORDER BY created_at DESC LIMIT :k"
+        )
+
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    rows = session.execute(sql, params).all()
+        except OperationalError:
+            # photo_chunks table may not exist on older deployments.
+            return []
+
+        out: List[Chunk] = []
+        for r in rows:
+            meta = None
+            photo_url = None
+            if r.photo_metadata:
+                try:
+                    meta = json_lib.loads(r.photo_metadata)
+                    photo_url = meta.get("source_url") if isinstance(meta, dict) else None
+                except Exception:
+                    pass
+            out.append(
+                Chunk(
+                    chunk_id=r.chunk_id,
+                    project_id=r.project_id or "",
+                    doc_id=r.chunk_id,
+                    chunk_index=0,
+                    text=r.caption,
+                    score=1.0,
+                    kind="photo",
+                    sha256=r.sha256,
+                    photo_url=photo_url,
+                    photo_metadata=meta,
+                )
+            )
+        return out
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 

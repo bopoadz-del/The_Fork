@@ -165,3 +165,9 @@ class MyClass:
 @pytest.fixture
 def data_dir():
     return "/app/data"
+
+
+# NOTE: the previous autouse event-loop cleanup fixture was removed after the
+# legacy Playwright browser suite was deleted. pytest-asyncio now manages loop
+# lifecycle; forcibly closing the loop after every test broke module-scoped
+# async fixtures (RuntimeError: Event loop is closed).

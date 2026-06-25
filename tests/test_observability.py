@@ -1,5 +1,6 @@
 """Observability lane — Sentry helpers, block metrics, health enrichment."""
 
+import importlib.util
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.dependencies import require_api_key
 from app.infra.monitoring import (
     BlockMetricsRegistry,
     JsonLogFormatter,
@@ -26,6 +28,10 @@ def test_is_llm_transport_failure_detects_dead_tunnel():
     assert not is_llm_transport_failure("validation failed: missing field")
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("sentry_sdk") is None,
+    reason="sentry_sdk not installed",
+)
 @patch.dict(os.environ, {"SENTRY_DSN": "https://example@sentry.io/1", "OLLAMA_URL": "http://dead-tunnel:11434"})
 @patch("sentry_sdk.capture_message", return_value="evt-123")
 @patch("sentry_sdk.push_scope")
@@ -94,8 +100,16 @@ def test_health_v1_includes_observability(client: TestClient):
 
 
 def test_metrics_endpoint_returns_block_snapshot(client: TestClient):
+    from app.main import app
+
     record_block_execution("search", 15, "success")
-    response = client.get("/v1/metrics")
+    app.dependency_overrides[require_api_key] = lambda: {
+        "role": "admin", "user": "admin@test", "valid": True,
+    }
+    try:
+        response = client.get("/v1/metrics")
+    finally:
+        app.dependency_overrides.pop(require_api_key, None)
     assert response.status_code == 200
     data = response.json()
     assert "blocks" in data
@@ -105,4 +119,4 @@ def test_metrics_endpoint_returns_block_snapshot(client: TestClient):
 @pytest.fixture
 def client():
     from app.main import app
-    return TestClient(app)
+    return TestClient(app, headers={"Authorization": "Bearer cb_dev_key"})
