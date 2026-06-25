@@ -79,6 +79,12 @@ COPY . .
 # Replace the (gitignored) frontend/dist with the freshly built one.
 COPY --from=frontend /frontend/dist /app/frontend/dist
 
+# Copy V2 detector weights OUT of /app/data (which is a volume mount at
+# runtime — the volume overlay hides the image's content) to a stable,
+# non-volume location. SAFETY_DETECTOR_WEIGHTS on Render points here.
+RUN mkdir -p /app/models \
+    && cp /app/data/models/safety_qaqc_v1_r4.pt /app/models/safety_qaqc_v1_r4.pt
+
 # Run as an unprivileged user. /app/data (the persistent volume) and the app
 # tree must be owned by it so the process can write its DBs and uploads.
 RUN useradd --create-home --uid 10001 appuser \
