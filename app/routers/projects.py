@@ -429,16 +429,53 @@ async def add_document(
     audit.record("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
     background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
-    return {
+
+    # V2 inline safety + QA/QC detection for image uploads — runs PIL +
+    # COCO YOLO + the fine-tuned safety_qaqc detector and surfaces a
+    # compact summary the frontend can show to the user without a
+    # separate /v1/execute round-trip. Failures are non-fatal: the upload
+    # still succeeds, the result just won't carry safety_qaqc data.
+    safety_summary = None
+    if ext in {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}:
+        try:
+            from app.dependencies import get_block_instance
+            image_block = get_block_instance("image")
+            if image_block is not None:
+                analysis = await image_block.execute(
+                    {"file_path": filepath},
+                    {"mode": "safety_qaqc", "prompt": "construction safety + QA/QC scan"},
+                )
+                body = analysis.get("result", {}) or {}
+                detections = body.get("safety_qaqc") or []
+                if detections:
+                    safety_summary = {
+                        "count": len(detections),
+                        "top": [
+                            {
+                                "class": d.get("class"),
+                                "confidence": round(float(d.get("confidence") or 0.0), 3),
+                            }
+                            for d in detections[:8]
+                        ],
+                    }
+        except Exception:
+            # Detection is best-effort; never fail the upload over it.
+            pass
+
+    response: Dict[str, Any] = {
         "status": "stored",
         "message": (
             f"Added '{original_name}' — classified as {doc['doc_type']} "
-            f"(role: {doc['doc_role']}). No analysis was run; ask in chat to "
-            f"analyze it."
+            f"(role: {doc['doc_role']})."
+            + (f" Detected {safety_summary['count']} safety/QA-QC issue(s)."
+               if safety_summary else " No analysis was run; ask in chat to analyze it.")
         ),
         "document": doc,
         "readiness": store.compute_readiness(project_id),
     }
+    if safety_summary:
+        response["safety_qaqc"] = safety_summary
+    return response
 
 
 # ── gated progress tracking (Roadmap V2 · 0.2) ──────────────────────────────

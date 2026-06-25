@@ -111,10 +111,22 @@ export default function ChatComposer({
       }
       const body = await res.json()
       const docName = body?.document?.original_name || file.name
-      setAttachStatus(`Attached: ${docName}`)
+      // Surface V2 safety/QA-QC detections when the upload endpoint ran
+      // the image block inline on a photo.
+      const sq = body?.safety_qaqc as { count: number; top: { class: string; confidence: number }[] } | undefined
+      const detSummary = sq && sq.count > 0
+        ? sq.top.map((d) => `${d.class}@${d.confidence.toFixed(2)}`).join(', ')
+        : ''
+      const statusMsg = detSummary
+        ? `Attached: ${docName} — detected ${sq!.count}: ${detSummary}`
+        : `Attached: ${docName}`
+      setAttachStatus(statusMsg)
       onAttached?.(docName)
-      setText((prev) => (prev ? `${prev}\n` : '') + `[attached: ${docName}] `)
-      setTimeout(() => setAttachStatus(null), 4000)
+      const inlineTag = detSummary
+        ? `[attached: ${docName} | safety_qaqc: ${detSummary}] `
+        : `[attached: ${docName}] `
+      setText((prev) => (prev ? `${prev}\n` : '') + inlineTag)
+      setTimeout(() => setAttachStatus(null), 6000)
     } catch (err) {
       setAttachStatus(`Upload error: ${(err as Error).message}`)
     } finally {
