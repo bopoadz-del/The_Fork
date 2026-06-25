@@ -14,6 +14,17 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
+# V2 safety/QA-QC detector dependencies — CPU wheels only.
+# SAFETY_DETECTOR_WEIGHTS env var on Render points at the committed
+# data/models/safety_qaqc_v1_r4.pt that the runtime loads via
+# ultralytics YOLO(). Pinned to the same versions verified locally.
+RUN pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        "torch==2.5.1" \
+        "torchvision==0.20.1" \
+        "ultralytics==8.4.75" \
+        "opencv-python-headless==4.13.0.92"
+
 # Frontend stage: build the React SPA. VITE_API_BASE='' makes the app talk to
 # the same origin it was served from, so a single Render service is enough.
 FROM node:20-slim AS frontend
