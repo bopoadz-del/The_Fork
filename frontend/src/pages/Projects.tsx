@@ -121,7 +121,11 @@ export default function Projects() {
             )}
             <div className="projects-grid">
               {state.projects.map((project) => (
-                <ProjectCard key={project.id} project={project} />
+                <ProjectCard
+                  key={project.id}
+                  project={project}
+                  onDelete={() => void loadProjects()}
+                />
               ))}
             </div>
           </>

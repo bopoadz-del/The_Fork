@@ -292,3 +292,32 @@ def test_normal_project_document_search_uses_original_id(client, monkeypatch):
 def test_document_search_for_missing_project_returns_404(client):
     resp = client.get("/v1/projects/does-not-exist/documents/search", params={"q": "test"})
     assert resp.status_code == 404
+
+
+# ── Alias mutation routes ───────────────────────────────────────────────────
+
+
+def test_master_corpus_alias_clear_conversation_resolves(client):
+    """Clearing the workspace conversation for the alias must resolve to the
+    source project and not 404.
+    """
+    resp = client.post(
+        f"/v1/projects/{projects_mod.MASTER_CORPUS_PROJECT_ID}/conversations/"
+        f"ws-{projects_mod.MASTER_CORPUS_PROJECT_ID}/clear"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "cleared"
+
+
+def test_master_corpus_alias_delete_project_resolves(client):
+    """Deleting the alias project must resolve to and delete the source corpus."""
+    resp = client.delete(f"/v1/projects/{projects_mod.MASTER_CORPUS_PROJECT_ID}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "deleted"
+
+    # Alias should no longer be listed.
+    resp = client.get("/v1/projects")
+    assert resp.status_code == 200
+    ids = {p["id"] for p in resp.json()["projects"]}
+    assert projects_mod.MASTER_CORPUS_PROJECT_ID not in ids

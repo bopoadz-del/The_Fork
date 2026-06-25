@@ -256,7 +256,16 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
 @router.delete("/v1/projects/{project_id}")
 async def delete_project(project_id: str, auth: dict = Depends(require_user)):
     """Delete a project: its document records, facts, AND files on disk."""
-    proj = _owned_or_404(project_id, auth["user_id"])
+    # Resolve pilot master-corpus alias before the ownership check so admins
+    # can delete the shared corpus project from the UI.
+    resolved_id = store._master_corpus_source(project_id) or project_id
+    proj = store.get_project(
+        project_id, user_id=auth["user_id"], include_admin_approved=True
+    )
+    if not proj:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    if proj.get("user_id") != auth["user_id"] and auth.get("role") != "admin":
+        raise HTTPException(403, "Admin or project owner required")
     files_purged = 0
     # Audit each document BEFORE the DB cascade fires so we have per-row
     # forensics even when the deletion comes from a project-level action.
@@ -280,12 +289,12 @@ async def delete_project(project_id: str, auth: dict = Depends(require_user)):
                 files_purged += 1
             except OSError:
                 pass
-    store.delete_project(project_id)  # cascades documents + facts
-    audit.record("project.deleted", project_id=project_id,
+    store.delete_project(resolved_id)  # cascades documents + facts
+    audit.record("project.deleted", project_id=resolved_id,
                  files_purged=files_purged, user_id=auth["user_id"])
     return {
         "status": "deleted",
-        "project_id": project_id,
+        "project_id": resolved_id,
         "files_purged": files_purged,
     }
 
@@ -304,19 +313,30 @@ async def clear_project_conversation(
     Owner-only. Cross-project conversation IDs are rejected with 404 to
     avoid info-leak via timing.
     """
-    _owned_or_404(project_id, auth["user_id"])
+    # Resolve pilot master-corpus alias so the shared corpus can be cleared
+    # from the workspace UI.
+    resolved_id = store._master_corpus_source(project_id) or project_id
+    proj = store.get_project(
+        project_id, user_id=auth["user_id"], include_admin_approved=True
+    )
+    if not proj:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    if proj.get("user_id") != auth["user_id"] and auth.get("role") != "admin":
+        raise HTTPException(403, "Admin or project owner required")
     from app.core import agent_memory
 
     # Workspace conversation IDs are deterministic (ws-{project_id}).
+    # Accept both the alias and the backing project id for the master corpus.
     # Reject any other workspace prefix that doesn't match this project
     # before we let the call near agent_memory.
-    if conversation_id.startswith("ws-") and conversation_id != f"ws-{project_id}":
+    expected_ids = {f"ws-{project_id}", f"ws-{resolved_id}"}
+    if conversation_id.startswith("ws-") and conversation_id not in expected_ids:
         raise HTTPException(404, "Conversation not found")
 
     # For non-workspace conversation IDs, confirm the stored row (if any)
-    # belongs to this project.
+    # belongs to this project (alias or source id).
     conv = agent_memory.get_conversation(conversation_id)
-    if conv is not None and conv.get("project_id") not in (None, "", project_id):
+    if conv is not None and conv.get("project_id") not in (None, "", project_id, resolved_id):
         raise HTTPException(404, "Conversation not found")
 
     cleared = agent_memory.clear_conversation(conversation_id)

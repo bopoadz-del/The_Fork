@@ -54,3 +54,33 @@ ENV=development PYTHONIOENCODING=utf-8 .venv/Scripts/python -m uvicorn app.main:
 ```
 
 API key for `/v1/*`: `Authorization: Bearer cb_dev_key` (development only).
+
+
+## 2026-06-23 — Safety Observation AI v2 close-out
+
+**Live on Render:** `c340bdc` — Safety Observation AI v2, Render Starter plan.
+
+### Landed PRs
+- **#135** — Ship Safety Observation AI v2 (YOLO-Worldv2 ONNX; drops V1 R4 + `photo_chunks` RAG path).
+- **#136** — Diagnostic surface for cold-start debug.
+- **#137** — Revert diagnostic.
+- **#138** — Surface ALL detections (not just vest/hard-hat) + warm-load detector at startup.
+- **#139** — v4-hybrid prompts: preserve PPE confidence + add operator-spec items that v2 had dropped.
+
+### Prompt set
+- **33 total v4-hybrid prompts**
+  - PPE-tight: 30 prompts
+  - Added: honeycomb, aggregate, fall-hazard
+
+### Runtime notes
+- **No CLIP at runtime.**
+- **Warm-load** eliminates the cold-start race condition.
+- Detections surface as **tiered observations**.
+
+### Known deferred / ceilings
+- **Vest detection on low-quality/partial photos** — YOLO-World ceiling (~0.09 on `WA0006`). Real fix is the Path C fine-tuned YOLOv8n vest specialist; pending your call.
+- **Concrete honeycomb voids prompt** fires below 0.05 on the test image; exposed aggregate in concrete surface is the visual concept that actually catches. This is a CLIP limitation, not ours.
+
+### Context
+- YOLO-World integration was fixed in Claude; no rollback to Kimi Code path.
+- Local raw photo archive `G:\My Drive\construction-3-001.zip` (208 files) was identified but **not audited/indexed** before sign-off.

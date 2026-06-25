@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { apiDelete } from '../lib/api'
 
 // readiness shape may vary — render defensively
 export interface Project {
@@ -18,6 +19,7 @@ export interface Project {
 
 interface ProjectCardProps {
   project: Project
+  onDelete?: (id: string) => void
 }
 
 function statusClass(status: string): string {
@@ -61,10 +63,25 @@ function isIncompleteShell(project: Project): boolean {
   )
 }
 
-export default function ProjectCard({ project }: ProjectCardProps) {
+export default function ProjectCard({ project, onDelete }: ProjectCardProps) {
   const hint = readinessHint(project.readiness)
   const master = project.is_master_corpus
   const incomplete = isIncompleteShell(project)
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) {
+      return
+    }
+    try {
+      await apiDelete(`/v1/projects/${project.id}`)
+      onDelete?.(project.id)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Delete failed'
+      alert(message)
+    }
+  }
 
   return (
     <Link
@@ -106,6 +123,15 @@ export default function ProjectCard({ project }: ProjectCardProps) {
             <span className="project-card__readiness">{hint}</span>
           )}
         </div>
+
+        <button
+          type="button"
+          className="project-card__delete"
+          onClick={handleDelete}
+          aria-label={`Delete project ${project.name}`}
+        >
+          Delete
+        </button>
       </div>
     </Link>
   )

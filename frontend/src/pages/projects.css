@@ -494,3 +494,21 @@
   gap: var(--space-3);
   margin-top: var(--space-6);
 }
+
+
+.project-card__delete {
+  margin-top: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  color: #ef4444;
+  background: transparent;
+  border: 1px solid #ef4444;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.project-card__delete:hover {
+  color: #fff;
+  background: #ef4444;
+}
