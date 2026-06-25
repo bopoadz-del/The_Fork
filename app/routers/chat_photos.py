@@ -134,24 +134,6 @@ async def analyze_chat_photo(
         coco = body.get("summary_by_class") or {}
         person_count = int(coco.get("person", 0))
 
-        # Diagnostic surface -- when observations are empty the caller
-        # can tell WHY: detector not loaded vs loaded-but-empty vs raised.
-        _provider = body.get("provider", "")
-        _safety_qaqc_used = "safety_qaqc" in _provider
-        _safety_qaqc_error = body.get("safety_qaqc_error")
-        import os as _os
-        _diag = {
-            "safety_qaqc_used": _safety_qaqc_used,
-            "safety_qaqc_error": _safety_qaqc_error,
-            "raw_detection_count": len(detections),
-            "weights_env_set": bool(_os.getenv("SAFETY_WORLD_WEIGHTS")),
-            "weights_env": _os.getenv("SAFETY_WORLD_WEIGHTS"),
-            "weights_file_exists": (
-                _os.path.isfile(_os.getenv("SAFETY_WORLD_WEIGHTS") or "")
-                if _os.getenv("SAFETY_WORLD_WEIGHTS") else False
-            ),
-        }
-
         # Tiered observations -- never "violations".
         vest_tier = _tier_for(detections, _VEST_FRAGMENTS)
         hat_tier = _tier_for(detections, _HAT_FRAGMENTS)
@@ -185,7 +167,6 @@ async def analyze_chat_photo(
             "vest": vest_tier,
             "hat": hat_tier,
             "_product_name": "Safety Observation AI v2",
-            "_diagnostic": _diag,
         }
     finally:
         try:
