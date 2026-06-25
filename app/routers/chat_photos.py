@@ -95,6 +95,46 @@ def _person_observation(detections: List[Dict[str, Any]],
     return None
 
 
+# Classes whose surfacing is handled by the dedicated vest/hat/person logic
+# above. Everything else above _LOW_CONF_THRESHOLD gets surfaced through the
+# generic "other observations" path -- this is what makes concrete defects,
+# excavation hazards, ladders, cranes etc. visible to the user instead of
+# being silently dropped because they aren't PPE.
+_HANDLED_FRAGMENTS = _VEST_FRAGMENTS + _HAT_FRAGMENTS + _PERSON_FRAGMENTS
+
+
+def _other_observations(detections: List[Dict[str, Any]]) -> List[str]:
+    """Surface every non-vest/hat/person class as a tiered observation.
+
+    Groups detections by class, takes the max confidence per class, and
+    emits 'X detected' (conf >= 0.30) or 'possible X detected -- low
+    confidence' (0.05 <= conf < 0.30). Sorted by max confidence so the
+    LLM sees the strongest signal first.
+
+    Never returns 'violation'-style language for any class -- same
+    observation-not-judgment contract as vest/hat.
+    """
+    by_class: Dict[str, float] = {}
+    for d in detections:
+        cls_name = (d.get("class") or "").strip()
+        if not cls_name:
+            continue
+        if _matches(cls_name, _HANDLED_FRAGMENTS):
+            continue
+        conf = float(d.get("confidence") or 0.0)
+        if conf < _LOW_CONF_THRESHOLD:
+            continue
+        if conf > by_class.get(cls_name, 0.0):
+            by_class[cls_name] = conf
+    out: List[str] = []
+    for cls_name, conf in sorted(by_class.items(), key=lambda kv: -kv[1]):
+        if conf >= _DETECTED_THRESHOLD:
+            out.append(f"{cls_name} detected")
+        else:
+            out.append(f"possible {cls_name} detected -- low confidence")
+    return out
+
+
 @router.post("/v1/chat/analyze-photo")
 async def analyze_chat_photo(
     file: UploadFile = File(...),
@@ -145,6 +185,9 @@ async def analyze_chat_photo(
         no_vest_obs = _person_observation(detections, vest_tier)
         if no_vest_obs:
             observations.append(no_vest_obs)
+        # Surface QA/QC + general-hazard classes too (crack, porous holes,
+        # excavation, ladder, etc.). Vest/hat already handled above.
+        observations.extend(_other_observations(detections))
 
         # Strongest-class summary for any caller that wants the raw top list.
         # Truncated to 8 entries; sorted by confidence descending.
