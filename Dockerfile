@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir \
         "torch==2.5.1" \
         "torchvision==0.20.1" \
         "ultralytics==8.4.75" \
-        "opencv-python-headless==4.13.0.92"
+        "opencv-python-headless==4.10.0.84"
 
 # Frontend stage: build the React SPA. VITE_API_BASE='' makes the app talk to
 # the same origin it was served from, so a single Render service is enough.
