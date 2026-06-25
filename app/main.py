@@ -143,6 +143,24 @@ async def lifespan(app: FastAPI):
                 type(app.state.project_store).__name__)
     loaded = load_agents()
     logger.info("Loaded %d runtime agents: %s", len(loaded), ", ".join(sorted(loaded.keys())))
+    # Warm-load the Safety Observation AI v2 detector so the first
+    # /v1/chat/analyze-photo request doesn't pay the ~3-5s ONNX cold
+    # load and silently return empty observations (the bug that hit
+    # PR #135's first deploy). When SAFETY_WORLD_WEIGHTS is unset,
+    # default_detector() returns None -- which is fine, the chat route
+    # just gracefully skips the safety_qaqc tier.
+    try:
+        from app.blocks.safety_world_detector import default_detector as _safety_world_warm
+        _det = _safety_world_warm()
+        if _det is not None:
+            logger.info("Safety Observation AI v2 detector warm-loaded: %d classes",
+                        len(_det.class_names))
+        else:
+            logger.info("Safety Observation AI v2 detector NOT loaded "
+                        "(SAFETY_WORLD_WEIGHTS unset or file missing)")
+    except Exception:
+        logger.exception("Safety Observation AI v2 warm-load failed; "
+                         "/v1/chat/analyze-photo will lazy-load on first request")
     from app.core import hydration_scheduler
     hydration_scheduler.start()
     try:

@@ -105,3 +105,70 @@ def test_thresholds_are_what_the_product_spec_says():
 def test_class_match_is_case_insensitive_and_substring():
     out = _tier_for([{"class": "ORANGE reflective Safety VEST", "confidence": 0.60}], _VEST_FRAGMENTS)
     assert out["tier"] == "detected"
+
+
+# ────────── _other_observations: every non-vest/hat/person class surfaces ──────────
+
+from app.routers.chat_photos import _other_observations
+
+
+def test_other_observations_surfaces_qaqc_classes_above_threshold():
+    """Concrete defects, hazards, equipment etc. must appear in observations
+    instead of being silently dropped because they aren't PPE."""
+    detections = [
+        {"class": "porous holes in concrete surface", "confidence": 0.42},
+        {"class": "crack in concrete wall", "confidence": 0.08},
+        {"class": "crane", "confidence": 0.85},
+    ]
+    out = _other_observations(detections)
+    assert "porous holes in concrete surface detected" in out
+    assert "crane detected" in out
+    assert "possible crack in concrete wall detected -- low confidence" in out
+    # banned-word contract still applies
+    for line in out:
+        _check_no_violation_language(line)
+
+
+def test_other_observations_excludes_vest_hat_person():
+    """vest / hat / person are surfaced by their own tier functions --
+    don't double-emit them through the generic path."""
+    detections = [
+        {"class": "yellow reflective safety vest", "confidence": 0.71},
+        {"class": "yellow or white safety helmet", "confidence": 0.91},
+        {"class": "person", "confidence": 0.80},
+        {"class": "ladder", "confidence": 0.55},
+    ]
+    out = _other_observations(detections)
+    assert out == ["ladder detected"]
+
+
+def test_other_observations_sorted_by_confidence_descending():
+    """Strongest signal first so the LLM / UI list has the most useful at top."""
+    detections = [
+        {"class": "ladder", "confidence": 0.40},
+        {"class": "crane", "confidence": 0.80},
+        {"class": "open excavation pit", "confidence": 0.55},
+    ]
+    out = _other_observations(detections)
+    assert out == ["crane detected", "open excavation pit detected", "ladder detected"]
+
+
+def test_other_observations_dedups_class_by_max_confidence():
+    """Two boxes of the same class -> one observation, at the max confidence."""
+    detections = [
+        {"class": "ladder", "confidence": 0.10},
+        {"class": "ladder", "confidence": 0.40},
+        {"class": "ladder", "confidence": 0.22},
+    ]
+    out = _other_observations(detections)
+    assert out == ["ladder detected"]
+
+
+def test_other_observations_drops_below_low_floor():
+    """Anything < 0.05 (the noise floor) is not surfaced even as 'possible'."""
+    detections = [
+        {"class": "rust on steel rebar", "confidence": 0.001},
+        {"class": "missing handrail", "confidence": 0.04},
+    ]
+    out = _other_observations(detections)
+    assert out == []
