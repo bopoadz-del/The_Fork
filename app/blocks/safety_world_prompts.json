@@ -1,7 +1,7 @@
 {
-  "version": "v2",
+  "version": "v4-hybrid",
   "baked_model_file": "data/models/safety_world_v2.onnx",
-  "_comment": "v2 -- dropped negative classes ('person without X') that shadowed positives in v1 pilot on IMG-20150615-WA0006. Violation logic moved to application code: detect what is present (vest, hat), then for each 'person' bbox, code checks IoU overlap with PPE bbox. Vest prompts switched to color+stripe phrasings that align better with CLIP visual concepts. Order is STABLE -- the integer class id YOLO emits is the index into this list. Edit + re-bake to change.",
+  "_comment": "v4-hybrid -- v2's PPE-tight 30 prompts (proven detected-tier confidence on the corpus sweep) + 3 targeted additions for items the operator's original 33-class spec carried that v2 had silently dropped or under-covered: concrete_honeycomb (now two CLIP-aligned phrasings), and fall_hazard_unprotected. v3's wholesale 38-prompt rewrite from the original spec was reverted after pilot showed PPE confidence dropped a full tier from softmax competition + 'misaligned concrete column' fired as a false positive on a metal pipe. The integer class id YOLO emits is the index into this list -- order STABLE; edit + re-bake to change.",
   "prompts": [
     "orange reflective safety vest",
     "yellow reflective safety vest",
@@ -32,6 +32,9 @@
     "missing grout between tiles",
     "uneven plaster surface",
     "dirty surface",
-    "trip hazard on floor"
+    "trip hazard on floor",
+    "concrete honeycomb voids",
+    "exposed aggregate in concrete surface",
+    "unprotected open edge at height"
   ]
 }
