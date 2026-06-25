@@ -22,8 +22,14 @@ RUN pip install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         "torch==2.5.1" \
         "torchvision==0.20.1" \
-        "ultralytics==8.4.75" \
-        "opencv-python-headless==4.10.0.84"
+        "ultralytics==8.4.75"
+# Replace whatever opencv ultralytics pulled (opencv-python 4.13 has known
+# cv2.imdecode failures under numpy 2.x ABI) with the older, ABI-safe
+# headless 4.10.0.84. uninstall both packages first because pip treats
+# opencv-python and opencv-python-headless as separate identities, so
+# straight install of headless leaves the broken opencv-python on disk.
+RUN pip uninstall -y opencv-python opencv-python-headless \
+    && pip install --no-cache-dir "opencv-python-headless==4.10.0.84"
 
 # Frontend stage: build the React SPA. VITE_API_BASE='' makes the app talk to
 # the same origin it was served from, so a single Render service is enough.
