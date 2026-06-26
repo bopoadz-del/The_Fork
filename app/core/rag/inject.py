@@ -163,6 +163,7 @@ def rag_inject(
             "extracted_identifiers": identifiers,
             "chunks": [
                 {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
+                 "chunk_id": c.chunk_id, "project_id": c.project_id,
                  "score": c.score} for c in chunks
             ],
         })
@@ -178,6 +179,7 @@ def rag_inject(
         "threshold_fired": False,
         "chunks": [
             {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
+             "chunk_id": c.chunk_id, "project_id": c.project_id,
              "score": c.score} for c in kept
         ],
     })

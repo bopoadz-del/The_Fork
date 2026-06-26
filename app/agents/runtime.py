@@ -290,12 +290,14 @@ def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
     return any(p in text for p in _DELIVERABLE_PHRASES)
 
 
-# Bracketed form: [source: file.pdf, chunk 65] / [source: file.pdf, chunks 16, 34, 55]
+# Bracketed forms:
+#   [source: file.pdf, chunk 65]
+#   【source: file.pdf, chunk 65】   (gpt-oss Chinese-bracket variant)
 # Capture the entire bracket contents; _parse_source_tail extracts the
 # filename and optional chunk suffix. This lets filenames contain commas
 # without the regex engine swallowing the chunk suffix into group 1.
 _CITATION_RE = re.compile(
-    r"\[source:\s*(.+?)\s*\]",
+    r"(?:\[source:|【source:)\s*(.+?)\s*(?:\]|】)",
     re.IGNORECASE,
 )
 
@@ -363,6 +365,63 @@ def _strip_source_quotes(s: str) -> str:
         if s.startswith(open_q) and s.endswith(close_q):
             return s[1:-1].strip()
     return s
+
+
+def _clean_path_label(label: str) -> str:
+    r"""Return a user-facing source label stripped of Windows/Unix path gunk.
+
+    Preserves the basename (or last non-empty path segment) so sources are
+    still grounded to a real document, but never leaks ``G:\My Drive\...``
+    or ``/home/user/...`` machine paths in the UI.
+    """
+    if not label:
+        return label
+    # Normalize Windows backslashes and URL separators to a single slash,
+    # then return the last non-empty segment (the basename).
+    normalized = label.replace("\\", "/")
+    parts = [p for p in normalized.split("/") if p]
+    if parts:
+        return parts[-1].strip()
+    return label.strip()
+
+
+def _sanitize_citation_labels(text: str) -> str:
+    """Rewrite inline citation labels so they show basenames, not raw paths.
+
+    Handles the bracketed forms recognised by ``_CITATION_RE`` plus the
+    bracketless ``Source:`` line form.  Only the label/path inside the
+    citation is rewritten; chunk numbers and surrounding prose are left
+    untouched.
+    """
+    if not text:
+        return text
+
+    def _repl_bracket(m: re.Match) -> str:
+        inner = m.group(1)
+        # inner still contains the label and optional chunk tail.
+        fname, tail = _parse_source_tail(inner)
+        clean = _clean_path_label(fname)
+        # Reconstruct using the same bracket style as the original match.
+        open_br = m.group(0)[0]
+        close_br = {"[": "]", "【": "】"}.get(open_br, "]")
+        if tail:
+            return f"{open_br}source: {clean}, chunk {tail}{close_br}"
+        return f"{open_br}source: {clean}{close_br}"
+
+    text = _CITATION_RE.sub(_repl_bracket, text)
+
+    # Bracketless "Source: ..." / "Sources: ..." lines.
+    def _repl_line(m: re.Match) -> str:
+        inner = m.group(1)
+        fname, tail = _parse_source_tail(inner)
+        clean = _clean_path_label(fname)
+        prefix = m.group(0).split(":", 1)[0]  # "Source" or "Sources"
+        if tail:
+            return f"\n{prefix}: {clean}, chunk {tail}"
+        return f"\n{prefix}: {clean}"
+
+    text = _CITATION_LINE_RE.sub(_repl_line, text)
+    return text
 
 
 def _parse_source_tail(tail: str) -> Tuple[str, str]:
@@ -483,8 +542,11 @@ def _build_sources_from_audit(
         conf = "High" if score >= 0.75 else "Medium" if score >= 0.5 else "Low"
         return {
             "doc_id": chunk_meta["doc_id"],
-            "doc_name": doc_name,
+            "doc_name": _clean_path_label(doc_name),
             "page_or_section": f"chunk #{chunk_meta['chunk_index']}",
+            "chunk_index": chunk_meta.get("chunk_index"),
+            "chunk_id": chunk_meta.get("chunk_id"),
+            "project_id": (audit_rec or {}).get("project_id"),
             "score": float(score),
             "confidence": conf,
         }
@@ -1089,6 +1151,7 @@ class Agent:
                 "tool_calls": [],
                 "iterations": 0,
                 "messages": [],
+                "sources": [],
             }
 
         effective_history = list(history or [])
@@ -1170,6 +1233,7 @@ class Agent:
                             final_text = _sanitize_final_text(forced_msg.get("content") or "")
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
+                    final_text = _sanitize_citation_labels(final_text)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -1182,6 +1246,7 @@ class Agent:
                         "tool_calls": tool_calls_made,
                         "iterations": iteration + 1,
                         "messages": messages,
+                        "sources": _build_sources_from_audit(_rag_audit, final_text),
                     }
 
             # Persist the assistant turn that contained the tool calls
@@ -1562,6 +1627,7 @@ class Agent:
                             final_text = _sanitize_final_text(forced_msg.get("content") or "")
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
+                    final_text = _sanitize_citation_labels(final_text)
                     _LOG.info("chat_stream: final_text iter=%d chars=%d", iteration, len(final_text))
                     for chunk in _chunks(final_text, 80):
                         yield {"type": "token", "content": chunk}
@@ -1649,6 +1715,7 @@ class Agent:
             # user-safe fallback so the UI never renders an empty bubble.
             _LOG.warning("chat_stream: forced final returned empty, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
+        final_text = _sanitize_citation_labels(final_text)
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:

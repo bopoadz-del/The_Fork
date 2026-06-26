@@ -291,3 +291,70 @@ def test_build_sources_uses_filename_mention_fallback(monkeypatch):
     assert len(out) == 1
     assert out[0]["doc_name"] == "Diff BOQ Qty Vs Modified Qty.xlsx"
     assert out[0]["page_or_section"] == "chunk #0"
+
+
+# ── P0B: source contract hardening ───────────────────────────────────────────
+
+from app.agents.runtime import _clean_path_label, _sanitize_citation_labels
+
+
+def test_clean_path_label_strips_windows_drive():
+    assert _clean_path_label(r"G:\My Drive\500-Design Management\PRC-501.pdf") == "PRC-501.pdf"
+
+
+def test_clean_path_label_strips_unix_path():
+    assert _clean_path_label("/home/user/projects/specs/PRC-501.pdf") == "PRC-501.pdf"
+
+
+def test_clean_path_label_strips_network_share():
+    assert _clean_path_label(r"\\server\share\folder\doc.pdf") == "doc.pdf"
+
+
+def test_clean_path_label_leaves_basename_alone():
+    assert _clean_path_label("PRC-501.pdf") == "PRC-501.pdf"
+
+
+def test_sanitize_citation_labels_cleans_bracketed_windows_path():
+    raw = "See [source: G:\\My Drive\\PRC-501.pdf, chunk 3] for details."
+    cleaned = _sanitize_citation_labels(raw)
+    assert "G:\\My Drive" not in cleaned
+    assert "[source: PRC-501.pdf, chunk 3]" in cleaned
+
+
+def test_sanitize_citation_labels_cleans_chinese_bracket_path():
+    raw = "See 【source: G:\\My Drive\\PRC-501.pdf, chunk 3】 for details."
+    cleaned = _sanitize_citation_labels(raw)
+    assert "G:\\My Drive" not in cleaned
+    assert "【source: PRC-501.pdf, chunk 3】" in cleaned
+
+
+def test_sanitize_citation_labels_cleans_bracketless_source_line():
+    raw = "Answer body.\nSource: \\server\\share\\folder\\doc.pdf, chunk 8."
+    cleaned = _sanitize_citation_labels(raw)
+    assert "\\server" not in cleaned
+    assert "Source: doc.pdf, chunk 8" in cleaned
+
+
+def test_extract_chinese_bracket_source():
+    txt = "Per the procedure 【source: PRC-406_HSE.pdf, chunk 65】."
+    out = _extract_cited_chunk_indexes(txt)
+    assert ("PRC-406_HSE.pdf", 65) in out
+
+
+def test_build_sources_cleans_raw_doc_name(monkeypatch):
+    audit = {
+        "project_id": "proj_x",
+        "chunks": [
+            {"doc_id": "d1", "chunk_index": 4, "chunk_id": "proj_x:d1:4", "score": 0.82},
+        ],
+    }
+    monkeypatch.setattr(
+        "app.core.projects.get_document",
+        lambda did: {"original_name": r"G:\My Drive\PRC-406_HSE.pdf"},
+    )
+    out = _build_sources_from_audit(audit, "citation text")
+    assert len(out) == 1
+    assert out[0]["doc_name"] == "PRC-406_HSE.pdf"
+    assert out[0]["project_id"] == "proj_x"
+    assert out[0]["chunk_index"] == 4
+    assert out[0]["chunk_id"] == "proj_x:d1:4"
