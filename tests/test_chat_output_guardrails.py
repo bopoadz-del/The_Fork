@@ -96,3 +96,21 @@ async def test_chat_replaces_empty_final_with_fallback(monkeypatch):
     result = await agent.chat("Hello?")
     assert result["status"] == "success"
     assert result["answer"] == _EMPTY_RESPONSE_FALLBACK
+
+
+# ── P0B: harden raw-tool-JSON detection ───────────────────────────────────────
+
+from app.agents.runtime import _looks_like_internal_tool_json
+
+
+def test_looks_like_internal_tool_json_detects_embedded_json_in_prose():
+    raw = (
+        "We need to emit the tool call. We should output the JSON tool call. "
+        '{"name": "search_project_documents", "arguments": {"query": "foo"}}'
+    )
+    assert _looks_like_internal_tool_json(raw) is True
+
+
+def test_looks_like_internal_tool_json_ignores_plain_json_without_tool_keys():
+    raw = 'The answer is {"answer": "plain json"} and that is fine.'
+    assert _looks_like_internal_tool_json(raw) is False

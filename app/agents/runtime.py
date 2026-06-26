@@ -66,29 +66,67 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
 
 
 def _looks_like_internal_tool_json(text: str) -> bool:
-    """True if ``text`` is a JSON object/list shaped like a tool call."""
-    if not text or not text.strip().startswith(("{", "[")):
+    """True if ``text`` is (or contains) JSON shaped like a tool call."""
+    if not text:
         return False
-    try:
-        obj = json.loads(text.strip())
-    except json.JSONDecodeError:
-        return False
-    if isinstance(obj, dict):
-        # OpenAI-style tool call: {"name": ..., "arguments": ...}
+
+    def _is_tool_obj(obj) -> bool:
+        if not isinstance(obj, dict):
+            return False
         if _INTERNAL_TOOL_KEYS.issubset(obj.keys()):
             return True
-        # Single function call with nested function dict.
         if obj.get("type") == "function" and "function" in obj:
             return True
-    if isinstance(obj, list):
-        if all(
-            isinstance(item, dict)
-            and (
-                _INTERNAL_TOOL_KEYS.issubset(item.keys())
-                or (item.get("type") == "function" and "function" in item)
-            )
-            for item in obj
-        ):
+        return False
+
+    stripped = text.strip()
+    # Whole-string JSON.
+    if stripped.startswith(("{", "[")):
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(obj, dict):
+                if _is_tool_obj(obj):
+                    return True
+            if isinstance(obj, list):
+                if all(_is_tool_obj(item) for item in obj):
+                    return True
+
+    # Embedded JSON objects/lists (common when the model leaks a tool call
+    # inside prose / after a formatting preamble).  Handles nested braces.
+    def _candidates(open_ch: str, close_ch: str):
+        i = 0
+        while i < len(text):
+            if text[i] == open_ch:
+                depth = 1
+                j = i + 1
+                while j < len(text) and depth > 0:
+                    if text[j] == open_ch:
+                        depth += 1
+                    elif text[j] == close_ch:
+                        depth -= 1
+                    j += 1
+                if depth == 0:
+                    yield text[i:j]
+                    i = j
+                    continue
+            i += 1
+
+    for candidate in _candidates("{", "}"):
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and _is_tool_obj(obj):
+            return True
+    for candidate in _candidates("[", "]"):
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, list) and all(_is_tool_obj(item) for item in obj):
             return True
     return False
 
@@ -410,10 +448,12 @@ def _answer_is_caveat(text: str) -> bool:
     phrases = (
         "could not locate",
         "couldn't locate",
+        "unable to locate",
         "cannot confirm",
         "can't confirm",
         "unable to generate",
         "was unable to",
+        "wasn't able to",
         "not found",
         "i'm not able to",
         "i am not able to",
