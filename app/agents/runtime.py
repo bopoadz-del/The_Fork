@@ -385,6 +385,44 @@ def _clean_path_label(label: str) -> str:
     return label.strip()
 
 
+# Generic machine-path sanitiser: catches stray Windows/Unix paths that
+# appear outside formal citation markers (e.g. markdown table cells).
+_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:\\(?:[^\\]*\\)*[^\\\n]+"
+    r"|\\\\[^\\]+(?:\\[^\\]+)+"
+    r"|(?:/home/|/Users/)[^\n]+)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_inline_paths(text: str) -> str:
+    """Rewrite stray Windows/Unix file paths anywhere in the text to basenames."""
+    if not text:
+        return text
+    return _PATH_RE.sub(lambda m: _clean_path_label(m.group(0)), text)
+
+
+def _answer_is_caveat(text: str) -> bool:
+    """True when the assistant answer is explicitly refusing/declining to answer."""
+    if not text:
+        return False
+    lowered = text.lower()
+    phrases = (
+        "could not locate",
+        "couldn't locate",
+        "cannot confirm",
+        "can't confirm",
+        "unable to generate",
+        "was unable to",
+        "not found",
+        "i'm not able to",
+        "i am not able to",
+        "i cannot",
+        "no record",
+    )
+    return any(p in lowered for p in phrases)
+
+
 def _sanitize_citation_labels(text: str) -> str:
     """Rewrite inline citation labels so they show basenames, not raw paths.
 
@@ -521,6 +559,11 @@ def _build_sources_from_audit(
     """
     chunks = (audit_rec or {}).get("chunks") or []
     if not chunks:
+        return []
+
+    # If the assistant explicitly declined to answer, don't fabricate a
+    # sources panel from low-score fallback chunks.
+    if _answer_is_caveat(final_text):
         return []
 
     try:
@@ -1233,7 +1276,7 @@ class Agent:
                             final_text = _sanitize_final_text(forced_msg.get("content") or "")
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
-                    final_text = _sanitize_citation_labels(final_text)
+                    final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -1317,6 +1360,7 @@ class Agent:
         final_text = _sanitize_final_text(forced_msg.get("content") or "")
         if not final_text.strip():
             final_text = _EMPTY_RESPONSE_FALLBACK
+        final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -1329,6 +1373,7 @@ class Agent:
             "iterations": MAX_TOOL_ITERATIONS,
             "messages": messages,
             "forced_final": True,
+            "sources": _build_sources_from_audit(_rag_audit, final_text),
         }
 
     async def chat_stream(
@@ -1627,7 +1672,7 @@ class Agent:
                             final_text = _sanitize_final_text(forced_msg.get("content") or "")
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
-                    final_text = _sanitize_citation_labels(final_text)
+                    final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     _LOG.info("chat_stream: final_text iter=%d chars=%d", iteration, len(final_text))
                     for chunk in _chunks(final_text, 80):
                         yield {"type": "token", "content": chunk}
@@ -1715,7 +1760,7 @@ class Agent:
             # user-safe fallback so the UI never renders an empty bubble.
             _LOG.warning("chat_stream: forced final returned empty, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
-        final_text = _sanitize_citation_labels(final_text)
+        final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:

@@ -180,3 +180,40 @@ async def test_chat_returns_empty_sources_when_no_rag(monkeypatch):
 
     assert result["status"] == "success"
     assert result.get("sources") == []
+
+
+# ── P0B source-contract hardening additions ──────────────────────────────────
+
+from app.agents.runtime import (
+    _answer_is_caveat,
+    _sanitize_inline_paths,
+)
+
+
+def test_answer_is_caveat_detects_refusal_phrases():
+    assert _answer_is_caveat("I could not locate any record for that.") is True
+    assert _answer_is_caveat("I cannot confirm this from the sources.") is True
+    assert _answer_is_caveat("The design review procedure is as follows.") is False
+
+
+def test_sanitize_inline_paths_cleans_markdown_table_source_cell():
+    raw = "| Source |\n| G:\\My Drive\\PRC-501.pdf |"
+    cleaned = _sanitize_inline_paths(raw)
+    assert "G:\\My Drive" not in cleaned
+    assert "PRC-501.pdf" in cleaned
+
+
+def test_build_sources_returns_empty_for_caveat(monkeypatch):
+    audit = {
+        "project_id": "proj_x",
+        "chunks": [
+            {"doc_id": "d1", "chunk_index": 0, "chunk_id": "c1", "score": 0.6},
+        ],
+    }
+    monkeypatch.setattr(
+        "app.core.projects.get_document",
+        lambda did: {"original_name": "SomeDoc.pdf"},
+    )
+    from app.agents.runtime import _build_sources_from_audit
+    out = _build_sources_from_audit(audit, "I could not locate any record for that.")
+    assert out == []
