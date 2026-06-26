@@ -459,6 +459,11 @@ def _answer_is_caveat(text: str) -> bool:
         "i am not able to",
         "i cannot",
         "no record",
+        "could not find",
+        "i could not find",
+        "none of the indexed files contain",
+        "none of the indexed files",
+        "i searched the project's document repository",
     )
     return any(p in lowered for p in phrases)
 
@@ -599,6 +604,11 @@ def _build_sources_from_audit(
     """
     chunks = (audit_rec or {}).get("chunks") or []
     if not chunks:
+        return []
+
+    # If the retrieval trust gate fired (identifier miss or confidence
+    # threshold), don't fabricate a sources panel from fallback chunks.
+    if audit_rec.get("identifier_miss") or audit_rec.get("threshold_fired"):
         return []
 
     # If the assistant explicitly declined to answer, don't fabricate a

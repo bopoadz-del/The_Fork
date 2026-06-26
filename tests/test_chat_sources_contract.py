@@ -193,6 +193,10 @@ from app.agents.runtime import (
 def test_answer_is_caveat_detects_refusal_phrases():
     assert _answer_is_caveat("I could not locate any record for that.") is True
     assert _answer_is_caveat("I cannot confirm this from the sources.") is True
+    assert _answer_is_caveat(
+        "I searched the project's document repository for XKCD-99999, "
+        "but none of the indexed files contain that identifier."
+    ) is True
     assert _answer_is_caveat("The design review procedure is as follows.") is False
 
 
@@ -216,4 +220,25 @@ def test_build_sources_returns_empty_for_caveat(monkeypatch):
     )
     from app.agents.runtime import _build_sources_from_audit
     out = _build_sources_from_audit(audit, "I could not locate any record for that.")
+    assert out == []
+
+
+@pytest.mark.parametrize("flag", ["identifier_miss", "threshold_fired"])
+def test_build_sources_returns_empty_when_trust_gate_fires(flag, monkeypatch):
+    audit = {
+        "project_id": "proj_x",
+        flag: True,
+        "chunks": [
+            {"doc_id": "d1", "chunk_index": 0, "chunk_id": "c1", "score": 0.6},
+        ],
+    }
+    monkeypatch.setattr(
+        "app.core.projects.get_document",
+        lambda did: {"original_name": "SomeDoc.pdf"},
+    )
+    from app.agents.runtime import _build_sources_from_audit
+    out = _build_sources_from_audit(
+        audit,
+        "I searched but could not find anything specific.",
+    )
     assert out == []
