@@ -474,6 +474,7 @@ def test_chat_stream_injects_rag_system_message_for_project_assistant(monkeypatc
         return ({"role": "system", "content": "INJECTED_CONTEXT"}, {"injected_k": 1})
 
     monkeypatch.setattr("app.agents.runtime.rag_inject", fake_inject)
+    monkeypatch.setattr("app.agents.runtime.project_is_rag_ready", lambda _pid: True)
 
     # Intercept _call_llm so we see the messages list that goes to the model.
     seen_messages = {"value": None}

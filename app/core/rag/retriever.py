@@ -9,7 +9,7 @@ where caching, dimension matching, and graceful-degradation policy live.
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import Dict, List, Set, Tuple
 
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import Chunk, get_store
@@ -19,6 +19,91 @@ import re
 
 
 _NOISE_DEFAULT = r"^(~\$|nambae-menu|SandsChina_Application)"
+
+# Construction reference labels used to anchor identifier extraction.
+# These are generic categories, not project-specific values.
+_REFERENCE_LABELS = (
+    "BOQ", "Clause", "Contract", "Doc", "Document", "Drawing",
+    "Item", "NCR", "Package", "PRC", "Ref", "Reference", "RFI",
+    "Rev", "Revision", "Schedule", "Spec", "Specification", "VO",
+    "Variation Order",
+)
+
+# Regex components for extract_query_identifiers.
+_QUOTED_RE = re.compile(r'["“]([^"”]{4,})["”]|\'([^\']{4,})\'')
+_CODE_TOKEN_RE = re.compile(r"\b[A-Z]{2,}(?:[-./][A-Z0-9]+)+\b")
+# Named capture ``label`` keeps the category word (VO, RFI, PRC, ...)
+# separate from the captured ``code``.
+_LABELED_REF_FULL_RE = re.compile(
+    r"\b(?P<label>" + "|".join(re.escape(l) for l in _REFERENCE_LABELS) + r")"
+    r"\s*(?:No|Ref|Number|#)?\s*[:\-]?\s*"
+    r"(?P<code>[A-Za-z0-9][A-Za-z0-9\-./]*)",
+    re.IGNORECASE,
+)
+# Mixed/lowercase code-shaped tokens that clearly contain a digit, e.g.
+# D999.46, 12-A, revision-3.  The token may contain dots/dashes/slashes.
+_ALPHANUMERIC_RE = re.compile(
+    r"\b(?=[A-Za-z0-9./\-]*\d)[A-Za-z0-9]{2,}(?:[./\-][A-Za-z0-9]{1,})+\b"
+)
+
+_STOPWORDS: Set[str] = {
+    "this", "that", "with", "from", "have", "what", "when", "where",
+    "which", "about", "please", "thank", "thanks", "hello", "help",
+}
+
+
+def extract_query_identifiers(query: str) -> List[str]:
+    """Pull construction reference identifiers out of a user query.
+
+    Detects, without hardcoding any specific value:
+      * quoted phrases (preserved as exact-match candidates)
+      * code-shaped tokens such as PRC-501, IP-INF-054-0000-...
+      * labeled references such as "VO Ref 31", "RFI 42", "Clause 13.1"
+      * alphanumeric tokens that clearly contain a digit (e.g. D999.46)
+
+    Returns a deduplicated list of lowercase identifier strings. The list
+    is empty for queries that contain no identifier-like tokens.
+    """
+    if not query:
+        return []
+
+    found: Set[str] = set()
+
+    # 1. Quoted phrases (preserve exact content).
+    for m in _QUOTED_RE.finditer(query):
+        phrase = (m.group(1) or m.group(2) or "").strip()
+        if phrase and len(phrase) >= 3:
+            found.add(phrase.lower())
+
+    # 2. Code-shaped tokens (hyphen/dotted/dashed uppercase codes).
+    for m in _CODE_TOKEN_RE.finditer(query):
+        token = m.group(0).strip("-.:/")
+        if len(token) >= 4:
+            found.add(token.lower())
+
+    # 3. Labeled references: "VO Ref 31", "PRC-501", "RFI 12-A", etc.
+    for m in _LABELED_REF_FULL_RE.finditer(query):
+        label = m.group("label")
+        # The captured code may have trailing punctuation; strip it.
+        code = m.group("code").strip("-.:,;")
+        if code:
+            found.add(f"{label.lower()} {code.lower()}")
+            found.add(code.lower())
+
+    # 4. Standalone alphanumeric codes containing digits.
+    for m in _ALPHANUMERIC_RE.finditer(query):
+        token = m.group(0).strip("-.:,;")
+        if len(token) >= 5:
+            found.add(token.lower())
+
+    # Filter out trivial stopwords and very short tokens.
+    result = [
+        t for t in found
+        if len(t) >= 2 and t not in _STOPWORDS
+    ]
+    # Prefer longer, more specific identifiers first.
+    result.sort(key=lambda t: (-len(t), t))
+    return result
 
 
 def _noise_regex():
@@ -122,6 +207,30 @@ def _general_knowledge_project_ids() -> List[str]:
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
+def _project_has_any_chunks(store, project_id: str) -> bool:
+    """True iff the project (or any configured GK project) has indexed chunks."""
+    if store.count(project_id) > 0:
+        return True
+    for pid in _general_knowledge_project_ids():
+        if pid != project_id and store.count(pid) > 0:
+            return True
+    return False
+
+
+def project_is_rag_ready(project_id: str) -> bool:
+    """Public guard: is there any corpus to retrieve from for this project?"""
+    if not project_id:
+        return False
+    if not available():
+        return False
+    try:
+        store = get_store(dim=get_embedder().dim)
+        return _project_has_any_chunks(store, project_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("project_is_rag_ready check failed: %s", exc)
+        return False
+
+
 def retrieve_with_filter(
     query: str,
     project_id: str,
@@ -135,6 +244,13 @@ def retrieve_with_filter(
     ``_general_knowledge_project_ids``). The two candidate sets are
     merged, re-ranked by vector score descending, noise-filtered, and
     the top K returned.
+
+    **Identifier-aware precision:** if the query contains construction
+    reference identifiers (VO/RFI/NCR/PRC/drawing codes/etc.), the
+    retriever also performs a case-insensitive substring search over
+    chunk text and boosts matching chunks above pure semantic hits.
+    This prevents a high-cosine generic boilerplate chunk from
+    outranking the exact document that contains the requested code.
 
     Behaviour notes:
       * The active project is queried first so its chunks appear
@@ -177,15 +293,63 @@ def retrieve_with_filter(
                 gk_pid, exc,
             )
 
+    # Identifier-aware lexical rescue for exact reference lookups.
+    identifiers = extract_query_identifiers(query)
+    id_candidates: Dict[str, Tuple[Chunk, float]] = {}
+    if identifiers:
+        try:
+            id_active = store.identifier_search(project_id, identifiers, k=over_fetch)
+            for c in id_active:
+                id_candidates[c.chunk_id] = (c, c.score or 0.0)
+            for gk_pid in gk_ids:
+                try:
+                    id_gk = store.identifier_search(gk_pid, identifiers, k=over_fetch)
+                    for c in id_gk:
+                        # Active-project identifier hits win ties over GK.
+                        if c.chunk_id not in id_candidates:
+                            id_candidates[c.chunk_id] = (c, c.score or 0.0)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "identifier search for GK %s failed: %s", gk_pid, exc
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("identifier search failed: %s; falling back to semantic", exc)
+
+    # Fuse semantic and identifier signals.
+    # Semantic chunks carry their cosine score; identifier hits add a
+    # bonus proportional to how many identifiers they match. A chunk that
+    # matches all requested identifiers receives a +2.0 bonus, which is
+    # larger than any pure semantic score, guaranteeing it outranks
+    # semantically-similar boilerplate that lacks the exact reference.
+    fused: Dict[str, Tuple[Chunk, float]] = {}
+    for c in list(raw_active) + raw_gk:
+        fused[c.chunk_id] = (c, c.score or 0.0, 0.0)
+
+    IDENTIFIER_BONUS_MAX = 2.0
+    for chunk_id, (id_chunk, id_score) in id_candidates.items():
+        if chunk_id in fused:
+            sem_chunk, sem_score, _ = fused[chunk_id]
+            fused[chunk_id] = (sem_chunk, sem_score, id_score * IDENTIFIER_BONUS_MAX)
+        else:
+            # Identifier-only hit: keep its text but start from zero semantic.
+            fused[chunk_id] = (id_chunk, 0.0, id_score * IDENTIFIER_BONUS_MAX)
+
+    scored: List[Tuple[float, Chunk]] = []
+    for chunk, sem_score, id_bonus in fused.values():
+        final_score = (sem_score or 0.0) + (id_bonus or 0.0)
+        chunk.score = round(final_score, 6)
+        scored.append((final_score, chunk))
+
+    # Sort by fused score descending; active-project chunks naturally come
+    # first when scores are equal because they were inserted first.
+    scored.sort(key=lambda x: -x[0])
+
     # Photo chunks RAG leg was removed in migration 0008 along with the
     # photo_chunks table. Chat-attached photos are now question-context
     # (see POST /v1/chat/analyze-photo), not corpus material.
-    combined: List[Chunk] = list(raw_active) + raw_gk
-    combined.sort(key=lambda c: -(c.score or 0))
-
     kept: List[Chunk] = []
     noise_dropped = 0
-    for c in combined:
+    for _, c in scored:
         name = _doc_name_for_id(c.doc_id)
         if _is_noise_filename(name):
             noise_dropped += 1

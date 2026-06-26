@@ -26,6 +26,7 @@ import httpx
 
 from app.blocks import BLOCK_REGISTRY
 from app.core.rag.inject import rag_inject
+from app.core.rag.retriever import project_is_rag_ready
 from app.dependencies import block_instances, _create_block_instance
 
 _LOG = logging.getLogger(__name__)
@@ -37,6 +38,77 @@ _EMPTY_RESPONSE_FALLBACK = (
     "I was unable to generate a response for this turn. "
     "Please rephrase the question or try again."
 )
+
+_UNINDEXED_PROJECT_MESSAGE = (
+    "This project has no indexed documents yet, so I cannot answer "
+    "questions from its corpus. Please upload a document or wait for "
+    "indexing to finish."
+)
+
+
+# Patterns that indicate the model emitted a raw internal tool-call payload
+# instead of a user-facing answer. These must never be shown to the user.
+_INTERNAL_TOOL_KEYS = {"name", "arguments"}
+
+
+def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
+    """True if there is project-specific context (facts, documents, etc.)
+    outside the RAG corpus.  Allows project-fact Q&A to keep working even
+    when the project has no indexed chunks yet.
+    """
+    try:
+        from app.core.project_memory import build_project_context
+
+        ctx = build_project_context(project_id, user_message)
+        return bool(ctx and ctx.strip())
+    except Exception:
+        return False
+
+
+def _looks_like_internal_tool_json(text: str) -> bool:
+    """True if ``text`` is a JSON object/list shaped like a tool call."""
+    if not text or not text.strip().startswith(("{", "[")):
+        return False
+    try:
+        obj = json.loads(text.strip())
+    except json.JSONDecodeError:
+        return False
+    if isinstance(obj, dict):
+        # OpenAI-style tool call: {"name": ..., "arguments": ...}
+        if _INTERNAL_TOOL_KEYS.issubset(obj.keys()):
+            return True
+        # Single function call with nested function dict.
+        if obj.get("type") == "function" and "function" in obj:
+            return True
+    if isinstance(obj, list):
+        if all(
+            isinstance(item, dict)
+            and (
+                _INTERNAL_TOOL_KEYS.issubset(item.keys())
+                or (item.get("type") == "function" and "function" in item)
+            )
+            for item in obj
+        ):
+            return True
+    return False
+
+
+def _sanitize_final_text(text: str) -> str:
+    """Prepare assistant content for display.
+
+    1. Strip DeepSeek DSML tool-call markup.
+    2. Detect and drop raw internal tool-call JSON.
+    3. Return empty string if nothing usable remains.
+    """
+    if not text:
+        return ""
+    cleaned = _strip_dsml(text).strip()
+    if not cleaned:
+        return ""
+    if _looks_like_internal_tool_json(cleaned):
+        _LOG.warning("raw tool-call JSON detected in final answer; replacing with fallback")
+        return ""
+    return cleaned
 
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
@@ -999,6 +1071,26 @@ class Agent:
 
         _call_stack = _call_stack or [self.name]
 
+        # Zero-chunk project guardrail: refuse before spending any LLM budget
+        # unless the project has other (non-RAG) context such as facts.
+        if (
+            project_id
+            and not project_is_rag_ready(project_id)
+            and not _project_has_non_rag_context(project_id, user_message)
+        ):
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.get_or_create_conversation(conversation_id, self.name, project_id)
+                agent_memory.append_message(conversation_id, "user", user_message)
+                agent_memory.append_message(conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE)
+            return {
+                "status": "success",
+                "answer": _UNINDEXED_PROJECT_MESSAGE,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": [],
+            }
+
         effective_history = list(history or [])
         if conversation_id:
             from app.core import agent_memory
@@ -1063,20 +1155,21 @@ class Agent:
                         "tool_calls": dsml_tool_calls,
                     }
                 else:
-                    # Genuine final answer — scrub any partial DSML fragments.
-                    final_text = _strip_dsml(raw_content)
-                    # If the entire content was DSML (nothing usable before the
-                    # first marker), force one no-tools call so the model must
-                    # produce a plain-text answer instead of an empty bubble.
+                    # Genuine final answer — sanitize DSML markup, raw tool JSON,
+                    # and empty content before it reaches the user.
+                    final_text = _sanitize_final_text(raw_content)
+                    # If sanitization left nothing usable, force one no-tools call
+                    # so the model must produce a plain-text answer instead of an
+                    # empty bubble or leaked JSON.
                     if not final_text.strip():
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if forced_resp.get("status") == "error":
-                            final_text = "I wasn't able to produce a response — please rephrase."
+                            final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
                             forced_msg = forced_resp["choice"].get("message") or {}
-                            final_text = _strip_dsml(forced_msg.get("content") or "")
+                            final_text = _sanitize_final_text(forced_msg.get("content") or "")
                             if not final_text.strip():
-                                final_text = "I wasn't able to produce a response — please rephrase."
+                                final_text = _EMPTY_RESPONSE_FALLBACK
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -1156,7 +1249,9 @@ class Agent:
                 "messages": messages,
             }
         forced_msg = forced_resp["choice"].get("message") or {}
-        final_text = _strip_dsml(forced_msg.get("content") or "")
+        final_text = _sanitize_final_text(forced_msg.get("content") or "")
+        if not final_text.strip():
+            final_text = _EMPTY_RESPONSE_FALLBACK
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -1372,6 +1467,23 @@ class Agent:
 
         yield {"type": "start", "agent": self.name}
 
+        # Zero-chunk project guardrail: refuse before spending LLM budget
+        # unless the project has other (non-RAG) context such as facts.
+        if (
+            project_id
+            and not project_is_rag_ready(project_id)
+            and not _project_has_non_rag_context(project_id, user_message)
+        ):
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.get_or_create_conversation(conversation_id, self.name, project_id)
+                agent_memory.append_message(conversation_id, "user", user_message)
+                agent_memory.append_message(conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE)
+            for chunk in _chunks(_UNINDEXED_PROJECT_MESSAGE, 80):
+                yield {"type": "token", "content": chunk}
+            yield {"type": "end", "iterations": 0, "sources": []}
+            return
+
         effective_history = list(history or [])
         if conversation_id:
             from app.core import agent_memory
@@ -1434,12 +1546,12 @@ class Agent:
                         "tool_calls": dsml_tool_calls,
                     }
                 else:
-                    # Final answer — stream it (we have the whole text but emit it in chunks
-                    # so the UI feels live without an extra round-trip to the streaming endpoint).
-                    final_text = _strip_dsml(raw_content)
-                    # If the entire content was DSML (nothing usable before the
-                    # first marker), force one no-tools call so the model must
-                    # produce a plain-text answer instead of an empty bubble.
+                    # Final answer — sanitize DSML markup, raw tool JSON, and
+                    # empty content before streaming it to the user.
+                    final_text = _sanitize_final_text(raw_content)
+                    # If sanitization left nothing usable, force one no-tools call
+                    # so the model must produce a plain-text answer instead of an
+                    # empty bubble or leaked JSON.
                     if not final_text.strip():
                         _LOG.info("chat_stream: empty final_text, forcing no-tools retry")
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
@@ -1447,7 +1559,7 @@ class Agent:
                             final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
                             forced_msg = forced_resp["choice"].get("message") or {}
-                            final_text = _strip_dsml(forced_msg.get("content") or "")
+                            final_text = _sanitize_final_text(forced_msg.get("content") or "")
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     _LOG.info("chat_stream: final_text iter=%d chars=%d", iteration, len(final_text))
@@ -1531,10 +1643,10 @@ class Agent:
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
             return
         forced_msg = forced_resp["choice"].get("message") or {}
-        final_text = _strip_dsml(forced_msg.get("content") or "")
+        final_text = _sanitize_final_text(forced_msg.get("content") or "")
         if not final_text.strip():
-            # Forced retry returned empty — substitute the user-safe fallback
-            # so the UI never renders an empty bubble (FOLLOW-UP #90).
+            # Forced retry returned empty or raw tool JSON — substitute the
+            # user-safe fallback so the UI never renders an empty bubble.
             _LOG.warning("chat_stream: forced final returned empty, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         for chunk in _chunks(final_text, 80):

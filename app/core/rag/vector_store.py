@@ -475,6 +475,101 @@ class VectorStore:
 
         return _rrf_combine(sem_results, bm25_results, k)
 
+    def identifier_search(
+        self,
+        project_id: str,
+        identifiers: List[str],
+        k: int = 20,
+    ) -> List[Chunk]:
+        """Lexical exact-match search for construction reference identifiers.
+
+        Searches the raw chunk text for any of the supplied identifier
+        strings using case-insensitive token matching.  Intervening
+        punctuation/label words (e.g. "VO Ref: 99" vs "VO 99") are ignored.
+        No reindexing is required: this works against the existing
+        ``chunks.text`` column.
+
+        Scoring: each returned chunk gets a score equal to the fraction of
+        identifiers that appear in its text. This lets callers boost chunks
+        that match multiple reference tokens (e.g. a VO number + a date)
+        above chunks that only match one generic token.
+
+        Returns an empty list when ``identifiers`` is empty or no chunk
+        contains any of them.
+        """
+        if not identifiers or not project_id:
+            return []
+
+        # Tokenise each identifier so punctuation between tokens is ignored.
+        ident_tokens: List[List[str]] = []
+        for ident in identifiers:
+            tokens = [t for t in re.split(r"[^a-z0-9]+", ident.lower()) if t]
+            if tokens:
+                ident_tokens.append(tokens)
+        if not ident_tokens:
+            return []
+
+        # Build a pre-filter: every token of an identifier must appear as a
+        # substring in LOWER(text).  Tokens are alphanumeric so no LIKE
+        # wildcard escaping is required.
+        ident_clauses: List[str] = []
+        params: Dict[str, Any] = {"project_id": project_id, "k": k}
+        param_idx = 0
+        for tokens in ident_tokens:
+            token_clauses: List[str] = []
+            for tok in tokens:
+                token_clauses.append(f"LOWER(text) LIKE :p{param_idx}")
+                params[f"p{param_idx}"] = f"%{tok}%"
+                param_idx += 1
+            ident_clauses.append("(" + " AND ".join(token_clauses) + ")")
+
+        like_clauses = " OR ".join(ident_clauses)
+        sql = text(
+            "SELECT chunk_id, project_id, doc_id, chunk_index, text "
+            "FROM chunks "
+            "WHERE project_id = :project_id "
+            f"AND ({like_clauses}) "
+            "LIMIT :k"
+        )
+
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    rows = session.execute(sql, params).all()
+        except OperationalError as e:
+            logger.warning(
+                "identifier_search failed for project=%s: %s; identifiers=%r",
+                project_id, e, identifiers,
+            )
+            return []
+
+        def _tokens(text: str) -> Set[str]:
+            return set(re.split(r"[^a-z0-9]+", (text or "").lower())) - {""}
+
+        text_tokens_by_row: Dict[Any, Set[str]] = {}
+        out: List[Chunk] = []
+        for r in rows:
+            if r not in text_tokens_by_row:
+                text_tokens_by_row[r] = _tokens(r.text)
+            row_tokens = text_tokens_by_row[r]
+            matches = sum(
+                1 for tokens in ident_tokens if tokens and all(t in row_tokens for t in tokens)
+            )
+            score = matches / len(ident_tokens) if ident_tokens else 0.0
+            out.append(
+                Chunk(
+                    chunk_id=r.chunk_id,
+                    project_id=r.project_id,
+                    doc_id=r.doc_id,
+                    chunk_index=int(r.chunk_index),
+                    text=r.text,
+                    score=round(score, 4),
+                )
+            )
+        # Higher match fraction first; preserve stable order on ties.
+        out.sort(key=lambda c: -c.score)
+        return out
+
     def _semantic_search(
         self,
         project_id: str,

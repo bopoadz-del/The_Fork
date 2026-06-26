@@ -370,6 +370,9 @@ async def test_delegation_propagates_project_id(tmp_path, monkeypatch):
 
     box = {}
     monkeypatch.setattr(Agent, "_call_llm", _llm_capture(box, text="specialist answer"))
+    monkeypatch.setattr(
+        "app.agents.runtime.project_is_rag_ready", lambda _pid: True
+    )
 
     caller = _make_agent(name="caller", can_delegate=True)
     tool_call = {

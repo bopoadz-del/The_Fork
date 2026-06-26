@@ -250,6 +250,23 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
     except Exception:
         # Enrichment is best-effort — never break the project load on it.
         pass
+
+    # Expose the live indexed-chunk count so the UI/admin can flag
+    # projects that have documents but no searchable corpus.
+    try:
+        from app.core.rag.embeddings import get_embedder
+        from app.core.rag.vector_store import get_store
+        resolved_id = store._master_corpus_source(project_id) or project_id
+        embedder = get_embedder()
+        chunk_store = get_store(dim=embedder.dim)
+        indexed_chunks = chunk_store.count(resolved_id)
+        proj["indexed_chunks"] = indexed_chunks
+        proj["has_indexed_chunks"] = indexed_chunks > 0
+    except Exception:
+        # Vector store may not be configured in all test environments.
+        proj["indexed_chunks"] = None
+        proj["has_indexed_chunks"] = None
+
     return proj
 
 

@@ -94,6 +94,9 @@ def test_history_empty_for_new_conversation(client):
 def test_history_returns_persisted_turns(client, monkeypatch):
     """After a POST chat, GET should return the user + assistant turns oldest-first."""
     monkeypatch.setattr(Agent, "_call_llm", _fake_llm("mocked answer"))
+    monkeypatch.setattr(
+        "app.agents.runtime.project_is_rag_ready", lambda _pid: True
+    )
     headers = _register_and_login(client, "persist")
 
     # Create a project so the workspace conversation has an owner

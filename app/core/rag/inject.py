@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.rag.vector_store import Chunk
@@ -64,7 +65,7 @@ def format_chunks_as_system_message(
     return {"role": "system", "content": header + "\n" + "\n\n".join(body_parts)}
 
 
-from app.core.rag.retriever import retrieve_with_filter
+from app.core.rag.retriever import retrieve_with_filter, extract_query_identifiers
 from app.core.rag import audit as _audit
 from app.core.rag import budget as _budget
 
@@ -114,6 +115,31 @@ def rag_inject(
     )
     top_score = (max(c.score or 0 for c in chunks) if chunks else 0.0)
 
+    # Identifier precision gate: if the user asks for a specific reference
+    # and none of the retrieved chunks contain that reference, treat the
+    # retrieval as a miss. This stops the model from hallucinating an exact
+    # lookup answer from semantically-similar but irrelevant boilerplate.
+    identifiers = extract_query_identifiers(user_message or "")
+
+    def _identifier_present_in_text(ident: str, text: str) -> bool:
+        """A reference is present if every token of the identifier appears
+        in the chunk text. This tolerates intervening label words such as
+        "Ref" / "No" / "#" (e.g. "VO 99" matches "VO Ref: 99").
+        """
+        text_tokens = set(re.split(r"[^a-z0-9]+", text.lower())) - {"", "ref", "no", "#"}
+        ident_tokens = [t for t in re.split(r"[^a-z0-9]+", ident.lower()) if t]
+        return bool(ident_tokens) and all(t in text_tokens for t in ident_tokens)
+
+    identifier_miss = False
+    if identifiers and chunks:
+        id_lower = [i.lower() for i in identifiers]
+        if not any(
+            _identifier_present_in_text(ident, c.text or "")
+            for c in chunks
+            for ident in id_lower
+        ):
+            identifier_miss = True
+
     audit_rec: Dict[str, Any] = {
         "timestamp": now.isoformat() + "Z",
         "project_id": project_id,
@@ -128,11 +154,13 @@ def rag_inject(
         "budget_degraded": budget_state["degraded"],
     }
 
-    if not chunks or top_score < threshold:
+    if not chunks or top_score < threshold or identifier_miss:
         audit_rec.update({
             "injected_k": 0,
             "injected_tokens": 0,
             "threshold_fired": True,
+            "identifier_miss": identifier_miss,
+            "extracted_identifiers": identifiers,
             "chunks": [
                 {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
                  "score": c.score} for c in chunks
