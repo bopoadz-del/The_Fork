@@ -2,6 +2,7 @@
 
 import logging
 import re
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.universal_base import UniversalContainer
@@ -540,7 +541,6 @@ class ConstructionContainer(
         return grouped
     def _add_days(self, date_str: str, days: int) -> str:
         try:
-            from datetime import timedelta
             return (
                 datetime.strptime(date_str[:10], "%Y-%m-%d") + timedelta(days=days)
             ).strftime("%Y-%m-%d")

@@ -306,8 +306,8 @@ class ConstructionScheduleMixin:
 
         systems = p.get("systems") or data.get("systems") or data.get("equipment", [])
         project_name = p.get("project_name", data.get("project_name", "Project"))
-        handover_date = p.get("handover_date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-        defects_liability_months = int(p.get("defects_liability_months", 12))
+        handover_date = p.get("handover_date") or data.get("handover_date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        defects_liability_months = int(p.get("defects_liability_months", data.get("defects_liability_months", 12)))
 
         # Standard system warranties if none provided
         if not systems:
@@ -480,8 +480,8 @@ class ConstructionScheduleMixin:
         p = params or {}
         spec_file = data.get("spec_file") or p.get("spec_file")
         equipment_list = data.get("equipment_list") or p.get("equipment_list", [])
-        systems = p.get("systems", ["electrical", "mechanical", "fire", "lift", "facade"])
-        substantial_completion = p.get("substantial_completion_date")
+        systems = p.get("systems") or data.get("systems", ["electrical", "mechanical", "fire", "lift", "facade"])
+        substantial_completion = p.get("substantial_completion_date") or data.get("substantial_completion_date")
     
         checklists = {}
         for system in systems:

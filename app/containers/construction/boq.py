@@ -319,7 +319,7 @@ class ConstructionBoqMixin:
             gross_valuation - retention_held - advance_recovered - previous_certified, 2
         )
         cumulative_certified = round(previous_certified + net_this_period, 2)
-        remaining_balance = round(contract_value - cumulative_certified - retention_held, 2)
+        remaining_balance = round(contract_value - cumulative_certified, 2)
 
         return {
             "status": "success",

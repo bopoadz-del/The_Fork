@@ -48,7 +48,7 @@ class SandboxPolicy:
         if self.allowed_modules is None:
             self.allowed_modules = ["math", "random", "datetime", "json", "re"]
         if self.blocked_builtins is None:
-            self.blocked_builtins = ["__import__", "open", "exec", "eval", "compile"]
+            self.blocked_builtins = ["open", "exec", "eval", "compile"]
 
 
 class TimeoutException(Exception):
@@ -95,6 +95,15 @@ class SandboxBlock(UniversalBlock):
         self.active_sessions: Dict[str, Dict] = {}
         self.execution_count = 0
         self.blocked_count = 0
+        # Default policy must exist before process() is invoked; _legacy_initialize
+        # also sets it, but callers may use the block without booting HAL.
+        self.policies["default"] = SandboxPolicy(
+            max_memory_mb=self.config.get("max_memory_mb", 512),
+            max_cpu_time=self.config.get("max_cpu_time", 5),
+            network_allowed=self.config.get("network_allowed", False),
+            filesystem_readonly=self.config.get("filesystem_readonly", True),
+            allowed_modules=self.config.get("allowed_modules", []),
+        )
         
     async def _legacy_initialize(self) -> bool:
         """Initialize sandbox environment"""
@@ -190,7 +199,9 @@ class SandboxBlock(UniversalBlock):
         safe_globals = {
             "__builtins__": self._get_restricted_builtins(policy),
             "input": lambda prompt="": inputs.get("input", ""),
-            "print": lambda *args, **kwargs: None,  # Captured below
+            "print": lambda *args, **kwargs: stdout_capture.write(
+                kwargs.get("sep", " ").join(str(a) for a in args) + kwargs.get("end", "\n")
+            ),
         }
         
         # Add allowed modules
@@ -251,18 +262,22 @@ class SandboxBlock(UniversalBlock):
     def _get_restricted_builtins(self, policy: SandboxPolicy) -> Dict:
         """Create restricted builtins dict"""
         safe_builtins = {}
-        
+
+        # ``__builtins__`` may be a dict (e.g. under pytest) or the builtins
+        # module.  Normalise to a {name: value} mapping before filtering.
+        if isinstance(__builtins__, dict):
+            builtins_items = __builtins__.items()
+        else:
+            builtins_items = vars(__builtins__).items()
+
         # Copy safe builtins
-        for name in dir(__builtins__):
-            if name not in policy.blocked_builtins and not name.startswith("_"):
-                try:
-                    safe_builtins[name] = getattr(__builtins__, name)
-                except:
-                    pass
-        
+        for name, value in builtins_items:
+            if name not in policy.blocked_builtins and (not name.startswith("_") or name == "__import__"):
+                safe_builtins[name] = value
+
         # Add safe versions of blocked functions
         safe_builtins["open"] = self._safe_open
-        
+
         return safe_builtins
     
     def _safe_open(self, filepath: str, mode: str = "r", *args, **kwargs):
