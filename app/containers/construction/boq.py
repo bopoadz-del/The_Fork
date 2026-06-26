@@ -170,6 +170,51 @@ class ConstructionBoqMixin:
         if not isinstance(result, dict) or result.get("status") != "success":
             return None
         return result.get("rates", {}).get("adjusted_usd")
+    @staticmethod
+    def _normalize_measurements(measurements: Any) -> List[Dict]:
+        """Normalise measurements into the list-of-dicts shape _calculate_quantities expects.
+
+        Supports:
+        - list of dicts (passed through, with numeric values preserved)
+        - flat dict of numbers (e.g. {"area": 500, "volume": 120})
+        - dict of dicts with unit/value (e.g. {"concrete_slab": {"value": 50, "unit": "m3"}})
+        """
+        if isinstance(measurements, dict):
+            converted = []
+            for key, value in measurements.items():
+                if isinstance(value, (int, float)):
+                    converted.append({"type": key, "value": value, "item": key})
+                elif isinstance(value, dict):
+                    entry = dict(value)
+                    entry.setdefault("item", key)
+                    if not entry.get("type") and entry.get("unit"):
+                        unit = str(entry["unit"]).lower()
+                        if unit == "m3":
+                            entry["type"] = "volume"
+                        elif unit == "m2":
+                            entry["type"] = "area"
+                        elif unit in ("kg", "t", "tonne", "tonnes"):
+                            entry["type"] = "weight"
+                        elif unit in ("ea", "nr", "pcs", "each"):
+                            entry["type"] = "count"
+                    converted.append(entry)
+                else:
+                    converted.append({"type": key, "value": value, "item": key})
+            measurements = converted
+
+        if isinstance(measurements, list):
+            normalized = []
+            for m in measurements:
+                if isinstance(m, dict):
+                    normalized.append(m)
+                elif isinstance(m, (int, float)):
+                    normalized.append({"type": "count", "value": m})
+                else:
+                    normalized.append({"type": "unknown", "value": m})
+            measurements = normalized
+
+        return measurements or []
+
     async def extract_quantities(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
@@ -187,16 +232,7 @@ class ConstructionBoqMixin:
                 "quantities": {},
                 "measurements": [],
             }
-        # Normalise a flat dict of measurements (e.g. {"area": 500, "volume": 120})
-        # into the list shape _calculate_quantities expects.
-        if isinstance(measurements, dict):
-            converted = []
-            for key, value in measurements.items():
-                if isinstance(value, (int, float)):
-                    converted.append({"type": key, "value": value})
-                elif isinstance(value, dict):
-                    converted.append(value)
-            measurements = converted
+        measurements = self._normalize_measurements(measurements)
         quantities = self._calculate_quantities(measurements)
         return {"status": "success", "quantities": quantities, "measurements": measurements}
     async def estimate_costs(self, input_data: Any, params: Dict) -> Dict:
@@ -207,9 +243,10 @@ class ConstructionBoqMixin:
         # Accept quantities from multiple upstream shapes
         quantities = p.get("quantities") or data.get("quantities") or {}
 
-        # process_document output → derive quantities from measurements
+        # process_document output / raw measurements → derive quantities from measurements
         if not quantities and data.get("measurements"):
-            raw_q = self._calculate_quantities(data["measurements"])
+            measurements = self._normalize_measurements(data["measurements"])
+            raw_q = self._calculate_quantities(measurements)
             quantities = {
                 "Concrete Works": {"quantity": raw_q.get("concrete_volume_m3", 0), "unit": "m3"},
                 "Steel / Rebar": {"quantity": raw_q.get("steel_weight_kg", 0), "unit": "kg"},

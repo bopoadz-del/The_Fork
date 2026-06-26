@@ -260,6 +260,38 @@ class TestConstructionBlocks:
         assert r["rates"].get("adjusted_usd") is not None
 
     @pytest.mark.asyncio
+    async def test_extract_quantities_accepts_dict_measurements(self):
+        """extract_quantities must normalise a flat dict of measurements into
+        the list shape _calculate_quantities expects (regression for C03)."""
+        from app.containers.construction import ConstructionContainer
+        c = ConstructionContainer()
+        r = await c.extract_quantities({"measurements": {"area": 500, "volume": 120}}, {})
+        inner = _r(r)
+        assert inner["status"] == "success"
+        assert inner["quantities"]["floor_area_m2"] == 500
+        assert inner["quantities"]["concrete_volume_m3"] == 120
+
+    @pytest.mark.asyncio
+    async def test_estimate_costs_from_quantities(self):
+        """estimate_costs should produce a cost breakdown when given a
+        quantities dict and the historical_benchmark block is available."""
+        from app.containers.construction import ConstructionContainer
+        c = ConstructionContainer()
+        r = await c.estimate_costs({
+            "quantities": {
+                "concrete_m3": {"quantity": 120, "unit": "m3"},
+                "steel_kg": {"quantity": 5000, "unit": "kg"},
+            },
+            "location": "Lagos",
+            "project_type": "residential_building",
+        }, {"action": "estimate_costs"})
+        inner = _r(r)
+        assert inner["status"] == "success", inner
+        assert inner["action"] == "cost_estimate"
+        assert any(item["item"] in {"concrete_m3", "steel_kg"} for item in inner["line_items"])
+        assert inner["summary"]["total_estimate"] > 0
+
+    @pytest.mark.asyncio
     async def test_formula_executor(self):
         from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
         b = FormulaExecutorV2Block()
