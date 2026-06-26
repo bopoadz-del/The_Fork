@@ -325,3 +325,72 @@ async def test_first_failure_order(block):
     # Multiple failures: syntactic wins, then dimensional, physical, empirical, operational.
     result = await _run(block, {"value": "bad", "unit": "bad_unit"})
     assert result["first_failure"] == "syntactic"
+
+# ---------------------------------------------------------------------------
+# Production regression coverage: unit parsing must never crash
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_dimensional_value_only_still_passes(block):
+    result = await _run(block, {"value": 120})
+    assert _stage(result, "syntactic")["pass"] is True
+    assert _stage(result, "dimensional")["pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_dimensional_m3_does_not_crash(block):
+    result = await _run(block, {"value": 120, "unit": "m3"})
+    assert result["status"] == "success"
+    assert _stage(result, "dimensional")["pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_dimensional_unicode_cube_does_not_crash(block):
+    result = await _run(block, {"value": 120, "unit": "m³"})
+    assert result["status"] == "success"
+    assert _stage(result, "dimensional")["pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_dimensional_invalid_unit_returns_controlled_failure(block):
+    result = await _run(block, {"value": 120, "unit": "gibberish_xyz"})
+    assert result["status"] == "success"
+    assert _stage(result, "dimensional")["pass"] is False
+    assert "not recognised" in _stage(result, "dimensional")["reason"]
+
+
+@pytest.mark.asyncio
+async def test_dimensional_graceful_when_ureg_raises(monkeypatch, block):
+    """If Pint/UnitRegistry fails internally, the stage must not propagate."""
+    import app.blocks.validation_pipeline as vp
+
+    def _broken_ureg():
+        raise SystemError("simulated Pint failure")
+
+    monkeypatch.setattr(vp, "_get_ureg", _broken_ureg)
+    result = await block.process({"value": 120, "unit": "m3"})
+    assert result["status"] == "success"
+    assert _stage(result, "dimensional")["pass"] is True
+    assert "unavailable" in _stage(result, "dimensional")["reason"]
+
+
+@pytest.mark.asyncio
+async def test_execute_validation_pipeline_unit_returns_non_500():
+    """POST /v1/execute with validation_pipeline + unit must not crash."""
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.post(
+            "/v1/execute",
+            json={
+                "block": "validation_pipeline",
+                "input": {"value": 120, "unit": "m3"},
+                "params": {},
+            },
+            headers={"Authorization": "Bearer cb_dev_key"},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("status") != "error"
+    result = body.get("result", body)
+    assert result.get("status") == "success"
