@@ -405,10 +405,21 @@ async def test_chat_does_not_short_circuit_when_rag_context_exists(monkeypatch):
     assert len(result["sources"]) == 1
 
 
-def test_build_missing_reference_answer_includes_project_name():
+def test_build_missing_reference_answer_includes_project_name(monkeypatch):
+    monkeypatch.setattr(
+        "app.core.projects.get_project",
+        lambda pid, user_id=None, include_admin_approved=False: {"name": "Test Project"},
+    )
     answer = _build_missing_reference_answer("proj_a", "u1")
     assert "could not confirm this reference" in answer.lower()
-    assert "Test Project" not in answer  # no monkeypatch here, expect generic
+    assert "for Test Project" in answer
+    assert ".." not in answer
+
+
+def test_build_missing_reference_answer_no_double_period_without_project_name():
+    answer = _build_missing_reference_answer("unknown_proj", "u1")
+    assert "could not confirm this reference" in answer.lower()
+    assert ".." not in answer
 
 
 def test_sanitizer_does_not_replace_controlled_missing_reference_answer():

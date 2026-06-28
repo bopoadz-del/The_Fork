@@ -69,7 +69,7 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
 # the indexed project sources.  Replaces both the generic empty-content
 # fallback and any expensive model call that would otherwise spin on a miss.
 _MISSING_REFERENCE_ANSWER = (
-    "I could not confirm this reference in the indexed project sources."
+    "I could not confirm this reference in the indexed project sources"
 )
 
 
