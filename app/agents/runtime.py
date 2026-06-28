@@ -82,10 +82,13 @@ def _should_short_circuit_rag_miss(
     Conditions:
       * RAG injection produced no context (``rag_sys_msg`` is None).
       * The audit record shows either ``identifier_miss`` or
-        ``threshold_fired`` for a query that contained extracted identifiers.
+        ``threshold_fired``.
+      * The query contained at least one extracted identifier that looks
+        reference-like (contains a digit).  This prevents broad phrases such
+        as "contract value" from triggering the fast path.
 
-    Broad questions with no matches (``extracted_identifiers`` empty) are
-    deliberately NOT short-circuited so the model can still answer from
+    Broad questions with no real reference identifiers are deliberately NOT
+    short-circuited so the model can still answer from project facts or
     general knowledge.
     """
     if rag_sys_msg is not None:
@@ -93,7 +96,9 @@ def _should_short_circuit_rag_miss(
     if not audit_rec:
         return False
     identifiers = audit_rec.get("extracted_identifiers") or []
-    if not identifiers:
+    # Require a digit to avoid short-circuiting generic phrases like
+    # "contract value" that happen to match a reference label.
+    if not any(re.search(r"\d", ident) for ident in identifiers):
         return False
     return bool(
         audit_rec.get("identifier_miss") or audit_rec.get("threshold_fired")
@@ -1351,13 +1356,11 @@ class Agent:
             insert_at = max(0, len(messages) - 1)
             messages.insert(insert_at, _rag_sys_msg)
 
-        # Fast path: exact reference miss with no RAG context and no non-RAG
-        # project context.  Skip the model/tool loop entirely and return a
-        # controlled not-found answer immediately.
-        if (
-            _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg)
-            and not _project_has_non_rag_context(project_id, user_message)
-        ):
+        # Fast path: exact reference miss with no RAG context.  Skip the
+        # model/tool loop entirely and return a controlled not-found answer
+        # immediately.  Project facts / document listings are not useful for
+        # confirming a specific absent reference.
+        if _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg):
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
@@ -1768,12 +1771,10 @@ class Agent:
             insert_at = max(0, len(messages) - 1)
             messages.insert(insert_at, _rag_sys_msg)
 
-        # Fast path: exact reference miss with no RAG context and no non-RAG
-        # project context.  Skip the model/tool loop entirely.
-        if (
-            _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg)
-            and not _project_has_non_rag_context(project_id, user_message)
-        ):
+        # Fast path: exact reference miss with no RAG context.  Skip the
+        # model/tool loop entirely.  Project facts / document listings are not
+        # useful for confirming a specific absent reference.
+        if _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg):
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory

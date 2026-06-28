@@ -262,6 +262,12 @@ def test_should_short_circuit_rag_miss_true_for_threshold_fired_with_identifiers
     assert _should_short_circuit_rag_miss(audit, None) is True
 
 
+def test_should_short_circuit_rag_miss_false_for_generic_phrase_without_digit():
+    # "contract value" matches a reference label but is not a specific lookup.
+    audit = {"threshold_fired": True, "extracted_identifiers": ["contract value", "value"]}
+    assert _should_short_circuit_rag_miss(audit, None) is False
+
+
 def test_should_short_circuit_rag_miss_false_when_rag_context_exists():
     audit = {"identifier_miss": True, "extracted_identifiers": ["vo ref 99"]}
     assert _should_short_circuit_rag_miss(audit, {"role": "system", "content": "context"}) is False
