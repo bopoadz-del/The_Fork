@@ -65,6 +65,71 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
         return False
 
 
+# Controlled answer used when an exact construction reference is absent from
+# the indexed project sources.  Replaces both the generic empty-content
+# fallback and any expensive model call that would otherwise spin on a miss.
+_MISSING_REFERENCE_ANSWER = (
+    "I could not confirm this reference in the indexed project sources."
+)
+
+
+def _should_short_circuit_rag_miss(
+    audit_rec: Optional[Dict[str, Any]],
+    rag_sys_msg: Optional[Dict[str, str]],
+) -> bool:
+    """True when retrieval has definitively missed an exact reference.
+
+    Conditions:
+      * RAG injection produced no context (``rag_sys_msg`` is None).
+      * The audit record shows either ``identifier_miss`` or
+        ``threshold_fired`` for a query that contained extracted identifiers.
+
+    Broad questions with no matches (``extracted_identifiers`` empty) are
+    deliberately NOT short-circuited so the model can still answer from
+    general knowledge.
+    """
+    if rag_sys_msg is not None:
+        return False
+    if not audit_rec:
+        return False
+    identifiers = audit_rec.get("extracted_identifiers") or []
+    if not identifiers:
+        return False
+    return bool(
+        audit_rec.get("identifier_miss") or audit_rec.get("threshold_fired")
+    )
+
+
+def _build_missing_reference_answer(
+    project_id: Optional[str],
+    user_id: Optional[str],
+) -> str:
+    """Return a user-facing not-found answer, optionally naming the project."""
+    project_name = ""
+    if project_id:
+        try:
+            from app.core import projects as _projects
+
+            project = _projects.get_project(
+                project_id, user_id=user_id, include_admin_approved=True
+            )
+            project_name = (project or {}).get("name") or ""
+            if not project_name and project_id == _projects.MASTER_CORPUS_PROJECT_ID:
+                project_name = _projects.MASTER_CORPUS_NAME
+        except Exception:
+            pass
+
+    if project_name:
+        return (
+            f"{_MISSING_REFERENCE_ANSWER} for {project_name}. "
+            "Please check whether the document is indexed or provide the exact filename."
+        )
+    return (
+        f"{_MISSING_REFERENCE_ANSWER}. "
+        "Please check whether the document is indexed or provide the exact filename."
+    )
+
+
 def _looks_like_internal_tool_json(text: str) -> bool:
     """True if ``text`` is (or contains) JSON shaped like a tool call."""
     if not text:
@@ -1285,6 +1350,28 @@ class Agent:
             # after _build_messages). Index = len(messages) - 1.
             insert_at = max(0, len(messages) - 1)
             messages.insert(insert_at, _rag_sys_msg)
+
+        # Fast path: exact reference miss with no RAG context and no non-RAG
+        # project context.  Skip the model/tool loop entirely and return a
+        # controlled not-found answer immediately.
+        if (
+            _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg)
+            and not _project_has_non_rag_context(project_id, user_message)
+        ):
+            answer = _build_missing_reference_answer(project_id, user_id)
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": messages + [{"role": "assistant", "content": answer}],
+                "sources": [],
+            }
+
         tool_calls_made: List[Dict[str, Any]] = []
 
         for iteration in range(MAX_TOOL_ITERATIONS):
@@ -1680,6 +1767,21 @@ class Agent:
             # after _build_messages). Index = len(messages) - 1.
             insert_at = max(0, len(messages) - 1)
             messages.insert(insert_at, _rag_sys_msg)
+
+        # Fast path: exact reference miss with no RAG context and no non-RAG
+        # project context.  Skip the model/tool loop entirely.
+        if (
+            _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg)
+            and not _project_has_non_rag_context(project_id, user_message)
+        ):
+            answer = _build_missing_reference_answer(project_id, user_id)
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {"type": "end", "iterations": 0, "sources": []}
+            return
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             _LOG.info("chat_stream: iter=%d agent=%s", iteration, self.name)

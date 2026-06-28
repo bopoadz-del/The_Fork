@@ -242,3 +242,170 @@ def test_build_sources_returns_empty_when_trust_gate_fires(flag, monkeypatch):
         "I searched but could not find anything specific.",
     )
     assert out == []
+
+
+# ── Missing exact-reference fast-path tests ─────────────────────────────────
+
+from app.agents.runtime import (
+    _should_short_circuit_rag_miss,
+    _build_missing_reference_answer,
+)
+
+
+def test_should_short_circuit_rag_miss_true_for_identifier_miss():
+    audit = {"identifier_miss": True, "extracted_identifiers": ["vo ref 99"]}
+    assert _should_short_circuit_rag_miss(audit, None) is True
+
+
+def test_should_short_circuit_rag_miss_true_for_threshold_fired_with_identifiers():
+    audit = {"threshold_fired": True, "extracted_identifiers": ["vo ref 99"]}
+    assert _should_short_circuit_rag_miss(audit, None) is True
+
+
+def test_should_short_circuit_rag_miss_false_when_rag_context_exists():
+    audit = {"identifier_miss": True, "extracted_identifiers": ["vo ref 99"]}
+    assert _should_short_circuit_rag_miss(audit, {"role": "system", "content": "context"}) is False
+
+
+def test_should_short_circuit_rag_miss_false_for_broad_question():
+    audit = {"threshold_fired": True, "extracted_identifiers": []}
+    assert _should_short_circuit_rag_miss(audit, None) is False
+
+
+@pytest.mark.asyncio
+async def test_chat_short_circuits_missing_exact_reference(monkeypatch):
+    """Absent exact reference skips model call and returns controlled not-found."""
+    agent = _make_agent()
+
+    call_count = {"n": 0}
+
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+        call_count["n"] += 1
+        return {
+            "status": "success",
+            "choice": {
+                "message": {"content": "should not be called", "tool_calls": []},
+                "finish_reason": "stop",
+            },
+        }
+
+    def fake_rag_inject(**kwargs):
+        return None, {
+            "project_id": "proj_a",
+            "identifier_miss": True,
+            "threshold_fired": True,
+            "extracted_identifiers": ["vo ref 999999"],
+            "chunks": [],
+        }
+
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+    monkeypatch.setattr("app.agents.runtime.rag_inject", fake_rag_inject)
+    monkeypatch.setattr(
+        "app.core.projects.get_project",
+        lambda pid, user_id=None, include_admin_approved=False: {"name": "Test Project"},
+    )
+    _patch_guardrail(monkeypatch)
+
+    result = await agent.chat("What is the status of VO Ref 999999?", project_id="proj_a")
+
+    assert call_count["n"] == 0
+    assert result["status"] == "success"
+    assert "could not confirm this reference" in result["answer"].lower()
+    assert result["sources"] == []
+    assert result["iterations"] == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_short_circuits_missing_exact_reference(monkeypatch):
+    """Streaming absent exact reference yields controlled not-found and empty sources."""
+    agent = _make_agent()
+
+    call_count = {"n": 0}
+
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+        call_count["n"] += 1
+        return {
+            "status": "success",
+            "choice": {
+                "message": {"content": "should not be called", "tool_calls": []},
+                "finish_reason": "stop",
+            },
+        }
+
+    def fake_rag_inject(**kwargs):
+        return None, {
+            "project_id": "proj_a",
+            "identifier_miss": True,
+            "threshold_fired": True,
+            "extracted_identifiers": ["rfi xkcd-99999"],
+            "chunks": [],
+        }
+
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+    monkeypatch.setattr("app.agents.runtime.rag_inject", fake_rag_inject)
+    monkeypatch.setattr(
+        "app.core.projects.get_project",
+        lambda pid, user_id=None, include_admin_approved=False: {"name": "Test Project"},
+    )
+    _patch_guardrail(monkeypatch)
+
+    events = []
+    async for event in agent.chat_stream("Find RFI XKCD-99999 details.", project_id="proj_a"):
+        events.append(event)
+
+    assert call_count["n"] == 0
+    end_events = [e for e in events if e["type"] == "end"]
+    assert len(end_events) == 1
+    assert end_events[0].get("sources") == []
+    assert end_events[0].get("iterations") == 0
+    token_text = "".join(e.get("content", "") for e in events if e["type"] == "token")
+    assert "could not confirm this reference" in token_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_chat_does_not_short_circuit_when_rag_context_exists(monkeypatch):
+    """Exact reference with injected context still goes through the model."""
+    agent = _make_agent()
+
+    call_count = {"n": 0}
+
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+        call_count["n"] += 1
+        return {
+            "status": "success",
+            "choice": {
+                "message": {"content": "Found it. [source: SomeDoc.pdf, chunk 1]", "tool_calls": []},
+                "finish_reason": "stop",
+            },
+        }
+
+    def fake_rag_inject(**kwargs):
+        return (
+            {"role": "system", "content": "Relevant project context."},
+            _fake_rag_audit(),
+        )
+
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+    monkeypatch.setattr("app.agents.runtime.rag_inject", fake_rag_inject)
+    monkeypatch.setattr(
+        "app.core.projects.get_document", lambda did: {"original_name": "SomeDoc.pdf"}
+    )
+    _patch_guardrail(monkeypatch)
+
+    result = await agent.chat("What does the spec say?", project_id="proj_a")
+
+    assert call_count["n"] == 1
+    assert result["status"] == "success"
+    assert len(result["sources"]) == 1
+
+
+def test_build_missing_reference_answer_includes_project_name():
+    answer = _build_missing_reference_answer("proj_a", "u1")
+    assert "could not confirm this reference" in answer.lower()
+    assert "Test Project" not in answer  # no monkeypatch here, expect generic
+
+
+def test_sanitizer_does_not_replace_controlled_missing_reference_answer():
+    from app.agents.runtime import _sanitize_final_text
+    text = "I could not confirm this reference in the indexed project sources."
+    assert _sanitize_final_text(text) == text
