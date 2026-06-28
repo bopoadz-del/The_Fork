@@ -50,6 +50,43 @@ _UNINDEXED_PROJECT_MESSAGE = (
 # instead of a user-facing answer. These must never be shown to the user.
 _INTERNAL_TOOL_KEYS = {"name", "arguments"}
 
+# Fallback used when the assistant emits raw internal tool/search arguments
+# instead of a user-facing answer.
+_TOOL_FORMAT_FALLBACK = (
+    "I hit an internal search formatting issue before I could produce a "
+    "grounded answer. Please retry or narrow the question."
+)
+
+# Keys that strongly indicate an internal search tool argument payload.
+_SEARCH_TOOL_ARG_KEYS = {
+    "query",
+    "project_id",
+    "corpus",
+    "top_k",
+    "filters",
+    "source",
+    "tool",
+    "function",
+}
+
+# Keys that indicate legitimate user-requested data JSON, not tool args.
+_ANSWER_DATA_KEYS = {
+    "answer",
+    "result",
+    "results",
+    "data",
+    "items",
+    "rows",
+    "total",
+    "count",
+    "status",
+    "message",
+    "summary",
+    "explanation",
+    "value",
+    "values",
+}
+
 
 def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
     """True if there is project-specific context (facts, documents, etc.)
@@ -135,6 +172,28 @@ def _build_missing_reference_answer(
     )
 
 
+def _is_search_tool_args_obj(obj: Any) -> bool:
+    """True when ``obj`` looks like a search tool argument payload.
+
+    Detects shapes such as:
+      {"query": "...", "top_k": 5, "project_id": "..."}
+      {"tool": "search_project_documents", "arguments": {...}}
+      {"name": "search_project_documents", "arguments": {...}}
+    """
+    if not isinstance(obj, dict):
+        return False
+    keys = set(obj.keys())
+    # Explicit tool-call envelope shapes.
+    if "arguments" in keys and ("name" in keys or "tool" in keys or "function" in keys):
+        return True
+    # Search argument shape: has "query" plus other search params, and no
+    # obvious answer/data keys that would make it user-facing JSON.
+    if "query" in keys and not (keys & _ANSWER_DATA_KEYS):
+        if keys & {"top_k", "project_id", "corpus", "filters", "source", "tool", "function"}:
+            return True
+    return False
+
+
 def _looks_like_internal_tool_json(text: str) -> bool:
     """True if ``text`` is (or contains) JSON shaped like a tool call."""
     if not text:
@@ -146,6 +205,8 @@ def _looks_like_internal_tool_json(text: str) -> bool:
         if _INTERNAL_TOOL_KEYS.issubset(obj.keys()):
             return True
         if obj.get("type") == "function" and "function" in obj:
+            return True
+        if _is_search_tool_args_obj(obj):
             return True
         return False
 
@@ -205,17 +266,31 @@ def _sanitize_final_text(text: str) -> str:
     """Prepare assistant content for display.
 
     1. Strip DeepSeek DSML tool-call markup.
-    2. Detect and drop raw internal tool-call JSON.
-    3. Return empty string if nothing usable remains.
+    2. Detect raw internal tool-call JSON or search-tool argument objects.
+    3. Return a controlled fallback if the content is raw internal tool args.
+    4. Return empty string if nothing usable remains.
     """
     if not text:
         return ""
     cleaned = _strip_dsml(text).strip()
     if not cleaned:
         return ""
+
+    # Markdown code block that contains only a tool/search argument payload.
+    md_code = re.match(
+        r"^```(?:json)?\s*([\s\S]*?)\s*```$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if md_code:
+        inner = md_code.group(1).strip()
+        if _looks_like_internal_tool_json(inner):
+            _LOG.warning("raw tool args inside markdown code block; replacing with fallback")
+            return _TOOL_FORMAT_FALLBACK
+
     if _looks_like_internal_tool_json(cleaned):
         _LOG.warning("raw tool-call JSON detected in final answer; replacing with fallback")
-        return ""
+        return _TOOL_FORMAT_FALLBACK
     return cleaned
 
 
