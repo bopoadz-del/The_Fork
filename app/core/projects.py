@@ -286,7 +286,13 @@ def list_projects(
 
     _ensure_db()
     with SessionLocal() as session:
-        stmt = select(Project).order_by(Project.created_at.desc())
+        # Soft-archived projects are hidden from every listing (the "Delete"
+        # action archives rather than deletes — see archive_project).
+        stmt = (
+            select(Project)
+            .where(Project.status != "archived")
+            .order_by(Project.created_at.desc())
+        )
         if user_id is not None:
             if include_admin_approved:
                 stmt = stmt.where(
@@ -347,6 +353,11 @@ def get_project(
         project = session.get(Project, source_id)
     if not project:
         return None
+    # Soft-archived projects are treated as gone everywhere they're read
+    # (UI detail, ownership gates, retrieval scoping) — but the row + its RAG
+    # chunks stay in the DB. See archive_project.
+    if getattr(project, "status", "active") == "archived":
+        return None
     is_alias = source_id != project_id
     if user_id is not None and project.user_id != user_id:
         if is_alias:
@@ -387,8 +398,27 @@ def project_owner(project_id: str) -> Optional[str]:
     return project.user_id if project else None
 
 
+def archive_project(project_id: str) -> bool:
+    """Soft-delete: hide the project from listings, detail, ownership gates and
+    retrieval WITHOUT removing the row. `chunks.project_id` is ON DELETE
+    CASCADE, so keeping the row is what preserves the RAG — the operator
+    principle 'delete the UI, never the RAG; build on it only'. Reversible:
+    set status back to 'active' to restore. Returns False if not found."""
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            project.status = "archived"
+            session.commit()
+            return True
+
+
 def delete_project(project_id: str) -> bool:
-    """Delete a project and (via ON DELETE CASCADE) all its document rows."""
+    """HARD delete — removes the row and (via ON DELETE CASCADE) its documents
+    AND RAG chunks. Reserved for genuine admin cleanup; the user-facing Delete
+    action uses archive_project so the RAG is never destroyed."""
     _ensure_db()
     with _lock:
         with SessionLocal() as session:

@@ -68,6 +68,25 @@ def test_delete_project(client):
     assert client.get(f"/v1/projects/{proj['id']}", headers=H).status_code == 404
 
 
+def test_delete_soft_archives_and_preserves_the_row(client):
+    """Delete must HIDE the project (UI + retrieval) but NEVER hard-delete the
+    row. `chunks.project_id` is ON DELETE CASCADE, so keeping the row is what
+    keeps the RAG — the operator principle 'delete the UI, never the RAG'."""
+    proj = _new_project(client, "Archive Me")
+    pid = proj["id"]
+    assert client.delete(f"/v1/projects/{pid}", headers=H).status_code == 200
+    # hidden from detail + listing
+    assert client.get(f"/v1/projects/{pid}", headers=H).status_code == 404
+    listed = [p["id"] for p in client.get("/v1/projects", headers=H).json()["projects"]]
+    assert pid not in listed
+    # but the row survives as 'archived' → its chunks are NOT cascade-deleted
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    with SessionLocal() as s:
+        row = s.get(Project, pid)
+        assert row is not None and row.status == "archived"
+
+
 # ── 0.3 Execution-intent model — attaching a document runs nothing ──────────
 
 def test_document_upload_rejects_oversize(client, monkeypatch):

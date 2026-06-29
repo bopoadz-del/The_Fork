@@ -54,33 +54,34 @@ def test_delete_single_document(client):
     assert doc_id not in [d["id"] for d in docs]
 
 
-def test_delete_project_purges_files(client):
-    pid, doc_id = _project_with_doc(client)
+def test_delete_archives_and_preserves_files(client):
+    """Delete now SOFT-archives: the project is hidden but its files on disk
+    (which back the RAG chunks) are PRESERVED, not purged. Operator principle:
+    'delete the UI, never the RAG; build on it only'."""
+    pid, _ = _project_with_doc(client)
+    fp = client.get(f"/v1/projects/{pid}", headers=H).json()["documents"][0].get("file_path")
     r = client.delete(f"/v1/projects/{pid}", headers=H)
     assert r.status_code == 200
-    assert r.json()["files_purged"] >= 1
-    assert client.get(f"/v1/projects/{pid}", headers=H).status_code == 404
+    assert r.json()["status"] == "archived"
+    assert client.get(f"/v1/projects/{pid}", headers=H).status_code == 404  # hidden
+    import os
+    if fp:
+        assert os.path.exists(fp), "soft-archive must NOT delete document files"
 
 
-def test_project_cascade_audits_each_document(client):
-    """Regression guard for the 'BOQ disappeared with no explanation'
-    failure mode. When a project delete cascades through its documents,
-    each document removal must leave its OWN audit row — not just a
-    single ``project.deleted`` summary. Without per-doc rows there's
-    no forensic trail of which specific docs the cascade swept."""
+def test_project_delete_archives_without_destroying_documents(client):
+    """Soft-archive replaces the destructive cascade: deleting a project leaves
+    a 'project.archived' audit row and emits NO document.deleted cascade — the
+    'BOQ disappeared with no explanation' mode is now impossible because
+    documents (and their RAG chunks) are never removed."""
     pid, doc_id = _project_with_doc(client)
     r = client.delete(f"/v1/projects/{pid}", headers=H)
     assert r.status_code == 200
     entries = audit.read_audit(project_id=pid)
-    cascade_events = [
-        e for e in entries
-        if e.get("event") == "document.deleted"
-        and e.get("document_id") == doc_id
-        and e.get("reason") == "project_cascade"
-    ]
-    assert cascade_events, (
-        f"expected a 'document.deleted' audit row with reason='project_cascade' "
-        f"for doc {doc_id}; got events={[e.get('event') for e in entries]}"
+    events = [e.get("event") for e in entries]
+    assert "project.archived" in events
+    assert not [e for e in entries if e.get("event") == "document.deleted"], (
+        f"soft-archive must not cascade-delete documents; got {events}"
     )
 
 

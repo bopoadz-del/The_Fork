@@ -296,42 +296,18 @@ async def delete_project(project_id: str, auth: dict = Depends(require_user)):
         raise HTTPException(404, f"Project '{project_id}' not found")
     if proj.get("user_id") != auth["user_id"] and not is_admin:
         raise HTTPException(403, "Admin or project owner required")
-    files_purged = 0
-    # Audit each document BEFORE the DB cascade fires so we have per-row
-    # forensics even when the deletion comes from a project-level action.
-    # Previously the audit log recorded only a single "project.deleted"
-    # entry — a project with 50 documents would leave no record of which
-    # docs went with it, which is the "BOQ disappeared with no
-    # explanation" failure mode.
-    for doc in proj.get("documents", []):
-        audit.record(
-            "document.deleted",
-            project_id=project_id,
-            document_id=doc.get("id"),
-            name=doc.get("original_name"),
-            reason="project_cascade",
-            user_id=auth["user_id"],
-        )
-        fp = doc.get("file_path")
-        if fp and os.path.exists(fp):
-            try:
-                os.remove(fp)
-                files_purged += 1
-            except OSError:
-                pass
-    store.delete_project(resolved_id)  # cascades documents + facts
-    # Purge the index sources too (DocIndex row + legacy on-disk json / db) so
-    # a restart's legacy re-import can't resurrect the deleted project.
-    try:
-        doc_index.purge_project_index(resolved_id)
-    except Exception:  # noqa: BLE001 — delete already succeeded; purge is best-effort
-        logger.warning("delete_project: index purge failed for %s", resolved_id, exc_info=True)
-    audit.record("project.deleted", project_id=resolved_id,
-                 files_purged=files_purged, user_id=auth["user_id"])
+    # SOFT delete: archive the project — hide it from listings, detail,
+    # ownership gates and retrieval — WITHOUT removing the row. `chunks` is
+    # ON DELETE CASCADE on project_id, so a hard delete would destroy the
+    # project's RAG chunks. The operator principle is "delete the UI, never
+    # the RAG; build on it only", so documents, files on disk, and chunks all
+    # stay and the project is restorable (set status back to 'active').
+    store.archive_project(resolved_id)
+    audit.record("project.archived", project_id=resolved_id,
+                 user_id=auth["user_id"])
     return {
-        "status": "deleted",
+        "status": "archived",
         "project_id": resolved_id,
-        "files_purged": files_purged,
     }
 
 

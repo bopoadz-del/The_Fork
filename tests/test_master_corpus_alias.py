@@ -413,12 +413,13 @@ def test_master_corpus_alias_clear_conversation_resolves(client):
 
 
 def test_master_corpus_alias_delete_project_resolves(client):
-    """Deleting the alias project must resolve to and delete the source corpus."""
+    """Deleting the alias resolves to the source corpus and SOFT-archives it
+    (hidden from listings) — the row + RAG chunks are preserved, not deleted."""
     resp = client.delete(f"/v1/projects/{projects_mod.MASTER_CORPUS_PROJECT_ID}")
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "deleted"
+    assert resp.json()["status"] == "archived"
 
-    # Alias should no longer be listed.
+    # Alias should no longer be listed (the backing source is archived).
     resp = client.get("/v1/projects")
     assert resp.status_code == 200
     ids = {p["id"] for p in resp.json()["projects"]}
