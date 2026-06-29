@@ -80,16 +80,21 @@ async def project_ask(
     project_id = body.project_id or body.session_id
 
     # Tenant gate (same pattern as heavy-reasoning at app/routers/chat.py:97-121):
-    # drop the project_id when the caller doesn't own it. The reasoner's
+    # drop the project_id when the caller can't access it. The reasoner's
     # search_project_documents then runs without a project scope and returns
     # nothing, instead of leaking another tenant's docs into the answer.
+    # Reasoning is read-only over documents, so admin-approved platform
+    # projects (and the master-corpus alias backed by one) are readable by
+    # non-owners — same policy as chat and document search.
     safe_project_id: Optional[str] = project_id
     if project_id:
         try:
             from app.core import projects as projects_store
-            if projects_store.get_project(project_id, user_id=caller_id) is None:
+            if projects_store.get_project(
+                project_id, user_id=caller_id, include_admin_approved=True
+            ) is None:
                 logger.warning(
-                    "project_ask: user=%s does not own project=%s; dropping project_id",
+                    "project_ask: user=%s cannot access project=%s; dropping project_id",
                     caller_id, project_id,
                 )
                 safe_project_id = None
@@ -97,9 +102,26 @@ async def project_ask(
             logger.exception("project_ask: ownership check failed; dropping project_id (fail-closed)")
             safe_project_id = None
 
+    # Resolve the master-corpus alias to its backing source corpus for
+    # retrieval (e.g. dar_al_arkan_master -> projects_folder), matching
+    # app.routers.agents and doc_search. Without this, project mode queries the
+    # alias id — which has no indexed chunks — and always falls back to the
+    # no-context message. Non-alias ids pass through unchanged.
+    retrieval_project_id = safe_project_id
+    if safe_project_id:
+        try:
+            from app.core import projects as projects_store
+            retrieval_project_id = (
+                projects_store._master_corpus_source(safe_project_id)
+                or safe_project_id
+            )
+        except Exception:
+            logger.exception("project_ask: alias resolution failed; using original id")
+            retrieval_project_id = safe_project_id
+
     result = await reasoner.process({"request": body.request,
                                      "session": session,
-                                     "project_id": safe_project_id})
+                                     "project_id": retrieval_project_id})
 
     _store.save(session)   # persist the turn — history, computed state, cache
 

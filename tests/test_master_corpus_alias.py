@@ -125,6 +125,61 @@ def test_master_corpus_alias_chat_resolves_to_source_project(client, monkeypatch
     assert captured["conversation_id"] == f"ws-{projects_mod.MASTER_CORPUS_PROJECT_ID}"
 
 
+def test_master_corpus_alias_project_ask_resolves_to_source(client, monkeypatch):
+    """Project mode (/v1/project/ask) must retrieve against the backing source
+    corpus, not the alias id (which has no indexed chunks)."""
+    captured = {}
+
+    class _FakeReasoner:
+        async def process(self, input_data, params=None):
+            captured["project_id"] = (input_data or {}).get("project_id")
+            return {"status": "success", "answer": "ok", "understanding": "",
+                    "plan": None, "execution": None, "sources": []}
+
+    monkeypatch.setattr(
+        "app.routers.project._reasoner_factory", lambda: _FakeReasoner()
+    )
+
+    resp = client.post("/v1/project/ask", json={
+        "session_id": "sess-alias-1",
+        "request": "What is the scope of the project?",
+        "project_id": projects_mod.MASTER_CORPUS_PROJECT_ID,
+    })
+    assert resp.status_code == 200, resp.text
+    assert captured["project_id"] == projects_mod.MASTER_CORPUS_SOURCE_PROJECT_ID
+
+
+def test_project_ask_normal_project_uses_original_id(client, monkeypatch):
+    """A non-alias project id must pass through unchanged — no resolution, no
+    leakage to a different corpus."""
+    users_mod.ensure_user_exists("pilot-admin", role="admin")
+    projects_mod.create_project(
+        name="Mine", user_id="pilot-admin", project_id="mine-ask-1",
+        origin="user_create",
+    )
+    captured = {}
+
+    class _FakeReasoner:
+        async def process(self, input_data, params=None):
+            captured["project_id"] = (input_data or {}).get("project_id")
+            return {"status": "success", "answer": "ok", "understanding": "",
+                    "plan": None, "execution": None, "sources": []}
+
+    monkeypatch.setattr(
+        "app.routers.project._reasoner_factory", lambda: _FakeReasoner()
+    )
+    try:
+        resp = client.post("/v1/project/ask", json={
+            "session_id": "sess-normal-1",
+            "request": "hello",
+            "project_id": "mine-ask-1",
+        })
+        assert resp.status_code == 200, resp.text
+        assert captured["project_id"] == "mine-ask-1"
+    finally:
+        projects_mod.delete_project("mine-ask-1")
+
+
 def test_non_admin_cannot_see_master_corpus_alias(client, monkeypatch):
     """A regular user with include_admin_approved semantics can read the alias,
     but the legacy owner-only view excludes it."""
