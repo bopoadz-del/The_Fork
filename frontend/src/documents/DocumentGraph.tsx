@@ -25,8 +25,13 @@ interface Props {
   citedDocIds?: string[]
 }
 
+// Cap rendered nodes: the master corpus backs thousands of docs and rendering
+// one SVG-bearing <li> per doc in a single commit froze the workspace on open.
+const MAX_GRAPH_NODES = 200
+
 export default function DocumentGraph({ documents, citedDocIds = [] }: Props) {
   const cited = new Set(citedDocIds)
+  const visible = documents.slice(0, MAX_GRAPH_NODES)
   return (
     <div className="doc-graph">
       <header className="doc-graph__head">
@@ -39,7 +44,7 @@ export default function DocumentGraph({ documents, citedDocIds = [] }: Props) {
         <p className="doc-graph__empty">No documents in this project yet.</p>
       ) : (
         <ul className="doc-graph__items">
-          {documents.map((d) => {
+          {visible.map((d) => {
             const isCited = cited.has(d.id)
             return (
               <li

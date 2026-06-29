@@ -243,6 +243,12 @@ interface DocumentsPanelProps {
   onDocumentRemoved: (docId: string) => void
 }
 
+// Cap how many document rows we render at once. The master-corpus alias backs
+// thousands of documents; rendering them all in one synchronous commit froze
+// the workspace on open (a ~2,700-node render blocks the main thread). 200 is
+// ample for the pilot; the remainder are summarised in a footer.
+const MAX_VISIBLE_DOCS = 200
+
 function DocumentsPanel({
   projectId,
   documents,
@@ -300,7 +306,7 @@ function DocumentsPanel({
         </div>
       ) : (
         <ul className="doc-list" aria-label="Project documents">
-          {documents.map((doc) => {
+          {documents.slice(0, MAX_VISIBLE_DOCS).map((doc) => {
             const typeBadge = fileTypeBadge(doc.original_name)
             const notIndexed = doc.chunk_count === 0
             return (
@@ -354,6 +360,11 @@ function DocumentsPanel({
               </li>
             )
           })}
+          {documents.length > MAX_VISIBLE_DOCS && (
+            <li className="doc-row doc-row--overflow">
+              Showing {MAX_VISIBLE_DOCS} of {documents.length} documents.
+            </li>
+          )}
         </ul>
       )}
 
