@@ -39,6 +39,7 @@ import asyncio
 import concurrent.futures
 import copy
 import json
+import logging as _logging
 import os
 import re
 import sqlite3
@@ -438,6 +439,8 @@ def _import_legacy_json_indexes(session: Session) -> None:
         if not fn.endswith(".json"):
             continue
         pid = fn[:-5]
+        if _is_master_corpus_alias(pid):
+            continue  # virtual alias — never materialise a real row for it
         if session.get(DocIndex, pid) is not None:
             continue
         try:
@@ -462,6 +465,8 @@ def _import_legacy_sqlite_db(session: Session) -> None:
         for pid, index_json, updated_at in leg.execute(
             "SELECT project_id, index_json, updated_at FROM doc_index"
         ):
+            if _is_master_corpus_alias(pid):
+                continue  # virtual alias — never materialise a real row for it
             if session.get(DocIndex, pid) is not None:
                 continue
             try:
@@ -507,6 +512,15 @@ def init_db() -> None:
                 session.flush()
                 _import_legacy_sqlite_db(session)
                 session.commit()
+            # Self-heal: drop any real row carrying the virtual master-corpus
+            # alias id (a stale _ensure_project_row artifact that duplicates the
+            # injected alias in listings).
+            try:
+                _purge_spurious_master_corpus_row()
+            except Exception:  # noqa: BLE001 — never let startup die on cleanup
+                _logging.getLogger(__name__).warning(
+                    "init_db: spurious master-corpus row cleanup failed", exc_info=True
+                )
             _initialized_for_url = url
         _initialized = True
 
@@ -852,6 +866,76 @@ def invalidate_project(project_id: str) -> None:
                 delete(DocIndex).where(DocIndex.project_id == project_id)
             )
             session.commit()
+
+
+def _is_master_corpus_alias(project_id: str) -> bool:
+    """True when ``project_id`` is the VIRTUAL master-corpus alias (backed by a
+    different source project). Such an id must never become a real Project row —
+    the alias is injected into listings on the fly."""
+    from app.core.projects import (
+        MASTER_CORPUS_PROJECT_ID,
+        MASTER_CORPUS_SOURCE_PROJECT_ID,
+    )
+    return (
+        project_id == MASTER_CORPUS_PROJECT_ID
+        and MASTER_CORPUS_PROJECT_ID != MASTER_CORPUS_SOURCE_PROJECT_ID
+    )
+
+
+def purge_project_index(project_id: str) -> None:
+    """Remove ALL index traces of a project so a delete sticks across restarts.
+
+    ``delete_project`` only removes the Project row (+ cascaded docs). The
+    DocIndex row and the legacy on-disk sources (``data/doc_index/<pid>.json``
+    and the legacy sqlite db) survive — and ``init_db`` re-imports them on the
+    next restart, where ``_ensure_project_row`` resurrects the deleted project.
+    Purging those sources is what makes a delete permanent.
+    """
+    log = _logging.getLogger(__name__)
+    with _INDEX_LOCK:
+        _ensure_db()
+        with SessionLocal() as session:
+            session.execute(
+                delete(DocIndex).where(DocIndex.project_id == project_id)
+            )
+            session.commit()
+    # Legacy per-project JSON file.
+    try:
+        path = os.path.join(_legacy_index_dir(), f"{project_id}.json")
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError as exc:
+        log.warning("purge_project_index: legacy json remove failed for %s: %s", project_id, exc)
+    # Legacy dedicated sqlite db row.
+    try:
+        db = _legacy_db_path()
+        if os.path.isfile(db):
+            with sqlite3.connect(db, timeout=30.0) as leg:
+                leg.execute("DELETE FROM doc_index WHERE project_id = ?", (project_id,))
+                leg.commit()
+    except sqlite3.Error as exc:
+        log.warning("purge_project_index: legacy db purge failed for %s: %s", project_id, exc)
+
+
+def _purge_spurious_master_corpus_row() -> None:
+    """Remove a real Project row that carries the virtual master-corpus alias id.
+
+    The master corpus is injected into listings from its backing source project;
+    a real row with the alias id is always a stale ``_ensure_project_row``
+    artifact that duplicates the alias in the UI. Self-healing: runs on startup.
+    """
+    from app.core.projects import (
+        MASTER_CORPUS_PROJECT_ID,
+        MASTER_CORPUS_SOURCE_PROJECT_ID,
+    )
+    if MASTER_CORPUS_PROJECT_ID == MASTER_CORPUS_SOURCE_PROJECT_ID:
+        return  # aliasing disabled — the id IS a real project
+    with SessionLocal() as session:
+        row = session.get(Project, MASTER_CORPUS_PROJECT_ID)
+        if row is not None:
+            session.delete(row)
+            session.commit()
+    purge_project_index(MASTER_CORPUS_PROJECT_ID)
 
 
 # ── search ────────────────────────────────────────────────────────────────────

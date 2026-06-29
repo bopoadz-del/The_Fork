@@ -320,6 +320,12 @@ async def delete_project(project_id: str, auth: dict = Depends(require_user)):
             except OSError:
                 pass
     store.delete_project(resolved_id)  # cascades documents + facts
+    # Purge the index sources too (DocIndex row + legacy on-disk json / db) so
+    # a restart's legacy re-import can't resurrect the deleted project.
+    try:
+        doc_index.purge_project_index(resolved_id)
+    except Exception:  # noqa: BLE001 — delete already succeeded; purge is best-effort
+        logger.warning("delete_project: index purge failed for %s", resolved_id, exc_info=True)
     audit.record("project.deleted", project_id=resolved_id,
                  files_purged=files_purged, user_id=auth["user_id"])
     return {
