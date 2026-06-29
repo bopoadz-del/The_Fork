@@ -23,6 +23,18 @@ import './LeftPanel.css'
 interface ProjectRow {
   id: string
   name: string
+  /** Origin of the project. Only admin-approved Drive projects (and the
+   *  injected master corpus) appear in the sidebar. */
+  origin?: string
+  is_master_corpus?: boolean
+}
+
+/** The sidebar lists ONLY admin-approved projects (those an admin turned into
+ *  a project from Drive) plus the master corpus. Unapproved shells / backing
+ *  corpora / personal scratch projects stay out of the list — without deleting
+ *  anything. Admins manage + approve the rest from the Admin page. */
+function isSidebarVisible(p: ProjectRow): boolean {
+  return p.is_master_corpus === true || p.origin === 'admin_drive_approved'
 }
 
 interface ProjectsResponse {
@@ -71,7 +83,8 @@ export default function LeftPanel({
       try {
         const data = await apiGet<ProjectsResponse>('/v1/projects')
         if (cancelled) return
-        setState({ tag: 'loaded', projects: data.projects ?? [] })
+        const visible = (data.projects ?? []).filter(isSidebarVisible)
+        setState({ tag: 'loaded', projects: visible })
       } catch (err: unknown) {
         if (cancelled) return
         const msg = err instanceof ApiError ? err.message
