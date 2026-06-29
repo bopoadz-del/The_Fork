@@ -1,0 +1,79 @@
+# Render Blueprint — version-controlled deploy config for The Shovel / The Fork.
+#
+# Purpose: make the production service reproducible and the env surface
+# reviewable. Secrets are `sync: false` — they are entered once in the Render
+# dashboard and never live in this file or git. Non-secret values below are
+# safe infra config or match the application's code defaults.
+#
+# Live service: srv-d8hdc6ek1jcs739rq5sg (team bopoadz@gmail.com), oregon.
+# Applying this blueprint reconciles that service; review before `Apply`.
+
+services:
+  - type: web
+    name: the-fork
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /health
+    disk:
+      name: the-fork-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      # ── Infra config (safe to commit) ──────────────────────────────────
+      - key: ENV
+        value: production
+      - key: DATA_DIR
+        value: /app/data
+      - key: PYTHONIOENCODING
+        value: utf-8
+
+      # ── Pilot master-corpus alias (match app/core/projects.py defaults) ─
+      - key: MASTER_CORPUS_PROJECT_ID
+        value: dar_al_arkan_master
+      - key: MASTER_CORPUS_SOURCE_PROJECT_ID
+        value: projects_folder
+      - key: RAG_GENERAL_KNOWLEDGE_PROJECTS
+        value: training_material
+      # Cap document uploads so one large BIM file can't OOM the box.
+      - key: MAX_DOC_UPLOAD_SIZE
+        value: "52428800" # 50 MB
+
+      # ── Required in production (set in dashboard) ──────────────────────
+      - key: SECRET_KEY # JWT signing — app refuses to start in prod without it
+        sync: false
+      - key: DATA_ENCRYPTION_KEY # encrypts uploaded files at rest
+        sync: false
+      - key: CEREBRUM_MASTER_KEY # admin API key
+        sync: false
+
+      # ── LLM providers (set in dashboard) ───────────────────────────────
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+
+      # ── Google Drive integration (set in dashboard) ────────────────────
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+      # ── Bootstrap admin + misc (set in dashboard) ──────────────────────
+      - key: BOOTSTRAP_USER_EMAIL
+        sync: false
+      - key: BOOTSTRAP_USER_PASSWORD
+        sync: false
+      - key: TINKER_API_KEY
+        sync: false

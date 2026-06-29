@@ -1,4 +1,4 @@
-import { getToken } from './token'
+import { clearToken, getToken } from './token'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
@@ -39,6 +39,19 @@ async function handleResponse<T>(res: Response): Promise<T> {
     }
   } catch {
     // body wasn't JSON — keep the HTTP status message
+  }
+
+  // Global session-expiry handling: a 401 on any non-auth call means the token
+  // is missing/expired/invalid. Clear it and bounce to login instead of
+  // stranding the user on a panel whose Retry just keeps 401-ing. The auth
+  // bootstrap endpoints (login/register/me) are excluded — a bad-credentials
+  // 401 must surface on the Login page, and AuthContext handles /me itself.
+  const isAuthBootstrap = /\/v1\/users\/(login|register|me)\b/.test(res.url)
+  if (res.status === 401 && !isAuthBootstrap) {
+    clearToken()
+    if (window.location.pathname !== '/login') {
+      window.location.assign('/login')
+    }
   }
 
   throw new ApiError(message, res.status)
