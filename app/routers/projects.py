@@ -25,6 +25,11 @@ from app.dependencies import (
 router = APIRouter()
 
 DATA_DIR = os.getenv("DATA_DIR", "./data")
+# Cap document uploads so one large file can't OOM the shared instance — the
+# whole file is read into memory here (and copied again to encrypt). Larger
+# than the generic 10MB /upload cap because this path accepts BIM/schedule
+# formats (.rvt/.ifc/.xer); raise MAX_DOC_UPLOAD_SIZE on a bigger box.
+MAX_DOC_UPLOAD_SIZE = int(os.getenv("MAX_DOC_UPLOAD_SIZE", str(50 * 1024 * 1024)))
 # Pilot guardrail: approved Drive projects with this many or fewer indexed
 # documents are treated as incomplete shells and suppressed from non-admin
 # project lists so pilot users land on the master corpus instead.
@@ -451,6 +456,19 @@ async def add_document(
     _, ext = os.path.splitext(original_name.lower())
     if ext not in ALLOWED_DOC_EXTENSIONS:
         raise HTTPException(400, f"File type '{ext}' not allowed")
+
+    # Reject oversize uploads BEFORE reading the file into memory — this path
+    # buffers the whole file (and copies it to encrypt), so an unbounded upload
+    # of a large BIM model OOMs the single shared worker and drops every
+    # concurrent user, not just the uploader.
+    file.file.seek(0, 2)
+    upload_size = file.file.tell()
+    file.file.seek(0)
+    if upload_size > MAX_DOC_UPLOAD_SIZE:
+        raise HTTPException(
+            413,
+            f"File too large ({upload_size} bytes). Max is {MAX_DOC_UPLOAD_SIZE} bytes.",
+        )
 
     file_id = str(uuid.uuid4())[:8]
     stored_as = f"{file_id}_{original_name}"

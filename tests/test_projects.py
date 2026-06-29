@@ -70,6 +70,19 @@ def test_delete_project(client):
 
 # ── 0.3 Execution-intent model — attaching a document runs nothing ──────────
 
+def test_document_upload_rejects_oversize(client, monkeypatch):
+    """A too-large upload must be rejected with 413 BEFORE being read into
+    memory — otherwise one big BIM file OOMs the shared instance."""
+    import app.routers.projects as projects_router
+    monkeypatch.setattr(projects_router, "MAX_DOC_UPLOAD_SIZE", 64)
+    proj = _new_project(client, "Size Guard")
+    files = {"file": ("big.pdf", b"%PDF-1.4 " + b"x" * 500, "application/pdf")}
+    r = client.post(
+        f"/v1/projects/{proj['id']}/documents", files=files, headers=H
+    )
+    assert r.status_code == 413, r.text
+
+
 def test_attaching_document_stores_only(client):
     proj = _new_project(client)
     r = _attach(client, proj["id"], "site_drawing.pdf")
