@@ -12,6 +12,7 @@
  * RightPanel/SourcesList for the LATEST answer (operator spec — moved
  * to right panel for visibility).
  */
+import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { AlertTriangle, Download } from 'lucide-react'
@@ -24,7 +25,11 @@ interface Props {
   onDownload?: () => void
 }
 
-export default function ChatBubble({ message, onDownload }: Props) {
+// Memoised: every streamed token calls setMessages on the parent, which
+// re-renders the whole list. Without memo, each tick re-parses ReactMarkdown
+// for every prior bubble — janky in long sessions. Bubbles are immutable once
+// settled, so a shallow prop compare skips them.
+function ChatBubble({ message, onDownload }: Props) {
   const isUser = message.role === 'user'
 
   if (message.error) {
@@ -82,3 +87,5 @@ export default function ChatBubble({ message, onDownload }: Props) {
     </div>
   )
 }
+
+export default memo(ChatBubble)

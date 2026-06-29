@@ -621,7 +621,7 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
       )}
       {driveFiles.length > 0 && (
         <ul className="drive-file-list" aria-label="Google Drive files">
-          {driveFiles.map((file) => (
+          {driveFiles.slice(0, 300).map((file) => (
             <li
               key={file.id}
               className={`drive-file-row${file.is_folder ? ' drive-file-row--folder' : ''}`}

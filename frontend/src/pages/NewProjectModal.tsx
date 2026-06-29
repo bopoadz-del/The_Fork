@@ -300,7 +300,7 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
 
                   {!pickedFolder && folderResults.length > 0 && (
                     <ul className="modal__drive-results">
-                      {folderResults.map((f) => (
+                      {folderResults.slice(0, 300).map((f) => (
                         <li key={f.id}>
                           <button
                             type="button"

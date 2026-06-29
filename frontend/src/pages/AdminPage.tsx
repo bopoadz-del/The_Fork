@@ -387,7 +387,7 @@ function DriveSection() {
 
           {files.length > 0 && (
             <ul className="admin-files">
-              {files.map((f) => (
+              {files.slice(0, 300).map((f) => (
                 <li key={f.id} className={'admin-file' + (f.is_folder ? ' admin-file--folder' : '')}>
                   <span className="admin-file__name">
                     {f.is_folder && <span className="admin-file__folder-mark">[folder]</span>}
