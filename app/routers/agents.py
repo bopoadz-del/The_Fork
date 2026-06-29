@@ -11,7 +11,10 @@ Auth: same Bearer cb_dev_key (or any registered key) as the rest of /v1.
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -257,7 +260,11 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
                 yield f"data: {json.dumps(evt, default=str)}\n\n"
                 await asyncio.sleep(0)  # yield to the event loop
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            # Log the real error server-side; stream only a generic message so
+            # infra detail (e.g. the LLM tunnel URL in a ConnectError) never
+            # reaches the browser.
+            logger.warning("agent chat stream failed: %s", e)
+            yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.'})}\n\n"
 
     return StreamingResponse(
         event_stream(),

@@ -268,7 +268,8 @@ async def ingest(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingest pipeline failed: {str(e)}")
+        logger.exception("ingest pipeline failed")
+        raise HTTPException(status_code=500, detail="Ingest pipeline failed")
     finally:
         # Close any decrypt-to-temp copies created by open_plaintext.
         try:
@@ -350,7 +351,8 @@ async def ingest_via_block(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingest via block failed: {str(e)}")
+        logger.exception("ingest via block failed")
+        raise HTTPException(status_code=500, detail="Ingest via block failed")
     finally:
         try:
             _stack.close()

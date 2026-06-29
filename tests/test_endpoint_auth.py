@@ -23,6 +23,17 @@ def test_unauthenticated_requests_are_rejected(client):
     assert client.post("/v1/metrics/record", json={}).status_code in (401, 403)
 
 
+def test_memory_flush_and_keys_require_admin(client):
+    """Destructive/enumerating memory actions are admin-only. cb_dev_key
+    authenticates but carries no admin role, so flush/keys are forbidden while
+    ordinary actions still pass the gate."""
+    assert client.post("/v1/memory/flush", json={}, headers=H).status_code == 403
+    assert client.post("/v1/memory/keys", json={}, headers=H).status_code == 403
+    assert client.post(
+        "/v1/memory/get", json={"key": "x"}, headers=H
+    ).status_code not in (401, 403)
+
+
 def test_authenticated_requests_pass_the_auth_gate(client):
     """A valid key passes the gate — the response is not an auth rejection."""
     for path in ("/v1/memory/stats", "/v1/leaderboard"):

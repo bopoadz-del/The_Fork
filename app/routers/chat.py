@@ -395,7 +395,9 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
 
         except Exception as e:
             _report_sse_llm_failure(str(e), path="/chat/stream")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'request_id': rid})}\n\n"
+            # Keep the real error in the server report above; never stream raw
+            # exception text (it can carry infra detail like the LLM tunnel URL).
+            yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
 
     return StreamingResponse(
         event_stream(),
@@ -561,7 +563,8 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
 
         except Exception as e:
             _report_sse_llm_failure(str(e), path="/v1/chat/stream")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'request_id': rid})}\n\n"
+            # Generic user-facing message; the real error is in the report above.
+            yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
 
     return StreamingResponse(
         event_stream(),

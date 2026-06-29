@@ -40,6 +40,11 @@ async def memory_operation(
     if action not in _MEMORY_ACTIONS:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
+    # Destructive / enumerating actions on the shared in-process cache are
+    # admin-only — `flush` wipes it for everyone, `keys` enumerates it.
+    if action in {"flush", "keys"} and auth.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin required for this action")
+
     block = get_memory_block()
     payload = {"action": action, **request.model_dump(exclude_none=True)}
     return await block.execute(payload)
