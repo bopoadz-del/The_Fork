@@ -62,7 +62,9 @@ def _seed_and_stub():
 
     yield
 
-    # Teardown: remove seeded rows.
+    # Teardown: remove seeded rows AND clear the auth override so the admin
+    # stub never leaks into later test files (e.g. test_project_requires_auth).
+    app.dependency_overrides.pop(require_user, None)
     for pid in (projects_mod.MASTER_CORPUS_SOURCE_PROJECT_ID, projects_mod.MASTER_CORPUS_PROJECT_ID):
         projects_mod.delete_project(pid)
 
@@ -178,6 +180,51 @@ def test_project_ask_normal_project_uses_original_id(client, monkeypatch):
         assert captured["project_id"] == "mine-ask-1"
     finally:
         projects_mod.delete_project("mine-ask-1")
+
+
+def test_admin_can_delete_non_owned_project(client):
+    """An admin sees every project in the list; they must also be able to
+    DELETE one they don't own (the "frozen projects / not found" bug)."""
+    users_mod.ensure_user_exists("other-owner")
+    projects_mod.create_project(
+        name="Someone Else's", user_id="other-owner",
+        project_id="other-del-1", origin="user_create",
+    )
+    try:
+        # pilot-admin (the stubbed admin) is NOT the owner and the project is
+        # not admin-approved — previously this 404'd before the admin bypass.
+        resp = client.delete("/v1/projects/other-del-1")
+        assert resp.status_code == 200, resp.text
+        assert projects_mod.get_project("other-del-1", user_id=None) is None
+    finally:
+        projects_mod.delete_project("other-del-1")
+
+
+def test_non_admin_cannot_delete_non_owned_project(client):
+    """A non-admin must still be blocked from deleting another user's project."""
+    users_mod.ensure_user_exists("other-owner-2")
+    projects_mod.create_project(
+        name="Not Yours", user_id="other-owner-2",
+        project_id="other-del-2", origin="user_create",
+    )
+
+    def fake_regular():
+        return {"user_id": "regular-joe", "role": "user"}
+
+    prev = app.dependency_overrides.get(require_user)
+    app.dependency_overrides[require_user] = fake_regular
+    try:
+        resp = client.delete("/v1/projects/other-del-2")
+        assert resp.status_code in (403, 404), resp.text
+        assert projects_mod.get_project("other-del-2", user_id=None) is not None
+    finally:
+        # Restore the prior override so the regular-user stub never leaks into
+        # later tests (e.g. test_project_requires_auth).
+        if prev is not None:
+            app.dependency_overrides[require_user] = prev
+        else:
+            app.dependency_overrides.pop(require_user, None)
+        projects_mod.delete_project("other-del-2")
 
 
 def test_non_admin_cannot_see_master_corpus_alias(client, monkeypatch):

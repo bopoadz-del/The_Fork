@@ -276,12 +276,20 @@ async def delete_project(project_id: str, auth: dict = Depends(require_user)):
     # Resolve pilot master-corpus alias before the ownership check so admins
     # can delete the shared corpus project from the UI.
     resolved_id = store._master_corpus_source(project_id) or project_id
+    # Admins see every project in the list, so they must be able to load (and
+    # then delete) any of them — look up unscoped for admins. Without this an
+    # admin gets a 404 for a project they don't own, BEFORE the admin-bypass
+    # below ever runs (the "frozen projects / not found" bug). Non-admins keep
+    # the per-user scoped lookup.
+    is_admin = auth.get("role") == "admin"
     proj = store.get_project(
-        project_id, user_id=auth["user_id"], include_admin_approved=True
+        project_id,
+        user_id=None if is_admin else auth["user_id"],
+        include_admin_approved=True,
     )
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
-    if proj.get("user_id") != auth["user_id"] and auth.get("role") != "admin":
+    if proj.get("user_id") != auth["user_id"] and not is_admin:
         raise HTTPException(403, "Admin or project owner required")
     files_purged = 0
     # Audit each document BEFORE the DB cascade fires so we have per-row
