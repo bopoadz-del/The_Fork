@@ -76,12 +76,12 @@ jobs:
         # (origin/<base>...HEAD) resolves — fetch-depth: 0 on the checkout
         # step above provides it.
         #
-        # `continue-on-error: true` for the initial rollout: until we have
-        # a few data points on what real PRs hit, this surfaces the % as a
-        # warning instead of blocking. Flip to false once we've seen the
-        # baseline on 1-2 actual PRs (Step 4 of the audit-followups plan).
+        # Now blocking: the baseline has held green across many PRs, so per
+        # the rollout plan this gate is enforced — a PR whose newly-changed
+        # lines are <50% covered fails, keeping new code from ratcheting
+        # coverage down during the pilot.
         if: github.event_name == 'pull_request'
-        continue-on-error: true
+        continue-on-error: false
         run: |
           diff-cover coverage.xml \
             --compare-branch="origin/${{ github.base_ref }}" \
