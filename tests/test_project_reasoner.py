@@ -302,6 +302,74 @@ async def test_fallback_sources_do_not_leak_raw_filesystem_paths(monkeypatch):
     assert "G:\\" not in blob and ":\\" not in blob
 
 
+class _DeliverFailReasoner(ProjectReasonerBlock):
+    """PLAN call succeeds (valid JSON); the DELIVER call raises — exercises the
+    answer-writing failure path."""
+
+    def __init__(self, plan_json, exc=None, deliver_text=None, **kw):
+        super().__init__(**kw)
+        self._plan_json = plan_json
+        self._exc = exc
+        self._deliver_text = deliver_text
+        self.calls = 0
+
+    async def _call_llm(self, prompt: str) -> str:
+        self.calls += 1
+        if self.calls == 1:
+            return self._plan_json
+        if self._exc is not None:
+            raise self._exc
+        return self._deliver_text
+
+
+@pytest.mark.asyncio
+async def test_deliver_failure_does_not_leak_internal_error():
+    """A failed answer-writing call must not surface the raw exception text."""
+    session = _session_with_activities()
+    plan = json.dumps({"understanding": "cp", "steps": [{"type": "compute_cpm"}]})
+    block = _DeliverFailReasoner(
+        plan, exc=RuntimeError("groq 500 boom token=secret-xyz")
+    )
+    out = await block.process({"request": "critical path?", "session": session})
+    ans = out["answer"]
+    assert ans                                          # controlled, non-empty
+    for leak in ("Could not generate the written answer", "boom",
+                 "secret-xyz", "RuntimeError", "Traceback"):
+        assert leak not in ans
+    assert block.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_deliver_failure_preserves_sources(monkeypatch):
+    """When context exists, a DELIVER failure still returns its sources."""
+    async def fake_search(project_id, query, top_k=5):
+        return [{"document_id": "d1", "filename": "Plan.pdf",
+                 "snippet": "x", "score": 0.7}]
+    monkeypatch.setattr(
+        "app.core.doc_index.search_project_documents", fake_search
+    )
+    session = _session_with_activities()
+    plan = json.dumps({"understanding": "cp", "steps": [{"type": "compute_cpm"}]})
+    block = _DeliverFailReasoner(plan, exc=RuntimeError("deliver down"))
+    out = await block.process(
+        {"request": "cp?", "session": session, "project_id": "p1"}
+    )
+    assert "Could not generate the written answer" not in out["answer"]
+    srcs = out.get("sources") or []
+    assert len(srcs) == 1 and srcs[0]["doc_name"] == "Plan.pdf"
+
+
+@pytest.mark.asyncio
+async def test_deliver_empty_answer_falls_back_controlled():
+    """An empty DELIVER answer is treated as a failure, not surfaced blank."""
+    session = _session_with_activities()
+    plan = json.dumps({"understanding": "cp", "steps": [{"type": "compute_cpm"}]})
+    block = _DeliverFailReasoner(plan, deliver_text="   ")
+    out = await block.process({"request": "cp?", "session": session})
+    assert out["answer"].strip()                        # non-empty controlled msg
+    assert "Could not generate the written answer" not in out["answer"]
+
+
 @pytest.mark.asyncio
 async def test_reasoner_valid_plan_is_unaffected_by_fallback():
     """The graceful-degradation path must not change the happy path: a valid

@@ -22,6 +22,13 @@ _NO_PLAN_NO_CONTEXT_MESSAGE = (
     "Please narrow the question or provide a specific document or reference."
 )
 
+# Shown when the plan built and executed but writing the final answer failed
+# (LLM error or empty reply). Never exposes the raw exception.
+_DELIVER_FAILED_MESSAGE = (
+    "I found relevant project context, but I could not generate the final "
+    "written answer for this turn. Please retry or narrow the question."
+)
+
 
 def _build_sources_from_excerpts(excerpts: list) -> list:
     """Project-doc excerpts -> the clean source shape the chat path uses
@@ -273,10 +280,19 @@ class ProjectReasonerBlock(UniversalBlock):
             f"Write a clear, concise answer for the user from these results. "
             f"If the status is error or partial, explain what is missing."
         )
+        deliver_sources: list = []
         try:
-            answer = await self._call_llm(deliver_prompt)
+            answer = (await self._call_llm(deliver_prompt) or "").strip()
         except Exception as e:                              # noqa: BLE001
-            answer = f"(Could not generate the written answer: {e})"
+            logger.warning("project_reasoner: deliver step failed: %s", e)
+            answer = ""
+        if not answer:
+            # The plan built and executed, but writing the final answer failed
+            # (LLM error or empty reply). Never surface the raw exception or a
+            # blank answer — return a controlled message and preserve any
+            # retrieved sources so the turn still carries evidence.
+            answer = _DELIVER_FAILED_MESSAGE
+            deliver_sources = _build_sources_from_excerpts(excerpts)
 
         session.add_message("assistant", answer)
 
@@ -287,4 +303,5 @@ class ProjectReasonerBlock(UniversalBlock):
             "understanding": plan.understanding,
             "plan": plan.model_dump(mode="json"),
             "execution": run.model_dump(mode="json"),
+            "sources": deliver_sources,
         }
