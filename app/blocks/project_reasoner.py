@@ -24,8 +24,12 @@ _NO_PLAN_NO_CONTEXT_MESSAGE = (
 
 
 def _build_sources_from_excerpts(excerpts: list) -> list:
-    """Project-doc excerpts -> the source shape the chat path uses
-    (``doc_name``/``doc_id``/``snippet``/``score``)."""
+    """Project-doc excerpts -> the clean source shape the chat path uses
+    (``doc_name``/``doc_id``/``score``).
+
+    The raw ``snippet`` is deliberately NOT carried through: chunk text can
+    embed raw Drive/Windows paths (``G:\\My Drive\\…``), and the chat path's
+    structured sources don't expose snippets either."""
     out = []
     for e in excerpts or []:
         if not isinstance(e, dict):
@@ -36,7 +40,6 @@ def _build_sources_from_excerpts(excerpts: list) -> list:
         out.append({
             "doc_name": name,
             "doc_id": e.get("document_id"),
-            "snippet": (e.get("snippet") or "")[:300],
             "score": e.get("score"),
         })
     return out

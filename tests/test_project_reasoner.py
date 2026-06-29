@@ -279,6 +279,30 @@ async def test_reasoner_falls_back_to_rag_answer_with_sources(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fallback_sources_do_not_leak_raw_filesystem_paths(monkeypatch):
+    """Excerpt snippets can embed raw Drive/Windows paths from the source
+    chunk text; the structured sources must not echo them."""
+    async def fake_search(project_id, query, top_k=5):
+        return [{
+            "document_id": "d1", "filename": "Contract.docx",
+            "snippet": r"[source: G:\My Drive\600-Procurement\TEM-637.docx] text",
+            "score": 0.7,
+        }]
+    monkeypatch.setattr(
+        "app.core.doc_index.search_project_documents", fake_search
+    )
+    session = _session_with_activities()
+    block = _MockReasoner("no json", "Per Contract.docx, …")
+    out = await block.process(
+        {"request": "summary?", "session": session, "project_id": "p1"}
+    )
+    src = (out.get("sources") or [])[0]
+    assert src["doc_name"] == "Contract.docx"
+    blob = json.dumps(out["sources"])
+    assert "G:\\" not in blob and ":\\" not in blob
+
+
+@pytest.mark.asyncio
 async def test_reasoner_valid_plan_is_unaffected_by_fallback():
     """The graceful-degradation path must not change the happy path: a valid
     plan still executes and returns status success with no fallback sources."""
