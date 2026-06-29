@@ -219,13 +219,78 @@ async def test_reasoner_records_turn_in_history():
     assert roles == ["user", "assistant"]
 
 
+_PLANNER_LEAKS = (
+    "Could not build a plan",
+    "no JSON object",
+    "Traceback",
+    "ExecutionPlan",
+)
+
+
 @pytest.mark.asyncio
-async def test_reasoner_handles_bad_plan_json():
+async def test_reasoner_degrades_gracefully_without_context():
+    """Planner returns unparsable JSON and the project has no indexed context:
+    no hard error, a controlled user-facing message, sources=[], no leaked
+    planner internals, and no wasted DELIVER call."""
     session = _session_with_activities()
     block = _MockReasoner("not json at all", "unused")
     out = await block.process({"request": "go", "session": session})
-    assert out["status"] == "error"
-    assert "plan" in out["error"].lower()
+
+    assert out["status"] != "error"
+    assert not out.get("error")
+    ans = out["answer"]
+    assert ans                                   # user-facing, non-empty
+    for leak in _PLANNER_LEAKS:
+        assert leak not in ans
+    assert out.get("sources") == []
+    assert block.calls == 1                       # only the failed PLAN call
+
+
+@pytest.mark.asyncio
+async def test_reasoner_falls_back_to_rag_answer_with_sources(monkeypatch):
+    """Planner fails but project docs are available: answer directly from the
+    retrieved excerpts and surface their sources."""
+    async def fake_search(project_id, query, top_k=5):
+        return [
+            {"document_id": "d1", "filename": "Spec-A.pdf",
+             "snippet": "Concrete grade C40.", "score": 0.81},
+            {"document_id": "d2", "filename": "BOQ-B.xlsx",
+             "snippet": "250 m3 of concrete.", "score": 0.62},
+        ]
+    monkeypatch.setattr(
+        "app.core.doc_index.search_project_documents", fake_search
+    )
+    session = _session_with_activities()
+    block = _MockReasoner("prose, no json here",
+                          "The concrete grade is C40 (see Spec-A).")
+    out = await block.process(
+        {"request": "what concrete grade?", "session": session,
+         "project_id": "p1"}
+    )
+
+    assert out["status"] == "success"
+    assert out["answer"] == "The concrete grade is C40 (see Spec-A)."
+    srcs = out.get("sources") or []
+    assert len(srcs) == 2
+    assert srcs[0]["doc_name"] == "Spec-A.pdf"
+    for leak in _PLANNER_LEAKS:
+        assert leak not in out["answer"]
+    assert block.calls == 2                       # failed PLAN + fallback answer
+
+
+@pytest.mark.asyncio
+async def test_reasoner_valid_plan_is_unaffected_by_fallback():
+    """The graceful-degradation path must not change the happy path: a valid
+    plan still executes and returns status success with no fallback sources."""
+    session = _session_with_activities()
+    plan_json = json.dumps({"understanding": "critical path",
+                            "steps": [{"type": "compute_cpm"}]})
+    block = _MockReasoner(plan_json, "Critical path is A-B-C.")
+    out = await block.process({"request": "critical path?", "session": session})
+    assert out["status"] == "success"
+    assert out["answer"] == "Critical path is A-B-C."
+    assert out.get("sources", []) == []
+    assert block.calls == 2
 
 
 @pytest.mark.asyncio

@@ -6,10 +6,40 @@ answer from the executed results).
 """
 
 import json
+import logging
 import os
 from typing import Any, Dict
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+# Shown when the planner cannot produce a JSON plan AND there is no project
+# context to answer from. Deliberately user-facing — no planner internals.
+_NO_PLAN_NO_CONTEXT_MESSAGE = (
+    "I could not build a structured project plan for this question, but I "
+    "also could not confirm an answer from the indexed project sources. "
+    "Please narrow the question or provide a specific document or reference."
+)
+
+
+def _build_sources_from_excerpts(excerpts: list) -> list:
+    """Project-doc excerpts -> the source shape the chat path uses
+    (``doc_name``/``doc_id``/``snippet``/``score``)."""
+    out = []
+    for e in excerpts or []:
+        if not isinstance(e, dict):
+            continue
+        name = e.get("filename") or e.get("document_id")
+        if not name:
+            continue
+        out.append({
+            "doc_name": name,
+            "doc_id": e.get("document_id"),
+            "snippet": (e.get("snippet") or "")[:300],
+            "score": e.get("score"),
+        })
+    return out
 
 from app.core.universal_base import UniversalBlock
 from app.core.plan_executor import PlanExecutor
@@ -126,6 +156,44 @@ class ProjectReasonerBlock(UniversalBlock):
                 )
             return resp.json()["choices"][0]["message"]["content"]
 
+    async def _fallback_answer(self, request: str, excerpts: list) -> tuple:
+        """Direct answer used when the planner can't produce a JSON plan.
+
+        With project excerpts, answer grounded in them and return their
+        sources. Without context, return a controlled message and no sources.
+        Never raises and never exposes planner internals or raw LLM/tool
+        output to the caller.
+        """
+        if not excerpts:
+            return _NO_PLAN_NO_CONTEXT_MESSAGE, []
+
+        excerpt_block = "\n\n".join(
+            f"[{i}] {e.get('filename') or e.get('document_id') or 'source'}: "
+            f"{(e.get('snippet') or '').strip()}"
+            for i, e in enumerate(excerpts, 1)
+            if isinstance(e, dict)
+        )
+        prompt = (
+            "Answer the user's question about their project using ONLY the "
+            "document excerpts below. If the excerpts do not contain the "
+            "answer, say you could not confirm it in the indexed project "
+            "sources. Cite filenames where relevant. Do not invent figures.\n\n"
+            f"QUESTION:\n{request}\n\n"
+            f"DOCUMENT EXCERPTS:\n{excerpt_block}"
+        )
+        try:
+            answer = await self._call_llm(prompt)
+        except Exception as e:                              # noqa: BLE001
+            logger.warning(
+                "project_reasoner: fallback answer call failed: %s", e
+            )
+            return _NO_PLAN_NO_CONTEXT_MESSAGE, []
+
+        answer = (answer or "").strip()
+        if not answer:
+            return _NO_PLAN_NO_CONTEXT_MESSAGE, []
+        return answer, _build_sources_from_excerpts(excerpts)
+
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
         params = params or {}
         data = input_data if isinstance(input_data, dict) else {}
@@ -165,8 +233,26 @@ class ProjectReasonerBlock(UniversalBlock):
             )
             plan = ExecutionPlan.model_validate(_extract_json(plan_reply))
         except Exception as e:                              # noqa: BLE001
-            return {"status": "error",
-                    "error": f"Could not build a plan: {e}"}
+            # Small models often answer general/conversational questions in
+            # prose instead of emitting plan JSON, so the parse/validate
+            # fails here. Degrade gracefully instead of surfacing the raw
+            # planner error: answer directly from the project excerpts when
+            # we have them (with sources), else a controlled message.
+            logger.warning(
+                "project_reasoner: plan build failed, degrading to direct "
+                "answer: %s", e,
+            )
+            answer, sources = await self._fallback_answer(request, excerpts)
+            session.add_message("assistant", answer)
+            return {
+                "status": "success",
+                "answer": answer,
+                "understanding": "",
+                "plan": None,
+                "execution": None,
+                "sources": sources,
+                "degraded": True,
+            }
 
         # ── EXECUTE ──────────────────────────────────────────────────────
         run = await PlanExecutor().run(plan, session)

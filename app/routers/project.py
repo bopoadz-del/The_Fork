@@ -111,5 +111,8 @@ async def project_ask(
         "plan": result.get("plan"),
         "execution": result.get("execution"),
         "artifacts": [a.model_dump() for a in session.artifacts],
+        # Surface RAG sources when the reasoner answered from project docs
+        # (e.g. the graceful-degradation fallback when no plan could be built).
+        "sources": result.get("sources", []),
         "error": result.get("error"),
     }
