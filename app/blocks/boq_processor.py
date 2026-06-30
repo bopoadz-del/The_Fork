@@ -172,6 +172,35 @@ class BOQProcessorBlock(UniversalBlock):
         scanned PDF that wasn't OCR'd first), surfaces a clear error pointing
         to that limitation.
         """
+        # ── memory guard ────────────────────────────────────────────────
+        # pdfplumber loads the entire PDF and builds every page's table grid
+        # in memory; on a large priced BOQ this OOM-kills the worker and 502s
+        # EVERY concurrent user, not just this request. doc_index already caps
+        # the same operation at PDF_TABLES_MAX_MB — the BOQ tool had no such
+        # guard. Above the cap, refuse with a clear pointer to the xlsx/csv
+        # path (parsed cell-by-cell, no OCR, never OOMs) instead of crashing.
+        # See memory the-fork-boq-always-xlsx.
+        max_mb = float(os.getenv("BOQ_PDF_MAX_MB", "20"))
+        try:
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        except OSError:
+            size_mb = 0.0
+        if size_mb > max_mb:
+            return {
+                "status": "error",
+                "error": (
+                    f"This BOQ PDF is too large to parse on the server "
+                    f"({size_mb:.1f} MB, limit {max_mb:.0f} MB). PDF table "
+                    f"extraction loads the whole file into memory and can crash "
+                    f"the server. Please upload the .xlsx or .csv version of "
+                    f"this BOQ instead — it parses reliably and computes the "
+                    f"totals without the memory risk."
+                ),
+                "boq_pdf_too_large": True,
+                "size_mb": round(size_mb, 1),
+                "max_mb": max_mb,
+            }
+
         import pdfplumber
         import pandas as pd
 
