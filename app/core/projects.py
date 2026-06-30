@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, select, text as sqla_text
+from sqlalchemy import delete, func, select, text as sqla_text
 
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.models import Document, Project, ProjectFact
@@ -335,6 +335,8 @@ def get_project(
     user_id: Optional[str] = None,
     *,
     include_admin_approved: bool = False,
+    doc_limit: Optional[int] = None,
+    doc_offset: int = 0,
 ) -> Optional[Dict[str, Any]]:
     """Load a project the caller can access.
 
@@ -384,8 +386,17 @@ def get_project(
         proj["origin"] = "admin_drive_approved"
         proj["is_approved"] = True
         proj["is_master_corpus"] = True
-    proj["documents"] = list_documents(source_id)
-    proj["document_count"] = len(proj["documents"])
+    # Paginate documents: a large corpus (2713-doc master) must not serialize
+    # every row on every load. doc_limit=None preserves the legacy "all docs"
+    # behaviour for the many internal callers; the detail endpoint passes a
+    # first-page limit. document_count is a cheap COUNT, NOT len() of the page.
+    proj["documents"] = list_documents(
+        source_id,
+        limit=doc_limit,
+        offset=doc_offset,
+        newest_first=doc_limit is not None,
+    )
+    proj["document_count"] = count_documents(source_id)
     proj["readiness"] = compute_readiness(source_id)
     return proj
 
@@ -564,16 +575,50 @@ def find_document_by_sha(
     return _document_as_dict(document) if document else None
 
 
-def list_documents(project_id: str) -> List[Dict[str, Any]]:
+def list_documents(
+    project_id: str,
+    *,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    newest_first: bool = False,
+) -> List[Dict[str, Any]]:
+    """List a project's documents.
+
+    ``limit``/``offset`` paginate (used by the workspace + the documents
+    endpoint so a 2700-doc corpus doesn't serialize every row on every load).
+    ``newest_first`` orders by upload time descending — the natural order for a
+    paginated sidebar. Defaults preserve the legacy "all docs, oldest-first"
+    behaviour so existing callers are untouched.
+    """
+    _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
+    order = Document.uploaded_at.desc() if newest_first else Document.uploaded_at
+    with SessionLocal() as session:
+        stmt = (
+            select(Document)
+            .where(Document.project_id == source_id)
+            .order_by(order)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
+        rows = session.scalars(stmt).all()
+    return [_document_as_dict(document) for document in rows]
+
+
+def count_documents(project_id: str) -> int:
+    """Total document count for a project — a cheap indexed COUNT, so a
+    paginated listing can report the total without serializing every row."""
     _ensure_db()
     source_id = _master_corpus_source(project_id) or project_id
     with SessionLocal() as session:
-        rows = session.scalars(
-            select(Document)
-            .where(Document.project_id == source_id)
-            .order_by(Document.uploaded_at)
-        ).all()
-    return [_document_as_dict(document) for document in rows]
+        return int(
+            session.scalar(
+                select(func.count())
+                .select_from(Document)
+                .where(Document.project_id == source_id)
+            )
+            or 0
+        )
 
 
 def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
@@ -641,9 +686,16 @@ def compute_readiness(project_id: str) -> Dict[str, Any]:
     """A project is 'ready' for progress tracking only once it has a baseline
     schedule, at least one daily and one weekly report, and Aconex connected."""
     source_id = _master_corpus_source(project_id) or project_id
-    docs = list_documents(source_id)
-    roles = [d["doc_role"] for d in docs]
+    # Readiness only needs each doc's role — NOT the full serialized rows.
+    # Loading all documents here (via list_documents) meant get_project paid the
+    # full doc-load TWICE (~8s on the 2713-doc master corpus). Select just the
+    # doc_role column instead.
     with SessionLocal() as session:
+        roles = list(
+            session.scalars(
+                select(Document.doc_role).where(Document.project_id == source_id)
+            ).all()
+        )
         project = session.get(Project, source_id)
     aconex = bool(project.aconex_connected) if project else False
 

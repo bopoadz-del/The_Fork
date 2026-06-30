@@ -42,6 +42,10 @@ PILOT_INCOMPLETE_SHELL_DOC_THRESHOLD = int(
 _DETAIL_ENRICHMENT_DOC_LIMIT = int(
     os.getenv("DETAIL_ENRICHMENT_DOC_LIMIT", "500")
 )
+# Project-detail returns only the first page of documents (newest first); the
+# rest load on demand via GET .../documents. Keeps a 2700-doc corpus from
+# serializing every row on every workspace open.
+_DOC_FIRST_PAGE = int(os.getenv("PROJECT_DETAIL_DOC_PAGE", "100"))
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
 except PermissionError:
@@ -60,7 +64,14 @@ ALLOWED_DOC_EXTENSIONS = {
 }
 
 
-def _owned_or_404(project_id: str, user_id: str, *, read_only: bool = False):
+def _owned_or_404(
+    project_id: str,
+    user_id: str,
+    *,
+    read_only: bool = False,
+    doc_limit: Optional[int] = None,
+    doc_offset: int = 0,
+):
     """Load a project the caller can access, or 404 (never leak existence).
 
     PR D — when ``read_only=True``, non-owners are also allowed to load
@@ -68,9 +79,13 @@ def _owned_or_404(project_id: str, user_id: str, *, read_only: bool = False):
     is_approved=True). Used by the read-only GET handler so users can
     open shared platform projects without owning them. Mutating
     handlers must use the default (owner-only).
+
+    ``doc_limit``/``doc_offset`` paginate the returned documents (default None
+    = all, for mutating callers that need the full set).
     """
     proj = store.get_project(
         project_id, user_id=user_id, include_admin_approved=read_only,
+        doc_limit=doc_limit, doc_offset=doc_offset,
     )
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
@@ -246,8 +261,13 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
     a "Not indexed" badge for docs the extractor failed on (count == 0)
     without making N extra round-trips.
     """
-    proj = _owned_or_404(project_id, auth["user_id"], read_only=True)
-    doc_count = len(proj.get("documents") or [])
+    proj = _owned_or_404(
+        project_id, auth["user_id"], read_only=True, doc_limit=_DOC_FIRST_PAGE,
+    )
+    # `documents` is now the first page only; `document_count` is the true total
+    # (a cheap COUNT). Gate enrichment on the TOTAL, not the page length.
+    doc_count = proj.get("document_count") or 0
+    proj["documents_truncated"] = len(proj.get("documents") or []) < doc_count
 
     # Per-document chunk_count enrichment deserializes the ENTIRE doc index
     # (one JSON blob holding every document + its chunk list). On a large corpus
@@ -296,6 +316,35 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
         proj["has_indexed_chunks"] = None
 
     return proj
+
+
+@router.get("/v1/projects/{project_id}/documents")
+async def list_project_documents(
+    project_id: str,
+    offset: int = 0,
+    limit: int = 100,
+    auth: dict = Depends(require_user),
+):
+    """A page of a project's documents (newest first).
+
+    The workspace gets page 1 with the project detail and loads further pages
+    here on demand, so a large corpus never serializes every row at once.
+    """
+    # Access check (read-only: platform projects are visible to all). doc_limit=0
+    # makes the check itself cheap — it doesn't load the document rows.
+    proj = _owned_or_404(
+        project_id, auth["user_id"], read_only=True, doc_limit=0,
+    )
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    return {
+        "documents": store.list_documents(
+            project_id, limit=limit, offset=offset, newest_first=True,
+        ),
+        "total": proj.get("document_count") or store.count_documents(project_id),
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 @router.delete("/v1/projects/{project_id}")
