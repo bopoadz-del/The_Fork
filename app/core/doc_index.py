@@ -696,6 +696,11 @@ def index_project(project_id: str) -> Dict[str, Any]:
         file_path = doc.get("file_path") or ""
         text, meta = _extract_with_meta(file_path, filename)
         chunks = chunk_text(text)
+        # BOQ → RAG: mirror index_document so the package total + line items
+        # are retrievable regardless of which indexing path ran.
+        boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
+        if boq_chunks:
+            chunks = chunks + boq_chunks
 
         fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
         entry: Dict[str, Any] = {
@@ -739,6 +744,100 @@ def index_project(project_id: str) -> Dict[str, Any]:
         "skipped_unsupported": len(skipped),
         "total_chunks": total_chunks,
     }
+
+
+# ── BOQ → RAG wiring ────────────────────────────────────────────────────────
+# A bill-of-quantities document gets its COMPUTED total + line items appended
+# as retrievable chunks, so "what is the total package value?" is answerable
+# from the corpus. The raw spreadsheet/table text alone never contains the sum;
+# boq_processor computes it. Best-effort: a parse failure never blocks the
+# primary text indexing.
+
+_BOQ_NAME_RE = re.compile(
+    r"\bbo[q]\b|bill[\s_-]*of[\s_-]*quantit|schedule[\s_-]*of[\s_-]*quantit|priced",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_boq(filename: str, ext: str) -> bool:
+    """Cheap gate before invoking the (heavier) BOQ parser.
+
+    Spreadsheets are usually cost/quantity tables, so always attempt them
+    (pandas parse is cheap). PDFs are attempted ONLY when the filename signals
+    a BOQ, so we don't run pdfplumber table extraction on every PDF ingest.
+    """
+    if ext in {".xlsx", ".xls", ".csv"}:
+        return True
+    if ext == ".pdf" and _BOQ_NAME_RE.search(filename or ""):
+        return True
+    return False
+
+
+def _boq_summary_chunks(result: Dict[str, Any]) -> List[str]:
+    """Stringify a boq_processor result into retrievable chunks.
+
+    ACCURACY GUARD (no-assumptions rule): when ``pages_skipped > 0`` the total
+    is reported as PARTIAL / INCOMPLETE — never a confident figure — so chat
+    can never state a wrong package value with confidence.
+    """
+    if not result or result.get("status") != "success":
+        return []
+    line_items = result.get("line_items") or []
+    total = result.get("total_cost")
+    if not line_items and total is None:
+        return []
+    currency = (result.get("currency") or "").strip()
+    pages_skipped = result.get("pages_skipped") or 0
+    out: List[str] = []
+    if total is not None:
+        if pages_skipped:
+            out.append(
+                "BOQ partial total (some pages could not be parsed, this figure "
+                f"is INCOMPLETE): {total} {currency}".strip()
+            )
+        else:
+            out.append(f"BOQ total: {total} {currency}".strip())
+    cost_breakdown = result.get("cost_breakdown") or {}
+    if cost_breakdown:
+        parts = [
+            f"{section} {v.get('total')} {currency} ({v.get('percentage')}%)"
+            for section, v in cost_breakdown.items()
+        ]
+        out.append("BOQ cost breakdown by section — " + "; ".join(parts))
+    for item in line_items:
+        desc = (item.get("description") or item.get("item_key") or "item").strip()
+        out.append(
+            f"BOQ line item — {desc}: quantity {item.get('quantity')}, "
+            f"rate {item.get('unit_cost')}, total {item.get('total_cost')} "
+            f"{currency}".strip()
+        )
+    return out
+
+
+def _boq_chunks_for_document(
+    file_path: str, filename: str, ext: str, project_id: str
+) -> List[str]:
+    """Return BOQ summary chunks for a BOQ-type document, or [] otherwise.
+
+    Never raises — a parse failure just yields no extra chunks so the primary
+    text indexing is unaffected.
+    """
+    if not file_path or not _looks_like_boq(filename, ext):
+        return []
+    try:
+        from app.blocks.boq_processor import BOQProcessorBlock
+
+        result = _run_sync(
+            BOQProcessorBlock().process(
+                {"file_path": file_path, "project_id": project_id}
+            )
+        )
+        return _boq_summary_chunks(result)
+    except Exception as exc:  # noqa: BLE001 — never block indexing on a BOQ parse
+        _logging.getLogger(__name__).warning(
+            "BOQ wiring skipped for %s: %s", filename, exc
+        )
+        return []
 
 
 def index_document(
@@ -789,6 +888,11 @@ def index_document(
             chunks = chunk_text_with_overlap(text, target_chars=500, overlap=50)
         else:
             chunks = chunk_text(text)
+        # BOQ → RAG: append the computed total + line items so the package
+        # value is answerable from the corpus (the raw text never holds the sum).
+        boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
+        if boq_chunks:
+            chunks = chunks + boq_chunks
         entry = {
             "document_id": document_id,
             "filename": filename,

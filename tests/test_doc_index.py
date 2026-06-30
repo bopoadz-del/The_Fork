@@ -298,6 +298,77 @@ def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     assert saved["skipped"][0]["reason"] == "unsupported_type"
 
 
+def test_index_document_wires_boq_total_into_rag(fresh_db, tmp_path, monkeypatch):
+    """A priced BOQ's total + line items become retrievable chunks so the
+    platform can answer 'what is the total package value?' from the corpus.
+    Wires app/blocks/boq_processor into index_document. The summed total
+    (105000) is NOT present in the raw CSV text — only the BOQ wiring emits it.
+    """
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
+
+    proj = projects_mod.create_project("BOQ Project")
+    pid = proj["id"]
+
+    csv = (
+        b"Description,Quantity,Rate,Amount\n"
+        b"Excavation works,100,50,5000\n"
+        b"Concrete grade 40,200,300,60000\n"
+        b"Reinforcement steel,50,800,40000\n"
+    )
+    doc_path = _write_txt_doc(tmp_path, "Priced BOQ.csv", csv)
+    doc = projects_mod.add_document(pid, "Priced BOQ.csv", file_path=doc_path, size=len(csv))
+
+    doc_index.index_document(pid, doc["id"])
+
+    saved = doc_index._load_index(pid)
+    chunks = saved["documents"][0]["chunks"]
+    blob = "\n".join(chunks).lower()
+    assert "boq total" in blob, f"no BOQ summary chunk; chunks={chunks}"
+    # 5000 + 60000 + 40000 = 105000 — appears only via the BOQ wiring.
+    assert "105000" in blob or "105,000" in blob, f"total not wired; chunks={chunks}"
+
+
+def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, monkeypatch):
+    """Accuracy guard: if the BOQ parse skipped pages, the chunk must say the
+    total is PARTIAL, never a confident number (no-assumptions rule)."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
+
+    # Force the BOQ processor to report a skipped page.
+    import app.blocks.boq_processor as boq
+    async def _fake_process(self, input_data, params=None):
+        return {
+            "status": "success", "item_count": 2, "total_cost": 105000.0,
+            "currency": "USD", "line_items": [
+                {"description": "Excavation", "total_cost": 5000.0, "section": "Civil"},
+                {"description": "Concrete", "total_cost": 100000.0, "section": "Civil"},
+            ],
+            "cost_breakdown": {"Civil": {"total": 105000.0, "percentage": 100.0}},
+            "pages_skipped": 2,
+        }
+    monkeypatch.setattr(boq.BOQProcessorBlock, "process", _fake_process)
+
+    proj = projects_mod.create_project("Partial BOQ")
+    pid = proj["id"]
+    csv = b"Description,Amount\nExcavation,5000\n"
+    doc_path = _write_txt_doc(tmp_path, "scanned BOQ.pdf", csv)  # .pdf -> boq path
+    doc = projects_mod.add_document(pid, "scanned BOQ.pdf", file_path=doc_path, size=len(csv))
+
+    doc_index.index_document(pid, doc["id"])
+    saved = doc_index._load_index(pid)
+    blob = "\n".join(saved["documents"][0]["chunks"]).lower()
+    assert "partial" in blob, f"pages_skipped>0 must hedge; chunks missing 'partial': {blob[:300]}"
+
+
 def test_index_project_empty_project(fresh_db, monkeypatch):
     """Empty project produces a valid index file with no documents."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
