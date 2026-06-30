@@ -898,10 +898,11 @@ export default function ProjectWorkspace() {
         const { done, value } = await reader.read()
         if (done) break
 
-        // Any byte from the server counts as proof of life — covers tokens,
-        // heartbeats, tool events, anything. Reset the wall-clock deadline.
-        resetReaderDeadline()
-
+        // NOTE: do NOT reset the deadline on raw byte arrival. Heartbeats are
+        // bytes too, so resetting here let a stalled answer (heartbeat-only,
+        // zero tokens) keep the spinner alive forever. The reset now happens
+        // per-event below, and ONLY for substantive events — a heartbeat-only
+        // stream must still time out so the user gets a banner, not a spinner.
         sseBuffer += decoder.decode(value, { stream: true })
 
         // SSE events are separated by \n\n
@@ -923,6 +924,12 @@ export default function ProjectWorkspace() {
             }
 
             const evtType = evt['type'] as string | undefined
+
+            // Substantive progress (route/start/token/tool/end/error) resets the
+            // stall deadline. Heartbeats deliberately do NOT — a stream that only
+            // heartbeats is stalled, and must hit the deadline so we surface a
+            // friendly timeout instead of an indefinite spinner + locked composer.
+            if (evtType && evtType !== 'heartbeat') resetReaderDeadline()
 
             if (evtType === 'start') {
               // Agent stream start — {type, agent}. No session_id to echo back.

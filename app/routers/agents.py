@@ -196,6 +196,32 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     return result
 
 
+# The client sends the full conversation thread as `history` every turn. On a
+# long pilot session that balloons the prompt — slower time-to-first-token,
+# which on a memory-tight box reads like the cold-start stalls we saw. Bound it.
+# NOTE: defense-in-depth, NOT the fix for the streaming hang (that was the
+# frontend stall-timeout resetting on heartbeats). Tests showed history content
+# is not what stalls the model; this just keeps the prompt from growing without
+# limit on multi-turn conversations.
+_MAX_HISTORY_MESSAGES = 24  # ~12 recent turns
+
+
+def _bound_history(history: object) -> list:
+    """Keep only the most recent messages and drop empty-content turns.
+
+    Empty turns come from an interrupted stream (an assistant bubble that never
+    produced text); they carry no signal, so dropping them is free. Capping the
+    count guards prompt bloat on long conversations.
+    """
+    if not isinstance(history, list):
+        return []
+    cleaned = [
+        m for m in history
+        if isinstance(m, dict) and isinstance(m.get("content"), str) and m["content"].strip()
+    ]
+    return cleaned[-_MAX_HISTORY_MESSAGES:]
+
+
 @router.post("/v1/agents/{name}/chat/stream")
 async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(require_user)):
     agent = get_agent(name)
@@ -206,7 +232,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     except Exception:
         body = {}
     message = body.get("message", "")
-    history = body.get("history") or []
+    history = _bound_history(body.get("history"))
     model = body.get("model")
     project_id = body.get("project_id")
     conversation_id = body.get("conversation_id")
