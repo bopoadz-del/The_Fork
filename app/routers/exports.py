@@ -56,6 +56,22 @@ class CostBoqExportRequest(BaseModel):
     document_id: Optional[str] = None
 
 
+class CostScheduleExportRequest(BaseModel):
+    """Cost-loaded L2 schedule. Activities: {id, wbs, name, duration,
+    predecessors:[id], cost, manpower}."""
+    project_name: Optional[str] = None
+    currency: str = "SAR"
+    activities: List[Dict[str, Any]] = Field(..., description="CPM activities with cost + manpower")
+
+
+class EvmExportRequest(BaseModel):
+    """EVM workbook. Periods: {period, pv, ev, ac}; bac = budget at completion."""
+    project_name: Optional[str] = None
+    currency: str = "SAR"
+    bac: float = 0
+    periods: List[Dict[str, Any]] = Field(..., description="PV/EV/AC per period")
+
+
 def _check_owner(project_id: str, user_id: str) -> Dict[str, Any]:
     proj = projects_store.get_project(project_id, user_id=user_id)
     if not proj:
@@ -329,6 +345,51 @@ async def export_cost_boq(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=f"{name.replace(' ', '_')}_cost_BOQ.xlsx",
     )
+
+
+_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.post("/v1/projects/{project_id}/export/cost-schedule")
+async def export_cost_schedule(
+    project_id: str,
+    req: CostScheduleExportRequest,
+    auth: Dict[str, Any] = Depends(require_user),
+):
+    """Generate a cost-loaded L2 schedule workbook: CPM (ES/EF/LS/LF/float/
+    critical) + cost per activity, a cumulative cost baseline (S-curve, live
+    =prev+curr), a manpower histogram (man-days =Dur*Manpower), and a summary."""
+    proj = _check_owner(project_id, auth["user_id"])
+    if not req.activities:
+        raise HTTPException(400, "activities is required and must be non-empty")
+    name = req.project_name or proj.get("name") or "Project"
+    from app.lib.pm_excel import generate_cost_loaded_schedule
+    wb = generate_cost_loaded_schedule({"project": name, "currency": req.currency}, req.activities)
+    fd, path = tempfile.mkstemp(prefix="cost_sched_", suffix=".xlsx"); os.close(fd)
+    wb.save(path)
+    return FileResponse(path, media_type=_XLSX_MEDIA,
+                        filename=f"{name.replace(' ', '_')}_cost_loaded_schedule.xlsx")
+
+
+@router.post("/v1/projects/{project_id}/export/evm")
+async def export_evm(
+    project_id: str,
+    req: EvmExportRequest,
+    auth: Dict[str, Any] = Depends(require_user),
+):
+    """Generate an EVM workbook from PV/EV/AC + BAC. CV/SV/CPI/SPI/EAC/ETC/VAC
+    are all live formulas so the client can audit performance."""
+    proj = _check_owner(project_id, auth["user_id"])
+    if not req.periods:
+        raise HTTPException(400, "periods is required and must be non-empty")
+    name = req.project_name or proj.get("name") or "Project"
+    from app.lib.pm_excel import generate_evm_workbook
+    wb = generate_evm_workbook(
+        {"project": name, "currency": req.currency, "bac": req.bac}, req.periods)
+    fd, path = tempfile.mkstemp(prefix="evm_", suffix=".xlsx"); os.close(fd)
+    wb.save(path)
+    return FileResponse(path, media_type=_XLSX_MEDIA,
+                        filename=f"{name.replace(' ', '_')}_EVM.xlsx")
 
 
 # ── Conversation message export (Document Export Layer phase 1) ────────────
