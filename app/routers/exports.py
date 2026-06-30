@@ -44,11 +44,50 @@ class ScheduleExportRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class CostBoqExportRequest(BaseModel):
+    """Generate a formula-linked cost BOQ. Either pass structured ``categories``
+    or a ``document_id`` of an uploaded priced BOQ to derive them from."""
+    title: Optional[str] = None
+    project_name: Optional[str] = None
+    location: Optional[str] = None
+    currency: str = "SAR"
+    date: Optional[str] = None
+    categories: Optional[List[Dict[str, Any]]] = None
+    document_id: Optional[str] = None
+
+
 def _check_owner(project_id: str, user_id: str) -> Dict[str, Any]:
     proj = projects_store.get_project(project_id, user_id=user_id)
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
     return proj
+
+
+def _categories_from_document(project_id: str, document_id: str) -> List[Dict[str, Any]]:
+    """Derive cost-BOQ categories from an uploaded priced BOQ via boq_processor
+    (groups its line items by section). Raises 4xx if no priced items parse."""
+    doc = projects_store.get_document(document_id)
+    if not doc or not doc.get("file_path"):
+        raise HTTPException(404, "document not found")
+    from app.blocks.boq_processor import BOQProcessorBlock
+    from app.core.doc_index import _run_sync
+    res = _run_sync(BOQProcessorBlock().process(
+        {"file_path": doc["file_path"], "project_id": project_id}))
+    if res.get("status") != "success" or not res.get("line_items"):
+        raise HTTPException(
+            422, "could not extract priced line items from that document — a "
+                 "digital/xlsx BOQ is required (scanned PDFs won't parse).")
+    by_section: Dict[str, List[Dict[str, Any]]] = {}
+    for i, it in enumerate(res["line_items"], 1):
+        sec = it.get("section") or "General"
+        by_section.setdefault(sec, []).append({
+            "item_no": it.get("item_key") or str(i),
+            "description": it.get("description") or "",
+            "unit": it.get("unit") or "",
+            "qty": it.get("quantity") or 0,
+            "rate": it.get("unit_cost") or 0,
+        })
+    return [{"name": s, "items": items} for s, items in by_section.items()]
 
 
 def _render_xlsx(activities: List[Dict[str, Any]], project_name: str,
@@ -256,6 +295,40 @@ async def export_schedule(
 
     download_name = f"{name.replace(' ', '_')}_schedule.{ext}"
     return FileResponse(path, media_type=media, filename=download_name)
+
+
+@router.post("/v1/projects/{project_id}/export/cost-boq")
+async def export_cost_boq(
+    project_id: str,
+    req: CostBoqExportRequest,
+    auth: Dict[str, Any] = Depends(require_user),
+):
+    """Generate a FORMULA-LINKED cost-BOQ workbook (Cover / BOQ_Detail with
+    =Qty*Rate / BOQ_Summary with cross-sheet links + % + cumulative /
+    Cost_Charts). Pass ``categories`` directly, or ``document_id`` to derive
+    them from an uploaded priced BOQ. Returns the .xlsx as a download."""
+    proj = _check_owner(project_id, auth["user_id"])
+    name = req.project_name or proj.get("name") or "Project"
+    categories = req.categories
+    if not categories and req.document_id:
+        categories = _categories_from_document(project_id, req.document_id)
+    if not categories:
+        raise HTTPException(400, "provide `categories` or a `document_id` to derive them from")
+    from app.lib.boq_excel import generate_cost_boq
+    meta = {
+        "title": req.title or f"{name} — Bill of Quantities",
+        "project": name, "location": req.location or "",
+        "currency": req.currency, "date": req.date or "",
+    }
+    wb = generate_cost_boq(meta, categories)
+    fd, path = tempfile.mkstemp(prefix="cost_boq_", suffix=".xlsx")
+    os.close(fd)
+    wb.save(path)
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"{name.replace(' ', '_')}_cost_BOQ.xlsx",
+    )
 
 
 # ── Conversation message export (Document Export Layer phase 1) ────────────
