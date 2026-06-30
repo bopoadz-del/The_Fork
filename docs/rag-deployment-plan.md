@@ -19,6 +19,14 @@ Flow:
 
 No layered RAG yet.
 
+**This is ONE layer, not a frozen corpus.** Everything still connects INTO the
+Master Corpus as a single piece — new uploads, project docs, BOQs, training
+material all flow into the one corpus and become retrievable. What is deferred
+is **splitting that content into separate layers (1 / 2A / 2B / 3) and applying
+authority scoring** — not the ingestion. So during the pilot: keep connecting
+content to the RAG as one undifferentiated layer; do the layer separation at
+deployment.
+
 **Confirmed working behaviour (pilot):**
 
 - Exact references boosted (identifier-aware retrieval).
