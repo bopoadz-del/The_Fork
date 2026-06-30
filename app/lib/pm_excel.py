@@ -16,6 +16,7 @@ from collections import deque
 from typing import Any, Dict, List, Tuple
 
 import openpyxl
+from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 
 _HDR_FILL = PatternFill("solid", fgColor="122B49")
@@ -108,7 +109,7 @@ def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[st
         cl.cell(rr, 4, cum).number_format = _MONEY
         rr += 1
 
-    # ── Manpower Histogram ──────────────────────────────────────────────────
+    # ── Manpower Histogram (man-days table + time-phased demand + chart) ────
     mp = wb.create_sheet("Manpower Histogram")
     mp["A1"] = "MANPOWER HISTOGRAM"; mp["A1"].font = _TITLE
     _header(mp, 3, ["ID", "Activity", "Dur", "Manpower", "Man-days"])
@@ -122,6 +123,35 @@ def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[st
         rr += 1
     mp.cell(rr, 2, "TOTAL").font = _BOLD
     mp.cell(rr, 5, f"=SUM(E4:E{rr - 1})").font = _BOLD
+
+    # Time-phased weekly staffing demand: each activity contributes its
+    # manpower across its ES->EF window; sum per week = the histogram.
+    period = 7
+    n_periods = max(1, (proj + period - 1) // period)
+    label_row = rr + 3
+    mp.cell(label_row, 1, "TIME-PHASED MANPOWER DEMAND (per week)").font = _BOLD
+    hrow = label_row + 1
+    _header(mp, hrow, ["Week", "Days", "Manpower"])
+    pfirst = hrow + 1
+    pr = pfirst
+    for k in range(n_periods):
+        w_start, w_end = k * period, k * period + period
+        demand = sum(
+            int(acts[i].get("manpower", 0)) for i in order
+            if cpm[i]["es"] < w_end and cpm[i]["ef"] > w_start
+        )
+        mp.cell(pr, 1, k + 1)
+        mp.cell(pr, 2, f"{w_start + 1}-{min(w_end, proj)}")
+        mp.cell(pr, 3, demand)
+        pr += 1
+    plast = pr - 1
+    mp.cell(pr + 1, 1, "Peak Manpower").font = _BOLD
+    mp.cell(pr + 1, 3, f"=MAX(C{pfirst}:C{plast})").font = _BOLD
+    hist = BarChart(); hist.type = "col"; hist.title = "Manpower Histogram (weekly demand)"
+    data = Reference(mp, min_col=3, min_row=hrow, max_row=plast)
+    cats = Reference(mp, min_col=1, min_row=pfirst, max_row=plast)
+    hist.add_data(data, titles_from_data=True); hist.set_categories(cats)
+    mp.add_chart(hist, "G3")
 
     # ── Summary ─────────────────────────────────────────────────────────────
     summ = wb.create_sheet("Summary")

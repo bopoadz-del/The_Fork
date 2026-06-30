@@ -45,6 +45,21 @@ def test_schedule_cost_loading_is_formula_linked():
     assert any("*" in f for f in md), "man-days must be =Dur*Manpower"
 
 
+def test_manpower_histogram_is_time_phased_with_chart():
+    """A real manpower histogram is time-phased staffing demand per period
+    (spread across each activity's ES->EF) with a bar chart + peak — not just
+    a man-days table."""
+    from app.lib.pm_excel import generate_cost_loaded_schedule
+    wb = generate_cost_loaded_schedule({"project": "Test DC"}, ACTIVITIES)
+    mp = wb["Manpower Histogram"]
+    assert len(mp._charts) >= 1, "must embed a histogram (bar) chart"
+    txt = "\n".join(str(c.value) for row in mp.iter_rows() for c in row if c.value is not None)
+    assert "Week" in txt or "Period" in txt, "must be time-phased into periods"
+    peaks = [c.value for row in mp.iter_rows() for c in row
+             if isinstance(c.value, str) and c.value.startswith("=MAX(")]
+    assert peaks, "peak manpower should be a =MAX() formula"
+
+
 def test_evm_metrics_are_live_formulas():
     from app.lib.pm_excel import generate_evm_workbook
     periods = [
