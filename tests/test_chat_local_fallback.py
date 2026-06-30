@@ -89,6 +89,46 @@ async def test_ollama_primary_path_calls_cloud_without_api_key(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ollama_cloud_forwards_api_key_when_set(monkeypatch):
+    """Ollama CLOUD (ollama.com) requires Bearer auth — HTTP 401 without it.
+
+    Regression (2026-06-30 pilot): with LLM_PROVIDER=ollama the chat block
+    hardcoded ``provider_key=""``, so the general /v1/chat surface called
+    ollama.com UNAUTHENTICATED, got 401, and fell back off Ollama. When
+    OLLAMA_API_KEY is set, the key MUST be forwarded to _call_cloud so the
+    general chat routes through Ollama Cloud like the agent path does.
+    Self-hosted Ollama (no key) keeps api_key="" — see the test above.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "https://ollama.com")
+    monkeypatch.setenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
+    monkeypatch.setenv("OLLAMA_API_KEY", "sk-ollama-secret")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    calls: list[dict] = []
+
+    async def fake_call(self, message, model, max_tokens, temperature,
+                        stream, api_key, cfg, **kwargs):
+        calls.append({"api_key": api_key, "url": cfg["url"], "model": model})
+        return {"status": "success", "text": "hi", "provider": "ollama", "model": model}
+
+    monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
+
+    block = ChatBlock()
+    result = await block.process("hi", {"stream": False, "model": "deepseek-chat"})
+
+    assert result["status"] == "success"
+    assert len(calls) == 1
+    assert calls[0]["api_key"] == "sk-ollama-secret", (
+        "Ollama Cloud key must be forwarded so ollama.com auth succeeds"
+    )
+    assert calls[0]["url"] == "https://ollama.com/v1/chat/completions"
+    # deepseek-chat placeholder remaps onto the active provider's model.
+    assert calls[0]["model"] == "gpt-oss:120b-cloud"
+
+
+@pytest.mark.asyncio
 async def test_call_cloud_omits_authorization_header_when_api_key_empty(monkeypatch):
     """Regression guard for the Ollama-empty-Bearer bug.
 

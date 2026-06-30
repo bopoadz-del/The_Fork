@@ -86,7 +86,14 @@ def extract_query_identifiers(query: str) -> List[str]:
         label = m.group("label")
         # The captured code may have trailing punctuation; strip it.
         code = m.group("code").strip("-.:,;")
-        if code:
+        # A genuine reference code carries a digit (VO 99, Clause 13.1,
+        # PRC-501). Several labels ("Contract", "Spec", "Package", ...) are
+        # also ordinary English words, so a label followed by a digit-less
+        # word ("contract cover", "specification") is prose — NOT a reference.
+        # Without this guard those false identifiers earned the +2.0 retrieval
+        # bonus and flooded the top-K with boilerplate, so grounded chat
+        # answered "I cannot find" for broad questions (2026-06-30 pilot).
+        if code and any(ch.isdigit() for ch in code):
             found.add(f"{label.lower()} {code.lower()}")
             found.add(code.lower())
 

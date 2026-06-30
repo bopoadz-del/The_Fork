@@ -52,6 +52,40 @@ def test_extract_identifiers_detects_common_reference_patterns():
     assert ids == []
 
 
+def test_extract_identifiers_ignores_common_label_words_without_a_code():
+    """Regression (2026-06-30 pilot): the labeled-reference regex treated
+    common words in _REFERENCE_LABELS (Contract, Spec, Package, ...) as a
+    reference label and grabbed the FOLLOWING plain English word as a 'code'
+    — so "contract cover" -> ['contract cover', 'cover'] and "specification"
+    -> ['spec ification', 'ification']. Those false identifiers then earned a
+    +2.0 retrieval bonus, flooding the top-K with any boilerplate chunk that
+    merely contained the word 'cover', and the model answered "I cannot find."
+
+    A real reference code contains a digit (VO 99, RFI 42, Clause 13.1). A
+    label followed by a digit-less word is NOT an identifier.
+    """
+    from app.core.rag.retriever import extract_query_identifiers
+
+    # The two prod questions that broke. Neither contains a real reference.
+    assert extract_query_identifiers(
+        "What does the DG2 demolition contract cover?"
+    ) == []
+    ids = extract_query_identifiers(
+        "What does the specification say about reinforcement joints "
+        "and crack control in concrete?"
+    )
+    assert ids == [], f"expected no identifiers, got {ids}"
+
+    # A bare label word with no code must not self-extract.
+    assert extract_query_identifiers("Tell me about the contract") == []
+    assert extract_query_identifiers("Summarize the package scope") == []
+
+    # ...but a label followed by a real (digit-bearing) code STILL extracts.
+    assert any("99" in i for i in extract_query_identifiers("status of VO 99?"))
+    assert any("42" in i for i in extract_query_identifiers("RFI 42 update"))
+    assert any("13.1" in i for i in extract_query_identifiers("see Clause 13.1"))
+
+
 def test_extract_identifiers_preserves_quoted_phrases():
     from app.core.rag.retriever import extract_query_identifiers
 

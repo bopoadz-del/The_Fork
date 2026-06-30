@@ -198,15 +198,18 @@ class ChatBlock(TypedBlock):
         # block route and the agent path.
         from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
         cfg = _llm_config()
-        # Ollama has no API key (env_key=""). Treat it as configured so we hit
-        # _call_cloud with the normalised /v1/chat/completions URL — same as
-        # app.agents.runtime._call_llm when LLM_PROVIDER=ollama.
-        if cfg["provider"] == "ollama":
-            provider_key = ""
-            cloud_ready = True
-        elif cfg["env_key"]:
+        # Provider auth. ``_llm_config`` sets env_key="OLLAMA_API_KEY" when an
+        # Ollama Cloud key is present, "" for self-hosted Ollama, and the
+        # provider key for DeepSeek/Groq. Check env_key FIRST so Ollama Cloud
+        # (ollama.com — returns HTTP 401 without a Bearer) gets its key
+        # forwarded, exactly like the agent runtime path. Only fall back to an
+        # empty key for self-hosted Ollama, which needs no auth.
+        if cfg["env_key"]:
             provider_key = os.getenv(cfg["env_key"])
             cloud_ready = bool(provider_key)
+        elif cfg["provider"] == "ollama":
+            provider_key = ""
+            cloud_ready = True
         else:
             provider_key = None
             cloud_ready = False

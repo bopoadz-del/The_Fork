@@ -336,9 +336,15 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
             "stream": False,
         })
 
+        # Report the ACTUAL provider/model that served the turn, not the
+        # request's placeholder default ("deepseek-chat"). The placeholder is
+        # remapped onto the active provider's model inside the chat block, so
+        # echoing request.model misreported Ollama responses as DeepSeek.
+        inner = result.get("result", {}) if isinstance(result, dict) else {}
         return {
-            "text": result.get("result", {}).get("text", ""),
-            "model": request.model,
+            "text": inner.get("text", ""),
+            "model": inner.get("model") or request.model,
+            "provider": inner.get("provider"),
         }
 
     except HTTPException:
