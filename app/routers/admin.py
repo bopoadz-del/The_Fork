@@ -137,6 +137,21 @@ def admin_doc_reindex(
     return _doc_index.index_document(project_id, document_id, chunker=chunker)
 
 
+@router.post("/v1/admin/projects/{project_id}/approve")
+def admin_approve_project(project_id: str, auth: dict = Depends(require_api_key)):
+    """Make an existing project admin-visible (shows in the sidebar).
+
+    Flips ``is_approved=True`` + ``origin='admin_drive_approved'`` on a project
+    that already exists (e.g. one created by uploading documents), without
+    re-importing from Drive. Idempotent.
+    """
+    _require_admin(auth)
+    from app.core import projects as _projects
+    if not _projects.approve_project(project_id):
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    return {"status": "approved", "project_id": project_id}
+
+
 @router.get("/v1/admin/training/list")
 def admin_training_list(auth: dict = Depends(require_api_key)):
     """List all training-scenario JSONL files on the server."""

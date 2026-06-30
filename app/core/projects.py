@@ -415,6 +415,24 @@ def archive_project(project_id: str) -> bool:
             return True
 
 
+def approve_project(project_id: str) -> bool:
+    """Make an EXISTING project admin-visible: set ``is_approved=True`` and
+    ``origin='admin_drive_approved'`` so the sidebar (which filters on that
+    origin) lists it for all users — the same visibility a Drive-approved
+    project gets, without re-importing. Idempotent. Returns False if not found.
+    """
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            project.is_approved = True
+            project.origin = "admin_drive_approved"
+            session.commit()
+            return True
+
+
 def delete_project(project_id: str) -> bool:
     """HARD delete — removes the row and (via ON DELETE CASCADE) its documents
     AND RAG chunks. Reserved for genuine admin cleanup; the user-facing Delete

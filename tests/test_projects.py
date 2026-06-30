@@ -87,6 +87,25 @@ def test_delete_soft_archives_and_preserves_the_row(client):
         assert row is not None and row.status == "archived"
 
 
+def test_approve_project_makes_it_admin_visible(client):
+    """approve_project flips an EXISTING user-created project to admin-approved
+    so it appears in the sidebar (which filters origin='admin_drive_approved').
+    Mirrors the visibility a Drive-approved project gets, without re-importing."""
+    from app.core import projects as store
+    proj = _new_project(client, "DG2 Bills of Quantities")
+    pid = proj["id"]
+    assert store.approve_project(pid) is True
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    with SessionLocal() as s:
+        row = s.get(Project, pid)
+        assert row.is_approved is True
+        assert row.origin == "admin_drive_approved"
+    # idempotent + safe on a missing id
+    assert store.approve_project(pid) is True
+    assert store.approve_project("does-not-exist") is False
+
+
 # ── 0.3 Execution-intent model — attaching a document runs nothing ──────────
 
 def test_document_upload_rejects_oversize(client, monkeypatch):
