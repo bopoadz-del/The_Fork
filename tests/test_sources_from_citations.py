@@ -139,6 +139,44 @@ def test_build_sources_empty_audit_returns_empty():
     assert out == []
 
 
+# ── gpt-oss-120b inline-bracketed form: "Source: [filename], chunk N" ──
+# The pilot model (gpt-oss:120b-cloud) emits the filename INSIDE brackets
+# with the chunk number AFTER the bracket, inline mid-sentence — a form none
+# of the prior patterns matched, so the Sources panel silently fell back to
+# top-3-by-score instead of the chunks the answer actually cited (2026-06-30).
+
+def test_extract_inline_bracketed_source_single_chunk():
+    txt = "Trees must be protected (Source: [DD-2022-175 - DG II Demolition Part 3], chunk 941)."
+    out = _extract_cited_chunk_indexes(txt)
+    assert any(idx == 941 for _, idx in out), out
+
+
+def test_extract_inline_bracketed_source_chunk_range():
+    txt = "See the schedule (Source: [DD-2022-175 - DG II Demolition Part 2], chunks 1988-1990)."
+    out = _extract_cited_chunk_indexes(txt)
+    nums = {idx for _, idx in out}
+    assert 1988 in nums, out  # at least the range start is captured
+
+
+def test_build_sources_matches_inline_bracket_cite_by_chunk_index(monkeypatch):
+    """The cited chunk index uniquely identifies the injected chunk even when
+    gpt-oss truncated the filename with an ellipsis. The Sources panel must
+    surface THAT chunk, not the top-3-by-score scaffolding."""
+    audit = _make_audit([
+        {"doc_id": "d1", "chunk_index": 5,   "score": 0.80},   # high-score scaffolding
+        {"doc_id": "d1", "chunk_index": 12,  "score": 0.78},
+        {"doc_id": "d2", "chunk_index": 941, "score": 0.64},   # the actually-cited chunk
+    ])
+    _stub_get_document(
+        monkeypatch,
+        "DD-2022-175 - DG II Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 3.pdf",
+    )
+    text = "Trees must be protected (Source: [DD-2022-175 - DG II Demolition … Part 3], chunk 941)."
+    out = _build_sources_from_audit(audit, text)
+    assert len(out) == 1, out
+    assert out[0]["page_or_section"] == "chunk #941"
+
+
 # ── PR #111 — bracketless "Source:" prefix form (gpt-oss variant) ──────
 
 def test_extract_bracketless_line_form_single():

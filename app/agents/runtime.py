@@ -517,6 +517,18 @@ _CITATION_DOCID_RE = re.compile(
     re.IGNORECASE,
 )
 
+# gpt-oss-120b (the pilot model) inline form — the filename is INSIDE the
+# brackets and the chunk number comes AFTER, mid-sentence:
+#   ...protected (Source: [DD-2022-175 - DG II Demolition … Part 3], chunk 941).
+#   ...schedule (Source: [DD-2022-175 … Part 2], chunks 1988-1990).
+# Distinct from _CITATION_RE ("[source: file, chunk N]" — source INSIDE the
+# bracket). Group 1 = filename (often truncated with an ellipsis); group 2 =
+# the chunk-number blob (digits, commas, and en-/em-dash ranges).
+_CITATION_INLINE_BRACKET_RE = re.compile(
+    r"sources?:\s*[\[【]\s*(.+?)\s*[\]】]\s*,?\s*chunks?\s+(\d[\d,\s‐-―−-]*)",
+    re.IGNORECASE,
+)
+
 
 def _normalise_filename(s: str) -> str:
     """Normalize source filenames for cite-vs-chunk matching.
@@ -725,6 +737,15 @@ def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
         chunk_idx = int(m.group(2))
         out.append((doc_id, chunk_idx))
 
+    # gpt-oss inline-bracketed form: "Source: [filename], chunk(s) N[-M]".
+    # The chunk number is the reliable signal (the model can only cite indexes
+    # it saw in the injected context); the filename is often ellipsis-truncated
+    # and is matched leniently downstream.
+    for m in _CITATION_INLINE_BRACKET_RE.finditer(text):
+        fname = _strip_source_quotes(m.group(1).strip())
+        for num in re.findall(r"\d+", m.group(2)):
+            out.append((fname, int(num)))
+
     return out
 
 
@@ -814,14 +835,18 @@ def _build_sources_from_audit(
                 if doc_id_match is not None:
                     if doc_id != doc_id_match:
                         continue
-                else:
-                    # Filename-keyed cite — require filename suffix-match
-                    # (normalized) so a model that rewrote the dash
-                    # style still resolves.
+                elif cited_idx == -1:
+                    # Filename-keyed cite with NO chunk number to disambiguate
+                    # — require a filename suffix-match (normalized) so a model
+                    # that rewrote the dash style still resolves.
                     name = _doc_name(doc_id)
                     name_n = _normalise_filename(name)
                     if cited_token_n and name_n and cited_token_n not in name_n and name_n not in cited_token_n:
                         continue
+                # else: the cite carried a chunk number that already matched
+                # above (cited_idx != -1, cidx == cited_idx). That index
+                # uniquely identifies the injected chunk, so trust it even when
+                # the model truncated the filename (gpt-oss "DG II … Part 3").
                 key = (doc_id, cidx)
                 if key in seen:
                     continue
