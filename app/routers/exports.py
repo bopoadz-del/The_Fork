@@ -15,21 +15,30 @@ absent).
 from __future__ import annotations
 
 import io
+import logging
 import os
 import tempfile
+import uuid
 from typing import Any, Dict, List, Optional
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import require_user
 from app.core import projects as projects_store
 from app.core import agent_memory
+from app.core import doc_index, file_crypto
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+# Mirror the upload path's storage root so generated workbooks persist next to
+# uploaded documents and feed the same RAG indexer (see app/routers/projects.py).
+DATA_DIR = os.getenv("DATA_DIR", "./data")
 
 
 class ScheduleExportRequest(BaseModel):
@@ -54,6 +63,10 @@ class CostBoqExportRequest(BaseModel):
     date: Optional[str] = None
     categories: Optional[List[Dict[str, Any]]] = None
     document_id: Optional[str] = None
+    # When true (default) the generated workbook is also persisted back into the
+    # project and queued for eager indexing so chat can answer from it. Set
+    # false to get the download only, without touching the RAG corpus.
+    ingest: bool = True
 
 
 class CostScheduleExportRequest(BaseModel):
@@ -317,12 +330,14 @@ async def export_schedule(
 async def export_cost_boq(
     project_id: str,
     req: CostBoqExportRequest,
+    background_tasks: BackgroundTasks,
     auth: Dict[str, Any] = Depends(require_user),
 ):
     """Generate a FORMULA-LINKED cost-BOQ workbook (Cover / BOQ_Detail with
     =Qty*Rate / BOQ_Summary with cross-sheet links + % + cumulative /
     Cost_Charts). Pass ``categories`` directly, or ``document_id`` to derive
-    them from an uploaded priced BOQ. Returns the .xlsx as a download."""
+    them from an uploaded priced BOQ. Returns the .xlsx as a download AND (unless
+    ``ingest`` is false) persists it into the project so it lands in RAG."""
     proj = _check_owner(project_id, auth["user_id"])
     name = req.project_name or proj.get("name") or "Project"
     categories = req.categories
@@ -340,6 +355,34 @@ async def export_cost_boq(
     fd, path = tempfile.mkstemp(prefix="cost_boq_", suffix=".xlsx")
     os.close(fd)
     wb.save(path)
+
+    # Persist the generated workbook back into the project as a document and
+    # queue eager indexing — this is the link that gets the generated BOQ into
+    # the project's RAG corpus so chat can answer from it. Mirrors the upload
+    # path in app/routers/projects.py (add_document). Best-effort: a RAG-ingest
+    # failure must NEVER 500 the export — the download below is the contract.
+    if req.ingest:
+        try:
+            with open(path, "rb") as fh:
+                raw_bytes = fh.read()
+            # "boq" is not one of store.VALID_ROLES, so leave role unset and let
+            # add_document classify it (falls back to "other").
+            original_name = f"{name} - Cost BOQ (generated).xlsx"
+            file_id = str(uuid.uuid4())[:8]
+            stored_as = f"{file_id}_{original_name}"
+            stored_path = os.path.join(DATA_DIR, stored_as)
+            file_crypto.write_document(stored_path, raw_bytes)
+            doc = projects_store.add_document(
+                project_id, original_name, stored_as, stored_path,
+                len(raw_bytes), role=None,
+            )
+            background_tasks.add_task(
+                doc_index.maybe_eager_index, project_id, doc["id"])
+        except Exception:  # noqa: BLE001 - ingest is best-effort, never fatal
+            logger.warning(
+                "cost-boq RAG ingest failed for project %s; download still served",
+                project_id, exc_info=True)
+
     return FileResponse(
         path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
