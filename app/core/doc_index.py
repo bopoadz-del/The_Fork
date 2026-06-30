@@ -790,13 +790,21 @@ def _boq_summary_chunks(result: Dict[str, Any]) -> List[str]:
     pages_skipped = result.get("pages_skipped") or 0
     out: List[str] = []
     if total is not None:
+        # Phrase the total the way users actually ask ("what is the total
+        # package value?"), so this chunk out-matches generic contract
+        # templates that merely mention "package value".
         if pages_skipped:
             out.append(
-                "BOQ partial total (some pages could not be parsed, this figure "
-                f"is INCOMPLETE): {total} {currency}".strip()
+                "BOQ partial total — total package value / total contract value "
+                "(some pages could not be parsed, this figure is INCOMPLETE): "
+                f"{total} {currency}".strip()
             )
         else:
-            out.append(f"BOQ total: {total} {currency}".strip())
+            out.append(
+                "BOQ total — total package value, total contract value, total "
+                f"cost of the bill of quantities: {total} {currency} "
+                "(sum of all priced line items).".strip()
+            )
     cost_breakdown = result.get("cost_breakdown") or {}
     if cost_breakdown:
         parts = [

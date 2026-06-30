@@ -331,6 +331,11 @@ def test_index_document_wires_boq_total_into_rag(fresh_db, tmp_path, monkeypatch
     assert "boq total" in blob, f"no BOQ summary chunk; chunks={chunks}"
     # 5000 + 60000 + 40000 = 105000 — appears only via the BOQ wiring.
     assert "105000" in blob or "105,000" in blob, f"total not wired; chunks={chunks}"
+    # The total chunk must phrase itself the way users actually ask, so a
+    # broad "what is the total package value?" matches it instead of a generic
+    # contract template (the question that started this thread).
+    assert "package value" in blob, f"total chunk should match 'package value'; chunks={chunks}"
+    assert "total contract value" in blob, f"total chunk should match 'contract value'; chunks={chunks}"
 
 
 def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, monkeypatch):
