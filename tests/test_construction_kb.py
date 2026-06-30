@@ -262,6 +262,53 @@ def test_new_procurement_workflows_enforce_key_rules():
     assert vsr_block["allowed"] is False
 
 
+def test_search_knowledge_retrieves_rules_by_nl_query():
+    """Free-text query → ranked KB rule ids by token overlap on id+title+statement."""
+    def ids(q):
+        return [e["id"] for e in kb.search_knowledge(q, top_k=4)]
+    assert "thermal.equilibrium_time" in ids("mass concrete equilibrium time for a thick pour")
+    assert "compaction.acceptance" in ids("subgrade compaction acceptance criteria")
+    assert "asphalt.bitumen_content" in ids("bitumen percentage for the wearing course")
+    assert "dewatering.method_selection" in ids("dewatering well point selection")
+    assert "roads.heavy_lift_feasibility" in ids("crane heavy lift feasibility for a precast beam")
+    assert kb.search_knowledge("") == []
+    # domain filter restricts to entries that apply to that namespace
+    res = kb.search_knowledge("concrete", top_k=8, domain="construction.concrete")
+    assert res and all(
+        "construction.concrete" in (e.get("applicability", {}).get("applies_to") or [])
+        for e in res
+    )
+
+
+def test_construction_advisor_block_answers_with_cited_rules():
+    import asyncio
+    from app.blocks.construction_advisor import ConstructionAdvisorBlock
+    b = ConstructionAdvisorBlock()
+    out = asyncio.run(b.process("what is the mass concrete equilibrium time for a thick pour"))
+    assert out["status"] == "success" and out["count"] >= 1
+    assert "thermal.equilibrium_time" in [m["id"] for m in out["matches"]]
+    # every answer is cited (provenance + tier present)
+    assert all("provenance" in m and "credibility_tier" in m for m in out["matches"])
+    # evaluates the top formula when values are supplied
+    out2 = asyncio.run(b.process({"query": "mass concrete equilibrium time", "values": {"X": 1.2}}))
+    assert out2["evaluation"]["result"] == pytest.approx(107.52, abs=1e-6)
+    # empty query handled
+    assert asyncio.run(b.process(""))["status"] == "error"
+
+
+def test_orchestrator_routes_kb_queries_to_advisor():
+    import asyncio
+    from app.blocks.smart_orchestrator import SmartOrchestratorBlock
+    from app.core.action_router import best_action
+    orch = SmartOrchestratorBlock()
+    for q in ["what is the mass concrete equilibrium time",
+              "subgrade compaction acceptance and field density",
+              "dewatering well point selection"]:
+        res = asyncio.run(orch.process({"user_message": q}))
+        action, conf = best_action(res)
+        assert action == "construction_advisor", f"{q!r} routed to {action}"
+
+
 def test_evaluate_rejects_workflow():
     with pytest.raises(ValueError):
         kb.evaluate("procurement.tender_lifecycle")

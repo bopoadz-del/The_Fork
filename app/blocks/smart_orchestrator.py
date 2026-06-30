@@ -44,6 +44,19 @@ def _matches_keyword(kw: str, text: str) -> bool:
 # construction keywords below — otherwise "raise an NCR" falls through to a
 # bare contract-analysis action.
 ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
+    # Construction knowledge base (cited engineering rules/formulas). Keywords
+    # are specific multi-word engineering phrasings so they don't collide with
+    # the schedule / manpower / cost actions below.
+    ("construction_advisor", [
+        "mass concrete", "equilibrium time", "thermal control", "core temperature",
+        "compaction acceptance", "field density", "proctor", "swelling factor",
+        "dewatering", "well point", "ground improvement", "dynamic compaction",
+        "soil stabilization", "roller compacted", "rcc mix", "bitumen content",
+        "wearing course", "heavy lift", "crane lift", "lifting feasibility",
+        "uplift", "factor of safety", "diaphragm wall", "post-tension",
+        "sealant joint", "rebar coupler", "tunnel cross section",
+        "earthworks production", "haul distance", "design formula",
+    ]),
     # BOQ / Cost
     ("boq_process",           ["boq", "bill of quantities", "bill of quantity", "quantities sheet", "cost sheet", "price list", ".xlsx", ".csv"]),
     # WBS / schedule generation — matched ahead of extract_quantities so

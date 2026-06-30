@@ -100,6 +100,42 @@ def get_rule(rule_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+_TOKEN_RE = __import__("re").compile(r"[a-z0-9]+")
+
+
+def _tokens(text: str) -> set:
+    return set(_TOKEN_RE.findall((text or "").lower()))
+
+
+def search_knowledge(
+    query: str, top_k: int = 5, domain: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Free-text retrieval over the KB: rank entries by token overlap between
+    the query and each entry's id + title + statement, return the top-K.
+
+    Lightweight + dependency-free (no vector index needed) so the construction
+    blocks can map a natural-language question to the relevant rule(s). Empty /
+    no-match query returns []. ``domain`` restricts to one applies_to namespace.
+    """
+    qt = _tokens(query)
+    if not qt:
+        return []
+    scored: List[tuple] = []
+    for e in load_knowledge(domain):
+        hay = (
+            _tokens((e.get("id") or "").replace(".", " "))
+            | _tokens(e.get("title"))
+            | _tokens(e.get("statement"))
+        )
+        score = len(qt & hay)
+        if score:
+            # secondary key: id-token hits weigh a touch more (title relevance)
+            id_hits = len(qt & _tokens((e.get("id") or "").replace(".", " ")))
+            scored.append((score + 0.5 * id_hits, e))
+    scored.sort(key=lambda x: -x[0])
+    return [e for _, e in scored[:top_k]]
+
+
 def _build_warnings(entry: Dict[str, Any]) -> List[str]:
     """Standard warning list applied to every evaluator response.
 
