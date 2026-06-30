@@ -8,8 +8,9 @@ WBS generation, and cost analysis.
 **Live:** [the-fork.onrender.com](https://the-fork.onrender.com)
 
 The deployed instance runs on Render (FastAPI web service + Postgres
-16 with pgvector). Chat routes through Ollama Cloud via a cloudflared
-tunnel. ~142k indexed chunks across two corpus projects
+16 with pgvector). Chat routes directly to Ollama Cloud
+(`https://ollama.com`, model `gpt-oss:120b-cloud`). ~142k indexed
+chunks across two corpus projects
 (`training_material` + `projects_folder`).
 
 ---
@@ -52,13 +53,13 @@ schedules, reports) and gives the operator a chat surface that:
 │  - JWT auth + admin-gated /v1/admin/* endpoints                   │
 └─────┬─────────────────────────┬──────────────────────────────────┘
       │                         │
-      │  pgvector(256)          │  cloudflared tunnel
-      │  + tsvector GIN         │
+      │  pgvector(256)          │  direct HTTPS
+      │  + tsvector GIN         │  to ollama.com
       ▼                         ▼
 ┌──────────────┐         ┌──────────────────┐
 │  Postgres 16 │         │  Ollama Cloud    │
-│  + pgvector  │         │  qwen3-coder:    │
-│  on Render   │         │  480b-cloud      │
+│  + pgvector  │         │  gpt-oss:        │
+│  on Render   │         │  120b-cloud      │
 └──────────────┘         └──────────────────┘
 ```
 
