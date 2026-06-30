@@ -36,6 +36,12 @@ MAX_DOC_UPLOAD_SIZE = int(os.getenv("MAX_DOC_UPLOAD_SIZE", str(50 * 1024 * 1024)
 PILOT_INCOMPLETE_SHELL_DOC_THRESHOLD = int(
     os.getenv("PILOT_INCOMPLETE_SHELL_DOC_THRESHOLD", "1")
 )
+# Above this document count, project-detail skips the full-index chunk_count
+# enrichment (it deserializes a tens-of-MB index blob → ~11s on the master
+# corpus). The fields it produces are cosmetic; chat + listing don't need them.
+_DETAIL_ENRICHMENT_DOC_LIMIT = int(
+    os.getenv("DETAIL_ENRICHMENT_DOC_LIMIT", "500")
+)
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
 except PermissionError:
@@ -241,34 +247,51 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
     without making N extra round-trips.
     """
     proj = _owned_or_404(project_id, auth["user_id"], read_only=True)
-    try:
-        from app.core import doc_index as _doc_index
-        index = _doc_index._load_index(project_id)  # noqa: SLF001 — internal use
-        chunk_counts: dict[str, int] = {}
-        if index and isinstance(index.get("documents"), list):
-            for entry in index["documents"]:
-                doc_id = entry.get("document_id")
-                if doc_id:
-                    chunk_counts[doc_id] = len(entry.get("chunks", []))
-        for doc in proj.get("documents", []) or []:
-            doc["chunk_count"] = chunk_counts.get(doc.get("id"), 0)
-    except Exception:
-        # Enrichment is best-effort — never break the project load on it.
-        pass
+    doc_count = len(proj.get("documents") or [])
 
-    # Expose the live indexed-chunk count so the UI/admin can flag
-    # projects that have documents but no searchable corpus.
-    try:
-        from app.core.rag.embeddings import get_embedder
-        from app.core.rag.vector_store import get_store
-        resolved_id = store._master_corpus_source(project_id) or project_id
-        embedder = get_embedder()
-        chunk_store = get_store(dim=embedder.dim)
-        indexed_chunks = chunk_store.count(resolved_id)
-        proj["indexed_chunks"] = indexed_chunks
-        proj["has_indexed_chunks"] = indexed_chunks > 0
-    except Exception:
-        # Vector store may not be configured in all test environments.
+    # Per-document chunk_count enrichment deserializes the ENTIRE doc index
+    # (one JSON blob holding every document + its chunk list). On a large corpus
+    # — the 2713-doc master corpus — that blob is tens of MB and deserializing
+    # it dominated the project-detail response (~11s warm; latency scaled with
+    # document count, sub-second for small projects). It only feeds the cosmetic
+    # "Not indexed" per-doc badge, which is meaningless for the master corpus, so
+    # skip the whole enrichment past a threshold and keep the load snappy.
+    if doc_count <= _DETAIL_ENRICHMENT_DOC_LIMIT:
+        try:
+            from app.core import doc_index as _doc_index
+            index = _doc_index._load_index(project_id)  # noqa: SLF001 — internal use
+            chunk_counts: dict[str, int] = {}
+            if index and isinstance(index.get("documents"), list):
+                for entry in index["documents"]:
+                    doc_id = entry.get("document_id")
+                    if doc_id:
+                        chunk_counts[doc_id] = len(entry.get("chunks", []))
+            for doc in proj.get("documents", []) or []:
+                doc["chunk_count"] = chunk_counts.get(doc.get("id"), 0)
+        except Exception:
+            # Enrichment is best-effort — never break the project load on it.
+            pass
+
+        # Expose the live indexed-chunk count so the UI/admin can flag
+        # projects that have documents but no searchable corpus. Same
+        # threshold: the count is one query but pairs with the badge above.
+        try:
+            from app.core.rag.embeddings import get_embedder
+            from app.core.rag.vector_store import get_store
+            resolved_id = store._master_corpus_source(project_id) or project_id
+            embedder = get_embedder()
+            chunk_store = get_store(dim=embedder.dim)
+            indexed_chunks = chunk_store.count(resolved_id)
+            proj["indexed_chunks"] = indexed_chunks
+            proj["has_indexed_chunks"] = indexed_chunks > 0
+        except Exception:
+            # Vector store may not be configured in all test environments.
+            proj["indexed_chunks"] = None
+            proj["has_indexed_chunks"] = None
+    else:
+        # Large corpus: skip both enrichments. Fields stay absent/None so the
+        # UI simply doesn't render the per-doc badge (correct for a corpus we
+        # know is indexed). Chat + document listing are unaffected.
         proj["indexed_chunks"] = None
         proj["has_indexed_chunks"] = None
 
