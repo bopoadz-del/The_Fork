@@ -1,116 +1,77 @@
-# Construction Knowledge Base — MVP scaffold
+# Construction Knowledge Base
 
-> **Status: MVP scaffold. Full corpus pending operator review.**
-> Only 3 demo entries are encoded so far (one per domain). The loader, evaluator,
-> workflow validator, and 5-stage test gates are wired and passing. Once the
-> operator approves these three entries' shape and provenance handling, the
-> remaining entries from the source corpus will be added in the same schema.
+_Generated from `app/knowledge/construction_kb.json` (single source of truth) — version `2026.06.30-general-corpus`, 47 entries._
 
-## Domains
 
-- `construction.buildings` — high-rise structures
-- `construction.concrete` — mix design, mass-pour heat, high-strength, precast, RCC (cross-cuts buildings and roads)
-- `construction.roads` — earthworks, haulage, compaction, geotech, pavements, tunnels
-- `construction.procurement` — tendering / payments / change management
+**General construction-engineering priors** — NOT code-of-practice design values. Every entry is kept GENERAL (not tied to a location or project). Values are site-experience references; **verify against your project specification and applicable standards** before use. Entries at credibility tier <=3 surface this warning automatically via the loader.
 
-The knowledge is treated as general construction priors. Provenance is kept as an
-audit trail (which source documents and projects the formulas / processes were
-extracted from), but applicability is not restricted by region or project. Where
-a specific entry IS project- or region-specific, the JSON sets the corresponding
-field and the loader surfaces a "verify against your project spec" warning.
 
-## Schema (per entry)
+Four domains: `construction.buildings` · `construction.concrete` · `construction.roads` (incl. earthworks + geotech) · `construction.procurement`.
 
-```
-id, domain, type (formula|threshold|rule|decision_pattern|checklist|reference_design|workflow),
-title, statement, expression, variables{unit,desc}, thresholds,
-applicability {applies_to[], region_specific, project_specific, standards_cross_ref[]},
-remediation[],
-provenance {source, project, confidence, verified_against_standard},
-credibility_tier (1-5),
-needs_review (bool)
-```
 
-For `type=workflow`: also `states[]`, `transitions[{from,to,guard}]`,
-`required_documents[]`, `approval_roles[]`.
+## construction.buildings  (20 entries)
 
-## Credibility tiers
+| id | type | statement | tier | review |
+|---|---|---|---|---|
+| `columns.coupler_rule` | rule | Reinforcement-splicing rule for columns: mechanical couplers are required for bars larger  | 3 |  |
+| `columns.high_strength` | threshold | Columns using concrete characteristic strength above 60 N/mm2 are treated as high-strength | 3 |  |
+| `columns.value_engineering_grade_up` | decision_pattern | Value-engineering pattern observed on the tower: increasing column concrete grade from 60  | 3 |  |
+| `diaphragm_wall.panel_sequence` | reference_design | Reference construction for a cast-in-situ diaphragm (slurry) wall, built as a 5-step panel | 3 |  |
+| `enabling.tech_limits` | reference_design | Indicative technology envelopes used on high-rise enabling/superstructure works. Deep foun | 3 |  |
+| `facade.sealant_joint_rules` | rule | Rules for facade weatherseal (movement-joint) sealant. Minimum sealant depth 6 mm; minimum | 3 |  |
+| `foundation.dewatering_stop_floors` | rule | Construction dewatering must continue until the permanent structure's accumulated dead loa | 2 | yes |
+| `foundation.shrinkage_strip_1200mm` | threshold | A 1.2 m (1200 mm) wide shrinkage/pour strip is left open at the raft-to-podium junction to | 3 |  |
+| `foundation.uplift_fos` | formula | Factor of safety against hydrostatic/buoyant uplift = available counterweight (dead load + | 4 |  |
+| `foundation.uplift_remediation_tension_piles` | decision_pattern | Decision pattern paired with foundation.uplift_fos. WHEN the uplift factor of safety (coun | 3 |  |
+| `highrise.definition_contextual` | rule | There is no single universal floor-count that defines a 'high-rise'. The threshold is juri | 3 |  |
+| `mep.commissioning_sequence` | checklist | MEP commissioning is sequenced and driven by activity-interface charts that map the depend | 3 |  |
+| `posttension.five_day_cycle` | reference_design | Reference floor-cycle for a post-tensioned slab high-rise: a 5-day cycle per floor (form/r | 3 |  |
+| `posttension.storage_checklist` | checklist | Storage/handling checklist for post-tensioning (PT) components before stressing. | 3 |  |
+| `slabs.flat_vs_drophead` | decision_pattern | Decision pattern for high-rise floor slabs. A flat two-way plate gives the simplest soffit | 3 |  |
+| `thermal.core_temp_limit` | threshold | Peak internal (core) temperature of a mass-concrete pour must be kept at or below 70 degC  | 3 |  |
+| `thermal.equilibrium_time` | formula | Time for a mass concrete pour of half-thickness X (m) to reach thermal equilibrium with am | 3 |  |
+| `thermal.gradient_limit` | threshold | The temperature differential between the concrete core and its surface (T_core - T_surface | 3 |  |
+| `thermal.ice_cost_coeff` | reference_design | Decision aid for lowering fresh-concrete placing temperature: the choice between supplemen | 3 |  |
+| `thermal.monitoring_protocol` | checklist | Thermocouple monitoring protocol for mass-concrete pours, used to enforce thermal.core_tem | 3 |  |
 
-| Tier | Meaning |
-|---|---|
-| 5 | Cross-checked vs cited standard + dimensionally valid |
-| 4 | Dimensionally valid + consistent worked example (controlled documents) |
-| 3 | Single-project site experience — DEFAULT |
-| 2 | Ambiguous scan / needs_review |
-| 1 | Unverified |
+## construction.concrete  (3 entries)
 
-`evaluate()` and `validate_transition()` always surface a `"verify against your project spec or applicable standards"`
-warning when tier <= 3 OR `region_specific` is set OR `project_specific` is set. Tier 4 and
-5 entries skip the auto-warning unless region- or project-tagged.
+| id | type | statement | tier | review |
+|---|---|---|---|---|
+| `concrete.grade_selection` | rule | Select compressive strength grade by element function. Core walls, columns and other prima | 3 |  |
+| `rcc.compaction_95spd` | threshold | Roller-compacted concrete must be compacted to greater than 95% of Standard Proctor Densit | 3 |  |
+| `rcc.mix_design` | reference_design | Reference RCC mix and placement envelope. Aggregate grading (percent passing): 38 mm = 100 | 3 |  |
 
-## MVP entries
+## construction.procurement  (3 entries)
 
-### 1. `thermal.equilibrium_time` (formula, `construction.buildings`)
+| id | type | statement | tier | review |
+|---|---|---|---|---|
+| `procurement.change_management` | workflow | Governs the change-management cycle from a Request for Modification through an internal Ba | 4 |  |
+| `procurement.interim_payment_flow` | workflow | Governs the progress / interim payment cycle from a registered contractor payment request  | 4 |  |
+| `procurement.tender_lifecycle` | workflow | Job Requisition -> Sole Source justification (optional) -> Request for Authority to Tender | 4 |  |
 
-Mass-concrete pour equilibrium time as a function of half-thickness.
+## construction.roads  (21 entries)
 
-- **Expression:** `168 * (X / 1.5)**2` (X in metres, result in hours)
-- **Worked example:** X = 1.2 m -> 107.52 hr
-- **Provenance:** SMGTC552 part 2, site_experience source
-- **Credibility tier:** 3 (auto-warns on every evaluate call)
-
-### 2. `earthworks.swelling_factor` (formula, `construction.roads`)
-
-Swelling factor from Modified Proctor density, loose density, and compaction factor.
-
-- **Expression:** `(A * C) / B` (A, B in t/m^3; C as raw percent number)
-- **Worked example:** Sub-base row A=2.18, B=1.6, C=96 -> 130.8
-- **Convention note:** The published source table value is 1.31 — the published convention treats
-  C as a decimal (0.96) while the formula uses C raw (96). The entry's `statement` field
-  documents this; one of the test gates locks in the convention.
-- **Provenance:** Message_from_MGTC55234 sect 2, cross-referenced to AASHTO T 180-93 (Modified Proctor)
-- **Credibility tier:** 3 (auto-warns on every evaluate call)
-
-### 3. `procurement.tender_lifecycle` (workflow, `construction.procurement`)
-
-Construction tender lifecycle state machine.
-
-- **States:** `JOB_REQUISITION -> SOLE_SOURCE_REVIEW? -> RAT_REQUESTED -> RAT_ISSUED -> RFP_ISSUED -> TENDER_QUERIES -> TENDER_ANALYSIS -> PREFERRED_TENDERER -> BAFO -> AWARDED`
-- **Guard example:** `RAT_ISSUED -> RFP_ISSUED` requires `context.rat_number is not None`
-- **Required documents:** JR_TEM-601, SSJ_TEM-602, RAT, RFP_TEM-613, TenderEvaluationReport_TEM-624, AwardRecommendationLetter_TEM-625
-- **Approval roles:** Estimator, VP_Project_Management, Contracts_Manager, Tender_Analysis_Committee, Project_Director
-- **Provenance:** PRC-601 through PRC-604 (controlled documents)
-- **Credibility tier:** 4 (no auto-warn — adopt as-is if it matches your org's tender process)
-
-## Loader API
-
-```python
-from app.blocks._knowledge import (
-    load_knowledge,        # list entries; optional domain filter
-    get_rule,              # fetch one entry by id
-    evaluate,              # run a formula entry against numeric inputs
-    validate_transition,   # run a workflow entry against (state, event, context)
-)
-```
-
-Returned dicts always include `provenance`, `credibility_tier`, and a `warnings` list
-so the calling LLM never silently applies a project-sourced prior elsewhere.
-
-## Safe guard parser
-
-Workflow `guard` strings are author-controlled JSON but are still treated as untrusted
-input. `_safe_guard_eval` parses each guard with `ast.parse(mode="eval")` and walks the
-tree against a strict allowlist:
-
-- `ast.Constant`, `ast.Name "context"`, `ast.Attribute` (only on `context`),
-  `ast.Subscript` (only on `context`)
-- `ast.Compare` with `Eq | NotEq | Lt | LtE | Gt | GtE | Is | IsNot | In | NotIn`
-- `ast.BoolOp` (`And`, `Or`), `ast.UnaryOp` (`Not`)
-
-Everything else — `ast.Call`, `ast.Lambda`, imports, free names, `ast.BinOp` arithmetic —
-is rejected with `GuardEvalError` before any value is produced.
-
-## Tests
-
-`tests/test_construction_kb.py` — 28 cases covering the 5-stage gates per entry plus
-loader-shape tests and a security suite for the guard parser. All passing.
+| id | type | statement | tier | review |
+|---|---|---|---|---|
+| `asphalt.bitumen_content` | reference_design | Reference bitumen content by asphalt course: base course 3-6%, binder course approximately | 3 |  |
+| `asphalt.compaction_trial_30m` | threshold | Before full hot-mix asphalt production paving, lay a compaction trial section of at least  | 3 |  |
+| `asphalt.plant_layout` | reference_design | Reference hot-mix asphalt batch plant layout, in process order: cold feed bins, dryer drum | 3 |  |
+| `asphalt.rolling_rules` | checklist | Breakdown rolling checklist for hot-mix asphalt: keep breakdown-rolled layer thickness no  | 3 |  |
+| `compaction.aashto_t180_ref` | reference_design | AASHTO T 180-93 (Modified Proctor) determines the laboratory maximum dry density and optim | 4 |  |
+| `compaction.acceptance` | threshold | Minimum field compaction acceptance levels (percent of laboratory maximum dry density, Mod | 3 |  |
+| `compaction.field_density` | formula | Field compaction percentage = (field dry density / laboratory maximum dry density) * 100,  | 4 |  |
+| `dewatering.method_selection` | reference_design | Select a dewatering method by soil type, required water-table lowering, and permeability.  | 3 |  |
+| `earthworks.compacted_material` | formula | Compacted (in-place) quantity = Loose quantity / Swelling factor, i.e. Compacted = E_loose | 4 |  |
+| `earthworks.equipment_by_haul` | decision_pattern | Select earthmoving equipment by haul distance: haul <= 200 m, straight dozing (push with d | 3 |  |
+| `earthworks.material_properties_table` | reference_design | Reference properties per material layer. Columns: A = Modified Proctor density (t/m3), B = | 3 |  |
+| `earthworks.method_correction_lesson` | decision_pattern | Context-aware equipment selection by material. Holland loaders suit DUNE SAND ONLY -- thei | 3 |  |
+| `earthworks.production_rates` | reference_design | Indicative production rates and specifications. Dozers: D8K 130-200 m3/hr, D9H 160-230 m3/ | 3 |  |
+| `earthworks.swelling_factor` | formula | Swelling factor = (Proctor density A x Compaction factor C) / Loose density B. Reference t | 3 |  |
+| `equipment.crane_rating_check` | reference_design | Always check the required lifted capacity per crane against the crane's rated-load (capaci | 3 |  |
+| `ground_improvement.dynamic_compaction` | formula | Depth of ground improvement from dynamic (drop-weight) compaction: D = 0.5 * sqrt(M * H),  | 4 |  |
+| `ground_improvement.taxonomy` | reference_design | Ground improvement techniques: (1) MSE / reinforced-earth walls (mechanically stabilized e | 3 |  |
+| `roads.heavy_lift_feasibility` | formula | Required lifted capacity per crane for a multi-crane (tandem) beam erection = beam weight  | 4 |  |
+| `roads.precast_ibeam_type4` | reference_design | Reference precast prestressed I-beam, Type-4 section: span 22.25 m, weight 66.6 T. Erectio | 3 |  |
+| `roads.tunnel_cross_section` | reference_design | Reference cross-section for a cut-and-cover road underpass / tunnel. The combined mass-con | 3 |  |
+| `stabilization.taxonomy` | rule | Stabilization methods classified by mechanism. (1) Mechanical / granular stabilization: bl | 3 |  |

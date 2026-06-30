@@ -75,10 +75,10 @@ def test_thermal_empirical_range():
 def test_thermal_operational_envelope():
     out = kb.evaluate("thermal.equilibrium_time", X=1.2)
     assert "provenance" in out
-    # Provenance preserves the source/project audit trail; we only assert
-    # the project field exists rather than pin a specific source name so
-    # the JSON can be edited without breaking the test.
-    assert out["provenance"].get("project")
+    # Provenance preserves the source citation. Entries are kept GENERAL (no
+    # location/project tie — region_specific/project_specific false, project
+    # null), so we assert the source citation exists rather than a project.
+    assert out["provenance"].get("source")
     assert isinstance(out["credibility_tier"], int)
     assert isinstance(out["warnings"], list)
     # Tier 3 (site-experience) entries surface the verify-against-spec warning.
@@ -216,11 +216,50 @@ def test_load_knowledge_filters_by_domain():
 def test_load_knowledge_no_filter_returns_all():
     all_entries = kb.load_knowledge()
     ids = {e["id"] for e in all_entries}
-    assert ids == {
+    # The full general corpus (buildings + roads/earthworks + concrete +
+    # procurement). The three pilot entries must remain; the corpus is large.
+    assert {
         "thermal.equilibrium_time",
         "earthworks.swelling_factor",
         "procurement.tender_lifecycle",
-    }
+    } <= ids
+    assert len(ids) >= 40, f"expected the full general corpus, got {len(ids)}"
+
+
+def test_every_entry_is_general_and_valid():
+    """No entry may be tied to a location/project, and every formula must
+    sympy-parse, every workflow guard must be safe-evaluable."""
+    import sympy
+    for e in kb.load_knowledge():
+        ap = e.get("applicability", {})
+        assert ap.get("region_specific") in (False, None), e["id"]
+        assert ap.get("project_specific") in (False, None), e["id"]
+        assert not (e.get("provenance") or {}).get("project"), f"{e['id']} ties to a project"
+        if e.get("type") == "formula" and e.get("expression"):
+            sympy.sympify(e["expression"])  # raises on bad expression
+
+
+def test_new_corpus_worked_examples_reproduce():
+    """Spot-check the load-bearing formulas across domains evaluate correctly."""
+    assert kb.evaluate("foundation.uplift_fos", counterweight=34, uplift=100)["result"] == pytest.approx(0.34, abs=1e-6)
+    assert kb.evaluate("ground_improvement.dynamic_compaction", M=20, H=20)["result"] == pytest.approx(10.0, abs=1e-6)
+    assert kb.evaluate("earthworks.compacted_material", E_loose=18, D=1.35)["result"] == pytest.approx(13.333, abs=1e-2)
+    assert kb.evaluate("compaction.field_density", field_dry_density=2.104, lab_mdd=2.131)["result"] == pytest.approx(98.73, abs=1e-1)
+    assert kb.evaluate("roads.heavy_lift_feasibility", beam_wt=66.6, rigging_factor=1.1, n_cranes=2)["result"] == pytest.approx(36.63, abs=1e-2)
+
+
+def test_new_procurement_workflows_enforce_key_rules():
+    """Payment Advice blocked without a passed checklist; VSR blocked without
+    an attached back-up sheet."""
+    pay_block = kb.validate_transition("procurement.interim_payment_flow", "CHECKLIST_REVIEW",
+                                       {"to": "PAYMENT_ADVICE_ISSUED"}, {"payment_certificate_checklist_passed": False})
+    assert pay_block["allowed"] is False
+    pay_ok = kb.validate_transition("procurement.interim_payment_flow", "CHECKLIST_REVIEW",
+                                    {"to": "PAYMENT_ADVICE_ISSUED"}, {"payment_certificate_checklist_passed": True})
+    assert pay_ok["allowed"] is True
+    vsr_block = kb.validate_transition("procurement.change_management", "BACKUP_SHEET",
+                                       {"to": "VSR"}, {"back_up_sheet_attached": False, "cost_quality_schedule_assessed": False})
+    assert vsr_block["allowed"] is False
 
 
 def test_evaluate_rejects_workflow():
