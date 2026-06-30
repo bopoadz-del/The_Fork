@@ -27,6 +27,10 @@ schedules, reports) and gives the operator a chat surface that:
   full ES/EF/LS/LF, critical path)
 - Reconciles drawing quantities against BOQ totals (variance math via
   sympy) and produces recommendations
+- Answers engineering questions from a curated **construction knowledge
+  base** (concrete, buildings, roads/earthworks/geotech, procurement) —
+  every answer is a cited rule with provenance + a credibility tier, and
+  formula rules can be evaluated against supplied values
 - Cites real documents with confidence scores in every answer
 
 ---
@@ -76,6 +80,33 @@ Retrieval:
 - RAG injection gate: only the `project-assistant` agent gets
   per-turn RAG context (`app/core/rag/inject.py`). Confidence
   threshold 0.4, daily token budget 500K, fallback prefix on miss.
+
+---
+
+## Construction knowledge base
+
+A curated, general-purpose corpus of construction-engineering rules lives in
+[`app/knowledge/construction_kb.json`](app/knowledge/construction_kb.json)
+(human-readable mirror:
+[`docs/knowledge/construction_kb.md`](docs/knowledge/construction_kb.md)).
+It is deliberately **not** tied to any one project or region — entries cover
+concrete, buildings, roads/earthworks/geotech, and procurement, each carrying
+a credibility tier, provenance, and "verify against your spec" warnings for
+region- or project-specific values.
+
+- `app/blocks/_knowledge.py` loads/validates the corpus and exposes
+  `evaluate(rule_id, **values)` (sympy) for formula rules and
+  `search_knowledge(query, top_k, domain)` for token-overlap retrieval.
+- The `construction_advisor` block turns a natural-language question into
+  cited rule matches and evaluates the top formula when values are supplied.
+- `smart_orchestrator` routes engineering queries (mass-concrete equilibrium
+  time, compaction acceptance, dewatering, dynamic compaction, bitumen
+  content, heavy-lift uplift FOS, diaphragm wall, …) to that block.
+
+Adding rules: edit the JSON (keep entries general — `region_specific` /
+`project_specific` flags and a null `provenance.project`), then run
+`pytest tests/test_construction_kb.py` to validate every entry, formula, and
+worked example before committing.
 
 ---
 
