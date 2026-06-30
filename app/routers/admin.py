@@ -152,6 +152,38 @@ def admin_approve_project(project_id: str, auth: dict = Depends(require_api_key)
     return {"status": "approved", "project_id": project_id}
 
 
+@router.get("/v1/admin/projects/archived")
+def admin_list_archived_projects(auth: dict = Depends(require_api_key)):
+    """List soft-archived (hidden) projects — so an admin can see what junk is
+    eligible for a permanent purge. Read-only."""
+    _require_admin(auth)
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    out = []
+    with SessionLocal() as s:
+        for p in s.query(Project).filter(Project.status == "archived").all():
+            out.append({"id": p.id, "name": p.name, "status": p.status})
+    return {"archived": out, "count": len(out)}
+
+
+@router.post("/v1/admin/projects/{project_id}/purge")
+def admin_purge_archived_project(project_id: str,
+                                 auth: dict = Depends(require_api_key)):
+    """PERMANENTLY purge an ARCHIVED project (its RAG chunks + row).
+
+    Tightly guarded: only works on already-archived projects, and refuses the
+    master corpus / backing / general-knowledge ids — so live RAG can never be
+    destroyed through here (the never-delete-RAG rule still holds).
+    """
+    _require_admin(auth)
+    from app.core import projects as _projects
+    result = _projects.purge_archived_project(project_id)
+    if result == "purged":
+        return {"status": "purged", "project_id": project_id}
+    code = {"protected": 403, "not_found": 404, "not_archived": 409}.get(result, 400)
+    raise HTTPException(code, f"cannot purge '{project_id}': {result}")
+
+
 @router.get("/v1/admin/training/list")
 def admin_training_list(auth: dict = Depends(require_api_key)):
     """List all training-scenario JSONL files on the server."""

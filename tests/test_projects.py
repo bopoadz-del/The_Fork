@@ -106,6 +106,29 @@ def test_approve_project_makes_it_admin_visible(client):
     assert store.approve_project("does-not-exist") is False
 
 
+def test_purge_archived_project_only_touches_archived(client):
+    """purge_archived_project PERMANENTLY removes an ARCHIVED project's row +
+    chunks, but REFUSES active projects and protected master/backing ids — so
+    the never-delete-RAG rule still holds for everything live."""
+    from app.core import projects as store
+    proj = _new_project(client, "Junk To Purge")
+    pid = proj["id"]
+    # active project: refused
+    assert store.purge_archived_project(pid) == "not_archived"
+    # protected master ids: refused even if somehow archived
+    assert store.purge_archived_project("dar_al_arkan_master") == "protected"
+    assert store.purge_archived_project("projects_folder") == "protected"
+    # archive it, THEN purge succeeds and the row is gone
+    assert store.archive_project(pid) is True
+    assert store.purge_archived_project(pid) == "purged"
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    with SessionLocal() as s:
+        assert s.get(Project, pid) is None  # row permanently removed
+    # missing id: refused cleanly
+    assert store.purge_archived_project("nope-xyz") == "not_found"
+
+
 # ── 0.3 Execution-intent model — attaching a document runs nothing ──────────
 
 def test_document_upload_rejects_oversize(client, monkeypatch):

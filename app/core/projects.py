@@ -448,6 +448,47 @@ def delete_project(project_id: str) -> bool:
             return True
 
 
+# Projects that may NEVER be hard-purged regardless of status — the master
+# corpus, its backing source, and the shared general-knowledge base.
+_PURGE_PROTECTED_IDS = {
+    MASTER_CORPUS_PROJECT_ID,
+    MASTER_CORPUS_SOURCE_PROJECT_ID,
+    os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material").split(",")[0].strip(),
+}
+
+
+def purge_archived_project(project_id: str) -> str:
+    """PERMANENTLY remove an ARCHIVED project — its RAG chunks AND its row.
+
+    SAFETY (never-delete-RAG rule still holds for everything live):
+      * refuses protected master/backing/general-knowledge ids outright;
+      * refuses any project whose status is not 'archived' — so active
+        projects and the master corpus can never be purged through here.
+    Returns one of: 'protected' | 'not_found' | 'not_archived' | 'purged'.
+    """
+    if project_id in _PURGE_PROTECTED_IDS:
+        return "protected"
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return "not_found"
+            if getattr(project, "status", "active") != "archived":
+                return "not_archived"
+    # Clear the vector store first, then hard-delete the row (cascade clears
+    # the chunks table). Both, belt-and-suspenders.
+    try:
+        from app.core import doc_index
+        doc_index.purge_project_index(project_id)
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "purge_archived_project: index purge failed for %s: %s", project_id, exc)
+    delete_project(project_id)
+    return "purged"
+
+
 def set_aconex(project_id: str, connected: bool) -> bool:
     """Set the Aconex connection flag. Stub for the full connector (Roadmap V2)."""
     _ensure_db()
