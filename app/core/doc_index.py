@@ -149,7 +149,7 @@ def _ocr_pdf_page(page) -> str:
         from app.blocks.ocr import _ocr_lang
     except Exception:
         return ""
-    dpi = int(os.getenv("PDF_OCR_DPI", "200"))
+    dpi = int(os.getenv("PDF_OCR_DPI", "150"))
     tmp_path: Optional[str] = None
     pix = None
     try:
@@ -168,6 +168,21 @@ def _ocr_pdf_page(page) -> str:
                 os.unlink(tmp_path)
             except Exception:
                 pass
+
+
+def _pdf_tables_enabled(file_path: str) -> bool:
+    """Whether to run pdfplumber table extraction on this PDF.
+
+    pdfplumber loads the whole PDF into memory, which is the OOM hazard on the
+    2 GB box for large scans. Skip it above ``PDF_TABLES_MAX_MB`` — per-page OCR
+    still captures the text, and image-only scans have no extractable tables
+    anyway. Digital table BOQs (small files) keep the table extraction.
+    """
+    try:
+        max_mb = float(os.getenv("PDF_TABLES_MAX_MB", "25"))
+        return (os.path.getsize(file_path) / (1024 * 1024)) <= max_mb
+    except Exception:
+        return False
 
 
 def _pdf_tables_markdown(plumber_page) -> str:
@@ -207,11 +222,14 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
     try:
         with file_crypto.open_plaintext(file_path) as readable_path:
             plumber = None
-            try:
-                import pdfplumber
-                plumber = pdfplumber.open(readable_path)
-            except Exception:
-                plumber = None
+            # Skip pdfplumber on large scans — it loads the whole PDF and is
+            # the OOM hazard; per-page OCR still captures the text.
+            if _pdf_tables_enabled(file_path):
+                try:
+                    import pdfplumber
+                    plumber = pdfplumber.open(readable_path)
+                except Exception:
+                    plumber = None
             doc = fitz.open(readable_path)
             try:
                 for i, page in enumerate(doc):

@@ -117,6 +117,19 @@ def test_extract_pdf_ocrs_image_pages_even_when_cover_has_text(tmp_path, monkeyp
     assert meta.get("ocr_low_quality") is True
 
 
+def test_pdf_tables_disabled_for_large_files(monkeypatch):
+    """pdfplumber loads the whole PDF into memory — the OOM hazard on a large
+    scan. Skip it above PDF_TABLES_MAX_MB (per-page OCR still captures text;
+    image-only scans have no extractable tables anyway). Small files keep it."""
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    monkeypatch.setenv("PDF_TABLES_MAX_MB", "25")
+    monkeypatch.setattr("os.path.getsize", lambda p: 60 * 1024 * 1024)  # 60 MB
+    assert doc_index._pdf_tables_enabled("big_scan.pdf") is False
+    monkeypatch.setattr("os.path.getsize", lambda p: 2 * 1024 * 1024)   # 2 MB
+    assert doc_index._pdf_tables_enabled("small.pdf") is True
+
+
 def test_extract_pdf_ocr_page_cap_bounds_memory(tmp_path, monkeypatch):
     """OCR is capped so a long scan can't OOM the 2GB box: pages beyond the
     cap set ocr_truncated and are NOT OCR'd."""
