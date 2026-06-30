@@ -227,3 +227,45 @@ async def test_run_drive_folder_import_uses_helper(isolated_data_dir, monkeypatc
     names = {d["original_name"] for d in docs}
     assert "risk_register.pdf" in names, f"Worker did not import nested files; got {names}"
     assert "subcontract.docx" in names
+
+
+def test_index_folder_route_is_async_returns_queued(isolated_data_dir, monkeypatch):
+    """The index-folder route must NOT walk Drive synchronously (a real folder
+    exceeds the request timeout -> 502). It validates + queues a background
+    worker and returns 202 'queued' immediately."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.dependencies import require_user
+    from app.core import projects as projects_mod, users as users_mod
+    from app.routers import drive as drive_router
+
+    projects_mod.init_db()
+    users_mod.ensure_user_exists("idx-user")
+    projects_mod.create_project(
+        name="Idx", user_id="idx-user", project_id="idx-proj-1", origin="user_create",
+    )
+    app.dependency_overrides[require_user] = lambda: {"user_id": "idx-user", "role": "user"}
+
+    async def fake_token(uid):  # connection check passes
+        return "tok"
+    monkeypatch.setattr("app.core.drive_auth.get_access_token", fake_token)
+
+    captured = {}
+    async def fake_bg(**kwargs):  # capture that the walk was QUEUED, not run inline
+        captured.update(kwargs)
+    monkeypatch.setattr(drive_router, "_run_index_folder_bg", fake_bg)
+
+    try:
+        with TestClient(app) as c:
+            r = c.post(
+                "/v1/projects/idx-proj-1/drive/index-folder",
+                json={"folder_id": "F1", "max_files": 7, "max_depth": 3},
+            )
+        assert r.status_code == 202, r.text
+        assert r.json()["status"] == "queued"
+        assert captured.get("folder_id") == "F1"
+        assert captured.get("max_files") == 7
+        assert captured.get("project_id") == "idx-proj-1"
+    finally:
+        app.dependency_overrides.pop(require_user, None)
+        projects_mod.delete_project("idx-proj-1")

@@ -4,7 +4,9 @@ All routes require Authorization: Bearer like other /v1/* routes, EXCEPT
 /v1/drive/callback — Google calls that directly and cannot send our header,
 so it is protected by the single-use OAuth `state` value instead.
 """
+import asyncio
 import base64
+import logging
 import os
 import secrets
 import time
@@ -207,40 +209,92 @@ class DriveIndexFolderRequest(BaseModel):
     include_extensions: list[str] | None = None  # whitelist override; default = ALLOWED_DOC_EXTENSIONS
 
 
-@router.post("/v1/projects/{project_id}/drive/index-folder", status_code=201)
+async def _run_index_folder_bg(
+    *,
+    project_id: str,
+    user_id: str,
+    folder_id: str | None,
+    max_files: int,
+    max_depth: int,
+    role: str,
+    include_extensions: list[str] | None,
+) -> None:
+    """Background worker: walk a Drive folder into ``project_id``, then DRAIN
+    the per-file indexing tasks so chunks are written before the worker exits.
+    Mirrors ``admin._run_drive_folder_import`` so a folder import never blocks
+    the HTTP request — a synchronous walk of a real folder (download + encrypt
+    + store + index each file) easily exceeds the Render proxy timeout (502)."""
+    log = logging.getLogger(__name__)
+    try:
+        access_token = await drive_auth.get_access_token(user_id)
+        _bg = BackgroundTasks()
+        await _walk_drive_folder_into_project(
+            project_id=project_id,
+            user_id=user_id,
+            access_token=access_token,
+            folder_id=folder_id,
+            max_files=max_files,
+            max_depth=max_depth,
+            role=role,
+            background_tasks=_bg,
+            include_extensions=include_extensions,
+        )
+        # Drain the queued maybe_eager_index tasks inline so the chunks land
+        # before this worker returns (keeps doc/chunk counters consistent).
+        for task in _bg.tasks:
+            if asyncio.iscoroutinefunction(task.func):
+                await task.func(*task.args, **task.kwargs)
+            else:
+                task.func(*task.args, **task.kwargs)
+    except Exception as exc:  # noqa: BLE001 — background; never raise
+        log.exception(
+            "index-folder bg import failed project=%s folder=%s: %s",
+            project_id, folder_id, exc,
+        )
+
+
+@router.post("/v1/projects/{project_id}/drive/index-folder", status_code=202)
 async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
                              background_tasks: BackgroundTasks,
                              auth: dict = Depends(require_user)):
-    """Walk a Google Drive folder + auto-import every supported file into the project.
+    """Queue an async Drive-folder import into the project.
 
-    Recurses up to ``max_depth`` levels deep, stopping at ``max_files`` total
-    imports. Each downloaded file goes through the SAME path the single-file
-    import uses — encrypted at rest, indexed via ``doc_index.maybe_eager_index``.
-    Returns a per-file status list so the UI can show what landed and what
-    was skipped (wrong extension, native Google Doc not handled, etc.).
+    Validates ownership + the Drive connection up front, then runs the
+    recursive walk (download → encrypt-at-rest → RAG index, up to ``max_depth``
+    / ``max_files``) in the BACKGROUND and returns immediately. A synchronous
+    walk of a real folder exceeds the request timeout (502); the import now
+    progresses after the response and the caller polls the project's document
+    list for progress.
     """
     proj = store.get_project(project_id, user_id=auth["user_id"])
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
+    # Validate the connection now so a disconnected Drive fails fast (409)
+    # instead of silently no-op'ing in the background.
     try:
-        access_token = await drive_auth.get_access_token(auth["user_id"])
+        await drive_auth.get_access_token(auth["user_id"])
     except drive_auth.DriveNotConnected:
         raise HTTPException(409, "Google Drive is not connected.")
     except drive_auth.DriveAuthError as e:
         raise HTTPException(409, f"{e} Reconnect Google Drive.")
 
-    result = await _walk_drive_folder_into_project(
+    background_tasks.add_task(
+        _run_index_folder_bg,
         project_id=project_id,
         user_id=auth["user_id"],
-        access_token=access_token,
         folder_id=req.folder_id,
         max_files=req.max_files,
         max_depth=req.max_depth,
         role=req.role,
-        background_tasks=background_tasks,
         include_extensions=req.include_extensions,
     )
-    return result
+    return {
+        "status": "queued",
+        "project_id": project_id,
+        "folder_id": req.folder_id,
+        "max_files": req.max_files,
+        "max_depth": req.max_depth,
+    }
 
 
 async def _walk_drive_folder_into_project(
