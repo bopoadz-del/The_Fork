@@ -189,7 +189,19 @@ def _ensure_schema(url: str) -> None:
         if url in _INITIALIZED_URLS:
             return
         _ensure_sqlite_parent_dir(url)
-        RagChunk.__table__.create(bind=_engine_for_url(url), checkfirst=True)
+        eng = _engine_for_url(url)
+        RagChunk.__table__.create(bind=eng, checkfirst=True)
+        # `checkfirst=True` above SKIPS the whole table create — indexes
+        # included — when `chunks` already exists. A prod table that predates
+        # the idx_chunks_project declaration therefore never got the btree, so
+        # COUNT/filter-by-project seq-scans the full table (~11s on the master
+        # corpus; pgvector search stays fast via its own index). Create each
+        # declared index explicitly + idempotently so legacy tables get it too.
+        for index in RagChunk.__table__.indexes:
+            try:
+                index.create(bind=eng, checkfirst=True)
+            except Exception:  # noqa: BLE001 — never block startup on an index
+                pass
         _INITIALIZED_URLS.add(url)
 
 
