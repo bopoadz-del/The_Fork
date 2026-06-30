@@ -944,12 +944,33 @@ def _boq_summary_chunks(result: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _boq_no_total_guard(filename: str) -> str:
+    """A guard chunk emitted when a document is clearly a BOQ but NO verified
+    total could be computed from it (scanned/image PDF, or an unparseable
+    table). It instructs the model NOT to state a total, so chat can't
+    synthesise a confident-but-wrong 'total package value' from partial OCR
+    text. Accuracy over coverage (no-assumptions rule)."""
+    return (
+        f"VERIFIED-TOTAL GUARD for '{filename}': this is a Bill of Quantities, "
+        "but NO verified total could be computed from it — it appears to be a "
+        "scanned/image PDF or its priced table could not be parsed, so only "
+        "fragments were extracted. Do NOT state a total package value, total "
+        "contract value, or any overall BOQ total from this document; any such "
+        "figure would be partial or wrong. To get an accurate total, an "
+        "xlsx/csv version of this BOQ is required."
+    )
+
+
 def _boq_chunks_for_document(
     file_path: str, filename: str, ext: str, project_id: str
 ) -> List[str]:
     """Return BOQ summary chunks for a BOQ-type document, or [] otherwise.
 
-    Never raises — a parse failure just yields no extra chunks so the primary
+    When the file is clearly a BOQ (by filename) but no total could be
+    computed — e.g. a scanned PDF pdfplumber can't parse — emit a guard chunk
+    instead, so the model doesn't invent a total from partial OCR text.
+
+    Never raises — a parse failure just yields the guard (or []) so the primary
     text indexing is unaffected.
     """
     if not file_path or not _looks_like_boq(filename, ext):
@@ -962,11 +983,20 @@ def _boq_chunks_for_document(
                 {"file_path": file_path, "project_id": project_id}
             )
         )
-        return _boq_summary_chunks(result)
+        chunks = _boq_summary_chunks(result)
+        if chunks:
+            return chunks
+        # No verified total. If the FILENAME clearly says BOQ (not just any
+        # spreadsheet), emit the guard so chat refuses to state a false total.
+        if _BOQ_NAME_RE.search(filename or ""):
+            return [_boq_no_total_guard(filename)]
+        return []
     except Exception as exc:  # noqa: BLE001 — never block indexing on a BOQ parse
         _logging.getLogger(__name__).warning(
             "BOQ wiring skipped for %s: %s", filename, exc
         )
+        if _BOQ_NAME_RE.search(filename or ""):
+            return [_boq_no_total_guard(filename)]
         return []
 
 

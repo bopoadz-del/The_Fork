@@ -464,6 +464,33 @@ def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, 
     assert "partial" in blob, f"pages_skipped>0 must hedge; chunks missing 'partial': {blob[:300]}"
 
 
+def test_boq_named_pdf_without_computable_total_emits_guard(fresh_db, tmp_path, monkeypatch):
+    """A BOQ-named PDF that boq_processor CANNOT total (scanned/unparseable)
+    must emit a guard chunk telling the model NOT to state a total — so it
+    can't synthesise a false 'total package value' from partial OCR text
+    (the demolition-BOQ failure mode: 8 chunks of a 675-page scan)."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
+    import app.blocks.boq_processor as boq
+
+    async def _no_total(self, input_data, params=None):
+        return {"status": "error", "error": "no tables found (scanned image PDF)"}
+    monkeypatch.setattr(boq.BOQProcessorBlock, "process", _no_total)
+
+    proj = projects_mod.create_project("Scanned BOQ")
+    pid = proj["id"]
+    doc_path = _write_txt_doc(tmp_path, "Demolition BOQ.pdf", b"scanned image content")
+    doc = projects_mod.add_document(pid, "Demolition BOQ.pdf", file_path=doc_path, size=21)
+
+    doc_index.index_document(pid, doc["id"])
+    blob = "\n".join(doc_index._load_index(pid)["documents"][0]["chunks"]).lower()
+    assert "do not state a total" in blob, f"missing no-total guard; chunks={blob[:200]}"
+
+
 def test_index_project_empty_project(fresh_db, monkeypatch):
     """Empty project produces a valid index file with no documents."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
