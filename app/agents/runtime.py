@@ -878,6 +878,74 @@ def _build_sources_from_audit(
     return [_format(c, _doc_name(c["doc_id"])) for c in by_score]
 
 
+# File extensions whose BOQs are safe to turn into a cost workbook on click.
+# Digital grids only: a scanned PDF BOQ won't parse and OOMs the 2 GB box
+# (memory the-fork-boq-always-xlsx), so PDFs are deliberately excluded here.
+_BOQ_COST_EXPORT_EXTS = (".xlsx", ".csv")
+_BOQ_NAME_HINTS = ("boq", "bill of quantities", "priced", "tender")
+
+
+def _is_cost_boq_source(doc: Dict[str, Any]) -> bool:
+    """Cheap, metadata-only test for 'this cited doc can back a cost-BOQ
+    export'. NEVER runs boq_processor — gating on name/type/extension keeps
+    the SSE end path off the OOM-prone parse. The real parse happens on click,
+    server-side, where it's bounded (and 422s honestly if the grid is empty)."""
+    name = (doc.get("original_name") or "").lower()
+    if not name.endswith(_BOQ_COST_EXPORT_EXTS):
+        return False
+    doc_type = (doc.get("doc_type") or "").lower()
+    return doc_type == "boq" or any(h in name for h in _BOQ_NAME_HINTS)
+
+
+def _build_exports_from_audit(
+    audit_rec: Dict[str, Any],
+    final_text: str = "",
+) -> List[Dict[str, Any]]:
+    """SSE end-event `exports` list — data-backed download offers for the bubble.
+
+    Each descriptor is something the platform can actually produce from a
+    document the answer CITED (not from routing intent — an offer that 422s on
+    click is worse than no offer). Pilot scope: only the cost BOQ, because its
+    export endpoint self-derives from a `document_id`. Schedule/EVM need inline
+    activities/periods that a chat turn doesn't yet produce — deferred.
+
+    Returns [] whenever the turn cited nothing exportable. One descriptor per
+    document (deduplicated), in cited order.
+    """
+    sources = _build_sources_from_audit(audit_rec, final_text)
+    if not sources:
+        return []
+    project_id = (audit_rec or {}).get("project_id")
+    if not project_id:
+        return []
+    try:
+        from app.core import projects as _projects
+    except Exception:
+        return []
+
+    exports: List[Dict[str, Any]] = []
+    seen: set = set()
+    for s in sources:
+        doc_id = s.get("doc_id")
+        if not doc_id or doc_id in seen:
+            continue
+        try:
+            doc = _projects.get_document(doc_id) or {}
+        except Exception:
+            continue
+        if not _is_cost_boq_source(doc):
+            continue
+        seen.add(doc_id)
+        exports.append({
+            "label": "Cost BOQ (Excel)",
+            "format": "xlsx",
+            "method": "POST",
+            "endpoint": f"/v1/projects/{project_id}/export/cost-boq",
+            "payload": {"document_id": doc_id, "currency": "SAR"},
+        })
+    return exports
+
+
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
@@ -1530,6 +1598,7 @@ class Agent:
                         "iterations": iteration + 1,
                         "messages": messages,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "exports": _build_exports_from_audit(_rag_audit, final_text),
                     }
 
             # Persist the assistant turn that contained the tool calls
@@ -1614,6 +1683,7 @@ class Agent:
             "messages": messages,
             "forced_final": True,
             "sources": _build_sources_from_audit(_rag_audit, final_text),
+            "exports": _build_exports_from_audit(_rag_audit, final_text),
         }
 
     async def chat_stream(
@@ -1963,6 +2033,7 @@ class Agent:
                         "type": "end",
                         "iterations": iteration + 1,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "exports": _build_exports_from_audit(_rag_audit, final_text),
                     }
                     return
 
@@ -2026,6 +2097,7 @@ class Agent:
             "iterations": MAX_TOOL_ITERATIONS,
             "forced_final": True,
             "sources": _build_sources_from_audit(_rag_audit, final_text),
+            "exports": _build_exports_from_audit(_rag_audit, final_text),
         }
 
     # ── Internals ─────────────────────────────────────────────────────────

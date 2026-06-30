@@ -90,6 +90,14 @@ interface ChatMessage {
     score: number
     confidence: 'High' | 'Medium' | 'Low'
   }>
+  /** Data-backed download offers from the SSE 'end' event (e.g. cost BOQ). */
+  exports?: Array<{
+    label: string
+    format: string
+    method: string
+    endpoint: string
+    payload: Record<string, unknown>
+  }>
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -972,10 +980,11 @@ export default function ProjectWorkspace() {
             } else if (evtType === 'end') {
               const finalContent = accumulatedContent
               const rawSources = Array.isArray(evt['sources']) ? (evt['sources'] as ChatMessage['sources']) : []
+              const rawExports = Array.isArray(evt['exports']) ? (evt['exports'] as ChatMessage['exports']) : []
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantMsgId
-                    ? { ...m, content: finalContent, streaming: false, toolStatus: undefined, sources: rawSources }
+                    ? { ...m, content: finalContent, streaming: false, toolStatus: undefined, sources: rawSources, exports: rawExports }
                     : m
                 )
               )
@@ -1250,6 +1259,39 @@ export default function ProjectWorkspace() {
                   URL.revokeObjectURL(objUrl)
                 })
                 .catch((e) => alert(`Download error: ${(e as Error).message}`))
+            }}
+            onExport={(descriptor) => {
+              // Data-backed download offer (e.g. cost BOQ). The descriptor's
+              // endpoint is server-relative; generation happens server-side on
+              // click (bounded), not in the chat hot path.
+              const token = getToken() || ''
+              void fetch(`${API_BASE}${descriptor.endpoint}`, {
+                method: descriptor.method || 'POST',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(descriptor.payload ?? {}),
+              })
+                .then(async (res) => {
+                  if (!res.ok) {
+                    const detail = await res.text().catch(() => '')
+                    alert(`Export failed (${res.status}): ${detail.slice(0, 200)}`)
+                    return
+                  }
+                  const blob = await res.blob()
+                  const a = document.createElement('a')
+                  const objUrl = URL.createObjectURL(blob)
+                  a.href = objUrl
+                  const cd = res.headers.get('Content-Disposition') || ''
+                  const m = /filename="?([^";]+)"?/.exec(cd)
+                  a.download = m?.[1] || `the-fork-export.${descriptor.format || 'xlsx'}`
+                  document.body.appendChild(a)
+                  a.click()
+                  a.remove()
+                  URL.revokeObjectURL(objUrl)
+                })
+                .catch((e) => alert(`Export error: ${(e as Error).message}`))
             }}
           />
           <ChatComposer

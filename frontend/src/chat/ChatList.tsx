@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef } from 'react'
 import ChatBubble from './ChatBubble'
-import type { ChatMessage } from './types'
+import type { ChatMessage, ExportDescriptor } from './types'
 import './ChatList.css'
 
 interface Props {
@@ -16,6 +16,7 @@ interface Props {
   onSuggestion: (text: string) => void
   suggestionsDisabled: boolean
   onDownloadMessage?: (assistantIndex: number) => void
+  onExport?: (descriptor: ExportDescriptor) => void
 }
 
 const EMPTY_SUGGESTIONS = [
@@ -30,6 +31,7 @@ export default function ChatList({
   onSuggestion,
   suggestionsDisabled,
   onDownloadMessage,
+  onExport,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -79,7 +81,7 @@ export default function ChatList({
         } else if (msg.role === 'assistant') {
           assistantSeen += 1
         }
-        return <ChatBubble key={msg.id} message={msg} onDownload={downloadHandler} />
+        return <ChatBubble key={msg.id} message={msg} onDownload={downloadHandler} onExport={onExport} />
       })}
       <div ref={bottomRef} />
     </div>

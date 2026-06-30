@@ -11,6 +11,18 @@ export interface CitedSource {
   confidence: 'High' | 'Medium' | 'Low'
 }
 
+/** A data-backed download offer the platform attaches to an answer that cites
+ *  an exportable document (e.g. a priced BOQ → a formula-linked cost BOQ). The
+ *  bubble renders one link per descriptor under the answer; clicking POSTs to
+ *  `endpoint` with `payload` and downloads the returned file. No extra UI. */
+export interface ExportDescriptor {
+  label: string
+  format: string
+  method: string
+  endpoint: string
+  payload: Record<string, unknown>
+}
+
 export interface ChatMessage {
   id: string
   role: MessageRole
@@ -21,4 +33,6 @@ export interface ChatMessage {
   toolStatus?: string
   /** Top retrieved sources, populated by the SSE 'end' event when RAG fired. */
   sources?: CitedSource[]
+  /** Data-backed download offers from the SSE 'end' event (e.g. cost BOQ). */
+  exports?: ExportDescriptor[]
 }

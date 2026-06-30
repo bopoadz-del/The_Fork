@@ -18,19 +18,21 @@ import remarkGfm from 'remark-gfm'
 import { AlertTriangle, Download } from 'lucide-react'
 import './ChatBubble.css'
 
-import type { ChatMessage } from './types'
+import type { ChatMessage, ExportDescriptor } from './types'
 
 interface Props {
   message: ChatMessage
   onDownload?: () => void
+  onExport?: (descriptor: ExportDescriptor) => void
 }
 
 // Memoised: every streamed token calls setMessages on the parent, which
 // re-renders the whole list. Without memo, each tick re-parses ReactMarkdown
 // for every prior bubble — janky in long sessions. Bubbles are immutable once
 // settled, so a shallow prop compare skips them.
-function ChatBubble({ message, onDownload }: Props) {
+function ChatBubble({ message, onDownload, onExport }: Props) {
   const isUser = message.role === 'user'
+  const exports = message.exports ?? []
 
   if (message.error) {
     return (
@@ -69,17 +71,34 @@ function ChatBubble({ message, onDownload }: Props) {
           )}
         </div>
 
-        {message.role === 'assistant' && !message.streaming && message.content && onDownload && (
-          <button
-            type="button"
-            className="chat-bubble__download"
-            onClick={onDownload}
-            title="Download this message as a Word document"
-            aria-label="Download as Word document"
-          >
-            <Download size={13} />
-            <span>Download</span>
-          </button>
+        {message.role === 'assistant' && !message.streaming && message.content && (onDownload || exports.length > 0) && (
+          <div className="chat-bubble__actions">
+            {onDownload && (
+              <button
+                type="button"
+                className="chat-bubble__download"
+                onClick={onDownload}
+                title="Download this message as a Word document"
+                aria-label="Download as Word document"
+              >
+                <Download size={13} />
+                <span>Download</span>
+              </button>
+            )}
+            {exports.map((exp, i) => (
+              <button
+                key={`${exp.endpoint}-${i}`}
+                type="button"
+                className="chat-bubble__download chat-bubble__download--export"
+                onClick={() => onExport?.(exp)}
+                title={`Generate and download: ${exp.label}`}
+                aria-label={`Download ${exp.label}`}
+              >
+                <Download size={13} />
+                <span>{exp.label}</span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
 

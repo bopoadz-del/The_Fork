@@ -214,6 +214,20 @@
   color: var(--text-primary);
 }
 
+/* Row holding the Word download + any data-backed export offers. */
+.chat-bubble__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Export offers (e.g. cost BOQ) read as the primary action — accent border. */
+.chat-bubble__download--export {
+  border-color: var(--accent, #2f6feb);
+  color: var(--accent, #2f6feb);
+}
+
 /* Error variant */
 .chat-bubble--error {
   align-self: center;
