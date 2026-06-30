@@ -76,6 +76,83 @@ def test_extract_pdf_mocked(tmp_path, monkeypatch):
     assert text.count("Page text alpha.") == 2
 
 
+def test_extract_pdf_ocrs_image_pages_even_when_cover_has_text(tmp_path, monkeypatch):
+    """Cover-page bug fix: a PDF whose FIRST page has a text layer but whose
+    body pages are image-only must still OCR the body pages (per-page), instead
+    of skipping OCR because the whole-doc text passed the threshold."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    doc_path = str(tmp_path / "scanned_boq.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 dummy")
+
+    class FakePage:
+        def __init__(self, txt):
+            self._t = txt
+
+        def get_text(self):
+            return self._t
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([
+                FakePage("Cover: DG II Demolition Works Package 1 Volume 2 specification."),
+                FakePage(""),   # image-only body page
+                FakePage(""),   # image-only body page
+            ])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    # Stub the single-page OCR so the test doesn't need tesseract.
+    monkeypatch.setattr(doc_index, "_ocr_pdf_page",
+                        lambda page: "OCR body text: excavation 5000 m3")
+
+    text, meta = doc_index._extract_with_meta(doc_path, "scanned_boq.pdf")
+    assert "Cover:" in text, "the cover text-layer page must be kept"
+    assert "OCR body text" in text, "image body pages must be OCR'd per-page (cover-page bug)"
+    assert meta.get("ocr_low_quality") is True
+
+
+def test_extract_pdf_ocr_page_cap_bounds_memory(tmp_path, monkeypatch):
+    """OCR is capped so a long scan can't OOM the 2GB box: pages beyond the
+    cap set ocr_truncated and are NOT OCR'd."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("PDF_OCR_PAGE_CAP", "1")
+    doc_path = str(tmp_path / "long_scan.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 dummy")
+
+    class FakePage:
+        def get_text(self):
+            return ""  # all image pages
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([FakePage(), FakePage(), FakePage()])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    calls = {"n": 0}
+
+    def _fake_ocr(page):
+        calls["n"] += 1
+        return "page ocr text"
+
+    monkeypatch.setattr(doc_index, "_ocr_pdf_page", _fake_ocr)
+    text, meta = doc_index._extract_with_meta(doc_path, "long_scan.pdf")
+    assert calls["n"] == 1, "OCR must stop at the page cap (memory bound)"
+    assert meta.get("ocr_truncated") is True
+
+
 def test_extract_docx_mocked(tmp_path, monkeypatch):
     """DOCX extraction: monkeypatch docx.Document; assert joined paragraph text."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)

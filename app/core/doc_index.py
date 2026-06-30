@@ -136,6 +136,123 @@ def _ocr_extract(file_path: str) -> Tuple[str, bool]:
         return "", False
 
 
+def _ocr_pdf_page(page) -> str:
+    """OCR a single ``fitz`` page via a rendered pixmap.
+
+    MEMORY-BOUNDED: the pixmap is dropped and the temp PNG deleted before
+    returning, so OCR'ing a long scan one page at a time can never accumulate
+    bitmaps and OOM the 2 GB box. Never raises — returns "" on any error.
+    """
+    try:
+        import pytesseract
+        from PIL import Image
+        from app.blocks.ocr import _ocr_lang
+    except Exception:
+        return ""
+    dpi = int(os.getenv("PDF_OCR_DPI", "200"))
+    tmp_path: Optional[str] = None
+    pix = None
+    try:
+        pix = page.get_pixmap(dpi=dpi)
+        fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        pix.save(tmp_path)
+        with Image.open(tmp_path) as img:
+            return pytesseract.image_to_string(img, lang=_ocr_lang())
+    except Exception:
+        return ""
+    finally:
+        pix = None  # free the bitmap immediately
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+
+def _pdf_tables_markdown(plumber_page) -> str:
+    """Extract a pdfplumber page's tables as pipe-delimited rows so BOQ /
+    schedule line items survive as retrievable text. Never raises."""
+    try:
+        tables = plumber_page.extract_tables() or []
+    except Exception:
+        return ""
+    rows: List[str] = []
+    for tbl in tables:
+        for row in tbl or []:
+            cells = [str(c).strip() if c is not None else "" for c in row]
+            if any(cells):
+                rows.append(" | ".join(cells))
+    return "\n".join(rows)
+
+
+def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
+    """Per-page PDF extraction.
+
+    For each page: keep its text layer when present, else OCR THAT page. Also
+    append pdfplumber table rows. This fixes the cover-page bug where a digital
+    cover page (> ``_PDF_OCR_THRESHOLD`` chars) made the WHOLE PDF skip OCR even
+    though the body pages were image-only.
+
+    MEMORY-BOUNDED for the 2 GB box: OCR at most ``PDF_OCR_PAGE_CAP`` pages
+    (sets ``ocr_truncated``), freeing each pixmap + temp file per page. Never
+    raises — returns ``("", {})`` on any error.
+    """
+    import fitz
+
+    page_cap = int(os.getenv("PDF_OCR_PAGE_CAP", "40"))
+    parts: List[str] = []
+    ocr_pages = 0
+    truncated = False
+    try:
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            plumber = None
+            try:
+                import pdfplumber
+                plumber = pdfplumber.open(readable_path)
+            except Exception:
+                plumber = None
+            doc = fitz.open(readable_path)
+            try:
+                for i, page in enumerate(doc):
+                    page_text = (page.get_text() or "").strip()
+                    # Always keep any real text layer — never discard digital
+                    # text in favour of OCR.
+                    if page_text:
+                        parts.append(page_text)
+                    # A page whose text layer is too thin is image-only (or
+                    # near-empty) — OCR it, bounded by the page cap so a long
+                    # scan can't OOM the box.
+                    if len(page_text) < _PDF_OCR_THRESHOLD:
+                        if ocr_pages < page_cap:
+                            ocr_text = _ocr_pdf_page(page)
+                            if ocr_text.strip():
+                                parts.append(ocr_text)
+                                ocr_pages += 1
+                        else:
+                            truncated = True
+                    if plumber is not None and i < len(plumber.pages):
+                        table_md = _pdf_tables_markdown(plumber.pages[i])
+                        if table_md:
+                            parts.append(table_md)
+            finally:
+                doc.close()
+                if plumber is not None:
+                    try:
+                        plumber.close()
+                    except Exception:
+                        pass
+    except Exception:
+        return "", {}
+    meta: Dict[str, Any] = {}
+    if ocr_pages > 0:
+        # The doc relied on OCR for some pages — flag for lower confidence.
+        meta["ocr_low_quality"] = True
+    if truncated:
+        meta["ocr_truncated"] = True
+    return "\n".join(parts), meta
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _now() -> str:
@@ -205,24 +322,11 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
             return text, meta
 
         # ── PDF ──────────────────────────────────────────────────────────────
+        # Per-page: keep each page's text layer, OCR image-only pages, add
+        # table rows. Fixes the cover-page bug (a digital cover page no longer
+        # suppresses OCR of image-only body pages). Memory-bounded.
         if ext == ".pdf":
-            import fitz  # PyMuPDF
-            text = ""
-            try:
-                with file_crypto.open_plaintext(file_path) as readable_path:
-                    doc = fitz.open(readable_path)
-                    for page in doc:
-                        text += page.get_text()
-                    doc.close()
-            except Exception:
-                text = ""
-            # Scanned / image-only PDF — no usable text layer → OCR fallback.
-            if len(text.strip()) < _PDF_OCR_THRESHOLD:
-                ocr_text, low_quality = _ocr_extract(file_path)
-                if ocr_text.strip():
-                    meta = {"ocr_low_quality": True} if low_quality else {}
-                    return ocr_text, meta
-            return text, {}
+            return _extract_pdf(file_path)
 
         # ── DOCX ─────────────────────────────────────────────────────────────
         if ext == ".docx":
