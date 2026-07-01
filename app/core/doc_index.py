@@ -934,12 +934,23 @@ def _boq_summary_chunks(result: Dict[str, Any]) -> List[str]:
             for section, v in cost_breakdown.items()
         ]
         out.append("BOQ cost breakdown by section — " + "; ".join(parts))
+    # Name the source BOQ on every line-item chunk so retrieval can disambiguate
+    # WITHIN a project that holds several BOQs (e.g. DG2's three distinct
+    # demolition totals must never be conflated). Phrase quantity/rate/total with
+    # the synonyms operators actually type ("total quantity", "unit price",
+    # "total price") plus the unit (UOM), so "unit price of X" / "total quantity
+    # of X" retrieve cleanly.
+    source = (result.get("source_name") or "").strip()
+    src_prefix = f" [{source}]" if source else ""
     for item in line_items:
         desc = (item.get("description") or item.get("item_key") or "item").strip()
+        unit = (item.get("unit") or "").strip()
+        unit_str = f" {unit}" if unit else ""
         out.append(
-            f"BOQ line item — {desc}: quantity {item.get('quantity')}, "
-            f"rate {item.get('unit_cost')}, total {item.get('total_cost')} "
-            f"{currency}".strip()
+            f"BOQ line item{src_prefix} — {desc}: total quantity "
+            f"{item.get('quantity')}{unit_str}, unit price (rate) "
+            f"{item.get('unit_cost')}, total price (amount) "
+            f"{item.get('total_cost')} {currency}".strip()
         )
     return out
 
@@ -983,6 +994,10 @@ def _boq_chunks_for_document(
                 {"file_path": file_path, "project_id": project_id}
             )
         )
+        # Tag the result with the source BOQ name so per-line-item chunks can
+        # name their origin (disambiguates several BOQs in one project).
+        if isinstance(result, dict):
+            result.setdefault("source_name", os.path.splitext(filename or "")[0])
         chunks = _boq_summary_chunks(result)
         if chunks:
             return chunks

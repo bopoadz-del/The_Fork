@@ -425,6 +425,38 @@ def test_index_document_wires_boq_total_into_rag(fresh_db, tmp_path, monkeypatch
     # broad "what is the total package value?" matches it instead of a generic
     # contract template (the question that started this thread).
     assert "package value" in blob, f"total chunk should match 'package value'; chunks={chunks}"
+
+
+def test_boq_line_item_chunk_carries_five_fields_and_source():
+    """Each per-item chunk must carry all five fields operators ask about
+    (description, total quantity, unit, unit price, total price) plus the source
+    BOQ name, so 'unit price of X' / 'total quantity of X' retrieve cleanly and
+    disambiguate between several BOQs in one project."""
+    from app.core.doc_index import _boq_summary_chunks
+
+    result = {
+        "status": "success",
+        "currency": "SAR",
+        "total_cost": 525000,
+        "source_name": "Al-Ostool Demolition BOQ",
+        "line_items": [
+            {
+                "description": "300mm gravity sewer pipe",
+                "quantity": 1250,
+                "unit": "m",
+                "unit_cost": 420,
+                "total_cost": 525000,
+            }
+        ],
+    }
+    item_chunks = [c for c in _boq_summary_chunks(result) if "line item" in c.lower()]
+    assert item_chunks, "no per-item chunk emitted"
+    c = item_chunks[0].lower()
+    assert "al-ostool demolition boq" in c, f"source BOQ not named: {c}"
+    assert "300mm gravity sewer pipe" in c
+    assert "1250" in c and "m," in c, f"quantity+unit missing: {c}"
+    assert "unit price" in c and "420" in c, f"unit price missing: {c}"
+    assert "total price" in c and "525000" in c, f"total price missing: {c}"
     assert "total contract value" in blob, f"total chunk should match 'contract value'; chunks={chunks}"
 
 
