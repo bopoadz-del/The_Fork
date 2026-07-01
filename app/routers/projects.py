@@ -7,11 +7,14 @@ Roadmap V2 · Part 0:
        analysis happens only when explicitly requested.
 """
 
+import io
+import math
 import os
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core import audit, doc_index, file_crypto, projects as store
@@ -345,6 +348,188 @@ async def list_project_documents(
         "offset": offset,
         "limit": limit,
     }
+
+
+# ── inline document preview ─────────────────────────────────────────────────
+# Render generated / uploaded artifacts (schedules, BOQs, procurement lists,
+# reports) in the right-panel WITHOUT forcing a download. Read-only; shared and
+# master-corpus projects are previewable like the read GET.
+
+# Per-sheet caps so a huge workbook can't serialize megabytes of cells into the
+# preview payload. The frontend notes truncation to the user.
+PREVIEW_MAX_ROWS = 200
+PREVIEW_MAX_COLS = 40
+# First N chars of extracted text (docx/txt/md) — enough to preview, bounded.
+PREVIEW_TEXT_CHARS = 20_000
+
+_TABLE_EXTS = {".xlsx", ".xls", ".csv"}
+_TEXT_EXTS = {".docx", ".doc", ".txt", ".md"}
+
+
+def _cell_str(value: Any) -> str:
+    """Stringify a cell for the JSON payload. None and pandas NaN → ""."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    return str(value)
+
+
+def _resolve_preview_document(
+    project_id: str, document_id: str, user_id: str,
+) -> Tuple[Dict[str, Any], str, str]:
+    """Access-check and resolve a document for preview.
+
+    Returns ``(doc, ext, file_path)``. Read-only access — non-owners may
+    preview shared / master-corpus documents like the read GET does.
+    ``doc_limit=0`` keeps the project access check cheap (no document rows
+    serialized — critical for the ~2,700-doc master corpus). The master-corpus
+    alias resolves to its backing source id before the ownership match, because
+    ``get_document`` returns the SOURCE project_id, not the alias.
+    """
+    _owned_or_404(project_id, user_id, read_only=True, doc_limit=0)
+    resolved_id = store._master_corpus_source(project_id) or project_id
+    doc = store.get_document(document_id)
+    if not doc or doc.get("project_id") != resolved_id:
+        raise HTTPException(
+            404, f"Document '{document_id}' not found in project '{project_id}'"
+        )
+    fp = doc.get("file_path")
+    if not fp or not os.path.exists(fp):
+        raise HTTPException(404, "Document file is not available for preview")
+    _, ext = os.path.splitext((doc.get("original_name") or "").lower())
+    return doc, ext, fp
+
+
+def _table_preview(file_path: str, ext: str) -> Dict[str, Any]:
+    """Build a ``{"kind":"table", "sheets":[...]}`` payload from a spreadsheet.
+
+    Caps each sheet at PREVIEW_MAX_ROWS x PREVIEW_MAX_COLS and flags truncation.
+    Legacy ``.xls`` needs xlrd (not installed) — pandas raises and the caller
+    converts that to a 422.
+    """
+    sheets: List[Dict[str, Any]] = []
+    truncated = False
+
+    if ext == ".csv":
+        import csv as _csv
+
+        raw = file_crypto.read_document(file_path)
+        text = raw.decode("utf-8", errors="replace")
+        rows: List[List[str]] = []
+        for i, row in enumerate(_csv.reader(io.StringIO(text))):
+            if i >= PREVIEW_MAX_ROWS:
+                truncated = True
+                break
+            if len(row) > PREVIEW_MAX_COLS:
+                truncated = True
+            rows.append([_cell_str(c) for c in row[:PREVIEW_MAX_COLS]])
+        sheets.append({"name": "Sheet1", "rows": rows})
+
+    elif ext == ".xlsx":
+        import openpyxl
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            wb = openpyxl.load_workbook(
+                readable_path, data_only=True, read_only=True
+            )
+            try:
+                for name in wb.sheetnames:
+                    ws = wb[name]
+                    rows = []
+                    for r, row in enumerate(ws.iter_rows(values_only=True)):
+                        if r >= PREVIEW_MAX_ROWS:
+                            truncated = True
+                            break
+                        if len(row) > PREVIEW_MAX_COLS:
+                            truncated = True
+                        rows.append([_cell_str(c) for c in row[:PREVIEW_MAX_COLS]])
+                    sheets.append({"name": name, "rows": rows})
+            finally:
+                wb.close()
+
+    else:  # .xls — best effort via pandas; raises without xlrd → 422 upstream.
+        import pandas as pd
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            frames = pd.read_excel(readable_path, sheet_name=None, header=None)
+        for name, df in frames.items():
+            if df.shape[0] > PREVIEW_MAX_ROWS or df.shape[1] > PREVIEW_MAX_COLS:
+                truncated = True
+            clipped = df.iloc[:PREVIEW_MAX_ROWS, :PREVIEW_MAX_COLS]
+            rows = [[_cell_str(c) for c in record] for record in clipped.values.tolist()]
+            sheets.append({"name": str(name), "rows": rows})
+
+    return {"kind": "table", "sheets": sheets, "truncated": truncated}
+
+
+def _text_preview(file_path: str, ext: str) -> Dict[str, Any]:
+    """Build a ``{"kind":"text", "text":...}`` payload (first PREVIEW_TEXT_CHARS).
+
+    Legacy binary ``.doc`` is not readable by python-docx and raises → 422.
+    """
+    if ext in {".txt", ".md"}:
+        raw = file_crypto.read_document(file_path)
+        text = raw.decode("utf-8", errors="replace")
+    else:  # .docx / .doc
+        import docx
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            document = docx.Document(readable_path)
+            text = "\n".join(p.text for p in document.paragraphs)
+    truncated = len(text) > PREVIEW_TEXT_CHARS
+    return {"kind": "text", "text": text[:PREVIEW_TEXT_CHARS], "truncated": truncated}
+
+
+@router.get("/v1/projects/{project_id}/documents/{document_id}/preview")
+async def preview_document(
+    project_id: str, document_id: str, auth: dict = Depends(require_user)
+):
+    """Render-friendly JSON preview of a stored document, by extension.
+
+    * .xlsx/.xls/.csv → {"kind":"table", "sheets":[...]}
+    * .pdf            → {"kind":"pdf"} (raw bytes at the sibling /preview/raw)
+    * .docx/.doc/.txt/.md → {"kind":"text", "text": ...}
+    * anything else   → {"kind":"unsupported", "ext": ext}
+
+    A malformed / unreadable file returns 422 (never 500).
+    """
+    _doc, ext, fp = _resolve_preview_document(project_id, document_id, auth["user_id"])
+    try:
+        if ext in _TABLE_EXTS:
+            return _table_preview(fp, ext)
+        if ext == ".pdf":
+            return {"kind": "pdf"}
+        if ext in _TEXT_EXTS:
+            return _text_preview(fp, ext)
+        return {"kind": "unsupported", "ext": ext}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — bad file must 422, never 500.
+        raise HTTPException(
+            422, f"Could not render a preview for this document: {exc}"
+        )
+
+
+@router.get("/v1/projects/{project_id}/documents/{document_id}/preview/raw")
+async def preview_document_raw(
+    project_id: str, document_id: str, auth: dict = Depends(require_user)
+):
+    """Raw decrypted PDF bytes so the frontend can embed the document.
+
+    Returns the bytes in-memory (NOT a FileResponse over an open_plaintext temp
+    path — that temp file is deleted when the context manager exits, before
+    Starlette can stream it, which fails whenever encryption-at-rest is on). The
+    upload size cap keeps buffering the whole file in memory safe for v1.
+    """
+    _doc, ext, fp = _resolve_preview_document(project_id, document_id, auth["user_id"])
+    if ext != ".pdf":
+        raise HTTPException(400, "Raw preview is available only for PDF documents")
+    try:
+        raw = file_crypto.read_document(fp)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(422, f"Could not read the document: {exc}")
+    return Response(content=raw, media_type="application/pdf")
 
 
 @router.delete("/v1/projects/{project_id}")

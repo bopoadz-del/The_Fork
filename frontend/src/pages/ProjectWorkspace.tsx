@@ -1317,6 +1317,12 @@ export default function ProjectWorkspace() {
           title="Sources"
           expanded={rightExpanded}
           onToggleExpand={() => setRightExpanded((v) => !v)}
+          projectId={id ?? ''}
+          documents={documents.map((d) => ({
+            id: d.id,
+            original_name: d.original_name,
+            doc_type: d.doc_type,
+          }))}
           sources={
             <SourcesList
               sources={latestSources}
