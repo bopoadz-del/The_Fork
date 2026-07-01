@@ -131,6 +131,11 @@ async def lifespan(app: FastAPI):
     init_agent_memory_db()
     from app.core.doc_index import init_db as init_doc_index_db
     init_doc_index_db()
+    # Ingest bundled docs/knowledge/*.md into the RAG general-knowledge project
+    # (idempotent; never raises) so the units/FIDIC/CESMM references are
+    # retrievable across every project without a manual upload.
+    from app.core.knowledge_seed import seed_knowledge
+    seed_knowledge()
     from app.core.hydration_store import init_db as init_hydration_db
     init_hydration_db()
     from app.core import rate_limit as _rate_limit_startup

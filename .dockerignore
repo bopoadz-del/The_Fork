@@ -20,3 +20,5 @@ logs
 *.log
 .github
 *.md
+# ...but bundle the RAG knowledge docs so boot-time seeding can ingest them.
+!docs/knowledge/*.md
