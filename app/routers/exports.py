@@ -69,6 +69,20 @@ class CostBoqExportRequest(BaseModel):
     ingest: bool = True
 
 
+class PriceBoqRequest(BaseModel):
+    """Price an UNPRICED BOQ from the typed rate-card.
+
+    ``document_id`` is an uploaded digital/xlsx BOQ whose rates are blank/0.
+    ``asset_type`` selects the rate-card (e.g. "Buildings/Towers"); ``currency``
+    defaults to that asset's sole/first currency. The generated workbook is
+    persisted + eager-indexed unless ``ingest`` is false."""
+    document_id: str
+    asset_type: str
+    currency: Optional[str] = None
+    project_name: Optional[str] = None
+    ingest: bool = True
+
+
 class CostScheduleExportRequest(BaseModel):
     """Cost-loaded L2 schedule. Activities: {id, wbs, name, duration,
     predecessors:[id], cost, manpower}."""
@@ -387,6 +401,121 @@ async def export_cost_boq(
         path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=f"{name.replace(' ', '_')}_cost_BOQ.xlsx",
+    )
+
+
+def _persist_and_index(
+    project_id: str, name: str, path: str, background_tasks: BackgroundTasks,
+) -> None:
+    """Persist a generated workbook back into the project and queue eager
+    indexing so it lands in the project's RAG corpus. Best-effort: a RAG-ingest
+    failure must NEVER break the download. Mirrors export_cost_boq's block."""
+    try:
+        with open(path, "rb") as fh:
+            raw_bytes = fh.read()
+        original_name = f"{name} - Priced BOQ (ESTIMATED from rate-card).xlsx"
+        file_id = str(uuid.uuid4())[:8]
+        stored_as = f"{file_id}_{original_name}"
+        stored_path = os.path.join(DATA_DIR, stored_as)
+        file_crypto.write_document(stored_path, raw_bytes)
+        doc = projects_store.add_document(
+            project_id, original_name, stored_as, stored_path,
+            len(raw_bytes), role=None,
+        )
+        background_tasks.add_task(
+            doc_index.maybe_eager_index, project_id, doc["id"])
+    except Exception:  # noqa: BLE001 - ingest is best-effort, never fatal
+        logger.warning(
+            "price-boq RAG ingest failed for project %s; download still served",
+            project_id, exc_info=True)
+
+
+@router.post("/v1/projects/{project_id}/price-boq")
+async def price_boq(
+    project_id: str,
+    req: PriceBoqRequest,
+    background_tasks: BackgroundTasks,
+    auth: Dict[str, Any] = Depends(require_user),
+):
+    """Price an UNPRICED BOQ from the typed rate-card and return a formula-linked
+    cost workbook. The rates are ESTIMATED from the rate-card medians (NOT real
+    tendered prices) -- the title/meta say so plainly. Persists + eager-indexes
+    the workbook unless ``ingest`` is false. The download is the contract; a
+    RAG-ingest failure never breaks it."""
+    from app.lib import boq_pricing
+
+    proj = _check_owner(project_id, auth["user_id"])
+    name = req.project_name or proj.get("name") or "Project"
+
+    # Validate asset_type / currency against the deployed rate-card.
+    assets = boq_pricing.available_assets()
+    if req.asset_type not in assets:
+        raise HTTPException(
+            400, f"Unknown asset_type '{req.asset_type}'. Valid options: "
+                 f"{ {a: c for a, c in assets.items()} }")
+    currencies = assets[req.asset_type]
+    currency = req.currency or currencies[0]
+    if currency not in currencies:
+        raise HTTPException(
+            400, f"Unknown currency '{currency}' for asset_type "
+                 f"'{req.asset_type}'. Valid: {currencies}")
+
+    # Extract UNPRICED line items from the document (rate is 0 -- expected).
+    doc = projects_store.get_document(req.document_id)
+    if not doc or not doc.get("file_path"):
+        raise HTTPException(404, "document not found")
+    from app.blocks.boq_processor import BOQProcessorBlock
+    res = await BOQProcessorBlock().process(
+        {"file_path": doc["file_path"], "project_id": project_id})
+    if res.get("status") != "success" or not res.get("line_items"):
+        raise HTTPException(
+            422, "could not extract line items from that document -- a "
+                 "digital/xlsx BOQ is required (scanned PDFs won't parse).")
+
+    priced, summary = boq_pricing.price_line_items(
+        res["line_items"], req.asset_type, currency)
+
+    # Group priced items into cost-BOQ categories by their section when the
+    # source BOQ carries one, else by the derived work_category. boq_processor
+    # defaults section to "General" when there is no section column, so treat
+    # "General" as absent and fall back to the work_category grouping.
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for it in priced:
+        sec = it.get("section")
+        key = sec if (sec and sec != "General") else it.get("work_category") or "Other"
+        grouped.setdefault(key, []).append({
+            "item_no": it["item_no"],
+            "description": it["description"],
+            "unit": it["unit"],
+            "qty": it["qty"],
+            "rate": it["rate"],
+        })
+    categories = [{"name": k, "items": v} for k, v in grouped.items()]
+
+    from app.lib.boq_excel import generate_cost_boq
+    meta = {
+        "title": f"{name} - Cost BOQ (ESTIMATED from rate-card)",
+        "project": name,
+        "location": "",
+        "currency": currency,
+        "date": (
+            f"Rates ESTIMATED from rate-card medians ({req.asset_type}/{currency}) "
+            f"-- NOT tendered prices. Priced {summary['exact'] + summary['fallback']}"
+            f"/{summary['total']} lines ({summary['no_rate']} flagged NO RATE)."
+        ),
+    }
+    wb = generate_cost_boq(meta, categories)
+    fd, path = tempfile.mkstemp(prefix="priced_boq_", suffix=".xlsx")
+    os.close(fd)
+    wb.save(path)
+
+    if req.ingest:
+        _persist_and_index(project_id, name, path, background_tasks)
+
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"{name.replace(' ', '_')}_priced_BOQ_ESTIMATED.xlsx",
     )
 
 
