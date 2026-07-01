@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
+from app.lib.boq_units import reconcile_unit
 
 _logger = logging.getLogger(__name__)
 
@@ -421,7 +422,13 @@ class BOQProcessorBlock(UniversalBlock):
             if total == 0 and qty > 0 and rate > 0:
                 total = qty * rate
 
-            unit = str(row.get(resolved.get("unit", ""), "")).strip()
+            unit_raw = str(row.get(resolved.get("unit", ""), "")).strip()
+            # Reconcile the OCR/printed unit against the unit implied by the work
+            # type (CESMM4/POMI): fill a blank/unreadable unit, and flag a stated
+            # unit that contradicts the work type (kept, never overwritten).
+            unit, unit_source, unit_suspect, unit_expected = reconcile_unit(
+                unit_raw, description
+            )
             section = str(row.get(resolved.get("section", ""), "General")).strip()
             if section.lower() == "nan":
                 section = "General"
@@ -433,7 +440,10 @@ class BOQProcessorBlock(UniversalBlock):
                     "item_key": item_key,
                     "description": description,
                     "quantity": qty,
-                    "unit": unit if unit != "nan" else "",
+                    "unit": unit,
+                    "unit_source": unit_source,
+                    "unit_suspect": unit_suspect,
+                    "unit_expected": unit_expected,
                     "unit_cost": rate,
                     "total_cost": round(total, 2),
                     "section": section,
