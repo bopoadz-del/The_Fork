@@ -463,6 +463,34 @@ def test_boq_line_item_chunk_carries_five_fields_and_source():
     assert "total price" in c and "525000" in c, f"total price missing: {c}"
 
 
+def test_boq_aggregate_total_quantity_chunk_is_complete_sum():
+    """A dedicated aggregate chunk carries the COMPLETE quantity total per unit,
+    so 'total length / total volume' queries get the exact figure from ONE chunk
+    and never depend on top-K retrieval (which undercounts when the model sums
+    only the line-item chunks it happened to retrieve)."""
+    from app.core.doc_index import _boq_summary_chunks
+
+    result = {
+        "status": "success", "currency": "SAR", "source_name": "DG2 Sewer BOQ",
+        "line_items": [
+            {"description": "sewer pipe 200mm", "quantity": 7790, "unit": "m",
+             "unit_cost": 10, "total_cost": 77900},
+            {"description": "sewer pipe 300mm", "quantity": 1499, "unit": "m",
+             "unit_cost": 12, "total_cost": 17988},
+            {"description": "manhole", "quantity": 40, "unit": "no",
+             "unit_cost": 5000, "total_cost": 200000},
+        ],
+    }
+    agg = [c for c in _boq_summary_chunks(result)
+           if c.lower().startswith("boq total quantity")]
+    joined = " ".join(agg).lower()
+    assert agg, "no aggregate total-quantity chunk emitted"
+    # 7790 + 1499 = 9289 m — the COMPLETE sum, in one chunk, not a partial.
+    assert "9289" in joined and "length" in joined, f"length total missing: {agg}"
+    assert "40" in joined and "count" in joined, f"count total missing: {agg}"
+    assert "dg2 sewer boq" in joined  # names its source BOQ
+
+
 def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, monkeypatch):
     """Accuracy guard: if the BOQ parse skipped pages, the chunk must say the
     total is PARTIAL, never a confident number (no-assumptions rule)."""
