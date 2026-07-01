@@ -936,36 +936,24 @@ def _boq_summary_chunks(result: Dict[str, Any]) -> List[str]:
         out.append("BOQ cost breakdown by section — " + "; ".join(parts))
     source = (result.get("source_name") or "").strip()
     src_prefix = f" [{source}]" if source else ""
-    # Aggregate QUANTITY totals per unit-of-measure — the COMPLETE sum computed at
-    # ingest. RAG retrieves only the top-K line-item chunks, so a model asked for
-    # a grand total ("total sewer pipe length") would sum whatever partial set it
-    # retrieved and UNDERCOUNT (e.g. 13,049 m instead of 20,286 m). This single
-    # chunk carries the full, exact total so the aggregate answer never depends on
-    # retrieval completeness. Mirrors the price-total chunk, for measured qty.
-    if not pages_skipped and line_items:
-        from collections import defaultdict
-        _UNIT_WORD = {
-            "m": "length", "lm": "length", "l.m": "length", "m2": "area",
-            "m²": "area", "sqm": "area", "m3": "volume", "m³": "volume",
-            "cum": "volume", "no": "count", "nr": "count", "nos": "count",
-            "ea": "count", "ls": "lump sum", "kg": "weight", "t": "weight",
-            "ton": "weight", "tonne": "weight",
-        }
-        agg: Dict[str, List[float]] = defaultdict(lambda: [0.0, 0])
-        for item in line_items:
-            u = (item.get("unit") or "").strip()
-            q = item.get("quantity")
-            if u and isinstance(q, (int, float)) and not isinstance(q, bool):
-                agg[u][0] += float(q)
-                agg[u][1] += 1
-        for u, (tot, n) in agg.items():
-            word = _UNIT_WORD.get(u.lower(), "quantity")
-            out.append(
-                f"BOQ total quantity{src_prefix} — total {word} across ALL line "
-                f"items measured in {u}: {round(tot, 2)} {u} (complete aggregate "
-                f"sum of all {n} line items; the full total, NOT a partial "
-                "retrieval).".strip()
-            )
+    # Terminology alias so a "sewer" query matches "waste water" content and vice
+    # versa (they are the SAME network; storm/surface water is a different one).
+    _blob = " ".join(str(it.get("description") or "") for it in line_items).lower()
+    if any(w in _blob for w in ("sewer", "foul", "waste water", "wastewater", "sanitary")):
+        out.append(
+            f"TERMINOLOGY{src_prefix}: in this Bill of Quantities the terms "
+            "'sewer', 'foul sewer', 'foul drainage', 'sanitary drainage' and "
+            "'waste water' all mean the SAME network. 'Storm water' / 'surface "
+            "water' is a DIFFERENT, separate network. A question about 'sewer' "
+            "quantities is answered by the 'waste water' / 'foul' items, and "
+            "vice versa."
+        )
+    # NOTE: no software "aggregate total" chunk. Blindly summing OCR'd line-item
+    # quantities is wrong — units are mixed and often mis-read (excavation /
+    # backfill / concrete are m3, pipe-laying is LM, bedding is m3 or LM-by-
+    # section), so a summed grand total is meaningless. Per-item chunks below
+    # carry each measured quantity as-is; totals come from the operator's
+    # verified figures, not from summing scanned line items.
     # Name the source BOQ on every line-item chunk so retrieval can disambiguate
     # WITHIN a project that holds several BOQs (e.g. DG2's three distinct
     # demolition totals must never be conflated). Phrase quantity/rate/total with

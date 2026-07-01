@@ -463,32 +463,28 @@ def test_boq_line_item_chunk_carries_five_fields_and_source():
     assert "total price" in c and "525000" in c, f"total price missing: {c}"
 
 
-def test_boq_aggregate_total_quantity_chunk_is_complete_sum():
-    """A dedicated aggregate chunk carries the COMPLETE quantity total per unit,
-    so 'total length / total volume' queries get the exact figure from ONE chunk
-    and never depend on top-K retrieval (which undercounts when the model sums
-    only the line-item chunks it happened to retrieve)."""
+def test_boq_no_software_aggregate_but_has_terminology_chunk():
+    """No blanket software 'aggregate total' chunk — summing OCR'd line items is
+    wrong (units are mixed and often mis-read: excavation/backfill/concrete are
+    m3, pipe-laying is LM). But a sewer/waste-water BOQ MUST emit a terminology
+    chunk so 'sewer' and 'waste water' queries match the same network."""
     from app.core.doc_index import _boq_summary_chunks
 
     result = {
         "status": "success", "currency": "SAR", "source_name": "DG2 Sewer BOQ",
         "line_items": [
-            {"description": "sewer pipe 200mm", "quantity": 7790, "unit": "m",
-             "unit_cost": 10, "total_cost": 77900},
-            {"description": "sewer pipe 300mm", "quantity": 1499, "unit": "m",
-             "unit_cost": 12, "total_cost": 17988},
-            {"description": "manhole", "quantity": 40, "unit": "no",
-             "unit_cost": 5000, "total_cost": 200000},
+            {"description": "Waste water (foul/sewer) gravity pipe 200mm",
+             "quantity": 7790, "unit": "m", "unit_cost": 10, "total_cost": 77900},
         ],
     }
-    agg = [c for c in _boq_summary_chunks(result)
-           if c.lower().startswith("boq total quantity")]
-    joined = " ".join(agg).lower()
-    assert agg, "no aggregate total-quantity chunk emitted"
-    # 7790 + 1499 = 9289 m — the COMPLETE sum, in one chunk, not a partial.
-    assert "9289" in joined and "length" in joined, f"length total missing: {agg}"
-    assert "40" in joined and "count" in joined, f"count total missing: {agg}"
-    assert "dg2 sewer boq" in joined  # names its source BOQ
+    chunks = _boq_summary_chunks(result)
+    # No software aggregate / summed-total chunk.
+    assert not [c for c in chunks if c.lower().startswith("boq total quantity")]
+    # Terminology alias IS present and bridges sewer <-> waste water.
+    term = [c for c in chunks if c.startswith("TERMINOLOGY")]
+    assert term, "no terminology chunk for a sewer/waste-water BOQ"
+    t = term[0].lower()
+    assert "sewer" in t and "waste water" in t
 
 
 def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, monkeypatch):
