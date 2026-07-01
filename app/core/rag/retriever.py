@@ -238,6 +238,41 @@ def project_is_rag_ready(project_id: str) -> bool:
         return False
 
 
+# General-knowledge relevance boost — lift a curated reference chunk (units /
+# CESMM / POMI / FIDIC in the GK project) that LEXICALLY overlaps the query, so
+# everyday phrasings surface it even when pure cosine ranks it just below the
+# active project's own chunks. Capped well under IDENTIFIER_BONUS_MAX (2.0) so
+# exact-code lookups still win, and relevance-gated (only overlapping GK chunks
+# are boosted) so it never displaces a strongly-matched project chunk.
+_GK_TERM_BONUS = 0.12
+_GK_BONUS_CAP = 0.6
+_GK_STOPWORDS = frozenset({
+    "what", "which", "when", "where", "whom", "whose", "does", "did", "how",
+    "the", "and", "for", "are", "was", "were", "this", "that", "these", "those",
+    "from", "with", "into", "your", "our", "their", "please", "tell", "give",
+    "answer", "question", "about", "standard", "project", "document", "documents",
+    "knowledge", "base", "using", "used", "there", "here", "have", "has", "will",
+})
+
+
+def _significant_terms(query: str) -> frozenset:
+    """Content words (>=4 chars, minus stopwords) used for lexical overlap."""
+    import re as _re
+    return frozenset(
+        w for w in _re.findall(r"[a-z0-9]{4,}", (query or "").lower())
+        if w not in _GK_STOPWORDS
+    )
+
+
+def _gk_lexical_bonus(query_terms: frozenset, chunk_text: str) -> float:
+    """Bonus for a GK chunk = capped count of distinct query terms it contains."""
+    if not query_terms or not chunk_text:
+        return 0.0
+    text = chunk_text.lower()
+    overlap = sum(1 for t in query_terms if t in text)
+    return min(overlap * _GK_TERM_BONUS, _GK_BONUS_CAP)
+
+
 def retrieve_with_filter(
     query: str,
     project_id: str,
@@ -340,6 +375,18 @@ def retrieve_with_filter(
         else:
             # Identifier-only hit: keep its text but start from zero semantic.
             fused[chunk_id] = (id_chunk, 0.0, id_score * IDENTIFIER_BONUS_MAX)
+
+    # General-knowledge lexical boost: lift GK reference chunks that overlap the
+    # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
+    q_terms = _significant_terms(query)
+    for gk_chunk_id in {c.chunk_id for c in raw_gk}:
+        entry = fused.get(gk_chunk_id)
+        if entry is None:
+            continue
+        gk_chunk, sem_score, bonus = entry
+        add = _gk_lexical_bonus(q_terms, gk_chunk.text)
+        if add:
+            fused[gk_chunk_id] = (gk_chunk, sem_score, bonus + add)
 
     scored: List[Tuple[float, Chunk]] = []
     for chunk, sem_score, id_bonus in fused.values():
