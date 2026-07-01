@@ -1,7 +1,7 @@
 {
  "_meta": {
-  "source": "session 2026-07-01, 1174 QA'd priced items",
-  "cells": 81
+  "source": "session 2026-07-01; incl medieval_modern GCC building rate book",
+  "cells": 100
  },
  "cards": {
   "Buildings/Towers": {
@@ -205,6 +205,160 @@
      "median": 3000.0,
      "p25": 2850.0,
      "p75": 3000.0
+    }
+   ],
+   "SAR": [
+    {
+     "cat": "Concrete",
+     "unit": "m3",
+     "n": 3,
+     "median": 1400.0,
+     "p25": 1350.0,
+     "p75": 1450.0
+    },
+    {
+     "cat": "Electrical (MEP)",
+     "unit": "ls",
+     "n": 5,
+     "median": 75000.0,
+     "p25": 55000.0,
+     "p75": 350000.0
+    },
+    {
+     "cat": "Finishes",
+     "unit": "m2",
+     "n": 6,
+     "median": 415.0,
+     "p25": 280.0,
+     "p75": 850.0
+    },
+    {
+     "cat": "Fire Protection",
+     "unit": "ls",
+     "n": 2,
+     "median": 157500.0,
+     "p25": 95000.0,
+     "p75": 220000.0
+    },
+    {
+     "cat": "Landscape/Softscape",
+     "unit": "ls",
+     "n": 2,
+     "median": 207500.0,
+     "p25": 95000.0,
+     "p75": 320000.0
+    },
+    {
+     "cat": "Landscape/Softscape",
+     "unit": "m",
+     "n": 2,
+     "median": 960.0,
+     "p25": 120.0,
+     "p75": 1800.0
+    },
+    {
+     "cat": "Landscape/Softscape",
+     "unit": "m2",
+     "n": 2,
+     "median": 400.0,
+     "p25": 250.0,
+     "p75": 550.0
+    },
+    {
+     "cat": "Masonry/Blockwork",
+     "unit": "m2",
+     "n": 2,
+     "median": 565.0,
+     "p25": 280.0,
+     "p75": 850.0
+    },
+    {
+     "cat": "Mechanical/HVAC (MEP)",
+     "unit": "ls",
+     "n": 4,
+     "median": 75000.0,
+     "p25": 75000.0,
+     "p75": 95000.0
+    },
+    {
+     "cat": "Other/Uncategorized",
+     "unit": "ls",
+     "n": 20,
+     "median": 90000.0,
+     "p25": 45000.0,
+     "p75": 180000.0
+    },
+    {
+     "cat": "Other/Uncategorized",
+     "unit": "m2",
+     "n": 13,
+     "median": 550.0,
+     "p25": 350.0,
+     "p75": 850.0
+    },
+    {
+     "cat": "Other/Uncategorized",
+     "unit": "m",
+     "n": 8,
+     "median": 615.0,
+     "p25": 380.0,
+     "p75": 2800.0
+    },
+    {
+     "cat": "Other/Uncategorized",
+     "unit": "m3",
+     "n": 3,
+     "median": 2200.0,
+     "p25": 1200.0,
+     "p75": 12000.0
+    },
+    {
+     "cat": "Other/Uncategorized",
+     "unit": "no",
+     "n": 3,
+     "median": 120000.0,
+     "p25": 55000.0,
+     "p75": 280000.0
+    },
+    {
+     "cat": "Pipework/Drainage",
+     "unit": "ls",
+     "n": 2,
+     "median": 65000.0,
+     "p25": 35000.0,
+     "p75": 95000.0
+    },
+    {
+     "cat": "Structural Steel",
+     "unit": "mt",
+     "n": 2,
+     "median": 9000.0,
+     "p25": 8500.0,
+     "p75": 9500.0
+    },
+    {
+     "cat": "Waterproofing/Insulation",
+     "unit": "m2",
+     "n": 4,
+     "median": 150.0,
+     "p25": 120.0,
+     "p75": 350.0
+    },
+    {
+     "cat": "Windows/Doors/Facade",
+     "unit": "m2",
+     "n": 6,
+     "median": 1375.0,
+     "p25": 950.0,
+     "p75": 2200.0
+    },
+    {
+     "cat": "Windows/Doors/Facade",
+     "unit": "no",
+     "n": 2,
+     "median": 61500.0,
+     "p25": 28000.0,
+     "p75": 95000.0
     }
    ]
   },

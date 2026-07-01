@@ -23,6 +23,9 @@ SOURCES = [
     (f"{SCR}/alostool_demolition_boq_items.xlsx", "Infrastructure", "SAR", "items"),
     (f"{SCR}/boq_batch/kenya_dc.xlsx", "Data Center", "USD", "raw"),
     (f"{SCR}/boq_batch/gcc_farmhouse.xlsx", "Villas", "SAR", "raw"),
+    # medieval_modern GCC cost-BOQ doubles as the operator's general GCC building
+    # rate book (full-trade SAR market rates), so expose it under Buildings too.
+    (f"{SCR}/boq_batch/gcc_farmhouse.xlsx", "Buildings/Towers", "SAR", "raw"),
     (f"{SCR}/boq_batch/acacia1_items.csv", "Buildings/Towers", "AED", "items"),
     (f"{SCR}/wetransfer_boq/BOQ_xlsx_items.csv", "Buildings/Towers", "AED", "items"),
     (f"{SCR}/wetransfer_boq/exel_SectionB_Sitework_items.csv", "Buildings/Towers", "AED", "items"),
