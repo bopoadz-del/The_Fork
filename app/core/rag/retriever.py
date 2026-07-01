@@ -244,8 +244,8 @@ def project_is_rag_ready(project_id: str) -> bool:
 # active project's own chunks. Capped well under IDENTIFIER_BONUS_MAX (2.0) so
 # exact-code lookups still win, and relevance-gated (only overlapping GK chunks
 # are boosted) so it never displaces a strongly-matched project chunk.
-_GK_TERM_BONUS = 0.12
-_GK_BONUS_CAP = 0.6
+_GK_TERM_BONUS = 0.25
+_GK_BONUS_CAP = 1.2
 _GK_STOPWORDS = frozenset({
     "what", "which", "when", "where", "whom", "whose", "does", "did", "how",
     "the", "and", "for", "are", "was", "were", "this", "that", "these", "those",
