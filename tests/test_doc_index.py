@@ -425,6 +425,7 @@ def test_index_document_wires_boq_total_into_rag(fresh_db, tmp_path, monkeypatch
     # broad "what is the total package value?" matches it instead of a generic
     # contract template (the question that started this thread).
     assert "package value" in blob, f"total chunk should match 'package value'; chunks={chunks}"
+    assert "total contract value" in blob, f"total chunk should match 'contract value'; chunks={chunks}"
 
 
 def test_boq_line_item_chunk_carries_five_fields_and_source():
@@ -449,7 +450,10 @@ def test_boq_line_item_chunk_carries_five_fields_and_source():
             }
         ],
     }
-    item_chunks = [c for c in _boq_summary_chunks(result) if "line item" in c.lower()]
+    item_chunks = [
+        c for c in _boq_summary_chunks(result)
+        if c.lower().startswith("boq line item")
+    ]
     assert item_chunks, "no per-item chunk emitted"
     c = item_chunks[0].lower()
     assert "al-ostool demolition boq" in c, f"source BOQ not named: {c}"
@@ -457,7 +461,6 @@ def test_boq_line_item_chunk_carries_five_fields_and_source():
     assert "1250" in c and "m," in c, f"quantity+unit missing: {c}"
     assert "unit price" in c and "420" in c, f"unit price missing: {c}"
     assert "total price" in c and "525000" in c, f"total price missing: {c}"
-    assert "total contract value" in blob, f"total chunk should match 'contract value'; chunks={chunks}"
 
 
 def test_index_document_boq_total_hedged_when_pages_skipped(fresh_db, tmp_path, monkeypatch):
