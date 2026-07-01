@@ -319,6 +319,11 @@ def retrieve_with_filter(
     query_vec = embedder.encode([query])[0]
     store = get_store(dim=embedder.dim)
     over_fetch = max(k * 4, 20)
+    # The GK corpus is small and curated (units / CESMM / FIDIC / procedures), so
+    # over-fetch it generously: a lexically-relevant reference chunk must enter
+    # the candidate pool even when its semantic score for a broad query is low
+    # -- the lexical boost below can only re-rank chunks that made the fetch.
+    gk_over_fetch = max(k * 12, 80)
 
     # Active project (operator's own corpus — first so it wins ties).
     raw_active = store.search(project_id, query_vec, k=over_fetch, query_text=query)
@@ -328,7 +333,7 @@ def retrieve_with_filter(
     raw_gk: List[Chunk] = []
     for gk_pid in gk_ids:
         try:
-            raw_gk.extend(store.search(gk_pid, query_vec, k=over_fetch, query_text=query))
+            raw_gk.extend(store.search(gk_pid, query_vec, k=gk_over_fetch, query_text=query))
         except Exception as exc:  # noqa: BLE001 — never let GK break primary path
             logger.warning(
                 "general-knowledge retrieval for %s failed: %s; primary results stand",
