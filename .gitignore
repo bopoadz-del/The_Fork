@@ -92,3 +92,5 @@ data/chroma_db/
 /yolov8m-worldv2.pt
 /weights/
 coverage.xml
+
+!.env.example
