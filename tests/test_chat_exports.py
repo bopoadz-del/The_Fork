@@ -104,3 +104,48 @@ def test_descriptor_deduplicated_per_document(monkeypatch):
     out = _build_exports_from_audit(audit, text)
 
     assert len(out) == 1
+
+
+def _wbs_call(status="success", total=225):
+    return {
+        "name": "generate_wbs", "ok": status == "success",
+        "result": {
+            "status": status, "brief": "Anthropic hyperscale data center",
+            "project_type": "data_center", "target_count": 200,
+            "start_date": "2026-01-05", "activities_total": total,
+        },
+    }
+
+
+def test_generate_wbs_call_yields_schedule_export():
+    """A generate_wbs turn offers the cost-loaded schedule download — even when
+    the turn cited no RAG documents (a schedule from a brief needn't cite)."""
+    out = _build_exports_from_audit({"project_id": "proj1", "chunks": []}, "Here is the schedule.",
+                                    [_wbs_call()])
+    assert len(out) == 1
+    exp = out[0]
+    assert exp["endpoint"] == "/v1/projects/proj1/export/schedule-from-brief"
+    assert exp["method"] == "POST" and exp["format"] == "xlsx"
+    assert exp["payload"]["brief"] == "Anthropic hyperscale data center"
+    assert exp["payload"]["project_type"] == "data_center"
+    assert exp["payload"]["start_date"] == "2026-01-05"
+    assert "225" in exp["label"]
+
+
+def test_failed_wbs_call_yields_no_schedule_export():
+    out = _build_exports_from_audit({"project_id": "proj1"}, "", [_wbs_call(status="error")])
+    assert out == []
+
+
+def test_non_wbs_tool_calls_yield_no_schedule_export():
+    calls = [{"name": "search_project_documents", "ok": True, "result": {"status": "success"}}]
+    out = _build_exports_from_audit({"project_id": "proj1"}, "", calls)
+    assert out == []
+
+
+def test_only_one_schedule_offer_for_multiple_wbs_calls():
+    out = _build_exports_from_audit({"project_id": "proj1"}, "",
+                                    [_wbs_call(total=200), _wbs_call(total=225)])
+    scheds = [e for e in out if "schedule-from-brief" in e["endpoint"]]
+    assert len(scheds) == 1
+    assert "225" in scheds[0]["label"]  # latest WBS wins (reversed scan)

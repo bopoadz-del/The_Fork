@@ -900,49 +900,80 @@ def _is_cost_boq_source(doc: Dict[str, Any]) -> bool:
 def _build_exports_from_audit(
     audit_rec: Dict[str, Any],
     final_text: str = "",
+    tool_calls: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """SSE end-event `exports` list — data-backed download offers for the bubble.
 
-    Each descriptor is something the platform can actually produce from a
-    document the answer CITED (not from routing intent — an offer that 422s on
-    click is worse than no offer). Pilot scope: only the cost BOQ, because its
-    export endpoint self-derives from a `document_id`. Schedule/EVM need inline
-    activities/periods that a chat turn doesn't yet produce — deferred.
+    Each descriptor is something the platform can actually produce (not from
+    routing intent — an offer that 422s on click is worse than no offer):
+      - Cost BOQ: from a document the answer CITED (endpoint self-derives from
+        the document_id).
+      - Schedule: when the turn ran `generate_wbs`, offer the cost-loaded
+        workbook. The full activity list is stripped from the tool result to
+        keep the SSE payload small, so the offer carries the brief params and
+        the endpoint re-derives them (generate_wbs is deterministic).
 
-    Returns [] whenever the turn cited nothing exportable. One descriptor per
-    document (deduplicated), in cited order.
+    Returns [] when the turn produced nothing exportable. Deduplicated.
     """
-    sources = _build_sources_from_audit(audit_rec, final_text)
-    if not sources:
-        return []
     project_id = (audit_rec or {}).get("project_id")
     if not project_id:
         return []
-    try:
-        from app.core import projects as _projects
-    except Exception:
-        return []
 
     exports: List[Dict[str, Any]] = []
-    seen: set = set()
-    for s in sources:
-        doc_id = s.get("doc_id")
-        if not doc_id or doc_id in seen:
-            continue
+
+    # ── Cost BOQ offers (from cited documents) ──────────────────────────────
+    sources = _build_sources_from_audit(audit_rec, final_text)
+    if sources:
         try:
-            doc = _projects.get_document(doc_id) or {}
+            from app.core import projects as _projects
         except Exception:
+            _projects = None
+        if _projects is not None:
+            seen: set = set()
+            for s in sources:
+                doc_id = s.get("doc_id")
+                if not doc_id or doc_id in seen:
+                    continue
+                try:
+                    doc = _projects.get_document(doc_id) or {}
+                except Exception:
+                    continue
+                if not _is_cost_boq_source(doc):
+                    continue
+                seen.add(doc_id)
+                exports.append({
+                    "label": "Cost BOQ (Excel)",
+                    "format": "xlsx",
+                    "method": "POST",
+                    "endpoint": f"/v1/projects/{project_id}/export/cost-boq",
+                    "payload": {"document_id": doc_id, "currency": "SAR"},
+                })
+
+    # ── Schedule offer (from a generate_wbs tool call this turn) ─────────────
+    for tc in reversed(tool_calls or []):
+        if not isinstance(tc, dict) or tc.get("name") != "generate_wbs":
             continue
-        if not _is_cost_boq_source(doc):
+        res = tc.get("result")
+        if not (isinstance(res, dict) and res.get("status") == "success"):
             continue
-        seen.add(doc_id)
+        total = res.get("activities_total") or res.get("actual_count") or 0
+        payload: Dict[str, Any] = {
+            "brief": res.get("brief") or "",
+            "target_count": res.get("target_count") or 200,
+            "currency": "SAR",
+        }
+        if res.get("project_type"):
+            payload["project_type"] = res["project_type"]
+        if res.get("start_date"):
+            payload["start_date"] = res["start_date"]
         exports.append({
-            "label": "Cost BOQ (Excel)",
+            "label": f"Schedule — {total} activities (Excel)" if total else "Schedule (Excel)",
             "format": "xlsx",
             "method": "POST",
-            "endpoint": f"/v1/projects/{project_id}/export/cost-boq",
-            "payload": {"document_id": doc_id, "currency": "SAR"},
+            "endpoint": f"/v1/projects/{project_id}/export/schedule-from-brief",
+            "payload": payload,
         })
+        break  # one schedule offer per turn (latest WBS)
     return exports
 
 
@@ -1598,7 +1629,7 @@ class Agent:
                         "iterations": iteration + 1,
                         "messages": messages,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
-                        "exports": _build_exports_from_audit(_rag_audit, final_text),
+                        "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made),
                     }
 
             # Persist the assistant turn that contained the tool calls
@@ -1683,7 +1714,7 @@ class Agent:
             "messages": messages,
             "forced_final": True,
             "sources": _build_sources_from_audit(_rag_audit, final_text),
-            "exports": _build_exports_from_audit(_rag_audit, final_text),
+            "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made),
         }
 
     async def chat_stream(
@@ -1954,6 +1985,9 @@ class Agent:
             yield {"type": "end", "iterations": 0, "sources": []}
             return
 
+        # Tool results accumulated this turn — feeds the schedule download offer
+        # (a generate_wbs call becomes a 'Schedule (Excel)' export descriptor).
+        stream_tool_results: List[Dict[str, Any]] = []
         for iteration in range(MAX_TOOL_ITERATIONS):
             _LOG.info("chat_stream: iter=%d agent=%s", iteration, self.name)
             resp = await self._call_llm(messages, api_key, project_id=project_id, user_id=user_id)
@@ -2033,7 +2067,7 @@ class Agent:
                         "type": "end",
                         "iterations": iteration + 1,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
-                        "exports": _build_exports_from_audit(_rag_audit, final_text),
+                        "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
                     }
                     return
 
@@ -2053,6 +2087,7 @@ class Agent:
                     _depth=_depth,
                     _call_stack=_call_stack,
                 )
+                stream_tool_results.append(tool_result)
                 yield {
                     "type": "tool_result",
                     "tool": tool_result["name"],
@@ -2097,7 +2132,7 @@ class Agent:
             "iterations": MAX_TOOL_ITERATIONS,
             "forced_final": True,
             "sources": _build_sources_from_audit(_rag_audit, final_text),
-            "exports": _build_exports_from_audit(_rag_audit, final_text),
+            "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
         }
 
     # ── Internals ─────────────────────────────────────────────────────────

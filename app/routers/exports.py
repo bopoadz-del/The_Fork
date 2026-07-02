@@ -98,6 +98,22 @@ class CostScheduleExportRequest(BaseModel):
     start_date: Optional[str] = Field(None, description="ISO date to calendar-date the milestones")
 
 
+class ScheduleFromBriefRequest(BaseModel):
+    """Generate a cost-loaded L2 schedule straight from a brief: runs the
+    DETERMINISTIC generate_wbs (template-based, no LLM) then bridges + renders.
+    The chat turn strips the full activity list from generate_wbs' result to
+    keep the SSE payload small, so the download re-derives it from the same
+    brief params — identical output because generate_wbs is deterministic."""
+    project_name: Optional[str] = None
+    currency: str = "SAR"
+    brief: str = ""
+    target_count: int = 200
+    project_type: Optional[str] = None
+    start_date: Optional[str] = None
+    day_rate: Optional[float] = Field(None, description="opt-in indicative labor rate/day")
+    crew_per_trade: int = 4
+
+
 class EvmExportRequest(BaseModel):
     """EVM workbook. Periods: {period, pv, ev, ac}; bac = budget at completion."""
     project_name: Optional[str] = None
@@ -560,6 +576,45 @@ async def export_cost_schedule(
     wb.save(path)
     return FileResponse(path, media_type=_XLSX_MEDIA,
                         filename=f"{name.replace(' ', '_')}_cost_loaded_schedule.xlsx")
+
+
+@router.post("/v1/projects/{project_id}/export/schedule-from-brief")
+async def export_schedule_from_brief(
+    project_id: str,
+    req: ScheduleFromBriefRequest,
+    auth: Dict[str, Any] = Depends(require_user),
+):
+    """Cost-loaded L2 schedule from a brief: generate_wbs -> bridge -> workbook
+    (CPM, man-days S-curve, manpower histogram, milestones). This backs the
+    chat 'Schedule (Excel)' download offer."""
+    proj = _check_owner(project_id, auth["user_id"])
+    name = req.project_name or proj.get("name") or "Project"
+    from app.containers.construction import ConstructionContainer
+    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+    from app.lib.pm_excel import generate_cost_loaded_schedule
+
+    wbs = await ConstructionContainer().generate_wbs({}, {
+        "brief": req.brief,
+        "target_count": req.target_count,
+        "project_type": req.project_type,
+        "start_date": req.start_date,
+    })
+    acts = wbs.get("activities") or []
+    if not acts:
+        raise HTTPException(422, f"WBS produced no activities ({wbs.get('cpm_error') or wbs.get('status')})")
+    bridged = bridge_wbs_to_cost_loaded(
+        acts, crew_per_trade=req.crew_per_trade, day_rate=req.day_rate,
+    )
+    meta: Dict[str, Any] = {"project": name, "currency": req.currency}
+    if req.start_date or wbs.get("start_date"):
+        meta["start_date"] = req.start_date or wbs.get("start_date")
+    if req.day_rate:
+        meta["cost_basis"] = "Indicative Labor"
+    wb = generate_cost_loaded_schedule(meta, bridged)
+    fd, path = tempfile.mkstemp(prefix="sched_brief_", suffix=".xlsx"); os.close(fd)
+    wb.save(path)
+    return FileResponse(path, media_type=_XLSX_MEDIA,
+                        filename=f"{name.replace(' ', '_')}_schedule.xlsx")
 
 
 @router.post("/v1/projects/{project_id}/export/evm")
