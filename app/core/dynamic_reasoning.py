@@ -12,6 +12,7 @@ to the dynamic agent — never invents a step.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Dict
 
 from app.core.llm_client import complete_json
@@ -53,7 +54,11 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
     if has_documents:
         user += "\n\n(Note: the user has attached document(s) to this project.)"
     try:
-        out = await complete_json(_SYSTEM, user, max_tokens=300)
+        # Intent routing is cheap work — pin it to a lighter model when
+        # ORCHESTRATOR_INTENT_MODEL is set (e.g. gpt-oss:20b-cloud), instead of
+        # the heavy answering model. Unset -> provider default (local dev).
+        model = os.getenv("ORCHESTRATOR_INTENT_MODEL") or None
+        out = await complete_json(_SYSTEM, user, max_tokens=300, model=model)
     except Exception:
         return empty
     workflow = str(out.get("workflow") or "none").lower()
