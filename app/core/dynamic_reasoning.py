@@ -58,7 +58,14 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
         # ORCHESTRATOR_INTENT_MODEL is set (e.g. gpt-oss:20b-cloud), instead of
         # the heavy answering model. Unset -> provider default (local dev).
         model = os.getenv("ORCHESTRATOR_INTENT_MODEL") or None
-        out = await complete_json(_SYSTEM, user, max_tokens=300, model=model)
+        # Fail FAST: a per-turn router must never hang a chat for 2 minutes on a
+        # slow/broken cloud LLM. Short timeout -> exception -> fall through to
+        # the agent path. Configurable via ORCHESTRATOR_INTENT_TIMEOUT.
+        try:
+            tmo = float(os.getenv("ORCHESTRATOR_INTENT_TIMEOUT") or "20")
+        except ValueError:
+            tmo = 20.0
+        out = await complete_json(_SYSTEM, user, max_tokens=300, model=model, timeout=tmo)
     except Exception:
         return empty
     workflow = str(out.get("workflow") or "none").lower()

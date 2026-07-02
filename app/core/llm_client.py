@@ -50,12 +50,13 @@ async def complete_json(
     *,
     max_tokens: int = 500,
     model: Optional[str] = None,
+    timeout: float = 120.0,
 ) -> Dict[str, Any]:
     """Completion that must return a JSON object. Tolerant parse: strips code
     fences and pulls the first {...} block. Returns {} on unparseable output."""
     text = await complete(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        temperature=0.0, max_tokens=max_tokens, model=model,
+        temperature=0.0, max_tokens=max_tokens, model=model, timeout=timeout,
     )
     return _extract_json_object(text)
 
