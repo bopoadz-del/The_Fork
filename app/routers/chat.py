@@ -223,9 +223,6 @@ def _predefined_workflows() -> set:
     return set(WORKFLOW_REGISTRY)
 
 
-_PREDEFINED_MIN_CONFIDENCE = 0.5
-
-
 async def _stream_from_predefined(
     action: str,
     user_message: str,
@@ -233,6 +230,7 @@ async def _stream_from_predefined(
     user_id: Optional[str],
     session_id: str,
     document_ids: List[str],
+    params: Optional[Dict[str, Any]] = None,
 ):
     """Run the orchestrator's predefined reasoning for a known workflow and
     yield SSE events (same shape as the heavy path). Intent-gated: a question
@@ -261,7 +259,7 @@ async def _stream_from_predefined(
         "project_id": safe_project_id,
         "project_name": project_name or "Project",
         "document_ids": document_ids if safe_project_id else [],
-        "params": {},
+        "params": {k: v for k, v in (params or {}).items() if v is not None},
     }
     try:
         from app.core.predefined_reasoning import run_workflow
@@ -533,12 +531,14 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     action, confidence = await _classify_intent(prompt)
 
     # ── Predefined reasoning (Phase 1 pilot, flagged) ──────────────────────
-    # When enabled, a known workflow (schedule) with high confidence runs the
-    # orchestrator's predefined PLAN->EXECUTE->DELIVER instead of the agent.
-    # Everything else is untouched — the pilot only intercepts this one intent.
+    # When enabled, a known workflow (schedule) that WOULD have gone to the
+    # heavy agent (same generative gate) runs the orchestrator's predefined
+    # PLAN->EXECUTE->DELIVER instead. Same threshold as the agent path
+    # (needs_planning), so the pilot intercepts exactly those turns — no new
+    # threshold to mis-tune.
     if (_predefined_enabled()
             and action in _predefined_workflows()
-            and confidence >= _PREDEFINED_MIN_CONFIDENCE):
+            and needs_planning(action, confidence)):
         logger.info("chat → predefined: action=%s confidence=%.2f project=%s",
                     action, confidence, project_id or "<none>")
         return StreamingResponse(
@@ -549,6 +549,12 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                 user_id=auth.get("user_id"),
                 session_id=session_id,
                 document_ids=body.get("document_ids") or [],
+                params={
+                    "target_count": body.get("target_count"),
+                    "project_type": body.get("project_type"),
+                    "start_date": body.get("start_date"),
+                    "day_rate": body.get("day_rate"),
+                },
             ),
             media_type="text/event-stream",
             headers={
