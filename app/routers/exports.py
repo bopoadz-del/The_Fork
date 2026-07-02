@@ -633,50 +633,6 @@ async def export_schedule_from_brief(
                         filename=f"{name.replace(' ', '_')}_schedule.xlsx")
 
 
-async def _schedule_feed_from_documents(document_ids: List[str]):
-    """Run document_engine over the given documents and distil the schedule
-    feed: real equipment lead times (ontology-default rows dropped) + target
-    milestones. Returns (procurement_lead_times, target_milestones)."""
-    from app.blocks.document_engine import DocumentEngineBlock
-
-    _EXT_KEY = {".pdf": "pdf_path", ".docx": "docx_path", ".doc": "docx_path",
-                ".xlsx": "xlsx_path", ".xls": "xlsx_path"}
-    lead_map: Dict[str, int] = {}
-    milestones: List[Dict[str, Any]] = []
-    seen_ms: set = set()
-    for did in document_ids:
-        doc = projects_store.get_document(did)
-        if not doc or not doc.get("file_path"):
-            continue
-        ext = os.path.splitext(doc.get("original_name") or doc["file_path"])[1].lower()
-        key = _EXT_KEY.get(ext, "pdf_path")
-        try:
-            res = await DocumentEngineBlock().process({key: doc["file_path"]})
-        except Exception:
-            continue
-        if not isinstance(res, dict) or res.get("status") != "success":
-            continue
-        for spec in res.get("equipment_specs") or []:
-            if spec.get("source") == "ontology_default":
-                continue  # never inject a fabricated default as a real lead time
-            equip = spec.get("equipment")
-            try:
-                days = int(spec.get("lead_time_days") or 0)
-            except (TypeError, ValueError):
-                days = 0
-            if equip and days > 0:
-                lead_map[equip] = max(lead_map.get(equip, 0), days)
-        sched = (res.get("downstream") or {}).get("schedule_engine") or {}
-        for m in sched.get("milestones") or []:
-            key_ms = (m.get("name"), m.get("target_date"))
-            if key_ms in seen_ms:
-                continue
-            seen_ms.add(key_ms)
-            milestones.append({"name": m.get("name"), "target_date": m.get("target_date")})
-    lead_times = [{"equipment": k, "lead_time_days": v} for k, v in lead_map.items()]
-    return lead_times, milestones
-
-
 @router.post("/v1/projects/{project_id}/export/schedule-from-document")
 async def export_schedule_from_document(
     project_id: str,
@@ -691,7 +647,8 @@ async def export_schedule_from_document(
     if not req.document_ids:
         raise HTTPException(400, "document_ids is required and must be non-empty")
     name = req.project_name or proj.get("name") or "Project"
-    lead_times, target_milestones = await _schedule_feed_from_documents(req.document_ids)
+    from app.lib.schedule_feed import extract_schedule_feed
+    lead_times, target_milestones = await extract_schedule_feed(req.document_ids)
 
     from app.containers.construction import ConstructionContainer
     from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded

@@ -149,6 +149,99 @@ class PlanExecutor:
         session.data[step.output_key or "compressed"] = value
         return value
 
+    # ── schedule-workflow step handlers (predefined reasoning) ───────────
+    # These call the SAME blocks/libs the export endpoints call (one execution
+    # surface), writing staged state into session.data / session.artifacts.
+    async def _step_extract_document(self, step, session):
+        """document_engine over RFP/BOD docs -> real lead times + milestones."""
+        from app.lib.schedule_feed import extract_schedule_feed
+        doc_ids = step.args.get("document_ids") or []
+        lead_times, milestones = await extract_schedule_feed(doc_ids)
+        session.data["procurement_lead_times"] = lead_times
+        session.data["target_milestones"] = milestones
+        value = {"lead_times": lead_times, "target_milestones": milestones}
+        session.data[step.output_key or "schedule_feed"] = value
+        return value
+
+    async def _step_build_wbs(self, step, session):
+        """generate_wbs, consuming any lead times/milestones the extract step
+        staged. Writes the WBS + its activities into the session."""
+        from app.containers.construction import ConstructionContainer
+        params = {
+            "brief": step.args.get("brief") or "",
+            "target_count": step.args.get("target_count", 200),
+            "project_type": step.args.get("project_type"),
+            "start_date": step.args.get("start_date"),
+            "procurement_lead_times": session.data.get("procurement_lead_times") or [],
+            "target_milestones": session.data.get("target_milestones") or [],
+        }
+        wbs = await ConstructionContainer().generate_wbs({}, params)
+        session.data["wbs"] = wbs
+        session.data["activities"] = wbs.get("activities") or []
+        value = {
+            "actual_count": wbs.get("actual_count"),
+            "duration_days": (wbs.get("summary") or {}).get("total_duration_days"),
+            "procurement_injected": wbs.get("procurement_injected"),
+        }
+        session.data[step.output_key or "wbs_summary"] = value
+        return value
+
+    async def _step_cost_load(self, step, session):
+        """Bridge the WBS -> cost-loaded workbook. Builds + STAGES it (temp
+        path + summary in session.data); does not expose it. render_artifact
+        does the exposing — so a plan without render_artifact answers inline."""
+        import os as _os, tempfile
+        from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+        from app.lib.pm_excel import generate_cost_loaded_schedule
+        wbs = session.data.get("wbs") or {}
+        acts = wbs.get("activities") or session.data.get("activities") or []
+        if not acts:
+            raise PlanExecutionError("no WBS activities staged — run build_wbs first")
+        day_rate = step.args.get("day_rate")
+        bridged = bridge_wbs_to_cost_loaded(
+            acts, crew_per_trade=step.args.get("crew_per_trade", 4), day_rate=day_rate)
+        meta = {"project": step.args.get("project_name") or "Project",
+                "currency": step.args.get("currency", "SAR")}
+        sd = step.args.get("start_date") or wbs.get("start_date")
+        if sd:
+            meta["start_date"] = sd
+        if day_rate:
+            meta["cost_basis"] = "Indicative Labor"
+        milestones = session.data.get("target_milestones") or []
+        if milestones:
+            meta["target_milestones"] = milestones
+        wb = generate_cost_loaded_schedule(meta, bridged)
+        fd, path = tempfile.mkstemp(prefix="sched_plan_", suffix=".xlsx"); _os.close(fd)
+        wb.save(path)
+        total_mandays = sum(int(a.get("manpower", 0) or 0) * int(a.get("duration", 0) or 0)
+                            for a in bridged)
+        summary = {
+            "duration_days": (wbs.get("summary") or {}).get("total_duration_days"),
+            "critical_count": (wbs.get("summary") or {}).get("critical_count"),
+            "procurement_injected": wbs.get("procurement_injected", 0),
+            "activities": wbs.get("actual_count") or len(acts),
+            "total_man_days": total_mandays,
+            "target_milestones": milestones,
+        }
+        session.data["schedule_workbook_path"] = path
+        session.data["schedule_summary"] = summary
+        session.data[step.output_key or "cost_load"] = summary
+        return summary
+
+    async def _step_render_artifact(self, step, session):
+        """MATERIALIZE the staged workbook — expose it as a session artifact.
+        Only included in a plan when the intent asks for a deliverable."""
+        from app.schemas.project_session import Artifact
+        path = session.data.get("schedule_workbook_path")
+        if not path:
+            raise PlanExecutionError("no staged workbook — run cost_load first")
+        name = step.args.get("name") or "Schedule.xlsx"
+        art = Artifact(name=name, path=path, type=step.args.get("type", "excel"))
+        session.artifacts.append(art)
+        value = {"name": name, "path": path, "type": art.type}
+        session.data[step.output_key or "artifact"] = value
+        return value
+
     # ── code-generation step handler (delegates to Plan 4) ───────────────
     async def _step_generate_code(self, step, session):
         task = step.args.get("task")

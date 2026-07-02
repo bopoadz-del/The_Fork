@@ -209,6 +209,84 @@ async def _stream_from_heavy_reasoning(
     yield f"data: {json.dumps(end_event)}\n\n"
 
 
+# ── Predefined reasoning (Phase 1 pilot) ────────────────────────────────────
+# The orchestrator's own PLAN->EXECUTE->DELIVER path for known workflows. Gated
+# behind ORCHESTRATOR_PREDEFINED (default off) so the live path is unchanged
+# until the pilot proves out; scoped to the schedule workflow only.
+def _predefined_enabled() -> bool:
+    import os
+    return (os.getenv("ORCHESTRATOR_PREDEFINED") or "").lower() in ("1", "true", "yes", "on")
+
+
+def _predefined_workflows() -> set:
+    from app.core.predefined_reasoning import WORKFLOW_REGISTRY
+    return set(WORKFLOW_REGISTRY)
+
+
+_PREDEFINED_MIN_CONFIDENCE = 0.5
+
+
+async def _stream_from_predefined(
+    action: str,
+    user_message: str,
+    project_id: Optional[str],
+    user_id: Optional[str],
+    session_id: str,
+    document_ids: List[str],
+):
+    """Run the orchestrator's predefined reasoning for a known workflow and
+    yield SSE events (same shape as the heavy path). Intent-gated: a question
+    streams an inline answer; a 'produce' request also carries an export offer
+    pointing at the render endpoint."""
+    rid = get_request_id()
+    yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'mode': 'predefined', 'request_id': rid})}\n\n"
+
+    # Tenant gate — same as the heavy path: drop project_id when not owned.
+    safe_project_id = project_id
+    project_name = None
+    if project_id:
+        try:
+            from app.core import projects as projects_store
+            proj = projects_store.get_project(project_id, user_id=user_id)
+            if proj is None:
+                safe_project_id = None
+            else:
+                project_name = proj.get("name")
+        except Exception:  # noqa: BLE001
+            logger.exception("predefined: ownership check failed; dropping project_id")
+            safe_project_id = None
+
+    context = {
+        "message": user_message,
+        "project_id": safe_project_id,
+        "project_name": project_name or "Project",
+        "document_ids": document_ids if safe_project_id else [],
+        "params": {},
+    }
+    try:
+        from app.core.predefined_reasoning import run_workflow
+        from app.schemas.project_session import ProjectSession
+        session = ProjectSession.new(f"wf-{user_id or 'anon'}-{session_id}",
+                                     user_id=user_id or "system")
+        out = await run_workflow(action, context, session)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("predefined reasoning crashed")
+        _report_sse_llm_failure(str(e), path="/v1/chat/stream")
+        yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
+        return
+
+    if not out.get("handled"):
+        yield f"data: {json.dumps({'type': 'error', 'message': 'workflow not handled', 'request_id': rid})}\n\n"
+        return
+
+    answer = out.get("answer") or "(no answer produced)"
+    for word in answer.split(" "):
+        yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
+        await asyncio.sleep(0.01)
+
+    yield f"data: {json.dumps({'type': 'end', 'complete': True, 'mode': 'predefined', 'workflow': action, 'plan_steps': out.get('plan_steps', []), 'exports': out.get('exports', []), 'request_id': rid})}\n\n"
+
+
 async def _with_domain_hint(prompt: str) -> str:
     """Prepend a smart-orchestrator domain hint when the user's message matches
     a known intent above the confidence threshold.
@@ -453,6 +531,33 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     # (the frontend prepends sessionFileContexts), and the agent's own RAG
     # tool gracefully no-ops when project_id is None.
     action, confidence = await _classify_intent(prompt)
+
+    # ── Predefined reasoning (Phase 1 pilot, flagged) ──────────────────────
+    # When enabled, a known workflow (schedule) with high confidence runs the
+    # orchestrator's predefined PLAN->EXECUTE->DELIVER instead of the agent.
+    # Everything else is untouched — the pilot only intercepts this one intent.
+    if (_predefined_enabled()
+            and action in _predefined_workflows()
+            and confidence >= _PREDEFINED_MIN_CONFIDENCE):
+        logger.info("chat → predefined: action=%s confidence=%.2f project=%s",
+                    action, confidence, project_id or "<none>")
+        return StreamingResponse(
+            _stream_from_predefined(
+                action=action,
+                user_message=prompt,
+                project_id=project_id,
+                user_id=auth.get("user_id"),
+                session_id=session_id,
+                document_ids=body.get("document_ids") or [],
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     if needs_planning(action, confidence):
         # Heavy-reasoning path. Returns its own StreamingResponse from the
         # event generator and bypasses the fast pipeline entirely.
