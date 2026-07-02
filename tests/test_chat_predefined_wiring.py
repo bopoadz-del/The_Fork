@@ -66,18 +66,23 @@ def client():
         yield c
 
 
-def test_endpoint_routes_to_predefined_when_flagged(client, monkeypatch):
-    """With the flag on and a known workflow intent, the endpoint streams the
-    predefined path (deterministic, no LLM)."""
+def test_endpoint_routes_to_predefined_via_dynamic_understand(client, monkeypatch):
+    """With the flag on, dynamic UNDERSTAND (mocked) recognizes the workflow and
+    the endpoint streams the predefined path (deterministic, no LLM in exec)."""
     monkeypatch.setenv("ORCHESTRATOR_PREDEFINED", "1")
 
-    async def fake_classify(prompt):
-        return ("generate_wbs", 0.9)
+    async def fake_understand(prompt, has_documents=False):
+        return {"workflow": "schedule", "action": "generate_wbs", "mode": "produce",
+                "deliverable": True, "params": {"target_count": 40, "project_type": "data_center"}}
+    monkeypatch.setattr(chat_mod, "understand_intent", fake_understand)
+
+    async def fake_classify(prompt):   # keep the pre-branch classify fast/offline
+        return (None, 0.0)
     monkeypatch.setattr(chat_mod, "_classify_intent", fake_classify)
 
     pid = client.post("/v1/projects", json={"name": "PredWire", "client": "A"}, headers=H).json()["id"]
     r = client.post("/v1/chat/stream",
-                    json={"prompt": "produce the schedule", "project_id": pid, "target_count": 40},
+                    json={"prompt": "produce the schedule", "project_id": pid},
                     headers=H)
     assert r.status_code == 200
     evs = [json.loads(ln[6:]) for ln in r.text.splitlines() if ln.startswith("data: ")]
@@ -85,3 +90,4 @@ def test_endpoint_routes_to_predefined_when_flagged(client, monkeypatch):
     assert start["mode"] == "predefined"
     end = next(e for e in evs if e["type"] == "end")
     assert end["workflow"] == "generate_wbs"
+    assert end["exports"], "produce mode should carry a download offer"

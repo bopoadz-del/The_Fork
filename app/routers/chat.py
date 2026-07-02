@@ -13,6 +13,7 @@ from app.core.action_router import (
     hint_for_orchestrator_result,
     needs_planning,
 )
+from app.core.dynamic_reasoning import understand_intent
 from app.dependencies import require_user
 from app.dependencies import block_instances
 from app.infra.monitoring import capture_llm_transport_failure, get_request_id
@@ -231,6 +232,7 @@ async def _stream_from_predefined(
     session_id: str,
     document_ids: List[str],
     params: Optional[Dict[str, Any]] = None,
+    deliverable: Optional[bool] = None,
 ):
     """Run the orchestrator's predefined reasoning for a known workflow and
     yield SSE events (same shape as the heavy path). Intent-gated: a question
@@ -261,6 +263,8 @@ async def _stream_from_predefined(
         "document_ids": document_ids if safe_project_id else [],
         "params": {k: v for k, v in (params or {}).items() if v is not None},
     }
+    if deliverable is not None:
+        context["deliverable"] = deliverable   # dynamic UNDERSTAND verdict wins
     try:
         from app.core.predefined_reasoning import run_workflow
         from app.schemas.project_session import ProjectSession
@@ -530,39 +534,43 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     # tool gracefully no-ops when project_id is None.
     action, confidence = await _classify_intent(prompt)
 
-    # ── Predefined reasoning (Phase 1 pilot, flagged) ──────────────────────
-    # When enabled, a known workflow (schedule) that WOULD have gone to the
-    # heavy agent (same generative gate) runs the orchestrator's predefined
-    # PLAN->EXECUTE->DELIVER instead. Same threshold as the agent path
-    # (needs_planning), so the pilot intercepts exactly those turns — no new
-    # threshold to mis-tune.
-    if (_predefined_enabled()
-            and action in _predefined_workflows()
-            and needs_planning(action, confidence)):
-        logger.info("chat → predefined: action=%s confidence=%.2f project=%s",
-                    action, confidence, project_id or "<none>")
-        return StreamingResponse(
-            _stream_from_predefined(
-                action=action,
-                user_message=prompt,
-                project_id=project_id,
-                user_id=auth.get("user_id"),
-                session_id=session_id,
-                document_ids=body.get("document_ids") or [],
-                params={
-                    "target_count": body.get("target_count"),
-                    "project_type": body.get("project_type"),
-                    "start_date": body.get("start_date"),
-                    "day_rate": body.get("day_rate"),
+    # ── Dynamic reasoning for known workflows (Phase 2, flagged) ───────────
+    # When enabled, the orchestrator's DYNAMIC UNDERSTAND (an LLM read) decides
+    # whether this is a known workflow and whether the user wants a deliverable
+    # or an answer — replacing the brittle keyword classifier for that decision.
+    # A recognized workflow runs the predefined PLAN->EXECUTE->DELIVER; anything
+    # else (or LLM unavailable -> action None) falls through to the agent path.
+    if _predefined_enabled():
+        try:
+            intent = await understand_intent(
+                prompt, has_documents=bool(body.get("document_ids")))
+        except Exception:  # noqa: BLE001
+            intent = {"action": None}
+        if intent.get("action") in _predefined_workflows():
+            logger.info("chat → dynamic-predefined: workflow=%s mode=%s project=%s",
+                        intent.get("workflow"), intent.get("mode"), project_id or "<none>")
+            merged = dict(intent.get("params") or {})
+            for k in ("target_count", "project_type", "start_date", "day_rate"):
+                if body.get(k) is not None:
+                    merged[k] = body.get(k)   # explicit body params win
+            return StreamingResponse(
+                _stream_from_predefined(
+                    action=intent["action"],
+                    user_message=prompt,
+                    project_id=project_id,
+                    user_id=auth.get("user_id"),
+                    session_id=session_id,
+                    document_ids=body.get("document_ids") or [],
+                    params=merged,
+                    deliverable=intent.get("deliverable"),
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
                 },
-            ),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+            )
 
     if needs_planning(action, confidence):
         # Heavy-reasoning path. Returns its own StreamingResponse from the
