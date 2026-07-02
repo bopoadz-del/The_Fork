@@ -122,7 +122,10 @@ async def run_workflow(action: str, context: Dict[str, Any],
     builder = WORKFLOW_REGISTRY.get(action)
     if builder is None:
         return {"handled": False}
-    deliverable = is_deliverable_request(context.get("message", ""))
+    # Prefer the dynamic UNDERSTAND verdict (context["deliverable"]) when the
+    # orchestrator supplied it; fall back to the keyword heuristic otherwise.
+    deliverable = (context["deliverable"] if "deliverable" in context
+                   else is_deliverable_request(context.get("message", "")))
     plan = builder(context)
     run = await PlanExecutor().run(plan, session)
     answer = deliver_schedule(session, deliverable)
