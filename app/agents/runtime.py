@@ -897,6 +897,29 @@ def _is_cost_boq_source(doc: Dict[str, Any]) -> bool:
     return doc_type == "boq" or any(h in name for h in _BOQ_NAME_HINTS)
 
 
+# RFP/BOD/spec documents document_engine can mine for lead times + milestones.
+# Text formats only (docx/pdf/txt) — spreadsheets carry no procurement
+# narrative, and a scanned-BOQ pdf is the OOM path we avoid elsewhere.
+_SPEC_EXPORT_EXTS = (".pdf", ".docx", ".doc", ".txt", ".md")
+_SPEC_NAME_HINTS = ("rfp", "request for proposal", "bod", "basis of design",
+                    "spec", "requirement", "scope of work", "tender",
+                    "employer requirement", "design brief")
+
+
+def _is_spec_or_rfp_source(doc: Dict[str, Any]) -> bool:
+    """Metadata-only test for 'this cited doc is an RFP/BOD/spec that
+    document_engine can extract equipment lead times + target milestones from',
+    to drive a document-aware schedule offer. The extract runs on click,
+    server-side, bounded — this only gates the offer."""
+    name = (doc.get("original_name") or "").lower()
+    if not name.endswith(_SPEC_EXPORT_EXTS):
+        return False
+    doc_type = (doc.get("doc_type") or "").lower()
+    if doc_type in ("spec", "rfp", "bod", "design", "requirements"):
+        return True
+    return any(h in name for h in _SPEC_NAME_HINTS)
+
+
 def _build_exports_from_audit(
     audit_rec: Dict[str, Any],
     final_text: str = "",
@@ -918,36 +941,55 @@ def _build_exports_from_audit(
     project_id = (audit_rec or {}).get("project_id")
     if not project_id:
         return []
+    try:
+        from app.core import projects as _projects
+    except Exception:
+        _projects = None
 
     exports: List[Dict[str, Any]] = []
+    sources = _build_sources_from_audit(audit_rec, final_text)
 
     # ── Cost BOQ offers (from cited documents) ──────────────────────────────
-    sources = _build_sources_from_audit(audit_rec, final_text)
-    if sources:
-        try:
-            from app.core import projects as _projects
-        except Exception:
-            _projects = None
-        if _projects is not None:
-            seen: set = set()
-            for s in sources:
-                doc_id = s.get("doc_id")
-                if not doc_id or doc_id in seen:
-                    continue
-                try:
-                    doc = _projects.get_document(doc_id) or {}
-                except Exception:
-                    continue
-                if not _is_cost_boq_source(doc):
-                    continue
-                seen.add(doc_id)
-                exports.append({
-                    "label": "Cost BOQ (Excel)",
-                    "format": "xlsx",
-                    "method": "POST",
-                    "endpoint": f"/v1/projects/{project_id}/export/cost-boq",
-                    "payload": {"document_id": doc_id, "currency": "SAR"},
-                })
+    if sources and _projects is not None:
+        seen: set = set()
+        for s in sources:
+            doc_id = s.get("doc_id")
+            if not doc_id or doc_id in seen:
+                continue
+            try:
+                doc = _projects.get_document(doc_id) or {}
+            except Exception:
+                continue
+            if not _is_cost_boq_source(doc):
+                continue
+            seen.add(doc_id)
+            exports.append({
+                "label": "Cost BOQ (Excel)",
+                "format": "xlsx",
+                "method": "POST",
+                "endpoint": f"/v1/projects/{project_id}/export/cost-boq",
+                "payload": {"document_id": doc_id, "currency": "SAR"},
+            })
+
+    # RFP/BOD/spec docs cited this turn → drive the schedule from THEIR real
+    # extracted lead times (document_engine) rather than a generic template.
+    # Only spec-type sources qualify, capped, and only digital formats — running
+    # document_engine on a scanned BOQ is exactly the OOM path we avoid.
+    rfp_doc_ids: List[str] = []
+    if sources and _projects is not None:
+        seen_rfp: set = set()
+        for s in sources:
+            did = s.get("doc_id")
+            if not did or did in seen_rfp:
+                continue
+            try:
+                doc = _projects.get_document(did) or {}
+            except Exception:
+                continue
+            if _is_spec_or_rfp_source(doc):
+                seen_rfp.add(did)
+                rfp_doc_ids.append(did)
+        rfp_doc_ids = rfp_doc_ids[:3]
 
     # ── Schedule offer (from a generate_wbs tool call this turn) ─────────────
     for tc in reversed(tool_calls or []):
@@ -966,12 +1008,19 @@ def _build_exports_from_audit(
             payload["project_type"] = res["project_type"]
         if res.get("start_date"):
             payload["start_date"] = res["start_date"]
+        if rfp_doc_ids:
+            # Document-driven: real lead times + milestones from the cited RFP.
+            payload["document_ids"] = rfp_doc_ids
+            label = (f"Schedule from documents — {total} activities (Excel)"
+                     if total else "Schedule from documents (Excel)")
+            endpoint = f"/v1/projects/{project_id}/export/schedule-from-document"
+        else:
+            label = (f"Schedule — {total} activities (Excel)"
+                     if total else "Schedule (Excel)")
+            endpoint = f"/v1/projects/{project_id}/export/schedule-from-brief"
         exports.append({
-            "label": f"Schedule — {total} activities (Excel)" if total else "Schedule (Excel)",
-            "format": "xlsx",
-            "method": "POST",
-            "endpoint": f"/v1/projects/{project_id}/export/schedule-from-brief",
-            "payload": payload,
+            "label": label, "format": "xlsx", "method": "POST",
+            "endpoint": endpoint, "payload": payload,
         })
         break  # one schedule offer per turn (latest WBS)
     return exports

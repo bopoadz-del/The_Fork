@@ -149,3 +149,28 @@ def test_only_one_schedule_offer_for_multiple_wbs_calls():
     scheds = [e for e in out if "schedule-from-brief" in e["endpoint"]]
     assert len(scheds) == 1
     assert "225" in scheds[0]["label"]  # latest WBS wins (reversed scan)
+
+
+def test_wbs_with_cited_rfp_yields_document_driven_schedule(monkeypatch):
+    """A generate_wbs turn that cited an RFP/BOD spec offers the DOCUMENT-driven
+    schedule (real lead times) instead of the generic brief-driven one."""
+    audit = _audit_citing("rfp1", 1)
+    _stub_doc(monkeypatch, "Anthropic RFP - Basis of Design.docx", doc_type="spec")
+    out = _build_exports_from_audit(audit, "Schedule built from the RFP.", [_wbs_call()])
+    sched = [e for e in out if "schedule" in e["endpoint"]]
+    assert len(sched) == 1
+    assert sched[0]["endpoint"].endswith("/export/schedule-from-document")
+    assert sched[0]["payload"]["document_ids"] == ["rfp1"]
+    assert "from documents" in sched[0]["label"].lower()
+
+
+def test_wbs_with_cited_boq_stays_brief_driven(monkeypatch):
+    """A cited BOQ is a cost source, not a spec — the schedule stays brief-driven
+    (no document_engine run on a spreadsheet), and a cost-BOQ offer appears."""
+    audit = _audit_citing("boq1", 1)
+    _stub_doc(monkeypatch, "DG2 Priced BOQ.xlsx", doc_type="boq")
+    out = _build_exports_from_audit(audit, "totals [source: DG2 Priced BOQ.xlsx, chunk 1]", [_wbs_call()])
+    sched = [e for e in out if "schedule" in e["endpoint"]]
+    assert sched and sched[0]["endpoint"].endswith("/export/schedule-from-brief")
+    assert "document_ids" not in sched[0]["payload"]
+    assert any(e["endpoint"].endswith("/export/cost-boq") for e in out)
