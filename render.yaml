@@ -38,6 +38,11 @@ services:
         value: projects_folder
       - key: RAG_GENERAL_KNOWLEDGE_PROJECTS
         value: training_material
+      # Phase 1 pilot: route the schedule workflow through the orchestrator's
+      # predefined reasoning. Non-breaking (only intercepts high-confidence
+      # generate_wbs intents); remove to revert to the tool-agent path.
+      - key: ORCHESTRATOR_PREDEFINED
+        value: "1"
       # Cap document uploads so one large BIM file can't OOM the box.
       - key: MAX_DOC_UPLOAD_SIZE
         value: "52428800" # 50 MB

@@ -212,6 +212,45 @@ Consequences of "everything through the orchestrator + API calls":
 - The orchestrator is thin: classify -> pick arm -> issue API calls -> collect
   -> DELIVER. It holds no domain logic; blocks/steps do the work.
 
+## 10b. Sandboxes (two distinct ones — both covered)
+
+- **Code-execution sandbox** — `app/core/sandbox.py` (`run_sandboxed`) +
+  `app/blocks/sandbox.py` (`SandboxBlock`, 512 MB / 5 s CPU, POSIX). Isolates
+  LLM-GENERATED Python; `formula_executor_v2` routes every snippet through it,
+  so the `generate_code` plan step inherits isolation. Deterministic schedule
+  steps run no generated code, so they need it only if a step generates code.
+- **Staging sandbox** — the `ProjectSession` (fresh + ephemeral per request).
+  Plan steps write staged state into `session.data`; nothing touches the real
+  project or is delivered until DELIVER decides (intent-gated). This is the
+  "stage then apply per request" concept — implemented in Phase 1.
+
+## 10c. Reasoning lives in the agent / reasoner — NOT the orchestrator blocks
+
+Verified: `smart_orchestrator` is intent CLASSIFICATION (keyword regex, or a
+learned classifier when `routing_mode` != keyword) — no generative/multi-step
+reasoning. `orchestrator.py` is chain plumbing (type validation + transforms).
+The actual reasoning is in the heavy-reasoning tool-agent and in
+`project_reasoner` (whose PLAN phase is an LLM call). So "the orchestrator" must
+ABSORB reasoning; today it has none.
+
+## 10d. Direction: DYNAMIC reasoning over predefined route-templates (operator, 2026-07-02)
+
+Operator preference: build DYNAMIC reasoning, not predefined routes/logics.
+Reconciliation — Phase 1's machinery is exactly the substrate a dynamic reasoner
+needs, so it is NOT wasted:
+- KEEP: the typed step vocabulary (`extract_document`/`build_wbs`/`cost_load`/
+  `render_artifact`), `PlanExecutor`, the `ProjectSession` staging, intent-gated
+  DELIVER + materialization, the SSE streaming.
+- CHANGE: the PLAN source. Instead of a fixed `build_schedule_plan(context)`
+  template (a "predefined route"), the orchestrator's reasoning does an LLM PLAN
+  call that emits an `ExecutionPlan` over the SAME typed steps — exactly
+  `project_reasoner`'s PLAN phase. Dynamic (the LLM chooses steps) but BOUNDED
+  (only valid step types, executed deterministically) — safer than free-form
+  tool-calling (no tool-drift/hallucination of steps), more flexible than
+  templates. This becomes Phase 2.
+- The fixed template stays only as a deterministic fallback when the LLM planner
+  is unavailable.
+
 ## 10. Guardrails (must not break)
 
 - Live chat keeps working throughout; the tool-agent stays live until the
