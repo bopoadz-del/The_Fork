@@ -86,8 +86,8 @@ def test_endpoint_routes_to_predefined_via_dynamic_understand(client, monkeypatc
                     headers=H)
     assert r.status_code == 200
     evs = [json.loads(ln[6:]) for ln in r.text.splitlines() if ln.startswith("data: ")]
-    start = next(e for e in evs if e["type"] == "start")
-    assert start["mode"] == "predefined"
+    # Orchestrator emits a generic `start` first, then the predefined events.
+    assert any(e["type"] == "start" for e in evs)
     end = next(e for e in evs if e["type"] == "end")
     assert end["workflow"] == "generate_wbs"
     assert end["exports"], "produce mode should carry a download offer"

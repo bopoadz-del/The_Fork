@@ -860,7 +860,11 @@ export default function ProjectWorkspace() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/v1/agents/project-assistant/chat/stream`, {
+      // Repointed to the ORCHESTRATOR front door (not the agent directly). The
+      // orchestrator decides: predefined reasoning for a known workflow, else it
+      // dispatches to the project-assistant agent (which self-routes generative
+      // turns to heavy-reasoning). Everything flows through one entry point.
+      const res = await fetch(`${API_BASE}/v1/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -870,6 +874,7 @@ export default function ProjectWorkspace() {
           message: userText,
           project_id: id ?? null,
           conversation_id: conversationId,
+          session_id: conversationId ?? undefined,
           history: historyForRequest,
         }),
         signal: controller.signal,

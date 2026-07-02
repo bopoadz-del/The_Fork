@@ -233,13 +233,16 @@ async def _stream_from_predefined(
     document_ids: List[str],
     params: Optional[Dict[str, Any]] = None,
     deliverable: Optional[bool] = None,
+    emit_start: bool = True,
 ):
     """Run the orchestrator's predefined reasoning for a known workflow and
     yield SSE events (same shape as the heavy path). Intent-gated: a question
     streams an inline answer; a 'produce' request also carries an export offer
-    pointing at the render endpoint."""
+    pointing at the render endpoint. ``emit_start`` is False when the caller
+    (the orchestrator front door) already emitted the ``start`` event."""
     rid = get_request_id()
-    yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'mode': 'predefined', 'request_id': rid})}\n\n"
+    if emit_start:
+        yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'mode': 'predefined', 'request_id': rid})}\n\n"
 
     # Tenant gate — same as the heavy path: drop project_id when not owned.
     safe_project_id = project_id
@@ -532,163 +535,82 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     # schedules. File context still reaches the agent via the prompt itself
     # (the frontend prepends sessionFileContexts), and the agent's own RAG
     # tool gracefully no-ops when project_id is None.
-    action, confidence = await _classify_intent(prompt)
+    # ── Orchestrator front door ────────────────────────────────────────────
+    # ONE entry point: emit `start` immediately (no pre-stream blocking, so the
+    # gateway never 502s waiting), then decide INSIDE the stream. A known
+    # workflow runs predefined reasoning; everything else dispatches to the
+    # project-assistant agent, which itself routes generative turns to
+    # heavy-reasoning (select_agent_for_message). The agent path preserves the
+    # existing document-Q&A behavior exactly.
+    from app.agents import get_agent
+    from app.agents.runtime import select_agent_for_message
+    from app.core import projects as projects_store
+    from app.routers.agents import _enforce_conversation_access
 
-    # ── Dynamic reasoning for known workflows (Phase 2, flagged) ───────────
-    # When enabled, the orchestrator's DYNAMIC UNDERSTAND (an LLM read) decides
-    # whether this is a known workflow and whether the user wants a deliverable
-    # or an answer — replacing the brittle keyword classifier for that decision.
-    # A recognized workflow runs the predefined PLAN->EXECUTE->DELIVER; anything
-    # else (or LLM unavailable -> action None) falls through to the agent path.
-    if _predefined_enabled():
-        try:
-            intent = await understand_intent(
-                prompt, has_documents=bool(body.get("document_ids")))
-        except Exception:  # noqa: BLE001
-            intent = {"action": None}
-        if intent.get("action") in _predefined_workflows():
-            logger.info("chat → dynamic-predefined: workflow=%s mode=%s project=%s",
-                        intent.get("workflow"), intent.get("mode"), project_id or "<none>")
-            merged = dict(intent.get("params") or {})
-            for k in ("target_count", "project_type", "start_date", "day_rate"):
-                if body.get(k) is not None:
-                    merged[k] = body.get(k)   # explicit body params win
-            return StreamingResponse(
-                _stream_from_predefined(
-                    action=intent["action"],
-                    user_message=prompt,
-                    project_id=project_id,
-                    user_id=auth.get("user_id"),
-                    session_id=session_id,
-                    document_ids=body.get("document_ids") or [],
-                    params=merged,
-                    deliverable=intent.get("deliverable"),
-                ),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
-            )
+    conversation_id = body.get("conversation_id")
+    user_id = auth.get("user_id")
 
-    if needs_planning(action, confidence):
-        # Heavy-reasoning path. Returns its own StreamingResponse from the
-        # event generator and bypasses the fast pipeline entirely.
-        logger.info(
-            "chat → heavy-reasoning: action=%s confidence=%.2f project=%s",
-            action, confidence, project_id or "<none>"
-        )
-        return StreamingResponse(
-            _stream_from_heavy_reasoning(
-                user_message=prompt,
-                project_id=project_id,
-                user_id=auth.get("user_id"),
-                history=history,
-                session_id=session_id,
-            ),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    # Flatten conversation history into a single prompt (the chat block doesn't
-    # yet accept structured messages). Cap to last 10 turns to stay under token
-    # budgets; trim each turn to 4000 chars to bound payload size.
-    if history:
-        recent = history[-10:]
-        parts = []
-        for turn in recent:
-            role = (turn.get("role") or "user").lower()
-            label = "User" if role == "user" else ("Assistant" if role in ("assistant", "ai") else role.capitalize())
-            content = str(turn.get("content") or "")[:4000]
-            if content:
-                parts.append(f"{label}: {content}")
-        parts.append(f"User: {prompt}")
-        full_prompt = "\n\n".join(parts)
-    else:
-        full_prompt = prompt
-
-    # Scope the chat to a project — inject its accumulated memory (Epic 3/4).
-    full_prompt = _with_project_memory(
-        full_prompt, project_id, auth["user_id"]
-    )
-    # Search the project's zvec doc index for relevant uploaded content,
-    # so the chat answers from the actual files — not just memory facts.
-    full_prompt = await _with_doc_search(
-        full_prompt, project_id, auth["user_id"]
-    )
-    # Smart-orchestrator domain hint, when the message matches a known intent
-    # but below the routing threshold (≥0.4 hint, ≥0.5 routes to agent).
-    full_prompt = await _with_domain_hint(full_prompt)
+    # Authoritative conversation-access gate (raises 404) BEFORE streaming, so a
+    # caller cannot stream into a victim's ws-{pid} conversation.
+    if conversation_id is not None:
+        _enforce_conversation_access(conversation_id, auth)
 
     async def event_stream():
         rid = get_request_id()
         yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'request_id': rid})}\n\n"
 
-        try:
-            if "chat" not in block_instances:
-                block_instances["chat"] = BLOCK_REGISTRY["chat"]()
-
-            block = block_instances["chat"]
-            result = await block.execute(
-                full_prompt,
-                {"model": model, "stream": True}
-            )
-
-            # Surface backend errors (no API key, provider 4xx/5xx, etc.)
-            # Error can be at top level or nested under result.result.
-            if isinstance(result, dict) and result.get("status") == "error":
-                inner_err = (result.get("result") or {}) if isinstance(result.get("result"), dict) else {}
-                err_msg = (
-                    result.get("error")
-                    or inner_err.get("error")
-                    or "Chat block returned an error"
-                )
-                _report_sse_llm_failure(err_msg, path="/v1/chat/stream")
-                yield f"data: {json.dumps({'type': 'error', 'message': err_msg, 'request_id': rid})}\n\n"
+        # 1) Predefined reasoning for a known workflow (flagged; dynamic UNDERSTAND).
+        if _predefined_enabled():
+            try:
+                intent = await understand_intent(
+                    prompt, has_documents=bool(body.get("document_ids")))
+            except Exception:  # noqa: BLE001
+                intent = {"action": None}
+            if intent.get("action") in _predefined_workflows():
+                logger.info("chat -> dynamic-predefined: workflow=%s mode=%s",
+                            intent.get("workflow"), intent.get("mode"))
+                merged = dict(intent.get("params") or {})
+                for k in ("target_count", "project_type", "start_date", "day_rate"):
+                    if body.get(k) is not None:
+                        merged[k] = body.get(k)
+                async for evt in _stream_from_predefined(
+                    action=intent["action"], user_message=prompt,
+                    project_id=project_id, user_id=user_id, session_id=session_id,
+                    document_ids=body.get("document_ids") or [], params=merged,
+                    deliverable=intent.get("deliverable"), emit_start=False,
+                ):
+                    yield evt
                 return
 
-            inner = result.get("result", {}) if isinstance(result, dict) else {}
-            stream_gen = inner.get("stream")
-            if stream_gen:
-                async for token in stream_gen:
-                    if isinstance(token, str) and token.startswith('{"type": "error"'):
-                        try:
-                            err_payload = json.loads(token)
-                            _report_sse_llm_failure(
-                                err_payload.get("message") or token,
-                                path="/v1/chat/stream",
-                            )
-                        except json.JSONDecodeError:
-                            _report_sse_llm_failure(token, path="/v1/chat/stream")
-                        yield f"data: {token}\n\n"
-                        return
-                    yield f"data: {json.dumps({'type': 'token', 'content': token, 'request_id': rid})}\n\n"
-                    await asyncio.sleep(0.01)
-            else:
-                text = inner.get("text", "")
-                if not text:
-                    err_msg = (
-                        "No response from chat — set DEEPSEEK_API_KEY, or run a local model "
-                        "(Ollama / llama.cpp) so the offline fallback can serve a reply."
-                    )
-                    _report_sse_llm_failure(err_msg, path="/v1/chat/stream")
-                    yield f"data: {json.dumps({'type': 'error', 'message': err_msg, 'request_id': rid})}\n\n"
-                    return
-                words = text.split()
-                for word in words:
-                    yield f"data: {json.dumps({'type': 'token', 'content': word + ' ', 'request_id': rid})}\n\n"
-                    await asyncio.sleep(0.05)
-
-            yield f"data: {json.dumps({'type': 'end', 'complete': True, 'request_id': rid})}\n\n"
-
-        except Exception as e:
+        # 2) Otherwise: dispatch to the project-assistant agent (which self-routes
+        #    generative turns to heavy-reasoning). Preserves current Q&A behavior.
+        agent = get_agent("project-assistant")
+        if agent is None:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
+            return
+        # Tenant gate: drop an unowned project_id (master-corpus alias is public-read).
+        safe_pid = project_id
+        if project_id and project_id != projects_store.MASTER_CORPUS_PROJECT_ID:
+            try:
+                if projects_store.get_project(project_id, user_id=user_id) is None:
+                    safe_pid = None
+            except Exception:  # noqa: BLE001
+                safe_pid = None
+        resolved_pid = safe_pid
+        if safe_pid == projects_store.MASTER_CORPUS_PROJECT_ID:
+            resolved_pid = projects_store.MASTER_CORPUS_SOURCE_PROJECT_ID
+        try:
+            agent, routing = await select_agent_for_message(prompt, agent)
+            yield f"data: {json.dumps({'type': 'route', **routing})}\n\n"
+            async for evt in agent.chat_stream(
+                prompt, history=history, project_id=resolved_pid,
+                conversation_id=conversation_id, user_id=user_id,
+            ):
+                yield f"data: {json.dumps(evt, default=str)}\n\n"
+                await asyncio.sleep(0)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("orchestrator agent stream failed: %s", e)
             _report_sse_llm_failure(str(e), path="/v1/chat/stream")
-            # Generic user-facing message; the real error is in the report above.
             yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
 
     return StreamingResponse(
@@ -698,5 +620,5 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-        }
+        },
     )
