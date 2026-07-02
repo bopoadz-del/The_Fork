@@ -1758,6 +1758,64 @@ class ConstructionScheduleMixin:
             "critical_count": len(cpm_out.critical_path),
         }
         return enriched, summary, None
+    # Install-verb keywords: a procurement item links to an activity only when
+    # the activity names the equipment AND is an install/erect step — so
+    # "Procure Chiller" precedes "Chiller install", not "Chiller pad pour".
+    _INSTALL_VERBS = ("install", "position", "erect", "terminat", "mount",
+                      "landing", "set out", "placement", "hookup", "hook-up")
+
+    def _inject_long_lead_procurement(
+        self,
+        activities: List[Dict[str, Any]],
+        lead_times: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Prepend long-lead equipment procurement activities (extracted from a
+        BOD/RFP by document_engine) and link each as a predecessor of the
+        matching install activity.
+
+        Long-lead procurement is the dominant driver of a data-center schedule,
+        yet the WBS templates carry none — a schedule from a brief alone
+        understates equipment-driven float. ``lead_times`` is a list of
+        ``{"equipment": str, "lead_time_days": int}``; only REAL (non-default)
+        entries should be passed in. Returns the augmented activity list
+        (procurement first). Unmatched items remain as standalone long-lead
+        markers rather than forcing a wrong dependency.
+        """
+        if not lead_times:
+            return activities
+        procurement: List[Dict[str, Any]] = []
+        n = 0
+        for lt in lead_times:
+            equip = str(lt.get("equipment") or "").strip()
+            try:
+                days = int(lt.get("lead_time_days") or 0)
+            except (TypeError, ValueError):
+                days = 0
+            if not equip or days <= 0:
+                continue
+            n += 1
+            pid = f"P.{n}"
+            el = equip.lower()
+            matched = False
+            for a in activities:
+                an = (a.get("name") or "").lower()
+                if el in an and any(v in an for v in self._INSTALL_VERBS):
+                    preds = a.setdefault("predecessors", [])
+                    if pid not in preds:
+                        preds.append(pid)
+                    matched = True
+            procurement.append({
+                "id": pid, "code": pid,
+                "name": f"Procure {equip} (long-lead)",
+                "duration_days": days,
+                "predecessors": [],
+                "resources": ["procurement"],
+                "wbs_phase": "Procurement / Long-Lead",
+                "long_lead": True,
+                "linked_to_install": matched,
+            })
+        return procurement + activities
+
     async def generate_wbs(self, input_data: Any, params: Dict) -> Dict:
         """Generate a CPM-ready Work Breakdown Structure from a project brief.
 
@@ -1802,6 +1860,17 @@ class ConstructionScheduleMixin:
         template = self._WBS_TEMPLATES[project_type]
         activities, wbs_tree = self._build_wbs_activities(template, target_count)
 
+        # Long-lead procurement + target milestones extracted from a BOD/RFP
+        # (document_engine.downstream.schedule_engine). Injecting the real lead
+        # times makes the schedule equipment-driven instead of rule-of-thumb.
+        lead_times = p.get("procurement_lead_times") or data.get("procurement_lead_times") or []
+        target_milestones = p.get("target_milestones") or data.get("target_milestones") or []
+        procurement_injected = 0
+        if lead_times:
+            before = len(activities)
+            activities = self._inject_long_lead_procurement(activities, lead_times)
+            procurement_injected = len(activities) - before
+
         enriched, summary, cpm_error = self._attach_cpm_to_activities(
             activities, start_date
         )
@@ -1817,12 +1886,20 @@ class ConstructionScheduleMixin:
             "activities": enriched,
             "wbs_tree": wbs_tree,
             "summary": summary,
+            "procurement_injected": procurement_injected,
+            "target_milestones": target_milestones,
             "assumptions": [
                 "Rule-of-thumb activity durations; replace with project-specific data when available.",
                 "FS-only predecessors; no SS/FF/SF; zero lag.",
                 "Zone-multiplier scales repeatable activities to reach target_count.",
             ],
         }
+        if procurement_injected:
+            result["assumptions"].append(
+                f"{procurement_injected} long-lead procurement activities injected from "
+                "extracted equipment lead times; each links as a predecessor to its "
+                "matching install activity (unmatched items kept as standalone markers)."
+            )
         if cpm_error:
             result["cpm_error"] = cpm_error
         return result

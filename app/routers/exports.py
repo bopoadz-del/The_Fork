@@ -114,6 +114,22 @@ class ScheduleFromBriefRequest(BaseModel):
     crew_per_trade: int = 4
 
 
+class ScheduleFromDocumentRequest(BaseModel):
+    """Cost-loaded L2 schedule driven by real RFP/BOD documents: runs
+    document_engine to extract equipment lead times + target milestones, injects
+    long-lead procurement into the WBS, then bridges + renders. Only REAL
+    extracted lead times are used (ontology defaults are dropped)."""
+    project_name: Optional[str] = None
+    currency: str = "SAR"
+    document_ids: List[str] = Field(..., description="RFP/BOD docs to extract lead times + milestones from")
+    brief: str = ""
+    target_count: int = 200
+    project_type: Optional[str] = None
+    start_date: Optional[str] = None
+    day_rate: Optional[float] = Field(None, description="opt-in indicative labor rate/day")
+    crew_per_trade: int = 4
+
+
 class EvmExportRequest(BaseModel):
     """EVM workbook. Periods: {period, pv, ev, ac}; bac = budget at completion."""
     project_name: Optional[str] = None
@@ -615,6 +631,103 @@ async def export_schedule_from_brief(
     wb.save(path)
     return FileResponse(path, media_type=_XLSX_MEDIA,
                         filename=f"{name.replace(' ', '_')}_schedule.xlsx")
+
+
+async def _schedule_feed_from_documents(document_ids: List[str]):
+    """Run document_engine over the given documents and distil the schedule
+    feed: real equipment lead times (ontology-default rows dropped) + target
+    milestones. Returns (procurement_lead_times, target_milestones)."""
+    from app.blocks.document_engine import DocumentEngineBlock
+
+    _EXT_KEY = {".pdf": "pdf_path", ".docx": "docx_path", ".doc": "docx_path",
+                ".xlsx": "xlsx_path", ".xls": "xlsx_path"}
+    lead_map: Dict[str, int] = {}
+    milestones: List[Dict[str, Any]] = []
+    seen_ms: set = set()
+    for did in document_ids:
+        doc = projects_store.get_document(did)
+        if not doc or not doc.get("file_path"):
+            continue
+        ext = os.path.splitext(doc.get("original_name") or doc["file_path"])[1].lower()
+        key = _EXT_KEY.get(ext, "pdf_path")
+        try:
+            res = await DocumentEngineBlock().process({key: doc["file_path"]})
+        except Exception:
+            continue
+        if not isinstance(res, dict) or res.get("status") != "success":
+            continue
+        for spec in res.get("equipment_specs") or []:
+            if spec.get("source") == "ontology_default":
+                continue  # never inject a fabricated default as a real lead time
+            equip = spec.get("equipment")
+            try:
+                days = int(spec.get("lead_time_days") or 0)
+            except (TypeError, ValueError):
+                days = 0
+            if equip and days > 0:
+                lead_map[equip] = max(lead_map.get(equip, 0), days)
+        sched = (res.get("downstream") or {}).get("schedule_engine") or {}
+        for m in sched.get("milestones") or []:
+            key_ms = (m.get("name"), m.get("target_date"))
+            if key_ms in seen_ms:
+                continue
+            seen_ms.add(key_ms)
+            milestones.append({"name": m.get("name"), "target_date": m.get("target_date")})
+    lead_times = [{"equipment": k, "lead_time_days": v} for k, v in lead_map.items()]
+    return lead_times, milestones
+
+
+@router.post("/v1/projects/{project_id}/export/schedule-from-document")
+async def export_schedule_from_document(
+    project_id: str,
+    req: ScheduleFromDocumentRequest,
+    auth: Dict[str, Any] = Depends(require_user),
+):
+    """Cost-loaded L2 schedule DRIVEN BY real documents: document_engine
+    extracts equipment lead times + target milestones -> long-lead procurement
+    injected into the WBS -> bridge -> workbook. Backs the document-aware chat
+    'Schedule (Excel)' offer."""
+    proj = _check_owner(project_id, auth["user_id"])
+    if not req.document_ids:
+        raise HTTPException(400, "document_ids is required and must be non-empty")
+    name = req.project_name or proj.get("name") or "Project"
+    lead_times, target_milestones = await _schedule_feed_from_documents(req.document_ids)
+
+    from app.containers.construction import ConstructionContainer
+    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+    from app.lib.pm_excel import generate_cost_loaded_schedule
+
+    wbs = await ConstructionContainer().generate_wbs({}, {
+        "brief": req.brief or f"Schedule from {len(req.document_ids)} source document(s)",
+        "target_count": req.target_count,
+        "project_type": req.project_type,
+        "start_date": req.start_date,
+        "procurement_lead_times": lead_times,
+        "target_milestones": target_milestones,
+    })
+    acts = wbs.get("activities") or []
+    if not acts:
+        raise HTTPException(422, f"WBS produced no activities ({wbs.get('cpm_error') or wbs.get('status')})")
+    bridged = bridge_wbs_to_cost_loaded(
+        acts, crew_per_trade=req.crew_per_trade, day_rate=req.day_rate,
+    )
+    meta: Dict[str, Any] = {"project": name, "currency": req.currency}
+    sd = req.start_date or wbs.get("start_date")
+    if sd:
+        meta["start_date"] = sd
+    if req.day_rate:
+        meta["cost_basis"] = "Indicative Labor"
+    if target_milestones:
+        meta["target_milestones"] = target_milestones
+    wb = generate_cost_loaded_schedule(meta, bridged)
+    fd, path = tempfile.mkstemp(prefix="sched_doc_", suffix=".xlsx"); os.close(fd)
+    wb.save(path)
+    return FileResponse(
+        path, media_type=_XLSX_MEDIA,
+        filename=f"{name.replace(' ', '_')}_schedule.xlsx",
+        headers={"X-Procurement-Items": str(len(lead_times)),
+                 "X-Target-Milestones": str(len(target_milestones))},
+    )
 
 
 @router.post("/v1/projects/{project_id}/export/evm")

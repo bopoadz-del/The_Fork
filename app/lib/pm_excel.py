@@ -248,6 +248,20 @@ def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[st
             ms.cell(mrow, 4, _add_working_days(start_date, ef).isoformat()); col = 5
         ms.cell(mrow, col, "YES" if crit else "")
         mrow += 1
+    # Target milestones extracted from the source RFP/BOD (document_engine),
+    # shown alongside the computed completions so the gap is visible.
+    targets = meta.get("target_milestones") or []
+    if targets:
+        trow = mrow + 2
+        ms.cell(trow, 1, "TARGET MILESTONES (from source document)").font = _BOLD
+        thdr = trow + 1
+        _header(ms, thdr, ["Milestone", "Target Date"])
+        tr = thdr + 1
+        for t in targets:
+            nm = t.get("name") or t.get("context") or "Target"
+            dt = t.get("target_date") or t.get("date") or t.get("year") or ""
+            ms.cell(tr, 1, str(nm)[:80]); ms.cell(tr, 2, str(dt))
+            tr += 1
     ms.sheet_view.showGridLines = False
 
     # ── Summary ─────────────────────────────────────────────────────────────
