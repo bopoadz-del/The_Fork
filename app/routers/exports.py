@@ -84,11 +84,18 @@ class PriceBoqRequest(BaseModel):
 
 
 class CostScheduleExportRequest(BaseModel):
-    """Cost-loaded L2 schedule. Activities: {id, wbs, name, duration,
-    predecessors:[id], cost, manpower}."""
+    """Cost-loaded L2 schedule. Accepts either cost-loaded activities
+    ({id, wbs, name, duration, predecessors:[id], cost, manpower}) OR raw
+    ``generate_wbs`` activities ({duration_days, resources, wbs_phase, ...}) —
+    the latter are bridged (manpower derived from crew, man-days drive the
+    S-curve). ``day_rate`` opts into an INDICATIVE labor-cost column; without
+    it no cost is fabricated. ``start_date`` dates the milestones."""
     project_name: Optional[str] = None
     currency: str = "SAR"
-    activities: List[Dict[str, Any]] = Field(..., description="CPM activities with cost + manpower")
+    activities: List[Dict[str, Any]] = Field(..., description="cost-loaded OR generate_wbs activities")
+    day_rate: Optional[float] = Field(None, description="opt-in indicative labor rate/day; no cost column without it")
+    crew_per_trade: int = Field(4, description="heads per assigned trade when deriving manpower")
+    start_date: Optional[str] = Field(None, description="ISO date to calendar-date the milestones")
 
 
 class EvmExportRequest(BaseModel):
@@ -536,7 +543,19 @@ async def export_cost_schedule(
         raise HTTPException(400, "activities is required and must be non-empty")
     name = req.project_name or proj.get("name") or "Project"
     from app.lib.pm_excel import generate_cost_loaded_schedule
-    wb = generate_cost_loaded_schedule({"project": name, "currency": req.currency}, req.activities)
+    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+
+    # Bridge raw generate_wbs activities (duration_days/resources/wbs_phase) into
+    # cost-loaded shape; already cost-loaded activities pass through unchanged.
+    activities = bridge_wbs_to_cost_loaded(
+        req.activities, crew_per_trade=req.crew_per_trade, day_rate=req.day_rate,
+    )
+    meta = {"project": name, "currency": req.currency}
+    if req.start_date:
+        meta["start_date"] = req.start_date
+    if req.day_rate:
+        meta["cost_basis"] = "Indicative Labor"
+    wb = generate_cost_loaded_schedule(meta, activities)
     fd, path = tempfile.mkstemp(prefix="cost_sched_", suffix=".xlsx"); os.close(fd)
     wb.save(path)
     return FileResponse(path, media_type=_XLSX_MEDIA,

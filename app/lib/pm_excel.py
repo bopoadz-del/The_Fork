@@ -16,7 +16,7 @@ from collections import deque
 from typing import Any, Dict, List, Tuple
 
 import openpyxl
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 
 _HDR_FILL = PatternFill("solid", fgColor="122B49")
@@ -70,10 +70,28 @@ def _cpm(activities: List[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, int]], i
     return out, proj, order
 
 
+def _add_working_days(start, n: int):
+    """Calendar date n working days (Mon-Fri) after ``start``. Honest CPM->date
+    conversion (no holidays modelled) — used only when a start_date is given."""
+    from datetime import timedelta
+    d = start
+    added = 0
+    while added < n:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            added += 1
+    return d
+
+
 def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[str, Any]]):
     cpm, proj, order = _cpm(activities)
     acts = {str(a["id"]): a for a in activities}
     ccy = meta.get("currency", "SAR")
+    # Cost is only rendered when a real/indicative figure was supplied — a
+    # schedule from a brief has no estimate, so we never show a fabricated
+    # zero-cost column. Man-days (schedule-derived) carry the S-curve instead.
+    has_cost = any(float(a.get("cost", 0) or 0) for a in activities)
+    cost_label = meta.get("cost_basis") or "Cost"
     wb = openpyxl.Workbook()
 
     # ── L2 Schedule ─────────────────────────────────────────────────────────
@@ -89,7 +107,7 @@ def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[st
         s.cell(r, 4, a.get("duration", 0)); s.cell(r, 5, ",".join(str(p) for p in a.get("predecessors", [])))
         s.cell(r, 6, c["es"]); s.cell(r, 7, c["ef"]); s.cell(r, 8, c["ls"]); s.cell(r, 9, c["lf"])
         s.cell(r, 10, c["tf"]); s.cell(r, 11, "YES" if c["critical"] else "")
-        cc = s.cell(r, 12, a.get("cost", 0)); cc.font = _INPUT; cc.number_format = _MONEY
+        cc = s.cell(r, 12, (a.get("cost", 0) if has_cost else None)); cc.font = _INPUT; cc.number_format = _MONEY
         r += 1
     s.cell(r, 3, "TOTAL").font = _BOLD
     tc = s.cell(r, 12, f"=SUM(L{first}:L{r - 1})"); tc.font = _BOLD; tc.number_format = _MONEY
@@ -97,17 +115,59 @@ def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[st
     s.cell(r + 2, 3, "Project Duration (days)").font = _BOLD
     s.cell(r + 2, 4, proj).font = _BOLD
 
-    # ── Cost Loading (cumulative S-curve) ───────────────────────────────────
+    # ── Progress baseline / S-curve (cumulative man-days, time-phased) ───────
+    # The honest S-curve for a schedule is cumulative man-days over TIME, not
+    # cost: man-days (crew x duration) are schedule-derived, whereas cost from a
+    # brief would be fabricated. Cost is cumulated only when `has_cost`.
     cl = wb.create_sheet("Cost Loading")
-    cl["A1"] = "COST LOADING / BASELINE (S-CURVE)"; cl["A1"].font = _TITLE
-    _header(cl, 3, ["ID", "Activity", f"Cost ({ccy})", f"Cumulative ({ccy})"])
-    rr = 4
-    for idx, i in enumerate(order):
-        cl.cell(rr, 1, i); cl.cell(rr, 2, acts[i].get("name", ""))
-        lk = cl.cell(rr, 3, f"='L2 Schedule'!L{first + idx}"); lk.font = _XREF; lk.number_format = _MONEY
-        cum = f"=C{rr}" if idx == 0 else f"=D{rr - 1}+C{rr}"   # live cumulative
-        cl.cell(rr, 4, cum).number_format = _MONEY
-        rr += 1
+    cl["A1"] = "PROGRESS BASELINE / S-CURVE (cumulative man-days)"; cl["A1"].font = _TITLE
+    period = 7
+    n_periods = max(1, (proj + period - 1) // period)
+    _header(cl, 3, ["Week", "Days", "Man-days", "Cumulative Man-days", "% Complete"])
+    sfirst = 4
+    sr = sfirst
+    for k in range(n_periods):
+        w_start, w_end = k * period, k * period + period
+        # man-days this week = sum over active activities of manpower x the
+        # count of that activity's ES->EF days falling inside the week.
+        md = 0
+        for i in order:
+            overlap = min(cpm[i]["ef"], w_end) - max(cpm[i]["es"], w_start)
+            if overlap > 0:
+                md += int(acts[i].get("manpower", 0) or 0) * overlap
+        cl.cell(sr, 1, k + 1)
+        cl.cell(sr, 2, f"{w_start + 1}-{min(w_end, proj)}")
+        cl.cell(sr, 3, md).font = _INPUT
+        cum = f"=C{sr}" if sr == sfirst else f"=D{sr - 1}+C{sr}"   # live cumulative
+        cl.cell(sr, 4, cum).number_format = "#,##0"
+        last_cum = f"$D${sfirst + n_periods - 1}"
+        cl.cell(sr, 5, f"=IF({last_cum}=0,0,D{sr}/{last_cum})").number_format = "0%"
+        sr += 1
+    slast = sr - 1
+    cl.cell(sr, 2, "TOTAL MAN-DAYS").font = _BOLD
+    cl.cell(sr, 3, f"=SUM(C{sfirst}:C{slast})").font = _BOLD
+    # S-curve: cumulative man-days vs week — a real time-phased curve.
+    scurve = LineChart(); scurve.title = "Progress S-Curve (cumulative man-days)"
+    scurve.y_axis.title = "Man-days"; scurve.x_axis.title = "Week"
+    sdata = Reference(cl, min_col=4, min_row=3, max_row=slast)
+    scats = Reference(cl, min_col=1, min_row=sfirst, max_row=slast)
+    scurve.add_data(sdata, titles_from_data=True); scurve.set_categories(scats)
+    cl.add_chart(scurve, "G3")
+
+    # Cost baseline — only when a real/indicative cost was supplied.
+    if has_cost:
+        crow = sr + 3
+        cl.cell(crow, 1, f"COST BASELINE ({cost_label}, {ccy}) — cumulative =prev+curr").font = _BOLD
+        chrow = crow + 1
+        _header(cl, chrow, ["ID", "Activity", f"{cost_label} ({ccy})", f"Cumulative ({ccy})"])
+        cfirst = chrow + 1
+        cr = cfirst
+        for idx, i in enumerate(order):
+            cl.cell(cr, 1, i); cl.cell(cr, 2, acts[i].get("name", ""))
+            lk = cl.cell(cr, 3, f"='L2 Schedule'!L{first + idx}"); lk.font = _XREF; lk.number_format = _MONEY
+            cum = f"=C{cfirst}" if cr == cfirst else f"=D{cr - 1}+C{cr}"   # live cumulative
+            cl.cell(cr, 4, cum).number_format = _MONEY
+            cr += 1
 
     # ── Manpower Histogram (man-days table + time-phased demand + chart) ────
     mp = wb.create_sheet("Manpower Histogram")
@@ -153,15 +213,55 @@ def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[st
     hist.add_data(data, titles_from_data=True); hist.set_categories(cats)
     mp.add_chart(hist, "G3")
 
+    # ── Milestones (phase completions + project completion) ──────────────────
+    ms = wb.create_sheet("Milestones")
+    ms["A1"] = "MILESTONES"; ms["A1"].font = _TITLE
+    start_date = None
+    if meta.get("start_date"):
+        try:
+            from datetime import date as _date
+            start_date = _date.fromisoformat(str(meta["start_date"])[:10])
+        except (ValueError, TypeError):
+            start_date = None
+    hdr = ["Milestone", "WBS", "Finish (working day)"]
+    if start_date:
+        hdr.append("Finish Date (Mon-Fri)")
+    hdr.append("Critical")
+    _header(ms, 3, hdr)
+    # A phase completion is the latest-finishing activity within each WBS group.
+    phase_end: Dict[str, str] = {}
+    for i in order:
+        w = str(acts[i].get("wbs", "")) or "(unassigned)"
+        if w not in phase_end or cpm[i]["ef"] > cpm[phase_end[w]]["ef"]:
+            phase_end[w] = i
+    milestones = [
+        (f"Complete: {w} — {acts[i].get('name', '')}", w, cpm[i]["ef"], cpm[i]["critical"])
+        for w, i in phase_end.items()
+    ]
+    milestones.append(("PROJECT COMPLETION", "", proj, True))
+    milestones.sort(key=lambda m: m[2])
+    mrow = 4
+    for label, w, ef, crit in milestones:
+        ms.cell(mrow, 1, label); ms.cell(mrow, 2, w); ms.cell(mrow, 3, ef)
+        col = 4
+        if start_date:
+            ms.cell(mrow, 4, _add_working_days(start_date, ef).isoformat()); col = 5
+        ms.cell(mrow, col, "YES" if crit else "")
+        mrow += 1
+    ms.sheet_view.showGridLines = False
+
     # ── Summary ─────────────────────────────────────────────────────────────
     summ = wb.create_sheet("Summary")
     summ["A1"] = f"SCHEDULE SUMMARY — {meta.get('project', '')}"; summ["A1"].font = _TITLE
     summ["B3"] = "Project Duration (days)"; summ["C3"] = f"='L2 Schedule'!D{total_cost_row + 2}"
-    summ["B4"] = f"Total Cost ({ccy})"
-    tcl = summ["C4"]; tcl.value = f"='L2 Schedule'!L{total_cost_row}"; tcl.font = _XREF; tcl.number_format = _MONEY
-    summ["B5"] = "Critical Activities"
-    summ["C5"] = sum(1 for i in order if cpm[i]["critical"])
-    summ["B6"] = "Total Man-days"; summ["C6"] = f"='Manpower Histogram'!E{rr}"
+    summ["B4"] = "Total Man-days"; summ["C4"] = f"='Manpower Histogram'!E{rr}"
+    summ["B5"] = "Peak Manpower"; summ["C5"] = f"='Manpower Histogram'!C{plast + 2}"
+    summ["B6"] = "Critical Activities"; summ["C6"] = sum(1 for i in order if cpm[i]["critical"])
+    summ["B7"] = "Milestones"; summ["C7"] = len(milestones)
+    if has_cost:
+        summ["B8"] = f"Total {cost_label} ({ccy})"
+        tcl = summ["C8"]; tcl.value = f"='L2 Schedule'!L{total_cost_row}"
+        tcl.font = _XREF; tcl.number_format = _MONEY
     summ.sheet_view.showGridLines = False
     return wb
 
