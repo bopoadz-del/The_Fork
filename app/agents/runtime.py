@@ -1208,6 +1208,40 @@ def _llm_config() -> Dict[str, str]:
     }
 
 
+def _llm_fallback_config(primary: Dict[str, str]) -> Optional[Dict[str, str]]:
+    """Config for the fallback LLM provider, or ``None`` when none is usable.
+
+    Controlled by ``LLM_FALLBACK_PROVIDER`` (``ollama`` | ``groq`` |
+    ``deepseek``). Returns ``None`` when it is unset, names the primary
+    provider, or its API-key env is required but missing. This lets a
+    Groq-primary deploy degrade to gpt-oss/Ollama on a retryable failure
+    (413 request-too-large, 429 rate-limit, 5xx, network) instead of failing
+    the whole turn — the resilience the operator asked about ("keep gpt-oss as
+    a fallback to Groq").
+
+    Reuses ``_llm_config`` for URL/suffix normalisation by pinning the provider
+    through the env for the duration of one synchronous call (no ``await``
+    between set and restore, so no cross-coroutine interleave).
+    """
+    name = (os.getenv("LLM_FALLBACK_PROVIDER") or "").strip().lower()
+    if not name or name == primary.get("provider"):
+        return None
+    prev = os.environ.get("LLM_PROVIDER")
+    os.environ["LLM_PROVIDER"] = name
+    try:
+        cfg = _llm_config()
+    finally:
+        if prev is None:
+            os.environ.pop("LLM_PROVIDER", None)
+        else:
+            os.environ["LLM_PROVIDER"] = prev
+    if cfg.get("provider") == primary.get("provider"):
+        return None
+    if cfg.get("env_key") and not os.getenv(cfg["env_key"]):
+        return None
+    return cfg
+
+
 # ── DeepSeek DSML tool-call markup handling ─────────────────────────────────
 # deepseek-chat sometimes emits a tool call as inline text markup inside the
 # message `content` (its own "DSML" token format) instead of, or in addition
@@ -2644,46 +2678,85 @@ class Agent:
             else:
                 payload["tool_choice"] = "auto"
 
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                r = await client.post(
-                    cfg["url"],
-                    json=payload,
-                    headers=(
-                        {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                        if api_key
-                        else {"Content-Type": "application/json"}
-                    ),
-                )
-                if r.status_code >= 400:
-                    body = r.text
-                    # Groq's tool-use validator rejects Llama-native function
-                    # markup (`<function=name{json}>`) with HTTP 400 and
-                    # `tool_use_failed`. The raw markup lives in
-                    # `error.failed_generation`. Recover it into OpenAI-style
-                    # tool_calls so the agent loop can dispatch and continue
-                    # rather than bubbling a 400 to the user.
-                    try:
-                        err = json.loads(body)
-                        err_obj = err.get("error", {}) if isinstance(err, dict) else {}
-                        if err_obj.get("code") == "tool_use_failed":
-                            failed_gen = err_obj.get("failed_generation", "") or ""
-                            recovered = _parse_llama_native_tool_calls(failed_gen)
-                            if recovered:
-                                return {
-                                    "status": "success",
-                                    "choice": {
-                                        "message": {
-                                            "role": "assistant",
-                                            "content": "",
-                                            "tool_calls": recovered,
-                                        },
+        # Provider attempts: primary first, then the configured fallback (if
+        # any) on a RETRYABLE failure only — 413 (request too large), 429
+        # (rate limit), 5xx, or a network/timeout error. Auth/validation
+        # errors (400/401/403/404) are not retried: a different provider
+        # won't fix a bad key or a malformed request.
+        fallback_cfg = _llm_fallback_config(cfg)
+        attempts = [(cfg, api_key, model)]
+        if fallback_cfg:
+            fb_key = os.getenv(fallback_cfg["env_key"]) if fallback_cfg["env_key"] else ""
+            attempts.append((fallback_cfg, fb_key, fallback_cfg["default_model"]))
+
+        def _is_retryable(status: int) -> bool:
+            return status in (408, 413, 429) or status >= 500
+
+        last_error: Dict[str, Any] = {"status": "error", "error": "LLM call failed"}
+        for attempt_idx, (a_cfg, a_key, a_model) in enumerate(attempts):
+            is_last = attempt_idx == len(attempts) - 1
+            payload["model"] = a_model
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    r = await client.post(
+                        a_cfg["url"],
+                        json=payload,
+                        headers=(
+                            {"Authorization": f"Bearer {a_key}", "Content-Type": "application/json"}
+                            if a_key
+                            else {"Content-Type": "application/json"}
+                        ),
+                    )
+            except httpx.TimeoutException:
+                last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call timed out (120s)."}
+                if not is_last:
+                    _LOG.warning("llm: %s timed out — falling back to %s", a_cfg["provider"], attempts[attempt_idx + 1][0]["provider"])
+                    continue
+                return last_error
+            except Exception as e:  # noqa: BLE001 — network/transport
+                last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call failed: {e}"}
+                if not is_last:
+                    _LOG.warning("llm: %s network error (%s) — falling back to %s", a_cfg["provider"], e, attempts[attempt_idx + 1][0]["provider"])
+                    continue
+                return last_error
+
+            if r.status_code >= 400:
+                body = r.text
+                # Groq's tool-use validator rejects Llama-native function
+                # markup (`<function=name{json}>`) with HTTP 400 and
+                # `tool_use_failed`. The raw markup lives in
+                # `error.failed_generation`. Recover it into OpenAI-style
+                # tool_calls so the agent loop can dispatch and continue
+                # rather than bubbling a 400 to the user.
+                try:
+                    err = json.loads(body)
+                    err_obj = err.get("error", {}) if isinstance(err, dict) else {}
+                    if err_obj.get("code") == "tool_use_failed":
+                        failed_gen = err_obj.get("failed_generation", "") or ""
+                        recovered = _parse_llama_native_tool_calls(failed_gen)
+                        if recovered:
+                            return {
+                                "status": "success",
+                                "choice": {
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": "",
+                                        "tool_calls": recovered,
                                     },
-                                    "raw": err,
-                                }
-                    except (json.JSONDecodeError, KeyError, TypeError):
-                        pass
-                    return {"status": "error", "error": f"{cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
+                                },
+                                "raw": err,
+                            }
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    pass
+                last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
+                if _is_retryable(r.status_code) and not is_last:
+                    _LOG.warning("llm: %s HTTP %d — falling back to %s", a_cfg["provider"], r.status_code, attempts[attempt_idx + 1][0]["provider"])
+                    continue
+                return last_error
+
+            # ── success on this provider ──────────────────────────────────
+            active_cfg = a_cfg
+            try:
                 data = r.json()
                 choice = (data.get("choices") or [{}])[0]
                 # Best-effort cost tracking — never let it sink an LLM call.
@@ -2692,8 +2765,8 @@ class Agent:
                     usage_tracker.record(
                         user_id=user_id,
                         agent_name=self.name,
-                        provider=cfg.get("provider", ""),
-                        model=data.get("model") or cfg.get("default_model") or "",
+                        provider=active_cfg.get("provider", ""),
+                        model=data.get("model") or active_cfg.get("default_model") or "",
                         usage=data.get("usage"),
                     )
                 except Exception:  # noqa: BLE001
@@ -2712,10 +2785,14 @@ class Agent:
                             msg["content"] = rewritten
                             choice["message"] = msg
                 return {"status": "success", "choice": choice, "raw": data}
-        except httpx.TimeoutException:
-            return {"status": "error", "error": "LLM call timed out (120s)."}
-        except Exception as e:
-            return {"status": "error", "error": f"LLM call failed: {e}"}
+            except Exception as e:  # noqa: BLE001 — response parse / rewrite
+                last_error = {"status": "error", "error": f"{a_cfg['provider']} response error: {e}"}
+                if not is_last:
+                    _LOG.warning("llm: %s response error (%s) — falling back to %s", a_cfg["provider"], e, attempts[attempt_idx + 1][0]["provider"])
+                    continue
+                return last_error
+
+        return last_error
 
     async def _run_tool_call(
         self,
