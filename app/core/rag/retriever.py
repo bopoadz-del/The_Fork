@@ -52,6 +52,21 @@ _STOPWORDS: Set[str] = {
 }
 
 
+def _is_prose_compound(token: str) -> bool:
+    """True if a hyphen/dot/slash token contains a full English-word segment
+    (all-alpha, >4 chars) — e.g. '30-storey', '12-month', 'revision-3'. These
+    are descriptive compounds, NOT reference codes (whose alpha parts are short
+    abbreviations: TL, PRC, IP). Without this guard a generative request like
+    "risk register for a 30-storey tower" extracted '30-storey' as a reference,
+    which then (on a retrieval miss) wrongly fired the missing-reference
+    short-circuit — answering "provide the exact filename" to a generate request.
+    """
+    for seg in re.split(r"[-./]", token):
+        if seg.isalpha() and len(seg) > 4:
+            return True
+    return False
+
+
 def extract_query_identifiers(query: str) -> List[str]:
     """Pull construction reference identifiers out of a user query.
 
@@ -100,7 +115,7 @@ def extract_query_identifiers(query: str) -> List[str]:
     # 4. Standalone alphanumeric codes containing digits.
     for m in _ALPHANUMERIC_RE.finditer(query):
         token = m.group(0).strip("-.:,;")
-        if len(token) >= 5:
+        if len(token) >= 5 and not _is_prose_compound(token):
             found.add(token.lower())
 
     # Filter out trivial stopwords and very short tokens.
