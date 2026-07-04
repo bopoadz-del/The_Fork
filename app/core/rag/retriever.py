@@ -408,15 +408,14 @@ def retrieve_with_filter(
         if add:
             fused[gk_chunk_id] = (gk_chunk, sem_score, bonus + add)
 
-    # General-knowledge is BACKGROUND, not primary: apply a small penalty to GK
-    # chunks so a project's OWN documents win for project-specific questions — a
-    # "manhole spacing" query must not surface the curated units note above the
-    # project's sewer drawings/reports (which retrieve at similar cosine). GK
-    # still dominates when it is the only relevant source (e.g. a FIDIC question
-    # the active project holds no content for), because there its scores far
-    # exceed the active project's.
+    # GK background factor: penalise GK vs the active project's own docs. Default
+    # 1.0 (OFF) — a 0.9 penalty was found to DEMOTE the authoritative curated KB
+    # below a project's contract templates for knowledge questions (a FIDIC "IPC
+    # payment days" query grounded on a project's amended 45-day contract instead
+    # of the KB's 56-day FIDIC default), which is worse than the project-question
+    # case it was meant to help. Kept as a live env knob for future tuning.
     gk_id_set = set(gk_ids)
-    GK_BACKGROUND_FACTOR = float(os.getenv("RAG_GK_BACKGROUND_FACTOR", "0.9"))
+    GK_BACKGROUND_FACTOR = float(os.getenv("RAG_GK_BACKGROUND_FACTOR", "1.0"))
     scored: List[Tuple[float, Chunk]] = []
     for chunk, sem_score, id_bonus in fused.values():
         final_score = (sem_score or 0.0) + (id_bonus or 0.0)

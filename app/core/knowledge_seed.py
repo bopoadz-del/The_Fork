@@ -60,7 +60,14 @@ def seed_knowledge() -> None:
             try:
                 with open(path, "rb") as fh:
                     raw = fh.read()
-                sha = hashlib.sha256(raw).hexdigest()
+                # Include the chunker in the idempotency key: the curated notes
+                # are dense (tables of deadlines/percentages), and the default
+                # 500-WORD chunker buried whole tables in one ~2500-char chunk so
+                # the model under-read specific rows (retention %, IPC days, DNP
+                # length). We now index them with the finer char-level chunker;
+                # bumping the key here forces a one-time re-chunk of notes that
+                # were previously seeded coarse.
+                sha = hashlib.sha256(raw + b"::chunker=finer").hexdigest()
                 name = os.path.basename(path)
 
                 # Exact content already present -> nothing to do (idempotent).
@@ -83,7 +90,7 @@ def seed_knowledge() -> None:
                 doc = store.add_document(
                     gk, name, stored_as, filepath, len(raw), content_sha256=sha,
                 )
-                doc_index.index_document(gk, doc["id"])
+                doc_index.index_document(gk, doc["id"], chunker="finer")
                 seeded += 1
                 logger.info("knowledge seed: ingested '%s'", name)
             except Exception as e:  # noqa: BLE001 — one bad file must not stop the rest

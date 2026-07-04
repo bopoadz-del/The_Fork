@@ -204,15 +204,13 @@ def test_retrieve_merges_general_knowledge(monkeypatch):
     assert "p_active" in project_ids
     assert "training_material" in project_ids
 
-    # GK is background: RAG_GK_BACKGROUND_FACTOR (0.9) mildly penalises GK scores
-    # so a project's own docs win close calls, but a strong GK match still wins.
-    # Order unchanged (GK 0.92*0.9=0.828 first, active 0.80 second, GK 0.55*0.9
-    # =0.495 third); only the GK scores are scaled.
-    assert abs(chunks[0].score - 0.828) < 1e-6
+    # GK background factor defaults to 1.0 (OFF), so GK scores are unchanged:
+    # GK 0.92 first, active 0.80 second, GK 0.55 third.
+    assert chunks[0].score == 0.92
     assert chunks[0].project_id == "training_material"
     assert chunks[1].score == 0.80
     assert chunks[1].project_id == "p_active"
-    assert abs(chunks[2].score - 0.495) < 1e-6
+    assert chunks[2].score == 0.55
 
 
 def test_retrieve_skips_gk_when_active_is_gk(monkeypatch):
