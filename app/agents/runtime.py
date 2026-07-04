@@ -40,36 +40,66 @@ _EMPTY_RESPONSE_FALLBACK = (
 )
 
 
+_GENERATIVE_VERB_RE = re.compile(
+    r"\b(generate|produce|create|draft|prepare|compose|write up|write a |write an |"
+    r"build (?:a|an|me)|auto[-\s]?populate|put together|come up with)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_generative_request(text: str) -> bool:
+    """A request to PRODUCE an artifact (checklist, register, RFI, plan) rather
+    than look up a fact. Generative requests must not be strait-jacketed by the
+    'answer ONLY from context' directive — with any related template in the
+    corpus the model would otherwise refuse ("I can't generate that from the
+    provided material"), which is the opposite of what the user asked for."""
+    return bool(_GENERATIVE_VERB_RE.search(text or ""))
+
+
 def _apply_rag_context(messages: list, rag_sys_msg: dict) -> bool:
     """Fold retrieved RAG context INTO the final user turn rather than adding a
     separate system message.
 
     Models (esp. gpt-oss) de-prioritize system messages: with the context in a
-    system block the model would cite the doc-ids but still answer from its
-    (often wrong) parametric prior — observed live on a FIDIC question where the
-    answer was byte-identical whether the retrieved context was the correct KB
-    note or unrelated contract templates. Embedding the grounding directive +
-    context immediately around the question, in the user turn, makes the model
-    treat it as part of what it must answer. Returns True if applied.
+    system block the model cites the doc-ids but still answers from its (often
+    wrong) parametric prior — observed live on a FIDIC question where the answer
+    was byte-identical whether the context was the correct KB note or unrelated
+    templates. Embedding it in the user turn makes the model actually use it.
+
+    The directive is INTENT-AWARE: a lookup/factual turn is grounded strictly
+    (answer only from context, don't invent); a GENERATE turn treats the context
+    as optional background and lets the model apply domain expertise to produce
+    the artifact, while still not fabricating project-specific facts. Returns
+    True if applied.
     """
     content = (rag_sys_msg or {}).get("content")
     if not content:
         return False
     if messages and messages[-1].get("role") == "user":
         question = messages[-1].get("content", "")
-        messages[-1] = {
-            **messages[-1],
-            "content": (
-                content
-                + "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+        if _is_generative_request(question):
+            directive = (
+                "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+                "The reference context above is background you MAY draw on. This "
+                "is a REQUEST TO GENERATE — produce the complete artifact asked "
+                "for, applying standard construction / engineering domain "
+                "knowledge where the context is thin or absent. Do NOT fabricate "
+                "project-specific facts (real names, numbers, drawing or clause "
+                "references) that aren't in the context, but DO generate the "
+                "standard professional content requested (checklist items, risk "
+                "entries, methodology, etc.).\n\nREQUEST: "
+            )
+        else:
+            directive = (
+                "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
                 "Answer the question below using ONLY the reference context "
                 "above. Reproduce its specific facts — numbers, deadlines, clause "
                 "references, named principles, definitions — EXACTLY. If the "
                 "context conflicts with what you think you know, the context "
                 "wins. If the context does not contain the answer, say you don't "
-                "have it rather than inventing one.\n\nQUESTION: " + question
-            ),
-        }
+                "have it rather than inventing one.\n\nQUESTION: "
+            )
+        messages[-1] = {**messages[-1], "content": content + directive + question}
         return True
     # No user turn to attach to (unexpected) — fall back to a system message.
     messages.insert(max(0, len(messages) - 1), rag_sys_msg)
