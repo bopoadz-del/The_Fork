@@ -410,6 +410,10 @@ def test_rag_search_route_unknown_project_returns_empty(isolated_data_dir, monke
     from fastapi.testclient import TestClient
     from app.main import app
 
+    # Isolate from any general-knowledge corpus: this test asserts an unknown
+    # project has no docs of its OWN. With GK merge on (PR #107) a seeded GK
+    # project would otherwise contribute background chunks and make count > 0.
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     # The auth router accepts the built-in dev key "cb_dev_key" via Bearer.
     with TestClient(app) as client:
         r = client.post(

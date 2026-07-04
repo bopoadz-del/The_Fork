@@ -44,7 +44,7 @@ def _fake_rag_audit():
 async def test_chat_returns_structured_sources(monkeypatch):
     agent = _make_agent()
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -87,7 +87,7 @@ async def test_chat_returns_structured_sources(monkeypatch):
 async def test_chat_stream_end_event_includes_sources(monkeypatch):
     agent = _make_agent()
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -125,7 +125,7 @@ async def test_chat_stream_end_event_includes_sources(monkeypatch):
 async def test_chat_source_labels_do_not_expose_raw_paths(monkeypatch):
     agent = _make_agent()
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -161,7 +161,7 @@ async def test_chat_source_labels_do_not_expose_raw_paths(monkeypatch):
 async def test_chat_returns_empty_sources_when_no_rag(monkeypatch):
     agent = _make_agent()
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -285,7 +285,7 @@ async def test_chat_short_circuits_missing_exact_reference(monkeypatch):
 
     call_count = {"n": 0}
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         call_count["n"] += 1
         return {
             "status": "success",
@@ -328,7 +328,7 @@ async def test_chat_stream_short_circuits_missing_exact_reference(monkeypatch):
 
     call_count = {"n": 0}
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         call_count["n"] += 1
         return {
             "status": "success",
@@ -375,7 +375,7 @@ async def test_chat_does_not_short_circuit_when_rag_context_exists(monkeypatch):
 
     call_count = {"n": 0}
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         call_count["n"] += 1
         return {
             "status": "success",

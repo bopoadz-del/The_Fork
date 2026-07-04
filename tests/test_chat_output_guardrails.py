@@ -68,7 +68,7 @@ async def test_chat_replaces_raw_tool_json_with_fallback(monkeypatch):
 
     raw_tool = json.dumps({"name": "search_project_documents", "arguments": {"query": "PRC-501", "top_k": 20}})
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -95,7 +95,7 @@ async def test_chat_replaces_empty_final_with_fallback(monkeypatch):
         allowed_blocks=[],
     )
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -172,7 +172,7 @@ async def test_chat_blocks_raw_search_args_leak(monkeypatch):
 
     search_args = json.dumps({"query": "registered capital", "top_k": 5})
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -201,7 +201,7 @@ async def test_chat_stream_blocks_raw_search_args_leak(monkeypatch):
 
     search_args = json.dumps({"query": "registered capital", "top_k": 5})
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {
@@ -236,7 +236,7 @@ async def test_chat_preserves_user_requested_json(monkeypatch):
 
     user_json = '{"items": [{"description": "concrete", "quantity": 10, "unit": "m3"}]}'
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
         return {
             "status": "success",
             "choice": {

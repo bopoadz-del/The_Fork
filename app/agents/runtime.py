@@ -361,12 +361,12 @@ def _sanitize_final_text(text: str) -> str:
 
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
-# Hard cap so a runaway loop can't burn budget or hang a turn. Env-tunable:
-# 12 let a grounded Q&A that couldn't find an exact value (e.g. "manhole spacing")
-# keep re-searching for ~90-120s+ before the forced final. 6 bounds that to a few
-# rounds — still ample for legit multi-step tasks (schedule = 1-2 tool calls) —
-# and the forced no-tools final then answers from the already-injected context.
-MAX_TOOL_ITERATIONS = int(os.getenv("AGENT_MAX_TOOL_ITERATIONS", "6"))
+# Hard cap so a runaway loop can't burn budget (backstop). Kept at 12 for legit
+# complex multi-step tasks; env-tunable. The real fix for the "keep re-searching"
+# hang is the per-turn search-tool cap (AGENT_SEARCH_TOOL_CAP) in the chat loops,
+# which stops offering search_project_documents after a couple of calls so the
+# model answers from injected context instead of grinding to this cap.
+MAX_TOOL_ITERATIONS = int(os.getenv("AGENT_MAX_TOOL_ITERATIONS", "12"))
 MAX_HISTORY_TURNS = 20
 MAX_DELEGATION_DEPTH = 3  # how deep agent → agent delegation may recurse
 
@@ -1692,10 +1692,19 @@ class Agent:
             }
 
         tool_calls_made: List[Dict[str, Any]] = []
+        # Root fix for the tool-loop (mirrors chat_stream): cap explicit
+        # search_project_documents calls, then stop offering the tool so the
+        # model answers from injected context instead of grinding to the cap.
+        SEARCH_TOOL_CAP = int(os.getenv("AGENT_SEARCH_TOOL_CAP", "2"))
+        search_calls = 0
+        excluded_tools: set = set()
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             await _emit("iteration", {"n": iteration + 1})
-            resp = await self._call_llm(messages, api_key, project_id=project_id, user_id=user_id)
+            resp = await self._call_llm(
+                messages, api_key, project_id=project_id, user_id=user_id,
+                exclude_tools=excluded_tools or None,
+            )
             if resp.get("status") == "error":
                 return resp
             choice = resp["choice"]
@@ -1756,6 +1765,10 @@ class Agent:
                 # so the UI can show "️ tool_name — running…" live.
                 fn = tc.get("function") or {}
                 tc_name = fn.get("name") or tc.get("name") or "unknown"
+                if tc_name == "search_project_documents":
+                    search_calls += 1
+                    if search_calls >= SEARCH_TOOL_CAP:
+                        excluded_tools.add("search_project_documents")
                 tc_args_raw = fn.get("arguments") or tc.get("arguments") or "{}"
                 try:
                     tc_args = json.loads(tc_args_raw) if isinstance(tc_args_raw, str) else dict(tc_args_raw)
@@ -2102,9 +2115,21 @@ class Agent:
         # Tool results accumulated this turn — feeds the schedule download offer
         # (a generate_wbs call becomes a 'Schedule (Excel)' export descriptor).
         stream_tool_results: List[Dict[str, Any]] = []
+        # Root fix for the tool-loop: RAG context is injected pre-loop, yet the
+        # model keeps re-calling search_project_documents when an exact value
+        # isn't found — grinding to the iteration cap. Allow a few explicit
+        # searches, then STOP offering the tool so the model must answer from what
+        # it has (or honestly say it doesn't) instead of looping. generate_wbs and
+        # other tools stay available.
+        SEARCH_TOOL_CAP = int(os.getenv("AGENT_SEARCH_TOOL_CAP", "2"))
+        search_calls = 0
+        excluded_tools: set = set()
         for iteration in range(MAX_TOOL_ITERATIONS):
             _LOG.info("chat_stream: iter=%d agent=%s", iteration, self.name)
-            resp = await self._call_llm(messages, api_key, project_id=project_id, user_id=user_id)
+            resp = await self._call_llm(
+                messages, api_key, project_id=project_id, user_id=user_id,
+                exclude_tools=excluded_tools or None,
+            )
             if resp.get("status") == "error":
                 err = resp.get("error", "LLM call failed")
                 _LOG.warning("chat_stream: iter=%d LLM error %s", iteration, err)
@@ -2188,6 +2213,12 @@ class Agent:
             messages.append(assistant_msg)
             for tc in tool_calls:
                 fn = (tc.get("function") or {})
+                if fn.get("name") == "search_project_documents":
+                    search_calls += 1
+                    if search_calls >= SEARCH_TOOL_CAP:
+                        # Stop offering the search tool for the rest of this turn —
+                        # the model has searched enough; force it to answer.
+                        excluded_tools.add("search_project_documents")
                 yield {
                     "type": "tool_call",
                     "tool": fn.get("name"),
@@ -2460,6 +2491,7 @@ class Agent:
         project_id: Optional[str] = None,
         with_tools: bool = True,
         user_id: Optional[str] = None,
+        exclude_tools: Optional[set] = None,
     ) -> Dict[str, Any]:
         cfg = _llm_config()
         # Grounded LoRA adapter (narrow path): serve forced-final / tool-less
@@ -2514,6 +2546,11 @@ class Agent:
             "stream": False,
         }
         tools = self.tool_definitions(project_id=project_id)
+        if exclude_tools:
+            tools = [
+                t for t in tools
+                if t.get("function", {}).get("name") not in exclude_tools
+            ]
         if tools and with_tools:
             payload["tools"] = tools
             # When the latest user message names a deliverable (schedule,

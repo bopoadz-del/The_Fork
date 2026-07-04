@@ -416,7 +416,7 @@ def retrieve_with_filter(
     # the active project holds no content for), because there its scores far
     # exceed the active project's.
     gk_id_set = set(gk_ids)
-    GK_BACKGROUND_FACTOR = float(os.getenv("RAG_GK_BACKGROUND_FACTOR", "0.82"))
+    GK_BACKGROUND_FACTOR = float(os.getenv("RAG_GK_BACKGROUND_FACTOR", "0.9"))
     scored: List[Tuple[float, Chunk]] = []
     for chunk, sem_score, id_bonus in fused.values():
         final_score = (sem_score or 0.0) + (id_bonus or 0.0)
