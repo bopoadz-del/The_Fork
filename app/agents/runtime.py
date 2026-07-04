@@ -513,6 +513,12 @@ _DELIVERABLE_PHRASES = (
     "cost estimate", "budget breakdown", "cost breakdown",
     "compare boq to drawings", "discrepancy report",
     "generate recommendations", "recommend action",
+    # Commissioning deliverables → force the commissioning_checklist tool so the
+    # authoritative ASHRAE/AHRI/IEEE/BS 7671/NFPA tables are used, not an LLM
+    # guess. Deliverable phrasings only — a bare "commissioning" question (e.g.
+    # "when does commissioning start?") is left on tool_choice=auto.
+    "commissioning checklist", "commissioning plan", "commissioning schedule",
+    "testing and commissioning", "t&c checklist",
 )
 
 
