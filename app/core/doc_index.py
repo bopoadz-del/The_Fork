@@ -505,6 +505,81 @@ def chunk_text_with_overlap(
     return chunks
 
 
+def chunk_markdown(
+    text: str,
+    target_chars: int = 500,
+    overlap: int = 50,
+    max_table_chars: int = 2200,
+) -> List[str]:
+    """Markdown-aware chunking for curated knowledge notes.
+
+    Keeps each markdown TABLE atomic — header row + separator + all data rows,
+    prefixed with the nearest preceding heading — as a single chunk, and
+    char-chunks the prose between tables. Plain char-chunking split tables so a
+    data row (e.g. "Silver | EPC | Contractor | Lump sum") ended up in a
+    different chunk from its column header ("Book | Form | Design | Pricing
+    basis"); retrieval then matched the headerless fragment poorly and the model
+    couldn't map the value to its column. Keeping the table whole (with its
+    heading) fixes both retrieval and extraction. A table larger than
+    ``max_table_chars`` falls back to char-chunking so it can't blow the budget.
+    """
+    if not text or not text.strip():
+        return []
+    lines = text.split("\n")
+    sep_re = re.compile(r"\s*\|[\s:|\-]+\|")
+    segments: List[tuple] = []  # (kind, text)
+    prose_buf: List[str] = []
+    last_heading = ""
+
+    def _flush_prose():
+        if prose_buf:
+            joined = "\n".join(prose_buf).strip()
+            if joined:
+                segments.append(("prose", joined))
+            prose_buf.clear()
+
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            last_heading = stripped
+        # A table = a "|" row immediately followed by a |---|---| separator.
+        if (
+            stripped.startswith("|")
+            and i + 1 < n
+            and sep_re.match(lines[i + 1])
+        ):
+            _flush_prose()
+            tbl = [line]
+            j = i + 1
+            while j < n and lines[j].lstrip().startswith("|"):
+                tbl.append(lines[j])
+                j += 1
+            body = "\n".join(tbl)
+            table_text = f"{last_heading}\n{body}" if last_heading else body
+            segments.append(("table", table_text))
+            i = j
+            continue
+        prose_buf.append(line)
+        i += 1
+    _flush_prose()
+
+    chunks: List[str] = []
+    for kind, seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+        if kind == "table" and len(seg) <= max_table_chars:
+            chunks.append(seg)
+        else:
+            chunks.extend(
+                chunk_text_with_overlap(seg, target_chars=target_chars, overlap=overlap)
+            )
+    return chunks
+
+
 # ── index persistence ─────────────────────────────────────────────────────────
 
 def _index_from_row(row: DocIndex | None) -> Optional[Dict[str, Any]]:
@@ -1077,7 +1152,9 @@ def index_document(
     else:
         file_path = doc.get("file_path") or ""
         text, meta = _extract_with_meta(file_path, filename)
-        if chunker == "finer":
+        if chunker == "markdown":
+            chunks = chunk_markdown(text, target_chars=500, overlap=50)
+        elif chunker == "finer":
             chunks = chunk_text_with_overlap(text, target_chars=500, overlap=50)
         else:
             chunks = chunk_text(text)
