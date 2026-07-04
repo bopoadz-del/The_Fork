@@ -550,6 +550,33 @@ def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
     return any(p in text for p in _DELIVERABLE_PHRASES)
 
 
+# Deliverable phrase -> the SPECIFIC tool that must produce it. tool_choice=
+# "required" alone let the model satisfy the requirement with the wrong tool
+# (e.g. search_project_documents) and then generate the answer from memory,
+# bypassing the tool's authoritative data. When one of these matches we force
+# THAT tool by name so the real data path runs.
+_INTENT_TOOL_MAP = (
+    (("commissioning checklist", "commissioning plan", "commissioning schedule",
+      "testing and commissioning", "t&c checklist"), "commissioning_checklist"),
+)
+
+
+def _forced_specific_tool(messages: List[Dict[str, Any]], available: set) -> Optional[str]:
+    """Return a tool name to force via named tool_choice for this turn, or None.
+    Gated to the user-tail (iter 0) and to tools actually available, mirroring
+    ``_user_intent_requires_tool``."""
+    if not messages:
+        return None
+    tail = messages[-1]
+    if tail.get("role") != "user":
+        return None
+    text = (tail.get("content") or "").lower()
+    for phrases, tool in _INTENT_TOOL_MAP:
+        if tool in available and any(p in text for p in phrases):
+            return tool
+    return None
+
+
 # Bracketed forms:
 #   [source: file.pdf, chunk 65]
 #   【source: file.pdf, chunk 65】   (gpt-oss Chinese-bracket variant)
@@ -2597,7 +2624,18 @@ class Agent:
             # heavy-reasoning) have their own discipline + may legitimately
             # answer in prose on the same keywords. Q&A queries that don't
             # name a deliverable keep tool_choice="auto" as before.
-            if self.name == "project-assistant" and _user_intent_requires_tool(messages):
+            tool_names = {t.get("function", {}).get("name") for t in tools}
+            forced_tool = (
+                _forced_specific_tool(messages, tool_names)
+                if self.name == "project-assistant" else None
+            )
+            if forced_tool:
+                # Force THIS tool by name — "required" alone let the model pick
+                # the wrong tool (search) and bypass the authoritative data.
+                payload["tool_choice"] = {
+                    "type": "function", "function": {"name": forced_tool},
+                }
+            elif self.name == "project-assistant" and _user_intent_requires_tool(messages):
                 payload["tool_choice"] = "required"
             else:
                 payload["tool_choice"] = "auto"
