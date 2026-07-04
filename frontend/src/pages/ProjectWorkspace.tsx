@@ -1020,11 +1020,11 @@ export default function ProjectWorkspace() {
                     : m
                 )
               )
-              setLlmAvailable(false)
-              setTimeout(() => {
-                setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
-                setLlmAvailable(true)
-              }, 8000)
+              // Error bubble persists until the user sends a new message or
+              // clears the conversation — no 8s self-delete, which made a
+              // failure look like a silent hang. Unlock the composer so the
+              // user can retry immediately.
+              setLlmAvailable(true)
             }
           }
         }
@@ -1059,11 +1059,8 @@ export default function ProjectWorkspace() {
                 : m
             )
           )
-          setLlmAvailable(false)
-          setTimeout(() => {
-            setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
-            setLlmAvailable(true)
-          }, 8000)
+          // Error bubble persists (no 8s self-delete). Unlock composer to retry.
+          setLlmAvailable(true)
           return
         }
         // Intentional cancel — mark assistant message done, keep content, clear tool status
@@ -1085,11 +1082,8 @@ export default function ProjectWorkspace() {
             : m
         )
       )
-      setLlmAvailable(false)
-      setTimeout(() => {
-        setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
-        setLlmAvailable(true)
-      }, 8000)
+      // Error bubble persists (no 8s self-delete). Unlock composer to retry.
+      setLlmAvailable(true)
     } finally {
       clearReaderDeadline()
       setStreaming(false)
