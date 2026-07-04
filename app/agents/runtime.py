@@ -2294,7 +2294,14 @@ class Agent:
                     # empty bubble or leaked JSON.
                     if not final_text.strip():
                         _LOG.info("chat_stream: empty final_text, forcing no-tools retry")
+                        if _timing:
+                            _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
+                                         len(raw_content), time.monotonic() - _turn_t0)
+                        _fr_t0 = time.monotonic()
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
+                        if _timing:
+                            _LOG.warning("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
+                                         time.monotonic() - _fr_t0, forced_resp.get("status"), time.monotonic() - _turn_t0)
                         if forced_resp.get("status") == "error":
                             final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
@@ -2303,6 +2310,9 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+                    if _timing:
+                        _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
+                                     iteration, len(final_text), time.monotonic() - _turn_t0)
                     _LOG.info("chat_stream: final_text iter=%d chars=%d", iteration, len(final_text))
                     for chunk in _chunks(final_text, 80):
                         yield {"type": "token", "content": chunk}
