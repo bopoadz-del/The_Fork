@@ -182,6 +182,44 @@ def test_primary_success_no_fallback_call(monkeypatch):
     assert client.post.await_count == 1
 
 
+def test_tool_use_failed_prose_falls_back(monkeypatch):
+    """Groq 400 tool_use_failed where the model emitted PROSE (not recoverable
+    native tool markup) must fall back to gpt-oss instead of erroring the turn.
+    This is the commissioning-checklist failure observed live on Groq."""
+    _groq_primary_ollama_fallback(monkeypatch)
+    agent = _agent()
+    tuf_body = (
+        '{"error":{"message":"Failed to call a function.","type":"invalid_request_error",'
+        '"code":"tool_use_failed","failed_generation":"## Electrical System Commissioning '
+        'Checklist\\n\\n### 1. Visual Inspection\\n- ..."}}'
+    )
+    client = _client_with([
+        _resp(400, text=tuf_body),
+        _resp(200, json_body={"choices": [{"message": {"content": "checklist from gpt-oss"}}]}),
+    ])
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=client):
+        resp = _run(agent._call_llm([], api_key="gk-test", with_tools=False))
+
+    assert resp["status"] == "success"
+    assert resp["choice"]["message"]["content"] == "checklist from gpt-oss"
+    assert client.post.await_count == 2
+
+
+def test_tool_use_failed_prose_no_fallback_errors(monkeypatch):
+    """With no fallback configured, the same 400 returns an error (single
+    attempt) — we do not silently swallow it."""
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "gk-test")
+    monkeypatch.delenv("LLM_FALLBACK_PROVIDER", raising=False)
+    agent = _agent()
+    tuf_body = '{"error":{"code":"tool_use_failed","failed_generation":"## prose ..."}}'
+    client = _client_with([_resp(400, text=tuf_body)])
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=client):
+        resp = _run(agent._call_llm([], api_key="gk-test", with_tools=False))
+    assert resp["status"] == "error"
+    assert client.post.await_count == 1
+
+
 # ── llm_client.complete(): same fallback for the intent path ─────────────────
 
 

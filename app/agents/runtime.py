@@ -2728,6 +2728,7 @@ class Agent:
                 # `error.failed_generation`. Recover it into OpenAI-style
                 # tool_calls so the agent loop can dispatch and continue
                 # rather than bubbling a 400 to the user.
+                tool_use_failed_unrecovered = False
                 try:
                     err = json.loads(body)
                     err_obj = err.get("error", {}) if isinstance(err, dict) else {}
@@ -2746,11 +2747,19 @@ class Agent:
                                 },
                                 "raw": err,
                             }
+                        # Llama emitted the answer as PROSE instead of a tool
+                        # call (common on Groq when tool_choice is forced with a
+                        # large production context). We can't recover a tool
+                        # call from prose — but this is a model-side failure a
+                        # different provider CAN handle, so treat it as
+                        # retryable and fall back rather than erroring the turn.
+                        tool_use_failed_unrecovered = True
                 except (json.JSONDecodeError, KeyError, TypeError):
                     pass
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
-                if _is_retryable(r.status_code) and not is_last:
-                    _LOG.warning("llm: %s HTTP %d — falling back to %s", a_cfg["provider"], r.status_code, attempts[attempt_idx + 1][0]["provider"])
+                if (_is_retryable(r.status_code) or tool_use_failed_unrecovered) and not is_last:
+                    reason = "tool_use_failed (prose)" if tool_use_failed_unrecovered else f"HTTP {r.status_code}"
+                    _LOG.warning("llm: %s %s — falling back to %s", a_cfg["provider"], reason, attempts[attempt_idx + 1][0]["provider"])
                     continue
                 return last_error
 
