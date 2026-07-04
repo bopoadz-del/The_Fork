@@ -23,25 +23,61 @@ async def complete(
     model: Optional[str] = None,
     timeout: float = 120.0,
 ) -> str:
-    """Return the assistant message text for a tool-less completion."""
-    from app.agents.runtime import _llm_config
+    """Return the assistant message text for a tool-less completion.
+
+    Mirrors ``Agent._call_llm``'s provider fallback: on a RETRYABLE failure
+    from the primary (408/413/429/5xx or a network/timeout error) it retries
+    once against ``LLM_FALLBACK_PROVIDER`` so the orchestrator's intent routing
+    survives a Groq rate-limit instead of silently losing smart routing for the
+    turn. Auth/validation errors (other 4xx) are not retried.
+    """
+    from app.agents.runtime import _llm_config, _llm_fallback_config
     cfg = _llm_config()
-    api_key = os.getenv(cfg["env_key"]) if cfg.get("env_key") else ""
-    payload: Dict[str, Any] = {
-        "model": model or cfg["default_model"],
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "stream": False,
-    }
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(cfg["url"], json=payload, headers=headers)
-        r.raise_for_status()
-        data = r.json()
-    return (data["choices"][0]["message"].get("content") or "").strip()
+    fallback_cfg = _llm_fallback_config(cfg)
+
+    attempts = [(cfg, os.getenv(cfg["env_key"]) if cfg.get("env_key") else "", model or cfg["default_model"])]
+    if fallback_cfg:
+        fb_key = os.getenv(fallback_cfg["env_key"]) if fallback_cfg["env_key"] else ""
+        attempts.append((fallback_cfg, fb_key, fallback_cfg["default_model"]))
+
+    def _retryable(status: int) -> bool:
+        return status in (408, 413, 429) or status >= 500
+
+    last_exc: Optional[Exception] = None
+    for idx, (a_cfg, a_key, a_model) in enumerate(attempts):
+        is_last = idx == len(attempts) - 1
+        payload: Dict[str, Any] = {
+            "model": a_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        headers = {"Content-Type": "application/json"}
+        if a_key:
+            headers["Authorization"] = f"Bearer {a_key}"
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.post(a_cfg["url"], json=payload, headers=headers)
+                if r.status_code >= 400:
+                    exc = httpx.HTTPStatusError(
+                        f"{a_cfg['provider']} HTTP {r.status_code}", request=r.request, response=r
+                    )
+                    if _retryable(r.status_code) and not is_last:
+                        last_exc = exc
+                        continue
+                    raise exc
+                data = r.json()
+            return (data["choices"][0]["message"].get("content") or "").strip()
+        except httpx.HTTPStatusError:
+            raise
+        except Exception as e:  # network / timeout / parse
+            last_exc = e
+            if not is_last:
+                continue
+            raise
+    # Unreachable in practice (loop always returns or raises), but keeps types honest.
+    raise last_exc or RuntimeError("LLM completion failed")
 
 
 async def complete_json(

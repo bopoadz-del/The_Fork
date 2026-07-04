@@ -180,3 +180,35 @@ def test_primary_success_no_fallback_call(monkeypatch):
     assert resp["status"] == "success"
     assert resp["choice"]["message"]["content"] == "primary ok"
     assert client.post.await_count == 1
+
+
+# ── llm_client.complete(): same fallback for the intent path ─────────────────
+
+
+def test_complete_429_falls_back(monkeypatch):
+    """The orchestrator intent path (complete/complete_json) must also degrade
+    on a Groq rate-limit, else smart routing silently vanishes for the turn."""
+    from app.core import llm_client
+    _groq_primary_ollama_fallback(monkeypatch)
+    client = _client_with([
+        _resp(429, text="rate limited"),
+        _resp(200, json_body={"choices": [{"message": {"content": "intent json"}}]}),
+    ])
+    with patch("app.core.llm_client.httpx.AsyncClient", return_value=client):
+        out = _run(llm_client.complete([{"role": "user", "content": "hi"}]))
+    assert out == "intent json"
+    assert client.post.await_count == 2
+
+
+def test_complete_401_does_not_fall_back(monkeypatch):
+    from app.core import llm_client
+    import httpx
+    _groq_primary_ollama_fallback(monkeypatch)
+    client = _client_with([
+        _resp(401, text="invalid api key"),
+        _resp(200, json_body={"choices": [{"message": {"content": "SHOULD NOT REACH"}}]}),
+    ])
+    with patch("app.core.llm_client.httpx.AsyncClient", return_value=client):
+        with pytest.raises(httpx.HTTPStatusError):
+            _run(llm_client.complete([{"role": "user", "content": "hi"}]))
+    assert client.post.await_count == 1
