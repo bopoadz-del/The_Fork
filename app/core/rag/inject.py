@@ -55,8 +55,16 @@ def format_chunks_as_system_message(
         return {"role": "system", "content": ""}
     scores = [c.score or 0.0 for c in chunks]
     header = (
-        f"Relevant project context (top {len(chunks)} of {total_candidates} "
-        f"matches; cosine in [{min(scores):.3f}, {max(scores):.3f}]):\n"
+        "AUTHORITATIVE REFERENCE CONTEXT — the material below was retrieved from "
+        "the project corpus and curated knowledge base for THIS question. Treat it "
+        "as ground truth and answer using it. When it states specific facts "
+        "(numbers, deadlines, clause references, named principles, definitions), "
+        "reproduce them EXACTLY and do NOT substitute or override them with your own "
+        "prior knowledge — your training data on this topic may be wrong or generic. "
+        "If a detail the user asks for is not in this context, say you don't have it "
+        "rather than inventing a plausible answer.\n"
+        f"(top {len(chunks)} of {total_candidates} matches; cosine in "
+        f"[{min(scores):.3f}, {max(scores):.3f}])\n"
     )
     body_parts = [
         f"[doc_id={c.doc_id} chunk={c.chunk_index} score={(c.score or 0):.3f}] {c.text}"
