@@ -39,6 +39,42 @@ _EMPTY_RESPONSE_FALLBACK = (
     "Please rephrase the question or try again."
 )
 
+
+def _apply_rag_context(messages: list, rag_sys_msg: dict) -> bool:
+    """Fold retrieved RAG context INTO the final user turn rather than adding a
+    separate system message.
+
+    Models (esp. gpt-oss) de-prioritize system messages: with the context in a
+    system block the model would cite the doc-ids but still answer from its
+    (often wrong) parametric prior — observed live on a FIDIC question where the
+    answer was byte-identical whether the retrieved context was the correct KB
+    note or unrelated contract templates. Embedding the grounding directive +
+    context immediately around the question, in the user turn, makes the model
+    treat it as part of what it must answer. Returns True if applied.
+    """
+    content = (rag_sys_msg or {}).get("content")
+    if not content:
+        return False
+    if messages and messages[-1].get("role") == "user":
+        question = messages[-1].get("content", "")
+        messages[-1] = {
+            **messages[-1],
+            "content": (
+                content
+                + "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+                "Answer the question below using ONLY the reference context "
+                "above. Reproduce its specific facts — numbers, deadlines, clause "
+                "references, named principles, definitions — EXACTLY. If the "
+                "context conflicts with what you think you know, the context "
+                "wins. If the context does not contain the answer, say you don't "
+                "have it rather than inventing one.\n\nQUESTION: " + question
+            ),
+        }
+        return True
+    # No user turn to attach to (unexpected) — fall back to a system message.
+    messages.insert(max(0, len(messages) - 1), rag_sys_msg)
+    return True
+
 _UNINDEXED_PROJECT_MESSAGE = (
     "This project has no indexed documents yet, so I cannot answer "
     "questions from its corpus. Please upload a document or wait for "
@@ -1599,10 +1635,7 @@ class Agent:
             agent_name=self.name,
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
-            # Insert just before the last user message (which is always last
-            # after _build_messages). Index = len(messages) - 1.
-            insert_at = max(0, len(messages) - 1)
-            messages.insert(insert_at, _rag_sys_msg)
+            _apply_rag_context(messages, _rag_sys_msg)
 
         # Fast path: exact reference miss with no RAG context.  Skip the
         # model/tool loop entirely and return a controlled not-found answer
@@ -2016,10 +2049,7 @@ class Agent:
             agent_name=self.name,
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
-            # Insert just before the last user message (which is always last
-            # after _build_messages). Index = len(messages) - 1.
-            insert_at = max(0, len(messages) - 1)
-            messages.insert(insert_at, _rag_sys_msg)
+            _apply_rag_context(messages, _rag_sys_msg)
 
         # Fast path: exact reference miss with no RAG context.  Skip the
         # model/tool loop entirely.  Project facts / document listings are not
