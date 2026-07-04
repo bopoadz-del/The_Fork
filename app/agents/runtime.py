@@ -1800,12 +1800,18 @@ class Agent:
         SEARCH_TOOL_CAP = int(os.getenv("AGENT_SEARCH_TOOL_CAP", "2"))
         search_calls = 0
         excluded_tools: set = set()
+        # Once a deliverable (non-search) tool returns, force a tool-free
+        # synthesis call — see the streaming loop for the full rationale (stops
+        # the tool-loop and the Groq large-context tool_use_failed/429 hang).
+        force_synthesis = False
+        _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             await _emit("iteration", {"n": iteration + 1})
             resp = await self._call_llm(
                 messages, api_key, project_id=project_id, user_id=user_id,
                 exclude_tools=excluded_tools or None,
+                with_tools=not force_synthesis,
             )
             if resp.get("status") == "error":
                 return resp
@@ -1899,6 +1905,11 @@ class Agent:
                 if isinstance(_inner, dict) and _inner.get("status") == "error":
                     ok = False
                     err = str(_inner.get("error") or "")[:200]
+                if (
+                    _force_synth_enabled and ok
+                    and tool_result.get("name") != "search_project_documents"
+                ):
+                    force_synthesis = True
                 await _emit("tool_result", {
                     "name": tool_result.get("name", tc_name),
                     "id": tc.get("id") or "",
@@ -2226,11 +2237,21 @@ class Agent:
         SEARCH_TOOL_CAP = int(os.getenv("AGENT_SEARCH_TOOL_CAP", "2"))
         search_calls = 0
         excluded_tools: set = set()
+        # Once a deliverable (non-search) tool has returned its result, the model
+        # has what it needs — the next call is synthesis. Offering tools on that
+        # synthesis call is pure downside: it lets the model loop, and on Groq a
+        # large context makes Llama's prose synthesis fail the tool-use validator
+        # (HTTP 400 tool_use_failed) or blow the free-tier TPM (429) — each then
+        # falls back to slow gpt-oss and the turn appears to hang for minutes.
+        # Force a tool-free synthesis instead. Env-disable: AGENT_FORCE_SYNTHESIS=0.
+        force_synthesis = False
+        _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
         for iteration in range(MAX_TOOL_ITERATIONS):
-            _LOG.info("chat_stream: iter=%d agent=%s", iteration, self.name)
+            _LOG.info("chat_stream: iter=%d agent=%s force_synthesis=%s", iteration, self.name, force_synthesis)
             resp = await self._call_llm(
                 messages, api_key, project_id=project_id, user_id=user_id,
                 exclude_tools=excluded_tools or None,
+                with_tools=not force_synthesis,
             )
             if resp.get("status") == "error":
                 err = resp.get("error", "LLM call failed")
@@ -2335,6 +2356,15 @@ class Agent:
                     _call_stack=_call_stack,
                 )
                 stream_tool_results.append(tool_result)
+                # A successful deliverable tool (anything but search) means the
+                # model now has authoritative data to synthesize from — stop
+                # offering tools so the next call is a clean, tool-free answer.
+                if (
+                    _force_synth_enabled
+                    and tool_result.get("ok", True)
+                    and tool_result.get("name") != "search_project_documents"
+                ):
+                    force_synthesis = True
                 yield {
                     "type": "tool_result",
                     "tool": tool_result["name"],
