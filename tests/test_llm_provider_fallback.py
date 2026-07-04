@@ -182,6 +182,56 @@ def test_primary_success_no_fallback_call(monkeypatch):
     assert client.post.await_count == 1
 
 
+def _pa_agent():
+    """A project-assistant agent with the construction block so commissioning_checklist
+    is an available tool and _forced_specific_tool can fire."""
+    return Agent(
+        name="project-assistant",
+        description="pa",
+        system_prompt="x",
+        allowed_blocks=["construction"],
+    )
+
+
+def _posted_payload(client):
+    """The json= payload of the first post call on the stub client."""
+    return client.post.await_args_list[0].kwargs["json"]
+
+
+COMMISSIONING_MSG = [{"role": "user", "content": "Generate a commissioning checklist for the electrical and plumbing systems, with test standards and acceptance criteria."}]
+
+
+def test_tool_choice_not_forced_on_groq(monkeypatch):
+    """On Groq, a forced-tool deliverable must send tool_choice='auto' — forcing
+    a named tool makes Llama 400/hang. This is the commissioning-hang fix."""
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "gk-test")
+    monkeypatch.delenv("LLM_FALLBACK_PROVIDER", raising=False)
+    agent = _pa_agent()
+    client = _client_with([_resp(200, json_body={"choices": [{"message": {"content": "ok"}}]})])
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=client):
+        _run(agent._call_llm(list(COMMISSIONING_MSG), api_key="gk-test", with_tools=True))
+    payload = _posted_payload(client)
+    assert payload.get("tool_choice") == "auto", payload.get("tool_choice")
+
+
+def test_tool_choice_forced_on_gpt_oss(monkeypatch):
+    """On a non-Groq provider (Ollama/gpt-oss), the same deliverable still forces
+    the named commissioning tool (behaviour preserved for providers that honor it)."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "http://x.tunnel.cf")
+    monkeypatch.delenv("LLM_FALLBACK_PROVIDER", raising=False)
+    agent = _pa_agent()
+    client = _client_with([_resp(200, json_body={"choices": [{"message": {"content": "ok"}}]})])
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=client):
+        _run(agent._call_llm(list(COMMISSIONING_MSG), api_key="", with_tools=True))
+    tc = _posted_payload(client).get("tool_choice")
+    # Either a named-function force or "required" — anything but a plain "auto".
+    assert tc != "auto"
+    if isinstance(tc, dict):
+        assert tc["function"]["name"] == "commissioning_checklist"
+
+
 def test_tool_use_failed_prose_falls_back(monkeypatch):
     """Groq 400 tool_use_failed where the model emitted PROSE (not recoverable
     native tool markup) must fall back to gpt-oss instead of erroring the turn.

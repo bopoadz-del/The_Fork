@@ -2667,16 +2667,13 @@ class Agent:
                 _forced_specific_tool(messages, tool_names)
                 if self.name == "project-assistant" else None
             )
-            if forced_tool:
-                # Force THIS tool by name — "required" alone let the model pick
-                # the wrong tool (search) and bypass the authoritative data.
-                payload["tool_choice"] = {
-                    "type": "function", "function": {"name": forced_tool},
-                }
-            elif self.name == "project-assistant" and _user_intent_requires_tool(messages):
-                payload["tool_choice"] = "required"
-            else:
-                payload["tool_choice"] = "auto"
+            requires_tool = (
+                self.name == "project-assistant"
+                and _user_intent_requires_tool(messages)
+            )
+        else:
+            forced_tool = None
+            requires_tool = False
 
         # Provider attempts: primary first, then the configured fallback (if
         # any) on a RETRYABLE failure only — 413 (request too large), 429
@@ -2692,10 +2689,31 @@ class Agent:
         def _is_retryable(status: int) -> bool:
             return status in (408, 413, 429) or status >= 500
 
+        def _tool_choice_for(provider: str):
+            # Forcing tool_choice HANGS/400s on Groq: Llama-4-Scout emits the
+            # tool as PROSE under a large prod context -> HTTP 400
+            # tool_use_failed -> the streaming tool-loop retries/loops. Forcing
+            # ALSO does nothing on gpt-oss, which ignores tool_choice outright.
+            # So only force on providers that honor it without hard-failing;
+            # Groq uses "auto", where Llama calls tools cleanly on its own and
+            # the turn always completes. Decided PER-ATTEMPT so a fallback to a
+            # different provider gets the right value.
+            if provider == "groq":
+                return "auto"
+            if forced_tool:
+                # Force THIS tool by name — "required" alone let the model pick
+                # the wrong tool (search) and bypass the authoritative data.
+                return {"type": "function", "function": {"name": forced_tool}}
+            if requires_tool:
+                return "required"
+            return "auto"
+
         last_error: Dict[str, Any] = {"status": "error", "error": "LLM call failed"}
         for attempt_idx, (a_cfg, a_key, a_model) in enumerate(attempts):
             is_last = attempt_idx == len(attempts) - 1
             payload["model"] = a_model
+            if tools and with_tools:
+                payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
                 async with httpx.AsyncClient(timeout=120.0) as client:
                     r = await client.post(
