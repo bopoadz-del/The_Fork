@@ -8,6 +8,7 @@ written to the project, and later questions can be answered from that
 accumulated knowledge without re-attaching the source document.
 """
 
+import os
 from typing import Any, Dict, List, Optional
 
 from app.core import projects as store
@@ -78,21 +79,37 @@ def build_project_context(project_id: str, query: str = "", limit: int = 8) -> s
 
     Returns a non-empty string when the project has facts or documents.
     Returns "" when neither exists.
+
+    The document listing is CAPPED (``PROJECT_CONTEXT_DOC_CAP``, default 40).
+    A large corpus (e.g. the 2,997-doc master corpus) previously dumped every
+    filename into a system message on every turn — ~60k tokens of noise the
+    model can't use (retrieval surfaces the relevant docs) that blew past
+    provider rate limits. We list the newest ``cap`` docs and summarise the
+    rest as a count.
     """
     facts_block = build_memory_context(project_id, query, limit)
-    docs = store.list_documents(project_id)
 
-    if not facts_block and not docs:
+    doc_cap = int(os.getenv("PROJECT_CONTEXT_DOC_CAP", "40"))
+    total_docs = store.count_documents(project_id)
+    docs = store.list_documents(project_id, limit=doc_cap, newest_first=True)
+
+    if not facts_block and not total_docs:
         return ""
 
     parts: List[str] = []
     if facts_block:
         parts.append(facts_block)
     if docs:
-        lines = ["Project documents:"]
+        lines = [f"Project documents ({total_docs} total):"]
         for doc in docs:
             lines.append(
                 f"- {doc['original_name']} (type: {doc['doc_type']}, role: {doc['doc_role']})"
+            )
+        remaining = total_docs - len(docs)
+        if remaining > 0:
+            lines.append(
+                f"- …and {remaining} more document(s). Use document search to "
+                "find specific ones — do not assume they are absent."
             )
         parts.append("\n".join(lines))
 

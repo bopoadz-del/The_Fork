@@ -52,7 +52,7 @@ def test_build_project_context_facts_only():
     ctx = build_project_context(pid)
     assert "Diriyah Gate Authority" in ctx
     # No document section
-    assert "Project documents:" not in ctx
+    assert "Project documents" not in ctx
 
 
 def test_build_project_context_documents_only():
@@ -63,6 +63,6 @@ def test_build_project_context_documents_only():
 
     ctx = build_project_context(pid)
     assert "weekly_report.pdf" in ctx
-    assert "Project documents:" in ctx
+    assert "Project documents" in ctx
     # No facts section
     assert "Known facts" not in ctx
