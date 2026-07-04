@@ -1242,6 +1242,51 @@ def _llm_fallback_config(primary: Dict[str, str]) -> Optional[Dict[str, str]]:
     return cfg
 
 
+# Outbound message sanitiser — the single chokepoint that protects every
+# provider from non-standard fields our own (reasoning-capable) models add.
+# Reasoning models (gpt-oss / GLM) attach a `reasoning` field to the assistant
+# message that carries a tool call; runtime appends that message wholesale and
+# it is persisted to agent memory. When the array is later POSTed to Groq it
+# 400s: "messages[N].reasoning: reasoning is not supported with this model" and
+# the whole (tool-calling) turn errors. We WHITELIST allowed keys rather than
+# blacklist `reasoning`, so whatever field the next provider invents is dropped
+# too. Applied only in _call_llm so already-contaminated history is neutralised
+# on replay — no persistence migration.
+_ALLOWED_MSG_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name")
+_ALLOWED_TOOLCALL_KEYS = ("id", "type")
+_ALLOWED_FUNCTION_KEYS = ("name", "arguments")
+
+
+def _sanitize_messages_for_provider(
+    messages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Return a copy of ``messages`` with only OpenAI-standard keys per message
+    (and per tool_call). Never mutates the input list."""
+    clean: List[Dict[str, Any]] = []
+    for m in messages:
+        if not isinstance(m, dict):
+            clean.append(m)
+            continue
+        cm = {k: m[k] for k in _ALLOWED_MSG_KEYS if k in m}
+        tcs = m.get("tool_calls")
+        if isinstance(tcs, list):
+            clean_tcs = []
+            for tc in tcs:
+                if not isinstance(tc, dict):
+                    clean_tcs.append(tc)
+                    continue
+                ctc = {k: tc[k] for k in _ALLOWED_TOOLCALL_KEYS if k in tc}
+                fn = tc.get("function")
+                if isinstance(fn, dict):
+                    ctc["function"] = {
+                        k: fn[k] for k in _ALLOWED_FUNCTION_KEYS if k in fn
+                    }
+                clean_tcs.append(ctc)
+            cm["tool_calls"] = clean_tcs
+        clean.append(cm)
+    return clean
+
+
 # ── DeepSeek DSML tool-call markup handling ─────────────────────────────────
 # deepseek-chat sometimes emits a tool call as inline text markup inside the
 # message `content` (its own "DSML" token format) instead of, or in addition
@@ -2691,6 +2736,10 @@ class Agent:
         model = self.model
         if cfg["provider"] != "deepseek" and model.startswith("deepseek-"):
             model = cfg["default_model"]
+        # Whitelist-sanitise every outbound message (drops `reasoning` and any
+        # other non-standard field that would make a strict provider — Groq —
+        # reject the request). Single chokepoint, covers all callers.
+        messages = _sanitize_messages_for_provider(messages)
         payload = {
             "model": model,
             "messages": messages,
