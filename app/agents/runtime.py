@@ -1532,6 +1532,37 @@ class Agent:
                     },
                 },
             })
+            # ── synthetic tool: commissioning_checklist ──────────────────────
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "commissioning_checklist",
+                    "description": (
+                        "Generate a systems commissioning / testing & commissioning "
+                        "checklist with the REAL test standards and acceptance "
+                        "criteria per system (HVAC: ASHRAE/AHRI; electrical: "
+                        "IEEE/BS 7671; fire: NFPA; plumbing/lift/facade/BMS too). "
+                        "Call this whenever the user asks to produce/generate a "
+                        "commissioning or T&C checklist — do NOT invent test "
+                        "standards yourself; this tool returns the authoritative ones."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "systems": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Systems to commission. Map the user's wording to "
+                                    "these keys: hvac, electrical, fire, plumbing, "
+                                    "elevator, facade, bms."
+                                ),
+                            },
+                        },
+                        "required": ["systems"],
+                    },
+                },
+            })
 
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
@@ -2816,6 +2847,42 @@ class Agent:
                 result = compact
             return {
                 "name": "generate_wbs",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
+        # ── synthetic tool: commissioning_checklist ──────────────────────────
+        if name == "commissioning_checklist":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error", "error": "construction container not in agent's allowed_blocks"},
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            systems = args.get("systems")
+            if not isinstance(systems, list) or not systems:
+                systems = ["hvac", "electrical", "fire"]
+            try:
+                result = await container.commissioning_checklist({}, {"systems": systems})
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error", "error": f"commissioning_checklist failed: {e}"},
+                }
+            # Trim the flattened master list — the model only needs the organised
+            # per-system checklists + summary to present; the full flat list is
+            # redundant and bloats context.
+            if isinstance(result, dict):
+                result = {k: v for k, v in result.items() if k != "master_test_schedule"}
+            return {
+                "name": "commissioning_checklist",
                 "ok": isinstance(result, dict) and result.get("status") == "success",
                 "result": result,
             }
