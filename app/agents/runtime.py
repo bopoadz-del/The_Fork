@@ -361,7 +361,12 @@ def _sanitize_final_text(text: str) -> str:
 
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
-MAX_TOOL_ITERATIONS = 12  # hard cap so a runaway loop can't burn budget; raised to 12 for complex multi-step tasks
+# Hard cap so a runaway loop can't burn budget or hang a turn. Env-tunable:
+# 12 let a grounded Q&A that couldn't find an exact value (e.g. "manhole spacing")
+# keep re-searching for ~90-120s+ before the forced final. 6 bounds that to a few
+# rounds — still ample for legit multi-step tasks (schedule = 1-2 tool calls) —
+# and the forced no-tools final then answers from the already-injected context.
+MAX_TOOL_ITERATIONS = int(os.getenv("AGENT_MAX_TOOL_ITERATIONS", "6"))
 MAX_HISTORY_TURNS = 20
 MAX_DELEGATION_DEPTH = 3  # how deep agent → agent delegation may recurse
 
