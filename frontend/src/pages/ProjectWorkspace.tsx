@@ -894,6 +894,11 @@ export default function ProjectWorkspace() {
       let sseBuffer = ''
       let accumulatedContent = ''
       let firstTokenReceived = false
+      // 'end' is terminal — set on receipt so we stop reading immediately
+      // instead of waiting for the server to close the connection (which left
+      // the global "typing" spinner + a placeholder bubble hanging after the
+      // answer had already rendered).
+      let streamEnded = false
 
       // Arm the wall-clock deadline now that the response has started.
       resetReaderDeadline()
@@ -990,6 +995,7 @@ export default function ProjectWorkspace() {
                 )
               }
             } else if (evtType === 'end') {
+              streamEnded = true
               const finalContent = accumulatedContent
               const rawSources = Array.isArray(evt['sources']) ? (evt['sources'] as ChatMessage['sources']) : []
               const rawExports = Array.isArray(evt['exports']) ? (evt['exports'] as ChatMessage['exports']) : []
@@ -1021,6 +1027,13 @@ export default function ProjectWorkspace() {
               }, 8000)
             }
           }
+        }
+        // Terminal 'end' event seen — stop reading now (don't wait for the
+        // server to close the socket, which left the spinner hanging).
+        if (streamEnded) {
+          try { await reader.cancel() } catch { /* already closing */ }
+          clearReaderDeadline()
+          break
         }
       }
 
