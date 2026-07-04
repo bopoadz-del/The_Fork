@@ -2246,13 +2246,24 @@ class Agent:
         # Force a tool-free synthesis instead. Env-disable: AGENT_FORCE_SYNTHESIS=0.
         force_synthesis = False
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
+        # WARNING-level timing instrumentation: Render drops INFO app logs on this
+        # service, so the deliverable-hang call-count/latency was invisible.
+        # Gate behind AGENT_TIMING_LOG=1 so it's off by default.
+        _timing = os.getenv("AGENT_TIMING_LOG") == "1"
+        _turn_t0 = time.monotonic()
         for iteration in range(MAX_TOOL_ITERATIONS):
             _LOG.info("chat_stream: iter=%d agent=%s force_synthesis=%s", iteration, self.name, force_synthesis)
+            _call_t0 = time.monotonic()
             resp = await self._call_llm(
                 messages, api_key, project_id=project_id, user_id=user_id,
                 exclude_tools=excluded_tools or None,
                 with_tools=not force_synthesis,
             )
+            if _timing:
+                _tcs = [((tc.get("function") or {}).get("name")) for tc in (resp.get("choice", {}).get("message", {}).get("tool_calls") or [])]
+                _LOG.warning("TIMING chat_stream iter=%d call=%.1fs status=%s tools=%s cum=%.1fs",
+                             iteration, time.monotonic() - _call_t0, resp.get("status"),
+                             _tcs or "final", time.monotonic() - _turn_t0)
             if resp.get("status") == "error":
                 err = resp.get("error", "LLM call failed")
                 _LOG.warning("chat_stream: iter=%d LLM error %s", iteration, err)

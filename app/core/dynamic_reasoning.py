@@ -65,7 +65,14 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
             tmo = float(os.getenv("ORCHESTRATOR_INTENT_TIMEOUT") or "20")
         except ValueError:
             tmo = 20.0
-        out = await complete_json(_SYSTEM, user, max_tokens=300, model=model, timeout=tmo)
+        if os.getenv("AGENT_TIMING_LOG") == "1":
+            import time as _t, logging as _lg
+            _t0 = _t.monotonic()
+            out = await complete_json(_SYSTEM, user, max_tokens=300, model=model, timeout=tmo)
+            _lg.getLogger("app.core.dynamic_reasoning").warning(
+                "TIMING understand_intent call=%.1fs model=%s", _t.monotonic() - _t0, model)
+        else:
+            out = await complete_json(_SYSTEM, user, max_tokens=300, model=model, timeout=tmo)
     except Exception:
         return empty
     workflow = str(out.get("workflow") or "none").lower()
