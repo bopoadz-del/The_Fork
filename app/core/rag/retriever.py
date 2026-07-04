@@ -408,9 +408,20 @@ def retrieve_with_filter(
         if add:
             fused[gk_chunk_id] = (gk_chunk, sem_score, bonus + add)
 
+    # General-knowledge is BACKGROUND, not primary: apply a small penalty to GK
+    # chunks so a project's OWN documents win for project-specific questions — a
+    # "manhole spacing" query must not surface the curated units note above the
+    # project's sewer drawings/reports (which retrieve at similar cosine). GK
+    # still dominates when it is the only relevant source (e.g. a FIDIC question
+    # the active project holds no content for), because there its scores far
+    # exceed the active project's.
+    gk_id_set = set(gk_ids)
+    GK_BACKGROUND_FACTOR = float(os.getenv("RAG_GK_BACKGROUND_FACTOR", "0.82"))
     scored: List[Tuple[float, Chunk]] = []
     for chunk, sem_score, id_bonus in fused.values():
         final_score = (sem_score or 0.0) + (id_bonus or 0.0)
+        if chunk.project_id in gk_id_set and final_score > 0:
+            final_score *= GK_BACKGROUND_FACTOR
         chunk.score = round(final_score, 6)
         scored.append((final_score, chunk))
 
