@@ -367,7 +367,11 @@ CONFIGS_DIR = Path(__file__).parent / "configs"
 # which stops offering search_project_documents after a couple of calls so the
 # model answers from injected context instead of grinding to this cap.
 MAX_TOOL_ITERATIONS = int(os.getenv("AGENT_MAX_TOOL_ITERATIONS", "12"))
-MAX_HISTORY_TURNS = 20
+# History replayed into each LLM call. 20 turns of long answers (schedules,
+# checklists) pushed requests to ~100k tokens — slow/costly on any model, and
+# over Groq's free-tier 30k TPM (413). 8 keeps requests well under that while
+# retaining ample conversational memory. Env-tunable.
+MAX_HISTORY_TURNS = int(os.getenv("AGENT_MAX_HISTORY_TURNS", "8"))
 MAX_DELEGATION_DEPTH = 3  # how deep agent → agent delegation may recurse
 
 # Blocks whose inputs reference a user-uploaded file. When the LLM passes a
