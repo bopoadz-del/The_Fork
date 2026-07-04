@@ -57,10 +57,33 @@ def configured_path() -> Optional[str]:
     return p or None
 
 
+_TINKER_IMPORTABLE: Optional[bool] = None
+
+
+def _tinker_importable() -> bool:
+    """Whether the ``tinker`` SDK is actually installed. Cached — the answer
+    can't change within a process. Guards against a host where the env flags
+    are set but the package was never installed (prod: GROUNDED_ADAPTER_ENABLED
+    was on, ``tinker`` absent → every turn crashed on ``import tinker`` and fell
+    through to an empty forced-final)."""
+    global _TINKER_IMPORTABLE
+    if _TINKER_IMPORTABLE is None:
+        import importlib.util
+        _TINKER_IMPORTABLE = importlib.util.find_spec("tinker") is not None
+    return _TINKER_IMPORTABLE
+
+
 def is_available() -> bool:
     """Lightweight check the chat block can call before each turn.
-    No SDK import, no client init — just the env vars."""
-    return is_enabled() and configured_path() is not None and bool(os.getenv("TINKER_API_KEY"))
+    Verifies config (env vars) AND that the SDK is importable — no client
+    init. A stray ``GROUNDED_ADAPTER_ENABLED`` on a host without ``tinker``
+    must NOT route chat into an import that crashes."""
+    return (
+        is_enabled()
+        and configured_path() is not None
+        and bool(os.getenv("TINKER_API_KEY"))
+        and _tinker_importable()
+    )
 
 
 def _ensure_client(path: str) -> tuple:
