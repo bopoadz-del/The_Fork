@@ -1163,6 +1163,18 @@ def index_document(
         boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
         if boq_chunks:
             chunks = chunks + boq_chunks
+        if not chunks:
+            # A supported file that produced zero chunks is a SILENT indexing
+            # failure: the document "exists" but can never be retrieved. Three
+            # whole projects sat in that state for weeks before the 2026-06
+            # audit noticed. WARNING (not error) because empty-but-valid files
+            # exist; the marker makes the condition grep-able in Render logs.
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "ZERO_CHUNK project=%s doc=%s file=%s ext=%s — supported type "
+                "extracted no chunks (empty file, failed OCR, or extractor bug)",
+                project_id, document_id, filename, ext,
+            )
         entry = {
             "document_id": document_id,
             "filename": filename,

@@ -892,3 +892,52 @@ async def test_search_excludes_deleted_document(tmp_path, monkeypatch):
     results = await doc_index.search_project_documents(pid, "electrical wiring conduit")
     returned_ids = [r["document_id"] for r in results]
     assert doc_del["id"] not in returned_ids
+
+
+def test_zero_chunk_indexing_emits_warning(tmp_path, monkeypatch, caplog):
+    """A supported file that extracts to zero chunks must WARN with the
+    grep-able ZERO_CHUNK marker (TASK C3): three whole projects sat
+    silently unretrievable in this state before the 2026-06 audit."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    proj = projects_mod.create_project("Zero Chunk Project")
+    pid = proj["id"]
+
+    doc_path = _write_txt_doc(tmp_path, "empty.txt", b"")
+    doc = projects_mod.add_document(pid, "empty.txt", file_path=doc_path, size=0)
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="app.core.doc_index"):
+        result = doc_index.index_document(pid, doc["id"])
+
+    assert result["indexed"] == 1  # entry recorded, not skipped
+    assert any("ZERO_CHUNK" in r.message for r in caplog.records), (
+        f"no ZERO_CHUNK warning; records={[r.message for r in caplog.records]}"
+    )
+    marker = next(r.message for r in caplog.records if "ZERO_CHUNK" in r.message)
+    assert pid in marker and doc["id"] in marker
+
+
+def test_nonempty_indexing_does_not_emit_zero_chunk_warning(tmp_path, monkeypatch, caplog):
+    """The ZERO_CHUNK marker must stay quiet for normal documents, or the
+    log signal drowns in noise and stops being a tripwire."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    proj = projects_mod.create_project("Normal Project")
+    pid = proj["id"]
+
+    content = b"Concrete grade C40 shall be used for all substructure elements."
+    doc_path = _write_txt_doc(tmp_path, "spec.txt", content)
+    doc = projects_mod.add_document(pid, "spec.txt", file_path=doc_path, size=len(content))
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="app.core.doc_index"):
+        doc_index.index_document(pid, doc["id"])
+
+    assert not any("ZERO_CHUNK" in r.message for r in caplog.records)
