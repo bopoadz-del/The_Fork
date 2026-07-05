@@ -37,3 +37,23 @@ first. Update on every task state change.
 - PR #146 opened (CI revival). Tests run 28755289990 in flight with pytest-timeout instrumentation; monitor armed.
 - Agent launched: orchestrator action-registry extraction (TASK G-1 input).
 - Agent launched: TASK H knobs implementation (isolated worktree, defaults-off, intent exemption).
+- TASK C findings: the 3 zero-chunk projects (bb00878f, df28d3c0, e483b574) NO LONGER EXIST on prod
+  (removed in the 2026-06-29 junk purge) - C1 closes as resolved-by-purge. C3 (zero-chunk WARNING
+  log at index time) still valuable, small - queued. C2 (471-file Drive drain) depends on the Drive
+  connector, disconnected on prod - PARK pending Chadi (also a G3-adjacent infra decision).
+- TASK G-1 registry extracted from code: 53 distinct actions verified (docstring "52" and config
+  "39" are stale); ~11 actions are hint-only labels; routing gate = select_agent_for_message,
+  kill-switch SMART_ORCH_ROUTING_DISABLED; evidence events: route/tool_call/tool_result.
+  Manifest authored: tests/feature_matrix_manifest.yaml on branch feat/feature-matrix-sweep
+  (13 must-cover features x 2 phrasings + full coverage set, 3 mechanical oracles).
+- Agent launched: sweep runner build (scripts/feature_matrix_sweep.py) on feat/feature-matrix-sweep.
+- TASK H implementation landed on feat/gk-contamination-knobs (3501f8b): RAG_GK_SCORE_MARGIN /
+  RAG_OWN_DOC_BOOST / RAG_GK_TOPK_CAP, all default-off; intent exemption (calc/standards/knowledge
+  bypass); 11/11 new tests. FINDING: test_doc_search_api::test_search_returns_ranked_results is
+  red on UNMODIFIED main - GK curated notes now crowd uploaded docs entirely out of top-5 (the
+  audit symptom, worse). Pre-existing, affects CI green - to be quarantined-with-reason in PR #146
+  and tracked by TASK H.
+- Agent launched: TASK H config-grid sweep (8 configs x 3 harnesses) against a LOCAL instance;
+  deliverable RAG_AUDIT_V3.md.
+- CI run 28755289990: security scan PASSES on all 3 jobs (the __import__ fix verified in CI);
+  jobs running the full suite with --timeout=120 armed.
