@@ -63,6 +63,15 @@ def _seed_corpus():
                        across two top-folder prefixes (40 in 'A/', 20 in 'B/')
        - "small_project": 3 documents (below threshold), 10 chunks
        - "chunks_only_legacy": 0 documents, 5 chunks (legacy Drive imports)
+
+    FK-compliant on PostgreSQL, where chunks.doc_id and chunks.project_id
+    are enforced (the_fork_schema.sql) — sqlite's model-created chunks
+    table declares no FKs, so the old fabricated doc-ids only blew up on
+    the test-postgres job. Chunks therefore reference REAL document ids,
+    and the chunks-only legacy corpus points its chunks at a document
+    owned by ANOTHER project: documents are counted by
+    documents.project_id, so its own document count stays 0 — the same
+    dangling shape the legacy Drive imports produced.
     """
     import uuid
 
@@ -72,15 +81,17 @@ def _seed_corpus():
         # Wipe pre-existing test rows for these ids — keeps the test idempotent
         # against repeated runs in the same SQLite DB.
         for pid in ("big_corpus", "small_project", "chunks_only_legacy"):
-            session.query(Document).filter(Document.project_id == pid).delete()
             session.query(RagChunk).filter(RagChunk.project_id == pid).delete()
+            session.query(Document).filter(Document.project_id == pid).delete()
             session.query(Project).filter(Project.id == pid).delete()
         session.commit()
 
-        # Projects (FK target for documents)
+        # Projects (FK target for documents AND, on Postgres, for chunks —
+        # chunks_only_legacy needs a project row even with zero documents).
         for pid, name in (
             ("big_corpus", "Big corpus"),
             ("small_project", "Small project"),
+            ("chunks_only_legacy", "Chunks-only legacy"),
         ):
             session.add(Project(
                 id=pid, name=name, user_id="system",
@@ -90,42 +101,57 @@ def _seed_corpus():
         session.flush()
 
         # big_corpus: 40 'A/...' + 20 'B/...' = 60 docs
+        big_doc_ids = []
         for i in range(40):
+            doc_id = str(uuid.uuid4())[:8]
+            big_doc_ids.append(doc_id)
             session.add(Document(
-                id=str(uuid.uuid4())[:8], project_id="big_corpus",
+                id=doc_id, project_id="big_corpus",
                 original_name=f"A/folder/file_{i:03d}.pdf",
                 doc_type="document", doc_role="other", size=1024,
                 uploaded_at="2026-06-21T00:00:00Z",
             ))
         for i in range(20):
+            doc_id = str(uuid.uuid4())[:8]
+            big_doc_ids.append(doc_id)
             session.add(Document(
-                id=str(uuid.uuid4())[:8], project_id="big_corpus",
+                id=doc_id, project_id="big_corpus",
                 original_name=f"B/folder/file_{i:03d}.pdf",
                 doc_type="document", doc_role="other", size=1024,
                 uploaded_at="2026-06-21T00:00:00Z",
             ))
         # small_project: 3 docs in one folder
+        small_doc_ids = []
         for i in range(3):
+            doc_id = str(uuid.uuid4())[:8]
+            small_doc_ids.append(doc_id)
             session.add(Document(
-                id=str(uuid.uuid4())[:8], project_id="small_project",
+                id=doc_id, project_id="small_project",
                 original_name=f"misc/file_{i}.pdf",
                 doc_type="document", doc_role="other", size=512,
                 uploaded_at="2026-06-21T00:00:00Z",
             ))
+        # Documents must be flushed before chunks reference them — no ORM
+        # relationship is declared, so the unit of work won't order the
+        # inserts for us and Postgres checks the FK per statement.
+        session.flush()
 
-        # chunks rows for each project
+        # chunks rows for each project. 5 chunks per document (chunk_index
+        # 0..4) keeps uq_chunks_project_doc_index happy.
         import numpy as np
         zero_vec = np.zeros(256, dtype=np.float32)
-        for pid, n_chunks in (
-            ("big_corpus", 200),
-            ("small_project", 10),
-            ("chunks_only_legacy", 5),
+        for pid, n_chunks, doc_ids in (
+            ("big_corpus", 200, big_doc_ids),
+            ("small_project", 10, small_doc_ids),
+            # Legacy: chunks whose parent document landed under a different
+            # project — its own documents count is 0.
+            ("chunks_only_legacy", 5, big_doc_ids),
         ):
             for i in range(n_chunks):
                 session.add(RagChunk(
                     chunk_id=f"{pid}-{i}-{uuid.uuid4().hex[:6]}",
                     project_id=pid,
-                    doc_id=f"doc-{i // 5}",
+                    doc_id=doc_ids[(i // 5) % len(doc_ids)],
                     chunk_index=i % 5,
                     text=f"chunk {i}",
                     embedding=zero_vec,
