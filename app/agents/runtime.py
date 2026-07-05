@@ -2324,6 +2324,12 @@ class Agent:
         # Gate behind AGENT_TIMING_LOG=1 so it's off by default.
         _timing = os.getenv("AGENT_TIMING_LOG") == "1"
         _turn_t0 = time.monotonic()
+        # Served model string of the LAST successful LLM call this turn, surfaced
+        # in the `end` event so observability (fork_cli/smoke) can tell the
+        # configured provider apart from a silent fallback (e.g. Kimi K2 vs an
+        # Ollama fallback) per run. The model string alone is a sufficient
+        # discriminator; None until the first successful call.
+        served_model: Optional[str] = None
         for iteration in range(MAX_TOOL_ITERATIONS):
             _LOG.info("chat_stream: iter=%d agent=%s force_synthesis=%s", iteration, self.name, force_synthesis)
             # ── True token streaming for the forced synthesis call ────────────
@@ -2383,6 +2389,7 @@ class Agent:
                         if forced_resp.get("status") == "error":
                             final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
+                            served_model = (forced_resp.get("raw") or {}).get("model") or served_model
                             _fm = forced_resp["choice"].get("message") or {}
                             final_text = _sanitize_final_text(_fm.get("content") or "")
                             if not final_text.strip():
@@ -2399,6 +2406,7 @@ class Agent:
                     yield {
                         "type": "end",
                         "iterations": iteration + 1,
+                        "model": served_model,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
                         "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
                     }
@@ -2419,6 +2427,7 @@ class Agent:
                 _LOG.warning("chat_stream: iter=%d LLM error %s", iteration, err)
                 yield {"type": "error", "message": err}
                 return
+            served_model = (resp.get("raw") or {}).get("model") or served_model
             assistant_msg = resp["choice"].get("message") or {}
             tool_calls = assistant_msg.get("tool_calls") or []
             raw_content = assistant_msg.get("content") or ""
@@ -2455,6 +2464,7 @@ class Agent:
                         if forced_resp.get("status") == "error":
                             final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
+                            served_model = (forced_resp.get("raw") or {}).get("model") or served_model
                             forced_msg = forced_resp["choice"].get("message") or {}
                             final_text = _sanitize_final_text(forced_msg.get("content") or "")
                             if not final_text.strip():
@@ -2499,6 +2509,7 @@ class Agent:
                     yield {
                         "type": "end",
                         "iterations": iteration + 1,
+                        "model": served_model,
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
                         "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
                     }
@@ -2560,6 +2571,7 @@ class Agent:
         if forced_resp.get("status") == "error":
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
             return
+        served_model = (forced_resp.get("raw") or {}).get("model") or served_model
         forced_msg = forced_resp["choice"].get("message") or {}
         final_text = _sanitize_final_text(forced_msg.get("content") or "")
         if not final_text.strip():
@@ -2579,6 +2591,7 @@ class Agent:
             "type": "end",
             "iterations": MAX_TOOL_ITERATIONS,
             "forced_final": True,
+            "model": served_model,
             "sources": _build_sources_from_audit(_rag_audit, final_text),
             "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
         }

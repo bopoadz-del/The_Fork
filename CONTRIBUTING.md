@@ -84,7 +84,12 @@ export FORK_API_KEY="<master key>"
 ./scripts/smoke.sh
 ```
 
-It runs `scripts/fork_cli.py` ten times with a deliverable (tool-calling) prompt and prints ten summary lines plus a verdict. **PASS** requires all ten turns to succeed (non-empty answer) AND at least three runs to exercise a `tool_call`/`tool_result` pair; otherwise it **FAIL**s with a nonzero exit code. Zero-tool runs prove nothing — the tool path is what breaks. Point it at a branch preview or a staging instance with `$env:FORK_BASE_URL` before merging when you can; at minimum, run it against prod immediately after the deploy and be ready to roll back.
+It runs `scripts/fork_cli.py` N times with a deliverable (tool-calling) prompt and prints a per-run summary line (including the **served model**, so a silent provider fallback is visible) plus a verdict. **PASS** requires every run to succeed — `answer_chars >= MIN_ANSWER_CHARS` (default 1500, so a degenerate short answer FAILs, not just an empty one) — AND at least `max(1, floor(N*0.3))` runs to exercise a `tool_call`/`tool_result` pair. Otherwise it **FAIL**s with a nonzero exit code. Zero-tool runs prove nothing — the tool path is what breaks.
+
+- **Routine (default): `-Runs 3`** — the default. Keeps LLM-provider quota use light; heavy 10-run smokes before *and* after every deploy can exhaust a metered tier and mask real failures behind fallback.
+- **Release: `-Runs 10`** (`SMOKE_RUNS=10` for `smoke.sh`) — the full discriminator, e.g. after a model/provider migration.
+
+Point it at a branch preview or a staging instance with `$env:FORK_BASE_URL` before merging when you can; at minimum, run it against prod immediately after the deploy and be ready to roll back. If a run shows a model you didn't expect (a fallback), the smoke's PASS is weaker than it looks — investigate before trusting it.
 
 ## Trivial PRs
 
