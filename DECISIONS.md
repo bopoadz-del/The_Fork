@@ -20,6 +20,16 @@ Newest first.
   pytest-timeout stack dump IS the diagnostic for the 6-hour hang. Root-cause
   fix lands in the same PR, then green, then merge.
 
+## CI quarantines
+
+- `tests/test_doc_index.py::test_search_uses_hybrid_retriever` and
+  `tests/test_doc_search_api.py::test_search_returns_ranked_results` are
+  xfail (strict=False): curated GK notes crowd freshly uploaded project
+  docs out of the top-5 — a known precision issue documented in
+  RAG_AUDIT_V2.md, with the fix (fresh-upload-wins config knobs) tracked
+  under TASK H on its own branch, defaults-off. Un-xfail when the knobs
+  land.
+
 ## Parked (Chadi's gates)
 
 - K2 decision: raise CHAT_STREAM_TIMEOUT_SECONDS vs synthesis streaming on
