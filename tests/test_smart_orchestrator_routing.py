@@ -9,6 +9,14 @@ queries redirect to the heavy-reasoning agent.
 These tests exercise the gate directly (without the FastAPI router) so
 the contract is locked even when the router's auth / project-ownership
 plumbing changes around it.
+
+smart_orchestrator ships with the construction kit (see
+_KIT_BLOCK_SPECS in app/core/domain_kit_loader.py), so every test that
+needs the real classifier registered is marked
+``@requires_construction_kit`` — on the virgin CI profile they skip,
+exactly like the rest of the kit-gated suite. The pass-through /
+kill-switch / crash tests stay unmarked: they stub the block lookup or
+short-circuit before it, so they must hold on a virgin boot too.
 """
 from __future__ import annotations
 
@@ -18,6 +26,7 @@ import pytest
 
 from app.agents import runtime as runtime_module
 from app.agents.runtime import Agent, AGENT_REGISTRY, select_agent_for_message
+from tests.conftest import requires_construction_kit
 
 
 def _run(coro):
@@ -61,6 +70,7 @@ def registry_with_heavy(monkeypatch, project_assistant, heavy_reasoning):
 # ── Generative-intent redirect ─────────────────────────────────────────────
 
 
+@requires_construction_kit
 def test_generative_intent_redirects_to_heavy_reasoning(registry_with_heavy, project_assistant):
     """A clear generative intent ("create L2 schedule with 200 activities")
     should classify above the routing threshold and re-target the
@@ -77,6 +87,7 @@ def test_generative_intent_redirects_to_heavy_reasoning(registry_with_heavy, pro
     assert routing["reason"] == "needs_planning"
 
 
+@requires_construction_kit
 def test_drawing_qto_redirects_post_pr76(registry_with_heavy, project_assistant):
     """PR #76 added drawing_qto to GENERATIVE_INTENTS. Verify the routing
     gate honours that — a DXF/blueprint read should hit heavy-reasoning.
@@ -96,6 +107,7 @@ def test_drawing_qto_redirects_post_pr76(registry_with_heavy, project_assistant)
 # ── Pass-through cases (no redirect, classifier metadata still returned) ─────
 
 
+@requires_construction_kit
 def test_small_talk_stays_on_requested_agent(registry_with_heavy, project_assistant):
     """Conversational openers never reach a generative intent — confidence
     is zero, the gate stays out of the way."""
@@ -106,6 +118,7 @@ def test_small_talk_stays_on_requested_agent(registry_with_heavy, project_assist
     assert routing["confidence"] < 0.4
 
 
+@requires_construction_kit
 def test_non_generative_action_stays_on_requested_agent(registry_with_heavy, project_assistant):
     """``boq_process`` is a routing action but NOT a GENERATIVE_INTENT
     (the operator's design: BOQ Q&A is RAG-based, not tool-dispatch). It
@@ -120,6 +133,7 @@ def test_non_generative_action_stays_on_requested_agent(registry_with_heavy, pro
     assert routing["reason"] in ("below_routing_gate", "no-op")
 
 
+@requires_construction_kit
 def test_no_double_redirect_when_already_heavy(registry_with_heavy, heavy_reasoning):
     """When the caller already requested heavy-reasoning, the gate must
     pass through even on a generative intent — re-routing to itself
@@ -180,6 +194,7 @@ def test_kill_switch_truthy_variants(registry_with_heavy, project_assistant, mon
     assert routing["reason"] == "routing_disabled_env"
 
 
+@requires_construction_kit
 def test_kill_switch_unset_means_enabled(registry_with_heavy, project_assistant, monkeypatch):
     monkeypatch.delenv("SMART_ORCH_ROUTING_DISABLED", raising=False)
     final, routing = _run(select_agent_for_message(
@@ -192,6 +207,7 @@ def test_kill_switch_unset_means_enabled(registry_with_heavy, project_assistant,
 # ── Heavy-reasoning missing from registry ───────────────────────────────────
 
 
+@requires_construction_kit
 def test_redirect_target_missing_passes_through(monkeypatch, project_assistant):
     """If the operator removes heavy-reasoning from AGENT_REGISTRY (e.g. a
     minimal deploy), the gate must NOT crash and must NOT redirect to a

@@ -238,6 +238,7 @@ class TestConstructionBlocks:
         r = await b.execute({}, {})
         assert "status" in r
 
+    @requires_construction_kit
     def test_historical_benchmark_block_exists(self):
         """historical_benchmark is now a lightweight, region-adjusted fallback
         rate source. It must register and return plausible rates for common
@@ -247,6 +248,7 @@ class TestConstructionBlocks:
         assert "historical_benchmark" in BLOCK_REGISTRY
         assert BLOCK_REGISTRY["historical_benchmark"] is HistoricalBenchmarkBlock
 
+    @requires_construction_kit
     @pytest.mark.asyncio
     async def test_container_benchmark_lookup_returns_rate(self):
         """ConstructionContainer.benchmark_lookup() delegates to the
@@ -271,6 +273,7 @@ class TestConstructionBlocks:
         assert inner["quantities"]["floor_area_m2"] == 500
         assert inner["quantities"]["concrete_volume_m3"] == 120
 
+    @requires_construction_kit
     @pytest.mark.asyncio
     async def test_estimate_costs_from_quantities(self):
         """estimate_costs should produce a cost breakdown when given a
@@ -528,6 +531,7 @@ class TestAPIEndpoints:
         finally:
             os.unlink(f.name)
 
+    @requires_construction_kit
     @pytest.mark.asyncio
     async def test_execute_endpoint_historical_benchmark_lookup(self, client):
         """POST /execute targeting historical_benchmark returns a structured
