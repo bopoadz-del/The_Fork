@@ -125,6 +125,7 @@ features:
     structure: [has_period_buckets]
 
   - action: parse_primavera_schedule
+    project: ff905e29   # Pilot Feature Sweep fixture project
     feature: milestones extraction / report
     class: must
     handler: container (primavera_parser)
@@ -134,7 +135,7 @@ features:
       - text: "give me a milestone report - what are the major completion dates?"
         expect_route: [parse_primavera_schedule, progress_tracker]
     structure: [milestones_have_dates]
-    needs: .xer fixture if corpus has no programme file — upload via normal path
+    needs: UPLOADED 2026-07-06 project_programme.xer (doc 9f8f228a) in ff905e29
 
   - action: cash_flow_forecast
     feature: S-curve (progress/cost)
@@ -183,6 +184,7 @@ features:
     structure: [has_numbers, shows_working_or_rule]
 
   - action: drawing_qto
+    project: ff905e29   # Pilot Feature Sweep fixture project
     feature: QTO from drawings
     class: must
     handler: container (drawing_qto block)
@@ -192,7 +194,7 @@ features:
       - text: "measure the floor area from the ground floor plan drawing"
         expect_route: [drawing_qto, extract_quantities]
     structure: [references_drawing, has_numbers]
-    needs: dxf/dwg fixture if corpus drawings are raster-only — upload via normal path
+    needs: UPLOADED 2026-07-06 ground_floor_plan.dxf (doc ed81d829) in ff905e29
 
   - action: commissioning_checklist
     feature: commissioning checklist (regression baseline)
@@ -362,28 +364,31 @@ features:
         expect_route: [forensic_delay_analysis, claims_builder]
 
   - action: bim_analysis
+    project: ff905e29   # Pilot Feature Sweep fixture project
     class: coverage
     handler: container (bim block)
     prompts:
       - text: "review the BIM model and give me quantities by element type"
         expect_route: [bim_analysis, bim_extractor]
-    needs: .ifc fixture — upload via normal path if absent
+    needs: UPLOADED 2026-07-06 sample_office.ifc (doc 2979a1b4) in ff905e29
 
   - action: bim_clash_detection
+    project: ff905e29   # Pilot Feature Sweep fixture project
     class: coverage
     handler: container
     prompts:
       - text: "run clash detection between the structural and MEP models"
         expect_route: [bim_clash_detection]
-    needs: .ifc fixture
+    needs: UPLOADED 2026-07-06 sample_office.ifc (doc 2979a1b4) in ff905e29
 
   - action: bim_extractor
+    project: ff905e29   # Pilot Feature Sweep fixture project
     class: coverage
     handler: container (bim_extractor block)
     prompts:
       - text: "extract the concrete quantities from the IFC model"
         expect_route: [bim_extractor, bim_analysis]
-    needs: .ifc fixture
+    needs: UPLOADED 2026-07-06 sample_office.ifc (doc 2979a1b4) in ff905e29
 
   - action: digital_twin_sync
     class: coverage
