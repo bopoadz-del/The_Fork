@@ -1159,7 +1159,7 @@ OLLAMA_DEFAULT_URL = "http://localhost:11434/v1/chat/completions"
 OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
 
 
-def _llm_config() -> Dict[str, str]:
+def _llm_config() -> Dict[str, Any]:
     """Pick the active LLM provider's URL + env-key + default model.
 
     Precedence:
@@ -1214,6 +1214,12 @@ def _llm_config() -> Dict[str, str]:
             "url": KIMI_API_URL,
             "env_key": "KIMI_API_KEY",
             "default_model": os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL),
+            # Moonshot's K2 reasoning models reject any temperature but 1
+            # ("invalid temperature: only 1 is allowed for this model"). Declare
+            # that constraint HERE so the outbound payload is shaped per-provider
+            # (see _provider_temperature) rather than hardcoding 1 globally — a
+            # global constant would just become the next provider's 400.
+            "fixed_temperature": 1,
         }
     return {
         "provider": "deepseek",
@@ -1223,7 +1229,7 @@ def _llm_config() -> Dict[str, str]:
     }
 
 
-def _llm_fallback_config(primary: Dict[str, str]) -> Optional[Dict[str, str]]:
+def _llm_fallback_config(primary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Config for the fallback LLM provider, or ``None`` when none is usable.
 
     Controlled by ``LLM_FALLBACK_PROVIDER`` (``ollama`` | ``groq`` |
@@ -1255,6 +1261,20 @@ def _llm_fallback_config(primary: Dict[str, str]) -> Optional[Dict[str, str]]:
     if cfg.get("env_key") and not os.getenv(cfg["env_key"]):
         return None
     return cfg
+
+
+def _provider_temperature(cfg: Dict[str, Any], default: float) -> float:
+    """The temperature this provider will actually accept.
+
+    Some providers pin temperature. Moonshot's K2 reasoning models 400 on any
+    value but 1. Rather than hardcode 1 globally (which would become the NEXT
+    provider's 400), each constrained provider declares ``fixed_temperature`` in
+    ``_llm_config``; every other provider keeps the agent's own temperature.
+    Applied at the same outbound chokepoint as message sanitisation so every
+    caller (_call_llm and _stream_synthesis) shapes the payload identically.
+    """
+    fixed = cfg.get("fixed_temperature")
+    return default if fixed is None else float(fixed)
 
 
 # Outbound message sanitiser — the single chokepoint that protects every
@@ -2950,6 +2970,10 @@ class Agent:
         for attempt_idx, (a_cfg, a_key, a_model) in enumerate(attempts):
             is_last = attempt_idx == len(attempts) - 1
             payload["model"] = a_model
+            # Per-attempt like tool_choice: a fallback to a different provider
+            # must get that provider's accepted temperature (kimi -> 1, others ->
+            # the agent's own), not the primary's.
+            payload["temperature"] = _provider_temperature(a_cfg, self.temperature)
             if tools and with_tools:
                 payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
@@ -3017,6 +3041,14 @@ class Agent:
                     reason = "tool_use_failed (prose)" if tool_use_failed_unrecovered else f"HTTP {r.status_code}"
                     _LOG.warning("llm: %s %s — falling back to %s", a_cfg["provider"], reason, attempts[attempt_idx + 1][0]["provider"])
                     continue
+                # No fallback taken (non-retryable status, or this was the last
+                # provider): this error ENDS the turn. A silently-returned 4xx
+                # (e.g. Moonshot's temperature 400) was previously invisible in
+                # prod logs, so the acceptance criterion "no HTTP 400 events"
+                # could not be verified from logs that never recorded it. Observe
+                # only — no retry logic added here.
+                _LOG.warning("llm: %s HTTP %s — no fallback taken, turn errors: %s",
+                             a_cfg["provider"], r.status_code, body[:200])
                 return last_error
 
             # ── success on this provider ──────────────────────────────────
@@ -3043,6 +3075,23 @@ class Agent:
                 # RAG context) serves the original answer unchanged.
                 msg = choice.get("message") or {}
                 if msg and not (msg.get("tool_calls") or []):
+                    # Observe-only tripwire: the model answered a turn whose
+                    # intent REQUIRED a tool (requires_tool) without calling one.
+                    # On groq/kimi we can't force tool_choice (it 400s), so the
+                    # model may skip on "auto" and emit a degenerate prose answer
+                    # — the exact failure the hardened smoke catches externally.
+                    # Emit one grep-able marker so a resurgence is queryable from
+                    # prod logs (list_logs text="TOOL_SKIP"). This does NOT act:
+                    # no forced retry is triggered here. (A deepseek DSML-in-prose
+                    # tool call recovered downstream would false-positive here,
+                    # but we don't run deepseek in prod and this only logs.)
+                    if requires_tool:
+                        _LOG.warning(
+                            "TOOL_SKIP agent=%s provider=%s model=%s answer_chars=%d "
+                            "— deliverable intent, no tool call",
+                            self.name, a_cfg.get("provider"),
+                            data.get("model") or a_model, len(msg.get("content") or ""),
+                        )
                     original_text = msg.get("content") or ""
                     if original_text.strip():
                         rewritten = await self._rewrite_with_adapter(messages, original_text)
@@ -3109,7 +3158,9 @@ class Agent:
         payload = {
             "model": model,
             "messages": messages,
-            "temperature": self.temperature,
+            # Same per-provider shaping as _call_llm (single provider here, no
+            # fallback loop): kimi -> 1, everyone else -> the agent's own.
+            "temperature": _provider_temperature(cfg, self.temperature),
             "max_tokens": self.max_tokens,
             "stream": True,
             # Ask the provider to append a final usage chunk so cost tracking
