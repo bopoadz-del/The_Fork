@@ -1,4 +1,4 @@
-"""Smart Orchestrator Block - 52-action keyword router for construction workflows.
+"""Smart Orchestrator Block - 53-action keyword router for construction workflows.
 
 The runtime action list is built by prepending PROCEDURE_ROUTING_ADDITIONS
 (17 procedure-specific actions, PRC-301..PRC-606) to the in-file ACTION_PATTERNS
@@ -179,7 +179,7 @@ class SmartOrchestratorBlock(UniversalBlock):
     auto_validate = False
     name = "smart_orchestrator"
     version = "1.1.0"
-    description = "52-action construction keyword router: maps user messages to action queues with parallel execution hints"
+    description = "53-action construction keyword router: maps user messages to action queues with parallel execution hints"
     layer = 2
     tags = ["infrastructure", "construction", "orchestration", "routing", "nlp"]
     requires = []

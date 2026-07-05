@@ -182,9 +182,15 @@ def test_sort_order_chunks_desc_then_documents(client, _stub_admin):
         resp = client.get("/v1/admin/corpus/collections")
     finally:
         app.dependency_overrides.clear()
-    ids = [c["project_id"] for c in resp.json()["collections"]]
-    # big_corpus first (200 chunks), then small_project (10), then chunks_only_legacy (5)
-    assert ids[:3] == ["big_corpus", "small_project", "chunks_only_legacy"]
+    all_ids = [c["project_id"] for c in resp.json()["collections"]]
+    # The app boot-seeds a general-knowledge collection (training_material,
+    # from docs/knowledge/*.md) whose chunk count can land anywhere in the
+    # global ordering. The contract this test guards is chunks-desc AMONG the
+    # seeded corpora, so filter to them before asserting order.
+    seeded = [pid for pid in all_ids
+              if pid in {"big_corpus", "small_project", "chunks_only_legacy"}]
+    # big_corpus (200 chunks) > small_project (10) > chunks_only_legacy (5)
+    assert seeded == ["big_corpus", "small_project", "chunks_only_legacy"], all_ids
 
 
 def test_non_admin_gets_403(client, _stub_admin):
