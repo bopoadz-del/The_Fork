@@ -14,7 +14,12 @@ def users(monkeypatch, tmp_path):
     importlib.reload(db_mod)
     reloaded = importlib.reload(users_mod)
     reloaded._initialized = False
-    return reloaded
+    yield reloaded
+    # _initialized is a process global while the engine URL tracks DATA_DIR
+    # at call time. Leaving it True after monkeypatch restores DATA_DIR
+    # would point later tests at a DB that never ran init_db (the in-suite
+    # 'no such table: users' failure in test_validation_pipeline).
+    reloaded._initialized = False
 
 
 def test_init_creates_system_user(users):

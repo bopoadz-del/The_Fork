@@ -14,6 +14,7 @@ def tmp_data_dir(tmp_path_factory):
 @pytest.fixture(scope="module", autouse=True)
 def isolate_data_dir(tmp_data_dir):
     """Set DATA_DIR and reset module state before the module-scoped client."""
+    prev_data_dir = os.environ.get("DATA_DIR")
     os.environ["DATA_DIR"] = tmp_data_dir
     # Reset module state so both modules use the tmp path
     import app.core.users as u_mod
@@ -21,10 +22,17 @@ def isolate_data_dir(tmp_data_dir):
     u_mod._initialized = False
     jwt_mod._cached_secret = None
     yield
-    # Teardown: reset state
+    # Teardown: reset state. Restore the PREVIOUS value — popping DATA_DIR
+    # dropped the suite-wide temp dir conftest.py installs, so every later
+    # DB access fell back to ./data (the live-data leak conftest exists to
+    # prevent) and test_validation_pipeline's ASGI test found no users
+    # table there.
     u_mod._initialized = False
     jwt_mod._cached_secret = None
-    os.environ.pop("DATA_DIR", None)
+    if prev_data_dir is None:
+        os.environ.pop("DATA_DIR", None)
+    else:
+        os.environ["DATA_DIR"] = prev_data_dir
 
 
 @pytest.fixture(scope="module")

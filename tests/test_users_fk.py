@@ -20,7 +20,11 @@ def users_db(monkeypatch, tmp_path):
     importlib.reload(users_mod)
     users_mod._initialized = False
     users_mod.init_db()
-    return users_mod, db_mod
+    yield users_mod, db_mod
+    # Same rationale as the users fixture in test_users.py: the initialized
+    # flag must not outlive the tmp DATA_DIR it was earned against.
+    users_mod._initialized = False
+    projects_mod._initialized = False
 
 
 def test_delete_user_with_projects_blocked(users_db):
