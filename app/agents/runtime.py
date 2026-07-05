@@ -1257,6 +1257,14 @@ _ALLOWED_TOOLCALL_KEYS = ("id", "type")
 _ALLOWED_FUNCTION_KEYS = ("name", "arguments")
 
 
+class _SynthStreamError(Exception):
+    """Raised by ``_stream_synthesis`` when the streaming synthesis call cannot
+    be served (bad config, over daily cap, non-200, transport error). The
+    streaming chat loop catches it and — if nothing was streamed yet — falls
+    back to the non-streaming ``_call_llm`` path, so streaming is never a
+    one-way door away from the working behaviour."""
+
+
 def _sanitize_messages_for_provider(
     messages: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
@@ -2291,6 +2299,23 @@ class Agent:
         # Force a tool-free synthesis instead. Env-disable: AGENT_FORCE_SYNTHESIS=0.
         force_synthesis = False
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
+        # True token streaming for the FINAL synthesis call only. Gated to:
+        #   * SYNTHESIS_STREAMING=1  (instant prod kill-switch; default off)
+        #   * provider == groq       (the only verified streaming path)
+        #   * grounded adapter INACTIVE (a with_tools=False call otherwise routes
+        #     to the local tinker adapter / rewrite-pass in _call_llm; streaming
+        #     would bypass both, so leave those deploys on the non-streaming path)
+        # When enabled, the force_synthesis iteration streams provider deltas as
+        # token events instead of computing the whole answer then re-chunking it
+        # (which made first_token ~= total). Any pre-first-token failure falls
+        # back to the untouched non-streaming path below.
+        from app.core.llm import tinker_adapter as _tinker_adapter
+        _synth_stream_enabled = (
+            os.getenv("SYNTHESIS_STREAMING") == "1"
+            and cfg["provider"] == "groq"
+            and not _tinker_adapter.is_available()
+            and not _tinker_adapter.is_rewrite_pass_enabled()
+        )
         # WARNING-level timing instrumentation: Render drops INFO app logs on this
         # service, so the deliverable-hang call-count/latency was invisible.
         # Gate behind AGENT_TIMING_LOG=1 so it's off by default.
@@ -2298,6 +2323,83 @@ class Agent:
         _turn_t0 = time.monotonic()
         for iteration in range(MAX_TOOL_ITERATIONS):
             _LOG.info("chat_stream: iter=%d agent=%s force_synthesis=%s", iteration, self.name, force_synthesis)
+            # ── True token streaming for the forced synthesis call ────────────
+            # force_synthesis is set only AFTER a deliverable tool returns, so
+            # this call is with_tools=False — no tool_calls can appear, honouring
+            # "tool iterations stay non-streaming". Stream its provider deltas as
+            # token events. On any pre-first-token failure we fall through to the
+            # unchanged non-streaming path below (streaming is never a one-way
+            # door). A mid-stream drop finishes with whatever streamed.
+            if force_synthesis and _synth_stream_enabled:
+                streamed_any = False
+                fell_back = False
+                acc: List[str] = []
+                pending = ""
+                try:
+                    async for _delta in self._stream_synthesis(
+                        messages, api_key, project_id=project_id, user_id=user_id,
+                    ):
+                        streamed_any = True
+                        acc.append(_delta)
+                        pending += _delta
+                        # Flush only COMPLETE lines, sanitised. Both citation
+                        # regexes are within-line / line-anchored, so per-line
+                        # sanitisation equals full-text as long as we hold the
+                        # partial last line (which we do).
+                        nl = pending.rfind("\n")
+                        if nl >= 0:
+                            seg, pending = pending[: nl + 1], pending[nl + 1:]
+                            seg = _sanitize_inline_paths(_sanitize_citation_labels(seg))
+                            if seg:
+                                yield {"type": "token", "content": seg}
+                except _SynthStreamError as _se:
+                    if streamed_any:
+                        _LOG.warning("chat_stream: synthesis stream dropped mid-way (%s)", _se)
+                    else:
+                        _LOG.info("chat_stream: synthesis stream unavailable (%s) — non-streaming fallback", _se)
+                        fell_back = True
+                if not fell_back:
+                    if pending:
+                        seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
+                        if seg:
+                            yield {"type": "token", "content": seg}
+                    raw = "".join(acc)
+                    # Fully-sanitised accumulated text: what we persist + feed
+                    # sources/exports (must match the non-streaming path, not a
+                    # concatenation of per-line flushes).
+                    final_text = _sanitize_inline_paths(
+                        _sanitize_citation_labels(_sanitize_final_text(raw))
+                    )
+                    if not final_text.strip():
+                        # Nothing usable streamed (empty response) — preserve the
+                        # empty-final forced-retry path (non-streamed, chunked).
+                        forced_resp = await self._call_llm(
+                            messages, api_key, project_id=project_id,
+                            with_tools=False, user_id=user_id,
+                        )
+                        if forced_resp.get("status") == "error":
+                            final_text = _EMPTY_RESPONSE_FALLBACK
+                        else:
+                            _fm = forced_resp["choice"].get("message") or {}
+                            final_text = _sanitize_final_text(_fm.get("content") or "")
+                            if not final_text.strip():
+                                final_text = _EMPTY_RESPONSE_FALLBACK
+                        final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+                        for chunk in _chunks(final_text, 80):
+                            yield {"type": "token", "content": chunk}
+                    if _timing:
+                        _LOG.warning("TIMING chat_stream STREAMED-SYNTH iter=%d chars=%d cum=%.1fs",
+                                     iteration, len(final_text), time.monotonic() - _turn_t0)
+                    if conversation_id:
+                        from app.core import agent_memory
+                        agent_memory.append_message(conversation_id, "assistant", final_text)
+                    yield {
+                        "type": "end",
+                        "iterations": iteration + 1,
+                        "sources": _build_sources_from_audit(_rag_audit, final_text),
+                        "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
+                    }
+                    return
             _call_t0 = time.monotonic()
             resp = await self._call_llm(
                 messages, api_key, project_id=project_id, user_id=user_id,
@@ -2920,6 +3022,114 @@ class Agent:
                 return last_error
 
         return last_error
+
+    async def _stream_synthesis(
+        self,
+        messages: List[Dict[str, Any]],
+        api_key: str,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        """Stream a tool-free synthesis completion, yielding content deltas.
+
+        Used ONLY for the forced (``with_tools=False``) synthesis call and only
+        on Groq (the verified provider). Mirrors ``_call_llm``'s setup — same
+        ``_llm_config``, same deepseek->default model remap, same soft daily-cap
+        semantics, and critically the SAME ``_sanitize_messages_for_provider``
+        chokepoint — but sets ``stream=True`` and offers NO tools, so no
+        tool_call deltas can appear (honours "tool iterations stay
+        non-streaming").
+
+        Raises ``_SynthStreamError`` on any PRE-first-token failure (wrong
+        provider, over cap, non-200, connect/transport error) so the caller can
+        fall back to the non-streaming ``_call_llm`` path. A mid-stream drop is
+        also surfaced as ``_SynthStreamError`` — the caller distinguishes the two
+        via whether it has already emitted tokens, and never restarts a stream
+        it has begun.
+        """
+        cfg = _llm_config()
+        if cfg["provider"] != "groq":
+            # Only Groq streaming is verified; anything else falls back.
+            raise _SynthStreamError("streaming synthesis only verified for groq")
+        # Soft daily cap: mirror _call_llm. Over cap -> fall back so the
+        # non-streaming path emits the structured cap error the UI expects.
+        if user_id:
+            try:
+                cap = float(os.getenv("USAGE_DAILY_CAP_USD") or "0")
+            except ValueError:
+                cap = 0.0
+            if cap > 0:
+                try:
+                    from app.core import usage_tracker
+                    over = usage_tracker.is_over_cap(user_id, cap)
+                except Exception:  # noqa: BLE001 — broken tracker must not block
+                    over = False
+                if over:
+                    raise _SynthStreamError("daily cap reached")
+        model = self.model
+        if cfg["provider"] != "deepseek" and model.startswith("deepseek-"):
+            model = cfg["default_model"]
+        messages = _sanitize_messages_for_provider(messages)
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True,
+            # Ask the provider to append a final usage chunk so cost tracking
+            # still works on the streamed path (Groq honours stream_options).
+            "stream_options": {"include_usage": True},
+        }
+        headers = (
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            if api_key
+            else {"Content-Type": "application/json"}
+        )
+        usage: Optional[Dict[str, Any]] = None
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=120.0)) as client:
+                async with client.stream(
+                    "POST", cfg["url"], json=payload, headers=headers,
+                ) as r:
+                    if r.status_code != 200:
+                        await r.aread()
+                        raise _SynthStreamError(
+                            f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
+                        )
+                    async for line in r.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            evt = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = evt.get("choices") or []
+                        if choices:
+                            delta = (choices[0].get("delta") or {}).get("content")
+                            if delta:
+                                yield delta
+                        if evt.get("usage"):
+                            usage = evt["usage"]
+        except _SynthStreamError:
+            raise
+        except Exception as e:  # noqa: BLE001 — network/transport/parse
+            raise _SynthStreamError(f"{cfg['provider']} stream error: {e}")
+        # Best-effort cost tracking — never let it sink the turn.
+        if usage is not None:
+            try:
+                from app.core import usage_tracker
+                usage_tracker.record(
+                    user_id=user_id,
+                    agent_name=self.name,
+                    provider=cfg.get("provider", ""),
+                    model=model,
+                    usage=usage,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _run_tool_call(
         self,
