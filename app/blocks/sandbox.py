@@ -221,30 +221,49 @@ class SandboxBlock(UniversalBlock):
         
         result_value = None
         error = None
-        
+        rlimit_to_restore = None
+
         try:
             # Set memory limit (POSIX only; on Windows we skip the rlimit
             # call and let the OS handle process-level OOM — the sandbox
             # provides weaker isolation here, which is documented).
+            #
+            # Lower ONLY the soft limit and restore it after exec. The old
+            # code set soft AND hard to the policy cap and never restored —
+            # rlimits are process-wide and a lowered hard limit can never be
+            # raised again (EPERM), so the first sandboxed run permanently
+            # capped the HOST process at 512MB of address space. Every
+            # thread started afterwards hung at pthread stack mmap: that was
+            # the 2026-07-05 CI zombie (TestClient portals, asyncio child
+            # watchers, and to_thread executors all park in thread.start()).
             if policy.max_memory_mb > 0 and _RESOURCE_AVAILABLE:
-                resource.setrlimit(
-                    resource.RLIMIT_AS,
-                    (policy.max_memory_mb * 1024 * 1024, policy.max_memory_mb * 1024 * 1024)
-                )
+                old_soft, old_hard = resource.getrlimit(resource.RLIMIT_AS)
+                limit = policy.max_memory_mb * 1024 * 1024
+                if old_hard != resource.RLIM_INFINITY:
+                    limit = min(limit, old_hard)
+                resource.setrlimit(resource.RLIMIT_AS, (limit, old_hard))
+                rlimit_to_restore = (old_soft, old_hard)
 
             # Execute with timeout
             exec(code, safe_globals)
-            
+
             # Try to get result
             if "result" in safe_globals:
                 result_value = safe_globals["result"]
             elif "output" in safe_globals:
                 result_value = safe_globals["output"]
-                
+
         except Exception as e:
             error = str(e)
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
+            if rlimit_to_restore is not None:
+                # Hard limit was never touched, so restoring the old soft
+                # limit is always permitted.
+                try:
+                    resource.setrlimit(resource.RLIMIT_AS, rlimit_to_restore)
+                except (ValueError, OSError):  # pragma: no cover — defensive
+                    pass
         
         execution_time = time.time() - start_time
         

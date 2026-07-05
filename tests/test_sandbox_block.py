@@ -262,14 +262,25 @@ async def test_default_policy_exists_without_legacy_init():
 @pytest.mark.asyncio
 async def test_execute_python_sets_rlimit_on_posix(block):
     # Harmless code that just verifies the sandbox ran under a limit.
+    # The block caps the SOFT address-space limit at the policy value for
+    # the duration of exec and restores it afterwards; the hard limit is
+    # deliberately left alone (lowering it is irreversible and crippled the
+    # whole test process — the 2026-07-05 CI zombie).
+    import resource as host_resource
+    limits_before = host_resource.getrlimit(host_resource.RLIMIT_AS)
+
     result = await block.process({
         "action": "execute",
-        "code": "import resource\nresult = resource.getrlimit(resource.RLIMIT_AS)[1]",
+        "code": "import resource\nresult = resource.getrlimit(resource.RLIMIT_AS)[0]",
         "language": "python",
     })
     assert result.get("success") is True
-    # The block caps virtual memory at the policy limit.
     assert result.get("result") == 512 * 1024 * 1024
+
+    # And the limit must NOT leak past the sandboxed run: the host process
+    # keeps its original limits (otherwise every later thread.start() in
+    # the suite hangs at pthread stack mmap).
+    assert host_resource.getrlimit(host_resource.RLIMIT_AS) == limits_before
 
 
 # ---------------------------------------------------------------------------
