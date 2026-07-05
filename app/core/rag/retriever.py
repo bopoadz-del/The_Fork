@@ -9,7 +9,7 @@ where caching, dimension matching, and graceful-degradation policy live.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import Chunk, get_store
@@ -209,9 +209,11 @@ def retrieve(
     query: str,
     project_id: str,
     k: int = 5,
+    *,
+    intent: Optional[str] = None,
 ) -> List[Chunk]:
     """Backwards-compatible: returns top-K AFTER the noise filter."""
-    chunks, _ = retrieve_with_filter(query, project_id, k=k)
+    chunks, _ = retrieve_with_filter(query, project_id, k=k, intent=intent)
     return chunks
 
 
@@ -270,6 +272,41 @@ _GK_STOPWORDS = frozenset({
 })
 
 
+# Intent classes gating the GK-contamination knobs (RAG_GK_SCORE_MARGIN /
+# RAG_OWN_DOC_BOOST / RAG_GK_TOPK_CAP). RAG_AUDIT_V2 found curated GK notes
+# outranking a user's own uploads 9/12 times, but calculation/standards
+# features DEPEND on GK winning (unit tables, CESMM/POMI, FIDIC clauses) — so
+# the knobs apply only to lookup-shaped retrieval. intent=None (the chat path
+# today, and any caller that doesn't classify) counts as lookup.
+DOC_LOOKUP_INTENTS = frozenset({"document_lookup", "project_lookup", "doc_qa"})
+CALC_KB_INTENTS = frozenset({"calculation", "standards", "knowledge"})
+
+
+def _knob_float(name: str) -> Optional[float]:
+    """Env-driven ranking knob. Unset/blank/unparsable means OFF (None) so a
+    typo'd value can never silently change ranking; 0.0 is a valid ON value."""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("invalid %s=%r; knob disabled", name, raw)
+        return None
+
+
+def _knob_int(name: str) -> Optional[int]:
+    """Integer variant of _knob_float; same OFF-on-garbage contract."""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("invalid %s=%r; knob disabled", name, raw)
+        return None
+
+
 def _significant_terms(query: str) -> frozenset:
     """Content words (>=4 chars, minus stopwords) used for lexical overlap."""
     import re as _re
@@ -292,6 +329,8 @@ def retrieve_with_filter(
     query: str,
     project_id: str,
     k: int = 5,
+    *,
+    intent: Optional[str] = None,
 ) -> tuple:
     """Returns ``(chunks, noise_filtered_count)``.
 
@@ -318,6 +357,26 @@ def retrieve_with_filter(
         logged + the active-only results stand.
       * When ``RAG_GENERAL_KNOWLEDGE_PROJECTS=""``, no GK lookup runs
         and the retriever behaves as it did pre-PR-107.
+
+    **GK contamination knobs (all default OFF — unset env var means the
+    merge is bit-identical to the description above):** RAG_AUDIT_V2
+    measured curated GK notes beating a user's own uploads 9/12 times,
+    because GK candidates compete purely on score. Three independent,
+    env-driven counters:
+
+      * ``RAG_GK_SCORE_MARGIN`` (float) — a GK candidate survives only
+        when its score >= best active-project candidate's score + margin.
+        A project with no candidates leaves GK untouched (the GK-only
+        fallback for empty projects must keep working).
+      * ``RAG_OWN_DOC_BOOST`` (float) — additive boost on active-project
+        candidates (ownership, not recency) before the merged re-rank.
+      * ``RAG_GK_TOPK_CAP`` (int) — at most this many GK chunks in the
+        final top-K; excess GK slots backfill with the next-best project
+        chunks, or shrink the result when none remain.
+
+    The knobs apply only when ``intent`` is None or in DOC_LOOKUP_INTENTS;
+    any other intent (notably CALC_KB_INTENTS) bypasses them so features
+    that depend on GK winning are unaffected.
 
     The audit log records ``noise_filtered_count`` so the regex can be
     tuned from data.
@@ -424,6 +483,36 @@ def retrieve_with_filter(
         chunk.score = round(final_score, 6)
         scored.append((final_score, chunk))
 
+    # GK contamination knobs — see the docstring. Each is None (OFF) unless
+    # its env var is set AND the intent is lookup-shaped; when all are None
+    # the pipeline below is byte-for-byte the pre-knob behavior.
+    knobs_apply = intent is None or intent in DOC_LOOKUP_INTENTS
+    gk_margin = _knob_float("RAG_GK_SCORE_MARGIN") if knobs_apply else None
+    own_boost = _knob_float("RAG_OWN_DOC_BOOST") if knobs_apply else None
+    gk_cap = _knob_int("RAG_GK_TOPK_CAP") if knobs_apply else None
+
+    # H2: ownership boost — the active project's own chunks get an additive
+    # lift before the merged re-rank, so a user's uploaded doc can beat a
+    # keyword-dense GK note of similar raw score.
+    if own_boost is not None:
+        for i, (score, chunk) in enumerate(scored):
+            if chunk.project_id == project_id:
+                boosted = score + own_boost
+                chunk.score = round(boosted, 6)
+                scored[i] = (boosted, chunk)
+
+    # H1: GK score margin — GK must BEAT the project's best candidate by the
+    # margin to enter the pool at all. Compared after H2 so an enabled boost
+    # also raises the bar. Empty projects skip the gate: GK-only fallback.
+    if gk_margin is not None:
+        project_scores = [s for s, c in scored if c.project_id == project_id]
+        if project_scores:
+            bar = max(project_scores) + gk_margin
+            scored = [
+                (s, c) for s, c in scored
+                if c.project_id not in gk_id_set or s >= bar
+            ]
+
     # Sort by fused score descending; active-project chunks naturally come
     # first when scores are equal because they were inserted first.
     scored.sort(key=lambda x: -x[0])
@@ -431,13 +520,21 @@ def retrieve_with_filter(
     # Photo chunks RAG leg was removed in migration 0008 along with the
     # photo_chunks table. Chat-attached photos are now question-context
     # (see POST /v1/chat/analyze-photo), not corpus material.
+    # H3: GK top-K cap — skipping (not truncating) excess GK chunks lets the
+    # next-best project chunks flow into the freed slots; when the pool has
+    # no project chunks left the result simply comes back shorter.
     kept: List[Chunk] = []
     noise_dropped = 0
+    gk_kept = 0
     for _, c in scored:
         name = _doc_name_for_id(c.doc_id)
         if _is_noise_filename(name):
             noise_dropped += 1
             continue
+        if gk_cap is not None and c.project_id in gk_id_set:
+            if gk_kept >= gk_cap:
+                continue
+            gk_kept += 1
         kept.append(c)
         if len(kept) == k:
             break
