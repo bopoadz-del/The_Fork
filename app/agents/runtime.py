@@ -2315,6 +2315,9 @@ class Agent:
             and cfg["provider"] == "groq"
             and not _tinker_adapter.is_available()
             and not _tinker_adapter.is_rewrite_pass_enabled()
+            # rag_debug needs the whole final text to run its with/without-RAG
+            # A/B in the non-streaming branch; don't stream those turns.
+            and not rag_debug
         )
         # WARNING-level timing instrumentation: Render drops INFO app logs on this
         # service, so the deliverable-hang call-count/latency was invisible.
