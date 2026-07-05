@@ -64,6 +64,28 @@ Test the override in `tests/test_chain_text_output_field.py` and the legacy glob
 
 By default, all changes land via PRs. The repo owner has opted into allowing direct pushes to `main` in personal Claude Code sessions (see `.claude/settings.local.json`), but the team norm is still PR-first — direct pushes bypass CI, CodeQL, and any review.
 
+`main` auto-deploys to prod (`render.yaml`: `branch: main`, `autoDeploy: true`). Every merge is a deploy — treat it accordingly.
+
+## Pre-deploy smoke
+
+`main` auto-deploys, and the chat/deliverable path has a failure mode that unit tests don't catch: a contaminated message replayed to the provider 400s on every *tool-calling* turn, which the browser renders as a silent hang (see the reasoning-field bug, commits `d3cb9fc`/`dc2c2d1`). The tripwire for that whole class of bug is a live smoke run.
+
+**Run the smoke before AND after any deploy that touches `app/agents/runtime.py`, the `app/agents/` chat routes, or the frontend chat path (`frontend/src/pages/ProjectWorkspace.tsx`).**
+
+```powershell
+# Windows / PowerShell
+$env:FORK_API_KEY = "<master key>"     # env only — never commit a key
+./scripts/smoke.ps1
+```
+
+```bash
+# bash
+export FORK_API_KEY="<master key>"
+./scripts/smoke.sh
+```
+
+It runs `scripts/fork_cli.py` ten times with a deliverable (tool-calling) prompt and prints ten summary lines plus a verdict. **PASS** requires all ten turns to succeed (non-empty answer) AND at least three runs to exercise a `tool_call`/`tool_result` pair; otherwise it **FAIL**s with a nonzero exit code. Zero-tool runs prove nothing — the tool path is what breaks. Point it at a branch preview or a staging instance with `$env:FORK_BASE_URL` before merging when you can; at minimum, run it against prod immediately after the deploy and be ready to roll back.
+
 ## Trivial PRs
 
 Single-typo fixes, dependency bumps, or label changes can skip the PR template by adding the `trivial` label. The `pr-quality.yml` gate honors it.
