@@ -63,7 +63,13 @@ Write-Host ("message: {0}" -f $Message)
 Write-Host ("=" * 72)
 
 for ($i = 1; $i -le $Runs; $i++) {
+    # PS 5.1: 2>&1 on a native exe wraps each stderr line in an ErrorRecord;
+    # with EAP=Stop the first one (fork_cli's "[auth] logged in" on the
+    # email/password path) becomes a TERMINATING error and kills the loop.
+    # Relax EAP for the invocation only — stderr text still lands in $out.
+    $eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     $out = & python $cli @baseArgs chat $Message --project $Project --events 2>&1 | Out-String
+    $ErrorActionPreference = $eap
 
     $m = [regex]::Match($out, "total=([\d.]+)s\s+first_token=([\d.\-]+s?|-)\s+events=(\d+)\s+answer_chars=(\d+)")
     $total = if ($m.Success) { [double]$m.Groups[1].Value } else { $null }
