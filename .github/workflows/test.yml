@@ -84,6 +84,13 @@ jobs:
           DATA_DIR: ${{ runner.temp }}/data
           CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
           CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
+          # Deterministic 256-dim fake embedder — same as the test-postgres
+          # job and the documented local run. Without it, any test that
+          # touches the embedding path on a fresh runner downloads a real
+          # model from HuggingFace inside the 120s per-test budget
+          # (test_scenario_validation timed out this way on the virgin
+          # profile of run 28755289990).
+          RAG_EMBEDDING_MODEL: fake
 
       - name: Diff coverage (per-PR gate on lines changed)
         # Runs only on pull_request events. Compares coverage.xml against
