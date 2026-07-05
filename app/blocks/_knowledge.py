@@ -28,6 +28,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -100,7 +101,7 @@ def get_rule(rule_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-_TOKEN_RE = __import__("re").compile(r"[a-z0-9]+")
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def _tokens(text: str) -> set:

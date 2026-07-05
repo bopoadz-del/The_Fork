@@ -11,9 +11,16 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/cerebrum-blocks
 
+# Newer push to the same ref supersedes the running build (the newest
+# image is the one that matters for a given branch/PR anyway).
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
