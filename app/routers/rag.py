@@ -23,6 +23,12 @@ class RagSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Text to retrieve against")
     project_id: str = Field(..., min_length=1, description="Scope to one project")
     k: int = Field(5, ge=1, le=50, description="Number of chunks to return")
+    # Eval hook: lets recall runners exercise the intent-gated GK knobs
+    # (retriever.DOC_LOOKUP_INTENTS / CALC_KB_INTENTS). Chat does not go
+    # through this route and keeps passing no intent.
+    intent: Optional[str] = Field(
+        None, description="Optional retrieval intent; gates GK ranking knobs",
+    )
 
 
 class RagSearchChunk(BaseModel):
@@ -62,7 +68,7 @@ async def rag_search(
         )
 
     try:
-        chunks = _r.retrieve(req.query, req.project_id, k=req.k)
+        chunks = _r.retrieve(req.query, req.project_id, k=req.k, intent=req.intent)
     except ValueError as exc:
         # Caller-side error (e.g. empty project_id) — surface as 400
         raise HTTPException(status_code=400, detail=str(exc))
