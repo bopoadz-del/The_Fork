@@ -1143,6 +1143,14 @@ DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
+# Kimi / Moonshot native API — OpenAI-compatible chat-completions. Same payload
+# shape as Groq/DeepSeek (verified: tool-calling + streaming accepted). K2 models
+# (kimi-k2.6 default) are reasoning models: the response carries a separate
+# `reasoning_content` chain-of-thought and the real answer in `content`; we read
+# `content` and the outbound sanitiser strips `reasoning_content` on replay.
+KIMI_API_URL = "https://api.moonshot.ai/v1/chat/completions"
+KIMI_DEFAULT_MODEL = "kimi-k2.6"
+
 # Ollama exposes an OpenAI-compatible endpoint at /v1/chat/completions
 # (v0.1.31+). Self-hosted on the operator's PC or a VPS. No auth, no token
 # cost, no TPM rate limits — bounded by local hardware. Used when the
@@ -1199,6 +1207,13 @@ def _llm_config() -> Dict[str, str]:
             "url": GROQ_API_URL,
             "env_key": "GROQ_API_KEY",
             "default_model": os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL),
+        }
+    if provider == "kimi":
+        return {
+            "provider": "kimi",
+            "url": KIMI_API_URL,
+            "env_key": "KIMI_API_KEY",
+            "default_model": os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL),
         }
     return {
         "provider": "deepseek",
@@ -2916,7 +2931,12 @@ class Agent:
             # Groq uses "auto", where Llama calls tools cleanly on its own and
             # the turn always completes. Decided PER-ATTEMPT so a fallback to a
             # different provider gets the right value.
-            if provider == "groq":
+            if provider in ("groq", "kimi"):
+                # Groq: forcing tool_choice makes Llama-4-Scout emit the tool as
+                # PROSE -> HTTP 400 tool_use_failed. Kimi K2: forcing a specific
+                # tool 400s outright ("tool_choice 'specified' is incompatible
+                # with thinking enabled" — K2 is a reasoning model). Both call
+                # tools cleanly on "auto", so never force them.
                 return "auto"
             if forced_tool:
                 # Force THIS tool by name — "required" alone let the model pick

@@ -69,6 +69,19 @@ services:
         sync: false
 
       # ── LLM providers (set in dashboard) ───────────────────────────────
+      # PRIMARY (pilot): Kimi K2 on Moonshot's native API. Set LLM_PROVIDER=kimi,
+      # KIMI_API_KEY, and KIMI_MODEL (default kimi-k2.6 — a reasoning model, so
+      # the runtime uses tool_choice=auto: forcing a specific tool 400s on a
+      # thinking model). ROLLBACK: flip LLM_PROVIDER=groq with
+      # GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct for an instant
+      # revert to the previous Scout config. LLM_FALLBACK_PROVIDER=ollama stays
+      # as the emergency fallback for either primary.
+      - key: LLM_PROVIDER
+        sync: false
+      - key: KIMI_API_KEY
+        sync: false
+      - key: KIMI_MODEL
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
