@@ -108,6 +108,7 @@ def stream_turn(client: httpx.Client, args, cred: str, message: str,
     tool_timings: list[tuple[str, float]] = []
     pending_tool: tuple[str, float] | None = None
     answer_parts: list[str] = []
+    served_model: str | None = None  # from the `end` event — configured vs fallback
     n_events = 0
 
     with client.stream("POST", url, json=body, headers=headers(cred),
@@ -159,6 +160,8 @@ def stream_turn(client: httpx.Client, args, cred: str, message: str,
                 if args.events:
                     print(f"[{fmt_delta(t0)}] heartbeat")
             elif etype in ("route", "start", "sources", "end", "error"):
+                if etype == "end":
+                    served_model = evt.get("model") or served_model
                 keep = {k: v for k, v in evt.items() if k != "type"}
                 brief = json.dumps(keep, default=str)
                 print(f"\n[{fmt_delta(t0)}] {etype.upper():11s} {brief[:600]}")
@@ -173,7 +176,8 @@ def stream_turn(client: httpx.Client, args, cred: str, message: str,
     print(f"\n{'─'*60}")
     print(f"turn summary: total={total:.2f}s  "
           f"first_token={'-' if first_token_at is None else f'{first_token_at:.2f}s'}  "
-          f"events={n_events}  answer_chars={sum(len(p) for p in answer_parts)}")
+          f"events={n_events}  answer_chars={sum(len(p) for p in answer_parts)}  "
+          f"model={served_model or '?'}")
     for name, dur in tool_timings:
         print(f"  tool {name}: {dur:.2f}s")
     if first_token_at is None and total > 5:
