@@ -17,7 +17,7 @@ Six action names appear in both lists:
 
 These tests pick one previously-dropped keyword per affected action and
 assert it routes after the 1.1.0 merge fix. Plus the static descriptor
-checks: version bump, "52-action" label, deduplicated merged_patterns
+checks: version bump, "53-action" label, deduplicated merged_patterns
 count matches what we expect.
 """
 from __future__ import annotations
@@ -52,18 +52,22 @@ def test_version_is_1_1_0():
     assert SmartOrchestratorBlock.version == "1.1.0"
 
 
-def test_description_says_52_actions():
-    assert "52-action" in SmartOrchestratorBlock.description
+def test_description_says_53_actions():
+    # construction_advisor (commit 9fcba83) is the 42nd smart_orch action,
+    # taking the net unique count 52 -> 53; the label must track it.
+    assert "53-action" in SmartOrchestratorBlock.description
+    assert "52-action" not in SmartOrchestratorBlock.description
     assert "39-action" not in SmartOrchestratorBlock.description
 
 
-def test_unique_action_count_is_52():
+def test_unique_action_count_is_53():
     """Net unique action names in ACTION_PATTERNS (PROCEDURE + smart_orch lists
-    combined) must equal 52: 17 PROCEDURE + 41 smart_orch − 6 collisions."""
+    combined) must equal 53: 17 PROCEDURE + 42 smart_orch − 6 collisions.
+    (The 42nd smart_orch action, construction_advisor, was added in 9fcba83.)"""
     seen = set()
     for action, _ in ACTION_PATTERNS:
         seen.add(action)
-    assert len(seen) == 52, f"expected 52 unique actions, got {len(seen)}"
+    assert len(seen) == 53, f"expected 53 unique actions, got {len(seen)}"
 
 
 # ── Regression guards: previously-dropped keywords must now route ───────────

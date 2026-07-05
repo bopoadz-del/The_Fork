@@ -79,7 +79,6 @@ def test_extract_image_runs_ocr(tmp_path, monkeypatch):
 def test_extract_scanned_pdf_falls_back_to_ocr(tmp_path, monkeypatch):
     """An image-only PDF (empty fitz text) falls back to OCR."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
-    from app.blocks.ocr import OCRBlock
     from app.core import doc_index
     importlib.reload(doc_index)
 
@@ -98,11 +97,14 @@ def test_extract_scanned_pdf_falls_back_to_ocr(tmp_path, monkeypatch):
     import fitz as real_fitz
     monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
 
-    monkeypatch.setattr(OCRBlock, "process", _make_ocr_stub({
-        "status": "success",
-        "text": "SCANNED SITE PLAN extracted via OCR fallback",
-        "quality": {"low_quality": False},
-    }))
+    # _extract_pdf OCRs each thin-text page via doc_index._ocr_pdf_page
+    # (pytesseract on a rendered pixmap), NOT OCRBlock.process. Mock that
+    # per-page entry point — FakePage has no pixmap, so the real function
+    # would return "" and the fallback text would never appear.
+    monkeypatch.setattr(
+        doc_index, "_ocr_pdf_page",
+        lambda page: "SCANNED SITE PLAN extracted via OCR fallback",
+    )
 
     pdf_path = str(tmp_path / "scan.pdf")
     file_crypto.write_document(pdf_path, b"%PDF-1.4 image-only")

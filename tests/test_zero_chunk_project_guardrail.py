@@ -87,7 +87,11 @@ async def test_chat_allows_indexed_project(monkeypatch):
 
     called = False
 
-    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True):
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None,
+                            with_tools=True, **kwargs):
+        # **kwargs tolerates _call_llm's evolving keyword args (e.g.
+        # exclude_tools, added for the forced tool-free synthesis path) so
+        # this stub doesn't break every time the real signature grows.
         nonlocal called
         called = True
         return {
