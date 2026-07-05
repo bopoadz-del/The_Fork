@@ -301,38 +301,52 @@ class SandboxBlock(UniversalBlock):
     async def _execute_javascript(self, code: str, policy: SandboxPolicy) -> Dict:
         """Execute JavaScript in sandbox using Node.js"""
         import subprocess
-        
+
         # Create temp file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
             f.write(code)
             temp_path = f.name
-        
+
         try:
-            # Run with timeout and resource limits
-            proc = await asyncio.create_subprocess_exec(
-                "node", temp_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                limit=policy.max_memory_mb * 1024 * 1024
-            )
-            
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=policy.max_cpu_time
+            # The whole spawn+communicate sequence runs under ONE outer
+            # deadline. The inner wait_for only covered communicate(); the
+            # 2026-07-05 CI zombies proved the pipeline can block before or
+            # around it (subprocess creation / pipe teardown), hanging the
+            # caller forever. A sandbox that can hang its caller is not a
+            # sandbox — convert any stall into the timeout error path.
+            async def _spawn_and_wait():
+                proc = await asyncio.create_subprocess_exec(
+                    "node", temp_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    limit=policy.max_memory_mb * 1024 * 1024
                 )
-                
-                return {
-                    "success": proc.returncode == 0,
-                    "stdout": stdout.decode(),
-                    "stderr": stderr.decode(),
-                    "returncode": proc.returncode,
-                    "sandboxed": True
-                }
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(),
+                        timeout=policy.max_cpu_time
+                    )
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    raise TimeoutException()
+                return proc.returncode, stdout, stderr
+
+            try:
+                returncode, stdout, stderr = await asyncio.wait_for(
+                    _spawn_and_wait(),
+                    timeout=policy.max_cpu_time + 10,
+                )
             except asyncio.TimeoutError:
-                proc.kill()
                 raise TimeoutException()
-                
+
+            return {
+                "success": returncode == 0,
+                "stdout": stdout.decode(),
+                "stderr": stderr.decode(),
+                "returncode": returncode,
+                "sandboxed": True
+            }
+
         finally:
             os.unlink(temp_path)
     
@@ -359,30 +373,42 @@ class SandboxBlock(UniversalBlock):
             self._audit_shell(code, allowed=False, result=result)
             return result
         
-        # Run in restricted mode
-        proc = await asyncio.create_subprocess_shell(
-            code,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            limit=policy.max_memory_mb * 1024 * 1024
-        )
-        
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=policy.max_cpu_time
+        # Run in restricted mode. Same outer-deadline shape as
+        # _execute_javascript: spawn+communicate under one wait_for so a
+        # stall anywhere in the subprocess pipeline becomes a timeout
+        # instead of hanging the caller.
+        async def _spawn_and_wait():
+            proc = await asyncio.create_subprocess_shell(
+                code,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                limit=policy.max_memory_mb * 1024 * 1024
             )
-            
-            return {
-                "success": proc.returncode == 0,
-                "stdout": stdout.decode(),
-                "stderr": stderr.decode(),
-                "returncode": proc.returncode,
-                "sandboxed": True
-            }
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=policy.max_cpu_time
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                raise TimeoutException()
+            return proc.returncode, stdout, stderr
+
+        try:
+            returncode, stdout, stderr = await asyncio.wait_for(
+                _spawn_and_wait(),
+                timeout=policy.max_cpu_time + 10,
+            )
         except asyncio.TimeoutError:
-            proc.kill()
             raise TimeoutException()
+
+        return {
+            "success": returncode == 0,
+            "stdout": stdout.decode(),
+            "stderr": stderr.decode(),
+            "returncode": returncode,
+            "sandboxed": True
+        }
     
     async def _validate_code(self, data: Dict) -> Dict:
         """Static analysis of code before execution"""
