@@ -57,3 +57,17 @@ first. Update on every task state change.
   deliverable RAG_AUDIT_V3.md.
 - CI run 28755289990: security scan PASSES on all 3 jobs (the __import__ fix verified in CI);
   jobs running the full suite with --timeout=120 armed.
+- CI diagnostic run COMPLETE: all 3 jobs finished in ~21 min (vs 6h hangs). pytest-timeout
+  CONVICTED the hang: test_sandbox_block::test_execute_javascript_simple, Timeout >120s with
+  the main thread parked inside block.process (node subprocess pipeline). Suite reality on
+  main: 40 failed + 15 collection errors + 1561 passed - regressions accumulated while CI was
+  dead. Sandbox fixed (024daf4): one outer deadline around spawn+communicate in JS and bash
+  paths - a sandbox that can hang its caller is not a sandbox. Triage agent launched on the
+  remaining families (chat contracts, orchestrator routing, e2e benchmarks, collection errors).
+- TASK C3 shipped on fix/zero-chunk-warning (fa5b91c): ZERO_CHUNK warning marker + 2 tests.
+  C1 resolved-by-purge, C2 parked (Drive connector disconnected).
+- TASK G: runner built by agent (3fe6dfd, 9/9 contract tests, 68-prompt plan). Fixture project
+  ff905e29 created on prod via normal API; sample_office.ifc + project_programme.xer +
+  generated ground_floor_plan.dxf uploaded via the normal document path; manifest wired
+  (a076d7c). SWEEP LAUNCHED against prod, 20s pacing, kill-safe resume via state file.
+- TASK H sweep agent running (8 local configs x 3 harnesses).
