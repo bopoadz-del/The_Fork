@@ -11,6 +11,23 @@ import pytest
 from app.agents.runtime import Agent, _UNINDEXED_PROJECT_MESSAGE
 
 
+@pytest.fixture(autouse=True)
+def _stub_llm_key(monkeypatch):
+    """Agent.chat() guards on the provider api key *before* _call_llm is
+    reached. These tests monkeypatch _call_llm so no network call ever
+    happens, but the guard still fires when the key is unset (e.g. in CI,
+    where conftest's load_dotenv finds no .env key). Pin the provider to
+    the deepseek default so the guard checks DEEPSEEK_API_KEY regardless
+    of a developer's LLM_PROVIDER, then satisfy it with a placeholder.
+
+    Deliberately a per-file fixture, not in conftest.py: a global key would
+    un-skip the live DEEPSEEK acceptance tests (their skipif is evaluated at
+    collection time) and make them run against the real API with a fake key.
+    """
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+
+
 def make_test_agent() -> Agent:
     return Agent(
         name="test-agent",
