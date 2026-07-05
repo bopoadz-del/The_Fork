@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 
-from app.agents.runtime import Agent, _llm_config
+from app.agents.runtime import Agent, _llm_config, _provider_temperature
 
 
 def _run(coro):
@@ -45,6 +45,57 @@ def test_kimi_model_override(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "kimi")
     monkeypatch.setenv("KIMI_MODEL", "kimi-k2.5")
     assert _llm_config()["default_model"] == "kimi-k2.5"
+
+
+# ── temperature: K2 pins it to 1 (declared in provider config, not global) ────
+
+def test_kimi_config_pins_temperature(monkeypatch):
+    """K2 400s on any temperature but 1. The constraint must live in the
+    provider config so shaping stays per-provider, not a global constant."""
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    assert _llm_config()["fixed_temperature"] == 1
+
+
+def test_provider_temperature_only_pins_constrained_providers(monkeypatch):
+    """_provider_temperature returns the pinned value for kimi and the agent's
+    own temperature for an unconstrained provider (e.g. groq)."""
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    kimi_cfg = _llm_config()
+    assert _provider_temperature(kimi_cfg, 0.3) == 1.0
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    groq_cfg = _llm_config()
+    assert "fixed_temperature" not in groq_cfg
+    assert _provider_temperature(groq_cfg, 0.3) == 0.3
+
+
+def test_kimi_call_posts_temperature_1_even_when_agent_wants_other(monkeypatch):
+    """The outbound payload to Moonshot must carry temperature=1 regardless of
+    the agent's configured temperature (0.3 for project-assistant) — otherwise
+    every deliverable 400s in prod, which is exactly what happened."""
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("KIMI_API_KEY", "test-key")
+    monkeypatch.delenv("LLM_FALLBACK_PROVIDER", raising=False)
+
+    agent = _pa_agent()
+    agent.temperature = 0.3  # the value that used to 400 on K2
+
+    fake_client = MagicMock()
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "choices": [{"message": {"content": "ok"}}],
+        "model": "kimi-k2.6",
+    }
+    fake_client.post = AsyncMock(return_value=fake_response)
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=False)
+
+    messages = [{"role": "user", "content": "Generate a commissioning checklist for the MV substation."}]
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=fake_client):
+        resp = _run(agent._call_llm(messages, api_key="test-key", project_id="p", with_tools=True))
+
+    assert resp["status"] == "success"
+    _, kwargs = fake_client.post.call_args
+    assert kwargs["json"]["temperature"] == 1
 
 
 # ── tool_choice must be "auto" for kimi (never forced) ───────────────────────
