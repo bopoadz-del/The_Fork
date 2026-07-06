@@ -144,6 +144,11 @@ PROCEDURE_ROUTING_ADDITIONS = [
             "tender package", "instructions to tenderers",
             "form of tender", "tender documents",
             "scope of work document",
+            # TASK 1 vocabulary patch (additive): "RFP" alone scores 0.2,
+            # below the 0.3 non-generative gate; the sweep's verbatim miss
+            # was "prepare an RFP for the landscaping subcontract package".
+            "prepare an rfp", "rfp for", "issue an rfp", "draft an rfp",
+            "rfp document",
         ]
     ),
     (
