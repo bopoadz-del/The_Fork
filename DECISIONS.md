@@ -152,29 +152,52 @@ acceptance battery and re-test after `RAG_GK_LEXICAL_FOLD=1` is active. The
 intent-exempted GK demotion may resolve it for free. If it still fails after the
 fold, it becomes a block-level answer-source bug for the next iteration.
 
-## Missing fixture projects on prod (Step 1, 2026-07-06)
+## Missing fixture projects on prod (Step 1, 2026-07-06) — UPDATED
 
-**Finding:** The three fixture projects referenced by the pilot gates are all
-missing on prod (HTTP 404 / not in the projects list):
-
-- `5c13510e` — DG2 Bills of Quantities, used by `boq_process` (must-cover).
-- `ff905e29` — Pilot Feature Sweep fixture, used by `parse_primavera_schedule`
-  and `drawing_qto` (must-cover).
-- `bc812f36` — RAG Audit V2 Fresh Upload Eval project, used by
-  `scripts/rag_fresh_upload_eval.py`, `tests/golden_set.yaml`, and the Step 2
-  acceptance battery.
+**Finding:** `5c13510e` (DG2 Bills of Quantities) exists as a Drive-approved
+project (4 docs / 179 chunks). The earlier 404 was a chat-stream ownership-check
+bug, now fixed in PR #154. `ff905e29` and `bc812f36` are still missing.
+`bc812f36` has been superseded by the canonical fixture project
+`FIXTURE — Fresh Upload Eval` (`b5a0fed8`) created by `scripts/seed_fixtures.py`.
 
 **Impact:**
-- FEATURE_MATRIX_V2 sweep: `boq_process`, `parse_primavera_schedule`, and
-  `drawing_qto` are BLOCKED.
-- Step 2 fresh-upload eval (case b) cannot run without `bc812f36`.
-- Step 3 golden-set gate cannot run without `bc812f36`.
+- `boq_process` is now unblocked for the feature matrix (still needs the chat fix deployed).
+- `parse_primavera_schedule` and `drawing_qto` remain BLOCKED until
+  `FIXTURE — Programme+Drawings` is seeded from the files Chadi provides.
+- Fresh-upload eval / golden-set gate use `FIXTURE — Fresh Upload Eval`.
 
-**Classification:** Fixture/data gap, not a routing or block bug.
+**Disposition:**
+- `boq_process`: use `FIXTURE — BOQ` canonical name in the manifest; seed once
+  Chadi provides the BOQ files in `FIXTURES_DIR`.
+- `parse_primavera_schedule` / `drawing_qto`: use `FIXTURE — Programme+Drawings`
+  canonical name; seed once Chadi provides `project_programme.xer`,
+  `ground_floor_plan.dxf`, and optionally `sample_office.ifc`.
 
-**Disposition:** Chadi must decide whether to (a) restore the projects from
-backup, or (b) recreate them. Recreating `bc812f36` is possible from the 12 note
-texts in `scripts/rag_fresh_upload_eval.py` CASES. Recreating `5c13510e` and
-`ff905e29` requires the original BOQ workbook and programme/drawing files, which
-are not in the repo. Until the fixtures are restored, the affected gates will be
-reported as BLOCKED / cannot-run.
+## Drive re-import blocked on service-account config (2026-07-06)
+
+**Finding:** The source data for the lost master-corpus blobs and the
+Drive-approved projects is intact in Google Drive, but the surviving project
+metadata does not contain the Drive folder IDs. The Render env currently has no
+`GDRIVE_SERVICE_ACCOUNT_JSON` or `GDRIVE_PROJECT_FOLDERS` set.
+
+**Classification:** Infrastructure/configuration gap, not a code bug.
+
+**Disposition:** PARKED pending Chadi providing:
+1. A service-account JSON key with read access to the Drive folders, set as
+   `GDRIVE_SERVICE_ACCOUNT_JSON` on Render (or as a mounted file path).
+2. The complete `GDRIVE_PROJECT_FOLDERS` mapping, including sibling packs under
+   the same parent as `DG2 Infra Pack 1` (folder ID
+   `1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j`).
+
+Once both are in place, run `scripts/inspect_drive_projects.py` to update the
+manifest, then perform the full re-import/re-index before resuming gates.
+
+## Smoke harness local Python issue (2026-07-06)
+
+**Finding:** `scripts/smoke.sh` invokes `python`, which in this Git Bash session
+resolves to the Windows Store placeholder and fails. The same script likely runs
+correctly in a PowerShell/Windows environment with Python on PATH.
+
+**Disposition:** Use `.venv/Scripts/python.exe scripts/fork_cli.py` directly for
+manual prod health checks in this shell. Do not alter `smoke.sh` unless the
+project standardizes a cross-shell python launcher.
