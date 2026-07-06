@@ -412,3 +412,34 @@ panel has something worth showing. Epic 6 can slip late but `DATA_GOVERNANCE.md`
 *Generated as a handover artifact. The two behavioural corrections (Part 0) are
 the immediate priority — they are what makes the platform stop "auto-generating
 on the panel" and start behaving like a conversational assistant.*
+
+## 2026-07-06 additions (V2 ideas parked during the pilot-readiness program)
+
+Documented here instead of built, per the standing no-architecture-changes rule.
+
+1. **CI fast-core/nightly split** — per-PR job runs a fast Linux core suite
+   (unit + contract tests, ~5 min); the full 3-job matrix (virgin +
+   production-like + postgres, ~20 min) moves to nightly `schedule:` +
+   `workflow_dispatch`. Today's per-PR cost (~20 min with the new caps) is
+   tolerable, so this is an optimization, not a fix.
+2. **GK lexical-bonus demotion by intent** — RAG_AUDIT_V3 showed the +0.25/term
+   (cap +1.2) GK lexical bonus is why a user's own document can never reach
+   rank 1 on collision queries (EOT case: GK wins by ~+0.5, beyond any sane
+   margin knob). V2: scale or zero the lexical bonus for document-lookup
+   intents; keep it for calculation/standards intents.
+3. **Orchestrator intents into retrieval** — retrieve_with_filter already
+   accepts `intent` (PR #149, plumbed but unused by chat). V2: the chat
+   grounding path (app/core/rag/inject.py) passes the smart_orchestrator's
+   classified intent so the GK knobs and future ranking rules act on real
+   intent instead of always-on.
+4. **Keyword-dictionary rebuild for the router** — the TASK G sweep logged 20
+   natural-phrasing prompts scoring confidence 0.0 (DECISIONS.md evidence
+   log). Post-pilot: rebuild the ACTION_PATTERNS keyword sets from that
+   evidence plus real pilot transcripts, or replace keyword scoring with the
+   dynamic LLM intent classifier the orchestrator-consolidation plan already
+   sketches.
+5. **Synthesis streaming for kimi/Moonshot** — the streaming gate is pinned to
+   provider=="groq" and _stream_synthesis reads only delta.content; K2 emits
+   reasoning deltas. Extending both is the prerequisite for any K2 cutover
+   surviving the 90s chat_stream deadline (2/10 tool-turns exceeded it in the
+   2d gate).
