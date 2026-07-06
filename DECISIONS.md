@@ -80,3 +80,21 @@ Newest first.
 | value_engineering | value engineer the basement - options to cut cost without losing parki | (none) | 0.0 | below_routing_gate |
 
 Input for the post-pilot keyword-dictionary rebuild. The router was NOT tuned during the sweep (standing rule).
+
+## BOQ total discrepancy (Step 1c, 2026-07-06)
+
+**Finding:** Project `5c13510e` (DG2 Bills of Quantities) live corpus cites a
+BOQ total of **29,207,138.5 USD** (review_pack/boq_process_1.md, verbatim
+answer). A remembered value of **SAR 62,236,109** could not be verified in the
+repo corpus or in the live retrieval context.
+
+**Classification:** Data/expectation issue, not a calculation bug. The live
+corpus is internally consistent (the same USD value appears in both the total
+and the cost-breakdown chunks), and the model is correctly grounding its
+answer in retrieved chunks.
+
+**Disposition:** No code fix. The golden-set gate (`tests/golden_set.yaml` on
+`feat/golden-set-gate`) already avoids pinning a number for the BOQ total
+query; it expects only a currency token plus a million-scale value. Chadi to
+confirm whether the corpus value is the authoritative client figure or
+whether the project BOQ corpus needs to be refreshed/replaced.
