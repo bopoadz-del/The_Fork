@@ -86,20 +86,20 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ]),
     # Combined "extract_quantities" entry — there used to be two; the dedupe
     # guard in _match_actions silently dropped the second list. Merged here.
-    ("extract_quantities",    ["extract quantities", "take off", "qto", "quantity take", "measure", "count items", "area calculation", "room area", "floor area", "calculate area"]),
+    ("extract_quantities",    ["extract quantities", "take off", "qto", "quantity take", "measure", "count items", "area calculation", "room area", "floor area", "calculate area", "quantities", "takeoff"]),
     ("estimate_costs",        ["estimate cost", "cost estimate", "budget", "pricing", "price estimate", "how much"]),
     ("tender_bid_analysis",   ["tender", "bid", "proposal", "quote comparison", "contractor bid"]),
-    ("procurement_list_generator", ["procurement", "material list", "purchase list", "buy list", "vendor list"]),
+    ("procurement_list_generator", ["procurement", "material list", "purchase list", "buy list", "vendor list", "procurement list", "what materials", "need to buy", "materials list"]),
     ("procurement_optimizer", ["optimize procurement", "best supplier", "cheapest", "optimize cost"]),
     ("payment_certificate",   ["payment cert", "valuation", "progress payment", "invoice", "certificate"]),
-    ("cash_flow_forecast",    ["cash flow", "s-curve", "payment schedule", "fund flow"]),
+    ("cash_flow_forecast",    ["cash flow", "s-curve", "payment schedule", "fund flow", "s curve", "spend curve", "cumulative spend", "cumulative cost curve", "drawdown"]),
     # Specifications
-    ("spec_analyze",          ["spec", "specification", "material spec", "grade requirement", "astm", "aci", "saso", "standard", "compliance check"]),
+    ("spec_analyze",          ["spec", "specification", "material spec", "grade requirement", "astm", "aci", "saso", "standard", "compliance check", "specification requirements", "material specs", "material specifications", "concrete specification", "specs"]),
     ("process_specification_full", ["full specification", "spec section", "csi division", "masterformat"]),
     # Drawings
-    ("drawing_qto",           ["drawing", "dxf", "dwg", "floor plan", "blueprint", "autocad", "measure drawing"]),
+    ("drawing_qto",           ["drawing", "dxf", "dwg", "floor plan", "blueprint", "autocad", "measure drawing", "drawings", "quantity takeoff", "takeoff", "take-off"]),
     # Schedule
-    ("parse_primavera_schedule", ["primavera", "xer", "p6", "schedule", "gantt", "programme", "baseline"]),
+    ("parse_primavera_schedule", ["primavera", "xer", "p6", "schedule", "gantt", "programme", "baseline", "milestones", "milestone", "key milestones", "milestone report", "completion dates"]),
     ("progress_tracker",      ["progress", "completion", "percent complete", "actual vs planned", "delay"]),
     ("resource_histogram",    ["resource", "manpower", "histogram", "crew", "labor loading", "workforce"]),
     ("forensic_delay_analysis", ["delay analysis", "eot", "extension of time", "delay claim", "forensic"]),
@@ -110,7 +110,7 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("digital_twin_sync",     ["digital twin", "asset data", "sync model", "as-built bim"]),
     # QA/QC
     ("qa_qc_inspection",      ["qa", "qc", "quality", "inspection", "test report", "ncr", "non-conformance", "punch list"]),
-    ("commissioning_checklist", ["commissioning", "handover", "pre-commissioning", "startup checklist"]),
+    ("commissioning_checklist", ["commissioning", "handover", "pre-commissioning", "startup checklist", "commissioning checklist", "commissioning steps", "t&c steps", "energising", "energisation", "energizing", "energization"]),
     # Contracts / Claims
     ("process_contract",      ["contract", "subcontract", "agreement", "terms", "clause", "fidic", "nec"]),
     # Note: 2-char abbreviations "co" / "vo" removed — they were substrings of
@@ -137,7 +137,7 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("value_engineering",     ["value engineering", "ve study", "cost reduction", "alternative", "optimization"]),
     ("sympy_reason",          ["variance analysis", "reasoning", "compare cost", "benchmark", "symbolic", "formula"]),
     # Documents
-    ("process_document",      ["document", "pdf", "report", "upload", "analyse file", "analyze file"]),
+    ("process_document",      ["document", "pdf", "report", "upload", "analyse file", "analyze file", "execution plan", "project execution plan", "what documents", "list the documents", "which documents", "which drawings", "project documents", "what files", "documents in this project"]),
     # Reasoning / AI
     ("intelligent_workflow",  ["workflow", "automate", "chain", "pipeline", "multi-step", "full analysis"]),
     ("health_check",          ["health", "status", "ping", "alive", "system check"]),
