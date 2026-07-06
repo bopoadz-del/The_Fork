@@ -55,14 +55,14 @@ features:
     feature: BOQ queries
     class: must
     handler: container (boq_processor)
-    project: "FIXTURE — BOQ"   # seeded by scripts/seed_fixtures.py
+    project: "5c13510e"   # DG2 Bills of Quantities (Drive-approved; files restored)
     prompts:
       - text: "process the bill of quantities and give me the total value"
         expect_route: [boq_process]
       - text: "what's in the priced BOQ - break down the cost sheet by section"
         expect_route: [boq_process, estimate_costs]
     structure: [has_numbers, has_currency_or_units]
-    needs: BOQ xlsx in FIXTURES_DIR (supplied by Chadi)
+    needs: BOQ xlsx in project 5c13510e
 
   - action: estimate_costs
     feature: BOQ generation / cost estimate
@@ -125,7 +125,7 @@ features:
     structure: [has_period_buckets]
 
   - action: parse_primavera_schedule
-    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
+    project: "ff905e29"   # Pilot Feature Sweep (project_programme.xer restored)
     feature: milestones extraction / report
     class: must
     handler: container (primavera_parser)
@@ -135,7 +135,7 @@ features:
       - text: "give me a milestone report - what are the major completion dates?"
         expect_route: [parse_primavera_schedule, progress_tracker]
     structure: [milestones_have_dates]
-    needs: UPLOADED project_programme.xer in FIXTURES_DIR (supplied by Chadi)
+    needs: UPLOADED project_programme.xer in project ff905e29
 
   - action: cash_flow_forecast
     feature: S-curve (progress/cost)
@@ -184,7 +184,7 @@ features:
     structure: [has_numbers, shows_working_or_rule]
 
   - action: drawing_qto
-    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
+    project: "ff905e29"   # Pilot Feature Sweep (ground_floor_plan.dxf restored)
     feature: QTO from drawings
     class: must
     handler: container (drawing_qto block)
@@ -194,7 +194,7 @@ features:
       - text: "measure the floor area from the ground floor plan drawing"
         expect_route: [drawing_qto, extract_quantities]
     structure: [references_drawing, has_numbers]
-    needs: UPLOADED ground_floor_plan.dxf in FIXTURES_DIR (supplied by Chadi)
+    needs: UPLOADED ground_floor_plan.dxf in project ff905e29
 
   - action: commissioning_checklist
     feature: commissioning checklist (regression baseline)
@@ -364,31 +364,31 @@ features:
         expect_route: [forensic_delay_analysis, claims_builder]
 
   - action: bim_analysis
-    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
+    project: "ff905e29"   # Pilot Feature Sweep (sample_office.ifc restored)
     class: coverage
     handler: container (bim block)
     prompts:
       - text: "review the BIM model and give me quantities by element type"
         expect_route: [bim_analysis, bim_extractor]
-    needs: UPLOADED sample_office.ifc in FIXTURES_DIR (supplied by Chadi)
+    needs: UPLOADED sample_office.ifc in project ff905e29
 
   - action: bim_clash_detection
-    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
+    project: "ff905e29"   # Pilot Feature Sweep (sample_office.ifc restored)
     class: coverage
     handler: container
     prompts:
       - text: "run clash detection between the structural and MEP models"
         expect_route: [bim_clash_detection]
-    needs: UPLOADED sample_office.ifc in FIXTURES_DIR (supplied by Chadi)
+    needs: UPLOADED sample_office.ifc in project ff905e29
 
   - action: bim_extractor
-    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
+    project: "ff905e29"   # Pilot Feature Sweep (sample_office.ifc restored)
     class: coverage
     handler: container (bim_extractor block)
     prompts:
       - text: "extract the concrete quantities from the IFC model"
         expect_route: [bim_extractor, bim_analysis]
-    needs: UPLOADED sample_office.ifc in FIXTURES_DIR (supplied by Chadi)
+    needs: UPLOADED sample_office.ifc in project ff905e29
 
   - action: digital_twin_sync
     class: coverage
