@@ -55,14 +55,14 @@ features:
     feature: BOQ queries
     class: must
     handler: container (boq_processor)
-    project: 5c13510e   # DG2 Bills of Quantities (4 BOQ workbooks indexed)
+    project: "FIXTURE — BOQ"   # seeded by scripts/seed_fixtures.py
     prompts:
       - text: "process the bill of quantities and give me the total value"
         expect_route: [boq_process]
       - text: "what's in the priced BOQ - break down the cost sheet by section"
         expect_route: [boq_process, estimate_costs]
     structure: [has_numbers, has_currency_or_units]
-    needs: BOQ xlsx in project 5c13510e (already indexed, 179 chunks)
+    needs: BOQ xlsx in FIXTURES_DIR (supplied by Chadi)
 
   - action: estimate_costs
     feature: BOQ generation / cost estimate
@@ -125,7 +125,7 @@ features:
     structure: [has_period_buckets]
 
   - action: parse_primavera_schedule
-    project: ff905e29   # Pilot Feature Sweep fixture project
+    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
     feature: milestones extraction / report
     class: must
     handler: container (primavera_parser)
@@ -135,7 +135,7 @@ features:
       - text: "give me a milestone report - what are the major completion dates?"
         expect_route: [parse_primavera_schedule, progress_tracker]
     structure: [milestones_have_dates]
-    needs: UPLOADED 2026-07-06 project_programme.xer (doc 9f8f228a) in ff905e29
+    needs: UPLOADED project_programme.xer in FIXTURES_DIR (supplied by Chadi)
 
   - action: cash_flow_forecast
     feature: S-curve (progress/cost)
@@ -184,7 +184,7 @@ features:
     structure: [has_numbers, shows_working_or_rule]
 
   - action: drawing_qto
-    project: ff905e29   # Pilot Feature Sweep fixture project
+    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
     feature: QTO from drawings
     class: must
     handler: container (drawing_qto block)
@@ -194,7 +194,7 @@ features:
       - text: "measure the floor area from the ground floor plan drawing"
         expect_route: [drawing_qto, extract_quantities]
     structure: [references_drawing, has_numbers]
-    needs: UPLOADED 2026-07-06 ground_floor_plan.dxf (doc ed81d829) in ff905e29
+    needs: UPLOADED ground_floor_plan.dxf in FIXTURES_DIR (supplied by Chadi)
 
   - action: commissioning_checklist
     feature: commissioning checklist (regression baseline)
@@ -364,31 +364,31 @@ features:
         expect_route: [forensic_delay_analysis, claims_builder]
 
   - action: bim_analysis
-    project: ff905e29   # Pilot Feature Sweep fixture project
+    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
     class: coverage
     handler: container (bim block)
     prompts:
       - text: "review the BIM model and give me quantities by element type"
         expect_route: [bim_analysis, bim_extractor]
-    needs: UPLOADED 2026-07-06 sample_office.ifc (doc 2979a1b4) in ff905e29
+    needs: UPLOADED sample_office.ifc in FIXTURES_DIR (supplied by Chadi)
 
   - action: bim_clash_detection
-    project: ff905e29   # Pilot Feature Sweep fixture project
+    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
     class: coverage
     handler: container
     prompts:
       - text: "run clash detection between the structural and MEP models"
         expect_route: [bim_clash_detection]
-    needs: UPLOADED 2026-07-06 sample_office.ifc (doc 2979a1b4) in ff905e29
+    needs: UPLOADED sample_office.ifc in FIXTURES_DIR (supplied by Chadi)
 
   - action: bim_extractor
-    project: ff905e29   # Pilot Feature Sweep fixture project
+    project: "FIXTURE — Programme+Drawings"   # seeded by scripts/seed_fixtures.py
     class: coverage
     handler: container (bim_extractor block)
     prompts:
       - text: "extract the concrete quantities from the IFC model"
         expect_route: [bim_extractor, bim_analysis]
-    needs: UPLOADED 2026-07-06 sample_office.ifc (doc 2979a1b4) in ff905e29
+    needs: UPLOADED sample_office.ifc in FIXTURES_DIR (supplied by Chadi)
 
   - action: digital_twin_sync
     class: coverage
