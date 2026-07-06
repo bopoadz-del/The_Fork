@@ -129,3 +129,8 @@ first. Update on every task state change.
 - Step 1 PR: #153 opened from feat/pilot-readiness-step1 (router vocab + structure
   oracles + docs). In-flight pre-fix sweep stopped; will merge after CI and re-run
   sweep against deployed prod for consistent post-fix results.
+- Step 1 review: oracle changes split into a separate commit (a42a9a3). Two
+  relaxations kept with verbatim justification in PR #153 description
+  (`has_activities_and_durations`, `has_checklist_items`). Two relaxations
+  REVERTED because the failing outputs were thin/malformed (`has_period_buckets`,
+  `milestones_have_dates`). Branch force-pushed; CI restarted.
