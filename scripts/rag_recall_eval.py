@@ -42,7 +42,10 @@ import httpx
 DEFAULT_BASE = "https://the-fork.onrender.com"
 BASELINE_30 = "data/learning/rag_audit/sample_retrieval_recall_projects_folder.json"
 QUESTIONS_V2 = "data/learning/training_scenarios_drive_archive_v2.jsonl"
-PROJECT = "projects_folder"  # the audit measured the master corpus directly
+# The audit measures the master corpus directly. On prod it lives under
+# project_id "projects_folder"; on a local box the same corpus is stored
+# under "drive_archive" — override with --project (default unchanged).
+PROJECT = "projects_folder"
 
 
 def _auth_header(base: str) -> dict:
@@ -60,7 +63,7 @@ def _auth_header(base: str) -> dict:
 
 
 def _search(client: httpx.Client, base: str, headers: dict,
-            query: str, k: int) -> dict:
+            query: str, k: int, project: str = PROJECT) -> dict:
     # Retry 5xx with a long backoff: a burst of searches over the 110k-chunk
     # corpus can starve the single-worker box until Render's health check
     # times out and restarts it (observed live 2026-07-05, event
@@ -72,7 +75,7 @@ def _search(client: httpx.Client, base: str, headers: dict,
             time.sleep(25 * attempt)
         try:
             r = client.post(f"{base}/v1/rag/search", headers=headers,
-                            json={"query": query, "project_id": PROJECT, "k": k},
+                            json={"query": query, "project_id": project, "k": k},
                             timeout=60)
         except httpx.HTTPError as exc:
             last = exc
@@ -131,6 +134,9 @@ def main() -> int:
     ap.add_argument("--end", type=int, default=0, help="see --start (0 = all)")
     ap.add_argument("--base", default=os.getenv("FORK_BASE_URL") or DEFAULT_BASE)
     ap.add_argument("--out", help="artifact path (default derived from mode)")
+    ap.add_argument("--project", default=PROJECT,
+                    help="project id holding the master corpus (prod: "
+                         "projects_folder; local boxes: drive_archive)")
     args = ap.parse_args()
 
     if args.baseline30:
@@ -152,7 +158,7 @@ def main() -> int:
         mode += f"[{lo}:{hi}]"
 
     headers = _auth_header(args.base)
-    print(f"mode={mode}  n={len(items)}  k={args.k}  project={PROJECT}  base={args.base}")
+    print(f"mode={mode}  n={len(items)}  k={args.k}  project={args.project}  base={args.base}")
     print("=" * 76)
 
     details, found_doc, found_chunk, top1 = [], 0, 0, []
@@ -162,7 +168,8 @@ def main() -> int:
             if i > 1 and args.delay:
                 time.sleep(args.delay)
             try:
-                resp = _search(client, args.base, headers, it["query"], args.k)
+                resp = _search(client, args.base, headers, it["query"], args.k,
+                               project=args.project)
             except Exception as exc:  # noqa: BLE001
                 print(f"{i:>3}  ERROR {str(exc)[:120]}")
                 details.append({**it, "error": str(exc)[:300]})
@@ -187,7 +194,7 @@ def main() -> int:
                 # incremental write so a killed run keeps finished rows
                 summary = {
                     "mode": mode, "sample_size": n_done, "k": args.k,
-                    "project_id": PROJECT, "base": args.base,
+                    "project_id": args.project, "base": args.base,
                     f"doc_recall_at_{args.k}": round(found_doc / n_done, 4),
                     f"chunk_recall_at_{args.k}": round(found_chunk / n_done, 4),
                     "avg_top_score": round(sum(top1) / len(top1), 6) if top1 else None,

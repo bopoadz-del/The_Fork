@@ -136,6 +136,7 @@ def main() -> int:
     ap.add_argument("--wait", type=int, default=90,
                     help="seconds to allow eager indexing before querying")
     ap.add_argument("--delay", type=float, default=3.0)
+    ap.add_argument("--out", default=OUT, help="artifact path")
     args = ap.parse_args()
 
     headers = _auth_header(args.base)
@@ -216,10 +217,10 @@ def main() -> int:
     summary = {"project_id": project_id, "n_cases": n,
                "top1_wins": top1_wins, "top3_wins": top3_wins,
                "uploaded_docs": uploaded, "results": results}
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    with open(OUT, "w", encoding="utf-8") as fh:
+    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+    with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=1)
-    print(f"artifact: {OUT}")
+    print(f"artifact: {args.out}")
     return 0
 
 
