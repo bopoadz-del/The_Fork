@@ -91,6 +91,22 @@ It runs `scripts/fork_cli.py` N times with a deliverable (tool-calling) prompt a
 
 Point it at a branch preview or a staging instance with `$env:FORK_BASE_URL` before merging when you can; at minimum, run it against prod immediately after the deploy and be ready to roll back. If a run shows a model you didn't expect (a fallback), the smoke's PASS is weaker than it looks — investigate before trusting it.
 
+## Fixture projects
+
+Pilot test fixtures are **disposable and rebuildable as code**. Do not treat fixture project ids as stable constants — they change whenever the fixture is recreated.
+
+- Canonical fixture names (resolved at runtime):
+  - `FIXTURE — Fresh Upload Eval`
+  - `FIXTURE — BOQ`
+  - `FIXTURE — Programme+Drawings`
+- Seeder: `python scripts/seed_fixtures.py`
+  - Self-contained for `FIXTURE — Fresh Upload Eval` (uses the 12 CASES texts).
+  - Dir-based fixtures (`FIXTURE — BOQ`, `FIXTURE — Programme+Drawings`) require `FIXTURES_DIR` to point at the files Chadi provides.
+- Harnesses resolve fixtures by name via the projects API. Hardcoded fixture ids in `tests/feature_matrix_manifest.yaml` or `scripts/rag_fresh_upload_eval.py` are a defect.
+- Deleting a fixture project from the UI is safe: re-run `seed_fixtures.py` to recreate it.
+
+Run `seed_fixtures.py` before any feature-matrix sweep; the sweep runner will BLOCK features whose fixture project is missing instead of failing with a 404.
+
 ## Trivial PRs
 
 Single-typo fixes, dependency bumps, or label changes can skip the PR template by adding the `trivial` label. The `pr-quality.yml` gate honors it.

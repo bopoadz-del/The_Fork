@@ -39,8 +39,18 @@ import time
 import httpx
 
 DEFAULT_BASE = "https://the-fork.onrender.com"
-PROJECT_NAME = "RAG Audit V2 - Fresh Upload Eval"
+PROJECT_NAME = "FIXTURE — Fresh Upload Eval"
 OUT = "data/learning/rag_audit/v2_fresh_upload_wins.json"
+
+
+def _resolve_project_id(client: httpx.Client, name: str) -> str | None:
+    """Look up a fixture project by canonical name; return None if not found."""
+    r = client.get("/v1/projects")
+    r.raise_for_status()
+    for p in r.json().get("projects", []) or []:
+        if p.get("name") == name:
+            return p["id"]
+    return None
 
 # (filename, document text, retrieval query)
 # Topics collide with GK/master content on purpose; values are project-unique.
@@ -143,15 +153,33 @@ def main() -> int:
     client = httpx.Client(base_url=args.base, headers=headers, timeout=120)
 
     project_id = args.project
+    created_here = False
     uploaded: dict[str, str] = {}  # filename -> document id
 
-    if not args.query_only:
-        if not project_id:
+    if not project_id:
+        resolved = _resolve_project_id(client, PROJECT_NAME)
+        if resolved:
+            project_id = resolved
+            print(f"[setup] resolved {PROJECT_NAME} -> {project_id}")
+        elif args.query_only:
+            sys.exit(f"[error] query-only but project {PROJECT_NAME!r} not found")
+        else:
             r = client.post("/v1/projects", json={"name": PROJECT_NAME})
             r.raise_for_status()
             project_id = r.json()["id"]
+            created_here = True
             print(f"[setup] created project {project_id} ({PROJECT_NAME})")
+
+    if not args.query_only:
+        existing_names = {
+            d["original_name"]
+            for d in (client.get(f"/v1/projects/{project_id}/documents")
+                      .raise_for_status().json().get("documents") or [])
+        }
         for fname, text, _q in CASES:
+            if fname in existing_names:
+                print(f"[skip] {fname} already uploaded")
+                continue
             r = client.post(
                 f"/v1/projects/{project_id}/documents",
                 files={"file": (fname, io.BytesIO(text.encode("utf-8")), "text/plain")},
@@ -162,8 +190,9 @@ def main() -> int:
             uploaded[fname] = str(doc_id)
             print(f"[upload] {fname} -> doc {doc_id}")
             time.sleep(1.0)
-        print(f"[setup] waiting {args.wait}s for eager indexing...")
-        time.sleep(args.wait)
+        if created_here or uploaded:
+            print(f"[setup] waiting {args.wait}s for eager indexing...")
+            time.sleep(args.wait)
 
     print(f"project={project_id}  k={args.k}  cases={len(CASES)}")
     print("=" * 76)

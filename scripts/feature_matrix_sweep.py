@@ -47,6 +47,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -338,6 +339,46 @@ def load_manifest(path: Path | str = DEFAULT_MANIFEST) -> dict:
     if problems:
         raise ManifestError("manifest validation failed:\n  - " + "\n  - ".join(problems))
     return {"defaults": defaults, "features": features}
+
+
+def _resolve_fixture_projects(manifest: dict, base: str, headers: dict) -> None:
+    """Replace canonical fixture names in the manifest with live project ids.
+
+    Fixture projects are disposable and recreated by scripts/seed_fixtures.py;
+    hard-coding their ids in the manifest is a defect. We query the project
+    list once, map names to ids, and mark any unresolved fixture as blocked.
+    """
+    names_to_resolve = {
+        f["project"] for f in manifest["features"]
+        if isinstance(f.get("project"), str) and f["project"].startswith("FIXTURE —")
+    }
+    if not names_to_resolve:
+        return
+
+    try:
+        with httpx.Client(base_url=base, headers=headers, timeout=30) as client:
+            r = client.get("/v1/projects")
+            r.raise_for_status()
+            name_to_id = {p.get("name"): p.get("id")
+                          for p in r.json().get("projects", []) or []}
+    except httpx.HTTPError as exc:
+        print(f"[fixture-resolve] warning: could not list projects: {exc}",
+              file=sys.stderr)
+        name_to_id = {}
+
+    for feat in manifest["features"]:
+        name = feat.get("project")
+        if not isinstance(name, str) or not name.startswith("FIXTURE —"):
+            continue
+        resolved = name_to_id.get(name)
+        if resolved:
+            feat["project"] = resolved
+            feat["_resolved_from"] = name
+        else:
+            feat["blocked"] = True
+            feat["needs"] = (feat.get("needs") or "") + f" (fixture project {name!r} missing — run scripts/seed_fixtures.py)"
+            print(f"[fixture-resolve] {feat['action']}: {name!r} not found -> BLOCKED",
+                  file=sys.stderr)
 
 
 def build_plan(manifest: dict, action: str | None, klass: str | None,
@@ -887,6 +928,9 @@ def main() -> int:
                     help="print implemented structure checks")
     ap.add_argument("--report", action="store_true",
                     help="regenerate FEATURE_MATRIX.md from the results jsonl")
+    ap.add_argument("--auto-seed", action="store_true",
+                    help="run scripts/seed_fixtures.py for missing self-contained "
+                         "fixtures before the sweep")
     args = ap.parse_args()
 
     if args.list_checks:
@@ -899,6 +943,40 @@ def main() -> int:
         manifest = load_manifest(args.manifest)
     except ManifestError as exc:
         sys.exit(str(exc))
+
+    # Resolve canonical fixture names to live project ids before any planning.
+    headers = _auth_header(args.base)
+    _resolve_fixture_projects(manifest, args.base, headers)
+
+    unresolved = [
+        (f["action"], f.get("project"))
+        for f in manifest["features"]
+        if f.get("blocked") and isinstance(f.get("project"), str) and f["project"].startswith("FIXTURE —")
+    ]
+    if unresolved:
+        print(f"[pre-sweep] {len(unresolved)} fixture-bound features unresolved:")
+        for action, name in unresolved:
+            print(f"  - {action}: {name}")
+        if args.auto_seed:
+            seeder = ROOT / "scripts" / "seed_fixtures.py"
+            print(f"[pre-sweep] auto-seeding via {seeder} ...")
+            subprocess.run(
+                [sys.executable, str(seeder), "--base", args.base],
+                check=False,
+            )
+            # Re-resolve after seeding.
+            _resolve_fixture_projects(manifest, args.base, headers)
+            still_unresolved = [
+                (f["action"], f.get("project"))
+                for f in manifest["features"]
+                if f.get("blocked") and isinstance(f.get("project"), str) and f["project"].startswith("FIXTURE —")
+            ]
+            if still_unresolved:
+                print(f"[pre-sweep] {len(still_unresolved)} fixture-bound features still blocked "
+                      f"(need FIXTURES_DIR files): {', '.join(a for a, _ in still_unresolved)}")
+        else:
+            print("[pre-sweep] run with --auto-seed to create self-contained fixtures, "
+                  "or set FIXTURES_DIR and run scripts/seed_fixtures.py for dir-based fixtures.")
 
     if args.dry_run:
         return dry_run(args, manifest)

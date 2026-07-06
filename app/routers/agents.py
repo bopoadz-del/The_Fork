@@ -246,10 +246,13 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     if conversation_id is not None:
         _enforce_conversation_access(conversation_id, auth)
 
-    # Defense in depth: if a project_id is provided, the caller must own it.
+    # Defense in depth: if a project_id is provided, the caller must own it
+    # OR it must be an admin-approved platform project visible to them (PR D).
     # The master-corpus alias is gated by conversation access above.
     if project_id is not None and project_id != store.MASTER_CORPUS_PROJECT_ID:
-        project = store.get_project(project_id, user_id=auth["user_id"])
+        project = store.get_project(
+            project_id, user_id=auth["user_id"], include_admin_approved=True
+        )
         if project is None:
             raise HTTPException(404, "Project not found")
 
