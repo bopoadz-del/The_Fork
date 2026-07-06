@@ -45,4 +45,29 @@ Newest first.
 
 ## Routing-miss evidence log (TASK G class-1)
 
-(none yet - populated by the sweep)
+### Routing-miss evidence (TASK G sweep, 2026-07-06, prod, verbatim)
+
+| action | prompt | router chose | confidence | reason |
+|---|---|---|---|---|
+| process_document | what does the DG2 project execution plan cover? | (none) | 0.0 | below_routing_gate |
+| spec_analyze | analyze the concrete specification requirements - what grades and stan | (none) | 0.0 | below_routing_gate |
+| spec_analyze | pull out the material specs for the road works | (none) | 0.0 | below_routing_gate |
+| document_metadata | list the documents in this project and what type each one is | (none) | 0.0 | below_routing_gate |
+| document_metadata | which drawings do we have for the stormwater network? | (none) | 0.0 | below_routing_gate |
+| parse_primavera_schedule | give me a milestone report - what are the major completion dates? | (none) | 0.0 | below_routing_gate |
+| cash_flow_forecast | what does the cumulative spend curve look like month by month? | (none) | 0.0 | below_routing_gate |
+| procurement_list_generator | what materials do we need to buy for the substructure works? | (none) | 0.0 | below_routing_gate |
+| rfp_management | prepare an RFP for the landscaping subcontract package | (none) | 0.0 | below_routing_gate |
+| drawing_qto | do a quantity takeoff from the infrastructure drawings - pipe lengths  | (none) | 0.0 | below_routing_gate |
+| commissioning_checklist | what T&C steps do we need before energising the electrical rooms? | (none) | 0.0 | below_routing_gate |
+| rfi_management | how many RFIs are open and which ones are overdue? | (none) | 0.0 | below_routing_gate |
+| safety_compliance_audit | run an HSE compliance audit checklist for working at height on the fac | (none) | 0.0 | below_routing_gate |
+| tender_bid_analysis | compare three contractor bids for the earthworks - how should we score | (none) | 0.0 | below_routing_gate |
+| extract_quantities | take off the concrete quantities for the ground floor slabs | (none) | None | ? |
+| progress_tracker | how is actual progress tracking against planned - where are we slippin | (none) | 0.0 | below_routing_gate |
+| submittal_log_generator | set up a submittal log for the finishes packages with approval status  | (none) | 0.0 | below_routing_gate |
+| as_built_deviation_report | report the as-built deviations from design on the drainage runs | (none) | 0.0 | below_routing_gate |
+| om_manual_generator | generate the O&M manual outline for the chilled water plant | handover_management | 0.4 | below_routing_gate |
+| value_engineering | value engineer the basement - options to cut cost without losing parki | (none) | 0.0 | below_routing_gate |
+
+Input for the post-pilot keyword-dictionary rebuild. The router was NOT tuned during the sweep (standing rule).
