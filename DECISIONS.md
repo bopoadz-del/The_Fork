@@ -114,3 +114,40 @@ FEATURE_MATRIX_V2 sweep. `drawing_qto` uses project `ff905e29` and is unaffected
 `5c13510e` from backup, (b) provide the correct BOQ project ID, or (c) upload a
 new BOQ workbook to a fresh fixture project and update the manifest. Until then,
 `boq_process` will be reported BLOCKED in the feature matrix.
+
+## `cash_flow_forecast` thin-answer failure (Step 1, 2026-07-06)
+
+**Finding:** In the FEATURE_MATRIX_V2 sweep, prompt 2 for `cash_flow_forecast`
+("what does the cumulative spend curve look like month by month?") returned a
+251-character answer: "I don't have that information in the provided reference
+context." The project used was `dar_al_arkan_master` (master corpus), which
+contains contract/payment clauses but no project-specific cost plan or budget
+curve.
+
+**Classification:** Fixture/data gap (no cost data in the test project), not a
+block bug. The block refused correctly because there is no cost corpus to ground
+a forecast in. This is the same class as the BOQ discrepancy: the feature cannot
+produce a correct answer if the project has no priced/cost data.
+
+**Disposition:** No code fix. If a cash-flow/S-curve forecast is a demo-critical
+requirement, create a fixture project with a priced BOQ or cost-loaded schedule
+and update the manifest. Until then, the red line is valid information that the
+feature is untested for real cost data.
+
+## `parse_primavera_schedule` GK-contamination case (Step 1 → Step 2, 2026-07-06)
+
+**Finding:** Prompt 2 for `parse_primavera_schedule` ("give me a milestone
+report - what are the major completion dates?") routed to the correct action but
+returned FIDIC contract deadline tables instead of milestones extracted from
+the uploaded programme in fixture project `ff905e29`. The answer was grounded in
+GK/reference content rather than the user's own document.
+
+**Classification:** GK contamination / answer-source problem. This is the same
+EOT-failure class (GK beats the user's own document) now appearing in a
+scheduling feature. It strengthens the case that GK contamination is a systemic
+answer-source problem, not just a retrieval corner case.
+
+**Disposition:** Do not fix code now. Add this as case (e) to the Step 2
+acceptance battery and re-test after `RAG_GK_LEXICAL_FOLD=1` is active. The
+intent-exempted GK demotion may resolve it for free. If it still fails after the
+fold, it becomes a block-level answer-source bug for the next iteration.

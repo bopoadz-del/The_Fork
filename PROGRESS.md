@@ -115,15 +115,21 @@ first. Update on every task state change.
   PASS 22 / PARTIAL 4 / FAIL 28 / BLOCKED 0 (54 features). Baseline v1 was 23 PASS -> regression
   of 1 PASS. Routing-class failures remain on coverage features; must-cover pilot-critical
   features still have execution/HTTP failures. Investigating regressions + BOQ discrepancy.
-- Step 1b: additive router vocabulary landed (8129d19) for parse_primavera_schedule,
+- Step 1b: additive router vocabulary landed (6187519) for parse_primavera_schedule,
   rfi_management, safety_compliance_audit, tender_bid_analysis, progress_tracker,
   submittal_log_generator, as_built_deviation_report, om_manual_generator, value_engineering.
-  Structure oracles relaxed for generate_wbs, cash_flow_forecast, parse_primavera_schedule,
-  qa_qc_inspection. Local router tests + manifest contract tests pass (29/29). Full V2 sweep
-  re-run started in background against prod; results will gate final FEATURE_MATRIX_V2.md.
+  Structure oracles relaxed for generate_wbs and qa_qc_inspection only (a42a9a3); two proposed
+  relaxations for cash_flow_forecast and parse_primavera_schedule were reverted because the
+  failing outputs were thin/malformed, not valid content in an unrecognised format. Local router
+  tests + manifest contract tests pass (29/29).
 - Step 1c: BOQ total discrepancy classified as data/expectation issue (no code fix). Live corpus
   cites 29,207,138.5 USD; remembered SAR 62,236,109 unverified. Golden set already avoids pinning
   the number. Chadi to confirm authoritative figure.
+- Step 1 follow-up: `cash_flow_forecast` thin-answer (251 chars, "I don't have that information")
+  classified as fixture/data gap (no cost data in test project) in DECISIONS.md. Red line kept.
+- Step 1 → Step 2 follow-up: `parse_primavera_schedule` returning FIDIC contract deadlines instead
+  of uploaded-programme milestones classified as GK contamination / answer-source problem in
+  DECISIONS.md. Added as case (e) to the Step 2 acceptance battery; re-test after fold flag ON.
 - Step 3a: PR #152 (golden-set gate) rebased onto main (fa4196f) and force-pushed
   (41d0219 -> f723344). CI running; mergeStateStatus=UNSTABLE pending checks.
 - Step 1 PR: #153 opened from feat/pilot-readiness-step1 (router vocab + structure
