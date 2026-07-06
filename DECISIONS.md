@@ -20,6 +20,15 @@ Newest first.
   pytest-timeout stack dump IS the diagnostic for the 6-hour hang. Root-cause
   fix lands in the same PR, then green, then merge.
 
+## Dependabot dispositions (2026-07-06, TASK 0b)
+
+- HIGH npm vite <=8.0.15 (fs.deny bypass, Windows): FIX NOW - PR #67 bumps to 8.0.16, merge on green CI.
+- medium npm vite (launch-editor NTLM hash, Windows): fixed by the same #67 bump.
+- medium pip pydantic-settings <2.14.2 x2 (requirements.txt + -cv.txt): FIX NOW - PR #99 bumps to 2.14.2, merge on green CI.
+- medium pip pytest <9.0.3 x2 (tmpdir handling): DEFER - test-only dependency, not shipped in the runtime image path that serves users; bump with the next requirements refresh.
+- low npm @babel/core <=7.29.0 (sourceMappingURL file read): DEFER - build-time only, frontend build runs in CI not on user input.
+- low pip torch <=2.12.0 x3 (jit.script memory corruption, no patched version exists): DEFER - no fix released; torch only enters via requirements-ml/cv/rag extras which prod does not install (Starter image ships without the ML stack).
+
 ## CI quarantines
 
 - `tests/test_doc_index.py::test_search_uses_hybrid_retriever` and
