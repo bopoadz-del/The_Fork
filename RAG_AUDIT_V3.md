@@ -175,3 +175,34 @@ PRE-PILOT LIST. Re-index plan sketch:
 * `scripts/rag_calc_intact_eval.py` — new committed harness.
 * `scripts/rag_recall_eval.py` — grew `--project`; `rag_fresh_upload_eval.py`
   grew `--out`. Defaults unchanged.
+
+## 7. cfg7 + lexical fold (TASK 2, measured 2026-07-06)
+
+Follow-up to the section-4 EOT residual: `RAG_GK_LEXICAL_FOLD` (new bool
+flag, default OFF) folds the GK lexical bonus inside the H1 margin gate —
+the margin comparison runs on each GK chunk's RAW fused score (lexical
+bonus subtracted); survivors keep the bonus for ordering. Same intent
+exemption as the H knobs (applies for intent None / DOC_LOOKUP; bypassed
+for CALC_KB). Same local harnesses, same corpus, same seeded draw as the
+grid above (server relaunched with the model2vec/256-dim embedder the
+grid ran with — the venv has since gained sentence-transformers, which
+was shimmed out of the server process to keep the environment identical).
+
+| config | MARGIN / BOOST / CAP / FOLD | doc recall@5 | chunk recall@5 | fresh top-1 /12 | fresh top-3 /12 | calc-intact | EOT case (fresh doc rank) |
+|---|---|---|---|---|---|---|---|
+| cfg7 + fold | 0.15 / 0.1 / 2 / on | 41/100 | 27/100 | **12** | 12 | 3/3 | **rank 1** |
+
+* The EOT case — the collision no grid config could win — now puts the
+  user's own contract note at rank 1 (score 0.7512); the GK FIDIC note is
+  absent from the top-10 entirely (its raw score fails the 0.15 margin;
+  only its lexical bonus ever carried it past the bar).
+* Fresh top-1 doubles again vs cfg7 (6 -> 12 of 12): every collision case
+  where a bonused GK note edged out the upload now resolves to the upload.
+* Recall and calc-intact are unchanged vs cfg7 (41/27, 3/3) — the fold
+  touches only lexically-bonused GK chunks at the margin gate, so
+  master-corpus recall and the calculation/standards path are untouched.
+
+**This is the shipping config pending the prod flip:**
+`RAG_GK_SCORE_MARGIN=0.15 RAG_OWN_DOC_BOOST=0.1 RAG_GK_TOPK_CAP=2
+RAG_GK_LEXICAL_FOLD=1`. Production defaults remain unchanged until the
+flip.
