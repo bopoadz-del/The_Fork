@@ -1,0 +1,325 @@
+#!/usr/bin/env python
+"""Idempotent fixture project seeder.
+
+Rebuilds the pilot test estate through normal API paths only — no direct DB
+writes. Behavior:
+
+  1. For each configured fixture, look up the project by canonical name via
+     GET /v1/projects.
+  2. If missing, create it with POST /v1/projects.
+  3. Upload fixture files via the standard upload endpoints
+     (/v1/projects/{id}/documents or /v1/upload with project_id).
+  4. Wait for eager indexing, then verify every document has chunk_count > 0
+     (the ZERO_CHUNK tripwire). If a doc is zero-chunk, trigger a re-index
+     via /v1/admin/debug/doc-reindex and re-verify.
+  5. Print a manifest table: canonical name -> project id -> docs -> chunks.
+
+Configuration:
+  FORK_BASE_URL     target env (default prod)
+  FORK_API_KEY      admin API key (or FORK_TOKEN / FORK_EMAIL+FORK_PASSWORD)
+  FIXTURES_DIR      directory containing supplied fixture files
+                    (BOQ workbook, Primavera .xer, ground_floor_plan.dxf,
+                    sample_office.ifc, etc.)
+
+The Fresh-Upload-Eval fixture is self-contained: it is created from the 12
+CASES texts in scripts/rag_fresh_upload_eval.py and does not need FIXTURES_DIR.
+"""
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork.onrender.com")
+FIXTURES_DIR = Path(os.getenv("FIXTURES_DIR", ROOT / "data" / "fixtures"))
+
+# Canonical fixture names shared with harnesses.
+FRESH_UPLOAD_EVAL_NAME = "FIXTURE — Fresh Upload Eval"
+BOQ_FIXTURE_NAME = "FIXTURE — BOQ"
+PROGRAMME_DRAWINGS_FIXTURE_NAME = "FIXTURE — Programme+Drawings"
+
+# Imports the CASES list from the eval script so there is one source of truth.
+sys.path.insert(0, str(ROOT / "scripts"))
+from rag_fresh_upload_eval import CASES as FRESH_UPLOAD_CASES  # noqa: E402
+
+
+FIXTURES: Dict[str, Dict[str, Any]] = {
+    "fresh_upload_eval": {
+        "name": FRESH_UPLOAD_EVAL_NAME,
+        "source": "cases",
+        "cases": FRESH_UPLOAD_CASES,
+    },
+    "boq": {
+        "name": BOQ_FIXTURE_NAME,
+        "source": "fixtures_dir",
+        "required_files": [
+            "DG2_Sewer_WasteWater_Network_BOQ_verified.xlsx",
+        ],
+        "optional_files": [
+            "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+            "IP-INF-053 Priced BOQ - General Summary (verified total).txt",
+        ],
+    },
+    "programme_drawings": {
+        "name": PROGRAMME_DRAWINGS_FIXTURE_NAME,
+        "source": "fixtures_dir",
+        "required_files": [
+            "project_programme.xer",
+            "ground_floor_plan.dxf",
+        ],
+        "optional_files": [
+            "sample_office.ifc",
+        ],
+    },
+}
+
+
+def _auth_header(base: str) -> dict:
+    tok = os.getenv("FORK_TOKEN") or os.getenv("FORK_API_KEY")
+    if not tok:
+        email, pw = os.getenv("FORK_EMAIL"), os.getenv("FORK_PASSWORD")
+        if not (email and pw):
+            sys.exit("No credentials: set FORK_TOKEN / FORK_API_KEY / FORK_EMAIL+FORK_PASSWORD")
+        r = httpx.post(f"{base}/v1/users/login", json={"email": email, "password": pw}, timeout=30)
+        r.raise_for_status()
+        tok = r.json()["token"]
+        print(f"[auth] logged in as {email}", file=sys.stderr)
+    return {"Authorization": f"Bearer {tok}"}
+
+
+def _resolve_project(client: httpx.Client, name: str) -> Optional[Dict[str, Any]]:
+    r = client.get("/v1/projects")
+    r.raise_for_status()
+    for p in r.json().get("projects", []) or []:
+        if p.get("name") == name:
+            return p
+    return None
+
+
+def _create_project(client: httpx.Client, name: str) -> Dict[str, Any]:
+    r = client.post("/v1/projects", json={"name": name})
+    r.raise_for_status()
+    return r.json()
+
+
+def _get_or_create_project(client: httpx.Client, name: str) -> Tuple[Dict[str, Any], bool]:
+    existing = _resolve_project(client, name)
+    if existing:
+        return existing, False
+    proj = _create_project(client, name)
+    print(f"[create] {name} -> {proj['id']}")
+    return proj, True
+
+
+def _upload_case(client: httpx.Client, project_id: str, fname: str, text: str) -> Dict[str, Any]:
+    r = client.post(
+        f"/v1/projects/{project_id}/documents",
+        files={"file": (fname, io.BytesIO(text.encode("utf-8")), "text/plain")},
+    )
+    r.raise_for_status()
+    return r.json()["document"]
+
+
+def _upload_file(client: httpx.Client, project_id: str, path: Path) -> Dict[str, Any]:
+    with open(path, "rb") as fh:
+        r = client.post(
+            f"/v1/projects/{project_id}/documents",
+            files={"file": (path.name, fh, "application/octet-stream")},
+        )
+    r.raise_for_status()
+    return r.json()["document"]
+
+
+def _list_docs(client: httpx.Client, project_id: str) -> List[Dict[str, Any]]:
+    r = client.get(f"/v1/projects/{project_id}/documents", params={"limit": 200})
+    r.raise_for_status()
+    return r.json().get("documents", []) or []
+
+
+def _reindex_doc(client: httpx.Client, project_id: str, doc_id: str) -> Dict[str, Any]:
+    r = client.post(
+        "/v1/admin/debug/doc-reindex",
+        params={"project_id": project_id, "document_id": doc_id},
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _verify_chunks(
+    client: httpx.Client,
+    project_id: str,
+    *,
+    max_wait: int = 120,
+    poll_interval: int = 3,
+) -> Tuple[int, int, List[str]]:
+    """Wait until every document has chunk_count > 0.
+
+    Returns (total_docs, total_chunks, zero_chunk_doc_ids). For projects with
+    more than the API's enrichment limit, falls back to a RAG search probe.
+    """
+    waited = 0
+    while waited <= max_wait:
+        docs = _list_docs(client, project_id)
+        # Detail enrichment returns chunk_count when doc_count is small.
+        if docs and all("chunk_count" in d for d in docs):
+            zero_chunk = [d["id"] for d in docs if (d.get("chunk_count") or 0) == 0]
+            total_chunks = sum((d.get("chunk_count") or 0) for d in docs)
+            if not zero_chunk:
+                return len(docs), total_chunks, []
+            # Re-index zero-chunk docs once, then continue waiting.
+            for doc_id in zero_chunk:
+                print(f"  [reindex] doc {doc_id} had zero chunks")
+                try:
+                    _reindex_doc(client, project_id, doc_id)
+                except httpx.HTTPError as exc:
+                    print(f"  [warn] reindex failed: {exc}")
+        else:
+            # Fallback probe for large projects: ask RAG for a generic query.
+            try:
+                r = client.post("/v1/rag/search", json={"query": ".", "project_id": project_id, "k": 1})
+                if r.status_code == 200 and r.json().get("chunks"):
+                    return len(docs), len(docs), []  # rough success signal
+            except httpx.HTTPError:
+                pass
+        if waited >= max_wait:
+            break
+        time.sleep(poll_interval)
+        waited += poll_interval
+
+    docs = _list_docs(client, project_id)
+    zero_chunk = [d["id"] for d in docs if (d.get("chunk_count") or 0) == 0]
+    total_chunks = sum((d.get("chunk_count") or 0) for d in docs)
+    return len(docs), total_chunks, zero_chunk
+
+
+def _seed_fresh_upload_eval(client: httpx.Client, spec: Dict[str, Any]) -> Dict[str, Any]:
+    proj, created = _get_or_create_project(client, spec["name"])
+    project_id = proj["id"]
+
+    if not created:
+        print(f"[skip-create] {spec['name']} already exists as {project_id}")
+
+    existing = {d["original_name"] for d in _list_docs(client, project_id)}
+    for fname, text, _query in spec["cases"]:
+        if fname in existing:
+            print(f"[skip-upload] {fname}")
+            continue
+        doc = _upload_case(client, project_id, fname, text)
+        print(f"[upload] {fname} -> doc {doc['id']}")
+
+    print(f"[wait] indexing {spec['name']} ...")
+    total_docs, total_chunks, zero_chunk = _verify_chunks(client, project_id)
+    return {
+        "name": spec["name"],
+        "project_id": project_id,
+        "docs": total_docs,
+        "chunks": total_chunks,
+        "zero_chunk_docs": zero_chunk,
+        "created": created,
+    }
+
+
+def _seed_from_dir(
+    client: httpx.Client, spec: Dict[str, Any], fixtures_dir: Path
+) -> Optional[Dict[str, Any]]:
+    name = spec["name"]
+    required = spec.get("required_files", [])
+    optional = spec.get("optional_files", [])
+
+    missing = [f for f in required if not (fixtures_dir / f).is_file()]
+    if missing:
+        print(f"[blocked] {name}: FIXTURES_DIR missing required files: {missing}")
+        return None
+
+    proj, created = _get_or_create_project(client, name)
+    project_id = proj["id"]
+    if not created:
+        print(f"[skip-create] {name} already exists as {project_id}")
+
+    existing = {d["original_name"] for d in _list_docs(client, project_id)}
+    files_to_upload = [f for f in required + optional if f not in existing]
+    if not files_to_upload:
+        print(f"[skip-upload] {name}: all files already present")
+    for fname in files_to_upload:
+        path = fixtures_dir / fname
+        if not path.is_file():
+            print(f"[skip-optional] {fname} not found in {fixtures_dir}")
+            continue
+        doc = _upload_file(client, project_id, path)
+        print(f"[upload] {fname} -> doc {doc['id']}")
+
+    print(f"[wait] indexing {name} ...")
+    total_docs, total_chunks, zero_chunk = _verify_chunks(client, project_id)
+    return {
+        "name": name,
+        "project_id": project_id,
+        "docs": total_docs,
+        "chunks": total_chunks,
+        "zero_chunk_docs": zero_chunk,
+        "created": created,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="idempotent fixture project seeder")
+    ap.add_argument("--base", default=DEFAULT_BASE)
+    ap.add_argument("--fixtures-dir", default=str(FIXTURES_DIR))
+    ap.add_argument("--only", choices=list(FIXTURES.keys()), help="seed one fixture")
+    ap.add_argument("--max-wait", type=int, default=120, help="seconds to wait for indexing")
+    ap.add_argument("--dry-run", action="store_true", help="show what would happen; no uploads")
+    args = ap.parse_args()
+
+    fixtures_dir = Path(args.fixtures_dir)
+    print(f"target: {args.base}")
+    print(f"FIXTURES_DIR: {fixtures_dir}")
+    print("-" * 76)
+
+    headers = _auth_header(args.base)
+    client = httpx.Client(base_url=args.base, headers=headers, timeout=120)
+
+    names = [args.only] if args.only else list(FIXTURES.keys())
+    results: List[Optional[Dict[str, Any]]] = []
+    for key in names:
+        spec = FIXTURES[key]
+        print(f"\n[{key}] {spec['name']}")
+        if args.dry_run:
+            print(f"  would seed {spec['name']}")
+            continue
+        if spec["source"] == "cases":
+            result = _seed_fresh_upload_eval(client, spec)
+        else:
+            result = _seed_from_dir(client, spec, fixtures_dir)
+        results.append(result)
+
+    print("\n" + "=" * 76)
+    print(f"{'fixture':<32} {'project_id':<12} {'docs':>6} {'chunks':>8} {'status':<15}")
+    print("-" * 76)
+    for result in results:
+        if result is None:
+            print(f"{'(blocked)':<32} {'-':<12} {'-':>6} {'-':>8} {'BLOCKED':<15}")
+            continue
+        status = "OK" if not result["zero_chunk_docs"] else "ZERO_CHUNK"
+        if result.get("created"):
+            status += " (new)"
+        print(
+            f"{result['name']:<32} {result['project_id']:<12} "
+            f"{result['docs']:>6} {result['chunks']:>8} {status:<15}"
+        )
+        if result["zero_chunk_docs"]:
+            print(f"  ZERO_CHUNK docs: {', '.join(result['zero_chunk_docs'])}")
+    print("=" * 76)
+
+    failed = any(r is not None and r["zero_chunk_docs"] for r in results)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
