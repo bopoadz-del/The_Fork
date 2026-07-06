@@ -124,3 +124,5 @@ first. Update on every task state change.
 - Step 1c: BOQ total discrepancy classified as data/expectation issue (no code fix). Live corpus
   cites 29,207,138.5 USD; remembered SAR 62,236,109 unverified. Golden set already avoids pinning
   the number. Chadi to confirm authoritative figure.
+- Step 3a: PR #152 (golden-set gate) rebased onto main (fa4196f) and force-pushed
+  (41d0219 -> f723344). CI running; mergeStateStatus=UNSTABLE pending checks.
