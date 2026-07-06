@@ -102,3 +102,16 @@ first. Update on every task state change.
 - TASK 1: additive router vocabulary patch on feat/router-vocabulary-patch - 12/12 sweep-miss
   phrasings route offline, 43 existing routing tests green, 20 lock-in tests added. Full
   sweep re-run (FEATURE_MATRIX_V2) gates the deployed behavior post-merge.
+
+## 2026-07-06 current session
+
+- Step 0a: main synced to origin/main (fa4196f). Local was 29 commits behind; fast-forward.
+- Step 0b: REPORT.md committed as handoff record (9bfd3b8).
+- Step 0c baseline (prod, smoke --runs 3): PASS 3/3. All runs served by glm-5.2:cloud
+  (Groq 429 fallback active). run1 19.70s/12837ch, run2 21.86s/12232ch, run3 20.11s/13374ch.
+  FORK_API_KEY (CEREBRUM_MASTER_KEY) confirmed working; first supplied key was invalid.
+- Step 1: FEATURE_MATRIX_V2 results recovered from worktree `.claude/worktrees/feature-matrix`
+  (feat/feature-matrix-sweep at 81cf62d). All 68 runs appear complete in jsonl. Generated report:
+  PASS 22 / PARTIAL 4 / FAIL 28 / BLOCKED 0 (54 features). Baseline v1 was 23 PASS -> regression
+  of 1 PASS. Routing-class failures remain on coverage features; must-cover pilot-critical
+  features still have execution/HTTP failures. Investigating regressions + BOQ discrepancy.
