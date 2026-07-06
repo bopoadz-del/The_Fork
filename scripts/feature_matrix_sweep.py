@@ -157,7 +157,8 @@ def boq_rows_have_qty_unit(text: str) -> str:
 def has_activities_and_durations(text: str) -> str:
     """At least 5 activity lines with a day/week/month duration."""
     n = sum(1 for line in text.splitlines()
-            if re.search(r"\d+\s*(?:working\s+)?(day|week|month)s?\b", line, re.I))
+            if re.search(r"\d+\s*(?:working\s+)?(day|week|month)s?\b", line, re.I)
+            or re.search(r"\((?:Day|Week|Month)\s*\d+\s*-\s*\d+\)", line, re.I))
     return "PASS" if n >= 5 else "FAIL"
 
 
@@ -224,9 +225,11 @@ def mentions_standard_or_grade(text: str) -> str:
 
 @_check
 def has_checklist_items(text: str) -> str:
-    """At least 8 checkbox / bullet / numbered checklist lines."""
+    """At least 8 checkbox / bullet / numbered checklist or table rows."""
     n = len(re.findall(r"^\s*(?:[-*•]\s*\[[ xX]?\]|\[[ xX]?\]|[-*•]|\d{1,3}[.)])\s+\S",
                        text, re.M))
+    # Markdown table rows that look like numbered checklist items (| 1.1 | Item | ...).
+    n += len(re.findall(r"^\s*\|\s*\d{1,3}(?:\.\d+)*\s*\|.*\|\s*$", text, re.M))
     return "PASS" if n >= 8 else "FAIL"
 
 

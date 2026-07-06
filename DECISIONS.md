@@ -80,3 +80,74 @@ Newest first.
 | value_engineering | value engineer the basement - options to cut cost without losing parki | (none) | 0.0 | below_routing_gate |
 
 Input for the post-pilot keyword-dictionary rebuild. The router was NOT tuned during the sweep (standing rule).
+
+## BOQ total discrepancy (Step 1c, 2026-07-06)
+
+**Finding:** Project `5c13510e` (DG2 Bills of Quantities) live corpus cites a
+BOQ total of **29,207,138.5 USD** (review_pack/boq_process_1.md, verbatim
+answer). A remembered value of **SAR 62,236,109** could not be verified in the
+repo corpus or in the live retrieval context.
+
+**Classification:** Data/expectation issue, not a calculation bug. The live
+corpus is internally consistent (the same USD value appears in both the total
+and the cost-breakdown chunks), and the model is correctly grounding its
+answer in retrieved chunks.
+
+**Disposition:** No code fix. The golden-set gate (`tests/golden_set.yaml` on
+`feat/golden-set-gate`) already avoids pinning a number for the BOQ total
+query; it expects only a currency token plus a million-scale value. Chadi to
+confirm whether the corpus value is the authoritative client figure or
+whether the project BOQ corpus needs to be refreshed/replaced.
+
+## Missing BOQ fixture project (Step 1, 2026-07-06)
+
+**Finding:** The manifest references project `5c13510e` for `boq_process` and
+`drawing_qto` fixtures. Prod API returns `HTTP 404 Project not found` for this
+project ID. The projects list on prod does not contain `5c13510e`.
+
+**Impact:** `boq_process` (must-cover pilot-critical feature) is BLOCKED in the
+FEATURE_MATRIX_V2 sweep. `drawing_qto` uses project `ff905e29` and is unaffected.
+
+**Classification:** Fixture/data gap, not a routing or block bug.
+
+**Disposition:** Do not guess-fix. Chadi to either (a) restore project
+`5c13510e` from backup, (b) provide the correct BOQ project ID, or (c) upload a
+new BOQ workbook to a fresh fixture project and update the manifest. Until then,
+`boq_process` will be reported BLOCKED in the feature matrix.
+
+## `cash_flow_forecast` thin-answer failure (Step 1, 2026-07-06)
+
+**Finding:** In the FEATURE_MATRIX_V2 sweep, prompt 2 for `cash_flow_forecast`
+("what does the cumulative spend curve look like month by month?") returned a
+251-character answer: "I don't have that information in the provided reference
+context." The project used was `dar_al_arkan_master` (master corpus), which
+contains contract/payment clauses but no project-specific cost plan or budget
+curve.
+
+**Classification:** Fixture/data gap (no cost data in the test project), not a
+block bug. The block refused correctly because there is no cost corpus to ground
+a forecast in. This is the same class as the BOQ discrepancy: the feature cannot
+produce a correct answer if the project has no priced/cost data.
+
+**Disposition:** No code fix. If a cash-flow/S-curve forecast is a demo-critical
+requirement, create a fixture project with a priced BOQ or cost-loaded schedule
+and update the manifest. Until then, the red line is valid information that the
+feature is untested for real cost data.
+
+## `parse_primavera_schedule` GK-contamination case (Step 1 → Step 2, 2026-07-06)
+
+**Finding:** Prompt 2 for `parse_primavera_schedule` ("give me a milestone
+report - what are the major completion dates?") routed to the correct action but
+returned FIDIC contract deadline tables instead of milestones extracted from
+the uploaded programme in fixture project `ff905e29`. The answer was grounded in
+GK/reference content rather than the user's own document.
+
+**Classification:** GK contamination / answer-source problem. This is the same
+EOT-failure class (GK beats the user's own document) now appearing in a
+scheduling feature. It strengthens the case that GK contamination is a systemic
+answer-source problem, not just a retrieval corner case.
+
+**Disposition:** Do not fix code now. Add this as case (e) to the Step 2
+acceptance battery and re-test after `RAG_GK_LEXICAL_FOLD=1` is active. The
+intent-exempted GK demotion may resolve it for free. If it still fails after the
+fold, it becomes a block-level answer-source bug for the next iteration.
