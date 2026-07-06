@@ -151,3 +151,30 @@ answer-source problem, not just a retrieval corner case.
 acceptance battery and re-test after `RAG_GK_LEXICAL_FOLD=1` is active. The
 intent-exempted GK demotion may resolve it for free. If it still fails after the
 fold, it becomes a block-level answer-source bug for the next iteration.
+
+## Missing fixture projects on prod (Step 1, 2026-07-06)
+
+**Finding:** The three fixture projects referenced by the pilot gates are all
+missing on prod (HTTP 404 / not in the projects list):
+
+- `5c13510e` — DG2 Bills of Quantities, used by `boq_process` (must-cover).
+- `ff905e29` — Pilot Feature Sweep fixture, used by `parse_primavera_schedule`
+  and `drawing_qto` (must-cover).
+- `bc812f36` — RAG Audit V2 Fresh Upload Eval project, used by
+  `scripts/rag_fresh_upload_eval.py`, `tests/golden_set.yaml`, and the Step 2
+  acceptance battery.
+
+**Impact:**
+- FEATURE_MATRIX_V2 sweep: `boq_process`, `parse_primavera_schedule`, and
+  `drawing_qto` are BLOCKED.
+- Step 2 fresh-upload eval (case b) cannot run without `bc812f36`.
+- Step 3 golden-set gate cannot run without `bc812f36`.
+
+**Classification:** Fixture/data gap, not a routing or block bug.
+
+**Disposition:** Chadi must decide whether to (a) restore the projects from
+backup, or (b) recreate them. Recreating `bc812f36` is possible from the 12 note
+texts in `scripts/rag_fresh_upload_eval.py` CASES. Recreating `5c13510e` and
+`ff905e29` requires the original BOQ workbook and programme/drawing files, which
+are not in the repo. Until the fixtures are restored, the affected gates will be
+reported as BLOCKED / cannot-run.
