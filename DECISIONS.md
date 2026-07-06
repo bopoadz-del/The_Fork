@@ -98,3 +98,19 @@ answer in retrieved chunks.
 query; it expects only a currency token plus a million-scale value. Chadi to
 confirm whether the corpus value is the authoritative client figure or
 whether the project BOQ corpus needs to be refreshed/replaced.
+
+## Missing BOQ fixture project (Step 1, 2026-07-06)
+
+**Finding:** The manifest references project `5c13510e` for `boq_process` and
+`drawing_qto` fixtures. Prod API returns `HTTP 404 Project not found` for this
+project ID. The projects list on prod does not contain `5c13510e`.
+
+**Impact:** `boq_process` (must-cover pilot-critical feature) is BLOCKED in the
+FEATURE_MATRIX_V2 sweep. `drawing_qto` uses project `ff905e29` and is unaffected.
+
+**Classification:** Fixture/data gap, not a routing or block bug.
+
+**Disposition:** Do not guess-fix. Chadi to either (a) restore project
+`5c13510e` from backup, (b) provide the correct BOQ project ID, or (c) upload a
+new BOQ workbook to a fresh fixture project and update the manifest. Until then,
+`boq_process` will be reported BLOCKED in the feature matrix.
