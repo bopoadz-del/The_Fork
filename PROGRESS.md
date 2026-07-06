@@ -115,3 +115,12 @@ first. Update on every task state change.
   PASS 22 / PARTIAL 4 / FAIL 28 / BLOCKED 0 (54 features). Baseline v1 was 23 PASS -> regression
   of 1 PASS. Routing-class failures remain on coverage features; must-cover pilot-critical
   features still have execution/HTTP failures. Investigating regressions + BOQ discrepancy.
+- Step 1b: additive router vocabulary landed (8129d19) for parse_primavera_schedule,
+  rfi_management, safety_compliance_audit, tender_bid_analysis, progress_tracker,
+  submittal_log_generator, as_built_deviation_report, om_manual_generator, value_engineering.
+  Structure oracles relaxed for generate_wbs, cash_flow_forecast, parse_primavera_schedule,
+  qa_qc_inspection. Local router tests + manifest contract tests pass (29/29). Full V2 sweep
+  re-run started in background against prod; results will gate final FEATURE_MATRIX_V2.md.
+- Step 1c: BOQ total discrepancy classified as data/expectation issue (no code fix). Live corpus
+  cites 29,207,138.5 USD; remembered SAR 62,236,109 unverified. Golden set already avoids pinning
+  the number. Chadi to confirm authoritative figure.
