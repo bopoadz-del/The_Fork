@@ -88,3 +88,17 @@ first. Update on every task state change.
   to rank 3) - follow-up documented. Embedder: best-config doc recall 41% < 50% -> embedder
   upgrade ENTERS THE PRE-PILOT LIST (re-index plan in V3 s.5). Prod defaults untouched; pick is
   Chadi's G4 gate. Local eval server killed; prod healthy (44/44) throughout.
+
+## 2026-07-06 post-merge session
+
+- TASK 0a: board LANDED. #146 merged (rebase) -> #148 -> #149 -> #147 rebased, all green,
+  merged in order. main tip e5074b5 deployed and live.
+- TASK 0c baseline (post-merge prod, smoke --runs 3): PASS 3/3. run1 13.9s/4193ch Scout,
+  run2 75.0s/12392ch glm-5.2:cloud (Groq 429 -> fallback, still frequent), run3 9.6s/4163ch
+  Scout. Fallback dependence on the Ollama tunnel remains an operational fact.
+- TASK 0b: dependabot #67 (vite 8.0.16 - the 1 HIGH + 1 medium) rebased, CI running, merge
+  when green. #99 (pydantic-settings 2.14.2 - 2 mediums) same treatment. Remaining alerts
+  dispositioned in DECISIONS.md.
+- TASK 1: additive router vocabulary patch on feat/router-vocabulary-patch - 12/12 sweep-miss
+  phrasings route offline, 43 existing routing tests green, 20 lock-in tests added. Full
+  sweep re-run (FEATURE_MATRIX_V2) gates the deployed behavior post-merge.
