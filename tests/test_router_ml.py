@@ -332,8 +332,12 @@ async def test_orchestrator_learned_mode_uses_classifier(isolated_data_dir):
     await le.execute({"operation": "train_router"}, {})
 
     so = BLOCK_REGISTRY["smart_orchestrator"]()
+    # Canonical phrase (see test_learned_mode_records_routing_decisions):
+    # the bare "extract BOQ totals" sits within ~0.02 of the 0.45 confidence
+    # gate and falls back after the TASK 1 vocabulary patch, which would make
+    # every assertion below vacuous under the fallback guard.
     envelope = await so.execute(
-        {"text": "extract BOQ totals", "routing_mode": "learned"}, {}
+        {"text": "extract BOQ totals from the cost sheet", "routing_mode": "learned"}, {}
     )
     inner = envelope["result"]
     assert inner["status"] == "success"
@@ -440,7 +444,17 @@ async def test_no_regression_with_keyword_fallback(isolated_data_dir, monkeypatc
 async def test_learned_mode_records_routing_decisions(isolated_data_dir):
     """Every learned-mode dispatch (or its keyword fallback when model is
     uncertain) leaves a routing_decisions row on learning_engine, so the
-    next retrain has live data."""
+    next retrain has live data.
+
+    Phrase note: use the canonical "extract BOQ totals from the cost sheet"
+    (same as the happy-path test), NOT the bare "extract BOQ totals". The
+    bare phrase has no multi-word keyword ("boq" alone scores 0.2, below the
+    0.3 gate), so it only records when the classifier clears the 0.45
+    confidence gate — and its calibrated confidence sits within ~0.02 of
+    that gate, drifting whenever the seed vocabulary grows (the TASK 1
+    vocabulary patch pushed it from 0.47 to 0.44999). The longer phrase is
+    both confidently learned AND keyword-matched, so a routing_decisions
+    row is written on either branch — which is the contract under test."""
     from app.blocks import BLOCK_REGISTRY
 
     le = BLOCK_REGISTRY["learning_engine"]()
@@ -449,7 +463,7 @@ async def test_learned_mode_records_routing_decisions(isolated_data_dir):
     so = BLOCK_REGISTRY["smart_orchestrator"]()
     await so.execute(
         {
-            "text": "extract BOQ totals",
+            "text": "extract BOQ totals from the cost sheet",
             "routing_mode": "learned",
             "session_context": {"project_id": "proj_a"},
         },
