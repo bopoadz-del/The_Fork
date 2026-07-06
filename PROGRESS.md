@@ -102,3 +102,41 @@ first. Update on every task state change.
 - TASK 1: additive router vocabulary patch on feat/router-vocabulary-patch - 12/12 sweep-miss
   phrasings route offline, 43 existing routing tests green, 20 lock-in tests added. Full
   sweep re-run (FEATURE_MATRIX_V2) gates the deployed behavior post-merge.
+
+## 2026-07-06 current session
+
+- Step 0a: main synced to origin/main (fa4196f). Local was 29 commits behind; fast-forward.
+- Step 0b: REPORT.md committed as handoff record (9bfd3b8).
+- Step 0c baseline (prod, smoke --runs 3): PASS 3/3. All runs served by glm-5.2:cloud
+  (Groq 429 fallback active). run1 19.70s/12837ch, run2 21.86s/12232ch, run3 20.11s/13374ch.
+  FORK_API_KEY (CEREBRUM_MASTER_KEY) confirmed working; first supplied key was invalid.
+- Step 1: FEATURE_MATRIX_V2 results recovered from worktree `.claude/worktrees/feature-matrix`
+  (feat/feature-matrix-sweep at 81cf62d). All 68 runs appear complete in jsonl. Generated report:
+  PASS 22 / PARTIAL 4 / FAIL 28 / BLOCKED 0 (54 features). Baseline v1 was 23 PASS -> regression
+  of 1 PASS. Routing-class failures remain on coverage features; must-cover pilot-critical
+  features still have execution/HTTP failures. Investigating regressions + BOQ discrepancy.
+- Step 1b: additive router vocabulary landed (6187519) for parse_primavera_schedule,
+  rfi_management, safety_compliance_audit, tender_bid_analysis, progress_tracker,
+  submittal_log_generator, as_built_deviation_report, om_manual_generator, value_engineering.
+  Structure oracles relaxed for generate_wbs and qa_qc_inspection only (a42a9a3); two proposed
+  relaxations for cash_flow_forecast and parse_primavera_schedule were reverted because the
+  failing outputs were thin/malformed, not valid content in an unrecognised format. Local router
+  tests + manifest contract tests pass (29/29).
+- Step 1c: BOQ total discrepancy classified as data/expectation issue (no code fix). Live corpus
+  cites 29,207,138.5 USD; remembered SAR 62,236,109 unverified. Golden set already avoids pinning
+  the number. Chadi to confirm authoritative figure.
+- Step 1 follow-up: `cash_flow_forecast` thin-answer (251 chars, "I don't have that information")
+  classified as fixture/data gap (no cost data in test project) in DECISIONS.md. Red line kept.
+- Step 1 → Step 2 follow-up: `parse_primavera_schedule` returning FIDIC contract deadlines instead
+  of uploaded-programme milestones classified as GK contamination / answer-source problem in
+  DECISIONS.md. Added as case (e) to the Step 2 acceptance battery; re-test after fold flag ON.
+- Step 3a: PR #152 (golden-set gate) rebased onto main (fa4196f) and force-pushed
+  (41d0219 -> f723344). CI running; mergeStateStatus=UNSTABLE pending checks.
+- Step 1 PR: #153 opened from feat/pilot-readiness-step1 (router vocab + structure
+  oracles + docs). In-flight pre-fix sweep stopped; will merge after CI and re-run
+  sweep against deployed prod for consistent post-fix results.
+- Step 1 review: oracle changes split into a separate commit (a42a9a3). Two
+  relaxations kept with verbatim justification in PR #153 description
+  (`has_activities_and_durations`, `has_checklist_items`). Two relaxations
+  REVERTED because the failing outputs were thin/malformed (`has_period_buckets`,
+  `milestones_have_dates`). Branch force-pushed; CI restarted.
