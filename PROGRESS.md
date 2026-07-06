@@ -71,3 +71,15 @@ first. Update on every task state change.
   generated ground_floor_plan.dxf uploaded via the normal document path; manifest wired
   (a076d7c). SWEEP LAUNCHED against prod, 20s pacing, kill-safe resume via state file.
 - TASK H sweep agent running (8 local configs x 3 harnesses).
+- CI GREEN: run 28763386869 passed all 3 jobs after the triage fixes (8 commits: sandbox rlimit
+  scoping, kit-gated routing tests, LLM-key stubs, DATA_DIR isolation, prometheus-client dep,
+  postgres FK seeding, 2 GK xfails-with-reason, matrix fake embedder). 222 local + full CI pass.
+  PR #146 ready to merge - classifier requires the operator's merge (self-merge blocked).
+- TASK G COMPLETE: 68/68 sweep runs through the orchestrator on prod. 23 PASS / 2 PARTIAL /
+  29 FAIL. 20 routing misses at confidence 0.0 (verbatim evidence in DECISIONS.md); 13 exec
+  fails (thin answers + 2 stream timeouts); 34/68 served by the fallback under Groq 429s.
+  PR #147 opened (manifest + runner + results + review_pack for Chadi).
+- TASK C3 published: PR #148 (ZERO_CHUNK warning). C1 resolved-by-purge, C2 parked.
+- TASK H grid (local, in-main after agents hit the session limit): cfg0-5 measured, cfg6-7
+  remaining. Emerging read: RAG_GK_TOPK_CAP=2 is the workhorse - doc recall 36->41%, fresh
+  top-3 5/12 -> 12/12, calc-intact 3/3 under every config so far. Prod defaults untouched.
