@@ -59,15 +59,19 @@ queries:
     # this project's PC-20.2 reduces the EOT claim notice to 21 days.
     # Colliding GK value: docs/knowledge/fidic_2017_administration.md says the
     # standard SC 20.1 notice is 28 days — the documented project-vs-GK
-    # disagreement from RAG_AUDIT_V2.md section 4. An answer giving 28 days is
-    # the GK-pollution failure mode this gate exists to catch, so 28 is
-    # rejected outright (deliberately strict: even "reduced from 28" trips it).
+    # disagreement from RAG_AUDIT_V2.md section 4. The reject targets 28 given
+    # as the OPERATIVE deadline ("within 28 days" / "28-day notice"), not any
+    # mention of 28: the source note itself says "reduced from the standard
+    # 28 days", so a correct grounded answer may legitimately cite 28 as
+    # context. A bare-context mention alongside the required "21 days" expect
+    # is correct behavior, not GK pollution.
     prompt: "Within how many days must the Contractor give notice of an EOT claim on this project?"
     retrieval_expect: "contract-eot-notice-period"
     answer_expect:
       - '21\s*days?'
     answer_reject:
-      - '28\s*days?'
+      - 'within\s+28\s+days'
+      - '28[-\s]day\s+(?:notice|period|time\s*bar)'
 
   - id: fresh_s4_manhole_spacing
     feature: fresh_upload_grounding

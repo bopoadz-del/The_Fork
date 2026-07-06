@@ -110,6 +110,14 @@ def test_eot_case_present_with_expect_and_reject(golden):
                    for p in eot["answer_expect"])
     assert not any(re.search(p, "notice within 21 days", REGEX_FLAGS)
                    for p in eot["answer_reject"])
+    # A CORRECT grounded answer may quote the source note's own context
+    # ("reduced from the standard 28 days") — the reject targets 28 as the
+    # operative deadline, not any mention of 28.
+    correct_with_context = ("Notice must be given within 21 days, reduced "
+                            "from the standard 28 days by PC-20.2.")
+    assert not any(re.search(p, correct_with_context, REGEX_FLAGS)
+                   for p in eot["answer_reject"]), \
+        "EOT reject fires on a correct answer that cites 28 as context"
 
 
 def test_feature_coverage_includes_all_pilot_critical(golden):
