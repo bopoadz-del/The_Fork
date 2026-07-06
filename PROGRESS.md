@@ -80,6 +80,11 @@ first. Update on every task state change.
   fails (thin answers + 2 stream timeouts); 34/68 served by the fallback under Groq 429s.
   PR #147 opened (manifest + runner + results + review_pack for Chadi).
 - TASK C3 published: PR #148 (ZERO_CHUNK warning). C1 resolved-by-purge, C2 parked.
-- TASK H grid (local, in-main after agents hit the session limit): cfg0-5 measured, cfg6-7
-  remaining. Emerging read: RAG_GK_TOPK_CAP=2 is the workhorse - doc recall 36->41%, fresh
-  top-3 5/12 -> 12/12, calc-intact 3/3 under every config so far. Prod defaults untouched.
+- TASK H COMPLETE: full 8-config grid measured (agent cfg0-3, in-main cfg4-7 after the session
+  limit killed agents). RAG_AUDIT_V3.md delivered on feat/gk-contamination-knobs (2414848),
+  PR #149. Recommended: cfg7 (MARGIN=0.15 BOOST=0.1 CAP=2) - doc 36->41, chunk 22->27, fresh
+  top-1 3->6/12, top-3 5->12/12, calc-intact 3/3 under EVERY config. EOT collision case stays
+  GK-won rank 1 everywhere (GK lexical bonus ~+0.5 beyond any margin; cap pulls the project doc
+  to rank 3) - follow-up documented. Embedder: best-config doc recall 41% < 50% -> embedder
+  upgrade ENTERS THE PRE-PILOT LIST (re-index plan in V3 s.5). Prod defaults untouched; pick is
+  Chadi's G4 gate. Local eval server killed; prod healthy (44/44) throughout.
