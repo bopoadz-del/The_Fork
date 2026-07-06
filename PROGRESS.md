@@ -144,3 +144,9 @@ first. Update on every task state change.
   Smoke --runs 3: PASS 3/3 after one transient 90s timeout/93-char run on first
   attempt. Clean full FEATURE_MATRIX_V2 sweep started on branch
   feat/feature-matrix-v2-results (post-fix, fresh conversation IDs).
+- BLOCKER (2026-07-06): all three pilot fixture projects are missing on prod:
+  `5c13510e` (BOQ), `ff905e29` (schedule/drawings), and `bc812f36` (fresh-upload
+  / golden set). This BLOCKS `boq_process`, `parse_primavera_schedule`, and
+  `drawing_qto` in the feature matrix; it also blocks Step 2 fresh-upload eval
+  and Step 3 golden-set gate. Chadi must restore/recreate fixtures before those
+  gates can run. DECISIONS.md updated.
