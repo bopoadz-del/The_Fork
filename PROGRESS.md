@@ -126,3 +126,6 @@ first. Update on every task state change.
   the number. Chadi to confirm authoritative figure.
 - Step 3a: PR #152 (golden-set gate) rebased onto main (fa4196f) and force-pushed
   (41d0219 -> f723344). CI running; mergeStateStatus=UNSTABLE pending checks.
+- Step 1 PR: #153 opened from feat/pilot-readiness-step1 (router vocab + structure
+  oracles + docs). In-flight pre-fix sweep stopped; will merge after CI and re-run
+  sweep against deployed prod for consistent post-fix results.
