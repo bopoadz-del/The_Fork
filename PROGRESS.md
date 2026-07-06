@@ -140,3 +140,7 @@ first. Update on every task state change.
   (`has_activities_and_durations`, `has_checklist_items`). Two relaxations
   REVERTED because the failing outputs were thin/malformed (`has_period_buckets`,
   `milestones_have_dates`). Branch force-pushed; CI restarted.
+- Step 1 merge + deploy: PR #153 merged to main (b54a2a4). Render auto-deployed.
+  Smoke --runs 3: PASS 3/3 after one transient 90s timeout/93-char run on first
+  attempt. Clean full FEATURE_MATRIX_V2 sweep started on branch
+  feat/feature-matrix-v2-results (post-fix, fresh conversation IDs).
