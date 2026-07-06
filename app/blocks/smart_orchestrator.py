@@ -88,7 +88,8 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     # guard in _match_actions silently dropped the second list. Merged here.
     ("extract_quantities",    ["extract quantities", "take off", "qto", "quantity take", "measure", "count items", "area calculation", "room area", "floor area", "calculate area", "quantities", "takeoff"]),
     ("estimate_costs",        ["estimate cost", "cost estimate", "budget", "pricing", "price estimate", "how much"]),
-    ("tender_bid_analysis",   ["tender", "bid", "proposal", "quote comparison", "contractor bid"]),
+    ("tender_bid_analysis",   ["tender", "bid", "proposal", "quote comparison", "contractor bid",
+                                "contractor bids", "compare bids", "score bids", "tender scoring", "evaluate bids"]),
     ("procurement_list_generator", ["procurement", "material list", "purchase list", "buy list", "vendor list", "procurement list", "what materials", "need to buy", "materials list"]),
     ("procurement_optimizer", ["optimize procurement", "best supplier", "cheapest", "optimize cost"]),
     ("payment_certificate",   ["payment cert", "valuation", "progress payment", "invoice", "certificate"]),
@@ -99,8 +100,9 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     # Drawings
     ("drawing_qto",           ["drawing", "dxf", "dwg", "floor plan", "blueprint", "autocad", "measure drawing", "drawings", "quantity takeoff", "takeoff", "take-off"]),
     # Schedule
-    ("parse_primavera_schedule", ["primavera", "xer", "p6", "schedule", "gantt", "programme", "baseline", "milestones", "milestone", "key milestones", "milestone report", "completion dates"]),
-    ("progress_tracker",      ["progress", "completion", "percent complete", "actual vs planned", "delay"]),
+    ("parse_primavera_schedule", ["primavera", "xer", "p6", "schedule", "gantt", "programme", "baseline", "milestones", "milestone", "key milestones", "milestone report", "completion dates", "major completion dates"]),
+    ("progress_tracker",      ["progress", "completion", "percent complete", "actual vs planned", "delay",
+                                "progress tracking", "tracking against planned", "slipping", "behind schedule", "schedule slippage"]),
     ("resource_histogram",    ["resource", "manpower", "histogram", "crew", "labor loading", "workforce"]),
     ("forensic_delay_analysis", ["delay analysis", "eot", "extension of time", "delay claim", "forensic"]),
     # BIM / IFC
@@ -122,19 +124,27 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("claims_builder",        ["claim", "dispute", "loss and expense", "damages", "extension of time"]),
     ("rfi_generator",         ["rfi", "request for information", "query", "clarification", "design query"]),
     # Safety
-    ("safety_compliance_audit", ["safety", "hse", "osha", "risk assessment", "hazard", "ppe", "toolbox"]),
+    ("safety_compliance_audit", ["safety", "hse", "osha", "risk assessment", "hazard", "ppe", "toolbox",
+                                  "hse compliance audit", "working at height", "work at height", "fall protection",
+                                  "site safety audit", "compliance audit checklist"]),
     ("risk_register_auto_populate", ["risk register", "risk log", "risk matrix", "risk assessment"]),
     # Sustainability
     ("carbon_footprint_calculator", ["carbon", "co2", "emissions", "sustainability", "embodied carbon", "lca"]),
     ("esg_sustainability_report", ["esg", "green", "leed", "breeam", "environmental report", "sustainability report"]),
     # Reports
     ("daily_site_report",     ["daily report", "site diary", "dsr", "site report", "daily log"]),
-    ("submittal_log_generator", ["submittal", "transmittal", "document log", "material approval", "shop drawing"]),
-    ("as_built_deviation_report", ["as-built", "as built", "deviation", "red-line", "record drawing"]),
+    ("submittal_log_generator", ["submittal", "transmittal", "document log", "material approval", "shop drawing",
+                                  "submittal log", "submittal register", "approval status", "material submittal", "shop drawing submittal"]),
+    ("as_built_deviation_report", ["as-built", "as built", "deviation", "red-line", "record drawing",
+                                    "as-built deviations", "as built deviations", "deviations from design",
+                                    "redline drawing", "as-built report"]),
     ("warranty_maintenance_schedule", ["warranty", "maintenance", "service schedule", "pppm", "o&m"]),
-    ("om_manual_generator",   ["o&m", "operation manual", "maintenance manual", "handover manual"]),
+    ("om_manual_generator",   ["o&m", "operation manual", "maintenance manual", "handover manual",
+                                "o&m manual", "operation and maintenance manual", "o&m outline", "o and m manual"]),
     # Value / Analysis
-    ("value_engineering",     ["value engineering", "ve study", "cost reduction", "alternative", "optimization"]),
+    ("value_engineering",     ["value engineering", "ve study", "cost reduction", "alternative", "optimization",
+                                "value engineer", "value engineering options", "cut cost", "cost reduction options",
+                                "optimize cost", "value engineering study"]),
     ("sympy_reason",          ["variance analysis", "reasoning", "compare cost", "benchmark", "symbolic", "formula"]),
     # Documents
     ("process_document",      ["document", "pdf", "report", "upload", "analyse file", "analyze file", "execution plan", "project execution plan", "what documents", "list the documents", "which documents", "which drawings", "project documents", "what files", "documents in this project"]),

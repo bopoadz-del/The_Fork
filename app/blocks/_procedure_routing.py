@@ -45,6 +45,8 @@ PROCEDURE_ROUTING_ADDITIONS = [
             "RFI-", "technical query", "technical enquiry",
             "contractor query", "design query", "clarification request",
             "rfi log", "rfi register", "open rfis", "overdue rfi",
+            "overdue rfis", "rfi status", "rfi tracker",
+            "rfis are open", "how many rfi",
         ]
     ),
     (
@@ -124,6 +126,8 @@ PROCEDURE_ROUTING_ADDITIONS = [
             "fatality risk", "serious injury", "environmental incident",
             "toolbox talk", "ppe compliance", "hse finding",
             "work resumption", "hse register",
+            "hse compliance audit", "working at height", "work at height", "fall protection",
+            "site safety audit", "compliance audit checklist",
         ]
     ),
 
@@ -159,6 +163,7 @@ PROCEDURE_ROUTING_ADDITIONS = [
             "bid scoring", "bid comparison", "tender recommendation",
             "RAP", "rapid approval", "PRC-603A",
             "technical score", "commercial score",
+            "contractor bids", "compare bids", "score bids", "tender scoring", "evaluate bids",
         ]
     ),
     (
