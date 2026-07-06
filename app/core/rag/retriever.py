@@ -307,6 +307,20 @@ def _knob_int(name: str) -> Optional[int]:
         return None
 
 
+def _knob_flag(name: str) -> bool:
+    """Boolean variant of _knob_float; unset/blank/garbage means OFF so a
+    typo'd value can never silently change ranking."""
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    logger.warning("invalid %s=%r; knob disabled", name, raw)
+    return False
+
+
 def _significant_terms(query: str) -> frozenset:
     """Content words (>=4 chars, minus stopwords) used for lexical overlap."""
     import re as _re
@@ -373,6 +387,12 @@ def retrieve_with_filter(
       * ``RAG_GK_TOPK_CAP`` (int) — at most this many GK chunks in the
         final top-K; excess GK slots backfill with the next-best project
         chunks, or shrink the result when none remain.
+      * ``RAG_GK_LEXICAL_FOLD`` (bool flag) — folds the GK lexical bonus
+        inside the margin gate: the H1 comparison runs on each GK chunk's
+        raw fused score (lexical bonus subtracted), so a GK note that only
+        outranks the project's own document because of its keyword bonus
+        is gated out. Survivors keep the bonus for ordering. No-op unless
+        ``RAG_GK_SCORE_MARGIN`` is also set.
 
     The knobs apply only when ``intent`` is None or in DOC_LOOKUP_INTENTS;
     any other intent (notably CALC_KB_INTENTS) bypasses them so features
@@ -457,7 +477,13 @@ def retrieve_with_filter(
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
+    # ``gk_lex_added`` records the bonus per chunk so the H1 margin gate below
+    # can compare on the pre-bonus (raw fused) score when RAG_GK_LEXICAL_FOLD
+    # is on. Recording here (rather than deferring the bonus until after the
+    # gate) is the smaller diff: the flag-off path stays byte-identical, and
+    # the gate only needs one subtraction instead of a second scoring pass.
     q_terms = _significant_terms(query)
+    gk_lex_added: Dict[str, float] = {}
     for gk_chunk_id in {c.chunk_id for c in raw_gk}:
         entry = fused.get(gk_chunk_id)
         if entry is None:
@@ -466,6 +492,7 @@ def retrieve_with_filter(
         add = _gk_lexical_bonus(q_terms, gk_chunk.text)
         if add:
             fused[gk_chunk_id] = (gk_chunk, sem_score, bonus + add)
+            gk_lex_added[gk_chunk_id] = add
 
     # GK background factor: penalise GK vs the active project's own docs. Default
     # 1.0 (OFF) — a 0.9 penalty was found to DEMOTE the authoritative curated KB
@@ -490,6 +517,7 @@ def retrieve_with_filter(
     gk_margin = _knob_float("RAG_GK_SCORE_MARGIN") if knobs_apply else None
     own_boost = _knob_float("RAG_OWN_DOC_BOOST") if knobs_apply else None
     gk_cap = _knob_int("RAG_GK_TOPK_CAP") if knobs_apply else None
+    lex_fold = _knob_flag("RAG_GK_LEXICAL_FOLD") if knobs_apply else False
 
     # H2: ownership boost — the active project's own chunks get an additive
     # lift before the merged re-rank, so a user's uploaded doc can beat a
@@ -504,13 +532,31 @@ def retrieve_with_filter(
     # H1: GK score margin — GK must BEAT the project's best candidate by the
     # margin to enter the pool at all. Compared after H2 so an enabled boost
     # also raises the bar. Empty projects skip the gate: GK-only fallback.
+    #
+    # Lexical fold (RAG_GK_LEXICAL_FOLD): RAG_AUDIT_V3 showed the GK lexical
+    # bonus (+0.25/term, cap +1.2) lifts curated notes ~+0.5 above any project
+    # chunk on collision queries, so a user's own contract can never clear the
+    # margin comparison against a bonused GK note. When the flag is on, the
+    # margin is compared on the GK chunk's RAW fused score (bonus subtracted);
+    # a GK chunk that only beats the project because of its lexical bonus is
+    # gated out, while one that clears the margin on raw score survives and
+    # keeps its bonus for ordering. The recorded bonus is scaled by
+    # GK_BACKGROUND_FACTOR because the factor multiplied the whole fused score
+    # (bonus included) above; subtracting the scaled bonus recovers exactly
+    # the factor-adjusted pre-bonus score.
     if gk_margin is not None:
         project_scores = [s for s, c in scored if c.project_id == project_id]
         if project_scores:
             bar = max(project_scores) + gk_margin
+
+            def _margin_score(s: float, c: Chunk) -> float:
+                if lex_fold and c.project_id in gk_id_set:
+                    return s - gk_lex_added.get(c.chunk_id, 0.0) * GK_BACKGROUND_FACTOR
+                return s
+
             scored = [
                 (s, c) for s, c in scored
-                if c.project_id not in gk_id_set or s >= bar
+                if c.project_id not in gk_id_set or _margin_score(s, c) >= bar
             ]
 
     # Sort by fused score descending; active-project chunks naturally come
