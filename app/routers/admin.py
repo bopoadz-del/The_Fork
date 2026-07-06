@@ -15,9 +15,11 @@ import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.dependencies import require_api_key
+from app.core import file_crypto
 
 router = APIRouter()
 
@@ -117,6 +119,48 @@ def admin_doc_extract(
             response["fresh_extraction_error"] = str(exc)
 
     return response
+
+
+@router.get("/v1/admin/debug/document-download")
+def admin_document_download(
+    project_id: str = Query(...),
+    document_id: str = Query(...),
+    auth: dict = Depends(require_api_key),
+):
+    """Download the original decrypted file bytes for any document.
+
+    Admin-only diagnostic endpoint. Bypasses ownership checks so operators can
+    recover fixture/source files from any project (including legacy/phantom
+    rows that normal project-scoped endpoints reject).
+    """
+    _require_admin(auth)
+    from app.core import projects as _projects
+
+    doc = _projects.get_document(document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.get("project_id") != project_id:
+        raise HTTPException(status_code=400, detail="Document does not belong to project")
+
+    filename = doc.get("original_name", "download")
+    file_path = doc.get("file_path") or ""
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Document file is not available")
+
+    try:
+        raw = file_crypto.read_document(file_path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Could not read document: {exc}")
+
+    import mimetypes
+    media_type, _ = mimetypes.guess_type(filename)
+    if not media_type:
+        media_type = "application/octet-stream"
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
+    return Response(content=raw, media_type=media_type, headers=headers)
 
 
 @router.post("/v1/admin/debug/doc-reindex")
