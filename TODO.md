@@ -92,7 +92,7 @@ Format: `[ ]` open, `[x]` done, `[~]` partial / needs verification.
 
 ## Half-shipped tonight (code in, missing the last small step)
 
-- [ ] **Soft daily cap on LLM cost** — `usage_tracker.is_over_cap(user_id, cap_usd)` exists; the runtime `_call_llm` short-circuit before the HTTP call is NOT wired. ~10 lines in `app/agents/runtime.py::_call_llm`.
+- [x] **Soft daily cap on LLM cost** — RECONCILED 2026-07-06: the short-circuit IS wired (see the 2026-06-07 section above, commit `04e378c`, 9 tests); this entry predated it.
 - [~] **Tinker training pipeline** — `scripts/run_tinker_training.py` ships with `--dry-run` as default; `--execute` path is wired and syntactically correct but never fired against the live SDK to produce a real LoRA adapter.
 - [~] **DWG -> DXF in the live image** — Dockerfile installs `ODAFileConverter` + sets `QT_QPA_PLATFORM=offscreen`. The `drawing_qto._try_convert_dwg` helper looks for it. Never uploaded a real DWG to the live deploy to confirm the end-to-end conversion path works post-ODA bundle.
 - [~] **Auto-validation through SSE** — `_collect_numerics` unwrap fix shipped (commit `364663d`). The non-streaming `chat()` is verified locally. The streaming `chat_stream()` SSE event shape that the React UI consumes was not re-verified after the unwrap fix.
@@ -101,15 +101,15 @@ Format: `[ ]` open, `[x]` done, `[~]` partial / needs verification.
 ## Known gaps / architectural items deferred deliberately
 
 - [ ] **Claude / Kimi-style artifacts side panel** — the current rail shows project metadata + documents but no live preview of generated WBS / exports / code blocks. Needs a real design pass plus a new SSE event richer than today's 400-char `summary` so the React side can render a structured artifact card.
-- [ ] **chat.py block still hardcodes DeepSeek** — used by `/v1/blocks/chat/execute` and its streaming generator. Larger surface than the `_llm_config()` migration I did for `runtime.py` / `formula_executor_v2` / `project_reasoner`. Not blocking the agent path, but breaks the `LLM_PROVIDER=groq` promise for the chat-block route.
+- [x] **chat.py block still hardcodes DeepSeek** — RECONCILED 2026-07-06: migrated to `_llm_config()` on 2026-06-07 (commit `c5d5704`); this entry predated it.
 - [ ] **Heavy-reasoning prompt stored in code** — `app/agents/configs/heavy-reasoning.md` is committed Markdown. Should be DB-backed and editable per project so a Riyadh BIM project and a Houston solar farm can carry different rule sets without a redeploy.
 - [ ] **FX rates inside `config/empirical_ranges.json`** — SAR/AED/EUR bands derived from a frozen mid-2026 FX snapshot. Should be pulled from a rate API or maintained in a separate FX config the operator can refresh.
 - [ ] **Raster-PDF drawings** — `drawing_qto`'s PDF path reads vector geometry via `page.get_drawings()`. Scanned/rasterised drawing PDFs need a CV-based dimension detector — new block, separate work.
 - [ ] **sympy_reasoning `cost_impacts` array** — `_compute_qty_variances` populates the variance row's `cost_impact` field but the legacy `_compute_cost_impacts` aggregator still keys on the historical-benchmark symbol vars and produces nothing for the BOQ-vs-drawing path. The data is there in the variance entries; the aggregate list is empty. Low priority; downstream consumers can read per-row.
 - [ ] **Validation -> LLM refusal pipeline** — runtime injects the `validation` field into the tool result the LLM sees, and the heavy-reasoning prompt says "refuse to report numbers whose validation.overall == fail". Not measured live whether the LLM actually obeys this on a real failed verdict. Needs a probe.
 - [ ] **GDRIVE_SERVICE_ACCOUNT_JSON unset** — hydration step 2 silently no-ops. Needs an actual service account JSON to enable nightly Drive ingestion (separate from the per-user OAuth walker, which works).
-- [ ] **Tests** — added auto-validation middleware, usage tracker, validation_pipeline block, exports router, Drive walker, sympy BOQ-vs-drawing path, and several others without unit tests. CI workflow won't catch a regression. Tech debt.
-- [ ] **No CI gate on test coverage** — `diff-cover` job ships with `continue-on-error: true`; the audit agent flagged this earlier in the session.
+- [ ] **Tests** — coverage debt remains, but CI now catches regressions again (2026-07-06: suite green, hung-test tripwire via pytest-timeout, 45-min job caps — PR #146).
+- [x] **No CI gate on test coverage** — RECONCILED 2026-07-06: diff-cover has been blocking (`continue-on-error: false`, fail-under 50 on changed lines) since the rollout note in test.yml.
 
 
 ## Operational housekeeping
@@ -187,12 +187,35 @@ the `fix/green-test-suite` PR body.
   ranking-precision decision, not a test bug (the test now asserts relative
   order — concrete.txt above electrical.txt — among the uploaded docs).
 
+## 2026-07-06 reconciliation (pilot-readiness program)
+
+Current program state lives in PROGRESS.md (audit trail) and DECISIONS.md
+(operator gates + parked items). Snapshot:
+
+- CI revived and green - PR #146 (merge FIRST; PRs #147/#148/#149 are red only
+  because their base main still carries the security-scan bug #146 fixes).
+- TASK G feature sweep - PR #147: 23/54 PASS through the orchestrator; the
+  routing-miss evidence (20 prompts at confidence 0.0) is in DECISIONS.md for
+  the post-pilot keyword-dictionary rebuild.
+- TASK H GK knobs + RAG_AUDIT_V3 - PR #149: cfg7 recommended, calc-intact 3/3,
+  embedder upgrade now ON the pre-pilot list (doc recall 41% < 50% at best).
+  This supersedes the "recall@K finding" section above: the knobs exist,
+  default-off, awaiting the operator's config pick (G4).
+- TASK C - PR #148: ZERO_CHUNK tripwire; zero-chunk projects resolved-by-purge;
+  Drive-queue drain parked (connector disconnected).
+- K2/Moonshot: config correct and merged; 2d gate failed on the 90s
+  chat_stream deadline (2/10 runs); prod on Scout; decision parked (G1/G2).
+- Quarantines: test_cross_process_concurrent_writes_serialise skipif(win32)
+  (see section above - unchanged); 2 GK-crowding tests xfail pending the H
+  config pick (DECISIONS.md "CI quarantines").
+
 ## Next session: pick from here
 
-Ordered by what unlocks the most for the operator's stated goal (training the AI on real construction docs):
-
-1. Wire the soft daily cap short-circuit in `runtime.py::_call_llm`. Tiny change, real safety.
-2. Fire `scripts/run_tinker_training.py --execute` against the real docs already in project `fb776aa2`. Produces the first actual LoRA adapter.
-3. Sit at the deploy in Edge and human-click the composer 📎 / 📷 / 🎤 buttons to confirm OS dialogs work as expected. (Yes the emojis are only in this list to refer to the visible UI; the code labels are plain text per the no-emoji rule.)
-4. Build the artifacts side panel — even a minimal one that lists past WBS generations + download buttons would change the UX meaningfully.
-5. Migrate `chat.py` block to `_llm_config()` so `LLM_PROVIDER=groq` covers every code path, not just the agent runtime.
+1. Chadi's gates: merge #146 then rebase/merge #147-#149; pick the V3 config
+   (cfg7 recommended); K2 decision (deadline vs streaming vs park).
+2. Embedder upgrade (now pre-pilot, plan in RAG_AUDIT_V3 section 5).
+3. Routing keyword-dictionary rebuild fed by the sweep evidence (post-pilot
+   per standing rule, but the evidence is banked).
+4. Fire `scripts/run_tinker_training.py --execute` against the real docs in
+   project `fb776aa2` for the first actual LoRA adapter.
+5. Artifacts side panel (minimal: past WBS generations + download buttons).
