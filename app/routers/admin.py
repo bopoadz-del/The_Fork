@@ -667,6 +667,26 @@ def admin_corpus_collections(
 
             collections.append(entry)
 
+    # Pilot master-corpus alias: the canonical project_id
+    # (dar_al_arkan_master) is a read-only view over the backing Drive-folder
+    # corpus (projects_folder). The admin inventory must never show the alias
+    # as 0 chunks — that invited a destructive re-index click in T2. Reflect
+    # the source counts under the alias so the admin page and reconciliation
+    # script agree with the API's resolved chunk_count.
+    from app.core.projects import (
+        MASTER_CORPUS_PROJECT_ID,
+        MASTER_CORPUS_SOURCE_PROJECT_ID,
+    )
+
+    by_pid = {c["project_id"]: c for c in collections}
+    source = by_pid.get(MASTER_CORPUS_SOURCE_PROJECT_ID)
+    if source and MASTER_CORPUS_PROJECT_ID not in by_pid:
+        alias_entry = dict(source)
+        alias_entry["project_id"] = MASTER_CORPUS_PROJECT_ID
+        alias_entry["source_project_id"] = MASTER_CORPUS_SOURCE_PROJECT_ID
+        alias_entry["is_master_corpus_alias"] = True
+        collections.append(alias_entry)
+
     # Largest first so the eye lands on drive_archive immediately when it
     # exists.
     collections.sort(key=lambda c: (-c["chunks"], -c["documents"], c["project_id"]))

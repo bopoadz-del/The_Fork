@@ -227,3 +227,30 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 - **Pending acceptance gate:** `smoke --runs 10` on prod main with
   `LLM_PROVIDER=groq`, zero `_TOOL_FORMAT_FALLBACK`, zero Ollama fallbacks.
   Must pass before provider work is considered closed.
+  → SUPERSEDED by 2026-07-08 final resolution above: OpenAI primary.
+
+## 2026-07-08 — T3 corpus reconciliation (in flight)
+
+- Ran `scripts/reconcile_migration.py` against prod (branch
+  `feat/t3-corpus-reconciliation`). Before-fix table:
+
+  | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
+  |---|---:|---:|---:|---:|---|
+  | dar_al_arkan_master | 0 | 0 | 110375 | 0 | mismatch (api=110375, db=0) |
+  | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
+  | training_material | 246 | 10982 | 10982 | 10982 | ok |
+  | unclassified | 1 | 4 | 4 | 4 | ok |
+
+- Root cause: `dar_al_arkan_master` is a pilot master-corpus alias whose
+  chunks live under `projects_folder`. The admin corpus-collections endpoint
+  counted by raw `project_id`, so the alias appeared as 0 chunks — the display
+  that invited a destructive re-index click.
+- Fix: `/v1/admin/corpus/collections` now mirrors the source project's counts
+  under the alias project_id, with `source_project_id` and
+  `is_master_corpus_alias` markers. Source entry kept for transparency.
+- Training-material direct `/v1/rag/search` verified working (project_id
+  `training_material` returns curated GK chunks). `curated_kb` is empty;
+  `RAG_GENERAL_KNOWLEDGE_PROJECTS` identity is unified on `training_material`.
+- PR #162 opened for the fix + contract test. Waiting on CI green before merge
+  and prod deploy; reconciliation script will be re-run after deploy to confirm
+  the table is all-green.
