@@ -3,6 +3,47 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-07-07 — LLM provider ladder FROZEN for pilot
+
+**Decision:** Pilot default is **Groq `meta-llama/llama-4-scout-17b-16e-instruct`**.
+Kimi K2.6 and Moonshot v1 are **out of the active chain** for the pilot.
+
+### Rationale
+
+- **Kimi K2.6** first-token latency is routinely 70–120s, exceeding the
+  reader-tolerance threshold and frequently hitting the chat timeout even at
+  120s. Not acceptable as a pilot default.
+- **Moonshot v1-32k** tokenizes and responds fast, but the stripped-payload
+  compatibility path (no tools, no message history) cannot run the
+  project-assistant deliverable tools; answers are ~580 chars of prose and
+  fail the smoke gate. Not viable for a construction-deliverable pilot.
+- **Scout** was intermittent with `_TOOL_FORMAT_FALLBACK` until the raw-args
+  recovery fix (`feat/scout-tool-recovery`). With the fix it passes the smoke
+  gate and produces tool-backed deliverables.
+
+### Frozen ladder
+
+1. **Primary:** Groq — `meta-llama/llama-4-scout-17b-16e-instruct` (pinned in
+   Render env as `GROQ_MODEL`).
+2. **Fallback:** Ollama — `glm-5.2:cloud` ( Render env `OLLAMA_*` ), used only
+   on Groq retryable failures (429, 5xx, timeout).
+3. **Kimi / Moonshot:** parked. Any post-pilot re-evaluation requires Chadi's
+   explicit written instruction naming this freeze.
+
+### Operational env
+
+- `LLM_PROVIDER=groq`
+- `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e- instruct`
+- `LLM_FALLBACK_PROVIDER=ollama`
+- `CHAT_STREAM_TIMEOUT_SECONDS=90`
+
+### Acceptance gate
+
+- `smoke --runs 10` against prod must be **10/10 PASS**, zero
+  `_TOOL_FORMAT_FALLBACK`, and zero silent fallbacks to Ollama. Until that
+  gate is met the provider choice is provisional and this entry must be
+  updated.
+
 ## 2026-07-07 T3 — Migration reconciliation
 
 ### GK identity
