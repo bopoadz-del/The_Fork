@@ -1209,17 +1209,16 @@ def _llm_config() -> Dict[str, Any]:
             "default_model": os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL),
         }
     if provider == "kimi":
+        model = os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL)
         return {
             "provider": "kimi",
             "url": KIMI_API_URL,
             "env_key": "KIMI_API_KEY",
-            "default_model": os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL),
+            "default_model": model,
             # Moonshot's K2 reasoning models reject any temperature but 1
-            # ("invalid temperature: only 1 is allowed for this model"). Declare
-            # that constraint HERE so the outbound payload is shaped per-provider
-            # (see _provider_temperature) rather than hardcoding 1 globally — a
-            # global constant would just become the next provider's 400.
-            "fixed_temperature": 1,
+            # ("invalid temperature: only 1 is allowed for this model"). v1
+            # models accept the normal range, so only pin temperature for K2.
+            "fixed_temperature": 1 if model.startswith("kimi-k2") else None,
         }
     return {
         "provider": "deepseek",
