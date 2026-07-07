@@ -135,6 +135,7 @@ from app.agents.runtime import (
     _is_native_ollama,
     _native_ollama_payload,
     _ollama_message_to_openai,
+    _sanitize_messages_for_ollama_native,
 )
 
 
@@ -262,3 +263,81 @@ def test_call_llm_native_ollama_no_tools(monkeypatch):
     sent = fake_client.post.call_args.kwargs["json"]
     assert "tools" not in sent
     assert resp["choice"]["message"]["content"] == "The contract value is $1M."
+
+
+
+def test_sanitize_messages_for_ollama_native_converts_tool_role():
+    sanitized = _sanitize_messages_for_ollama_native([
+        {"role": "user", "content": "find the value"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search_project_documents", "arguments": '{"query":"x"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"answer": 42}'},
+    ])
+    assert sanitized[0]["role"] == "user"
+    assert sanitized[1]["role"] == "assistant"
+    # arguments must be a parsed dict for native Ollama.
+    assert sanitized[1]["tool_calls"][0]["function"]["arguments"] == {"query": "x"}
+    # tool role becomes user role.
+    assert sanitized[2]["role"] == "user"
+    assert "Tool result" in sanitized[2]["content"]
+    assert "42" in sanitized[2]["content"]
+
+
+def test_sanitize_messages_for_ollama_native_leaves_simple_messages():
+    msgs = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+    assert _sanitize_messages_for_ollama_native(msgs) == msgs
+
+
+def test_call_llm_native_ollama_sanitizes_messages(monkeypatch):
+    """Native Ollama must receive tool messages converted to user role and
+    arguments as dicts."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "https://ollama.com/api/chat")
+
+    agent = _agent()
+    fake_client = MagicMock()
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "model": "glm-5.2:cloud",
+        "message": {"role": "assistant", "content": "done"},
+        "done": True,
+    }
+    fake_client.post = AsyncMock(return_value=fake_response)
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=False)
+
+    messages = [
+        {"role": "user", "content": "find boq"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "function": {"name": "search_project_documents", "arguments": '{"query":"boq"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"results":[]}'},
+    ]
+
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=fake_client):
+        resp = _run(agent._call_llm(messages, api_key="", with_tools=False))
+
+    assert resp["status"] == "success"
+    sent = fake_client.post.call_args.kwargs["json"]
+    assert sent["messages"][2]["role"] == "user"
+    assert sent["messages"][1]["tool_calls"][0]["function"]["arguments"] == {"query": "boq"}

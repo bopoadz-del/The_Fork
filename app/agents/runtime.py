@@ -1350,6 +1350,61 @@ def _is_native_ollama(cfg: Dict[str, Any]) -> bool:
     return cfg.get("provider") == "ollama" and str(cfg.get("url", "")).endswith("/api/chat")
 
 
+def _sanitize_messages_for_ollama_native(
+    messages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Adapt OpenAI-shaped messages for Ollama's native /api/chat protocol.
+
+    Native Ollama does not accept the ``tool`` role; tool responses must be
+    sent as ``user`` messages. It also expects ``function.arguments`` inside
+    assistant ``tool_calls`` to be a parsed dict, not a JSON string.
+    """
+    out: List[Dict[str, Any]] = []
+    for m in messages:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        role = m.get("role")
+        if role == "tool":
+            out.append({
+                "role": "user",
+                "content": f"Tool result: {m.get('content', '')}",
+            })
+            continue
+        if role == "assistant":
+            cm = {"role": "assistant", "content": m.get("content", "")}
+            tcs = m.get("tool_calls")
+            if isinstance(tcs, list):
+                clean_tcs: List[Dict[str, Any]] = []
+                for tc in tcs:
+                    if not isinstance(tc, dict):
+                        clean_tcs.append(tc)
+                        continue
+                    fn = tc.get("function") or {}
+                    raw_args = fn.get("arguments") or "{}"
+                    if isinstance(raw_args, str):
+                        try:
+                            args = json.loads(raw_args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    else:
+                        args = raw_args
+                    clean_tcs.append({
+                        "id": tc.get("id") or "",
+                        "type": tc.get("type") or "function",
+                        "function": {
+                            "name": fn.get("name") or "",
+                            "arguments": args,
+                        },
+                    })
+                if clean_tcs:
+                    cm["tool_calls"] = clean_tcs
+            out.append(cm)
+            continue
+        out.append(m)
+    return out
+
+
 def _native_ollama_payload(
     model: str,
     messages: List[Dict[str, Any]],
@@ -3136,10 +3191,12 @@ class Agent:
                 payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
                 if _is_native_ollama(a_cfg):
-                    # Native Ollama path: different payload shape, no tool_choice.
+                    # Native Ollama path: different payload shape, no tool_choice,
+                    # and tool messages must be recast as user messages.
+                    native_messages = _sanitize_messages_for_ollama_native(messages)
                     native_payload = _native_ollama_payload(
                         model=a_model,
-                        messages=messages,
+                        messages=native_messages,
                         temperature=payload["temperature"],
                         max_tokens=self.max_tokens,
                         tools=tools if (tools and with_tools) else None,
@@ -3369,7 +3426,7 @@ class Agent:
                 if native_ollama:
                     payload = _native_ollama_payload(
                         model=model,
-                        messages=messages,
+                        messages=_sanitize_messages_for_ollama_native(messages),
                         temperature=temperature,
                         max_tokens=self.max_tokens,
                         stream=True,
