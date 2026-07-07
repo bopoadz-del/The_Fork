@@ -3,6 +3,52 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-07-07 — Provider switch: Ollama native `/api/chat` primary
+
+**Decision:** Prod is now running **Ollama `glm-5.2:cloud` via the native
+`/api/chat` protocol**. Groq/Scout is parked pending a clean 10/10 smoke gate.
+OpenAI support is added but not yet tested.
+
+### Rationale
+
+- **Groq/Scout** could not hold the smoke gate: intermittent
+  `_TOOL_FORMAT_FALLBACK` 120-char answers persisted after the raw-args
+  recovery fix. The failure correlated with the Ollama OpenAI-compatible
+  `/v1/chat/completions` endpoint leaking raw internal tool/search args as
+  `content`; the recovery regexes did not cover every shape the model emitted.
+- **Ollama native `/api/chat`** returns properly structured `tool_calls` and
+  usable `message.content`. Tool-result messages must be recast from the
+  OpenAI `tool` role to `user` role, and `function.arguments` must be sent as
+  parsed dicts rather than JSON strings. With those adaptations the smoke
+  gate passes (`smoke --runs 3`: 3/3, tool-backed, model=glm-5.2:cloud).
+- **OpenAI gpt-4o-mini** provider support was added to `runtime.py` at the
+  user's request as an alternative to test, but no `OPENAI_API_KEY` is set
+  locally or on Render, so it has not been exercised.
+
+### Operational env
+
+- `LLM_PROVIDER=ollama`
+- `OLLAMA_URL=https://ollama.com/api/chat`
+- `OLLAMA_MODEL=glm-5.2:cloud`
+- `OLLAMA_API_KEY=<set>`
+- `LLM_FALLBACK_PROVIDER=` (unset until Groq is re-verified)
+
+### Acceptance gate
+
+- `smoke --runs 10` against prod must be **10/10 PASS**, zero
+  `_TOOL_FORMAT_FALLBACK`, and model reported as `glm-5.2:cloud` (no silent
+  fallback). A 10-run test is in progress.
+
+### Parked items
+
+- **Groq/Scout re-verification:** Parked. If the user wants Scout back as
+  primary, re-run `smoke --runs 10` on a branch with `LLM_PROVIDER=groq` and
+  `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`. Do not flip prod
+  without the gate.
+- **OpenAI gpt-4o-mini:** Parked on key availability. Set
+  `OPENAI_API_KEY` on Render and run the same smoke gate before any prod
+  flip.
+
 ## 2026-07-07 — LLM provider ladder FROZEN for pilot
 
 **Decision:** Pilot default is **Groq `meta-llama/llama-4-scout-17b-16e-instruct`**.
