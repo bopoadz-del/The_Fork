@@ -1209,16 +1209,17 @@ def _llm_config() -> Dict[str, Any]:
             "default_model": os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL),
         }
     if provider == "kimi":
-        model = os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL)
         return {
             "provider": "kimi",
             "url": KIMI_API_URL,
             "env_key": "KIMI_API_KEY",
-            "default_model": model,
+            "default_model": os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL),
             # Moonshot's K2 reasoning models reject any temperature but 1
-            # ("invalid temperature: only 1 is allowed for this model"). v1
-            # models accept the normal range, so only pin temperature for K2.
-            "fixed_temperature": 1 if model.startswith("kimi-k2") else None,
+            # ("invalid temperature: only 1 is allowed for this model"). Declare
+            # that constraint HERE so the outbound payload is shaped per-provider
+            # (see _provider_temperature) rather than hardcoding 1 globally — a
+            # global constant would just become the next provider's 400.
+            "fixed_temperature": 1,
         }
     return {
         "provider": "deepseek",
@@ -2892,36 +2893,14 @@ class Agent:
         # other non-standard field that would make a strict provider — Groq —
         # reject the request). Single chokepoint, covers all callers.
         messages = _sanitize_messages_for_provider(messages)
-        if "moonshot-v1" in model:
-            # Moonshot v1 models fail to tokenize the full K2-style message
-            # history (tool_calls arrays, tool role, etc.). Send only the last
-            # user turn plus tools; this matches the direct-API shape that v1
-            # has been verified to accept.
-            #
-            # The last user turn has RAG context folded into it, which can be
-            # tens of thousands of tokens. v1's tokenizer appears to reject
-            # very long concatenated contexts. Truncate to the first 1500
-            # characters (the original user prompt + a little context) for the
-            # diagnostic test.
-            raw_content = messages[-1].get("content", "")
-            content = raw_content[:500] if len(raw_content) > 500 else raw_content
-            payload = {
-                "model": model,
-                "messages": [{"role": "user", "content": content}],
-                "temperature": 0.7,
-                "max_tokens": 2048,
-                "stream": False,
-            }
-            tools = self.tool_definitions(project_id=project_id)
-        else:
-            payload = {
-                "model": model,
-                "messages": messages,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "stream": False,
-            }
-            tools = self.tool_definitions(project_id=project_id)
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+        tools = self.tool_definitions(project_id=project_id)
         if exclude_tools:
             tools = [
                 t for t in tools
@@ -2998,9 +2977,6 @@ class Agent:
             if tools and with_tools:
                 payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
-                if "moonshot-v1" in a_model:
-                    import logging as _v1_log
-                    _v1_log.warning("moonshot-v1 payload: %s", json.dumps(payload, default=str)[:2000])
                 async with httpx.AsyncClient(timeout=120.0) as client:
                     r = await client.post(
                         a_cfg["url"],
@@ -3011,9 +2987,6 @@ class Agent:
                             else {"Content-Type": "application/json"}
                         ),
                     )
-                if "moonshot-v1" in a_model and r.status_code >= 400:
-                    import logging as _v1_log
-                    _v1_log.warning("moonshot-v1 response %s: %s", r.status_code, r.text[:500])
             except httpx.TimeoutException:
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call timed out (120s)."}
                 if not is_last:
@@ -3076,12 +3049,6 @@ class Agent:
                 # only — no retry logic added here.
                 _LOG.warning("llm: %s HTTP %s — no fallback taken, turn errors: %s",
                              a_cfg["provider"], r.status_code, body[:200])
-                if "moonshot-v1" in a_model:
-                    diag = json.dumps(payload, default=str, ensure_ascii=False)
-                    return {
-                        "status": "error",
-                        "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]} | payload={diag[:1500]}",
-                    }
                 return last_error
 
             # ── success on this provider ──────────────────────────────────
