@@ -2898,11 +2898,17 @@ class Agent:
             # history (tool_calls arrays, tool role, etc.). Send only the last
             # user turn plus tools; this matches the direct-API shape that v1
             # has been verified to accept.
+            #
+            # The last user turn has RAG context folded into it, which can be
+            # tens of thousands of tokens. v1's tokenizer appears to reject
+            # very long concatenated contexts. Truncate to the first 1500
+            # characters (the original user prompt + a little context) for the
+            # diagnostic test.
+            raw_content = messages[-1].get("content", "")
+            content = raw_content[:1500] if len(raw_content) > 1500 else raw_content
             payload = {
                 "model": model,
-                "messages": [
-                    {"role": "user", "content": messages[-1].get("content", "")}
-                ],
+                "messages": [{"role": "user", "content": content}],
                 "temperature": 0.7,
                 "max_tokens": 2048,
                 "stream": False,
