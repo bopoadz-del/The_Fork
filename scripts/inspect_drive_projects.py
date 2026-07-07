@@ -3,23 +3,47 @@
 
 Usage:
   export FORK_API_KEY=...
-  python scripts/inspect_drive_projects.py
+  python scripts/inspect_drive_projects.py                  # damage snapshot
+  python scripts/inspect_drive_projects.py --discover <parent_drive_folder_id>
 
-Output columns:
-  project_id | name | origin | docs | files_present | zero_chunk_docs | total_chunks | folder_id
-
-folder_id is read from the optional GDRIVE_PROJECT_FOLDERS env var; if unset,
-it is left blank for manual fill-in.
+The --discover mode lists child folders of the given Drive parent, matches them
+against the Drive-linked project names in the recovery manifest, and prints a
+proposed GDRIVE_PROJECT_FOLDERS value. It is a read-only proposal: the operator
+must confirm the mapping before it goes into Render.
 """
 from __future__ import annotations
 
+import argparse
+import difflib
 import os
+import re
 import sys
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork.onrender.com")
+
+# Drive-linked projects from docs/recovery/re_import_manifest.md.
+# Each entry has the platform project_id and one or more folder-name aliases to
+# match against. The anchor pair dg2_infra_pack_1 is validated on discovery.
+RECOVERY_PROJECTS: List[Dict[str, Any]] = [
+    # dar_al_arkan_master is a virtual alias backed by projects_folder;
+    # the physical hydration target is projects_folder.
+    {"project_id": "dar_al_arkan_master", "names": ["Dar Al Arkan Master Corpus"], "no_map": True, "note": "alias -> projects_folder"},
+    {"project_id": "projects_folder", "names": ["Projects Folder"]},
+    {"project_id": "ha_long_xanh", "names": ["Ha Long Xanh"]},
+    {"project_id": "ha_long_xanh_2", "names": ["Ha Long Xanh"]},
+    {"project_id": "dg2_infra_pack_1", "names": ["DG2 Infra Pack 1"]},
+    {"project_id": "5c13510e", "names": ["DG2 Bills of Quantities"]},
+]
+
+ANCHOR_PROJECT = "dg2_infra_pack_1"
+ANCHOR_FOLDER_ID = "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j"
 
 
 def _auth_header(base: str) -> dict:
@@ -77,7 +101,141 @@ def _inspect_project(client: httpx.Client, proj: Dict[str, Any]) -> Dict[str, An
     }
 
 
-def main() -> int:
+def _normalise(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
+def _best_folder_match(
+    project_names: List[str],
+    folders: List[Dict[str, str]],
+    used: set,
+) -> Tuple[Optional[Dict[str, str]], str, float]:
+    """Return (folder, confidence_label, ratio) for the best available match."""
+    best: Optional[Dict[str, str]] = None
+    best_ratio = 0.0
+    best_confidence = "unmatched"
+    for folder in folders:
+        fid = folder["id"]
+        if fid in used:
+            continue
+        fname = folder["name"]
+        norm_folder = _normalise(fname)
+        for pname in project_names:
+            norm_project = _normalise(pname)
+            if norm_project == norm_folder:
+                ratio = 1.0
+                confidence = "exact"
+            else:
+                ratio = difflib.SequenceMatcher(None, norm_project, norm_folder).ratio()
+                confidence = "fuzzy" if ratio >= 0.7 else "unmatched"
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best = folder
+                best_confidence = confidence
+    return best, best_confidence, best_ratio
+
+
+def _discover_folders(parent_folder_id: str) -> List[Dict[str, str]]:
+    from app.core import gdrive_service
+
+    if not gdrive_service.is_configured():
+        sys.exit(
+            "Google Drive service account is not configured.\n"
+            "Set GDRIVE_SERVICE_ACCOUNT_JSON (file path or inline JSON) and try again."
+        )
+
+    files, err = gdrive_service.list_folder_files(parent_folder_id, page_size=200)
+    if err:
+        sys.exit(f"Drive list failed: {err}")
+
+    folder_mime = "application/vnd.google-apps.folder"
+    return [
+        {"id": f["id"], "name": f.get("name", "")}
+        for f in files
+        if f.get("mimeType") == folder_mime
+    ]
+
+
+def _run_discovery(parent_folder_id: str) -> int:
+    folders = _discover_folders(parent_folder_id)
+    if not folders:
+        print(f"No child folders found under Drive parent {parent_folder_id}.")
+        return 0
+
+    used: set = set()
+    matches: List[Dict[str, Any]] = []
+
+    for project in RECOVERY_PROJECTS:
+        folder, confidence, ratio = _best_folder_match(project["names"], folders, used)
+        if folder:
+            used.add(folder["id"])
+        matches.append({
+            "project_id": project["project_id"],
+            "names": project["names"],
+            "folder": folder,
+            "confidence": confidence,
+            "ratio": ratio,
+        })
+
+    # Proposed env string (only confident matches for projects that need a map).
+    proposed_pairs = [
+        f"{m['project_id']}:{m['folder']['id']}"
+        for m in matches
+        if m["folder"] and m["confidence"] in ("exact", "fuzzy") and not m.get("no_map")
+    ]
+    proposed_value = ",".join(proposed_pairs)
+
+    print(f"## Proposed GDRIVE_PROJECT_FOLDERS (from Drive parent {parent_folder_id})")
+    print()
+    print("```text")
+    print(proposed_value)
+    print("```")
+    print()
+    print("| project_id | project name | matched folder | folder id | confidence | ratio | note |")
+    print("|---|---|---|---|---|---|---|")
+    for m in matches:
+        pname = m["names"][0]
+        note = m.get("note", "")
+        if m["folder"]:
+            print(
+                f"| {m['project_id']} | {pname} | {m['folder']['name']} | "
+                f"{m['folder']['id']} | {m['confidence']} | {m['ratio']:.2f} | {note} |"
+            )
+        else:
+            print(f"| {m['project_id']} | {pname} | — | — | unmatched | — | {note} |")
+
+    unmatched_folders = [f for f in folders if f["id"] not in used]
+    if unmatched_folders:
+        print()
+        print("## Unmatched Drive folders")
+        print()
+        print("| folder name | folder id |")
+        print("|---|---|")
+        for f in unmatched_folders:
+            print(f"| {f['name']} | {f['id']} |")
+
+    # Anchor validation.
+    anchor_match = next(
+        (m for m in matches if m["project_id"] == ANCHOR_PROJECT),
+        None,
+    )
+    print()
+    if anchor_match and anchor_match.get("folder") and anchor_match["folder"]["id"] == ANCHOR_FOLDER_ID:
+        print(f"✓ Anchor validated: {ANCHOR_PROJECT} = {ANCHOR_FOLDER_ID}")
+    else:
+        print(
+            f"⚠ ANCHOR MISMATCH: expected {ANCHOR_PROJECT} = {ANCHOR_FOLDER_ID}, "
+            f"but discovery proposed "
+            f"{anchor_match['folder']['id'] if anchor_match and anchor_match.get('folder') else 'none'}. "
+            f"Review the parent folder before accepting the mapping."
+        )
+
+    print()
+    print("This is a proposed mapping only. Confirm it before setting GDRIVE_PROJECT_FOLDERS on Render.")
+    return 0
+
+
+def _run_inspect() -> int:
     base = os.getenv("FORK_BASE_URL", DEFAULT_BASE)
     headers = _auth_header(base)
     folder_map = _folder_map()
@@ -109,6 +267,17 @@ def main() -> int:
 
     print("\nMissing folder_id entries need to be provided in GDRIVE_PROJECT_FOLDERS or manually.")
     return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Inspect Drive-linked projects and propose folder mappings")
+    ap.add_argument("--discover", metavar="PARENT_FOLDER_ID",
+                    help="List child folders of the given Drive folder and propose a GDRIVE_PROJECT_FOLDERS mapping")
+    args = ap.parse_args()
+
+    if args.discover:
+        return _run_discovery(args.discover)
+    return _run_inspect()
 
 
 if __name__ == "__main__":

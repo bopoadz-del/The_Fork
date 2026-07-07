@@ -96,7 +96,7 @@ def main() -> int:
                     help="master-corpus project id (prod: projects_folder; "
                          "local boxes: drive_archive)")
     ap.add_argument("--gk-project", default="training_material",
-                    help="general-knowledge project id (prod: curated_kb)")
+                    help="general-knowledge project id (prod: training_material)")
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--delay", type=float, default=0.2)
     ap.add_argument("--out", help="artifact path (JSON)")

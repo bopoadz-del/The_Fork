@@ -43,6 +43,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI="$SCRIPT_DIR/fork_cli.py"
 [ -f "$CLI" ] || { echo "fork_cli.py not found next to smoke.sh ($CLI)" >&2; exit 2; }
 
+# Prefer explicit PYTHON, then repo venv, then system python.
+if [ -n "${PYTHON:-}" ]; then
+  PYTHON_BIN="$PYTHON"
+elif [ -f "$SCRIPT_DIR/../.venv/Scripts/python.exe" ]; then
+  PYTHON_BIN="$SCRIPT_DIR/../.venv/Scripts/python.exe"
+elif [ -f "$SCRIPT_DIR/../.venv/bin/python" ]; then
+  PYTHON_BIN="$SCRIPT_DIR/../.venv/bin/python"
+else
+  PYTHON_BIN="python"
+fi
+
 BASE_ARGS=()
 [ -n "${FORK_BASE_URL:-}" ] && BASE_ARGS=(--base "$FORK_BASE_URL")
 
@@ -58,7 +69,8 @@ echo "message: $MESSAGE"
 printf '=%.0s' $(seq 1 72); echo
 
 for i in $(seq 1 "$RUNS"); do
-  out="$(python "$CLI" "${BASE_ARGS[@]}" chat "$MESSAGE" --project "$PROJECT" --events 2>&1)"
+  conv_id="$("$PYTHON_BIN" -c 'import uuid; print(uuid.uuid4())')"
+  out="$("$PYTHON_BIN" "$CLI" "${BASE_ARGS[@]}" chat "$MESSAGE" --project "$PROJECT" --conversation "$conv_id" --events 2>&1)"
 
   line="$(printf '%s\n' "$out" | grep -oE 'total=[0-9.]+s +first_token=([0-9.]+s?|-) +events=[0-9]+ +answer_chars=[0-9]+' | head -1)"
   chars="$(printf '%s\n' "$line" | grep -oE 'answer_chars=[0-9]+' | grep -oE '[0-9]+$')"

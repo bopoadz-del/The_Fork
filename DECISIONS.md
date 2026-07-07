@@ -3,6 +3,41 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-07-07 T3 — Migration reconciliation
+
+### GK identity
+
+- **Single GK project: `training_material`.** After the drive_archive migration,
+  the curated general-knowledge corpus lives in `training_material` (241 docs).
+  `curated_kb` exists but is empty (0 docs). `RAG_GENERAL_KNOWLEDGE_PROJECTS`
+  is therefore `training_material` in prod and in `render.yaml`.
+- **Consequence:** Any eval harness or manifest that still points GK at
+  `curated_kb` is stale and has been updated.
+
+### Fixes landed
+
+- **chunk_count aggregation now uses the vector store.** `GET /v1/projects/{id}`
+  previously counted per-document chunks from the legacy `doc_index` JSON blob,
+  which bulk-inserted chunks never populate. It now reads from the `chunks`
+  table (cheap indexed `COUNT` / `GROUP BY`), so migrated projects never show
+  `chunk_count: 0` or `None`.
+- **training_material scoping anomaly root cause:** chunks whose `doc_id`
+  belongs to `training_material` documents were stored with `project_id=
+  projects_folder` during migration. Direct search on `training_material`
+  returned 0; search on `projects_folder` returned those chunks. Added
+  `POST /v1/admin/corpus/reconcile` (dry-run by default, `execute=true` to
+  repair) which aligns `chunks.project_id` with `documents.project_id`.
+- **Reconciliation script:** `scripts/reconcile_migration.py` prints the
+  project_id/name/docs/chunks/API-chunk-count/admin-chunk-count table and
+  flags mismatches. It is read-only unless the operator explicitly calls the
+  repair endpoint.
+
+### Operational note
+
+- The repair endpoint is gated on admin role and defaults to dry-run. Against
+  prod it must be used only after the reconciliation script is reviewed; no
+  destructive ops are performed by the script itself.
+
 ## 2026-07-06
 
 - **TASK H evals run against a LOCAL uvicorn instance, not prod.** The sweep is
@@ -151,3 +186,34 @@ answer-source problem, not just a retrieval corner case.
 acceptance battery and re-test after `RAG_GK_LEXICAL_FOLD=1` is active. The
 intent-exempted GK demotion may resolve it for free. If it still fails after the
 fold, it becomes a block-level answer-source bug for the next iteration.
+
+## Interim provider state (T0, 2026-07-07)
+
+**Decision:** Prod stays on `LLM_PROVIDER=kimi` (Kimi K2.6) tonight. This is **not**
+an R10 override; it is R1 compliance — prod must keep serving, Kimi passes smoke 3/3,
+and Scout demonstrably does not on the current (migrated) corpus.
+
+**Evidence:**
+- `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct` deployed.
+- Scout smoke: intermittent FAIL (~1/3 runs). Failing runs return the
+  `_TOOL_FORMAT_FALLBACK` message: "I hit an internal search formatting issue
+  before I could produce a grounded answer." The model emits raw internal
+  tool/search arguments instead of a user-facing answer.
+- Kimi smoke: PASS 3/3, all runs tool=Y, first token 70–90s, answer 8.5–10.8k chars.
+
+**Next steps before provider verdict:**
+1. T3: Reconcile the migrated corpus (chunk_count aggregation,
+   `training_material` scoping anomaly, one GK identity). Re-smoke Scout on
+   clean ground. If `_TOOL_FORMAT_FALLBACK` vanishes, it was a corpus symptom,
+   not a Scout defect. If it persists, capture the raw failing turn and diagnose
+   the runtime formatting interaction.
+2. Run the Kimi+streaming gate on branch config (`SYNTHESIS_STREAMING=1`,
+   smoke 10, tool=Y, first_token < 50% of total, browser check). If it passes,
+   the 90s timeout risk evaporates.
+3. Chadi to read `K2_QUALITY_SAMPLES.md` against `review_pack/` Scout outputs
+   (G2 verdict).
+
+**Open risk:** Kimi first token is at 70–90s, close to `CHAT_STREAM_TIMEOUT_SECONDS=90`.
+The streaming gate is the intended mitigation. Until that gate passes and G2 is
+recorded, the provider ladder remains officially: Scout default / Kimi parked /
+Ollama fallback only.

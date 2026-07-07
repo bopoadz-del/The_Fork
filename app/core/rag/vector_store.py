@@ -434,6 +434,23 @@ class VectorStore:
                     stmt = stmt.where(RagChunk.project_id == project_id)
                 return int(session.scalar(stmt) or 0)
 
+    def count_by_doc(self, project_id: str) -> Dict[str, int]:
+        """Return a ``{doc_id: chunk_count}`` map for ``project_id``.
+
+        Uses the ``idx_chunks_doc`` index; one small GROUP BY regardless of
+        corpus size. This is the source of truth for per-document chunk
+        counts, including chunks written by ``/v1/admin/corpus/bulk-insert``
+        (which bypasses the legacy ``doc_index`` JSON blob).
+        """
+        with self._lock:
+            with self._session_factory()() as session:
+                stmt = (
+                    select(RagChunk.doc_id, func.count())
+                    .where(RagChunk.project_id == project_id)
+                    .group_by(RagChunk.doc_id)
+                )
+                return {row[0]: int(row[1]) for row in session.execute(stmt).all()}
+
     def search(
         self,
         project_id: str,
