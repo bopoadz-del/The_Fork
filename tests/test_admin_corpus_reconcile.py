@@ -60,10 +60,24 @@ def _wipe(*pids: str):
         session.commit()
 
 
+def _wipe_all():
+    """Delete every RagChunk/Document/Project row for test isolation.
+
+    The reconcile endpoint reports mismatches across the whole corpus, so
+    leftovers from earlier tests make exact-count assertions flaky. Wipe
+    everything before seeding the reconcile fixture.
+    """
+    _ensure_schema()
+    with SessionLocal() as session:
+        session.query(RagChunk).delete()
+        session.query(Document).delete()
+        session.query(Project).delete()
+        session.commit()
+
+
 def _seed_misplaced_chunks():
     """Create two projects where one chunk is under the wrong project_id."""
-    _ensure_schema()
-    _wipe("reconcile_a", "reconcile_b")
+    _wipe_all()
     now = datetime.now(timezone.utc).isoformat()
     vec = np.zeros(256, dtype=np.float32)
     with SessionLocal() as session:
@@ -155,8 +169,7 @@ def test_reconcile_non_admin_blocked(client):
 
 
 def test_reconcile_reports_no_mismatches_when_clean(client):
-    _ensure_schema()
-    _wipe("reconcile_clean")
+    _wipe_all()
     now = datetime.now(timezone.utc).isoformat()
     vec = np.zeros(256, dtype=np.float32)
     with SessionLocal() as session:
