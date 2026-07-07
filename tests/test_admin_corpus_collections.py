@@ -238,3 +238,75 @@ def test_folder_breakdown_disable(client, _stub_admin):
     cols = {c["project_id"]: c for c in resp.json()["collections"]}
     # With breakdown disabled, even the big_corpus must NOT have by_top_folder.
     assert "by_top_folder" not in cols["big_corpus"]
+
+
+def test_master_corpus_alias_inherits_source_counts(client, _stub_admin):
+    """PR #??? — the admin inventory must show the pilot master-corpus alias
+    (dar_al_arkan_master) with the same counts as its backing Drive folder
+    corpus (projects_folder), never 0 chunks.
+    """
+    _ensure_schema()
+
+    import uuid
+    import numpy as np
+
+    with SessionLocal() as session:
+        # Clean slate for the ids this test owns.
+        for pid in ("projects_folder", "dar_al_arkan_master"):
+            session.query(RagChunk).filter(RagChunk.project_id == pid).delete()
+            session.query(Document).filter(Document.project_id == pid).delete()
+            session.query(Project).filter(Project.id == pid).delete()
+        session.commit()
+
+        # Backing corpus: 7 docs, 21 chunks.
+        session.add(Project(
+            id="projects_folder", name="Dar Al Arkan Master Corpus",
+            user_id="system", created_at="2026-06-21T00:00:00Z", status="active",
+        ))
+        session.add(Project(
+            id="dar_al_arkan_master", name="Dar Al Arkan Master Corpus",
+            user_id="system", created_at="2026-06-21T00:00:00Z", status="active",
+        ))
+        session.flush()
+        doc_ids = []
+        for i in range(7):
+            doc_id = str(uuid.uuid4())[:8]
+            doc_ids.append(doc_id)
+            session.add(Document(
+                id=doc_id, project_id="projects_folder",
+                original_name=f"folder/file_{i}.pdf",
+                doc_type="document", doc_role="other", size=1024,
+                uploaded_at="2026-06-21T00:00:00Z",
+            ))
+        session.flush()
+        zero_vec = np.zeros(256, dtype=np.float32)
+        for i in range(21):
+            session.add(RagChunk(
+                chunk_id=f"projects_folder-{i}-{uuid.uuid4().hex[:6]}",
+                project_id="projects_folder",
+                doc_id=doc_ids[i // 3],
+                chunk_index=i % 3,
+                text=f"chunk {i}",
+                embedding=zero_vec,
+                created_at="2026-06-21T00:00:00Z",
+            ))
+        session.commit()
+
+    app.dependency_overrides[__import__("app.dependencies", fromlist=["require_api_key"]).require_api_key] = _stub_admin["admin"]
+    try:
+        resp = client.get("/v1/admin/corpus/collections?folder_breakdown=false")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200, resp.text
+    cols = {c["project_id"]: c for c in resp.json()["collections"]}
+
+    assert "projects_folder" in cols
+    assert cols["projects_folder"]["documents"] == 7
+    assert cols["projects_folder"]["chunks"] == 21
+
+    # Alias must mirror the source counts, not report zero chunks.
+    assert "dar_al_arkan_master" in cols
+    assert cols["dar_al_arkan_master"]["documents"] == 7
+    assert cols["dar_al_arkan_master"]["chunks"] == 21
+    assert cols["dar_al_arkan_master"].get("source_project_id") == "projects_folder"
+    assert cols["dar_al_arkan_master"].get("is_master_corpus_alias") is True
