@@ -2894,10 +2894,10 @@ class Agent:
         # reject the request). Single chokepoint, covers all callers.
         messages = _sanitize_messages_for_provider(messages)
         if "moonshot-v1" in model:
-            # Diagnostic minimal payload for Moonshot v1 models. K2.6 reasoning
-            # models accept the full tool-calling payload, but v1 tokenizers have
-            # been observed to fail on the same shape. Strip to the bare request
-            # to confirm v1 connectivity, then re-add features incrementally.
+            # Moonshot v1 models fail to tokenize the full K2-style message
+            # history (tool_calls arrays, tool role, etc.). Send only the last
+            # user turn plus tools; this matches the direct-API shape that v1
+            # has been verified to accept.
             payload = {
                 "model": model,
                 "messages": [
@@ -2907,7 +2907,7 @@ class Agent:
                 "max_tokens": 2048,
                 "stream": False,
             }
-            tools: List[Dict[str, Any]] = []
+            tools = self.tool_definitions(project_id=project_id)
         else:
             payload = {
                 "model": model,
