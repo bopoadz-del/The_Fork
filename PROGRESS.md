@@ -140,3 +140,27 @@ first. Update on every task state change.
   (`has_activities_and_durations`, `has_checklist_items`). Two relaxations
   REVERTED because the failing outputs were thin/malformed (`has_period_buckets`,
   `milestones_have_dates`). Branch force-pushed; CI restarted.
+
+## 2026-07-07 T0 attempt — restored prod baseline
+
+- Set Render env vars: `LLM_PROVIDER=groq`, `RAG_GK_LEXICAL_FOLD=0`, `RAG_GENERAL_KNOWLEDGE_PROJECTS=training_material`.
+- Triggered deploy `dep-d967mve7r5hc73fufta0` → status `live` at 2026-07-07T04:08:19Z.
+- Verified `curated_kb` project exists but has 0 documents; keeping `training_material` as the declared GK identity and will document in DECISIONS.md.
+- Smoke --runs 3 FAIL: all runs return 0 chars in <1.5s, model=?.
+- Root cause confirmed via fork_cli: server error `"No GROQ_API_KEY configured."`.
+- T0 blocked pending Groq credential.
+
+## 2026-07-07 T0 provider comparison (Scout vs Kimi)
+
+After pinning `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`:
+- Scout smoke: intermittent FAIL. ~1/3 runs return 120 chars:
+  "I hit an internal search formatting issue before I could produce a grounded answer."
+  This is the `_TOOL_FORMAT_FALLBACK` guardrail firing — the model emits raw internal
+  tool/search arguments instead of a user-facing answer. Ollama fallback does NOT hit this.
+- Scout served runs that succeed: ~6-9s, 2.6-11k chars.
+
+Switched to `LLM_PROVIDER=kimi` (K2.6):
+- Kimi smoke: PASS 3/3, all tool=Y, 70-90s first token, 8.5-10.8k chars.
+- No "internal search formatting issue" observed.
+
+Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on pilot default.

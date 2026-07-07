@@ -802,6 +802,135 @@ def admin_corpus_bulk_insert(
     return {"status": "ok", "counts": counts}
 
 
+@router.post("/v1/admin/corpus/reconcile")
+def admin_corpus_reconcile(
+    execute: bool = Query(
+        False,
+        description="When true, repair mismatched chunk project_ids; "
+                    "otherwise return a read-only report."
+    ),
+    sample_limit: int = Query(
+        20, ge=0, le=1000,
+        description="Maximum individual mismatches to return in the report."
+    ),
+    auth: dict = Depends(require_api_key),
+):
+    """Detect (and optionally repair) chunks stored under the wrong project_id.
+
+    The drive_archive migration wrote chunks via ``/v1/admin/corpus/bulk-insert``
+    using a per-document destination project_id. If the manifest mapped a
+    document to project A but the chunk rows were stamped with project B,
+    direct search on project A returns 0 results while project B returns chunks
+    whose doc_id belongs to project A. This endpoint makes that mismatch
+    visible and corrects it by aligning ``chunks.project_id`` with
+    ``documents.project_id``.
+
+    Always runs as a dry-run unless ``execute=true`` is passed, so operators
+    can review the report before mutating the corpus. No chunks are deleted:
+    only the ``project_id`` column is updated.
+    """
+    _require_admin(auth)
+
+    from sqlalchemy import text
+    from app.core.db import SessionLocal
+
+    mismatches: List[Dict[str, Any]] = []
+    dangling: List[Dict[str, Any]] = []
+    summary: Dict[str, Dict[str, int]] = {}
+
+    with SessionLocal() as session:
+        # 1) Chunks whose project_id disagrees with their parent document.
+        mismatch_rows = session.execute(
+            text(
+                """
+                SELECT c.chunk_id, c.doc_id,
+                       c.project_id AS current_project_id,
+                       d.project_id AS correct_project_id
+                FROM chunks c
+                JOIN documents d ON c.doc_id = d.id
+                WHERE c.project_id != d.project_id
+                ORDER BY c.project_id, d.project_id, c.doc_id
+                """
+            )
+        ).all()
+
+        for row in mismatch_rows:
+            cur = row.current_project_id
+            corr = row.correct_project_id
+            summary.setdefault(cur, {"chunks": 0, "mismatched_to": {}})
+            summary.setdefault(corr, {"chunks": 0, "mismatched_from": {}})
+            summary[cur]["mismatched_to"][corr] = (
+                summary[cur]["mismatched_to"].get(corr, 0) + 1
+            )
+            summary[corr]["mismatched_from"][cur] = (
+                summary[corr]["mismatched_from"].get(cur, 0) + 1
+            )
+            if len(mismatches) < sample_limit:
+                mismatches.append({
+                    "chunk_id": row.chunk_id,
+                    "doc_id": row.doc_id,
+                    "current_project_id": cur,
+                    "correct_project_id": corr,
+                })
+
+        # 2) Chunks whose doc_id has no parent document at all.
+        dangling_rows = session.execute(
+            text(
+                """
+                SELECT c.chunk_id, c.project_id, c.doc_id
+                FROM chunks c
+                LEFT JOIN documents d ON c.doc_id = d.id
+                WHERE d.id IS NULL
+                ORDER BY c.project_id, c.doc_id
+                """
+            )
+        ).all()
+        for row in dangling_rows:
+            if len(dangling) < sample_limit:
+                dangling.append({
+                    "chunk_id": row.chunk_id,
+                    "project_id": row.project_id,
+                    "doc_id": row.doc_id,
+                })
+
+        repaired = 0
+        if execute and mismatch_rows:
+            # Align chunks.project_id with documents.project_id. This is a
+            # single bulk update; unique-constraint collisions would indicate
+            # duplicate chunks and will raise so the operator can inspect.
+            result = session.execute(
+                text(
+                    """
+                    UPDATE chunks
+                    SET project_id = (
+                        SELECT project_id FROM documents WHERE id = chunks.doc_id
+                    )
+                    WHERE doc_id IN (
+                        SELECT doc_id FROM chunks c2
+                        JOIN documents d2 ON c2.doc_id = d2.id
+                        WHERE c2.project_id != d2.project_id
+                    )
+                    AND project_id != (
+                        SELECT project_id FROM documents WHERE id = chunks.doc_id
+                    )
+                    """
+                )
+            )
+            session.commit()
+            repaired = result.rowcount or 0
+
+    return {
+        "dry_run": not execute,
+        "execute": execute,
+        "mismatches_sample": mismatches,
+        "mismatches_total": len(mismatch_rows),
+        "dangling_sample": dangling,
+        "dangling_total": len(dangling_rows),
+        "repaired": repaired,
+        "summary": summary,
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # PR A — admin-approved projects from Drive
 #

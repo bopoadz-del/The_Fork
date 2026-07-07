@@ -40,8 +40,10 @@ env/
 *.swp
 *.swo
 
-# Environment variables
+# Environment variables (master copies live in the password-manager vault)
 .env
+.env.local
+.env.*.local
 
 # pytest
 .pytest_cache/

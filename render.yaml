@@ -36,14 +36,12 @@ services:
         value: dar_al_arkan_master
       - key: MASTER_CORPUS_SOURCE_PROJECT_ID
         value: projects_folder
-      # GK = the curated docs/knowledge/*.md notes ONLY (seeded into this clean
-      # project on boot). Was `training_material`, which had also been loaded with
-      # ~241 raw project templates/contracts/NDAs — those acted as lexical decoys
-      # and buried the curated KB (e.g. a FIDIC question retrieved Maintenance
-      # Works Contract templates and the model hallucinated). training_material is
-      # left intact (no deletion) but is no longer the general-knowledge source.
+      # GK = the migrated drive_archive training corpus (procedures, scanned
+      # references, CESMM/FIDIC notes). The drive_archive migration moved the
+      # curated GK content into project `training_material`; `curated_kb` now
+      # exists but is empty. Keep this in sync with DECISIONS.md T3.
       - key: RAG_GENERAL_KNOWLEDGE_PROJECTS
-        value: curated_kb
+        value: training_material
       # Phase 1 pilot: route the schedule workflow through the orchestrator's
       # predefined reasoning. Non-breaking (only intercepts high-confidence
       # generate_wbs intents); remove to revert to the tool-agent path.
