@@ -12,7 +12,9 @@ first. Update on every task state change.
 - Deployed to Render prod (`srv-d8hdc6ek1jcs739rq5sg`) with
   `OLLAMA_URL=https://ollama.com/api/chat` and `OLLAMA_MODEL=glm-5.2:cloud`.
 - Smoke gate: `smoke --runs 3` PASS (3/3, tool-backed, model=glm-5.2:cloud).
-- `smoke --runs 10` in progress (background task).
+- `smoke --runs 10` first attempt: 3/10 PASS, then 7 transient failures
+  (timeouts/empty responses). A fresh single run immediately after passed
+  (39.6s, 8.9k chars). Re-run in progress to confirm stability.
 - DECISIONS.md updated: Ollama native is current primary; Groq/Scout and
   OpenAI gpt-4o-mini are parked pending gates.
 

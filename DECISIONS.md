@@ -37,7 +37,10 @@ OpenAI support is added but not yet tested.
 
 - `smoke --runs 10` against prod must be **10/10 PASS**, zero
   `_TOOL_FORMAT_FALLBACK`, and model reported as `glm-5.2:cloud` (no silent
-  fallback). A 10-run test is in progress.
+  fallback).
+- First 10-run attempt: 3/10 PASS, then 7 transient failures. A fresh single
+  run passed immediately after. The gate is provisional until a clean 10/10
+  re-run completes.
 
 ### Parked items
 
