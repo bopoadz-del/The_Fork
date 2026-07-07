@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.main import app
 from app.core.db import SessionLocal, engine
@@ -109,12 +110,36 @@ def _seed_misplaced_chunks():
             doc_id="doc_b", chunk_index=0, text="content",
             embedding=vec, created_at=now,
         ))
-        # A dangling chunk with no parent document.
-        session.add(RagChunk(
-            chunk_id="dangling_1", project_id="reconcile_a",
-            doc_id="doc_missing", chunk_index=0, text="content",
-            embedding=vec, created_at=now,
-        ))
+        # A dangling chunk with no parent document. On PostgreSQL the
+        # chunks.doc_id FK is enforced, so we bypass it the same way the
+        # drive-archive bulk import did: session_replication_role=replica
+        # disables FK checks for this insert only.
+        if session.bind.dialect.name == "postgresql":
+            session.execute(text("SET session_replication_role = 'replica'"))
+            session.execute(
+                text("""
+                INSERT INTO chunks (chunk_id, project_id, doc_id, chunk_index,
+                                    text, embedding, created_at)
+                VALUES (:chunk_id, :project_id, :doc_id, :chunk_index,
+                        :text, :embedding, :created_at)
+                """),
+                {
+                    "chunk_id": "dangling_1",
+                    "project_id": "reconcile_a",
+                    "doc_id": "doc_missing",
+                    "chunk_index": 0,
+                    "text": "content",
+                    "embedding": vec.tolist(),
+                    "created_at": now,
+                },
+            )
+            session.execute(text("SET session_replication_role = 'origin'"))
+        else:
+            session.add(RagChunk(
+                chunk_id="dangling_1", project_id="reconcile_a",
+                doc_id="doc_missing", chunk_index=0, text="content",
+                embedding=vec, created_at=now,
+            ))
         session.commit()
 
 
