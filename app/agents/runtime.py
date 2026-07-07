@@ -2905,7 +2905,7 @@ class Agent:
             # characters (the original user prompt + a little context) for the
             # diagnostic test.
             raw_content = messages[-1].get("content", "")
-            content = raw_content[:1500] if len(raw_content) > 1500 else raw_content
+            content = raw_content[:500] if len(raw_content) > 500 else raw_content
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": content}],
