@@ -1246,13 +1246,15 @@ def _llm_config() -> Dict[str, Any]:
             provider = "deepseek"
     if provider == "ollama":
         url = os.getenv("OLLAMA_URL", OLLAMA_DEFAULT_URL).rstrip("/")
-        # Accept both the bare host (http://host:11434) and the full
-        # OAI-shape path. Append the canonical suffix when missing.
-        if not url.endswith("/v1/chat/completions"):
-            if url.endswith("/v1"):
-                url = url + "/chat/completions"
-            elif "/v1/" not in url:
-                url = url + "/v1/chat/completions"
+        # Native Ollama protocol (/api/chat) is explicit — leave it alone.
+        # Otherwise accept both the bare host (http://host:11434) and the
+        # full OAI-shape path; append the canonical suffix when missing.
+        if not url.endswith("/api/chat"):
+            if not url.endswith("/v1/chat/completions"):
+                if url.endswith("/v1"):
+                    url = url + "/chat/completions"
+                elif "/v1/" not in url:
+                    url = url + "/v1/chat/completions"
         return {
             "provider": "ollama",
             "url": url,
@@ -1340,6 +1342,71 @@ def _provider_temperature(cfg: Dict[str, Any], default: float) -> float:
     """
     fixed = cfg.get("fixed_temperature")
     return default if fixed is None else float(fixed)
+
+
+def _is_native_ollama(cfg: Dict[str, Any]) -> bool:
+    """True when the configured Ollama endpoint uses the native /api/chat
+    protocol rather than the OpenAI-compatible /v1/chat/completions path."""
+    return cfg.get("provider") == "ollama" and str(cfg.get("url", "")).endswith("/api/chat")
+
+
+def _native_ollama_payload(
+    model: str,
+    messages: List[Dict[str, Any]],
+    temperature: float,
+    max_tokens: int,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    stream: bool = False,
+) -> Dict[str, Any]:
+    """Build an Ollama-native /api/chat payload from our OpenAI-shaped inputs.
+
+    Ollama's native protocol expects ``options.temperature`` and
+    ``options.num_predict`` (token limit), and ``tools`` in OpenAI format.
+    ``tool_choice`` is not supported natively, so the caller omits it.
+    """
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+    if tools:
+        payload["tools"] = tools
+    return payload
+
+
+def _ollama_message_to_openai(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert an Ollama-native ``message`` dict into an OpenAI-style message.
+
+    Native tool_calls carry ``function.arguments`` as a parsed dict; we
+    serialise it back to JSON so the rest of the runtime stays unchanged.
+    """
+    out: Dict[str, Any] = {
+        "role": message.get("role", "assistant"),
+        "content": message.get("content", ""),
+    }
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        clean: List[Dict[str, Any]] = []
+        for i, tc in enumerate(tool_calls):
+            fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+            name = fn.get("name") or ""
+            args = fn.get("arguments")
+            if isinstance(args, dict):
+                args = json.dumps(args)
+            elif not isinstance(args, str):
+                args = "{}"
+            clean.append({
+                "id": tc.get("id") or f"ollama_{i+1}",
+                "type": "function",
+                "function": {"name": name, "arguments": args},
+            })
+        if clean:
+            out["tool_calls"] = clean
+    return out
 
 
 # Outbound message sanitiser — the single chokepoint that protects every
@@ -3068,6 +3135,49 @@ class Agent:
             if tools and with_tools:
                 payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
+                if _is_native_ollama(a_cfg):
+                    # Native Ollama path: different payload shape, no tool_choice.
+                    native_payload = _native_ollama_payload(
+                        model=a_model,
+                        messages=messages,
+                        temperature=payload["temperature"],
+                        max_tokens=self.max_tokens,
+                        tools=tools if (tools and with_tools) else None,
+                        stream=False,
+                    )
+                    async with httpx.AsyncClient(timeout=120.0) as client:
+                        r = await client.post(
+                            a_cfg["url"],
+                            json=native_payload,
+                            headers=(
+                                {"Authorization": f"Bearer {a_key}", "Content-Type": "application/json"}
+                                if a_key
+                                else {"Content-Type": "application/json"}
+                            ),
+                        )
+                    if r.status_code >= 400:
+                        body = r.text
+                        last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
+                        if _is_retryable(r.status_code) and not is_last:
+                            _LOG.warning("llm: %s HTTP %s — falling back to %s", a_cfg["provider"], r.status_code, attempts[attempt_idx + 1][0]["provider"])
+                            continue
+                        _LOG.warning("llm: %s HTTP %s — no fallback taken: %s", a_cfg["provider"], r.status_code, body[:200])
+                        return last_error
+                    data = r.json()
+                    msg = _ollama_message_to_openai(data.get("message") or {})
+                    try:
+                        from app.core import usage_tracker
+                        usage_tracker.record(
+                            user_id=user_id,
+                            agent_name=self.name,
+                            provider=a_cfg.get("provider", ""),
+                            model=data.get("model") or a_model,
+                            usage=None,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {"status": "success", "choice": {"message": msg}, "raw": data}
+
                 async with httpx.AsyncClient(timeout=120.0) as client:
                     r = await client.post(
                         a_cfg["url"],
@@ -3224,9 +3334,10 @@ class Agent:
         it has begun.
         """
         cfg = _llm_config()
-        if cfg["provider"] not in ("groq", "openai"):
-            # Only Groq and OpenAI streaming are verified; anything else falls back.
-            raise _SynthStreamError("streaming synthesis only verified for groq/openai")
+        native_ollama = _is_native_ollama(cfg)
+        if cfg["provider"] not in ("groq", "openai") and not native_ollama:
+            # Only Groq, OpenAI, and native Ollama streaming are verified.
+            raise _SynthStreamError("streaming synthesis only verified for groq/openai/native-ollama")
         # Soft daily cap: mirror _call_llm. Over cap -> fall back so the
         # non-streaming path emits the structured cap error the UI expects.
         if user_id:
@@ -3246,18 +3357,7 @@ class Agent:
         if cfg["provider"] != "deepseek" and model.startswith("deepseek-"):
             model = cfg["default_model"]
         messages = _sanitize_messages_for_provider(messages)
-        payload = {
-            "model": model,
-            "messages": messages,
-            # Same per-provider shaping as _call_llm (single provider here, no
-            # fallback loop): kimi -> 1, everyone else -> the agent's own.
-            "temperature": _provider_temperature(cfg, self.temperature),
-            "max_tokens": self.max_tokens,
-            "stream": True,
-            # Ask the provider to append a final usage chunk so cost tracking
-            # still works on the streamed path (Groq honours stream_options).
-            "stream_options": {"include_usage": True},
-        }
+        temperature = _provider_temperature(cfg, self.temperature)
         headers = (
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             if api_key
@@ -3266,31 +3366,69 @@ class Agent:
         usage: Optional[Dict[str, Any]] = None
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=120.0)) as client:
-                async with client.stream(
-                    "POST", cfg["url"], json=payload, headers=headers,
-                ) as r:
-                    if r.status_code != 200:
-                        await r.aread()
-                        raise _SynthStreamError(
-                            f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
-                        )
-                    async for line in r.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data = line[5:].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            evt = json.loads(data)
-                        except json.JSONDecodeError:
-                            continue
-                        choices = evt.get("choices") or []
-                        if choices:
-                            delta = (choices[0].get("delta") or {}).get("content")
+                if native_ollama:
+                    payload = _native_ollama_payload(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=self.max_tokens,
+                        stream=True,
+                    )
+                    async with client.stream(
+                        "POST", cfg["url"], json=payload, headers=headers,
+                    ) as r:
+                        if r.status_code != 200:
+                            await r.aread()
+                            raise _SynthStreamError(
+                                f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
+                            )
+                        async for line in r.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                evt = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            msg = evt.get("message") or {}
+                            delta = msg.get("content")
                             if delta:
                                 yield delta
-                        if evt.get("usage"):
-                            usage = evt["usage"]
+                            if evt.get("done"):
+                                break
+                else:
+                    payload = {
+                        "model": model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": self.max_tokens,
+                        "stream": True,
+                        "stream_options": {"include_usage": True},
+                    }
+                    async with client.stream(
+                        "POST", cfg["url"], json=payload, headers=headers,
+                    ) as r:
+                        if r.status_code != 200:
+                            await r.aread()
+                            raise _SynthStreamError(
+                                f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
+                            )
+                        async for line in r.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                evt = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+                            choices = evt.get("choices") or []
+                            if choices:
+                                delta = (choices[0].get("delta") or {}).get("content")
+                                if delta:
+                                    yield delta
+                            if evt.get("usage"):
+                                usage = evt["usage"]
         except _SynthStreamError:
             raise
         except Exception as e:  # noqa: BLE001 — network/transport/parse
