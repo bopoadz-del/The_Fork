@@ -229,7 +229,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   Must pass before provider work is considered closed.
   → SUPERSEDED by 2026-07-08 final resolution above: OpenAI primary.
 
-## 2026-07-08 — T3 corpus reconciliation (in flight)
+## 2026-07-08 — T3 corpus reconciliation DONE
 
 - Ran `scripts/reconcile_migration.py` against prod (branch
   `feat/t3-corpus-reconciliation`). Before-fix table:
@@ -251,6 +251,15 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 - Training-material direct `/v1/rag/search` verified working (project_id
   `training_material` returns curated GK chunks). `curated_kb` is empty;
   `RAG_GENERAL_KNOWLEDGE_PROJECTS` identity is unified on `training_material`.
-- PR #162 opened for the fix + contract test. Waiting on CI green before merge
-  and prod deploy; reconciliation script will be re-run after deploy to confirm
-  the table is all-green.
+- PR #162 merged, deployed to prod at commit `17462d8`.
+- After-fix reconciliation table (all green):
+
+  | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
+  |---|---:|---:|---:|---:|---|
+  | dar_al_arkan_master | 2712 | 110375 | 110375 | 110375 | ok |
+  | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
+  | training_material | 246 | 10982 | 10982 | 10982 | ok |
+  | unclassified | 1 | 4 | 4 | 4 | ok |
+
+- Post-deploy smoke: `SMOKE_RUNS=3 bash scripts/smoke.sh` → **3/3 PASS**, all
+  tool-backed, model = `gpt-4o-mini-2024-07-18`.
