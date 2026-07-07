@@ -1,0 +1,26 @@
+[migrate] starting
+[migrate] loading manifest...
+Loaded manifest: 2954 documents
+Projects to create: ['training_material', 'projects_folder', 'unclassified']
+Documents to create: 2954
+
+[1/2] Inserting projects + documents...
+  done in 4.6s: {'projects': 0, 'documents': 0, 'chunks': 0, 'projects_seen': 3, 'documents_seen': 2954, 'chunks_seen': 0}
+
+[2/2] Inserting chunks in batches of 2000...
+  batch 1: +0 chunks (total inserted 0, seen 2000)
+  batch 5: +0 chunks (total inserted 0, seen 10000)
+  batch 10: +2000 chunks (total inserted 10000, seen 20000)
+  batch 15: +2000 chunks (total inserted 20000, seen 30000)
+  batch 20: +2000 chunks (total inserted 30000, seen 40000)
+  batch 25: +2000 chunks (total inserted 40000, seen 50000)
+  batch 30: +2000 chunks (total inserted 50000, seen 60000)
+  batch 35: +2000 chunks (total inserted 60000, seen 70000)
+  batch 40: +2000 chunks (total inserted 70000, seen 80000)
+  batch 45: +2000 chunks (total inserted 80000, seen 90000)
+  batch 50: +2000 chunks (total inserted 90000, seen 100000)
+  batch 55: +2000 chunks (total inserted 100000, seen 110000)
+  batch 60: +2000 chunks (total inserted 110000, seen 120000)
+
+Migration complete in 1810.7s
+Total chunks inserted: 111286
