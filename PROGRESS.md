@@ -184,6 +184,19 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 - Prod branch restored to `main` at d5e8692; service branch pinned back to main.
 - Current env: `LLM_PROVIDER=kimi`, `KIMI_MODEL=kimi-k2.6`, `CHAT_STREAM_TIMEOUT_SECONDS=120`.
 
-**Blocker:** No provider currently gives a reliable 3/3 smoke. Need either (a) T3
-reconciliation + Scout re-test, (b) tool-filtering implementation for moonshot-v1,
-or (c) operator decision to temporarily raise timeout / change provider ladder.
+## 2026-07-07 provider decision — FINAL
+
+- **Moonshot v1-32k ruled out.** Deployed `feat/moonshot-v1-compat` (stripped
+  payload: no tools, last user turn only). Smoke 9/9 FAIL: ~580 chars, no tool
+  calls, 7–10s first token. v1 cannot run project-assistant deliverables.
+- **Scout raw-args recovery fix landed** in `feat/scout-tool-recovery`. Smoke 3/3
+  PASS on the branch deploy, but runs frequently fell back to Ollama `glm-5.2:cloud`.
+  Root cause under investigation; recovery fix eliminates the user-facing
+  `_TOOL_FORMAT_FALLBACK` message by turning leaked raw args into proper tool_calls.
+- **Provider ladder frozen for pilot** (see DECISIONS.md):
+  - Primary: Groq `meta-llama/llama-4-scout-17b-16e-instruct`.
+  - Fallback: Ollama `glm-5.2:cloud`.
+  - Kimi K2.6 / Moonshot v1 parked.
+- **Pending acceptance gate:** `smoke --runs 10` on prod main with
+  `LLM_PROVIDER=groq`, zero `_TOOL_FORMAT_FALLBACK`, zero Ollama fallbacks.
+  Must pass before provider work is considered closed.
