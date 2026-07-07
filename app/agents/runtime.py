@@ -1198,6 +1198,11 @@ GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 KIMI_API_URL = "https://api.moonshot.ai/v1/chat/completions"
 KIMI_DEFAULT_MODEL = "kimi-k2.6"
 
+# OpenAI native API — standard chat-completions endpoint. Tool-calling and
+# streaming are first-class; we keep the same payload shape as Groq/DeepSeek.
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+
 # Ollama exposes an OpenAI-compatible endpoint at /v1/chat/completions
 # (v0.1.31+). Self-hosted on the operator's PC or a VPS. No auth, no token
 # cost, no TPM rate limits — bounded by local hardware. Used when the
@@ -1211,9 +1216,10 @@ def _llm_config() -> Dict[str, Any]:
 
     Precedence:
       1. Explicit ``LLM_PROVIDER`` env var (``deepseek`` | ``groq`` |
-         ``ollama``) wins.
+         ``ollama`` | ``openai``) wins.
       2. Otherwise: if ``GROQ_API_KEY`` is set, use Groq (free tier).
-      3. Otherwise: DeepSeek (the historical default).
+      3. Otherwise: if ``OPENAI_API_KEY`` is set, use OpenAI.
+      4. Otherwise: DeepSeek (the historical default).
 
     Per-provider override envs let the operator pin a specific model
     without code changes:
@@ -1232,7 +1238,12 @@ def _llm_config() -> Dict[str, Any]:
     """
     provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
     if not provider:
-        provider = "groq" if os.getenv("GROQ_API_KEY") else "deepseek"
+        if os.getenv("GROQ_API_KEY"):
+            provider = "groq"
+        elif os.getenv("OPENAI_API_KEY"):
+            provider = "openai"
+        else:
+            provider = "deepseek"
     if provider == "ollama":
         url = os.getenv("OLLAMA_URL", OLLAMA_DEFAULT_URL).rstrip("/")
         # Accept both the bare host (http://host:11434) and the full
@@ -1267,6 +1278,13 @@ def _llm_config() -> Dict[str, Any]:
             # (see _provider_temperature) rather than hardcoding 1 globally — a
             # global constant would just become the next provider's 400.
             "fixed_temperature": 1,
+        }
+    if provider == "openai":
+        return {
+            "provider": "openai",
+            "url": OPENAI_API_URL,
+            "env_key": "OPENAI_API_KEY",
+            "default_model": os.getenv("OPENAI_MODEL", OPENAI_DEFAULT_MODEL),
         }
     return {
         "provider": "deepseek",
@@ -3206,9 +3224,9 @@ class Agent:
         it has begun.
         """
         cfg = _llm_config()
-        if cfg["provider"] != "groq":
-            # Only Groq streaming is verified; anything else falls back.
-            raise _SynthStreamError("streaming synthesis only verified for groq")
+        if cfg["provider"] not in ("groq", "openai"):
+            # Only Groq and OpenAI streaming are verified; anything else falls back.
+            raise _SynthStreamError("streaming synthesis only verified for groq/openai")
         # Soft daily cap: mirror _call_llm. Over cap -> fall back so the
         # non-streaming path emits the structured cap error the UI expects.
         if user_id:
