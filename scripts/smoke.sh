@@ -23,13 +23,35 @@
 #   FORK_API_KEY="..." ./scripts/smoke.sh                 # routine: 3 runs
 #   SMOKE_RUNS=10 FORK_API_KEY="..." ./scripts/smoke.sh   # release: 10 runs
 #   ./scripts/smoke.sh dar_al_arkan_master
+#
+# Long release runs may exceed a shell/CI timeout. Use --background <file> to
+# detach and write results to a file; the caller polls the file for completion.
 set -u
 
 PROJECT="${1:-${FORK_PROJECT:-dar_al_arkan_master}}"
+BACKGROUND_FILE=""
+if [ "${1:-}" = "--background" ]; then
+  BACKGROUND_FILE="${2:-}"
+  if [ -z "$BACKGROUND_FILE" ]; then
+    echo "Usage: ./scripts/smoke.sh --background <output-file> [project]" >&2
+    exit 2
+  fi
+  shift 2
+  PROJECT="${1:-${FORK_PROJECT:-dar_al_arkan_master}}"
+fi
+
 RUNS="${SMOKE_RUNS:-3}"                       # routine default; release uses 10
 MIN_CHARS="${MIN_ANSWER_CHARS:-1500}"         # a degenerate short answer FAILs
 MESSAGE="${SMOKE_MESSAGE:-generate a commissioning checklist for the MV substation}"
 export PYTHONIOENCODING=utf-8
+
+# --- background mode: detach, run, write to file, print PID ---
+if [ -n "$BACKGROUND_FILE" ]; then
+  nohup bash "$0" "$PROJECT" > "$BACKGROUND_FILE" 2>&1 &
+  pid=$!
+  echo "smoke backgrounded (PID $pid) -> $BACKGROUND_FILE"
+  exit 0
+fi
 
 # --- credential guard: env only, never hardcoded ---
 if [ -z "${FORK_API_KEY:-}" ] \
