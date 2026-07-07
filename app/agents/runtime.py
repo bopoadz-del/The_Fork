@@ -3077,6 +3077,12 @@ class Agent:
                 # only — no retry logic added here.
                 _LOG.warning("llm: %s HTTP %s — no fallback taken, turn errors: %s",
                              a_cfg["provider"], r.status_code, body[:200])
+                if "moonshot-v1" in a_model:
+                    return {
+                        "status": "error",
+                        "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:500]}",
+                        "diagnostic_payload": payload,
+                    }
                 return last_error
 
             # ── success on this provider ──────────────────────────────────
