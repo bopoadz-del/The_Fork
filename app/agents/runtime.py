@@ -2993,6 +2993,9 @@ class Agent:
             if tools and with_tools:
                 payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
+                if "moonshot-v1" in a_model:
+                    import logging as _v1_log
+                    _v1_log.warning("moonshot-v1 payload: %s", json.dumps(payload, default=str)[:2000])
                 async with httpx.AsyncClient(timeout=120.0) as client:
                     r = await client.post(
                         a_cfg["url"],
@@ -3003,6 +3006,9 @@ class Agent:
                             else {"Content-Type": "application/json"}
                         ),
                     )
+                if "moonshot-v1" in a_model and r.status_code >= 400:
+                    import logging as _v1_log
+                    _v1_log.warning("moonshot-v1 response %s: %s", r.status_code, r.text[:500])
             except httpx.TimeoutException:
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call timed out (120s)."}
                 if not is_last:
