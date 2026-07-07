@@ -1198,6 +1198,11 @@ GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 KIMI_API_URL = "https://api.moonshot.ai/v1/chat/completions"
 KIMI_DEFAULT_MODEL = "kimi-k2.6"
 
+# OpenAI native API — standard chat-completions endpoint. Tool-calling and
+# streaming are first-class; we keep the same payload shape as Groq/DeepSeek.
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+
 # Ollama exposes an OpenAI-compatible endpoint at /v1/chat/completions
 # (v0.1.31+). Self-hosted on the operator's PC or a VPS. No auth, no token
 # cost, no TPM rate limits — bounded by local hardware. Used when the
@@ -1211,9 +1216,10 @@ def _llm_config() -> Dict[str, Any]:
 
     Precedence:
       1. Explicit ``LLM_PROVIDER`` env var (``deepseek`` | ``groq`` |
-         ``ollama``) wins.
+         ``ollama`` | ``openai``) wins.
       2. Otherwise: if ``GROQ_API_KEY`` is set, use Groq (free tier).
-      3. Otherwise: DeepSeek (the historical default).
+      3. Otherwise: if ``OPENAI_API_KEY`` is set, use OpenAI.
+      4. Otherwise: DeepSeek (the historical default).
 
     Per-provider override envs let the operator pin a specific model
     without code changes:
@@ -1232,16 +1238,23 @@ def _llm_config() -> Dict[str, Any]:
     """
     provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
     if not provider:
-        provider = "groq" if os.getenv("GROQ_API_KEY") else "deepseek"
+        if os.getenv("GROQ_API_KEY"):
+            provider = "groq"
+        elif os.getenv("OPENAI_API_KEY"):
+            provider = "openai"
+        else:
+            provider = "deepseek"
     if provider == "ollama":
         url = os.getenv("OLLAMA_URL", OLLAMA_DEFAULT_URL).rstrip("/")
-        # Accept both the bare host (http://host:11434) and the full
-        # OAI-shape path. Append the canonical suffix when missing.
-        if not url.endswith("/v1/chat/completions"):
-            if url.endswith("/v1"):
-                url = url + "/chat/completions"
-            elif "/v1/" not in url:
-                url = url + "/v1/chat/completions"
+        # Native Ollama protocol (/api/chat) is explicit — leave it alone.
+        # Otherwise accept both the bare host (http://host:11434) and the
+        # full OAI-shape path; append the canonical suffix when missing.
+        if not url.endswith("/api/chat"):
+            if not url.endswith("/v1/chat/completions"):
+                if url.endswith("/v1"):
+                    url = url + "/chat/completions"
+                elif "/v1/" not in url:
+                    url = url + "/v1/chat/completions"
         return {
             "provider": "ollama",
             "url": url,
@@ -1267,6 +1280,13 @@ def _llm_config() -> Dict[str, Any]:
             # (see _provider_temperature) rather than hardcoding 1 globally — a
             # global constant would just become the next provider's 400.
             "fixed_temperature": 1,
+        }
+    if provider == "openai":
+        return {
+            "provider": "openai",
+            "url": OPENAI_API_URL,
+            "env_key": "OPENAI_API_KEY",
+            "default_model": os.getenv("OPENAI_MODEL", OPENAI_DEFAULT_MODEL),
         }
     return {
         "provider": "deepseek",
@@ -1322,6 +1342,126 @@ def _provider_temperature(cfg: Dict[str, Any], default: float) -> float:
     """
     fixed = cfg.get("fixed_temperature")
     return default if fixed is None else float(fixed)
+
+
+def _is_native_ollama(cfg: Dict[str, Any]) -> bool:
+    """True when the configured Ollama endpoint uses the native /api/chat
+    protocol rather than the OpenAI-compatible /v1/chat/completions path."""
+    return cfg.get("provider") == "ollama" and str(cfg.get("url", "")).endswith("/api/chat")
+
+
+def _sanitize_messages_for_ollama_native(
+    messages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Adapt OpenAI-shaped messages for Ollama's native /api/chat protocol.
+
+    Native Ollama does not accept the ``tool`` role; tool responses must be
+    sent as ``user`` messages. It also expects ``function.arguments`` inside
+    assistant ``tool_calls`` to be a parsed dict, not a JSON string.
+    """
+    out: List[Dict[str, Any]] = []
+    for m in messages:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        role = m.get("role")
+        if role == "tool":
+            out.append({
+                "role": "user",
+                "content": f"Tool result: {m.get('content', '')}",
+            })
+            continue
+        if role == "assistant":
+            cm = {"role": "assistant", "content": m.get("content", "")}
+            tcs = m.get("tool_calls")
+            if isinstance(tcs, list):
+                clean_tcs: List[Dict[str, Any]] = []
+                for tc in tcs:
+                    if not isinstance(tc, dict):
+                        clean_tcs.append(tc)
+                        continue
+                    fn = tc.get("function") or {}
+                    raw_args = fn.get("arguments") or "{}"
+                    if isinstance(raw_args, str):
+                        try:
+                            args = json.loads(raw_args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    else:
+                        args = raw_args
+                    clean_tcs.append({
+                        "id": tc.get("id") or "",
+                        "type": tc.get("type") or "function",
+                        "function": {
+                            "name": fn.get("name") or "",
+                            "arguments": args,
+                        },
+                    })
+                if clean_tcs:
+                    cm["tool_calls"] = clean_tcs
+            out.append(cm)
+            continue
+        out.append(m)
+    return out
+
+
+def _native_ollama_payload(
+    model: str,
+    messages: List[Dict[str, Any]],
+    temperature: float,
+    max_tokens: int,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    stream: bool = False,
+) -> Dict[str, Any]:
+    """Build an Ollama-native /api/chat payload from our OpenAI-shaped inputs.
+
+    Ollama's native protocol expects ``options.temperature`` and
+    ``options.num_predict`` (token limit), and ``tools`` in OpenAI format.
+    ``tool_choice`` is not supported natively, so the caller omits it.
+    """
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+    if tools:
+        payload["tools"] = tools
+    return payload
+
+
+def _ollama_message_to_openai(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert an Ollama-native ``message`` dict into an OpenAI-style message.
+
+    Native tool_calls carry ``function.arguments`` as a parsed dict; we
+    serialise it back to JSON so the rest of the runtime stays unchanged.
+    """
+    out: Dict[str, Any] = {
+        "role": message.get("role", "assistant"),
+        "content": message.get("content", ""),
+    }
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        clean: List[Dict[str, Any]] = []
+        for i, tc in enumerate(tool_calls):
+            fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+            name = fn.get("name") or ""
+            args = fn.get("arguments")
+            if isinstance(args, dict):
+                args = json.dumps(args)
+            elif not isinstance(args, str):
+                args = "{}"
+            clean.append({
+                "id": tc.get("id") or f"ollama_{i+1}",
+                "type": "function",
+                "function": {"name": name, "arguments": args},
+            })
+        if clean:
+            out["tool_calls"] = clean
+    return out
 
 
 # Outbound message sanitiser — the single chokepoint that protects every
@@ -3050,6 +3190,51 @@ class Agent:
             if tools and with_tools:
                 payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
+                if _is_native_ollama(a_cfg):
+                    # Native Ollama path: different payload shape, no tool_choice,
+                    # and tool messages must be recast as user messages.
+                    native_messages = _sanitize_messages_for_ollama_native(messages)
+                    native_payload = _native_ollama_payload(
+                        model=a_model,
+                        messages=native_messages,
+                        temperature=payload["temperature"],
+                        max_tokens=self.max_tokens,
+                        tools=tools if (tools and with_tools) else None,
+                        stream=False,
+                    )
+                    async with httpx.AsyncClient(timeout=120.0) as client:
+                        r = await client.post(
+                            a_cfg["url"],
+                            json=native_payload,
+                            headers=(
+                                {"Authorization": f"Bearer {a_key}", "Content-Type": "application/json"}
+                                if a_key
+                                else {"Content-Type": "application/json"}
+                            ),
+                        )
+                    if r.status_code >= 400:
+                        body = r.text
+                        last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
+                        if _is_retryable(r.status_code) and not is_last:
+                            _LOG.warning("llm: %s HTTP %s — falling back to %s", a_cfg["provider"], r.status_code, attempts[attempt_idx + 1][0]["provider"])
+                            continue
+                        _LOG.warning("llm: %s HTTP %s — no fallback taken: %s", a_cfg["provider"], r.status_code, body[:200])
+                        return last_error
+                    data = r.json()
+                    msg = _ollama_message_to_openai(data.get("message") or {})
+                    try:
+                        from app.core import usage_tracker
+                        usage_tracker.record(
+                            user_id=user_id,
+                            agent_name=self.name,
+                            provider=a_cfg.get("provider", ""),
+                            model=data.get("model") or a_model,
+                            usage=None,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {"status": "success", "choice": {"message": msg}, "raw": data}
+
                 async with httpx.AsyncClient(timeout=120.0) as client:
                     r = await client.post(
                         a_cfg["url"],
@@ -3206,9 +3391,10 @@ class Agent:
         it has begun.
         """
         cfg = _llm_config()
-        if cfg["provider"] != "groq":
-            # Only Groq streaming is verified; anything else falls back.
-            raise _SynthStreamError("streaming synthesis only verified for groq")
+        native_ollama = _is_native_ollama(cfg)
+        if cfg["provider"] not in ("groq", "openai") and not native_ollama:
+            # Only Groq, OpenAI, and native Ollama streaming are verified.
+            raise _SynthStreamError("streaming synthesis only verified for groq/openai/native-ollama")
         # Soft daily cap: mirror _call_llm. Over cap -> fall back so the
         # non-streaming path emits the structured cap error the UI expects.
         if user_id:
@@ -3228,18 +3414,7 @@ class Agent:
         if cfg["provider"] != "deepseek" and model.startswith("deepseek-"):
             model = cfg["default_model"]
         messages = _sanitize_messages_for_provider(messages)
-        payload = {
-            "model": model,
-            "messages": messages,
-            # Same per-provider shaping as _call_llm (single provider here, no
-            # fallback loop): kimi -> 1, everyone else -> the agent's own.
-            "temperature": _provider_temperature(cfg, self.temperature),
-            "max_tokens": self.max_tokens,
-            "stream": True,
-            # Ask the provider to append a final usage chunk so cost tracking
-            # still works on the streamed path (Groq honours stream_options).
-            "stream_options": {"include_usage": True},
-        }
+        temperature = _provider_temperature(cfg, self.temperature)
         headers = (
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             if api_key
@@ -3248,31 +3423,69 @@ class Agent:
         usage: Optional[Dict[str, Any]] = None
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=120.0)) as client:
-                async with client.stream(
-                    "POST", cfg["url"], json=payload, headers=headers,
-                ) as r:
-                    if r.status_code != 200:
-                        await r.aread()
-                        raise _SynthStreamError(
-                            f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
-                        )
-                    async for line in r.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data = line[5:].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            evt = json.loads(data)
-                        except json.JSONDecodeError:
-                            continue
-                        choices = evt.get("choices") or []
-                        if choices:
-                            delta = (choices[0].get("delta") or {}).get("content")
+                if native_ollama:
+                    payload = _native_ollama_payload(
+                        model=model,
+                        messages=_sanitize_messages_for_ollama_native(messages),
+                        temperature=temperature,
+                        max_tokens=self.max_tokens,
+                        stream=True,
+                    )
+                    async with client.stream(
+                        "POST", cfg["url"], json=payload, headers=headers,
+                    ) as r:
+                        if r.status_code != 200:
+                            await r.aread()
+                            raise _SynthStreamError(
+                                f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
+                            )
+                        async for line in r.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                evt = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            msg = evt.get("message") or {}
+                            delta = msg.get("content")
                             if delta:
                                 yield delta
-                        if evt.get("usage"):
-                            usage = evt["usage"]
+                            if evt.get("done"):
+                                break
+                else:
+                    payload = {
+                        "model": model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": self.max_tokens,
+                        "stream": True,
+                        "stream_options": {"include_usage": True},
+                    }
+                    async with client.stream(
+                        "POST", cfg["url"], json=payload, headers=headers,
+                    ) as r:
+                        if r.status_code != 200:
+                            await r.aread()
+                            raise _SynthStreamError(
+                                f"{cfg['provider']} HTTP {r.status_code}: {r.text[:200]}"
+                            )
+                        async for line in r.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                evt = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+                            choices = evt.get("choices") or []
+                            if choices:
+                                delta = (choices[0].get("delta") or {}).get("content")
+                                if delta:
+                                    yield delta
+                            if evt.get("usage"):
+                                usage = evt["usage"]
         except _SynthStreamError:
             raise
         except Exception as e:  # noqa: BLE001 — network/transport/parse

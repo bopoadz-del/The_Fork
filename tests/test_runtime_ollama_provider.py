@@ -12,6 +12,7 @@ This lets the operator point the platform at their own Ollama instance
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
@@ -126,3 +127,217 @@ def test_groq_still_requires_api_key(monkeypatch):
 
     assert resp["status"] == "error"
     assert "GROQ_API_KEY" in resp["error"]
+
+
+# ── native /api/chat protocol support ──────────────────────────────────────────
+
+from app.agents.runtime import (
+    _is_native_ollama,
+    _native_ollama_payload,
+    _ollama_message_to_openai,
+    _sanitize_messages_for_ollama_native,
+)
+
+
+def test_ollama_native_url_preserved(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "https://ollama.com/api/chat")
+    cfg = _llm_config()
+    assert cfg["provider"] == "ollama"
+    assert cfg["url"] == "https://ollama.com/api/chat"
+    assert _is_native_ollama(cfg)
+
+
+def test_native_ollama_payload_shape():
+    payload = _native_ollama_payload(
+        model="glm-5.2:cloud",
+        messages=[{"role": "user", "content": "hi"}],
+        temperature=0.7,
+        max_tokens=2048,
+        tools=[{"type": "function", "function": {"name": "search_project_documents"}}],
+        stream=False,
+    )
+    assert payload["model"] == "glm-5.2:cloud"
+    assert payload["messages"] == [{"role": "user", "content": "hi"}]
+    assert payload["stream"] is False
+    assert payload["options"]["temperature"] == 0.7
+    assert payload["options"]["num_predict"] == 2048
+    assert payload["tools"][0]["function"]["name"] == "search_project_documents"
+
+
+def test_ollama_message_to_openai_with_tool_calls():
+    native = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "search_project_documents",
+                    "arguments": {"query": "contract value", "top_k": 5},
+                }
+            }
+        ],
+    }
+    openai_msg = _ollama_message_to_openai(native)
+    assert openai_msg["role"] == "assistant"
+    assert openai_msg["content"] == ""
+    assert len(openai_msg["tool_calls"]) == 1
+    assert openai_msg["tool_calls"][0]["function"]["name"] == "search_project_documents"
+    # arguments must be serialised to JSON string for the rest of the runtime.
+    args = json.loads(openai_msg["tool_calls"][0]["function"]["arguments"])
+    assert args["query"] == "contract value"
+
+
+def test_call_llm_uses_native_ollama_protocol(monkeypatch):
+    """When OLLAMA_URL ends in /api/chat, _call_llm must POST a native Ollama
+    payload (model/messages/stream/options/tools) and convert the native
+    response back into an OpenAI-shaped choice."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "https://ollama.com/api/chat")
+    monkeypatch.setenv("OLLAMA_API_KEY", "fake-token")
+
+    agent = _agent()
+    fake_client = MagicMock()
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "model": "glm-5.2:cloud",
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "search_project_documents",
+                        "arguments": {"query": "boq", "top_k": 5},
+                    }
+                }
+            ],
+        },
+        "done": True,
+    }
+    fake_client.post = AsyncMock(return_value=fake_response)
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=fake_client):
+        resp = _run(agent._call_llm([{"role": "user", "content": "find boq"}], api_key="fake-token"))
+
+    assert resp["status"] == "success"
+    fake_client.post.assert_awaited_once()
+    args, kwargs = fake_client.post.call_args
+    assert args[0] == "https://ollama.com/api/chat"
+    sent = kwargs["json"]
+    assert sent["stream"] is False
+    assert "options" in sent
+    assert sent["options"]["num_predict"] == agent.max_tokens
+    # tool_choice is not part of the native protocol.
+    assert "tool_choice" not in sent
+
+    msg = resp["choice"]["message"]
+    assert msg["tool_calls"][0]["function"]["name"] == "search_project_documents"
+    assert json.loads(msg["tool_calls"][0]["function"]["arguments"])["query"] == "boq"
+
+
+def test_call_llm_native_ollama_no_tools(monkeypatch):
+    """Native Ollama synthesis call (with_tools=False) must omit tools and
+    return the content as the final answer."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "https://ollama.com/api/chat")
+
+    agent = _agent()
+    fake_client = MagicMock()
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "model": "glm-5.2:cloud",
+        "message": {"role": "assistant", "content": "The contract value is $1M."},
+        "done": True,
+    }
+    fake_client.post = AsyncMock(return_value=fake_response)
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=fake_client):
+        resp = _run(agent._call_llm([{"role": "user", "content": "value?"}], api_key="", with_tools=False))
+
+    assert resp["status"] == "success"
+    sent = fake_client.post.call_args.kwargs["json"]
+    assert "tools" not in sent
+    assert resp["choice"]["message"]["content"] == "The contract value is $1M."
+
+
+
+def test_sanitize_messages_for_ollama_native_converts_tool_role():
+    sanitized = _sanitize_messages_for_ollama_native([
+        {"role": "user", "content": "find the value"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search_project_documents", "arguments": '{"query":"x"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"answer": 42}'},
+    ])
+    assert sanitized[0]["role"] == "user"
+    assert sanitized[1]["role"] == "assistant"
+    # arguments must be a parsed dict for native Ollama.
+    assert sanitized[1]["tool_calls"][0]["function"]["arguments"] == {"query": "x"}
+    # tool role becomes user role.
+    assert sanitized[2]["role"] == "user"
+    assert "Tool result" in sanitized[2]["content"]
+    assert "42" in sanitized[2]["content"]
+
+
+def test_sanitize_messages_for_ollama_native_leaves_simple_messages():
+    msgs = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+    assert _sanitize_messages_for_ollama_native(msgs) == msgs
+
+
+def test_call_llm_native_ollama_sanitizes_messages(monkeypatch):
+    """Native Ollama must receive tool messages converted to user role and
+    arguments as dicts."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "https://ollama.com/api/chat")
+
+    agent = _agent()
+    fake_client = MagicMock()
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {
+        "model": "glm-5.2:cloud",
+        "message": {"role": "assistant", "content": "done"},
+        "done": True,
+    }
+    fake_client.post = AsyncMock(return_value=fake_response)
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=False)
+
+    messages = [
+        {"role": "user", "content": "find boq"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "function": {"name": "search_project_documents", "arguments": '{"query":"boq"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"results":[]}'},
+    ]
+
+    with patch("app.agents.runtime.httpx.AsyncClient", return_value=fake_client):
+        resp = _run(agent._call_llm(messages, api_key="", with_tools=False))
+
+    assert resp["status"] == "success"
+    sent = fake_client.post.call_args.kwargs["json"]
+    assert sent["messages"][2]["role"] == "user"
+    assert sent["messages"][1]["tool_calls"][0]["function"]["arguments"] == {"query": "boq"}
