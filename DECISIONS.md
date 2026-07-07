@@ -3,6 +3,51 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-07-08 — FINAL PROVIDER RESOLUTION (v2 freeze)
+
+**Decision:** Pilot primary provider is **OpenAI `gpt-4o-mini`**.
+Fallback is **Ollama native `/api/chat` with `glm-5.2:cloud`**.
+All other providers are **permanently removed from consideration** for the
+pilot.
+
+### Rationale
+
+- **OpenAI gpt-4o-mini** passed the acceptance gate cleanly:
+  `smoke --runs 10` against prod = **10/10 PASS**, all tool-backed,
+  model column = `gpt-4o-mini-2024-07-18`, zero `_TOOL_FORMAT_FALLBACK`,
+  zero silent fallbacks. Per-run latency ~11s, well inside the 90s timeout.
+- **Ollama native `/api/chat`** is kept as the fallback layer. It was the
+  path that restored prod service and passed `smoke --runs 3`, but its
+  10-run gate was inconsistent under rapid-fire execution (timeout/queueing
+  variability). It remains a valid fallback on OpenAI retryable failures.
+- **Groq/Scout, Kimi K2.6, Moonshot v1, DeepSeek, and any other provider**
+  are out. They consumed multiple days without producing a clean, repeatable
+  10/10 smoke gate on prod.
+
+### Operational env (Render prod)
+
+- `LLM_PROVIDER=openai`
+- `OPENAI_MODEL=gpt-4o-mini`
+- `OPENAI_API_KEY=<set>`
+- `LLM_FALLBACK_PROVIDER=ollama`
+- `OLLAMA_URL=https://ollama.com/api/chat`
+- `OLLAMA_MODEL=glm-5.2:cloud`
+- `OLLAMA_API_KEY=<set>`
+
+### Acceptance gate (already passed)
+
+- `smoke --runs 10` on prod: **10/10 PASS** (saved to
+  `review_pack/openai/smoke10_*.log`)
+- 3 deliverable outputs saved to `review_pack/openai/deliverables/` for
+  quality review
+
+### Freeze rule
+
+Provider work is **permanently out of scope** for the remainder of the
+pilot program. The only remaining provider knob is `OPENAI_MODEL`, and it
+may be bumped **only on Chadi's explicit written instruction** citing this
+freeze. Any exception must also be written and reference this decision.
+
 ## 2026-07-07 — Provider switch: Ollama native `/api/chat` primary
 
 **Decision:** Prod is now running **Ollama `glm-5.2:cloud` via the native
