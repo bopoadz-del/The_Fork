@@ -360,6 +360,53 @@ def _sanitize_final_text(text: str) -> str:
     return cleaned
 
 
+def _recover_tool_calls_from_content(text: str) -> list[dict]:
+    """Recover OpenAI-style tool_calls from raw argument JSON/envelopes leaked
+    into ``content`` by models (e.g. Groq Llama-4-Scout) that fail to emit the
+    structured ``tool_calls`` field. Reuses the same detectors as
+    ``_looks_like_internal_tool_json`` so we only recover shapes we already
+    recognise as internal tool args.
+    """
+    if not text:
+        return []
+    stripped = text.strip()
+    if not stripped.startswith(("{", "[")):
+        return []
+    try:
+        obj = json.loads(stripped)
+    except json.JSONDecodeError:
+        return []
+    items = obj if isinstance(obj, list) else [obj]
+    out: list[dict] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or item.get("tool") or item.get("function")
+        args = item.get("arguments")
+        if name and isinstance(args, dict):
+            out.append({
+                "id": f"recovered_{i+1}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            })
+            continue
+        # Raw search_project_documents args without an envelope.
+        if _is_search_tool_args_obj(item) and "query" in item:
+            out.append({
+                "id": f"recovered_search_{i+1}",
+                "type": "function",
+                "function": {
+                    "name": "search_project_documents",
+                    "arguments": json.dumps({
+                        k: item[k]
+                        for k in ("query", "top_k", "project_id", "corpus", "filters")
+                        if k in item
+                    }),
+                },
+            })
+    return out
+
+
 CONFIGS_DIR = Path(__file__).parent / "configs"
 # Hard cap so a runaway loop can't burn budget (backstop). Kept at 12 for legit
 # complex multi-step tasks; env-tunable. The real fix for the "keep re-searching"
@@ -1910,9 +1957,15 @@ class Agent:
             raw_content = assistant_msg.get("content") or ""
 
             # DeepSeek sometimes emits the tool call as inline DSML markup in
-            # `content` with an empty structured `tool_calls` field. Recover it.
+            # `content` with an empty structured `tool_calls` field. Groq
+            # Llama-4-Scout sometimes leaks raw search args as JSON content.
+            # Recover either shape before treating the turn as a final answer.
             if not tool_calls:
                 cleaned_content, dsml_tool_calls = _parse_dsml_tool_calls(raw_content)
+                recovered_tool_calls = (
+                    _recover_tool_calls_from_content(raw_content)
+                    if not dsml_tool_calls else []
+                )
                 if dsml_tool_calls:
                     # Treat this turn as a tool-calling turn.
                     tool_calls = dsml_tool_calls
@@ -1920,6 +1973,13 @@ class Agent:
                         "role": "assistant",
                         "content": cleaned_content,
                         "tool_calls": dsml_tool_calls,
+                    }
+                elif recovered_tool_calls:
+                    tool_calls = recovered_tool_calls
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": recovered_tool_calls,
                     }
                 else:
                     # Genuine final answer — sanitize DSML markup, raw tool JSON,
@@ -2468,9 +2528,15 @@ class Agent:
             raw_content = assistant_msg.get("content") or ""
 
             # DeepSeek sometimes emits the tool call as inline DSML markup in
-            # `content` with an empty structured `tool_calls` field. Recover it.
+            # `content` with an empty structured `tool_calls` field. Groq
+            # Llama-4-Scout sometimes leaks raw search args as JSON content.
+            # Recover either shape before treating the turn as a final answer.
             if not tool_calls:
                 cleaned_content, dsml_tool_calls = _parse_dsml_tool_calls(raw_content)
+                recovered_tool_calls = (
+                    _recover_tool_calls_from_content(raw_content)
+                    if not dsml_tool_calls else []
+                )
                 if dsml_tool_calls:
                     # Treat as a tool-calling turn — do NOT stream the markup.
                     tool_calls = dsml_tool_calls
@@ -2478,6 +2544,13 @@ class Agent:
                         "role": "assistant",
                         "content": cleaned_content,
                         "tool_calls": dsml_tool_calls,
+                    }
+                elif recovered_tool_calls:
+                    tool_calls = recovered_tool_calls
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": recovered_tool_calls,
                     }
                 else:
                     # Final answer — sanitize DSML markup, raw tool JSON, and
