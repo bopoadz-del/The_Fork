@@ -46,6 +46,18 @@ def _ingest_file(
 
     rel = str(src_path.relative_to(Path("G:/My Drive"))).replace("\\", "/")
     size = src_path.stat().st_size
+
+    # Skip multi-hundred-MB files before copying — the doc_index PDF guard also
+    # rejects them, but copying them from the Drive mount is itself a timeout/OOM
+    # risk on the 2 GB worker.
+    max_size = int(os.getenv("P1B_MAX_FILE_SIZE_MB", "100")) * 1024 * 1024
+    if max_size > 0 and size > max_size:
+        return rel, {
+            "status": "error",
+            "error": "SKIPPED_TOO_LARGE",
+            "size_mb": round(size / (1024 * 1024), 1),
+        }
+
     content_sha = hashlib.sha256(src_path.read_bytes()).hexdigest()
 
     stored_name = f"{hashlib.sha256(str(src_path).encode()).hexdigest()[:8]}_{_safe_stored_name(src_path.name)}"
@@ -137,6 +149,7 @@ def main() -> int:
 
     successes = 0
     zero_chunk = 0
+    skipped_too_large = 0
     errors: List[Dict[str, Any]] = []
     skipped_unsupported = 0
     results: List[Dict[str, Any]] = []
@@ -156,6 +169,7 @@ def main() -> int:
             "batch_files": len(batch_files),
             "successes": successes,
             "zero_chunk": zero_chunk,
+            "skipped_too_large": skipped_too_large,
             "errors": errors,
             "results": results,
         }
@@ -175,6 +189,8 @@ def main() -> int:
             if result.get("status") == "error":
                 if result.get("error") == "ZERO_CHUNK":
                     zero_chunk += 1
+                elif result.get("error") == "SKIPPED_TOO_LARGE":
+                    skipped_too_large += 1
                 else:
                     errors.append({"path": rel, "error": result.get("error")})
             elif result.get("rag_indexed", 0) == 0:
@@ -193,8 +209,8 @@ def main() -> int:
     print(f"[p1b] report written to {args.output}", file=sys.stderr)
     print(
         f"[p1b] batch {offset+1}-{offset+len(batch_files)}: "
-        f"{successes} succeeded, {zero_chunk} zero-chunk, {len(errors)} errors, "
-        f"{elapsed:.1f}s",
+        f"{successes} succeeded, {zero_chunk} zero-chunk, {skipped_too_large} too-large skipped, "
+        f"{len(errors)} errors, {elapsed:.1f}s",
         file=sys.stderr,
     )
     return 0
