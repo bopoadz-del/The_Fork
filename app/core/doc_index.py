@@ -67,7 +67,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 
 # Extensions we know how to extract text from.
 _SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx", ".pptx"}
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx", ".pptx", ".kmz"}
     | _IMAGE_EXTS
 )
 
@@ -335,6 +335,32 @@ def _extract_pptx(file_path: str) -> str:
         return ""
 
 
+def _extract_kmz(file_path: str) -> str:
+    """Extract text from a KMZ file (ZIP containing KML).
+
+    Reads the first .kml entry, strips XML tags, and returns the plain text.
+    KMZ may contain images/models; we only index the KML narrative so the
+    file is locatable by its name and any embedded labels. Never raises.
+    """
+    try:
+        import zipfile
+        import re
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            with zipfile.ZipFile(readable_path, "r") as zf:
+                kml_names = [n for n in zf.namelist() if n.lower().endswith(".kml")]
+                if not kml_names:
+                    return ""
+                kml_bytes = zf.read(kml_names[0])
+        kml_text = kml_bytes.decode("utf-8", errors="replace")
+        # Strip XML tags and collapse whitespace.
+        plain = re.sub(r"<[^>]+>", " ", kml_text)
+        plain = re.sub(r"\s+", " ", plain).strip()
+        return plain
+    except Exception:
+        return ""
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _now() -> str:
@@ -439,6 +465,10 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
         # ── PPTX ─────────────────────────────────────────────────────────────
         if ext == ".pptx":
             return _extract_pptx(file_path), {}
+
+        # ── KMZ ──────────────────────────────────────────────────────────────
+        if ext == ".kmz":
+            return _extract_kmz(file_path), {}
 
     except Exception:
         return "", {}
