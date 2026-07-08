@@ -690,6 +690,7 @@ LANDSCAPING_TEXT = (
 def search_project(tmp_path, monkeypatch):
     """Shared fixture: isolated DATA_DIR, fresh DB, project with 3 disjoint docs."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     monkeypatch.setattr(projects_mod, "_initialized", False)
     projects_mod.init_db()
@@ -702,7 +703,9 @@ def search_project(tmp_path, monkeypatch):
     # DATA_DIR per-test, so the cache must be reset to repoint the store
     # at the new SQLite file, otherwise queries hit the previous test's DB.
     from app.core.rag import vector_store as _vs
+    from app.core.rag import embeddings as _emb
     _vs.reset_store_cache()
+    _emb.reset_embedder_cache()
 
     proj = projects_mod.create_project("Search Test Project")
     pid = proj["id"]
@@ -913,7 +916,8 @@ def test_zero_chunk_indexing_emits_warning(tmp_path, monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="app.core.doc_index"):
         result = doc_index.index_document(pid, doc["id"])
 
-    assert result["indexed"] == 1  # entry recorded, not skipped
+    assert result["status"] == "error"
+    assert result["error"] == "ZERO_CHUNK"
     assert any("ZERO_CHUNK" in r.message for r in caplog.records), (
         f"no ZERO_CHUNK warning; records={[r.message for r in caplog.records]}"
     )
