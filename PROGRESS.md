@@ -415,5 +415,10 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     (`textract`/`antiword`/COM) not justified for pilot.
   - Master Folder ingestion (7,222 files) into `v2` started; first run died
     silently at ~124/7222 (likely OOM on a large contract PDF). Added
-    `--resume` flag to `scripts/p1b_ingest_local_folder.py` and restarted.
-    Currently progressing through resumed run.
+    `--resume`, `--offset`, and `--limit` flags to
+    `scripts/p1b_ingest_local_folder.py`; fixed a bug where the loop was
+    iterating the unfiltered file list and re-processing already-indexed
+    files. Partial report now written every 50 files.
+  - Added `.doc` legacy-Word extraction (antiword/catdoc/textract/Word COM
+    fallback chain); tested on all 4 `.doc` files in Master Folder.
+  - Restarting ingestion in 500-file batches instead of one monolithic run.
