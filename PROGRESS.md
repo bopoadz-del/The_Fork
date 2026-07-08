@@ -3,6 +3,29 @@
 Living log of the autonomous work program. One section per task, newest state
 first. Update on every task state change.
 
+## 2026-07-08 — T5 fixture estate restored
+
+- Three canonical fixture projects seeded/reconciled on prod via normal API
+  paths:
+  | Fixture | project_id | Documents | Status |
+  |---|---|---|---|
+  | `FIXTURE — Fresh Upload Eval` | `ce1ced1a` | 12 small .txt cases | 12/12 indexed, 1 chunk each |
+  | `FIXTURE — BOQ` | `96bd7cd1` | `IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf` (28 MB, Drive OAuth) | 26 chunks after manual re-index |
+  | `FIXTURE — Programme+Drawings` | `7ce7b9d0` | `Annexure 2 - Baseline Program XER.xer` (25 MB, Drive OAuth), `IP-INF-053-0000-JCB-PLN-DE-000006-A_Post-appointment BIM Execution Plan (3).pdf` (2.3 MB), `BLVD conditional IFC DWGs - caw.pdf` (164 KB) | PDFs indexed; XER produces 0 RAG chunks by design (parsed by `primavera_parser` block at query time) |
+- Operational findings:
+  - Eager indexing (`maybe_eager_index` BackgroundTask) did not run for the
+    Drive-imported files or the fresh-upload .txt cases on prod; manual
+    `POST /v1/admin/debug/doc-reindex` was required. This is a deployment/
+    worker symptom, not an extractor bug — needs follow-up in T3 follow-up.
+  - `_SUPPORTED_EXTS` in `app/core/doc_index.py` does not include `.xer`;
+    schedule tests rely on the `primavera_parser` block, not RAG retrieval.
+  - Duplicate imports from earlier failed attempts were removed via
+    `DELETE /v1/projects/{id}/documents/{doc_id}`.
+- Next: run Step-2 acceptance battery with `RAG_GK_LEXICAL_FOLD=cfg7` ON. No
+  staging environment exists; branch-config gate will be implemented as a
+  code-default branch + Render preview or local validation before any prod
+  env flip (R1/R9).
+
 ## 2026-07-08 — FINAL PROVIDER RESOLUTION: OpenAI gpt-4o-mini primary
 
 - PR #160 merged: native Ollama `/api/chat` + OpenAI provider support on
