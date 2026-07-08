@@ -609,6 +609,9 @@ def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
 _INTENT_TOOL_MAP = (
     (("commissioning checklist", "commissioning plan", "commissioning schedule",
       "testing and commissioning", "t&c checklist"), "commissioning_checklist"),
+    (("primavera", "xer", "p6", "baseline programme", "baseline program",
+      "programme milestones", "program milestones", "project milestones",
+      "schedule milestones", "milestones from"), "primavera_parser"),
 )
 
 
