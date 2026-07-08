@@ -136,6 +136,46 @@ def _ocr_extract(file_path: str) -> Tuple[str, bool]:
         return "", False
 
 
+def _safety_world_extract(file_path: str, filename: str) -> str:
+    """Run the baked YOLO-Worldv2 detector and return a searchable summary.
+
+    The detector is only loaded when ``SAFETY_WORLD_WEIGHTS`` points at an
+    existing baked .onnx file. Detections are summarised as a plain-text
+    sentence so construction photos that OCR blanks still produce RAG
+    chunks. Never raises — any failure yields "".
+    """
+    try:
+        from pathlib import Path
+
+        from app.blocks.safety_world_detector import default_detector
+        from app.core.file_crypto import open_plaintext
+
+        detector = default_detector()
+        if detector is None:
+            return ""
+
+        conf = float(os.getenv("SAFETY_WORLD_CONF", "0.05"))
+        with open_plaintext(file_path) as plain_path:
+            detections = detector.detect(Path(plain_path), conf_threshold=conf)
+        if not detections:
+            return ""
+
+        # Group by class, keep highest confidence per class, stable order.
+        by_class: Dict[str, float] = {}
+        for d in detections:
+            cls = d.get("class", "unknown")
+            conf_val = float(d.get("confidence") or 0.0)
+            by_class[cls] = max(by_class.get(cls, 0.0), conf_val)
+
+        items = ", ".join(
+            f"{cls} ({conf_val:.2f})"
+            for cls, conf_val in sorted(by_class.items(), key=lambda kv: (-kv[1], kv[0]))
+        )
+        return f"Construction site photo {filename}: detected {items}."
+    except Exception:
+        return ""
+
+
 def _ocr_pdf_page(page) -> str:
     """OCR a single ``fitz`` page via a rendered pixmap.
 
@@ -331,9 +371,14 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
             raw = file_crypto.read_document(file_path)
             return raw.decode("utf-8", errors="replace"), {}
 
-        # ── images → OCR ─────────────────────────────────────────────────────
+        # ── images → OCR + YOLO-World fallback ───────────────────────────────
         if ext in _IMAGE_EXTS:
             text, low_quality = _ocr_extract(file_path)
+            # Construction photos usually OCR blank; run the baked YOLO-World
+            # detector to produce a searchable summary of visible objects.
+            yolo_text = _safety_world_extract(file_path, filename or "")
+            if yolo_text:
+                text = f"{text}\n\n{yolo_text}".strip() if text else yolo_text
             meta: Dict[str, Any] = {}
             if low_quality:
                 meta["ocr_low_quality"] = True
