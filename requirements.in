@@ -66,6 +66,10 @@ sentry-sdk[fastapi]>=2.0.0
 prometheus-client>=0.20.0
 
 python-docx>=1.1.0
+python-pptx>=1.0.0
+
+# Archive extraction (ZIP is builtin; RAR needs rarfile)
+rarfile>=4.0
 
 # MCP
 mcp>=1.0.0

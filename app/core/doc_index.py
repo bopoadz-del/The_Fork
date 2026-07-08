@@ -67,7 +67,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 
 # Extensions we know how to extract text from.
 _SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx"}
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx", ".pptx"}
     | _IMAGE_EXTS
 )
 
@@ -311,6 +311,30 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
     return "\n".join(parts), meta
 
 
+def _extract_pptx(file_path: str) -> str:
+    """Extract text from a PowerPoint file, slide by slide.
+
+    Collects text from all shapes on all slides, prefixed with the slide
+    number so chunk context stays answerable. Never raises.
+    """
+    try:
+        import pptx
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            prs = pptx.Presentation(readable_path)
+        parts: List[str] = []
+        for i, slide in enumerate(prs.slides, start=1):
+            slide_texts: List[str] = []
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text:
+                    slide_texts.append(shape.text.strip())
+            if slide_texts:
+                parts.append(f"Slide {i}:\n" + "\n".join(slide_texts))
+        return "\n\n".join(parts)
+    except Exception:
+        return ""
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _now() -> str:
@@ -411,6 +435,10 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
                             if cell.value is not None and str(cell.value).strip():
                                 parts.append(str(cell.value))
                 return " ".join(parts), {}
+
+        # ── PPTX ─────────────────────────────────────────────────────────────
+        if ext == ".pptx":
+            return _extract_pptx(file_path), {}
 
     except Exception:
         return "", {}
