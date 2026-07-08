@@ -429,3 +429,5 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     (works on Render with `unrar`).
   - Restarted ingestion in smaller 100-file batches with partial report flush
     every 10 files (previous 500-file batch was killed by session close).
+  - Added `scripts/p1b_run_batches.sh` to run sequential 100-file batches
+    automatically until the Master Folder is fully ingested.
