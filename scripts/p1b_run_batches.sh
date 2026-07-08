@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
-# Run Master Folder ingestion in 100-file batches until no unindexed files remain.
-# This is resilient to crashes because each invocation uses --resume.
+# Run Master Folder ingestion in 1,000-file batches until no unindexed files remain.
+# This is resilient to crashes because each invocation uses --resume, while the
+# larger batch size avoids reloading the embedding model every 100 files.
 
 export RAG_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 export RAG_VECTOR_NAMESPACE=v2
@@ -16,7 +17,7 @@ while true; do
         --folder "Master Folder" \
         --output "$out" \
         --resume \
-        --limit 100
+        --limit 1000
     
     # Stop when the batch processed 0 files (all done).
     count=$(.venv/Scripts/python -c "import json; print(len(json.load(open('$out')).get('results', [])))")

@@ -5,8 +5,8 @@
 - **Branch:** `feat/clean-rebuild-rag`
 - **Target:** Ingest `G:/My Drive/Master Folder` (7,222 files) into RAG namespace `v2`
 - **Embedder:** `BAAI/bge-small-en-v1.5`
-- **Runner:** `scripts/p1b_run_batches.sh` — sequential 100-file batches
-- **Active task:** `bash-maaw7rmf` (replaced `bash-7tzkkrr9` after patch) — **lost, restarting**
+- **Runner:** `scripts/p1b_run_batches.sh` — sequential **1,000-file batches** (was 100)
+- **Active task:** `bash-4ad9vim8` (replaced `bash-5bmlf5ig` for larger batches)
 
 ## Progress
 
@@ -66,6 +66,7 @@ This fixes the `OSError: [Errno 22] Invalid argument` pattern seen on:
 2. **500-file batch killed by session close** at file 22.
 3. **Batch runner killed silently** on 446 MB drawing PDFs.
 4. **Batch runner killed again** on 36 MB scanned PDF OCR.
+5. **Embedder reload overhead** — switched from 100-file to 1,000-file batches so `BAAI/bge-small-en-v1.5` loads ~7 times instead of ~70. Resilience preserved via `--resume`.
 
 ## Next Steps
 
