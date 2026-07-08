@@ -847,6 +847,11 @@ def _discover_gdrive_files(project_id: str) -> Tuple[int, List[str]]:
                 stored_as=stored_as,
                 file_path=filepath,
                 size=len(blob),
+                metadata={
+                    "drive_file_id": fid,
+                    "drive_path": f_meta.get("_drive_path", ""),
+                    "source": "gdrive_hydration",
+                },
             )
             attached += 1
             seen_for_project.add(fid)

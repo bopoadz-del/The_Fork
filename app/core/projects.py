@@ -80,7 +80,7 @@ def _project_as_dict(project: Project) -> Dict[str, Any]:
 
 
 def _document_as_dict(document: Document) -> Dict[str, Any]:
-    return {
+    out = {
         "id": document.id,
         "project_id": document.project_id,
         "original_name": document.original_name,
@@ -92,6 +92,10 @@ def _document_as_dict(document: Document) -> Dict[str, Any]:
         "uploaded_at": document.uploaded_at,
         "content_sha256": document.content_sha256,
     }
+    meta = getattr(document, "metadata_", None)
+    if meta is not None:
+        out["metadata"] = meta
+    return out
 
 
 def _fact_as_dict(fact: ProjectFact) -> Dict[str, Any]:
@@ -139,6 +143,7 @@ def _patch_legacy_columns() -> None:
     Currently handles:
       * projects.is_approved (Alembic 0004)
       * projects.origin       (Alembic 0005)
+      * documents.metadata    (Alembic 0009)
     """
     url = get_database_url()
     if not url.startswith("sqlite"):
@@ -160,13 +165,22 @@ def _patch_legacy_columns() -> None:
                     "ADD COLUMN origin TEXT NOT NULL DEFAULT 'user_create'"
                 ))
                 conn.commit()
+
+            doc_cols = {row[1] for row in conn.execute(
+                sqla_text("PRAGMA table_info(documents)")
+            )}
+            if "metadata" not in doc_cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE documents ADD COLUMN metadata TEXT"
+                ))
+                conn.commit()
     except Exception:
         # Don't crash boot on a dev-environment patch failure — the
         # next call to a feature that needs the column will surface
         # the real error with a clearer stack.
         import logging
         logging.getLogger(__name__).warning(
-            "projects.is_approved column patch skipped", exc_info=True,
+            "legacy column patch skipped", exc_info=True,
         )
 
 
@@ -523,6 +537,7 @@ def add_document(
     size: int = 0,
     role: Optional[str] = None,
     content_sha256: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Register a document under a project. Storing only — runs no analysis."""
     _ensure_db()
@@ -543,6 +558,7 @@ def add_document(
                     size=size,
                     uploaded_at=_now(),
                     content_sha256=content_sha256,
+                    metadata_=metadata,
                 )
             )
             session.commit()

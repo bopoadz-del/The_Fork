@@ -935,10 +935,27 @@ def index_project(project_id: str) -> Dict[str, Any]:
     }
     _write_index(project_id, index_data)
 
+    indexed = len(documents)
+    skipped_unsupported = len(skipped)
+    if indexed > 0 and total_chunks == 0:
+        return {
+            "status": "error",
+            "error": "ZERO_CHUNK",
+            "banner": (
+                f"ERROR: re-index produced 0 chunks across {indexed} documents — "
+                "check extractor/OCR logs."
+            ),
+            "project_id": project_id,
+            "indexed": indexed,
+            "skipped_unsupported": skipped_unsupported,
+            "total_chunks": 0,
+        }
+
     return {
+        "status": "ok",
         "project_id": project_id,
-        "indexed": len(documents),
-        "skipped_unsupported": len(skipped),
+        "indexed": indexed,
+        "skipped_unsupported": skipped_unsupported,
         "total_chunks": total_chunks,
     }
 
@@ -1175,6 +1192,19 @@ def index_document(
                 "extracted no chunks (empty file, failed OCR, or extractor bug)",
                 project_id, document_id, filename, ext,
             )
+            return {
+                "status": "error",
+                "error": "ZERO_CHUNK",
+                "banner": (
+                    "ERROR: document produced 0 chunks — check extractor/OCR."
+                ),
+                "project_id": project_id,
+                "document_id": document_id,
+                "filename": filename,
+                "indexed": 0,
+                "skipped_unsupported": 0,
+                "total_chunks": 0,
+            }
         entry = {
             "document_id": document_id,
             "filename": filename,
@@ -1230,12 +1260,14 @@ def index_document(
 
     if entry is None:
         return {
+            "status": "ok",
             "project_id": project_id,
             "indexed": 0,
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
     return {
+        "status": "ok",
         "project_id": project_id,
         "indexed": 1,
         "skipped_unsupported": 0,
@@ -1441,4 +1473,5 @@ def maybe_eager_index(project_id: str, document_id: str) -> None:
     is sent without blocking the upload.
     """
     if os.getenv("INDEX_ON_UPLOAD", "true").strip().lower() in ("1", "true", "yes"):
-        index_document(project_id, document_id)
+        return index_document(project_id, document_id)
+    return None

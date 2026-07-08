@@ -37,6 +37,10 @@ _DRIVE_API = "https://www.googleapis.com/drive/v3"
 _pending_states: Dict[str, tuple] = {}
 _STATE_TTL = 600  # seconds — pending OAuth states expire after 10 minutes.
 
+# In-memory registry for async Drive-folder imports keyed by job_id.
+# Process-local; a restart loses pending jobs (acceptable for this path).
+_DRIVE_FOLDER_JOBS: Dict[str, Dict[str, Any]] = {}
+
 
 def _prune_states() -> None:
     """Drop pending OAuth states older than _STATE_TTL."""
@@ -218,6 +222,7 @@ async def _run_index_folder_bg(
     max_depth: int,
     role: str,
     include_extensions: list[str] | None,
+    job_id: str,
 ) -> None:
     """Background worker: walk a Drive folder into ``project_id``, then DRAIN
     the per-file indexing tasks so chunks are written before the worker exits.
@@ -225,10 +230,13 @@ async def _run_index_folder_bg(
     the HTTP request — a synchronous walk of a real folder (download + encrypt
     + store + index each file) easily exceeds the Render proxy timeout (502)."""
     log = logging.getLogger(__name__)
+    job = _DRIVE_FOLDER_JOBS.get(job_id)
+    if job is not None:
+        job["status"] = "running"
     try:
         access_token = await drive_auth.get_access_token(user_id)
         _bg = BackgroundTasks()
-        await _walk_drive_folder_into_project(
+        walk_result = await _walk_drive_folder_into_project(
             project_id=project_id,
             user_id=user_id,
             access_token=access_token,
@@ -241,16 +249,41 @@ async def _run_index_folder_bg(
         )
         # Drain the queued maybe_eager_index tasks inline so the chunks land
         # before this worker returns (keeps doc/chunk counters consistent).
+        zero_chunk_docs: list[Dict[str, Any]] = []
         for task in _bg.tasks:
             if asyncio.iscoroutinefunction(task.func):
-                await task.func(*task.args, **task.kwargs)
+                idx_result = await task.func(*task.args, **task.kwargs)
             else:
-                task.func(*task.args, **task.kwargs)
+                idx_result = task.func(*task.args, **task.kwargs)
+            if isinstance(idx_result, dict) and idx_result.get("error") == "ZERO_CHUNK":
+                zero_chunk_docs.append(idx_result)
+
+        imported_count = walk_result.get("imported_count", 0)
+        if zero_chunk_docs:
+            banner = (
+                f"ERROR: {len(zero_chunk_docs)} imported Drive file(s) produced 0 chunks — "
+                "check extractor/OCR logs."
+            )
+            if job is not None:
+                job["status"] = "error"
+                job["banner"] = banner
+                job["imported_count"] = imported_count
+                job["zero_chunk_count"] = len(zero_chunk_docs)
+            log.error(banner)
+            return
+
+        if job is not None:
+            job["status"] = "done"
+            job["imported_count"] = imported_count
+            job["skipped_count"] = walk_result.get("skipped_count", 0)
     except Exception as exc:  # noqa: BLE001 — background; never raise
         log.exception(
             "index-folder bg import failed project=%s folder=%s: %s",
             project_id, folder_id, exc,
         )
+        if job is not None:
+            job["status"] = "error"
+            job["error"] = f"{type(exc).__name__}: {exc}"
 
 
 @router.post("/v1/projects/{project_id}/drive/index-folder", status_code=202)
@@ -278,6 +311,14 @@ async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
     except drive_auth.DriveAuthError as e:
         raise HTTPException(409, f"{e} Reconnect Google Drive.")
 
+    job_id = uuid.uuid4().hex[:12]
+    _DRIVE_FOLDER_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "project_id": project_id,
+        "folder_id": req.folder_id,
+        "created_at": time.time(),
+    }
     background_tasks.add_task(
         _run_index_folder_bg,
         project_id=project_id,
@@ -287,14 +328,30 @@ async def drive_index_folder(project_id: str, req: DriveIndexFolderRequest,
         max_depth=req.max_depth,
         role=req.role,
         include_extensions=req.include_extensions,
+        job_id=job_id,
     )
     return {
         "status": "queued",
+        "job_id": job_id,
+        "status_url": f"/v1/projects/{project_id}/drive/index-folder/job/{job_id}",
         "project_id": project_id,
         "folder_id": req.folder_id,
         "max_files": req.max_files,
         "max_depth": req.max_depth,
     }
+
+
+@router.get("/v1/projects/{project_id}/drive/index-folder/job/{job_id}")
+async def drive_index_folder_status(
+    project_id: str,
+    job_id: str,
+    auth: dict = Depends(require_user),
+):
+    """Poll the status of an async Drive-folder import job."""
+    job = _DRIVE_FOLDER_JOBS.get(job_id)
+    if not job or job.get("project_id") != project_id:
+        raise HTTPException(404, "job not found")
+    return job
 
 
 async def _walk_drive_folder_into_project(
@@ -323,6 +380,10 @@ async def _walk_drive_folder_into_project(
     folder_mt = "application/vnd.google-apps.folder"
     imported: list[Dict[str, Any]] = []
     skipped: list[Dict[str, Any]] = []
+
+    # Track folder path while recursing so each imported file carries its
+    # Drive location as provenance metadata.
+    folder_paths: Dict[str, str] = {}
 
     async def _list_folder(client: httpx.AsyncClient, fid: str) -> list[Dict[str, Any]]:
         q = f"'{fid}' in parents and trashed=false"
@@ -404,9 +465,10 @@ async def _walk_drive_folder_into_project(
 
     async with httpx.AsyncClient(timeout=60) as client:
         start = folder_id or "root"
-        stack: list[tuple[str, int]] = [(start, 0)]
+        folder_paths[start] = ""
+        stack: list[tuple[str, int, str]] = [(start, 0, "")]
         while stack and len(imported) < max_files:
-            fid, depth = stack.pop(0)
+            fid, depth, path_prefix = stack.pop(0)
             try:
                 children = await _list_folder(client, fid)
             except Exception as e:
@@ -416,9 +478,12 @@ async def _walk_drive_folder_into_project(
                 if len(imported) >= max_files:
                     skipped.append({"name": child.get("name"), "reason": "max_files cap"})
                     continue
+                child_name = child.get("name") or "unnamed"
+                child_path = f"{path_prefix}/{child_name}".lstrip("/")
                 if child.get("mimeType") == folder_mt:
                     if depth + 1 <= max_depth:
-                        stack.append((child["id"], depth + 1))
+                        folder_paths[child["id"]] = child_path
+                        stack.append((child["id"], depth + 1, child_path))
                     else:
                         skipped.append({"name": child.get("name"), "reason": "max_depth cap"})
                     continue
@@ -467,9 +532,16 @@ async def _walk_drive_folder_into_project(
                 stored_as = f"{file_uuid}_{stored_basename}"
                 filepath = os.path.join(projects_router.DATA_DIR, stored_as)
                 file_crypto.write_document(filepath, raw_bytes)
-                doc = store.add_document(project_id, stored_basename, stored_as,
-                                         filepath, len(raw_bytes),
-                                         content_sha256=content_sha)
+                doc = store.add_document(
+                    project_id, stored_basename, stored_as,
+                    filepath, len(raw_bytes),
+                    content_sha256=content_sha,
+                    metadata={
+                        "drive_file_id": child["id"],
+                        "drive_path": child_path,
+                        "source": "drive_oauth_folder",
+                    },
+                )
                 audit.record("document.added", project_id=project_id,
                              document_id=doc["id"], name=stored_basename,
                              size=len(raw_bytes), user_id=user_id,
@@ -571,7 +643,12 @@ async def drive_import(project_id: str, req: DriveImportRequest,
 
     # Register the document through the SAME app.core.projects call.
     doc = store.add_document(
-        project_id, original_name, stored_as, filepath, size)
+        project_id, original_name, stored_as, filepath, size,
+        metadata={
+            "drive_file_id": req.file_id,
+            "source": "drive_oauth_single",
+        },
+    )
     audit.record("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size)
     background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])

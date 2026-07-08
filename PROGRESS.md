@@ -229,7 +229,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   Must pass before provider work is considered closed.
   → SUPERSEDED by 2026-07-08 final resolution above: OpenAI primary.
 
-## 2026-07-08 — T3 corpus reconciliation (in flight)
+## 2026-07-08 — T3 corpus reconciliation DONE
 
 - Ran `scripts/reconcile_migration.py` against prod (branch
   `feat/t3-corpus-reconciliation`). Before-fix table:
@@ -251,6 +251,55 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 - Training-material direct `/v1/rag/search` verified working (project_id
   `training_material` returns curated GK chunks). `curated_kb` is empty;
   `RAG_GENERAL_KNOWLEDGE_PROJECTS` identity is unified on `training_material`.
-- PR #162 opened for the fix + contract test. Waiting on CI green before merge
-  and prod deploy; reconciliation script will be re-run after deploy to confirm
-  the table is all-green.
+- PR #162 merged, deployed to prod at commit `17462d8`.
+- After-fix reconciliation table (all green):
+
+  | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
+  |---|---:|---:|---:|---:|---|
+  | dar_al_arkan_master | 2712 | 110375 | 110375 | 110375 | ok |
+  | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
+  | training_material | 246 | 10982 | 10982 | 10982 | ok |
+  | unclassified | 1 | 4 | 4 | 4 | ok |
+
+- Post-deploy smoke: `SMOKE_RUNS=3 bash scripts/smoke.sh` → **3/3 PASS**, all
+  tool-backed, model = `gpt-4o-mini-2024-07-18`.
+
+## 2026-07-08 — T4 Drive pipeline proof (branch `feat/t4-drive-pipeline-proof`)
+
+- Added `metadata` JSONB column to `documents` with Alembic migration `0009`;
+  `add_document` persists Drive provenance (`drive_file_id`, `drive_path`,
+  `source`) for service-account hydration and OAuth imports.
+- Fail-loud zero-chunk indexing: `index_project` / `index_document` return
+  `status: error` + `ZERO_CHUNK` banner; `POST /v1/admin/debug/project-reindex`
+  returns HTTP 422 when a rebuild produces zero chunks.
+- Drive-folder background import now tracks job status and surfaces
+  ZERO_CHUNK as a job error instead of green success.
+- New admin proof endpoints:
+  - `POST /v1/admin/drive/download-proof` — service-account download bytes,
+    returns length + SHA-256 only.
+  - `POST /v1/admin/drive/ingest-proof` — download → store → register → index,
+    returns chunk count or ZERO_CHUNK banner.
+- New `scripts/reconcile_drive_delta.py` — dry-run by default (`--execute` to
+  write); walks each `GDRIVE_PROJECT_FOLDERS` mapping, imports missing files
+  through the normal pipeline, logs ZERO_CHUNK, and prints a completeness
+  manifest.
+- Tests added: `tests/test_doc_index_zero_chunk.py`,
+  `tests/test_drive_one_doc_proof.py`.
+- Local test gate: `pytest tests/test_admin_corpus_collections.py
+  tests/test_projects.py tests/test_doc_index.py tests/test_drive_index_folder.py
+  tests/test_doc_index_zero_chunk.py tests/test_drive_one_doc_proof.py -q`
+  → **65 passed, 1 xfailed**.
+- Status: implementation complete, awaiting CI green before merge/deploy.
+
+- **2026-07-08 (continued) — CI fix for PR #164:**
+  - `test-postgres` failed at `alembic upgrade head` with:
+    `sqlalchemy.exc.ProgrammingError: (psycopg.errors.DuplicateColumn) column "metadata" of relation "documents" already exists`.
+  - Root cause: migration `0001` applies `the_fork_schema.sql`, which already
+    includes `metadata JSONB` on `documents`; migration `0009` then ran an
+    unconditional `ALTER TABLE documents ADD COLUMN metadata JSONB`.
+  - Fix: changed `0009_document_metadata.py` to use
+    `ALTER TABLE documents ADD COLUMN IF NOT EXISTS metadata JSONB` and
+    `DROP COLUMN IF EXISTS metadata` on downgrade, making the migration
+    idempotent for both fresh schema-baseline databases and existing prod
+    databases. Pushed commit `2944dd2`.
+  - CI re-running (run 28910092979).
