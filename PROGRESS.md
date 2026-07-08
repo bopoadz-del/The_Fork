@@ -290,3 +290,16 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   tests/test_doc_index_zero_chunk.py tests/test_drive_one_doc_proof.py -q`
   → **65 passed, 1 xfailed**.
 - Status: implementation complete, awaiting CI green before merge/deploy.
+
+- **2026-07-08 (continued) — CI fix for PR #164:**
+  - `test-postgres` failed at `alembic upgrade head` with:
+    `sqlalchemy.exc.ProgrammingError: (psycopg.errors.DuplicateColumn) column "metadata" of relation "documents" already exists`.
+  - Root cause: migration `0001` applies `the_fork_schema.sql`, which already
+    includes `metadata JSONB` on `documents`; migration `0009` then ran an
+    unconditional `ALTER TABLE documents ADD COLUMN metadata JSONB`.
+  - Fix: changed `0009_document_metadata.py` to use
+    `ALTER TABLE documents ADD COLUMN IF NOT EXISTS metadata JSONB` and
+    `DROP COLUMN IF EXISTS metadata` on downgrade, making the migration
+    idempotent for both fresh schema-baseline databases and existing prod
+    databases. Pushed commit `2944dd2`.
+  - CI re-running (run 28910092979).
