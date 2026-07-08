@@ -113,7 +113,7 @@ def main() -> int:
 
     already_indexed: set[str] = set()
     if args.resume:
-        for doc in projects_mod.list_project_documents(project_id):
+        for doc in projects_mod.list_documents(project_id):
             rel = (doc.get("metadata") or {}).get("local_drive_path")
             if rel:
                 already_indexed.add(rel.replace("\\", "/"))
