@@ -3153,7 +3153,7 @@ class Agent:
             tool_names = {t.get("function", {}).get("name") for t in tools}
             forced_tool = (
                 _forced_specific_tool(messages, tool_names)
-                if self.name == "project-assistant" else None
+                if self.name in ("project-assistant", "heavy-reasoning") else None
             )
             requires_tool = (
                 self.name == "project-assistant"
