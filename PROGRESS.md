@@ -434,3 +434,5 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   - Added `PDF_MAX_SIZE_MB=100` guard in `doc_index.py`: silently skips
     PDFs > 100 MB (the drawing sets were 140–446 MB and OOM-killing the
     ingestion worker).
+  - Added `P1B_MAX_FILE_SIZE_MB=100` guard to `p1b_ingest_local_folder.py`
+    to avoid copying huge files from the Drive mount before indexing.
