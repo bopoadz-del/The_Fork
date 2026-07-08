@@ -3,6 +3,34 @@
 Living log of the autonomous work program. One section per task, newest state
 first. Update on every task state change.
 
+## 2026-07-08 — P0d: one-document BGE proof passed
+
+- Branch: `feat/clean-rebuild-rag`.
+- P0d script `scripts/p0d_one_doc_proof_bge.py` run end-to-end:
+  - embedder `BAAI/bge-small-en-v1.5` loaded (dim=384, normalized=True, query
+    instruction prefix applied).
+  - Normal `doc_index.index_document()` pipeline wrote 1 chunk to namespace
+    `v2` and returned `rag_indexed: 1`.
+  - Retrieval returned the injected fact (cement content 385 kg/m3) with
+    score 0.8596.
+  - Zero-chunk document failed loud with `ZERO_CHUNK` banner.
+- Fixes landed in the same branch:
+  - `doc_index.index_document` now surfaces `rag_indexed` in its return dict.
+  - Fixed `init_db` recursion caused by `_purge_spurious_master_corpus_row`
+    calling `purge_project_index`, which re-entered `init_db`.
+  - `projects.delete_document` now deletes chunks from the active vector-store
+    namespace instead of the legacy `chunks` table only.
+  - `vector_store._rag_vector_namespace()` honors an explicit empty string
+    (`RAG_VECTOR_NAMESPACE=""`) as the legacy namespace; previously it fell
+    back to `v2`.
+  - `make_rag_chunk_class("", ...)` returns the static legacy `RagChunk`
+    class, avoiding duplicate table registration.
+  - Legacy-namespace identity verification is skipped (original `chunks`
+    table predates identity columns).
+- Test suite: 188 passed, 2 skipped, 1 xfailed in the RAG/doc_index/projects
+  subset; P0d script passes cleanly.
+- Next: Phase 1 (Drive manifest + full re-ingestion into `v2`).
+
 ## 2026-07-08 — FINAL PROVIDER RESOLUTION: OpenAI gpt-4o-mini primary
 
 - PR #160 merged: native Ollama `/api/chat` + OpenAI provider support on

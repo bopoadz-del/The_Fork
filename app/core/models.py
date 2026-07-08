@@ -100,7 +100,13 @@ def make_rag_chunk_class(
     NOT change the table schema, so a namespace opened with a different
     model reuses the same class and relies on ``VectorStore`` to fail loud
     on identity mismatch.
+
+    The legacy namespace (empty string) reuses the static ``RagChunk`` class
+    so the original ``chunks`` table has exactly one mapped class.
     """
+    if namespace == "":
+        return RagChunk
+
     schema_key = (namespace, dim)
     if schema_key in _RAG_CHUNK_CLASS_CACHE:
         return _RAG_CHUNK_CLASS_CACHE[schema_key]

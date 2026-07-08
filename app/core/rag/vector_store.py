@@ -137,7 +137,7 @@ _INIT_LOCK = Lock()
 
 def _rag_vector_namespace() -> str:
     """Active RAG vector namespace. Legacy ``chunks`` table = empty string."""
-    return (os.getenv("RAG_VECTOR_NAMESPACE") or "v2").strip()
+    return os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
 
 
 def get_store(
@@ -287,13 +287,20 @@ class VectorStore:
         Checks a representative row. If any row has a different model/dim/
         normalized flag, the store refuses to operate. This is the structural
         guard that makes mixed-model contamination impossible.
+
+        Skipped for the legacy namespace because the original ``chunks`` table
+        predates the identity columns; it is retired in place and never used
+        for new embeddings.
         """
+        cls = self._rag_chunk_cls
+        # Legacy table has no identity columns — nothing to verify.
+        if not hasattr(cls, "embedding_model"):
+            return
         expected = {
             "model": self.model_name,
             "dim": self.dim,
             "normalized": True,
         }
-        cls = self._rag_chunk_cls
         with self._lock:
             with self._session_factory()() as session:
                 row = session.execute(

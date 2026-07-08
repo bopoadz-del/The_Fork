@@ -1218,12 +1218,13 @@ def index_document(
         # Lazy import + try/except keep doc_index importable even when
         # sentence-transformers isn't installed. Idempotent via
         # upsert_chunks: re-indexing the same doc replaces its chunks.
+        rag_indexed = 0
         try:
             from app.core.rag import retriever as _rag
             if _rag.available() and chunks:
-                indexed = _rag.index_chunks(project_id, document_id, chunks)
-                if indexed:
-                    entry["rag_indexed"] = indexed
+                rag_indexed = _rag.index_chunks(project_id, document_id, chunks) or 0
+                if rag_indexed:
+                    entry["rag_indexed"] = rag_indexed
         except Exception as exc:  # noqa: BLE001
             # Never let a RAG failure abort the primary doc-index path
             import logging as _logging
@@ -1272,6 +1273,7 @@ def index_document(
         "indexed": 1,
         "skipped_unsupported": 0,
         "total_chunks": len(chunks),
+        "rag_indexed": rag_indexed,
     }
 
 
@@ -1353,7 +1355,14 @@ def _purge_spurious_master_corpus_row() -> None:
         if row is not None:
             session.delete(row)
             session.commit()
-    purge_project_index(MASTER_CORPUS_PROJECT_ID)
+    # Delete the matching DocIndex row directly; do NOT call purge_project_index
+    # because that calls _ensure_db() and can recurse back into init_db while
+    # tables are still being created. A spurious alias row never has legacy files.
+    with SessionLocal() as session:
+        session.execute(
+            delete(DocIndex).where(DocIndex.project_id == MASTER_CORPUS_PROJECT_ID)
+        )
+        session.commit()
 
 
 # ── search ────────────────────────────────────────────────────────────────────

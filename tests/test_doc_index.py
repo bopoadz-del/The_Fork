@@ -903,8 +903,10 @@ def test_zero_chunk_indexing_emits_warning(tmp_path, monkeypatch, caplog):
     silently unretrievable in this state before the 2026-06 audit."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_VECTOR_NAMESPACE", "")
     from app.core import doc_index
     importlib.reload(doc_index)
+    projects_mod.init_db()
 
     proj = projects_mod.create_project("Zero Chunk Project")
     pid = proj["id"]
@@ -930,8 +932,10 @@ def test_nonempty_indexing_does_not_emit_zero_chunk_warning(tmp_path, monkeypatc
     log signal drowns in noise and stops being a tripwire."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_VECTOR_NAMESPACE", "")
     from app.core import doc_index
     importlib.reload(doc_index)
+    projects_mod.init_db()
 
     proj = projects_mod.create_project("Normal Project")
     pid = proj["id"]
