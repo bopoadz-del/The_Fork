@@ -48,6 +48,28 @@ pilot program. The only remaining provider knob is `OPENAI_MODEL`, and it
 may be bumped **only on Chadi's explicit written instruction** citing this
 freeze. Any exception must also be written and reference this decision.
 
+## 2026-07-08 — PARKED: retrieval-quality blocker on legacy 256-dim embeddings
+
+**Observation:** After manually reindexing the three fixture projects, the
+semantic retriever still returns only `drive_archive:` GK chunks from
+`training_material` for project-scoped queries. The fresh-upload eval fell
+from the previously reported 12/12 top-1 to **0/12 top-1 / 0/12 top-3**, and
+fixture-project searches (`96bd7cd1`, `7ce7b9d0`) likewise surface GK chunks
+rather than the project's own BOQ/programme documents. Hybrid BM25 is already
+wired (`retriever.py` passes `query_text`) but does not rescue the cases.
+
+**Working diagnosis:** The legacy 256-dim embedding model does not separate
+small, project-specific documents from the large, topically overlapping
+Drive-archive GK corpus. This is the same limitation measured in the Step-2
+recall gate (doc@5 20 %, chunk@5 17 % vs. 41 % / 27 % bar).
+
+**Decision:** Do not tune RAG knobs (score margin, own-doc boost, GK cap,
+lexical fold) to mask the embedding weakness — that would be chasing symptoms.
+Run the T5 sweep and golden set to capture the baseline, publish the failure
+itemization, and proceed to **T6 embedder migration** as the intended fix.
+If a new embedder cannot lift doc recall@5 to ≥50 % and golden-set score to
+≥ its T5 value, the cutover is PARKED for Chadi.
+
 ## 2026-07-07 — Provider switch: Ollama native `/api/chat` primary
 
 **Decision:** Prod is now running **Ollama `glm-5.2:cloud` via the native
