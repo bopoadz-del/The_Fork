@@ -37,11 +37,18 @@ first. Update on every task state change.
   | Fresh-upload eval | **PASS** | 12/12 top-1, 12/12 top-3 |
   | Calc-intact | **PASS** | 3/3 with `intent=calculation` |
   | parse_primavera schedule | **PASS** | `primavera_parser` forced; returned 258 programme milestones, no FIDIC |
-  | 100-question recall | **IN PROGRESS** | background task running |
+  | 100-question recall | **FAIL** | 30-question sample: doc@5=20%, chunk@5=17% (gate 41%/27%) |
   | Smoke --runs 3 | **PASS** | model=gpt-4o-mini, zero fallbacks |
-- Next: await 100-question recall score; if >=41/27, keep fold ON, flip
-  Render service branch back to `main`, merge PR #165, and continue to the
-  68-run feature-matrix sweep. If recall fails, fold stays OFF and report.
+- Decision: `RAG_GK_LEXICAL_FOLD` turned **OFF**; cfg7 knobs removed from
+  Render env. The recall shortfall is independent of the fold (same 20%/17%
+  measured with fold OFF on the same seed) — it is a legacy 256-dim embedding
+  limitation that the embedder migration (T6) must address. Fresh-upload wins
+  and EOT 21 days remain PASS without the fold once the fixture docs are
+  properly indexed, so the fold provides no benefit at the cost of recall.
+- Next: continue T5c 68-run feature-matrix sweep on the current prod config
+  (branch `feat/fold-cfg7-battery` deployed, fold OFF), then T5d golden set.
+  PR #165 merge is blocked by a failing Cloudflare Workers build check
+  (external integration) — the branch fixes stay on prod until that is green.
 
 ## 2026-07-08 — FINAL PROVIDER RESOLUTION: OpenAI gpt-4o-mini primary
 
