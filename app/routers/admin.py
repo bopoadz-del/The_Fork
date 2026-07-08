@@ -15,6 +15,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from app.dependencies import require_api_key
@@ -245,7 +246,162 @@ def admin_project_reindex(
     """
     _require_admin(auth)
     from app.core import doc_index as _doc_index
-    return _doc_index.index_project(project_id)
+    result = _doc_index.index_project(project_id)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=422, detail=result)
+    return result
+
+
+# ── Drive pipeline proof endpoints (Task T4) ───────────────────────────────
+
+class _DriveProofRequest(BaseModel):
+    project_id: str
+    file_id: str | None = None
+
+
+async def _resolve_drive_proof_file(
+    project_id: str,
+    file_id: str | None,
+) -> Dict[str, Any]:
+    """Return {file_id, name, error} for a Drive proof target.
+
+    If ``file_id`` is supplied, use it directly. Otherwise walk the configured
+    Drive folder for ``project_id`` and pick the first downloadable file.
+    """
+    from app.core import gdrive_service
+
+    if file_id:
+        return {"file_id": file_id, "name": "", "error": None}
+
+    mapping = gdrive_service.parse_project_folder_map()
+    folder_id = mapping.get(project_id)
+    if not folder_id:
+        return {
+            "error": f"no Drive folder configured for project {project_id}",
+        }
+
+    files, walk_errors = await run_in_threadpool(
+        gdrive_service.walk_folder, folder_id
+    )
+    for f_meta in files:
+        if gdrive_service.is_downloadable(f_meta):
+            return {
+                "file_id": f_meta["id"],
+                "name": f_meta.get("name", ""),
+                "error": None,
+            }
+    err = walk_errors[0] if walk_errors else "no downloadable files found"
+    return {"error": err}
+
+
+@router.post("/v1/admin/drive/download-proof")
+async def admin_drive_download_proof(
+    req: _DriveProofRequest,
+    auth: dict = Depends(require_api_key),
+):
+    """Prove the service account can download a real Drive file.
+
+    Returns length + SHA-256 only; raw bytes never leave the server.
+    """
+    _require_admin(auth)
+    from app.core import gdrive_service
+
+    target = await _resolve_drive_proof_file(req.project_id, req.file_id)
+    if target.get("error"):
+        return {"ok": False, "error": target["error"]}
+
+    file_id = target["file_id"]
+    blob, dl_err = await run_in_threadpool(
+        gdrive_service.download_file_bytes, file_id
+    )
+    if blob is None:
+        return {"ok": False, "error": dl_err or "download failed"}
+
+    import hashlib
+
+    return {
+        "ok": True,
+        "file_id": file_id,
+        "name": target.get("name", ""),
+        "bytes": len(blob),
+        "sha256": hashlib.sha256(blob).hexdigest(),
+        "mime_type": "application/octet-stream",
+    }
+
+
+@router.post("/v1/admin/drive/ingest-proof")
+async def admin_drive_ingest_proof(
+    req: _DriveProofRequest,
+    auth: dict = Depends(require_api_key),
+):
+    """Prove the service account can download + index a real Drive file.
+
+    Downloads the file, writes it to DATA_DIR, registers it as a project
+    document with Drive metadata, and runs incremental indexing.
+    """
+    _require_admin(auth)
+    import hashlib
+    import os
+
+    from app.core import doc_index as _doc_index
+    from app.core import file_crypto, gdrive_service, projects as _projects
+
+    if not _projects.get_project(req.project_id):
+        return {"ok": False, "error": f"project {req.project_id} not found"}
+
+    target = await _resolve_drive_proof_file(req.project_id, req.file_id)
+    if target.get("error"):
+        return {"ok": False, "error": target["error"]}
+
+    file_id = target["file_id"]
+    blob, dl_err = await run_in_threadpool(
+        gdrive_service.download_file_bytes, file_id
+    )
+    if blob is None:
+        return {"ok": False, "error": dl_err or "download failed"}
+
+    original_name = target.get("name") or file_id
+    data_dir = os.getenv("DATA_DIR", "data")
+    stored_as = f"{hashlib.sha256(file_id.encode()).hexdigest()[:8]}_{original_name}"
+    stored_as = os.path.basename(stored_as.replace("\\", "/"))
+    filepath = os.path.join(data_dir, stored_as)
+    file_crypto.write_document(filepath, blob)
+
+    doc = _projects.add_document(
+        req.project_id,
+        original_name,
+        stored_as=stored_as,
+        file_path=filepath,
+        size=len(blob),
+        content_sha256=hashlib.sha256(blob).hexdigest(),
+        metadata={
+            "drive_file_id": file_id,
+            "source": "drive_admin_ingest_proof",
+        },
+    )
+
+    idx_result = _doc_index.index_document(req.project_id, doc["id"])
+    if idx_result.get("status") == "error":
+        banner = idx_result.get(
+            "banner",
+            "ERROR: indexing produced 0 chunks — check extractor/OCR.",
+        )
+        return {
+            "ok": False,
+            "error": idx_result.get("error", "ZERO_CHUNK"),
+            "banner": banner,
+            "document_id": doc["id"],
+            "file_id": file_id,
+            "name": original_name,
+        }
+
+    return {
+        "ok": True,
+        "document_id": doc["id"],
+        "chunk_count": idx_result.get("total_chunks", 0),
+        "file_id": file_id,
+        "name": original_name,
+    }
 
 
 # ── Training scenario generation (Task 1.4 / MEGA-2) ───────────────────────
