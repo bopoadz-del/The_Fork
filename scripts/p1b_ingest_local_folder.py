@@ -45,7 +45,26 @@ def _ingest_file(
     from app.core import doc_index, file_crypto, projects as projects_mod
 
     rel = str(src_path.relative_to(Path("G:/My Drive"))).replace("\\", "/")
-    size = src_path.stat().st_size
+
+    # Google Workspace native files and certain archive placeholders cannot be
+    # read as normal files through the Drive mount; skip them cleanly rather than
+    # crashing with OSError: [Errno 22] Invalid argument.
+    unsupported_exts = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar"}
+    if src_path.suffix.lower() in unsupported_exts:
+        return rel, {
+            "status": "error",
+            "error": "SKIPPED_UNSUPPORTED",
+            "reason": "Google Workspace native or unsupported archive placeholder",
+        }
+
+    try:
+        size = src_path.stat().st_size
+    except OSError as exc:
+        return rel, {
+            "status": "error",
+            "error": "SKIPPED_UNREADABLE",
+            "reason": f"Cannot stat file on Drive mount: {exc}",
+        }
 
     # Skip multi-hundred-MB files before copying — the doc_index PDF guard also
     # rejects them, but copying them from the Drive mount is itself a timeout/OOM
@@ -58,7 +77,14 @@ def _ingest_file(
             "size_mb": round(size / (1024 * 1024), 1),
         }
 
-    content_sha = hashlib.sha256(src_path.read_bytes()).hexdigest()
+    try:
+        content_sha = hashlib.sha256(src_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        return rel, {
+            "status": "error",
+            "error": "SKIPPED_UNREADABLE",
+            "reason": f"Cannot read file on Drive mount: {exc}",
+        }
 
     stored_name = f"{hashlib.sha256(str(src_path).encode()).hexdigest()[:8]}_{_safe_stored_name(src_path.name)}"
     dest = data_dir / stored_name
@@ -150,8 +176,9 @@ def main() -> int:
     successes = 0
     zero_chunk = 0
     skipped_too_large = 0
-    errors: List[Dict[str, Any]] = []
     skipped_unsupported = 0
+    skipped_unreadable = 0
+    errors: List[Dict[str, Any]] = []
     results: List[Dict[str, Any]] = []
 
     def _write_partial_report() -> None:
@@ -170,6 +197,8 @@ def main() -> int:
             "successes": successes,
             "zero_chunk": zero_chunk,
             "skipped_too_large": skipped_too_large,
+            "skipped_unsupported": skipped_unsupported,
+            "skipped_unreadable": skipped_unreadable,
             "errors": errors,
             "results": results,
         }
@@ -191,6 +220,10 @@ def main() -> int:
                     zero_chunk += 1
                 elif result.get("error") == "SKIPPED_TOO_LARGE":
                     skipped_too_large += 1
+                elif result.get("error") == "SKIPPED_UNSUPPORTED":
+                    skipped_unsupported += 1
+                elif result.get("error") == "SKIPPED_UNREADABLE":
+                    skipped_unreadable += 1
                 else:
                     errors.append({"path": rel, "error": result.get("error")})
             elif result.get("rag_indexed", 0) == 0:
@@ -210,6 +243,7 @@ def main() -> int:
     print(
         f"[p1b] batch {offset+1}-{offset+len(batch_files)}: "
         f"{successes} succeeded, {zero_chunk} zero-chunk, {skipped_too_large} too-large skipped, "
+        f"{skipped_unsupported} unsupported skipped, {skipped_unreadable} unreadable skipped, "
         f"{len(errors)} errors, {elapsed:.1f}s",
         file=sys.stderr,
     )

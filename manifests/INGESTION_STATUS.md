@@ -6,7 +6,7 @@
 - **Target:** Ingest `G:/My Drive/Master Folder` (7,222 files) into RAG namespace `v2`
 - **Embedder:** `BAAI/bge-small-en-v1.5`
 - **Runner:** `scripts/p1b_run_batches.sh` — sequential 100-file batches
-- **Active task:** `bash-7tzkkrr9`
+- **Active task:** `bash-maaw7rmf` (replaced `bash-7tzkkrr9` after patch)
 
 ## Progress
 
@@ -17,6 +17,24 @@
 | Remaining filtered files | ~7,106 |
 | Current batch | 0 (`manifests/p1b_master_folder_batch_000.json`) |
 | Current file | ~6/7222 — `DD-2023-118_DG2 Infra P1_Vol 6 - Contractor's Proposal.pdf` |
+
+## Latest Patch (2026-07-08)
+
+`scripts/p1b_ingest_local_folder.py` now skips the following **before** attempting to read/copy from the Google Drive mount:
+
+| Category | Extension | Result |
+|----------|-----------|--------|
+| Google Workspace native files | `.gdoc`, `.gsheet`, `.gslides`, `.gdraw` | `SKIPPED_UNSUPPORTED` |
+| RAR archives (cannot be read from mount) | `.rar` | `SKIPPED_UNSUPPORTED` |
+| Files that fail `stat`/`read_bytes` on the mount | any | `SKIPPED_UNREADABLE` |
+
+This fixes the `OSError: [Errno 22] Invalid argument` pattern seen on:
+
+- `Master Folder/.archivetempES Qld Trust Employee Information forms (1).gdoc`
+- `Master Folder/Chadi_CV PM.gdoc`
+- `Master Folder/Copy of CAD.rar`
+- `Master Folder/DG2 Infra Pack 1/Contract Docs/.../DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (4-6 of 7).pdf`
+- `Master Folder/DG2 Infra Pack 1/Contract Docs/.../DD-2023-118_DG2 Infra P1_Vol 4 - Schedule (1-2 of 2) BOQ.pdf`
 
 ## Extractors Added & Verified
 
