@@ -436,3 +436,5 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     ingestion worker).
   - Added `P1B_MAX_FILE_SIZE_MB=100` guard to `p1b_ingest_local_folder.py`
     to avoid copying huge files from the Drive mount before indexing.
+  - Added `PDF_OCR_MAX_SIZE_MB=25` guard: disable OCR for PDFs > 25 MB and
+    rely on the text layer only (this was the timeout/OOM path).
