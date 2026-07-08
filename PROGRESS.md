@@ -60,10 +60,21 @@ first. Update on every task state change.
 - A docs-only commit that included review_pack line-ending normalisation was
   deployed and immediately rolled back because prod became unstable (502).
   Prod is now pinned back to commit `5bd5c2f` and smoke 3/3 is green.
-- Decision: capture the current baseline honestly — run the must-class sweep
-  and the full golden set, publish FEATURE_MATRIX_V2.md and
-  GOLDEN_SET_REPORT.md with every failure itemized, then move to T6 embedder
-  migration as the only remaining fix for retrieval-class failures.
+- T5 sweep baseline captured: `FEATURE_MATRIX_V2.md` = **19/54 PASS**
+  (must-class 6/14 PASS, coverage 13/40 PASS).
+- T5 golden-set baseline captured: `GOLDEN_SET_REPORT.md` = **9/28 PASS**
+  (bar 26/28). 12/12 fresh-upload cases failed retrieval; project-scoped
+  doc/BOQ/spec/metadata queries also failed because project docs do not rank.
+- T6 embedder migration started on branch `feat/t6-embedder-namespace`:
+  - Added `RAG_VECTOR_DB_PATH` env support in `app/core/rag/vector_store.py`
+    so a new index can live in a separate SQLite file / Postgres DB.
+  - Fixed `app/core/rag/embeddings.py` backend selection so model2vec-family
+    models are loaded through the model2vec backend (correct 256-dim + norm)
+    instead of through sentence-transformers.
+  - Added `scripts/reindex_corpus_new_embedder.py` to rebuild a corpus into
+    the chosen namespace with the chosen embedder.
+  - Local reindex into `data/rag/vectors_v2.db` with
+    `sentence-transformers/all-MiniLM-L6-v2` is running (142,218 source rows).
 - PR #165 merge is still blocked by the Cloudflare Workers build check.
   The branch remains deployed to prod for these validation runs.
 
