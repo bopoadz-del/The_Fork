@@ -424,4 +424,8 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   - Tightened archive extraction guards: 50 MB archive/file limit, 100-member
     limit, skip image members inside archives (avoids per-photo OCR/YOLO on
     ZIPs containing hundreds of construction photos).
-  - Restarting ingestion in 500-file batches instead of one monolithic run.
+  - Real-file extractor verification: PPTX, KMZ, ZIP, MSG, DOC all extract
+    text from real Master Folder files; RAR degrades gracefully on Windows
+    (works on Render with `unrar`).
+  - Restarted ingestion in smaller 100-file batches with partial report flush
+    every 10 files (previous 500-file batch was killed by session close).
