@@ -431,3 +431,6 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     every 10 files (previous 500-file batch was killed by session close).
   - Added `scripts/p1b_run_batches.sh` to run sequential 100-file batches
     automatically until the Master Folder is fully ingested.
+  - Added `PDF_MAX_SIZE_MB=100` guard in `doc_index.py`: silently skips
+    PDFs > 100 MB (the drawing sets were 140–446 MB and OOM-killing the
+    ingestion worker).
