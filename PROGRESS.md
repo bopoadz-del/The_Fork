@@ -348,3 +348,26 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   - Note: service-account `GDRIVE_PROJECT_FOLDERS` remains unset; the OAuth
     Drive pipeline is verified end-to-end and prod-ready.
   - T4 complete.
+
+- **2026-07-08 (later) — CLEAN REBUILD Phase 0: P0a/P0b/P0c complete on
+  `feat/clean-rebuild-rag`:**
+  - P0a: `app/core/rag/embeddings.py` rewritten to read `dim` from the loaded
+    model, L2-normalize every vector, and expose `Embedder.identity`.
+  - P0a addition: namespaced chunk tables carry embedding-identity metadata
+    (`embedding_model`, `embedding_dim`, `embedding_normalized`); startup
+    asserts exact model match and fails loud on mismatch.
+  - P0b: `app/core/models.py` gained `make_rag_chunk_class()` factory;
+    `app/core/rag/vector_store.py` honors `RAG_VECTOR_NAMESPACE` (default
+    `v2`), writes/reads the namespaced table, and retires the old `chunks`
+    table in place (never deleted, never written to again).
+  - Tests: 34 RAG + chunks-index tests green; added tests for identity,
+    namespace isolation, and mismatched-model failure.
+  - P0c: `scripts/benchmark_embedders.py` created; ran all three candidates
+    on the 20-question recall subset + 12 fresh-upload cases:
+    - `minishlab/potion-base-8M`: doc@5=0.95, chunk@5=0.55
+    - `sentence-transformers/all-MiniLM-L6-v2`: doc@5=0.90, chunk@5=0.70
+    - `BAAI/bge-small-en-v1.5`: doc@5=0.95, chunk@5=0.65
+    - All three: 12/12 fresh-upload top-1 wins.
+  - Draft recommendation in `EMBEDDER_DECISION.md`: `BAAI/bge-small-en-v1.5`
+    as winner (best combined doc/chunk recall, fits Render envelope).
+    Pending Chadi confirmation before Phase 1.

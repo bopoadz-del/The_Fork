@@ -18,6 +18,7 @@ import time
 
 import numpy as np
 import pytest
+from sqlalchemy import select
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -95,6 +96,26 @@ def test_embedder_get_cache_returns_same_instance(isolated_data_dir):
     reset_embedder_cache()
     c = get_embedder()
     assert c is not a, "reset_embedder_cache should drop the cached instance"
+
+
+def test_embedder_identity_includes_model_dim_normalized(isolated_data_dir):
+    from app.core.rag.embeddings import Embedder
+
+    e = Embedder(model_name="fake")
+    identity = e.identity
+    assert identity["model"] == "fake"
+    assert identity["dim"] == e.dim
+    assert identity["normalized"] is True
+
+
+def test_embedder_matches_identity(isolated_data_dir):
+    from app.core.rag.embeddings import Embedder
+
+    e = Embedder(model_name="fake")
+    assert e.matches_identity({"model": "fake", "dim": e.dim, "normalized": True})
+    assert not e.matches_identity({"model": "other", "dim": e.dim, "normalized": True})
+    assert not e.matches_identity({"model": "fake", "dim": e.dim - 1, "normalized": True})
+    assert not e.matches_identity({"model": "fake", "dim": e.dim, "normalized": False})
 
 
 # ── Vector store ──────────────────────────────────────────────────────────
@@ -187,6 +208,78 @@ def test_vector_store_dim_mismatch_raises(isolated_data_dir):
     wrong_dim_vecs = np.zeros((1, e.dim - 1), dtype=np.float32)
     with pytest.raises(ValueError, match="embedding dim"):
         s.upsert_chunks("proj_a", "doc_x", ["text"], wrong_dim_vecs)
+
+
+def test_vector_store_namespace_uses_separate_table(isolated_data_dir):
+    """Two namespaces on the same DB are isolated: writes in one do not
+    appear in the other."""
+    from app.core.rag.embeddings import Embedder
+    from app.core.rag.vector_store import VectorStore
+
+    e = Embedder(model_name="fake")
+    s1 = VectorStore(
+        db_path=str(isolated_data_dir / "vec.db"),
+        dim=e.dim,
+        namespace="ns1",
+        model_name="fake",
+    )
+    s2 = VectorStore(
+        db_path=str(isolated_data_dir / "vec.db"),
+        dim=e.dim,
+        namespace="ns2",
+        model_name="fake",
+    )
+    s1.upsert_chunks("proj_a", "doc_x", ["alpha"], e.encode(["alpha"]))
+    s2.upsert_chunks("proj_a", "doc_x", ["beta"], e.encode(["beta"]))
+
+    assert s1.count("proj_a") == 1
+    assert s2.count("proj_a") == 1
+    r1 = s1.search("proj_a", e.encode(["alpha"])[0], k=5)
+    r2 = s2.search("proj_a", e.encode(["beta"])[0], k=5)
+    assert r1[0].text == "alpha"
+    assert r2[0].text == "beta"
+
+
+def test_vector_store_stores_embedding_identity(isolated_data_dir):
+    from app.core.rag.embeddings import Embedder
+    from app.core.rag.vector_store import VectorStore
+
+    e = Embedder(model_name="fake")
+    s = VectorStore(
+        db_path=str(isolated_data_dir / "vec.db"),
+        dim=e.dim,
+        namespace="id_test",
+        model_name="fake",
+    )
+    s.upsert_chunks("proj_a", "doc_x", ["text"], e.encode(["text"]))
+
+    # Read back the identity columns directly
+    with s._session_factory()() as session:
+        row = session.execute(
+            select(
+                s._rag_chunk_cls.embedding_model,
+                s._rag_chunk_cls.embedding_dim,
+                s._rag_chunk_cls.embedding_normalized,
+            )
+        ).first()
+    assert row.embedding_model == "fake"
+    assert row.embedding_dim == e.dim
+    assert row.embedding_normalized is True
+
+
+def test_vector_store_rejects_mismatched_model_identity(isolated_data_dir):
+    """Once a namespace is stamped with model A, opening it with model B
+    fails loud — mixed-model contamination is structurally impossible."""
+    from app.core.rag.embeddings import Embedder
+    from app.core.rag.vector_store import VectorStore
+
+    e = Embedder(model_name="fake")
+    db = str(isolated_data_dir / "vec.db")
+    s_a = VectorStore(db_path=db, dim=e.dim, namespace="mix", model_name="model-a")
+    s_a.upsert_chunks("proj_a", "doc_x", ["text"], e.encode(["text"]))
+
+    with pytest.raises(RuntimeError, match="Embedding identity mismatch"):
+        VectorStore(db_path=db, dim=e.dim, namespace="mix", model_name="model-b")
 
 
 def test_search_empty_project_returns_empty(isolated_data_dir):
