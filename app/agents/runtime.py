@@ -1746,6 +1746,25 @@ class Agent:
                 },
                 "required": ["file_path"],
             },
+            "primavera_parser": {
+                "description": (
+                    "Parse a Primavera P6 .xer schedule file from the project. "
+                    "Returns activities, milestones, WBS, schedule_data, and CPM "
+                    "output. file_path must be the original_name from "
+                    "search_project_documents — never guess paths."
+                ),
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "The XER file's original_name (e.g. "
+                            "'Annexure 2 - Baseline Program XER.xer'). MUST come "
+                            "from a prior search_project_documents call."
+                        ),
+                    },
+                },
+                "required": ["file_path"],
+            },
         }
 
         tools = []
