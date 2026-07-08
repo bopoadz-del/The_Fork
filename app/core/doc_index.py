@@ -67,7 +67,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 
 # Extensions we know how to extract text from.
 _SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar", ".msg"}
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".doc", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar", ".msg"}
     | _IMAGE_EXTS
 )
 
@@ -406,6 +406,69 @@ def _extract_msg(file_path: str) -> str:
     return "\n\n".join(parts)
 
 
+def _extract_doc(file_path: str) -> str:
+    """Extract text from a legacy binary Microsoft Word .doc file.
+
+    Tries external converters in order of reliability:
+    ``antiword`` (Linux/Render), ``catdoc`` (Linux/Render), ``textract``
+    (if installed), then Windows Word COM automation (if Word is installed
+    and pywin32 is available). Never raises.
+    """
+    import shutil
+    import subprocess
+
+    converters = []
+    antiword = shutil.which("antiword")
+    catdoc = shutil.which("catdoc")
+    if antiword:
+        converters.append([antiword])
+    if catdoc:
+        converters.append([catdoc, "-d", "utf-8"])
+
+    for cmd in converters:
+        try:
+            with file_crypto.open_plaintext(file_path) as readable_path:
+                result = subprocess.run(
+                    cmd + [readable_path],
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    timeout=60,
+                )
+            text = (result.stdout or "").strip()
+            if text:
+                return text
+        except Exception:
+            continue
+
+    # Optional textract fallback (not a declared dependency — user-install only).
+    try:
+        import textract
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            return textract.process(readable_path).decode("utf-8", errors="replace").strip()
+    except Exception:
+        pass
+
+    # Optional Windows Word COM fallback (requires Word + pywin32).
+    try:
+        import win32com.client as win32
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            word = win32.Dispatch("Word.Application")
+            word.Visible = False
+            doc = word.Documents.Open(readable_path)
+            try:
+                return doc.Range().Text
+            finally:
+                doc.Close(SaveChanges=False)
+                word.Quit()
+    except Exception:
+        return ""
+
+    return ""
+
+
 # Archive extraction guards (zip-bomb / runaway-nest protection).
 _ARCHIVE_MAX_DEPTH = int(os.getenv("ARCHIVE_MAX_DEPTH", "3"))
 _ARCHIVE_MAX_FILES = int(os.getenv("ARCHIVE_MAX_FILES", "1000"))
@@ -620,7 +683,9 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
         if ext == ".pdf":
             return _extract_pdf(file_path)
 
-        # ── DOCX ─────────────────────────────────────────────────────────────
+        # ── DOC / DOCX ───────────────────────────────────────────────────────
+        if ext == ".doc":
+            return _extract_doc(file_path), {}
         if ext == ".docx":
             import docx
             with file_crypto.open_plaintext(file_path) as readable_path:
@@ -670,10 +735,11 @@ def extract_document_text(file_path: str, filename: str) -> str:
 
     Supports .txt/.md/.csv/.json/.xml (via file_crypto.read_document),
     .pdf (via fitz / PyMuPDF + open_plaintext, with OCR fallback for scanned
-    image-only PDFs), .docx (via python-docx + open_plaintext), .xlsx (via
-    openpyxl + open_plaintext), .pptx (python-pptx), .kmz (KML text), .zip/.rar
-    (recursive archive flattening), .msg (Outlook email body), and image formats
-    (.jpg/.jpeg/.png/.webp/.gif/.bmp/.tif/.tiff) via OCR.
+    image-only PDFs), .doc (antiword/catdoc/textract/Word COM), .docx (via
+    python-docx + open_plaintext), .xlsx (via openpyxl + open_plaintext), .pptx
+    (python-pptx), .kmz (KML text), .zip/.rar (recursive archive flattening),
+    .msg (Outlook email body), and image formats (.jpg/.jpeg/.png/.webp/.gif/
+    .bmp/.tif/.tiff) via OCR.
 
     Returns "" for unsupported extensions and on any extraction error —
     callers treat the empty string as "skipped". Never raises.

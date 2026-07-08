@@ -73,6 +73,8 @@ def main() -> int:
                     help="Platform project name (default: folder name)")
     ap.add_argument("--limit", type=int, default=0,
                     help="Ingest at most N files (0 = all)")
+    ap.add_argument("--offset", type=int, default=0,
+                    help="Skip the first N files (for batching)")
     ap.add_argument("--output", default="manifests/p1b_ingestion_report.json",
                     help="Report path")
     ap.add_argument("--resume", action="store_true",
@@ -108,8 +110,6 @@ def main() -> int:
     project_id = project["id"]
 
     files = sorted(p for p in folder_path.rglob("*") if p.is_file())
-    if args.limit:
-        files = files[: args.limit]
 
     already_indexed: set[str] = set()
     if args.resume:
@@ -124,7 +124,16 @@ def main() -> int:
         p for p in files
         if str(p.relative_to(drive_root)).replace("\\", "/") not in already_indexed
     ]
-    print(f"[p1b] {len(filtered_files)} files to ingest ({len(files)} total, {len(files)-len(filtered_files)} skipped)", file=sys.stderr)
+
+    # Apply offset/limit for batched ingestion.
+    offset = max(0, args.offset)
+    limit = args.limit if args.limit > 0 else len(filtered_files)
+    batch_files = filtered_files[offset : offset + limit]
+    print(
+        f"[p1b] batch {offset+1}-{offset+len(batch_files)} of {len(filtered_files)} "
+        f"filtered files ({len(files)} total, {len(files)-len(filtered_files)} already indexed)",
+        file=sys.stderr,
+    )
 
     successes = 0
     zero_chunk = 0
@@ -132,8 +141,31 @@ def main() -> int:
     skipped_unsupported = 0
     results: List[Dict[str, Any]] = []
 
+    def _write_partial_report() -> None:
+        partial = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "project_id": project_id,
+            "project_name": project_name,
+            "folder": args.folder,
+            "folder_path": str(folder_path),
+            "embedder": os.environ["RAG_EMBEDDING_MODEL"],
+            "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
+            "total_files": len(files),
+            "batch_offset": offset,
+            "batch_limit": limit,
+            "batch_files": len(batch_files),
+            "successes": successes,
+            "zero_chunk": zero_chunk,
+            "errors": errors,
+            "results": results,
+        }
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(partial, fh, indent=2, ensure_ascii=False)
+
     t0 = time.monotonic()
-    for idx, src_path in enumerate(files, 1):
+    for idx, src_path in enumerate(batch_files, start=offset + 1):
         rel = str(src_path.relative_to(Path("G:/My Drive"))).replace("\\", "/")
         ext = src_path.suffix.lower()
         print(f"[p1b] {idx}/{len(files)} {rel}", file=sys.stderr)
@@ -151,36 +183,20 @@ def main() -> int:
                 successes += 1
         except Exception as exc:
             errors.append({"path": rel, "error": f"{type(exc).__name__}: {exc}"})
+        # Flush partial report every 50 files so a crash doesn't lose the batch.
+        if idx % 50 == 0:
+            _write_partial_report()
 
     elapsed = time.monotonic() - t0
-
-    report = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "project_id": project_id,
-        "project_name": project_name,
-        "folder": args.folder,
-        "folder_path": str(folder_path),
-        "embedder": os.environ["RAG_EMBEDDING_MODEL"],
-        "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
-        "total_files": len(files),
-        "successes": successes,
-        "zero_chunk": zero_chunk,
-        "errors": errors,
-        "elapsed_seconds": round(elapsed, 1),
-        "results": results,
-    }
-
-    out_path = Path(args.output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump(report, fh, indent=2, ensure_ascii=False)
-    print(f"[p1b] report written to {out_path}", file=sys.stderr)
+    _write_partial_report()
+    print(f"[p1b] report written to {args.output}", file=sys.stderr)
     print(
-        f"[p1b] {successes}/{len(files)} succeeded, {zero_chunk} zero-chunk, {len(errors)} errors, "
+        f"[p1b] batch {offset+1}-{offset+len(batch_files)}: "
+        f"{successes} succeeded, {zero_chunk} zero-chunk, {len(errors)} errors, "
         f"{elapsed:.1f}s",
         file=sys.stderr,
     )
-    return 0 if not errors else 0  # report all outcomes; exit 0 so CI doesn't abort
+    return 0
 
 
 if __name__ == "__main__":
