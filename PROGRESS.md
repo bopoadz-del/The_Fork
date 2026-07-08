@@ -21,10 +21,27 @@ first. Update on every task state change.
     schedule tests rely on the `primavera_parser` block, not RAG retrieval.
   - Duplicate imports from earlier failed attempts were removed via
     `DELETE /v1/projects/{id}/documents/{doc_id}`.
-- Next: run Step-2 acceptance battery with `RAG_GK_LEXICAL_FOLD=cfg7` ON. No
-  staging environment exists; branch-config gate will be implemented as a
-  code-default branch + Render preview or local validation before any prod
-  env flip (R1/R9).
+- Branch `feat/fold-cfg7-battery` / PR #165 deployed to prod temporarily
+  (Render service branch flipped) so the battery could run with fold ON.
+  Fixes landed on the branch:
+  - `app/agents/configs/heavy-reasoning.md`: added `primavera_parser` to
+    `allowed_blocks` and toolkit instructions.
+  - `app/agents/runtime.py`: added `primavera_parser` to
+    `_FILE_TOOL_SCHEMAS`, added schedule/milestone/XER phrases to
+    `_INTENT_TOOL_MAP`, and extended the forced-specific-tool gate to
+    `heavy-reasoning`.
+- Step-2 battery (fold=cfg7, LLM_PROVIDER=openai, model=gpt-4o-mini):
+  | Test | Result | Notes |
+  |---|---|---|
+  | EOT chat — 21 days | **PASS** | `contract-eot-notice-period.txt` ranked #1 source; answer = 21 days |
+  | Fresh-upload eval | **PASS** | 12/12 top-1, 12/12 top-3 |
+  | Calc-intact | **PASS** | 3/3 with `intent=calculation` |
+  | parse_primavera schedule | **PASS** | `primavera_parser` forced; returned 258 programme milestones, no FIDIC |
+  | 100-question recall | **IN PROGRESS** | background task running |
+  | Smoke --runs 3 | **PASS** | model=gpt-4o-mini, zero fallbacks |
+- Next: await 100-question recall score; if >=41/27, keep fold ON, flip
+  Render service branch back to `main`, merge PR #165, and continue to the
+  68-run feature-matrix sweep. If recall fails, fold stays OFF and report.
 
 ## 2026-07-08 — FINAL PROVIDER RESOLUTION: OpenAI gpt-4o-mini primary
 
