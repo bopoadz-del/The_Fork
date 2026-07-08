@@ -303,3 +303,21 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     idempotent for both fresh schema-baseline databases and existing prod
     databases. Pushed commit `2944dd2`.
   - CI re-running (run 28910092979).
+
+- **2026-07-08 (continued) — T4 merged and deployed:**
+  - PR #164 merged into `main` at `c7e8608`.
+  - Render prod deploy `dep-d96qcg77f7vs73a1j12g` → **live**.
+  - Post-deploy smoke: `SMOKE_RUNS=3 bash scripts/smoke.sh` → **3/3 PASS**, all
+    tool-backed, model = `gpt-4o-mini-2024-07-18`.
+  - Admin Drive proof endpoints reachable on prod and return controlled
+    errors when no folder is configured:
+    - `POST /v1/admin/drive/download-proof` → `200 {ok: False, error: "no Drive folder configured for project dar_al_arkan_master"}`
+    - `POST /v1/admin/drive/ingest-proof` → same.
+  - **Blocker for full T4 live verification:** `GDRIVE_PROJECT_FOLDERS` is not
+    set on Render, and the service account (`thefork-drive-import@project-drive-469320.iam.gserviceaccount.com`)
+    currently has zero files/folders shared with it (root empty, no shared
+    drives, no `sharedWithMe` files). The service-account token is read-only
+    (`drive.readonly` scope), so the account cannot create test files either.
+    Pending: a Drive folder shared with the service account + the corresponding
+    `project_id:folder_id` mapping added to Render, OR a specific file_id that
+    the service account can read.
