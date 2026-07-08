@@ -321,3 +321,13 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     Pending: a Drive folder shared with the service account + the corresponding
     `project_id:folder_id` mapping added to Render, OR a specific file_id that
     the service account can read.
+
+- **2026-07-08 (continued) — T4c via OAuth Drive:**
+  - User chose OAuth Drive proof instead of service-account folder mapping.
+  - Checked `/v1/drive/status` for the bootstrap user: `configured: True`,
+    `connected: False` — the OAuth app is wired but the account has not
+    completed consent.
+  - Generated one-time consent URL:
+    `https://accounts.google.com/o/oauth2/v2/auth?client_id=382554705937-v3s8kpvl7h0em2aekud73fro8rig0cvu.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fthe-fork.onrender.com%2Fv1%2Fdrive%2Fcallback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive.readonly&access_type=offline&prompt=consent&state=DMkH4CfWeXq-i0HBgfhS_JKw9m9yGLw6`
+  - Pending user completing consent; then list → import one file → verify
+    chunk_count > 0.
