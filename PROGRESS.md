@@ -263,3 +263,30 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 
 - Post-deploy smoke: `SMOKE_RUNS=3 bash scripts/smoke.sh` → **3/3 PASS**, all
   tool-backed, model = `gpt-4o-mini-2024-07-18`.
+
+## 2026-07-08 — T4 Drive pipeline proof (branch `feat/t4-drive-pipeline-proof`)
+
+- Added `metadata` JSONB column to `documents` with Alembic migration `0009`;
+  `add_document` persists Drive provenance (`drive_file_id`, `drive_path`,
+  `source`) for service-account hydration and OAuth imports.
+- Fail-loud zero-chunk indexing: `index_project` / `index_document` return
+  `status: error` + `ZERO_CHUNK` banner; `POST /v1/admin/debug/project-reindex`
+  returns HTTP 422 when a rebuild produces zero chunks.
+- Drive-folder background import now tracks job status and surfaces
+  ZERO_CHUNK as a job error instead of green success.
+- New admin proof endpoints:
+  - `POST /v1/admin/drive/download-proof` — service-account download bytes,
+    returns length + SHA-256 only.
+  - `POST /v1/admin/drive/ingest-proof` — download → store → register → index,
+    returns chunk count or ZERO_CHUNK banner.
+- New `scripts/reconcile_drive_delta.py` — dry-run by default (`--execute` to
+  write); walks each `GDRIVE_PROJECT_FOLDERS` mapping, imports missing files
+  through the normal pipeline, logs ZERO_CHUNK, and prints a completeness
+  manifest.
+- Tests added: `tests/test_doc_index_zero_chunk.py`,
+  `tests/test_drive_one_doc_proof.py`.
+- Local test gate: `pytest tests/test_admin_corpus_collections.py
+  tests/test_projects.py tests/test_doc_index.py tests/test_drive_index_folder.py
+  tests/test_doc_index_zero_chunk.py tests/test_drive_one_doc_proof.py -q`
+  → **65 passed, 1 xfailed**.
+- Status: implementation complete, awaiting CI green before merge/deploy.
