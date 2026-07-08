@@ -78,6 +78,9 @@ _PDF_OCR_THRESHOLD = 30
 # Skip PDFs above this size entirely. Multi-hundred-MB scanned drawing sets
 # (e.g. 450 MB) OOM the 2 GB Render worker during fitz load / OCR.
 _PDF_MAX_SIZE_MB = float(os.getenv("PDF_MAX_SIZE_MB", "100"))
+# For PDFs above this size, do NOT run OCR — only extract any existing text
+# layer. OCR'ing large scanned PDFs is the ingestion timeout/OOM path.
+_PDF_OCR_MAX_SIZE_MB = float(os.getenv("PDF_OCR_MAX_SIZE_MB", "25"))
 
 # In-process guard around index writes. Cross-process safety comes from the
 # SQLite BEGIN IMMEDIATE transaction in _update_index; this lock just avoids
@@ -264,10 +267,12 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
     ocr_pages = 0
     truncated = False
     try:
-        if _PDF_MAX_SIZE_MB > 0:
-            size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            if size_mb > _PDF_MAX_SIZE_MB:
-                return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        if _PDF_MAX_SIZE_MB > 0 and size_mb > _PDF_MAX_SIZE_MB:
+            return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
+        # Large scans: disable OCR entirely, rely on text layer only.
+        if _PDF_OCR_MAX_SIZE_MB > 0 and size_mb > _PDF_OCR_MAX_SIZE_MB:
+            page_cap = 0
         with file_crypto.open_plaintext(file_path) as readable_path:
             plumber = None
             # Skip pdfplumber on large scans — it loads the whole PDF and is
@@ -289,7 +294,7 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
                     # A page whose text layer is too thin is image-only (or
                     # near-empty) — OCR it, bounded by the page cap so a long
                     # scan can't OOM the box.
-                    if len(page_text) < _PDF_OCR_THRESHOLD:
+                    if page_cap > 0 and len(page_text) < _PDF_OCR_THRESHOLD:
                         if ocr_pages < page_cap:
                             ocr_text = _ocr_pdf_page(page)
                             if ocr_text.strip():
