@@ -331,3 +331,20 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     `https://accounts.google.com/o/oauth2/v2/auth?client_id=382554705937-v3s8kpvl7h0em2aekud73fro8rig0cvu.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fthe-fork.onrender.com%2Fv1%2Fdrive%2Fcallback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive.readonly&access_type=offline&prompt=consent&state=DMkH4CfWeXq-i0HBgfhS_JKw9m9yGLw6`
   - Pending user completing consent; then list → import one file → verify
     chunk_count > 0.
+
+- **2026-07-08 (continued) — T4c OAuth Drive proof completed on prod:**
+  - Used Kimi WebBridge to complete Google OAuth consent for
+    `shadido.dxb@gmail.com`; callback landed at `/?drive=connected`.
+  - `/v1/drive/status` → `connected: True`, `email: shadido.dxb@gmail.com`.
+  - `/v1/drive/files` listed the user's Drive root (folders + files) successfully.
+  - Created a test project `153674a8` (`T4 OAuth Drive Proof`).
+  - Imported `1-Project Management Process.pdf` via
+    `POST /v1/projects/153674a8/drive/import` → `201 stored`.
+  - Document metadata stamped:
+    `{"drive_file_id": "1pm0CMD6davATGNHwiDfTzR-EvtZnAymF", "source": "drive_oauth_single"}`.
+  - Verified indexing: `/v1/admin/corpus/collections` shows project `153674a8`
+    with **1 document, 1 chunk**; admin doc-extract shows
+    `indexed_chunk_count: 1`, snippet preview present.
+  - Note: service-account `GDRIVE_PROJECT_FOLDERS` remains unset; the OAuth
+    Drive pipeline is verified end-to-end and prod-ready.
+  - T4 complete.
