@@ -67,7 +67,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 
 # Extensions we know how to extract text from.
 _SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar"}
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar", ".msg"}
     | _IMAGE_EXTS
 )
 
@@ -361,6 +361,51 @@ def _extract_kmz(file_path: str) -> str:
         return ""
 
 
+def _extract_msg(file_path: str) -> str:
+    """Extract text from an Outlook .msg file (OLE compound document).
+
+    Reads the subject, sender, and plain-text body streams. This makes
+    project correspondence searchable without relying on the full
+    extract-msg package (which conflicts with our beautifulsoup4 pin).
+    Never raises.
+    """
+    try:
+        import olefile
+    except Exception:
+        return ""
+
+    def _read_stream(ole, stream_name):
+        if not ole.exists(stream_name):
+            return None
+        data = ole.openstream(stream_name).read()
+        if stream_name.endswith("001F"):
+            return data.decode("utf-16-le", errors="replace")
+        return data.decode("cp1252", errors="replace")
+
+    try:
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            if not olefile.isOleFile(readable_path):
+                return ""
+            ole = olefile.OleFileIO(readable_path)
+            try:
+                subject = _read_stream(ole, "__substg1.0_0E04001F") or _read_stream(ole, "__substg1.0_0E04001E") or ""
+                sender = _read_stream(ole, "__substg1.0_0C1A001F") or _read_stream(ole, "__substg1.0_0C1A001E") or ""
+                body = _read_stream(ole, "__substg1.0_1000001F") or _read_stream(ole, "__substg1.0_1000001E") or ""
+            finally:
+                ole.close()
+    except Exception:
+        return ""
+
+    parts = []
+    if sender:
+        parts.append(f"From: {sender}")
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if body:
+        parts.append(body)
+    return "\n\n".join(parts)
+
+
 # Archive extraction guards (zip-bomb / runaway-nest protection).
 _ARCHIVE_MAX_DEPTH = int(os.getenv("ARCHIVE_MAX_DEPTH", "3"))
 _ARCHIVE_MAX_FILES = int(os.getenv("ARCHIVE_MAX_FILES", "1000"))
@@ -604,6 +649,10 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
         if ext == ".kmz":
             return _extract_kmz(file_path), {}
 
+        # ── MSG (Outlook email) ──────────────────────────────────────────────
+        if ext == ".msg":
+            return _extract_msg(file_path), {}
+
         # ── ZIP / RAR ────────────────────────────────────────────────────────
         if ext == ".zip":
             return _extract_zip(file_path, filename), {}
@@ -622,8 +671,9 @@ def extract_document_text(file_path: str, filename: str) -> str:
     Supports .txt/.md/.csv/.json/.xml (via file_crypto.read_document),
     .pdf (via fitz / PyMuPDF + open_plaintext, with OCR fallback for scanned
     image-only PDFs), .docx (via python-docx + open_plaintext), .xlsx (via
-    openpyxl + open_plaintext), and image formats (.jpg/.jpeg/.png/.webp/.gif/
-    .bmp/.tif/.tiff) via OCR.
+    openpyxl + open_plaintext), .pptx (python-pptx), .kmz (KML text), .zip/.rar
+    (recursive archive flattening), .msg (Outlook email body), and image formats
+    (.jpg/.jpeg/.png/.webp/.gif/.bmp/.tif/.tiff) via OCR.
 
     Returns "" for unsupported extensions and on any extraction error —
     callers treat the empty string as "skipped". Never raises.
