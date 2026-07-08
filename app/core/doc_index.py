@@ -75,6 +75,10 @@ _SUPPORTED_EXTS = (
 # scanned / image-only PDF and re-extracted via OCR.
 _PDF_OCR_THRESHOLD = 30
 
+# Skip PDFs above this size entirely. Multi-hundred-MB scanned drawing sets
+# (e.g. 450 MB) OOM the 2 GB Render worker during fitz load / OCR.
+_PDF_MAX_SIZE_MB = float(os.getenv("PDF_MAX_SIZE_MB", "100"))
+
 # In-process guard around index writes. Cross-process safety comes from the
 # SQLite BEGIN IMMEDIATE transaction in _update_index; this lock just avoids
 # threads in one process contending on the DB lock unnecessarily.
@@ -260,6 +264,10 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
     ocr_pages = 0
     truncated = False
     try:
+        if _PDF_MAX_SIZE_MB > 0:
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            if size_mb > _PDF_MAX_SIZE_MB:
+                return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
         with file_crypto.open_plaintext(file_path) as readable_path:
             plumber = None
             # Skip pdfplumber on large scans — it loads the whole PDF and is
