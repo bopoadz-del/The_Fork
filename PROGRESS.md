@@ -421,4 +421,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     files. Partial report now written every 50 files.
   - Added `.doc` legacy-Word extraction (antiword/catdoc/textract/Word COM
     fallback chain); tested on all 4 `.doc` files in Master Folder.
+  - Tightened archive extraction guards: 50 MB archive/file limit, 100-member
+    limit, skip image members inside archives (avoids per-photo OCR/YOLO on
+    ZIPs containing hundreds of construction photos).
   - Restarting ingestion in 500-file batches instead of one monolithic run.
