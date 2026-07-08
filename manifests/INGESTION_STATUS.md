@@ -6,17 +6,18 @@
 - **Target:** Ingest `G:/My Drive/Master Folder` (7,222 files) into RAG namespace `v2`
 - **Embedder:** `BAAI/bge-small-en-v1.5`
 - **Runner:** `scripts/p1b_run_batches.sh` — sequential 100-file batches
-- **Active task:** `bash-maaw7rmf` (replaced `bash-7tzkkrr9` after patch)
+- **Active task:** `bash-maaw7rmf` (replaced `bash-7tzkkrr9` after patch) — **lost, restarting**
 
 ## Progress
 
 | Metric | Value |
 |--------|-------|
 | Total files in Master Folder | 7,222 |
-| Already indexed (across prior attempts) | ~116 |
-| Remaining filtered files | ~7,106 |
+| Already indexed (across prior attempts) | ~119 |
+| Remaining filtered files | ~7,103 |
 | Current batch | 0 (`manifests/p1b_master_folder_batch_000.json`) |
-| Current file | ~6/7222 — `DD-2023-118_DG2 Infra P1_Vol 6 - Contractor's Proposal.pdf` |
+| Current file | ~11/7222 — batch 0 in progress |
+| Batch 000 status | 6 succeeded, 3 unsupported skipped, 0 errors |
 
 ## Latest Patch (2026-07-08)
 
