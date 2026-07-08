@@ -75,6 +75,8 @@ def main() -> int:
                     help="Ingest at most N files (0 = all)")
     ap.add_argument("--output", default="manifests/p1b_ingestion_report.json",
                     help="Report path")
+    ap.add_argument("--resume", action="store_true",
+                    help="Skip files already indexed in the project (by local_drive_path)")
     args = ap.parse_args()
 
     from app.core import projects as projects_mod
@@ -108,7 +110,21 @@ def main() -> int:
     files = sorted(p for p in folder_path.rglob("*") if p.is_file())
     if args.limit:
         files = files[: args.limit]
-    print(f"[p1b] {len(files)} files to ingest", file=sys.stderr)
+
+    already_indexed: set[str] = set()
+    if args.resume:
+        for doc in projects_mod.list_project_documents(project_id):
+            rel = (doc.get("metadata") or {}).get("local_drive_path")
+            if rel:
+                already_indexed.add(rel.replace("\\", "/"))
+        print(f"[p1b] {len(already_indexed)} files already indexed; resuming", file=sys.stderr)
+
+    drive_root = Path("G:/My Drive")
+    filtered_files = [
+        p for p in files
+        if str(p.relative_to(drive_root)).replace("\\", "/") not in already_indexed
+    ]
+    print(f"[p1b] {len(filtered_files)} files to ingest ({len(files)} total, {len(files)-len(filtered_files)} skipped)", file=sys.stderr)
 
     successes = 0
     zero_chunk = 0
