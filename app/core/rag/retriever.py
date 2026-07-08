@@ -410,7 +410,7 @@ def retrieve_with_filter(
         raise ValueError("project_id is required")
 
     embedder = get_embedder()
-    query_vec = embedder.encode([query])[0]
+    query_vec = embedder.encode_queries([query])[0]
     store = get_store(dim=embedder.dim)
     over_fetch = max(k * 4, 20)
     # The GK corpus is small and curated (units / CESMM / FIDIC / procedures), so

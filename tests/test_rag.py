@@ -118,6 +118,34 @@ def test_embedder_matches_identity(isolated_data_dir):
     assert not e.matches_identity({"model": "fake", "dim": e.dim, "normalized": False})
 
 
+def test_embedder_query_instruction_model_name_rule(isolated_data_dir):
+    from app.core.rag.embeddings import Embedder
+
+    fake = Embedder(model_name="fake")
+    assert fake.query_instruction is None
+    # Exercise the model-name rule without loading real weights: set _fake=False
+    # so the property branches past the fake early-return.
+    class StubBgeEmbedder(Embedder):
+        def __init__(self):
+            self.model_name = "BAAI/bge-small-en-v1.5"
+            self._fake = False
+            self._backend = "sentence_transformers"
+            self._dim = 384
+    bge = StubBgeEmbedder()
+    assert bge.query_instruction is not None
+    assert "searching relevant passages" in bge.query_instruction
+
+
+def test_embedder_encode_queries_applies_instruction(isolated_data_dir):
+    from app.core.rag.embeddings import Embedder
+
+    e = Embedder(model_name="fake")
+    plain = e.encode(["construction schedule"])[0]
+    query = e.encode_queries(["construction schedule"])[0]
+    # Fake embedder has no instruction, so results are identical.
+    assert np.allclose(plain, query)
+
+
 # ── Vector store ──────────────────────────────────────────────────────────
 
 

@@ -134,6 +134,34 @@ class Embedder:
         return self._backend
 
     @property
+    def query_instruction(self) -> Optional[str]:
+        """Instruction prefix recommended for retrieval queries.
+
+        Some sentence-transformers models (notably BGE) are trained with an
+        asymmetric instruction: queries are prefixed with a retrieval task
+        description, while passage/documents are encoded bare. This property
+        returns the correct prefix for the loaded model, or None when the
+        model does not specify one.
+
+        Production retrieval and the embedder benchmark MUST use the same
+        setting so benchmark numbers predict live behaviour.
+        """
+        if self._fake:
+            return None
+        # BGE models are trained with a query instruction for retrieval.
+        # The exact string is the one documented on the BGE model cards.
+        if "bge-" in self.model_name.lower():
+            return "Represent this sentence for searching relevant passages: "
+        return None
+
+    def encode_queries(self, texts: List[str]) -> np.ndarray:
+        """Encode query texts, applying the model's retrieval instruction."""
+        instr = self.query_instruction
+        if instr:
+            texts = [instr + t for t in texts]
+        return self.encode(texts)
+
+    @property
     def identity(self) -> dict:
         """Embedding-identity metadata for namespace compatibility checks.
 

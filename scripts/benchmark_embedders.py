@@ -181,7 +181,7 @@ def _run_recall_eval(store, embedder, items: List[Dict[str, Any]], k: int) -> Di
     found_chunk = 0
     details: List[Dict[str, Any]] = []
     for it in items:
-        qvec = embedder.encode([it["query"]])[0]
+        qvec = embedder.encode_queries([it["query"]])[0]
         chunks = store.search(it["project_id"], qvec, k=k)
         fdoc = any(c.doc_id == it["doc_id"] for c in chunks)
         fchunk = any(
@@ -219,7 +219,7 @@ def _run_fresh_upload_eval(store, embedder, k: int) -> Dict[str, Any]:
         embeddings = embedder.encode(chunks)
         store.upsert_chunks(project_id, doc_id, chunks, embeddings)
 
-        qvec = embedder.encode([query])[0]
+        qvec = embedder.encode_queries([query])[0]
         retrieved = store.search(project_id, qvec, k=k)
         fresh_ranks = [
             j for j, c in enumerate(retrieved, 1)
