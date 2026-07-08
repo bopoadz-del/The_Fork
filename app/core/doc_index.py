@@ -471,8 +471,11 @@ def _extract_doc(file_path: str) -> str:
 
 # Archive extraction guards (zip-bomb / runaway-nest protection).
 _ARCHIVE_MAX_DEPTH = int(os.getenv("ARCHIVE_MAX_DEPTH", "3"))
-_ARCHIVE_MAX_FILES = int(os.getenv("ARCHIVE_MAX_FILES", "1000"))
-_ARCHIVE_MAX_TOTAL_BYTES = int(os.getenv("ARCHIVE_MAX_TOTAL_BYTES", str(500 * 1024 * 1024)))
+_ARCHIVE_MAX_FILES = int(os.getenv("ARCHIVE_MAX_FILES", "100"))
+_ARCHIVE_MAX_TOTAL_BYTES = int(os.getenv("ARCHIVE_MAX_TOTAL_BYTES", str(50 * 1024 * 1024)))
+# Skip archives whose own compressed size exceeds this — extracting multi-GB
+# archives on the 2 GB Render worker is a timeout/OOM risk.
+_ARCHIVE_MAX_FILE_SIZE = int(os.getenv("ARCHIVE_MAX_FILE_SIZE", str(50 * 1024 * 1024)))
 
 
 def _extract_archive(
@@ -500,6 +503,11 @@ def _extract_archive(
         return ""
     if counters is None:
         counters = {"files": 0, "bytes": 0}
+    try:
+        if os.path.getsize(file_path) > _ARCHIVE_MAX_FILE_SIZE:
+            return ""
+    except Exception:
+        return ""
 
     parts: List[str] = []
     try:
@@ -522,6 +530,12 @@ def _extract_archive(
         try:
             with file_crypto.open_plaintext(file_path) as readable_path:
                 with opener(readable_path) as archive:
+                    info = archive.getinfo(name)
+                    member_size = getattr(info, "file_size", getattr(info, "compress_size", 0)) or 0
+                    if member_size > _ARCHIVE_MAX_TOTAL_BYTES:
+                        continue
+                    if counters["bytes"] + member_size > _ARCHIVE_MAX_TOTAL_BYTES:
+                        break
                     data = archive.read(name)
         except Exception:
             continue
@@ -547,6 +561,12 @@ def _extract_archive(
                 )
                 if nested_text:
                     parts.append(f"[archive:{name}]\n{nested_text}")
+                continue
+
+            # Skip images inside archives — per-photo OCR/YOLO is too expensive
+            # when a ZIP contains hundreds of construction photos, and the archive
+            # itself is still locatable by name plus any text/PDF members.
+            if ext in _IMAGE_EXTS:
                 continue
 
             # Supported file: route through the same extraction pipeline.
