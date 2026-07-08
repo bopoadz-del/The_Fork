@@ -67,7 +67,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 
 # Extensions we know how to extract text from.
 _SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx", ".pptx", ".kmz"}
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar"}
     | _IMAGE_EXTS
 )
 
@@ -361,7 +361,141 @@ def _extract_kmz(file_path: str) -> str:
         return ""
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# Archive extraction guards (zip-bomb / runaway-nest protection).
+_ARCHIVE_MAX_DEPTH = int(os.getenv("ARCHIVE_MAX_DEPTH", "3"))
+_ARCHIVE_MAX_FILES = int(os.getenv("ARCHIVE_MAX_FILES", "1000"))
+_ARCHIVE_MAX_TOTAL_BYTES = int(os.getenv("ARCHIVE_MAX_TOTAL_BYTES", str(500 * 1024 * 1024)))
+
+
+def _extract_archive(
+    file_path: str,
+    filename: str,
+    opener,
+    depth: int = 0,
+    counters: Optional[Dict[str, int]] = None,
+) -> str:
+    """Recursively extract text from an archive (ZIP or RAR).
+
+    ``opener`` must be a callable that takes a path and returns an object
+    with ``namelist()`` and ``read(name)`` methods (``zipfile.ZipFile`` or
+    ``rarfile.RarFile``).
+
+    Guards against zip bombs and infinitely nested archives:
+    * max depth ``_ARCHIVE_MAX_DEPTH``
+    * max total files ``_ARCHIVE_MAX_FILES``
+    * max total uncompressed bytes ``_ARCHIVE_MAX_TOTAL_BYTES``
+
+    Nested archive contents are flattened into the same document's text,
+    prefixed with their archive-internal path for provenance. Never raises.
+    """
+    if depth > _ARCHIVE_MAX_DEPTH:
+        return ""
+    if counters is None:
+        counters = {"files": 0, "bytes": 0}
+
+    parts: List[str] = []
+    try:
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            with opener(readable_path) as archive:
+                names = archive.namelist()
+    except Exception:
+        return ""
+
+    for name in names:
+        if counters["files"] >= _ARCHIVE_MAX_FILES:
+            break
+        lower = name.lower()
+        ext = os.path.splitext(lower)[1]
+
+        # Skip directories and macOS resource forks.
+        if name.endswith("/") or "__macosx" in lower:
+            continue
+
+        try:
+            with file_crypto.open_plaintext(file_path) as readable_path:
+                with opener(readable_path) as archive:
+                    data = archive.read(name)
+        except Exception:
+            continue
+
+        counters["files"] += 1
+        counters["bytes"] += len(data)
+        if counters["bytes"] >= _ARCHIVE_MAX_TOTAL_BYTES:
+            break
+
+        # Write the member to a temp file so existing extractors can run.
+        tmp_path: Optional[str] = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix=ext or ".bin", prefix="fork_arc_")
+            os.close(fd)
+            with open(tmp_path, "wb") as fh:
+                fh.write(data)
+
+            # Nested archive: recurse.
+            if ext in {".zip", ".rar"}:
+                nested_opener = _zip_opener if ext == ".zip" else _rar_opener
+                nested_text = _extract_archive(
+                    tmp_path, name, nested_opener, depth=depth + 1, counters=counters
+                )
+                if nested_text:
+                    parts.append(f"[archive:{name}]\n{nested_text}")
+                continue
+
+            # Supported file: route through the same extraction pipeline.
+            if ext in _SUPPORTED_EXTS:
+                member_text, _ = _extract_with_meta(tmp_path, name)
+                if member_text:
+                    parts.append(f"[file:{name}]\n{member_text}")
+        except Exception:
+            continue
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    return "\n\n".join(parts)
+
+
+def _zip_opener(path: str):
+    import zipfile
+
+    return zipfile.ZipFile(path, "r")
+
+
+def _rar_opener(path: str):
+    import rarfile
+
+    return rarfile.RarFile(path)
+
+
+def _extract_zip(file_path: str, filename: str) -> str:
+    """Recursively extract text from a ZIP archive. Never raises."""
+    return _extract_archive(file_path, filename, _zip_opener)
+
+
+def _rar_available() -> bool:
+    """Check whether rarfile can locate an unrar binary."""
+    try:
+        import rarfile
+        rarfile.tool_setup()
+        return bool(rarfile.UNRAR_TOOL)
+    except Exception:
+        return False
+
+
+def _extract_rar(file_path: str, filename: str) -> str:
+    """Recursively extract text from a RAR archive. Degrades to "" if no
+    unrar binary is available (expected on Windows dev boxes). Never raises.
+    """
+    if not _rar_available():
+        return ""
+    return _extract_archive(file_path, filename, _rar_opener)
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -469,6 +603,12 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
         # ── KMZ ──────────────────────────────────────────────────────────────
         if ext == ".kmz":
             return _extract_kmz(file_path), {}
+
+        # ── ZIP / RAR ────────────────────────────────────────────────────────
+        if ext == ".zip":
+            return _extract_zip(file_path, filename), {}
+        if ext == ".rar":
+            return _extract_rar(file_path, filename), {}
 
     except Exception:
         return "", {}

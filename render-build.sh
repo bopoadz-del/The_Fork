@@ -7,7 +7,8 @@ apt-get install -y -qq \
   tesseract-ocr \
   tesseract-ocr-ara \
   libgl1 \
-  libglib2.0-0
+  libglib2.0-0 \
+  unrar
 
 echo "=== Installing Python dependencies ==="
 pip install --upgrade pip

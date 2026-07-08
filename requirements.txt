@@ -305,6 +305,8 @@ python-multipart==0.0.32
     # via
     #   -r requirements.in
     #   mcp
+rarfile==4.2
+    # via -r requirements.in
 pyyaml==6.0.3
     # via
     #   huggingface-hub
