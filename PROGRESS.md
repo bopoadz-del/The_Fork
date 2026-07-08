@@ -399,3 +399,21 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   - Draft recommendation in `EMBEDDER_DECISION.md`: `BAAI/bge-small-en-v1.5`
     as winner (best combined doc/chunk recall, fits Render envelope).
     Pending Chadi confirmation before Phase 1.
+
+- **2026-07-08 (later) — CLEAN REBUILD Phase 1b extractors, `feat/clean-rebuild-rag`:**
+  - Added PPTX text extraction (`python-pptx`) — committed.
+  - Added KMZ text extraction (read first `.kml`, strip XML tags) — committed.
+  - Added recursive ZIP / RAR archive extraction with zip-bomb guards
+    (depth=3, max 1000 files, 500 MB total) — committed.
+  - Added `.msg` Outlook email extraction using `olefile` directly (avoids
+    `extract-msg` dependency conflict with pinned `beautifulsoup4==4.15.0`) —
+    committed and tested on real `.msg` files from Master Folder.
+  - RAR degrades to "" when `unrar` binary is missing (Windows dev); Render
+    build installs `unrar` via `render-build.sh`.
+  - Skipped `.doc` old-Word extractor: only 4 `.doc` files in Master Folder,
+    all HR/personal docs; cross-platform extraction needs heavy/fragile deps
+    (`textract`/`antiword`/COM) not justified for pilot.
+  - Master Folder ingestion (7,222 files) into `v2` started; first run died
+    silently at ~124/7222 (likely OOM on a large contract PDF). Added
+    `--resume` flag to `scripts/p1b_ingest_local_folder.py` and restarted.
+    Currently progressing through resumed run.
