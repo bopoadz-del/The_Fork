@@ -183,8 +183,9 @@ def main() -> int:
                 successes += 1
         except Exception as exc:
             errors.append({"path": rel, "error": f"{type(exc).__name__}: {exc}"})
-        # Flush partial report every 50 files so a crash doesn't lose the batch.
-        if idx % 50 == 0:
+        # Flush partial report every 10 files so a crash/session kill doesn't
+        # lose much progress on long-running batches.
+        if idx % 10 == 0:
             _write_partial_report()
 
     elapsed = time.monotonic() - t0
