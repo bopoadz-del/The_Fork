@@ -6,6 +6,7 @@ session already knows — a follow-up question then builds on prior state.
 
 from typing import Iterable, Mapping, Optional
 
+from app.core.catalogue import format_catalogue_for_prompt
 from app.schemas.project_session import ProjectSession
 
 _PHASES = """\
@@ -103,6 +104,7 @@ def build_reasoner_prompt(
     excerpts_block = _format_document_excerpts(document_excerpts)
     return (
         f"{_PHASES}\n\n"
+        f"{format_catalogue_for_prompt()}\n\n"
         f"CURRENT SESSION STATE:\n{_state_summary(session)}"
         f"{excerpts_block}\n\n"
         f"USER REQUEST:\n{request}"
