@@ -262,7 +262,11 @@ class TestConstructionLearningEngine:
         path = cl._storage_path()
         assert str(tmp_path) in path
         assert path.endswith("cerebrum_construction_learning.json")
-        assert "/tmp/" not in path.replace("\\", "/")
+        # DATA_DIR may itself live under /tmp (pytest tmp_path on Linux); assert
+        # the learning file is under DATA_DIR/learning/, not a bare /tmp default.
+        norm = path.replace("\\", "/")
+        assert "/learning/cerebrum_construction_learning.json" in norm
+        assert norm.startswith(str(tmp_path).replace("\\", "/"))
 
     def test_storage_explicit_env(self, monkeypatch, tmp_path):
         from app.core import construction_learning as cl
