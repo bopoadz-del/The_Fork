@@ -43,6 +43,7 @@ class TriggerCondition(str, Enum):
     COMPLETED = "completed"  # activity finished
     VARIANCE_THRESHOLD = "variance_threshold"  # cost/schedule variance exceeded
     MILESTONE_REACHED = "milestone_reached"
+    PLANNED = "planned"  # activity planned (e.g., handover planning)
 
 
 class SuggestedAction(str, Enum):
@@ -272,11 +273,11 @@ DEFAULT_RULES: List[DependencyRule] = [
     ),
     # Resource → Cost
     DependencyRule(
-        rule_id="R018", name="Resource overallruns budget",
+        rule_id="R018", name="Resource overrun runs budget",
         source_domain=Domain.RESOURCE, trigger=TriggerCondition.VARIANCE_THRESHOLD,
         target_domains=[Domain.COST],
         suggested_actions=[SuggestedAction.UPDATE_BUDGET],
-        description="Resource overallruns (overtime, additional crew) — update cost forecast.",
+        description="Resource overruns (overtime, additional crew) — update cost forecast.",
     ),
     # Quality → Risk
     DependencyRule(
@@ -467,7 +468,23 @@ class ProjectHealthAggregator:
             "suggested_actions": [],
         }
 
-        score_map = {"healthy": 100, "warning": 70, "critical": 40, "unknown": 75}
+        # Expanded score map handles all common domain status strings
+        score_map = {
+            "healthy": 100,
+            "warning": 70,
+            "critical": 40,
+            "unknown": 75,
+            "delayed": 60,
+            "overrun": 55,
+            "failed": 40,
+            "on_hold": 60,
+            "variance": 65,
+            "incident": 35,
+            "detected": 70,
+            "planned": 85,
+            "in_progress": 80,
+            "complete": 100,
+        }
         scores: List[int] = []
 
         for domain, status in domain_status.items():
