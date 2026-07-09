@@ -707,6 +707,10 @@ class VectorStore:
                     score=round(score, 4),
                 )
             )
+        # Discard SQL pre-filter false positives: a chunk that passed the
+        # LIKE clauses but has no identifier token in its word-set gets
+        # score 0.0 and must not be returned.
+        out = [c for c in out if c.score > 0]
         # Higher match fraction first; preserve stable order on ties.
         out.sort(key=lambda c: -c.score)
         return out

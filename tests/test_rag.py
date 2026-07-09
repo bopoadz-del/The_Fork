@@ -29,6 +29,10 @@ def isolated_data_dir(tmp_path, monkeypatch):
     """Fresh DATA_DIR + reset every RAG cache so a clean store is built."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    # Disable general-knowledge project merging: on PostgreSQL all tests
+    # share one database, so a GK project seeded by another test (or a
+    # previous run) would bleed into tests that assert an empty retrieval.
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     from app.core.rag import embeddings as _emb, vector_store as _vs
     _emb.reset_embedder_cache()
     _vs.reset_store_cache()

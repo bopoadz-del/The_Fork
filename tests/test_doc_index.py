@@ -692,6 +692,9 @@ def search_project(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    # Disable GK merging: on PostgreSQL the training_material project seeded
+    # by other tests persists in the shared DB and would corrupt rankings.
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.setattr(projects_mod, "_initialized", False)
     projects_mod.init_db()
 
@@ -775,6 +778,8 @@ async def test_search_empty_project(tmp_path, monkeypatch):
     """A project with no documents returns [] without raising."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    # Disable GK so training_material chunks from other tests don't leak in.
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.setattr(projects_mod, "_initialized", False)
     projects_mod.init_db()
 
@@ -795,6 +800,9 @@ async def test_search_builds_index_lazily(tmp_path, monkeypatch):
     """Index file must not exist before search; must exist afterwards."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    # Disable GK so training_material chunks from other tests don't cause
+    # search_project_documents to skip the lazy-bootstrap branch.
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.setattr(projects_mod, "_initialized", False)
     projects_mod.init_db()
 
