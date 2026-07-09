@@ -23,8 +23,10 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -237,42 +239,43 @@ def main() -> int:
             for err in walk_errors:
                 print(f"[p1b-server] WALK ERROR: {err}", file=sys.stderr)
 
-        # Filter already-indexed files when resuming. A document row alone is
-        # NOT proof of success — add_document runs before indexing, so a doc
-        # whose chunk insert failed (e.g. the NUL-byte DataError) has a row
-        # and zero chunks. Skip only files whose doc actually has chunks in
-        # the active namespace; zero-chunk docs are re-indexed in place.
+        # Resume is ALWAYS on. It used to be gated behind --resume, which the
+        # Render worker's start command never passed — so every redeploy
+        # created a duplicate project and restarted ingestion from file 1.
+        # A document row alone is NOT proof of success — add_document runs
+        # before indexing, so a doc whose chunk insert failed (e.g. the
+        # NUL-byte DataError) has a row and zero chunks. Skip only files
+        # whose doc actually has chunks in the active namespace; zero-chunk
+        # docs are re-indexed in place.
         already_indexed: set[str] = set()
         retry_doc_by_fid: Dict[str, Dict[str, Any]] = {}
         existing = None
-        if args.resume:
-            # Find the platform project for this folder; create if missing.
-            for p in projects_mod.list_projects():
-                if p.get("name") == folder_name:
-                    existing = p
-                    break
-            if existing:
-                chunk_counts: Dict[str, int] = {}
-                counts_available = True
-                try:
-                    chunk_counts = _vs.get_store().count_by_doc(existing["id"])
-                except Exception as exc:  # noqa: BLE001 — degrade to row-only resume
-                    print(f"[p1b-server] WARN: chunk-count resume check failed "
-                          f"({type(exc).__name__}: {exc}); falling back to "
-                          f"row-presence resume", file=sys.stderr)
-                    counts_available = False
-                for doc in projects_mod.list_documents(existing["id"]):
-                    fid = (doc.get("metadata") or {}).get("drive_file_id")
-                    if not fid:
-                        continue
-                    if not counts_available:
-                        # Row-presence resume (legacy behaviour): can't tell
-                        # zero-chunk docs apart, so skip anything with a row.
-                        already_indexed.add(fid)
-                    elif chunk_counts.get(doc["id"], 0) > 0:
-                        already_indexed.add(fid)
-                    elif fid not in retry_doc_by_fid:
-                        retry_doc_by_fid[fid] = doc
+        for p in projects_mod.list_projects():
+            if p.get("name") == folder_name:
+                existing = p
+                break
+        if existing:
+            chunk_counts: Dict[str, int] = {}
+            counts_available = True
+            try:
+                chunk_counts = _vs.get_store().count_by_doc(existing["id"])
+            except Exception as exc:  # noqa: BLE001 — degrade to row-only resume
+                print(f"[p1b-server] WARN: chunk-count resume check failed "
+                      f"({type(exc).__name__}: {exc}); falling back to "
+                      f"row-presence resume", file=sys.stderr)
+                counts_available = False
+            for doc in projects_mod.list_documents(existing["id"]):
+                fid = (doc.get("metadata") or {}).get("drive_file_id")
+                if not fid:
+                    continue
+                if not counts_available:
+                    # Row-presence resume (legacy behaviour): can't tell
+                    # zero-chunk docs apart, so skip anything with a row.
+                    already_indexed.add(fid)
+                elif chunk_counts.get(doc["id"], 0) > 0:
+                    already_indexed.add(fid)
+                elif fid not in retry_doc_by_fid:
+                    retry_doc_by_fid[fid] = doc
 
         filtered_files = [f for f in files if f["id"] not in already_indexed]
         print(f"[p1b-server] {folder_name}: {len(files)} files, {len(filtered_files)} to ingest "
@@ -286,52 +289,78 @@ def main() -> int:
         project_id = project["id"]
 
         t0_folder = time.monotonic()
-        for idx, file_meta in enumerate(filtered_files, start=1):
+
+        def _tally_result(rel: str, result: Dict[str, Any]) -> None:
+            results.append({"folder": folder_name, "path": rel, "result": result})
+            if result.get("status") == "error":
+                err = result.get("error")
+                if err == "ZERO_CHUNK":
+                    global_tally["zero_chunk"] += 1
+                    _bump_folder(folder_name, "zero_chunk")
+                elif err == "SKIPPED_TOO_LARGE":
+                    global_tally["skipped_too_large"] += 1
+                    _bump_folder(folder_name, "skipped_too_large")
+                elif err == "SKIPPED_UNSUPPORTED":
+                    global_tally["skipped_unsupported"] += 1
+                    _bump_folder(folder_name, "skipped_unsupported")
+                elif err == "SKIPPED_EMPTY":
+                    global_tally["skipped_empty"] += 1
+                    _bump_folder(folder_name, "skipped_empty")
+                elif err.startswith("DOWNLOAD_FAILED"):
+                    global_tally["download_failed"] += 1
+                    _bump_folder(folder_name, "download_failed")
+                else:
+                    global_tally["errors"] += 1
+                    _bump_folder(folder_name, "errors")
+            elif result.get("rag_indexed", 0) == 0:
+                global_tally["zero_chunk"] += 1
+                _bump_folder(folder_name, "zero_chunk")
+            else:
+                global_tally["succeeded"] += 1
+                _bump_folder(folder_name, "succeeded")
+
+        def _process_one(file_meta: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             rel = file_meta.get("_drive_path") or file_meta.get("name", "")
-            print(f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} {rel}", file=sys.stderr)
             try:
                 _, result = _ingest_file(
                     file_meta, project_id, data_dir, run_id, gdrive_service,
                     existing_doc=retry_doc_by_fid.get(file_meta["id"]),
                 )
-                results.append({"folder": folder_name, "path": rel, "result": result})
-                if result.get("status") == "error":
-                    err = result.get("error")
-                    if err == "ZERO_CHUNK":
-                        global_tally["zero_chunk"] += 1
-                        _bump_folder(folder_name, "zero_chunk")
-                    elif err == "SKIPPED_TOO_LARGE":
-                        global_tally["skipped_too_large"] += 1
-                        _bump_folder(folder_name, "skipped_too_large")
-                    elif err == "SKIPPED_UNSUPPORTED":
-                        global_tally["skipped_unsupported"] += 1
-                        _bump_folder(folder_name, "skipped_unsupported")
-                    elif err == "SKIPPED_EMPTY":
-                        global_tally["skipped_empty"] += 1
-                        _bump_folder(folder_name, "skipped_empty")
-                    elif err.startswith("DOWNLOAD_FAILED"):
-                        global_tally["download_failed"] += 1
-                        _bump_folder(folder_name, "download_failed")
-                    else:
-                        global_tally["errors"] += 1
-                        _bump_folder(folder_name, "errors")
-                elif result.get("rag_indexed", 0) == 0:
-                    global_tally["zero_chunk"] += 1
-                    _bump_folder(folder_name, "zero_chunk")
-                else:
-                    global_tally["succeeded"] += 1
-                    _bump_folder(folder_name, "succeeded")
-            except Exception as exc:
-                global_tally["errors"] += 1
-                _bump_folder(folder_name, "errors")
-                results.append({
-                    "folder": folder_name,
-                    "path": rel,
-                    "result": {"status": "error", "error": f"{type(exc).__name__}: {exc}"},
-                })
+            except Exception as exc:  # noqa: BLE001 — one file must not kill the run
+                result = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+            return rel, result
 
-            if idx % 10 == 0:
-                _write_partial_report()
+        # Parallel ingestion: downloads are network-bound and extraction
+        # releases the GIL in fitz/torch, so a small pool gives a 2-4x
+        # wall-clock speedup on the 4 GB worker. DB writes stay safe — the
+        # vector store serialises inserts behind its own lock.
+        pool_size = max(1, int(os.getenv("P1B_PARALLELISM", "4")))
+        tally_lock = threading.Lock()
+        done_count = 0
+        if pool_size == 1:
+            for idx, file_meta in enumerate(filtered_files, start=1):
+                rel = file_meta.get("_drive_path") or file_meta.get("name", "")
+                print(f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} {rel}", file=sys.stderr)
+                rel, result = _process_one(file_meta)
+                _tally_result(rel, result)
+                if idx % 10 == 0:
+                    _write_partial_report()
+        else:
+            print(f"[p1b-server] parallel ingestion with {pool_size} workers", file=sys.stderr)
+            with ThreadPoolExecutor(max_workers=pool_size) as pool:
+                futures = {
+                    pool.submit(_process_one, fm): fm for fm in filtered_files
+                }
+                for fut in as_completed(futures):
+                    rel, result = fut.result()
+                    with tally_lock:
+                        done_count += 1
+                        idx = done_count
+                        _tally_result(rel, result)
+                        status = result.get("error") or result.get("status", "ok")
+                        print(f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} [{status}] {rel}", file=sys.stderr)
+                        if idx % 10 == 0:
+                            _write_partial_report()
 
         elapsed_folder = time.monotonic() - t0_folder
         print(f"[p1b-server] {folder_name} done in {elapsed_folder:.1f}s", file=sys.stderr)
