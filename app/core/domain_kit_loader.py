@@ -30,6 +30,13 @@ _KIT_BLOCK_SPECS: Dict[str, List[Tuple[str, str, str]]] = {
         ("learning_engine", "app.blocks.learning_engine", "LearningEngineBlock"),
         ("recommendation_template", "app.blocks.recommendation_template", "RecommendationTemplateBlock"),
         ("historical_benchmark", "app.blocks.historical_benchmark", "HistoricalBenchmarkBlock"),
+        # L2 Schedule Engine roadmap-named shims (delegate to existing schedule code)
+        ("scope_extractor", "app.blocks.scope_extractor", "ScopeExtractorBlock"),
+        ("schedule_generator", "app.blocks.schedule_generator", "ScheduleGeneratorBlock"),
+        ("cpm_engine", "app.blocks.cpm_engine", "CPMEngineBlock"),
+        ("manpower_planner", "app.blocks.manpower_planner", "ManpowerPlannerBlock"),
+        ("fasttrack_analyzer", "app.blocks.fasttrack_analyzer", "FastTrackAnalyzerBlock"),
+        ("schedule_excel_writer", "app.blocks.schedule_excel_writer", "ScheduleExcelWriterBlock"),
     ],
 }
 

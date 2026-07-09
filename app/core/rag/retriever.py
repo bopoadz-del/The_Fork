@@ -410,7 +410,7 @@ def retrieve_with_filter(
         raise ValueError("project_id is required")
 
     embedder = get_embedder()
-    query_vec = embedder.encode([query])[0]
+    query_vec = embedder.encode_queries([query])[0]
     store = get_store(dim=embedder.dim)
     over_fetch = max(k * 4, 20)
     # The GK corpus is small and curated (units / CESMM / FIDIC / procedures), so
@@ -423,7 +423,20 @@ def retrieve_with_filter(
     raw_active = store.search(project_id, query_vec, k=over_fetch, query_text=query)
 
     # General-knowledge projects (cross-project background context).
-    gk_ids = [pid for pid in _general_knowledge_project_ids() if pid != project_id]
+    # Only merge GK when the active project already has indexed chunks.
+    # An empty/unindexed project must return [] — not training_material
+    # hits — or search_project_documents, lazy bootstrap, and the
+    # "unindexed project" contract all break (Postgres CI shares a DB where
+    # GK rows exist from other tests / the migrated corpus).
+    # Prefer authoritative corpus-size check, but fall back to the fetched
+    # active candidates for mocked/in-memory test stores that don't model
+    # ``count`` consistently with ``search``.
+    include_gk = store.count(project_id) > 0 or bool(raw_active)
+    gk_ids = (
+        [pid for pid in _general_knowledge_project_ids() if pid != project_id]
+        if include_gk
+        else []
+    )
     raw_gk: List[Chunk] = []
     for gk_pid in gk_ids:
         try:

@@ -32,6 +32,13 @@ if [ -n "${DATABASE_URL:-}" ] && [[ "${DATABASE_URL}" == postgresql* ]]; then
   fi
 fi
 
+# Background-worker override: run the supplied long-lived command instead of uvicorn.
+if [ -n "${WORKER_COMMAND:-}" ]; then
+  echo "🔧 WORKER_COMMAND set — executing: $WORKER_COMMAND"
+  # shellcheck disable=SC2086
+  exec sh -c "$WORKER_COMMAND"
+fi
+
 # shellcheck source=scripts/uvicorn_worker_count.sh
 . "$(dirname "$0")/scripts/uvicorn_worker_count.sh"
 

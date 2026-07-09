@@ -37,7 +37,15 @@ def _admin_override():
     app.dependency_overrides.clear()
 
 
-def _ensure_schema():
+def _ensure_schema(monkeypatch):
+    # Bulk-insert is the legacy migration path: it writes 256-dim vectors to
+    # the legacy ``chunks`` table. Force the test process to use that same
+    # namespace/dimension so reads and writes hit the same table.
+    monkeypatch.setenv("RAG_VECTOR_NAMESPACE", "")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core.rag import embeddings as _emb, vector_store as _vs
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
     from app.core.projects import init_db as init_projects_db
     init_projects_db()
     RagChunk.__table__.create(bind=engine, checkfirst=True)
@@ -92,8 +100,8 @@ def _bulk_payload(pid: str, docs: list[tuple[str, int]]):
     return {"projects": projects, "documents": documents, "chunks": chunks}
 
 
-def test_vector_store_count_by_doc_returns_bulk_inserted_counts():
-    _ensure_schema()
+def test_vector_store_count_by_doc_returns_bulk_inserted_counts(monkeypatch):
+    _ensure_schema(monkeypatch)
     _wipe("chunk_count_bulk")
     from app.core.rag.vector_store import get_store
     from app.core.rag.embeddings import get_embedder
@@ -113,8 +121,8 @@ def test_vector_store_count_by_doc_returns_bulk_inserted_counts():
     _wipe("chunk_count_bulk")
 
 
-def test_project_detail_chunk_count_reflects_bulk_inserted_chunks(client):
-    _ensure_schema()
+def test_project_detail_chunk_count_reflects_bulk_inserted_chunks(client, monkeypatch):
+    _ensure_schema(monkeypatch)
     _wipe("chunk_count_bulk")
     payload = _bulk_payload("chunk_count_bulk", [
         ("doc_a", 3), ("doc_b", 5),
@@ -132,14 +140,14 @@ def test_project_detail_chunk_count_reflects_bulk_inserted_chunks(client):
     _wipe("chunk_count_bulk")
 
 
-def test_project_detail_chunk_count_works_for_large_projects(client):
+def test_project_detail_chunk_count_works_for_large_projects(client, monkeypatch):
     """There is no document-count threshold that skips chunk enrichment.
 
     The legacy path skipped projects with >500 documents because it
     deserialised a huge JSON blob. The vector-store path is a cheap
     GROUP BY, so it must run for the master corpus too.
     """
-    _ensure_schema()
+    _ensure_schema(monkeypatch)
     _wipe("chunk_count_large")
     # 600 documents is above the old 500-doc threshold.
     docs = [(f"doc_{i:03d}", 1) for i in range(600)]
@@ -156,9 +164,9 @@ def test_project_detail_chunk_count_works_for_large_projects(client):
     _wipe("chunk_count_large")
 
 
-def test_project_detail_chunk_count_zero_for_unindexed_docs(client):
+def test_project_detail_chunk_count_zero_for_unindexed_docs(client, monkeypatch):
     """Documents with no chunks report 0, while the project total stays correct."""
-    _ensure_schema()
+    _ensure_schema(monkeypatch)
     _wipe("chunk_count_mixed")
     payload = _bulk_payload("chunk_count_mixed", [
         ("indexed_doc", 4), ("bare_doc", 0),

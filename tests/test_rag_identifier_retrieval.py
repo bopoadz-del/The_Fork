@@ -20,10 +20,18 @@ def isolated_store(tmp_path, monkeypatch):
     _vs.reset_store_cache()
     from app.core.rag.embeddings import Embedder
     from app.core.rag.vector_store import get_store
+    from sqlalchemy import delete as _sa_delete
     e = Embedder(model_name="fake")
     # Use the default project database path (honours DATA_DIR) so that
     # retriever.get_store() returns the same cached instance.
     store = get_store(dim=e.dim)
+    # On PostgreSQL, DATA_DIR does not change the database URL, so rows
+    # written by earlier tests survive into this test's store. Truncate the
+    # chunk table up-front to guarantee isolation regardless of backend.
+    with store._lock:
+        with store._session_factory()() as session:
+            session.execute(_sa_delete(store._rag_chunk_cls))
+            session.commit()
     yield store, e
     _emb.reset_embedder_cache()
     _vs.reset_store_cache()

@@ -45,9 +45,16 @@ def _make_ocr_raiser():
 def fresh_db(tmp_path, monkeypatch):
     """Isolated DATA_DIR + fresh projects DB for each test."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    # Disable GK so training_material chunks from other tests don't outrank
+    # the OCR-indexed documents in search results on the shared PostgreSQL DB.
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.setattr(projects_mod, "_initialized", False)
     projects_mod.init_db()
+    from app.core.rag import vector_store as _vs, embeddings as _emb
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
     return tmp_path
 
 

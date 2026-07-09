@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from typing import Optional, Type
+
 import numpy as np
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -22,34 +25,131 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+# Legacy constant kept for old imports/tests that reference it. The actual
+# dimension used for new tables is supplied to make_embedding_vector().
 EMBEDDING_DIM = 256
 
 
-class EmbeddingVector(TypeDecorator):
-    """Postgres: ``vector(256)``; SQLite: float32 BLOB for numpy fallback search."""
+def make_embedding_vector(dim: int):
+    """Return a TypeDecorator that stores ``dim``-dim float32 vectors.
 
-    impl = LargeBinary
-    cache_ok = True
+    PostgreSQL uses pgvector ``vector(dim)``; SQLite stores raw float32 bytes.
+    The dimension is bound at factory time so each namespace/table can have the
+    correct width for its embedder.
+    """
 
-    def load_dialect_impl(self, dialect):
-        if dialect.name == "postgresql":
-            return dialect.type_descriptor(Vector(EMBEDDING_DIM))
-        return dialect.type_descriptor(LargeBinary())
+    class DynamicEmbeddingVector(TypeDecorator):
+        impl = LargeBinary
+        cache_ok = True
 
-    def process_bind_param(self, value, dialect):
-        if value is None:
-            return None
-        arr = np.asarray(value, dtype=np.float32)
-        if dialect.name == "postgresql":
-            return arr.tolist()
-        return arr.tobytes()
+        def load_dialect_impl(self, dialect):
+            if dialect.name == "postgresql":
+                return dialect.type_descriptor(Vector(dim))
+            return dialect.type_descriptor(LargeBinary())
 
-    def process_result_value(self, value, dialect):
-        if value is None:
-            return None
-        if dialect.name == "postgresql":
-            return np.asarray(value, dtype=np.float32)
-        return np.frombuffer(value, dtype=np.float32)
+        def process_bind_param(self, value, dialect):
+            if value is None:
+                return None
+            arr = np.asarray(value, dtype=np.float32)
+            if dialect.name == "postgresql":
+                return arr.tolist()
+            return arr.tobytes()
+
+        def process_result_value(self, value, dialect):
+            if value is None:
+                return None
+            if dialect.name == "postgresql":
+                return np.asarray(value, dtype=np.float32)
+            return np.frombuffer(value, dtype=np.float32)
+
+    return DynamicEmbeddingVector
+
+
+class EmbeddingVector(make_embedding_vector(EMBEDDING_DIM)):
+    """Legacy 256-dim vector type used by the original ``chunks`` table."""
+
+    pass
+
+
+# Registry so the vector store can request the same dynamic class for the
+# same namespace without re-declaring it on SQLAlchemy's Base.
+_RAG_CHUNK_CLASS_CACHE: dict[tuple[str, int, str, bool], type] = {}
+
+
+def rag_chunk_table_name(namespace: str) -> str:
+    """Table name for a RAG vector namespace.
+
+    The legacy ``chunks`` table uses namespace ``""``. Every other namespace
+    gets ``chunks_<namespace>``. The old contaminated table is retired in
+    place — new writes go to namespaced tables only.
+    """
+    return "chunks" if not namespace else f"chunks_{namespace}"
+
+
+def make_rag_chunk_class(
+    namespace: str,
+    dim: int,
+    model_name: str,
+    normalized: bool = True,
+) -> type:
+    """Return a SQLAlchemy model class for ``chunks_<namespace>``.
+
+    The class is cached per (namespace, dim) so repeated calls return the
+    same mapped class. ``model_name`` only affects the default value of the
+    ``embedding_model`` column and the attached identity metadata; it does
+    NOT change the table schema, so a namespace opened with a different
+    model reuses the same class and relies on ``VectorStore`` to fail loud
+    on identity mismatch.
+
+    The legacy namespace (empty string) reuses the static ``RagChunk`` class
+    so the original ``chunks`` table has exactly one mapped class.
+    """
+    if namespace == "":
+        return RagChunk
+
+    schema_key = (namespace, dim)
+    if schema_key in _RAG_CHUNK_CLASS_CACHE:
+        return _RAG_CHUNK_CLASS_CACHE[schema_key]
+
+    table_name = rag_chunk_table_name(namespace)
+    vector_type = make_embedding_vector(dim)
+    class_name = f"RagChunk_{namespace or 'legacy'}_{dim}"
+
+    def _repr(self):
+        return f"<{class_name}(chunk_id={self.chunk_id!r})>"
+
+    attrs = {
+        "__tablename__": table_name,
+        "__table_args__": (
+            UniqueConstraint(
+                "project_id", "doc_id", "chunk_index",
+                name=f"uq_{table_name}_project_doc_index",
+            ),
+            Index(f"idx_{table_name}_project", "project_id"),
+            Index(f"idx_{table_name}_doc", "project_id", "doc_id"),
+        ),
+        "__repr__": _repr,
+        "chunk_id": mapped_column(String, primary_key=True),
+        "project_id": mapped_column(String, nullable=False),
+        "doc_id": mapped_column(String, nullable=False),
+        "chunk_index": mapped_column(Integer, nullable=False),
+        "text": mapped_column(Text, nullable=False),
+        "embedding": mapped_column(vector_type, nullable=False),
+        "created_at": mapped_column(String, nullable=False),
+        # Embedding identity — stamped on every row and verified at startup.
+        "embedding_model": mapped_column(String, nullable=False, default=model_name),
+        "embedding_dim": mapped_column(Integer, nullable=False, default=dim),
+        "embedding_normalized": mapped_column(Boolean, nullable=False, default=normalized),
+        "embedding_identity": {
+            "model": model_name,
+            "dim": dim,
+            "normalized": normalized,
+        },
+    }
+
+    DynamicRagChunk = type(class_name, (Base,), attrs)
+    _RAG_CHUNK_CLASS_CACHE[schema_key] = DynamicRagChunk
+    return DynamicRagChunk
 
 
 class Base(DeclarativeBase):

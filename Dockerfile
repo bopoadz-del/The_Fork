@@ -36,6 +36,12 @@ RUN pip install --no-cache-dir \
 RUN pip uninstall -y opencv-python opencv-python-headless \
     && pip install --no-cache-dir "opencv-python-headless==4.10.0.84"
 
+# Sentence-transformers for the RAG embedder. Installed AFTER the CPU torch
+# wheels above so pip sees torch is already satisfied and does not pull the
+# CUDA variant. BGE-small and other dense sentence-transformers models need
+# this; model2vec alone cannot load them.
+RUN pip install --no-cache-dir "sentence-transformers==5.5.1"
+
 # Frontend stage: build the React SPA. VITE_API_BASE='' makes the app talk to
 # the same origin it was served from, so a single Render service is enough.
 FROM node:20-slim AS frontend

@@ -40,7 +40,7 @@ PILOT_CRITICAL = {
     "drawing_qto",                 # QTO from drawings
 }
 
-FRESH_UPLOAD_PROJECT = "bc812f36"  # RAG Audit V2 - Fresh Upload Eval (prod)
+FRESH_UPLOAD_PROJECT = "ce1ced1a"  # RAG Audit V2 - Fresh Upload Eval (prod)
 
 
 @pytest.fixture(scope="module")

@@ -12,7 +12,7 @@
 # Pilot bar: >= 90% PASS (>= 26/28). The gate runner exits 0 iff the bar is met.
 #
 # Composition:
-#   - 12 fresh-upload grounding queries vs prod project bc812f36
+#   - 12 fresh-upload grounding queries vs prod project ce1ced1a
 #     ("RAG Audit V2 - Fresh Upload Eval"). Ground truth: the 12 note texts
 #     hardcoded in scripts/rag_fresh_upload_eval.py CASES (the notes were
 #     uploaded to that project on 2026-07-05, RAG_AUDIT_V2.md section 4).
@@ -28,13 +28,13 @@ defaults:
 
 queries:
 
-  # ── 12 × fresh-upload grounding (project bc812f36) ─────────────────────────
+  # ── 12 × fresh-upload grounding (project ce1ced1a) ─────────────────────────
   # Ground truth for every entry in this block: the uploaded note text in
   # scripts/rag_fresh_upload_eval.py CASES (filename named per entry).
 
   - id: fresh_pier_mix_cement
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "P-217-pier-mix-design.txt" — 385 kg/m3 CEM I 42.5N.
     prompt: "What is the cement content for the Pier P-217 concrete mix?"
     retrieval_expect: "P-217-pier-mix-design"
@@ -43,7 +43,7 @@ queries:
 
   - id: fresh_r9_lighting_wattage
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "road-R9-street-lighting.txt" — 45 W LED luminaires.
     # Topic collides with GK lighting content (RAG_AUDIT_V2 s4) but the GK
     # wattage value is not documented in the repo, so no answer_reject.
@@ -54,7 +54,7 @@ queries:
 
   - id: fresh_eot_notice_period
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # MANDATORY CASE. Ground truth: CASES "contract-eot-notice-period.txt" —
     # this project's PC-20.2 reduces the EOT claim notice to 21 days.
     # Colliding GK value: docs/knowledge/fidic_2017_administration.md says the
@@ -75,7 +75,7 @@ queries:
 
   - id: fresh_s4_manhole_spacing
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "sewer-S4-manhole-spacing.txt" — 42 m up to DN400.
     prompt: "What is the maximum manhole spacing on sewer line S-4?"
     retrieval_expect: "sewer-S4-manhole-spacing"
@@ -84,7 +84,7 @@ queries:
 
   - id: fresh_design_review_codes
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "design-review-status-codes.txt" — CODE-A / CODE-B /
     # CODE-C, no other codes used on this project.
     prompt: "What design review status codes are used on this project?"
@@ -96,7 +96,7 @@ queries:
 
   - id: fresh_excavation_rate
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "boq-excavation-rate.txt" — SAR 27.50 per m3 for
     # ordinary soil (item 2.1.1).
     prompt: "What is the contract rate per m3 for excavation in ordinary soil?"
@@ -107,7 +107,7 @@ queries:
 
   - id: fresh_rebar_cover
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "rebar-cover-substructure.txt" — 75 mm for
     # substructure elements in contact with soil.
     prompt: "What is the minimum concrete cover for substructure elements in contact with soil?"
@@ -117,7 +117,7 @@ queries:
 
   - id: fresh_wearing_course
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "asphalt-wearing-course.txt" — 60 mm polymer-modified
     # asphalt (PMB 76-10).
     prompt: "What thickness and type is the asphalt wearing course on this project?"
@@ -128,7 +128,7 @@ queries:
 
   - id: fresh_permit_to_work
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "hse-permit-to-work.txt" — permit-to-work validity is
     # 12 hours maximum.
     prompt: "How long is a permit-to-work valid on this project?"
@@ -138,7 +138,7 @@ queries:
 
   - id: fresh_mv_soak_test
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "mv-substation-soak-test.txt" — 5-day soak test at
     # not less than 80 percent load before taking-over.
     prompt: "How long is the soak test required for the MV substation before taking-over?"
@@ -148,7 +148,7 @@ queries:
 
   - id: fresh_cpi_threshold
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "evm-cpi-threshold.txt" — CPI below 0.92 (two
     # consecutive periods) triggers a corrective action plan.
     prompt: "What CPI threshold triggers a corrective action plan on this project?"
@@ -158,7 +158,7 @@ queries:
 
   - id: fresh_mass_concrete_curing
     feature: fresh_upload_grounding
-    project: bc812f36
+    project: ce1ced1a
     # Ground truth: CASES "mass-concrete-curing.txt" — cured 14 days minimum,
     # wet hessian and polythene. (The GK KB's 20 degC differential agrees with
     # the note, so no reject; the duration 14 days is the project-unique fact.)
@@ -185,7 +185,7 @@ queries:
 
   - id: pilot_boq_total
     feature: boq_process
-    project: 5c13510e
+    project: 96bd7cd1
     # Mirrors feature_matrix must-cover boq_process (DG2 BOQ project, 4
     # workbooks / 179 chunks). The memory value "demolition BOQ total
     # SAR 62,236,109" could NOT be verified anywhere in the repo, and a
@@ -243,10 +243,10 @@ queries:
 
   - id: pilot_milestones
     feature: parse_primavera_schedule
-    project: ff905e29
+    project: 7ce7b9d0
     # Mirrors feature_matrix must-cover parse_primavera_schedule prompt 1.
     # Fixture: project_programme.xer (doc 9f8f228a) uploaded 2026-07-06 to
-    # ff905e29 (per the feature-matrix manifest `needs`). The programme's
+    # 7ce7b9d0 (per the feature-matrix manifest `needs`). The programme's
     # actual dates are not in the repo: structural expect of milestone
     # vocabulary + at least one date-like string. No retrieval_expect —
     # schedule-parse turns may not emit RAG sources.
@@ -302,9 +302,9 @@ queries:
 
   - id: pilot_qto_floor_area
     feature: drawing_qto
-    project: ff905e29
+    project: 7ce7b9d0
     # Mirrors feature_matrix must-cover drawing_qto prompt 2. Fixture:
-    # ground_floor_plan.dxf (doc ed81d829) uploaded 2026-07-06 to ff905e29
+    # ground_floor_plan.dxf (doc ed81d829) uploaded 2026-07-06 to 7ce7b9d0
     # (per the feature-matrix manifest `needs`). The drawing's measured area
     # is not in the repo: structural expect of a drawing reference + an
     # area-like quantity.

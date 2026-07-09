@@ -36,7 +36,9 @@ from sqlalchemy.orm import Session
 import json as json_lib
 
 from app.core.db import _engine_for_url, _session_factory_for_url, get_database_url
-from app.core.models import EMBEDDING_DIM, Document, Project, RagChunk
+from app.core.models import EMBEDDING_DIM, Document, Project
+from app.core.models import make_rag_chunk_class, rag_chunk_table_name
+from app.core.rag.embeddings import get_embedder
 
 logger = logging.getLogger(__name__)
 
@@ -129,25 +131,50 @@ class Chunk:
 
 _STORE_CACHE: dict = {}
 _CACHE_LOCK = Lock()
-_INITIALIZED_URLS: Set[str] = set()
+_INITIALIZED_NAMESPACES: Set[Tuple[str, str]] = set()
 _INIT_LOCK = Lock()
 
 
-def get_store(dim: int = EMBEDDING_DIM, db_path: Optional[str] = None) -> "VectorStore":
-    """Process-cached store. Different ``db_path`` values get different
-    cached instances, which keeps tests isolated when they swap DATA_DIR."""
+def _rag_vector_namespace() -> str:
+    """Active RAG vector namespace. Legacy ``chunks`` table = empty string."""
+    return os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
+
+
+def get_store(
+    dim: Optional[int] = None,
+    db_path: Optional[str] = None,
+    namespace: Optional[str] = None,
+    model_name: Optional[str] = None,
+) -> "VectorStore":
+    """Process-cached store. Different ``db_path``/namespace values get
+    different cached instances, which keeps tests isolated when they swap
+    DATA_DIR or embedder.
+
+    ``dim`` is optional; when omitted the store uses the configured
+    embedder's actual dimension so the table width always matches the
+    vectors being written.
+    """
     path = db_path or _default_db_path()
     url = _database_url(path)
-    key = (url, dim)
+    ns = namespace if namespace is not None else _rag_vector_namespace()
+    embedder = get_embedder(model_name=model_name)
+    identity = embedder.identity
+    actual_dim = dim if dim is not None else identity["dim"]
+    key = (url, ns, identity["model"], identity["dim"])
     with _CACHE_LOCK:
         if key not in _STORE_CACHE:
-            _STORE_CACHE[key] = VectorStore(db_path=path, dim=dim)
+            _STORE_CACHE[key] = VectorStore(
+                db_path=path,
+                dim=actual_dim,
+                namespace=ns,
+                model_name=identity["model"],
+            )
     return _STORE_CACHE[key]
 
 
 def reset_store_cache() -> None:
     """Drop all cached stores. Used by tests to pick up a swapped DATA_DIR."""
-    global _STORE_CACHE, _INITIALIZED_URLS
+    global _STORE_CACHE, _INITIALIZED_NAMESPACES
     with _CACHE_LOCK:
         for s in _STORE_CACHE.values():
             try:
@@ -156,7 +183,7 @@ def reset_store_cache() -> None:
                 pass
         _STORE_CACHE = {}
     with _INIT_LOCK:
-        _INITIALIZED_URLS = set()
+        _INITIALIZED_NAMESPACES = set()
 
 
 def _default_db_path() -> str:
@@ -181,28 +208,52 @@ def _ensure_sqlite_parent_dir(url: str) -> None:
             os.makedirs(parent, exist_ok=True)
 
 
-def _ensure_schema(url: str) -> None:
-    global _INITIALIZED_URLS
-    if url in _INITIALIZED_URLS:
+def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
+    global _INITIALIZED_NAMESPACES
+    table_name = rag_chunk_cls.__tablename__
+    init_key = (url, table_name)
+    if init_key in _INITIALIZED_NAMESPACES:
         return
     with _INIT_LOCK:
-        if url in _INITIALIZED_URLS:
+        if init_key in _INITIALIZED_NAMESPACES:
             return
         _ensure_sqlite_parent_dir(url)
         eng = _engine_for_url(url)
-        RagChunk.__table__.create(bind=eng, checkfirst=True)
+        rag_chunk_cls.__table__.create(bind=eng, checkfirst=True)
         # `checkfirst=True` above SKIPS the whole table create — indexes
-        # included — when `chunks` already exists. A prod table that predates
+        # included — when the table already exists. A prod table that predates
         # the idx_chunks_project declaration therefore never got the btree, so
         # COUNT/filter-by-project seq-scans the full table (~11s on the master
         # corpus; pgvector search stays fast via its own index). Create each
         # declared index explicitly + idempotently so legacy tables get it too.
-        for index in RagChunk.__table__.indexes:
+        for index in rag_chunk_cls.__table__.indexes:
             try:
                 index.create(bind=eng, checkfirst=True)
             except Exception:  # noqa: BLE001 — never block startup on an index
                 pass
-        _INITIALIZED_URLS.add(url)
+        # PostgreSQL BM25 leg: the ``text_search`` GENERATED column + GIN
+        # index. Alembic 0003 only covers the legacy ``chunks`` table;
+        # namespaced tables (chunks_v2, ...) are created HERE, so they must
+        # get the column here too or ``_bm25_postgres`` fails with
+        # UndefinedColumn. Idempotent via IF NOT EXISTS.
+        if eng.dialect.name == "postgresql":
+            try:
+                with eng.begin() as conn:
+                    conn.execute(text(
+                        f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "
+                        "text_search tsvector GENERATED ALWAYS AS "
+                        "(to_tsvector('english', text)) STORED"
+                    ))
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS {table_name}_fts_gin "
+                        f"ON {table_name} USING GIN (text_search)"
+                    ))
+            except Exception:  # noqa: BLE001 — BM25 degrades, never block startup
+                logger.warning(
+                    "could not ensure text_search column on %s", table_name,
+                    exc_info=True,
+                )
+        _INITIALIZED_NAMESPACES.add(init_key)
 
 
 # ── Store ────────────────────────────────────────────────────────────────
@@ -216,13 +267,33 @@ class VectorStore:
     massive parallel ingest.
     """
 
-    def __init__(self, db_path: str, dim: int = EMBEDDING_DIM):
+    def __init__(
+        self,
+        db_path: str,
+        dim: int = EMBEDDING_DIM,
+        namespace: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ):
         self.db_path = db_path
         self.dim = dim
+        self.namespace = namespace if namespace is not None else _rag_vector_namespace()
+        self.model_name = model_name or os.getenv("RAG_EMBEDDING_MODEL") or "fake"
         self._lock = Lock()
         self._database_url = _database_url(db_path)
         self._use_pgvector = self._database_url.startswith("postgresql")
-        _ensure_schema(self._database_url)
+        # Build the namespaced model class. The old ``chunks`` table is
+        # retired in place: namespace="" maps to it, but prod defaults to
+        # namespace="v2" so new writes never touch the contaminated table.
+        self._rag_chunk_cls = make_rag_chunk_class(
+            namespace=self.namespace,
+            dim=dim,
+            model_name=self.model_name,
+        )
+        self._table_name = rag_chunk_table_name(self.namespace)
+        _ensure_schema(self._database_url, self._rag_chunk_cls)
+        # Fail loud if the namespace already contains vectors from a
+        # different embedder. Mixed-model contamination must be impossible.
+        self._verify_embedding_identity()
         # FTS5 mirror (SQLite only). Idempotent.
         if not self._use_pgvector:
             self._ensure_fts5_sqlite()
@@ -231,6 +302,49 @@ class VectorStore:
     def fast_search(self) -> bool:
         """True when search uses pgvector ANN on PostgreSQL."""
         return self._use_pgvector
+
+    def _verify_embedding_identity(self) -> None:
+        """Fail loud if the namespace contains chunks from a different model.
+
+        Checks a representative row. If any row has a different model/dim/
+        normalized flag, the store refuses to operate. This is the structural
+        guard that makes mixed-model contamination impossible.
+
+        Skipped for the legacy namespace because the original ``chunks`` table
+        predates the identity columns; it is retired in place and never used
+        for new embeddings.
+        """
+        cls = self._rag_chunk_cls
+        # Legacy table has no identity columns — nothing to verify.
+        if not hasattr(cls, "embedding_model"):
+            return
+        expected = {
+            "model": self.model_name,
+            "dim": self.dim,
+            "normalized": True,
+        }
+        with self._lock:
+            with self._session_factory()() as session:
+                row = session.execute(
+                    select(
+                        cls.embedding_model,
+                        cls.embedding_dim,
+                        cls.embedding_normalized,
+                    ).limit(1)
+                ).first()
+        if row is None:
+            return
+        stored = {
+            "model": row.embedding_model,
+            "dim": row.embedding_dim,
+            "normalized": row.embedding_normalized,
+        }
+        if stored != expected:
+            raise RuntimeError(
+                f"Embedding identity mismatch in namespace {self.namespace!r}: "
+                f"expected {expected}, found {stored}. "
+                f"Mixed-model namespaces are not allowed."
+            )
 
     def close(self) -> None:
         pass
@@ -278,33 +392,22 @@ class VectorStore:
         """Create the FTS5 mirror + AI/AD/AU sync triggers on first init,
         then backfill any rows that pre-date the FTS5 table.
 
-        Schema: external-content (``content='chunks'``,
+        Schema: external-content (``content='<table>'``,
         ``content_rowid='rowid'``). Text isn't duplicated; FTS5 reads it
-        from ``chunks`` at query time via ``rowid``. Joining back to
-        ``chunks`` by rowid restores the (project_id, doc_id, chunk_id,
-        chunk_index, text) tuple bm25_search returns.
-
-        Deviation from operator spec: spec called for standalone
-        ``fts5(id UNINDEXED, text)``. Reasons for external-content:
-        (a) the live SQLite database at ``data/rag/vectors.db`` already
-            has the external-content shape from the reference branch's
-            backfill (143,472 rows). Switching shapes forces a 140k
-            re-backfill on first boot post-deploy with no behavior win.
-        (b) Triggers DO fire on SQLAlchemy ORM inserts — ORM uses the
-            DBAPI INSERT under the hood, which is exactly what AFTER
-            INSERT triggers watch. The spec's rationale ("ORM doesn't
-            fire triggers, so write to FTS manually in upsert_chunks")
-            was wrong. With triggers, write paths stay simple.
-        (c) No text duplication = lower disk + lower index size.
+        from the source table at query time via ``rowid``. Joining back to
+        the source table by rowid restores the chunk tuple bm25_search
+        returns.
 
         Idempotent: presence-check short-circuits subsequent calls.
         """
+        table = self._table_name
+        fts_table = f"{table}_fts"
         with self._lock:
             with self._session_factory()() as session:
                 conn = session.connection()
                 row = conn.exec_driver_sql(
                     "SELECT sql FROM sqlite_master "
-                    "WHERE type='table' AND name='chunks_fts'"
+                    f"WHERE type='table' AND name='{fts_table}'"
                 ).fetchone()
                 if row is not None:
                     # Already exists. Verify it's the external-content
@@ -312,40 +415,40 @@ class VectorStore:
                     # different shape, surface it so we don't silently
                     # bm25 against the wrong schema.
                     existing_sql = (row[0] or "").lower()
-                    if "content='chunks'" not in existing_sql and "content=\"chunks\"" not in existing_sql:
+                    if f"content='{table}'" not in existing_sql and f'content="{table}"' not in existing_sql:
                         logger.warning(
-                            "chunks_fts exists but is not external-content; "
+                            "%s exists but is not external-content; "
                             "BM25 results may be unreliable. sql=%r",
-                            row[0],
+                            fts_table, row[0],
                         )
                     return
                 conn.exec_driver_sql(
-                    "CREATE VIRTUAL TABLE chunks_fts USING fts5("
-                    "text, content='chunks', content_rowid='rowid')"
+                    f"CREATE VIRTUAL TABLE {fts_table} USING fts5("
+                    f"text, content='{table}', content_rowid='rowid')"
                 )
                 conn.exec_driver_sql(
-                    "CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN "
-                    "INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text); "
+                    f"CREATE TRIGGER {table}_ai AFTER INSERT ON {table} BEGIN "
+                    f"INSERT INTO {fts_table}(rowid, text) VALUES (new.rowid, new.text); "
                     "END"
                 )
                 conn.exec_driver_sql(
-                    "CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN "
-                    "INSERT INTO chunks_fts(chunks_fts, rowid, text) "
+                    f"CREATE TRIGGER {table}_ad AFTER DELETE ON {table} BEGIN "
+                    f"INSERT INTO {fts_table}({fts_table}, rowid, text) "
                     "VALUES('delete', old.rowid, old.text); "
                     "END"
                 )
                 conn.exec_driver_sql(
-                    "CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN "
-                    "INSERT INTO chunks_fts(chunks_fts, rowid, text) "
+                    f"CREATE TRIGGER {table}_au AFTER UPDATE ON {table} BEGIN "
+                    f"INSERT INTO {fts_table}({fts_table}, rowid, text) "
                     "VALUES('delete', old.rowid, old.text); "
-                    "INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text); "
+                    f"INSERT INTO {fts_table}(rowid, text) VALUES (new.rowid, new.text); "
                     "END"
                 )
                 # One-time backfill — bulk insert via SELECT is fast
                 # (a few seconds even for 140k rows on local SSD).
                 cur = conn.exec_driver_sql(
-                    "INSERT INTO chunks_fts(rowid, text) "
-                    "SELECT rowid, text FROM chunks"
+                    f"INSERT INTO {fts_table}(rowid, text) "
+                    f"SELECT rowid, text FROM {table}"
                 )
                 n = cur.rowcount if cur.rowcount is not None else 0
                 session.commit()
@@ -392,20 +495,29 @@ class VectorStore:
             with self._session_factory()() as session:
                 self._ensure_fk_parents(session, project_id, doc_id)
                 session.execute(
-                    delete(RagChunk).where(
-                        RagChunk.project_id == project_id,
-                        RagChunk.doc_id == doc_id,
+                    delete(self._rag_chunk_cls).where(
+                        self._rag_chunk_cls.project_id == project_id,
+                        self._rag_chunk_cls.doc_id == doc_id,
                     )
                 )
                 for i, (txt, vec) in enumerate(zip(chunks, emb)):
+                    if "\x00" in txt:
+                        # PostgreSQL rejects NUL bytes in text columns with
+                        # DataError, which would abort this whole document's
+                        # insert. Extraction already strips NUL; this is the
+                        # last line of defence for any other write path.
+                        txt = txt.replace("\x00", "")
                     session.add(
-                        RagChunk(
+                        self._rag_chunk_cls(
                             chunk_id=f"{project_id}:{doc_id}:{i}",
                             project_id=project_id,
                             doc_id=doc_id,
                             chunk_index=i,
                             text=txt,
                             embedding=vec,
+                            embedding_model=self.model_name,
+                            embedding_dim=self.dim,
+                            embedding_normalized=True,
                             created_at=now,
                         )
                     )
@@ -416,9 +528,9 @@ class VectorStore:
         with self._lock:
             with self._session_factory()() as session:
                 result = session.execute(
-                    delete(RagChunk).where(
-                        RagChunk.project_id == project_id,
-                        RagChunk.doc_id == doc_id,
+                    delete(self._rag_chunk_cls).where(
+                        self._rag_chunk_cls.project_id == project_id,
+                        self._rag_chunk_cls.doc_id == doc_id,
                     )
                 )
                 session.commit()
@@ -429,9 +541,9 @@ class VectorStore:
     def count(self, project_id: Optional[str] = None) -> int:
         with self._lock:
             with self._session_factory()() as session:
-                stmt = select(func.count()).select_from(RagChunk)
+                stmt = select(func.count()).select_from(self._rag_chunk_cls)
                 if project_id is not None:
-                    stmt = stmt.where(RagChunk.project_id == project_id)
+                    stmt = stmt.where(self._rag_chunk_cls.project_id == project_id)
                 return int(session.scalar(stmt) or 0)
 
     def count_by_doc(self, project_id: str) -> Dict[str, int]:
@@ -445,9 +557,9 @@ class VectorStore:
         with self._lock:
             with self._session_factory()() as session:
                 stmt = (
-                    select(RagChunk.doc_id, func.count())
-                    .where(RagChunk.project_id == project_id)
-                    .group_by(RagChunk.doc_id)
+                    select(self._rag_chunk_cls.doc_id, func.count())
+                    .where(self._rag_chunk_cls.project_id == project_id)
+                    .group_by(self._rag_chunk_cls.doc_id)
                 )
                 return {row[0]: int(row[1]) for row in session.execute(stmt).all()}
 
@@ -555,7 +667,7 @@ class VectorStore:
         like_clauses = " OR ".join(ident_clauses)
         sql = text(
             "SELECT chunk_id, project_id, doc_id, chunk_index, text "
-            "FROM chunks "
+            f"FROM {self._table_name} "
             "WHERE project_id = :project_id "
             f"AND ({like_clauses}) "
             "LIMIT :k"
@@ -595,6 +707,10 @@ class VectorStore:
                     score=round(score, 4),
                 )
             )
+        # Discard SQL pre-filter false positives: a chunk that passed the
+        # LIKE clauses but has no identifier token in its word-set gets
+        # score 0.0 and must not be returned.
+        out = [c for c in out if c.score > 0]
         # Higher match fraction first; preserve stable order on ties.
         out.sort(key=lambda c: -c.score)
         return out
@@ -616,19 +732,19 @@ class VectorStore:
     ) -> List[Chunk]:
         q_list = query_vec.tolist()
         # EmbeddingVector is a TypeDecorator; cast to Vector for pgvector ops.
-        vec_col = cast(RagChunk.embedding, Vector(EMBEDDING_DIM))
+        vec_col = cast(self._rag_chunk_cls.embedding, Vector(self.dim))
         distance = vec_col.cosine_distance(q_list)
         score_expr = (1 - distance).label("score")
         stmt = (
             select(
-                RagChunk.chunk_id,
-                RagChunk.project_id,
-                RagChunk.doc_id,
-                RagChunk.chunk_index,
-                RagChunk.text,
+                self._rag_chunk_cls.chunk_id,
+                self._rag_chunk_cls.project_id,
+                self._rag_chunk_cls.doc_id,
+                self._rag_chunk_cls.chunk_index,
+                self._rag_chunk_cls.text,
                 score_expr,
             )
-            .where(RagChunk.project_id == project_id)
+            .where(self._rag_chunk_cls.project_id == project_id)
             .order_by(distance)
             .limit(k)
         )
@@ -650,7 +766,7 @@ class VectorStore:
     def _search_numpy(
         self, project_id: str, query_vec: np.ndarray, k: int
     ) -> List[Chunk]:
-        stmt = select(RagChunk).where(RagChunk.project_id == project_id)
+        stmt = select(self._rag_chunk_cls).where(self._rag_chunk_cls.project_id == project_id)
         with self._lock:
             with self._session_factory()() as session:
                 rows = session.scalars(stmt).all()
@@ -714,12 +830,13 @@ class VectorStore:
         """ts_rank + GIN. The plainto_tsquery accepts natural language
         (no manual sanitization needed; Postgres handles it).
         """
+        table = self._table_name
         sql = text(
-            """
+            f"""
             SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
                    c.text,
                    ts_rank(c.text_search, q) AS rank
-            FROM chunks c, plainto_tsquery('english', :q) AS q
+            FROM {table} c, plainto_tsquery('english', :q) AS q
             WHERE c.text_search @@ q
               AND c.project_id = :project_id
             ORDER BY rank DESC
@@ -758,15 +875,17 @@ class VectorStore:
         safe_query = _sanitize_fts5_query(query)
         if not safe_query:
             return []
+        table = self._table_name
+        fts_table = f"{table}_fts"
         sql = text(
-            """
+            f"""
             SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
-                   c.text, chunks_fts.rank AS bm25_rank
-            FROM chunks_fts
-            JOIN chunks c ON c.rowid = chunks_fts.rowid
-            WHERE chunks_fts MATCH :q
+                   c.text, {fts_table}.rank AS bm25_rank
+            FROM {fts_table}
+            JOIN {table} c ON c.rowid = {fts_table}.rowid
+            WHERE {fts_table} MATCH :q
               AND c.project_id = :project_id
-            ORDER BY chunks_fts.rank
+            ORDER BY {fts_table}.rank
             LIMIT :k
             """
         )

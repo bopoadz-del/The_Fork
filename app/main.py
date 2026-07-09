@@ -62,6 +62,7 @@ from app.routers import (
     projects,
     rag as rag_router,
     redline,
+    schedule as schedule_router,
     static,
     upload,
     users,
@@ -377,6 +378,8 @@ app.include_router(monitoring.router)
 app.include_router(projects.router)
 from app.routers import exports as exports_router  # noqa: E402 — late import to keep diff small
 app.include_router(exports_router.router)
+from app.routers import schedule as schedule_router_module  # noqa: E402
+app.include_router(schedule_router_module.router)
 from app.routers import usage as usage_router  # noqa: E402
 app.include_router(usage_router.router)
 from app.routers import chat_photos as chat_photos_router  # noqa: E402

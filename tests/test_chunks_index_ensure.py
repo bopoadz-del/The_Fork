@@ -32,20 +32,22 @@ def _dispose(url: str) -> None:
     """Release every engine that may hold the sqlite file open (Windows unlink)."""
     from app.core.rag import vector_store as vs
     from app.core import db as _db
+    from app.core.models import RagChunk
     try:
         _db._engine_for_url(url).dispose()
     except Exception:
         pass
-    vs._INITIALIZED_URLS.discard(url)
+    vs._INITIALIZED_NAMESPACES.discard((url, RagChunk.__tablename__))
 
 
 def test_ensure_schema_creates_project_index_on_fresh_db():
     from app.core.rag import vector_store as vs
+    from app.core.models import RagChunk
     d = tempfile.mkdtemp()
     url = f"sqlite:///{os.path.join(d, 'fresh.db')}"
     try:
-        vs._INITIALIZED_URLS.discard(url)
-        vs._ensure_schema(url)
+        vs._INITIALIZED_NAMESPACES.discard((url, RagChunk.__tablename__))
+        vs._ensure_schema(url, RagChunk)
         names = _index_names(url)
         assert "idx_chunks_project" in names
         assert "idx_chunks_doc" in names
@@ -57,6 +59,7 @@ def test_ensure_schema_creates_project_index_on_fresh_db():
 def test_index_created_on_preexisting_table_without_it():
     """The real prod case: the table already exists WITHOUT the index."""
     from app.core.rag import vector_store as vs
+    from app.core.models import RagChunk
     d = tempfile.mkdtemp()
     url = f"sqlite:///{os.path.join(d, 'legacy.db')}"
     try:
@@ -69,15 +72,15 @@ def test_index_created_on_preexisting_table_without_it():
         eng.dispose()
         assert "idx_chunks_project" not in _index_names(url)
 
-        vs._INITIALIZED_URLS.discard(url)
-        vs._ensure_schema(url)
+        vs._INITIALIZED_NAMESPACES.discard((url, RagChunk.__tablename__))
+        vs._ensure_schema(url, RagChunk)
 
         assert "idx_chunks_project" in _index_names(url), \
             "index must be created on a pre-existing table"
 
         # Idempotent: a second pass must not raise.
-        vs._INITIALIZED_URLS.discard(url)
-        vs._ensure_schema(url)
+        vs._INITIALIZED_NAMESPACES.discard((url, RagChunk.__tablename__))
+        vs._ensure_schema(url, RagChunk)
     finally:
         _dispose(url)
         shutil.rmtree(d, ignore_errors=True)

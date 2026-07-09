@@ -3,6 +3,34 @@
 Living log of the autonomous work program. One section per task, newest state
 first. Update on every task state change.
 
+## 2026-07-08 — P0d: one-document BGE proof passed
+
+- Branch: `feat/clean-rebuild-rag`.
+- P0d script `scripts/p0d_one_doc_proof_bge.py` run end-to-end:
+  - embedder `BAAI/bge-small-en-v1.5` loaded (dim=384, normalized=True, query
+    instruction prefix applied).
+  - Normal `doc_index.index_document()` pipeline wrote 1 chunk to namespace
+    `v2` and returned `rag_indexed: 1`.
+  - Retrieval returned the injected fact (cement content 385 kg/m3) with
+    score 0.8596.
+  - Zero-chunk document failed loud with `ZERO_CHUNK` banner.
+- Fixes landed in the same branch:
+  - `doc_index.index_document` now surfaces `rag_indexed` in its return dict.
+  - Fixed `init_db` recursion caused by `_purge_spurious_master_corpus_row`
+    calling `purge_project_index`, which re-entered `init_db`.
+  - `projects.delete_document` now deletes chunks from the active vector-store
+    namespace instead of the legacy `chunks` table only.
+  - `vector_store._rag_vector_namespace()` honors an explicit empty string
+    (`RAG_VECTOR_NAMESPACE=""`) as the legacy namespace; previously it fell
+    back to `v2`.
+  - `make_rag_chunk_class("", ...)` returns the static legacy `RagChunk`
+    class, avoiding duplicate table registration.
+  - Legacy-namespace identity verification is skipped (original `chunks`
+    table predates identity columns).
+- Test suite: 188 passed, 2 skipped, 1 xfailed in the RAG/doc_index/projects
+  subset; P0d script passes cleanly.
+- Next: Phase 1 (Drive manifest + full re-ingestion into `v2`).
+
 ## 2026-07-08 — T5 fixture estate restored
 
 - Three canonical fixture projects seeded/reconciled on prod via normal API
@@ -465,3 +493,65 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   - Note: service-account `GDRIVE_PROJECT_FOLDERS` remains unset; the OAuth
     Drive pipeline is verified end-to-end and prod-ready.
   - T4 complete.
+
+- **2026-07-08 (later) — CLEAN REBUILD Phase 0: P0a/P0b/P0c complete on
+  `feat/clean-rebuild-rag`:**
+  - P0a: `app/core/rag/embeddings.py` rewritten to read `dim` from the loaded
+    model, L2-normalize every vector, and expose `Embedder.identity`.
+  - P0a addition: namespaced chunk tables carry embedding-identity metadata
+    (`embedding_model`, `embedding_dim`, `embedding_normalized`); startup
+    asserts exact model match and fails loud on mismatch.
+  - P0b: `app/core/models.py` gained `make_rag_chunk_class()` factory;
+    `app/core/rag/vector_store.py` honors `RAG_VECTOR_NAMESPACE` (default
+    `v2`), writes/reads the namespaced table, and retires the old `chunks`
+    table in place (never deleted, never written to again).
+  - Tests: 34 RAG + chunks-index tests green; added tests for identity,
+    namespace isolation, and mismatched-model failure.
+  - P0c: `scripts/benchmark_embedders.py` created; ran all three candidates
+    on the 20-question recall subset + 12 fresh-upload cases:
+    - `minishlab/potion-base-8M`: doc@5=0.95, chunk@5=0.55
+    - `sentence-transformers/all-MiniLM-L6-v2`: doc@5=0.90, chunk@5=0.70
+    - `BAAI/bge-small-en-v1.5`: doc@5=0.95, chunk@5=0.65
+    - All three: 12/12 fresh-upload top-1 wins.
+  - Draft recommendation in `EMBEDDER_DECISION.md`: `BAAI/bge-small-en-v1.5`
+    as winner (best combined doc/chunk recall, fits Render envelope).
+    Pending Chadi confirmation before Phase 1.
+
+- **2026-07-08 (later) — CLEAN REBUILD Phase 1b extractors, `feat/clean-rebuild-rag`:**
+  - Added PPTX text extraction (`python-pptx`) — committed.
+  - Added KMZ text extraction (read first `.kml`, strip XML tags) — committed.
+  - Added recursive ZIP / RAR archive extraction with zip-bomb guards
+    (depth=3, max 1000 files, 500 MB total) — committed.
+  - Added `.msg` Outlook email extraction using `olefile` directly (avoids
+    `extract-msg` dependency conflict with pinned `beautifulsoup4==4.15.0`) —
+    committed and tested on real `.msg` files from Master Folder.
+  - RAR degrades to "" when `unrar` binary is missing (Windows dev); Render
+    build installs `unrar` via `render-build.sh`.
+  - Skipped `.doc` old-Word extractor: only 4 `.doc` files in Master Folder,
+    all HR/personal docs; cross-platform extraction needs heavy/fragile deps
+    (`textract`/`antiword`/COM) not justified for pilot.
+  - Master Folder ingestion (7,222 files) into `v2` started; first run died
+    silently at ~124/7222 (likely OOM on a large contract PDF). Added
+    `--resume`, `--offset`, and `--limit` flags to
+    `scripts/p1b_ingest_local_folder.py`; fixed a bug where the loop was
+    iterating the unfiltered file list and re-processing already-indexed
+    files. Partial report now written every 50 files.
+  - Added `.doc` legacy-Word extraction (antiword/catdoc/textract/Word COM
+    fallback chain); tested on all 4 `.doc` files in Master Folder.
+  - Tightened archive extraction guards: 50 MB archive/file limit, 100-member
+    limit, skip image members inside archives (avoids per-photo OCR/YOLO on
+    ZIPs containing hundreds of construction photos).
+  - Real-file extractor verification: PPTX, KMZ, ZIP, MSG, DOC all extract
+    text from real Master Folder files; RAR degrades gracefully on Windows
+    (works on Render with `unrar`).
+  - Restarted ingestion in smaller 100-file batches with partial report flush
+    every 10 files (previous 500-file batch was killed by session close).
+  - Added `scripts/p1b_run_batches.sh` to run sequential 100-file batches
+    automatically until the Master Folder is fully ingested.
+  - Added `PDF_MAX_SIZE_MB=100` guard in `doc_index.py`: silently skips
+    PDFs > 100 MB (the drawing sets were 140–446 MB and OOM-killing the
+    ingestion worker).
+  - Added `P1B_MAX_FILE_SIZE_MB=100` guard to `p1b_ingest_local_folder.py`
+    to avoid copying huge files from the Drive mount before indexing.
+  - Added `PDF_OCR_MAX_SIZE_MB=25` guard: disable OCR for PDFs > 25 MB and
+    rely on the text layer only (this was the timeout/OOM path).

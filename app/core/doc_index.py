@@ -67,13 +67,20 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 
 # Extensions we know how to extract text from.
 _SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".docx", ".xlsx"}
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".doc", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar", ".msg"}
     | _IMAGE_EXTS
 )
 
 # A PDF whose recovered text-layer is shorter than this is treated as a
 # scanned / image-only PDF and re-extracted via OCR.
 _PDF_OCR_THRESHOLD = 30
+
+# Skip PDFs above this size entirely. Multi-hundred-MB scanned drawing sets
+# (e.g. 450 MB) OOM the 2 GB Render worker during fitz load / OCR.
+_PDF_MAX_SIZE_MB = float(os.getenv("PDF_MAX_SIZE_MB", "100"))
+# For PDFs above this size, do NOT run OCR — only extract any existing text
+# layer. OCR'ing large scanned PDFs is the ingestion timeout/OOM path.
+_PDF_OCR_MAX_SIZE_MB = float(os.getenv("PDF_OCR_MAX_SIZE_MB", "25"))
 
 # In-process guard around index writes. Cross-process safety comes from the
 # SQLite BEGIN IMMEDIATE transaction in _update_index; this lock just avoids
@@ -134,6 +141,46 @@ def _ocr_extract(file_path: str) -> Tuple[str, bool]:
         return text, low_quality
     except Exception:
         return "", False
+
+
+def _safety_world_extract(file_path: str, filename: str) -> str:
+    """Run the baked YOLO-Worldv2 detector and return a searchable summary.
+
+    The detector is only loaded when ``SAFETY_WORLD_WEIGHTS`` points at an
+    existing baked .onnx file. Detections are summarised as a plain-text
+    sentence so construction photos that OCR blanks still produce RAG
+    chunks. Never raises — any failure yields "".
+    """
+    try:
+        from pathlib import Path
+
+        from app.blocks.safety_world_detector import default_detector
+        from app.core.file_crypto import open_plaintext
+
+        detector = default_detector()
+        if detector is None:
+            return ""
+
+        conf = float(os.getenv("SAFETY_WORLD_CONF", "0.05"))
+        with open_plaintext(file_path) as plain_path:
+            detections = detector.detect(Path(plain_path), conf_threshold=conf)
+        if not detections:
+            return ""
+
+        # Group by class, keep highest confidence per class, stable order.
+        by_class: Dict[str, float] = {}
+        for d in detections:
+            cls = d.get("class", "unknown")
+            conf_val = float(d.get("confidence") or 0.0)
+            by_class[cls] = max(by_class.get(cls, 0.0), conf_val)
+
+        items = ", ".join(
+            f"{cls} ({conf_val:.2f})"
+            for cls, conf_val in sorted(by_class.items(), key=lambda kv: (-kv[1], kv[0]))
+        )
+        return f"Construction site photo {filename}: detected {items}."
+    except Exception:
+        return ""
 
 
 def _ocr_pdf_page(page) -> str:
@@ -220,6 +267,12 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
     ocr_pages = 0
     truncated = False
     try:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        if _PDF_MAX_SIZE_MB > 0 and size_mb > _PDF_MAX_SIZE_MB:
+            return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
+        # Large scans: disable OCR entirely, rely on text layer only.
+        if _PDF_OCR_MAX_SIZE_MB > 0 and size_mb > _PDF_OCR_MAX_SIZE_MB:
+            page_cap = 0
         with file_crypto.open_plaintext(file_path) as readable_path:
             plumber = None
             # Skip pdfplumber on large scans — it loads the whole PDF and is
@@ -241,7 +294,7 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
                     # A page whose text layer is too thin is image-only (or
                     # near-empty) — OCR it, bounded by the page cap so a long
                     # scan can't OOM the box.
-                    if len(page_text) < _PDF_OCR_THRESHOLD:
+                    if page_cap > 0 and len(page_text) < _PDF_OCR_THRESHOLD:
                         if ocr_pages < page_cap:
                             ocr_text = _ocr_pdf_page(page)
                             if ocr_text.strip():
@@ -271,7 +324,319 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
     return "\n".join(parts), meta
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+def _extract_pptx(file_path: str) -> str:
+    """Extract text from a PowerPoint file, slide by slide.
+
+    Collects text from all shapes on all slides, prefixed with the slide
+    number so chunk context stays answerable. Never raises.
+    """
+    try:
+        import pptx
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            prs = pptx.Presentation(readable_path)
+        parts: List[str] = []
+        for i, slide in enumerate(prs.slides, start=1):
+            slide_texts: List[str] = []
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text:
+                    slide_texts.append(shape.text.strip())
+            if slide_texts:
+                parts.append(f"Slide {i}:\n" + "\n".join(slide_texts))
+        return "\n\n".join(parts)
+    except Exception:
+        return ""
+
+
+def _extract_kmz(file_path: str) -> str:
+    """Extract text from a KMZ file (ZIP containing KML).
+
+    Reads the first .kml entry, strips XML tags, and returns the plain text.
+    KMZ may contain images/models; we only index the KML narrative so the
+    file is locatable by its name and any embedded labels. Never raises.
+    """
+    try:
+        import zipfile
+        import re
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            with zipfile.ZipFile(readable_path, "r") as zf:
+                kml_names = [n for n in zf.namelist() if n.lower().endswith(".kml")]
+                if not kml_names:
+                    return ""
+                kml_bytes = zf.read(kml_names[0])
+        kml_text = kml_bytes.decode("utf-8", errors="replace")
+        # Strip XML tags and collapse whitespace.
+        plain = re.sub(r"<[^>]+>", " ", kml_text)
+        plain = re.sub(r"\s+", " ", plain).strip()
+        return plain
+    except Exception:
+        return ""
+
+
+def _extract_msg(file_path: str) -> str:
+    """Extract text from an Outlook .msg file (OLE compound document).
+
+    Reads the subject, sender, and plain-text body streams. This makes
+    project correspondence searchable without relying on the full
+    extract-msg package (which conflicts with our beautifulsoup4 pin).
+    Never raises.
+    """
+    try:
+        import olefile
+    except Exception:
+        return ""
+
+    def _read_stream(ole, stream_name):
+        if not ole.exists(stream_name):
+            return None
+        data = ole.openstream(stream_name).read()
+        if stream_name.endswith("001F"):
+            return data.decode("utf-16-le", errors="replace")
+        return data.decode("cp1252", errors="replace")
+
+    try:
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            if not olefile.isOleFile(readable_path):
+                return ""
+            ole = olefile.OleFileIO(readable_path)
+            try:
+                subject = _read_stream(ole, "__substg1.0_0E04001F") or _read_stream(ole, "__substg1.0_0E04001E") or ""
+                sender = _read_stream(ole, "__substg1.0_0C1A001F") or _read_stream(ole, "__substg1.0_0C1A001E") or ""
+                body = _read_stream(ole, "__substg1.0_1000001F") or _read_stream(ole, "__substg1.0_1000001E") or ""
+            finally:
+                ole.close()
+    except Exception:
+        return ""
+
+    parts = []
+    if sender:
+        parts.append(f"From: {sender}")
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if body:
+        parts.append(body)
+    return "\n\n".join(parts)
+
+
+def _extract_doc(file_path: str) -> str:
+    """Extract text from a legacy binary Microsoft Word .doc file.
+
+    Tries external converters in order of reliability:
+    ``antiword`` (Linux/Render), ``catdoc`` (Linux/Render), ``textract``
+    (if installed), then Windows Word COM automation (if Word is installed
+    and pywin32 is available). Never raises.
+    """
+    import shutil
+    import subprocess
+
+    converters = []
+    antiword = shutil.which("antiword")
+    catdoc = shutil.which("catdoc")
+    if antiword:
+        converters.append([antiword])
+    if catdoc:
+        converters.append([catdoc, "-d", "utf-8"])
+
+    for cmd in converters:
+        try:
+            with file_crypto.open_plaintext(file_path) as readable_path:
+                result = subprocess.run(
+                    cmd + [readable_path],
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    timeout=60,
+                )
+            text = (result.stdout or "").strip()
+            if text:
+                return text
+        except Exception:
+            continue
+
+    # Optional textract fallback (not a declared dependency — user-install only).
+    try:
+        import textract
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            return textract.process(readable_path).decode("utf-8", errors="replace").strip()
+    except Exception:
+        pass
+
+    # Optional Windows Word COM fallback (requires Word + pywin32).
+    try:
+        import win32com.client as win32
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            word = win32.Dispatch("Word.Application")
+            word.Visible = False
+            doc = word.Documents.Open(readable_path)
+            try:
+                return doc.Range().Text
+            finally:
+                doc.Close(SaveChanges=False)
+                word.Quit()
+    except Exception:
+        return ""
+
+    return ""
+
+
+# Archive extraction guards (zip-bomb / runaway-nest protection).
+_ARCHIVE_MAX_DEPTH = int(os.getenv("ARCHIVE_MAX_DEPTH", "3"))
+_ARCHIVE_MAX_FILES = int(os.getenv("ARCHIVE_MAX_FILES", "100"))
+_ARCHIVE_MAX_TOTAL_BYTES = int(os.getenv("ARCHIVE_MAX_TOTAL_BYTES", str(50 * 1024 * 1024)))
+# Skip archives whose own compressed size exceeds this — extracting multi-GB
+# archives on the 2 GB Render worker is a timeout/OOM risk.
+_ARCHIVE_MAX_FILE_SIZE = int(os.getenv("ARCHIVE_MAX_FILE_SIZE", str(50 * 1024 * 1024)))
+
+
+def _extract_archive(
+    file_path: str,
+    filename: str,
+    opener,
+    depth: int = 0,
+    counters: Optional[Dict[str, int]] = None,
+) -> str:
+    """Recursively extract text from an archive (ZIP or RAR).
+
+    ``opener`` must be a callable that takes a path and returns an object
+    with ``namelist()`` and ``read(name)`` methods (``zipfile.ZipFile`` or
+    ``rarfile.RarFile``).
+
+    Guards against zip bombs and infinitely nested archives:
+    * max depth ``_ARCHIVE_MAX_DEPTH``
+    * max total files ``_ARCHIVE_MAX_FILES``
+    * max total uncompressed bytes ``_ARCHIVE_MAX_TOTAL_BYTES``
+
+    Nested archive contents are flattened into the same document's text,
+    prefixed with their archive-internal path for provenance. Never raises.
+    """
+    if depth > _ARCHIVE_MAX_DEPTH:
+        return ""
+    if counters is None:
+        counters = {"files": 0, "bytes": 0}
+    try:
+        if os.path.getsize(file_path) > _ARCHIVE_MAX_FILE_SIZE:
+            return ""
+    except Exception:
+        return ""
+
+    parts: List[str] = []
+    try:
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            with opener(readable_path) as archive:
+                names = archive.namelist()
+    except Exception:
+        return ""
+
+    for name in names:
+        if counters["files"] >= _ARCHIVE_MAX_FILES:
+            break
+        lower = name.lower()
+        ext = os.path.splitext(lower)[1]
+
+        # Skip directories and macOS resource forks.
+        if name.endswith("/") or "__macosx" in lower:
+            continue
+
+        try:
+            with file_crypto.open_plaintext(file_path) as readable_path:
+                with opener(readable_path) as archive:
+                    info = archive.getinfo(name)
+                    member_size = getattr(info, "file_size", getattr(info, "compress_size", 0)) or 0
+                    if member_size > _ARCHIVE_MAX_TOTAL_BYTES:
+                        continue
+                    if counters["bytes"] + member_size > _ARCHIVE_MAX_TOTAL_BYTES:
+                        break
+                    data = archive.read(name)
+        except Exception:
+            continue
+
+        counters["files"] += 1
+        counters["bytes"] += len(data)
+        if counters["bytes"] >= _ARCHIVE_MAX_TOTAL_BYTES:
+            break
+
+        # Write the member to a temp file so existing extractors can run.
+        tmp_path: Optional[str] = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix=ext or ".bin", prefix="fork_arc_")
+            os.close(fd)
+            with open(tmp_path, "wb") as fh:
+                fh.write(data)
+
+            # Nested archive: recurse.
+            if ext in {".zip", ".rar"}:
+                nested_opener = _zip_opener if ext == ".zip" else _rar_opener
+                nested_text = _extract_archive(
+                    tmp_path, name, nested_opener, depth=depth + 1, counters=counters
+                )
+                if nested_text:
+                    parts.append(f"[archive:{name}]\n{nested_text}")
+                continue
+
+            # Skip images inside archives — per-photo OCR/YOLO is too expensive
+            # when a ZIP contains hundreds of construction photos, and the archive
+            # itself is still locatable by name plus any text/PDF members.
+            if ext in _IMAGE_EXTS:
+                continue
+
+            # Supported file: route through the same extraction pipeline.
+            if ext in _SUPPORTED_EXTS:
+                member_text, _ = _extract_with_meta(tmp_path, name)
+                if member_text:
+                    parts.append(f"[file:{name}]\n{member_text}")
+        except Exception:
+            continue
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    return "\n\n".join(parts)
+
+
+def _zip_opener(path: str):
+    import zipfile
+
+    return zipfile.ZipFile(path, "r")
+
+
+def _rar_opener(path: str):
+    import rarfile
+
+    return rarfile.RarFile(path)
+
+
+def _extract_zip(file_path: str, filename: str) -> str:
+    """Recursively extract text from a ZIP archive. Never raises."""
+    return _extract_archive(file_path, filename, _zip_opener)
+
+
+def _rar_available() -> bool:
+    """Check whether rarfile can locate an unrar binary."""
+    try:
+        import rarfile
+        rarfile.tool_setup()
+        return bool(rarfile.UNRAR_TOOL)
+    except Exception:
+        return False
+
+
+def _extract_rar(file_path: str, filename: str) -> str:
+    """Recursively extract text from a RAR archive. Degrades to "" if no
+    unrar binary is available (expected on Windows dev boxes). Never raises.
+    """
+    if not _rar_available():
+        return ""
+    return _extract_archive(file_path, filename, _rar_opener)
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -314,6 +679,11 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
     when the document was OCR'd and the OCR quality verdict flagged it as a poor
     scan (omitted otherwise). Never raises — returns ``("", {})`` on any error.
 
+    Output is guaranteed NUL-free: malformed PDFs (broken font CID maps —
+    the same files that spray MuPDF warnings) yield literal ``\\x00`` bytes in
+    the text layer, and PostgreSQL rejects any INSERT whose text contains
+    NUL, which zero-chunked whole documents during the P1b Drive ingestion.
+
     Supports:
     * .txt/.md/.csv/.json/.xml — via file_crypto.read_document
     * .pdf — fitz / PyMuPDF text layer; if that text is effectively empty
@@ -321,6 +691,14 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
     * .docx — python-docx; .xlsx — openpyxl
     * image extensions (.jpg/.png/.webp/...) — OCR via OCRBlock
     """
+    text, meta = _extract_with_meta_impl(file_path, filename)
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+    return text, meta
+
+
+def _extract_with_meta_impl(file_path: str, filename: str) -> Tuple[str, Dict[str, Any]]:
+    """Format dispatch for ``_extract_with_meta``. May return NUL bytes."""
     try:
         _, ext = os.path.splitext((filename or "").lower())
         if ext not in _SUPPORTED_EXTS:
@@ -331,9 +709,14 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
             raw = file_crypto.read_document(file_path)
             return raw.decode("utf-8", errors="replace"), {}
 
-        # ── images → OCR ─────────────────────────────────────────────────────
+        # ── images → OCR + YOLO-World fallback ───────────────────────────────
         if ext in _IMAGE_EXTS:
             text, low_quality = _ocr_extract(file_path)
+            # Construction photos usually OCR blank; run the baked YOLO-World
+            # detector to produce a searchable summary of visible objects.
+            yolo_text = _safety_world_extract(file_path, filename or "")
+            if yolo_text:
+                text = f"{text}\n\n{yolo_text}".strip() if text else yolo_text
             meta: Dict[str, Any] = {}
             if low_quality:
                 meta["ocr_low_quality"] = True
@@ -346,7 +729,9 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
         if ext == ".pdf":
             return _extract_pdf(file_path)
 
-        # ── DOCX ─────────────────────────────────────────────────────────────
+        # ── DOC / DOCX ───────────────────────────────────────────────────────
+        if ext == ".doc":
+            return _extract_doc(file_path), {}
         if ext == ".docx":
             import docx
             with file_crypto.open_plaintext(file_path) as readable_path:
@@ -367,6 +752,24 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
                                 parts.append(str(cell.value))
                 return " ".join(parts), {}
 
+        # ── PPTX ─────────────────────────────────────────────────────────────
+        if ext == ".pptx":
+            return _extract_pptx(file_path), {}
+
+        # ── KMZ ──────────────────────────────────────────────────────────────
+        if ext == ".kmz":
+            return _extract_kmz(file_path), {}
+
+        # ── MSG (Outlook email) ──────────────────────────────────────────────
+        if ext == ".msg":
+            return _extract_msg(file_path), {}
+
+        # ── ZIP / RAR ────────────────────────────────────────────────────────
+        if ext == ".zip":
+            return _extract_zip(file_path, filename), {}
+        if ext == ".rar":
+            return _extract_rar(file_path, filename), {}
+
     except Exception:
         return "", {}
 
@@ -378,8 +781,10 @@ def extract_document_text(file_path: str, filename: str) -> str:
 
     Supports .txt/.md/.csv/.json/.xml (via file_crypto.read_document),
     .pdf (via fitz / PyMuPDF + open_plaintext, with OCR fallback for scanned
-    image-only PDFs), .docx (via python-docx + open_plaintext), .xlsx (via
-    openpyxl + open_plaintext), and image formats (.jpg/.jpeg/.png/.webp/.gif/
+    image-only PDFs), .doc (antiword/catdoc/textract/Word COM), .docx (via
+    python-docx + open_plaintext), .xlsx (via openpyxl + open_plaintext), .pptx
+    (python-pptx), .kmz (KML text), .zip/.rar (recursive archive flattening),
+    .msg (Outlook email body), and image formats (.jpg/.jpeg/.png/.webp/.gif/
     .bmp/.tif/.tiff) via OCR.
 
     Returns "" for unsupported extensions and on any extraction error —
@@ -1218,17 +1623,22 @@ def index_document(
         # Lazy import + try/except keep doc_index importable even when
         # sentence-transformers isn't installed. Idempotent via
         # upsert_chunks: re-indexing the same doc replaces its chunks.
+        rag_indexed = 0
         try:
             from app.core.rag import retriever as _rag
             if _rag.available() and chunks:
-                indexed = _rag.index_chunks(project_id, document_id, chunks)
-                if indexed:
-                    entry["rag_indexed"] = indexed
+                rag_indexed = _rag.index_chunks(project_id, document_id, chunks) or 0
+                if rag_indexed:
+                    entry["rag_indexed"] = rag_indexed
         except Exception as exc:  # noqa: BLE001
             # Never let a RAG failure abort the primary doc-index path
             import logging as _logging
+            import traceback as _traceback
             _logging.getLogger(__name__).warning(
                 "RAG indexing skipped for %s: %s", document_id, exc
+            )
+            _logging.getLogger(__name__).warning(
+                "RAG indexing traceback for %s:\n%s", document_id, _traceback.format_exc()
             )
 
     # Load-modify-write inside one SQLite transaction — a concurrent
@@ -1272,6 +1682,7 @@ def index_document(
         "indexed": 1,
         "skipped_unsupported": 0,
         "total_chunks": len(chunks),
+        "rag_indexed": rag_indexed,
     }
 
 
@@ -1353,7 +1764,14 @@ def _purge_spurious_master_corpus_row() -> None:
         if row is not None:
             session.delete(row)
             session.commit()
-    purge_project_index(MASTER_CORPUS_PROJECT_ID)
+    # Delete the matching DocIndex row directly; do NOT call purge_project_index
+    # because that calls _ensure_db() and can recurse back into init_db while
+    # tables are still being created. A spurious alias row never has legacy files.
+    with SessionLocal() as session:
+        session.execute(
+            delete(DocIndex).where(DocIndex.project_id == MASTER_CORPUS_PROJECT_ID)
+        )
+        session.commit()
 
 
 # ── search ────────────────────────────────────────────────────────────────────
