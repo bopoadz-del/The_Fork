@@ -55,6 +55,9 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
+# Ultralytics settings dir — home is not writable as the non-root app user.
+ENV YOLO_CONFIG_DIR=/tmp/Ultralytics
+
 # Runtime system libs (OpenGL/glib for image processing; curl for healthcheck;
 # tesseract + Arabic language pack so Arabic BOQ pages OCR correctly per
 # FOLLOW-UP #93 — without ara, PyMuPDF's CMAP-less Arabic text becomes
