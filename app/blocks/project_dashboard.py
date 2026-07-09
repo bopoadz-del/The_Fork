@@ -96,6 +96,7 @@ class ProjectDashboardBlock(UniversalBlock):
             "activity_graph": self._activity_graph_analysis,
             "list_workflows": self._list_workflows,
             "workflow_detail": self._workflow_detail,
+            "run_workflow": self._run_workflow,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -156,7 +157,8 @@ class ProjectDashboardBlock(UniversalBlock):
         high_risk = graph.high_risk_activities()
         critical = graph.critical_path_activities()
 
-        # Derive domain status from activities
+        # Derive domain status from activities.
+        # Quality blocks → "failed" (R002 NCR/hold), not "critical" (R003 safety).
         domain_status: Dict[str, Dict[str, Any]] = {}
         for activity in graph.activities:
             domain_key = activity.type.value
@@ -171,7 +173,13 @@ class ProjectDashboardBlock(UniversalBlock):
             domain_status[domain_key]["count"] += 1
             if activity.is_blocked():
                 domain_status[domain_key]["blocked"] += 1
-                domain_status[domain_key]["status"] = "critical"
+                if domain_key == Domain.QUALITY.value:
+                    domain_status[domain_key]["status"] = "failed"
+                elif domain_key == Domain.SAFETY.value:
+                    domain_status[domain_key]["status"] = "critical"
+                else:
+                    # Non-QA/safety holds still surface as failed for R002-style holds
+                    domain_status[domain_key]["status"] = "failed"
             if activity.status == Status.OVERDUE:
                 domain_status[domain_key]["overdue"] += 1
                 if domain_status[domain_key]["status"] == "healthy":
@@ -235,6 +243,9 @@ class ProjectDashboardBlock(UniversalBlock):
                 "available": lib.all_template_ids(),
             }
         plan = template.build_plan(params)
+        from app.core.cross_domain_reasoner import MultiDomainPlanBuilder
+
+        executable = MultiDomainPlanBuilder(lib).build_from_template(template_id, params)
         return {
             "status": "success",
             "template": {
@@ -244,4 +255,27 @@ class ProjectDashboardBlock(UniversalBlock):
                 "domains": template.domains,
             },
             "sample_plan": plan.model_dump(mode="json"),
+            "executable_plan": executable,
         }
+
+    async def _run_workflow(self, data: Dict, params: Dict) -> Dict:
+        """Build an aliased executable plan for a template (dispatch-ready).
+
+        Does not invent a parallel executor — returns steps shaped for
+        /v1/execute {block, params.action}. Callers (or chain) run each step.
+        """
+        template_id = data.get("template_id") or params.get("template_id", "")
+        if not template_id:
+            return {"status": "error", "error": "template_id required"}
+        from app.core.cross_domain_reasoner import MultiDomainPlanBuilder
+
+        plan = MultiDomainPlanBuilder(self._get_template_library()).build_from_template(
+            template_id, {**params, **{k: v for k, v in data.items() if k != "action"}}
+        )
+        if plan is None:
+            return {
+                "status": "error",
+                "error": f"Unknown template: {template_id}",
+                "available": self._get_template_library().all_template_ids(),
+            }
+        return {"status": "success", **plan}
