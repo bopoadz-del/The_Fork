@@ -51,7 +51,19 @@ DATABASE_URL: str = get_database_url()
 
 def _engine_kwargs(url: str) -> dict[str, Any]:
     if url.startswith("postgresql"):
-        return {"pool_size": 10, "pool_pre_ping": True}
+        # Default pool_size=10 was fine for one web process, but five
+        # identical Pro ingest workers × 10 = 50 connections and knocks
+        # Render Postgres into recovery ("not yet accepting connections").
+        # Ingest only needs 1–2 live connections (P1B_PARALLELISM≤2).
+        # Override with DB_POOL_SIZE / DB_MAX_OVERFLOW on workers.
+        pool_size = max(1, int(os.getenv("DB_POOL_SIZE", "10")))
+        max_overflow = max(0, int(os.getenv("DB_MAX_OVERFLOW", "10")))
+        return {
+            "pool_size": pool_size,
+            "max_overflow": max_overflow,
+            "pool_pre_ping": True,
+            "pool_recycle": 300,
+        }
     if url.startswith("sqlite"):
         return {"connect_args": {"timeout": 30.0}}
     return {}
