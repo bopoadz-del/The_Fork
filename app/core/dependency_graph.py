@@ -345,7 +345,7 @@ class DependencyGraph:
     """Traverses dependency rules to find cross-domain impacts."""
 
     def __init__(self, rules: Optional[List[DependencyRule]] = None) -> None:
-        self.rules = rules or list(DEFAULT_RULES)
+        self.rules = list(DEFAULT_RULES) if rules is None else rules
         self._by_source: Dict[Domain, List[DependencyRule]] = {}
         self._by_target: Dict[Domain, List[DependencyRule]] = {}
         self._index()

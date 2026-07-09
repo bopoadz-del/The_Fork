@@ -27,6 +27,7 @@ STEP_EXTRACT_BOQ = "extract_boq"                    # boq_processor
 STEP_COST_LOAD = "cost_load"                        # schedule_bridge + pm_excel
 STEP_EXTRACT_RISKS = "extract_risks"                # document_engine risk extraction
 STEP_POPULATE_RISK_REGISTER = "populate_risk_register"  # risk_register_auto_populate
+STEP_UPDATE_RISK_REGISTER = "update_risk_register"   # risk register maintenance
 STEP_EXTRACT_EQUIPMENT_LIST = "extract_equipment_list"  # document_engine
 STEP_PROCUREMENT_PLAN = "procurement_plan"          # procurement_list_generator
 STEP_EXTRACT_CLAUSES = "extract_clauses"            # contract analysis

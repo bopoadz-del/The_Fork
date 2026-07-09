@@ -231,8 +231,6 @@ class ActivityGraph(BaseModel):
 
     def summary(self) -> Dict[str, Any]:
         """High-level project health summary."""
-        if not self.activities:
-            return {"total": 0}
         type_counts = {}
         status_counts = {}
         for a in self.activities:
