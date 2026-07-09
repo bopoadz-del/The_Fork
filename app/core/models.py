@@ -135,6 +135,12 @@ class Document(Base):
     size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     uploaded_at: Mapped[str] = mapped_column(String, nullable=False)
     content_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    # ``metadata`` is a reserved word in SQLAlchemy Declarative; the DB column
+    # is still named ``metadata`` (JSONB on Postgres), but the ORM attribute is
+    # ``metadata_`` to avoid clashing with ``Base.metadata``.
+    metadata_: Mapped[dict | None] = mapped_column(
+        "metadata", JSON, nullable=True
+    )
 
 
 class ProjectFact(Base):

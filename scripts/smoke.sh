@@ -23,13 +23,35 @@
 #   FORK_API_KEY="..." ./scripts/smoke.sh                 # routine: 3 runs
 #   SMOKE_RUNS=10 FORK_API_KEY="..." ./scripts/smoke.sh   # release: 10 runs
 #   ./scripts/smoke.sh dar_al_arkan_master
+#
+# Long release runs may exceed a shell/CI timeout. Use --background <file> to
+# detach and write results to a file; the caller polls the file for completion.
 set -u
 
 PROJECT="${1:-${FORK_PROJECT:-dar_al_arkan_master}}"
+BACKGROUND_FILE=""
+if [ "${1:-}" = "--background" ]; then
+  BACKGROUND_FILE="${2:-}"
+  if [ -z "$BACKGROUND_FILE" ]; then
+    echo "Usage: ./scripts/smoke.sh --background <output-file> [project]" >&2
+    exit 2
+  fi
+  shift 2
+  PROJECT="${1:-${FORK_PROJECT:-dar_al_arkan_master}}"
+fi
+
 RUNS="${SMOKE_RUNS:-3}"                       # routine default; release uses 10
 MIN_CHARS="${MIN_ANSWER_CHARS:-1500}"         # a degenerate short answer FAILs
 MESSAGE="${SMOKE_MESSAGE:-generate a commissioning checklist for the MV substation}"
 export PYTHONIOENCODING=utf-8
+
+# --- background mode: detach, run, write to file, print PID ---
+if [ -n "$BACKGROUND_FILE" ]; then
+  nohup bash "$0" "$PROJECT" > "$BACKGROUND_FILE" 2>&1 &
+  pid=$!
+  echo "smoke backgrounded (PID $pid) -> $BACKGROUND_FILE"
+  exit 0
+fi
 
 # --- credential guard: env only, never hardcoded ---
 if [ -z "${FORK_API_KEY:-}" ] \
@@ -42,6 +64,17 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI="$SCRIPT_DIR/fork_cli.py"
 [ -f "$CLI" ] || { echo "fork_cli.py not found next to smoke.sh ($CLI)" >&2; exit 2; }
+
+# Prefer explicit PYTHON, then repo venv, then system python.
+if [ -n "${PYTHON:-}" ]; then
+  PYTHON_BIN="$PYTHON"
+elif [ -f "$SCRIPT_DIR/../.venv/Scripts/python.exe" ]; then
+  PYTHON_BIN="$SCRIPT_DIR/../.venv/Scripts/python.exe"
+elif [ -f "$SCRIPT_DIR/../.venv/bin/python" ]; then
+  PYTHON_BIN="$SCRIPT_DIR/../.venv/bin/python"
+else
+  PYTHON_BIN="python"
+fi
 
 BASE_ARGS=()
 [ -n "${FORK_BASE_URL:-}" ] && BASE_ARGS=(--base "$FORK_BASE_URL")
@@ -58,7 +91,8 @@ echo "message: $MESSAGE"
 printf '=%.0s' $(seq 1 72); echo
 
 for i in $(seq 1 "$RUNS"); do
-  out="$(python "$CLI" "${BASE_ARGS[@]}" chat "$MESSAGE" --project "$PROJECT" --events 2>&1)"
+  conv_id="$("$PYTHON_BIN" -c 'import uuid; print(uuid.uuid4())')"
+  out="$("$PYTHON_BIN" "$CLI" "${BASE_ARGS[@]}" chat "$MESSAGE" --project "$PROJECT" --conversation "$conv_id" --events 2>&1)"
 
   line="$(printf '%s\n' "$out" | grep -oE 'total=[0-9.]+s +first_token=([0-9.]+s?|-) +events=[0-9]+ +answer_chars=[0-9]+' | head -1)"
   chars="$(printf '%s\n' "$line" | grep -oE 'answer_chars=[0-9]+' | grep -oE '[0-9]+$')"

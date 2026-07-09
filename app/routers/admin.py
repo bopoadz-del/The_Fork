@@ -15,6 +15,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -289,7 +290,162 @@ def admin_project_reindex(
     """
     _require_admin(auth)
     from app.core import doc_index as _doc_index
-    return _doc_index.index_project(project_id)
+    result = _doc_index.index_project(project_id)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=422, detail=result)
+    return result
+
+
+# ── Drive pipeline proof endpoints (Task T4) ───────────────────────────────
+
+class _DriveProofRequest(BaseModel):
+    project_id: str
+    file_id: str | None = None
+
+
+async def _resolve_drive_proof_file(
+    project_id: str,
+    file_id: str | None,
+) -> Dict[str, Any]:
+    """Return {file_id, name, error} for a Drive proof target.
+
+    If ``file_id`` is supplied, use it directly. Otherwise walk the configured
+    Drive folder for ``project_id`` and pick the first downloadable file.
+    """
+    from app.core import gdrive_service
+
+    if file_id:
+        return {"file_id": file_id, "name": "", "error": None}
+
+    mapping = gdrive_service.parse_project_folder_map()
+    folder_id = mapping.get(project_id)
+    if not folder_id:
+        return {
+            "error": f"no Drive folder configured for project {project_id}",
+        }
+
+    files, walk_errors = await run_in_threadpool(
+        gdrive_service.walk_folder, folder_id
+    )
+    for f_meta in files:
+        if gdrive_service.is_downloadable(f_meta):
+            return {
+                "file_id": f_meta["id"],
+                "name": f_meta.get("name", ""),
+                "error": None,
+            }
+    err = walk_errors[0] if walk_errors else "no downloadable files found"
+    return {"error": err}
+
+
+@router.post("/v1/admin/drive/download-proof")
+async def admin_drive_download_proof(
+    req: _DriveProofRequest,
+    auth: dict = Depends(require_api_key),
+):
+    """Prove the service account can download a real Drive file.
+
+    Returns length + SHA-256 only; raw bytes never leave the server.
+    """
+    _require_admin(auth)
+    from app.core import gdrive_service
+
+    target = await _resolve_drive_proof_file(req.project_id, req.file_id)
+    if target.get("error"):
+        return {"ok": False, "error": target["error"]}
+
+    file_id = target["file_id"]
+    blob, dl_err = await run_in_threadpool(
+        gdrive_service.download_file_bytes, file_id
+    )
+    if blob is None:
+        return {"ok": False, "error": dl_err or "download failed"}
+
+    import hashlib
+
+    return {
+        "ok": True,
+        "file_id": file_id,
+        "name": target.get("name", ""),
+        "bytes": len(blob),
+        "sha256": hashlib.sha256(blob).hexdigest(),
+        "mime_type": "application/octet-stream",
+    }
+
+
+@router.post("/v1/admin/drive/ingest-proof")
+async def admin_drive_ingest_proof(
+    req: _DriveProofRequest,
+    auth: dict = Depends(require_api_key),
+):
+    """Prove the service account can download + index a real Drive file.
+
+    Downloads the file, writes it to DATA_DIR, registers it as a project
+    document with Drive metadata, and runs incremental indexing.
+    """
+    _require_admin(auth)
+    import hashlib
+    import os
+
+    from app.core import doc_index as _doc_index
+    from app.core import file_crypto, gdrive_service, projects as _projects
+
+    if not _projects.get_project(req.project_id):
+        return {"ok": False, "error": f"project {req.project_id} not found"}
+
+    target = await _resolve_drive_proof_file(req.project_id, req.file_id)
+    if target.get("error"):
+        return {"ok": False, "error": target["error"]}
+
+    file_id = target["file_id"]
+    blob, dl_err = await run_in_threadpool(
+        gdrive_service.download_file_bytes, file_id
+    )
+    if blob is None:
+        return {"ok": False, "error": dl_err or "download failed"}
+
+    original_name = target.get("name") or file_id
+    data_dir = os.getenv("DATA_DIR", "data")
+    stored_as = f"{hashlib.sha256(file_id.encode()).hexdigest()[:8]}_{original_name}"
+    stored_as = os.path.basename(stored_as.replace("\\", "/"))
+    filepath = os.path.join(data_dir, stored_as)
+    file_crypto.write_document(filepath, blob)
+
+    doc = _projects.add_document(
+        req.project_id,
+        original_name,
+        stored_as=stored_as,
+        file_path=filepath,
+        size=len(blob),
+        content_sha256=hashlib.sha256(blob).hexdigest(),
+        metadata={
+            "drive_file_id": file_id,
+            "source": "drive_admin_ingest_proof",
+        },
+    )
+
+    idx_result = _doc_index.index_document(req.project_id, doc["id"])
+    if idx_result.get("status") == "error":
+        banner = idx_result.get(
+            "banner",
+            "ERROR: indexing produced 0 chunks — check extractor/OCR.",
+        )
+        return {
+            "ok": False,
+            "error": idx_result.get("error", "ZERO_CHUNK"),
+            "banner": banner,
+            "document_id": doc["id"],
+            "file_id": file_id,
+            "name": original_name,
+        }
+
+    return {
+        "ok": True,
+        "document_id": doc["id"],
+        "chunk_count": idx_result.get("total_chunks", 0),
+        "file_id": file_id,
+        "name": original_name,
+    }
 
 
 # ── Training scenario generation (Task 1.4 / MEGA-2) ───────────────────────
@@ -711,6 +867,26 @@ def admin_corpus_collections(
 
             collections.append(entry)
 
+    # Pilot master-corpus alias: the canonical project_id
+    # (dar_al_arkan_master) is a read-only view over the backing Drive-folder
+    # corpus (projects_folder). The admin inventory must never show the alias
+    # as 0 chunks — that invited a destructive re-index click in T2. Reflect
+    # the source counts under the alias so the admin page and reconciliation
+    # script agree with the API's resolved chunk_count.
+    from app.core.projects import (
+        MASTER_CORPUS_PROJECT_ID,
+        MASTER_CORPUS_SOURCE_PROJECT_ID,
+    )
+
+    by_pid = {c["project_id"]: c for c in collections}
+    source = by_pid.get(MASTER_CORPUS_SOURCE_PROJECT_ID)
+    if source and MASTER_CORPUS_PROJECT_ID not in by_pid:
+        alias_entry = dict(source)
+        alias_entry["project_id"] = MASTER_CORPUS_PROJECT_ID
+        alias_entry["source_project_id"] = MASTER_CORPUS_SOURCE_PROJECT_ID
+        alias_entry["is_master_corpus_alias"] = True
+        collections.append(alias_entry)
+
     # Largest first so the eye lands on drive_archive immediately when it
     # exists.
     collections.sort(key=lambda c: (-c["chunks"], -c["documents"], c["project_id"]))
@@ -844,6 +1020,135 @@ def admin_corpus_bulk_insert(
         session.commit()
 
     return {"status": "ok", "counts": counts}
+
+
+@router.post("/v1/admin/corpus/reconcile")
+def admin_corpus_reconcile(
+    execute: bool = Query(
+        False,
+        description="When true, repair mismatched chunk project_ids; "
+                    "otherwise return a read-only report."
+    ),
+    sample_limit: int = Query(
+        20, ge=0, le=1000,
+        description="Maximum individual mismatches to return in the report."
+    ),
+    auth: dict = Depends(require_api_key),
+):
+    """Detect (and optionally repair) chunks stored under the wrong project_id.
+
+    The drive_archive migration wrote chunks via ``/v1/admin/corpus/bulk-insert``
+    using a per-document destination project_id. If the manifest mapped a
+    document to project A but the chunk rows were stamped with project B,
+    direct search on project A returns 0 results while project B returns chunks
+    whose doc_id belongs to project A. This endpoint makes that mismatch
+    visible and corrects it by aligning ``chunks.project_id`` with
+    ``documents.project_id``.
+
+    Always runs as a dry-run unless ``execute=true`` is passed, so operators
+    can review the report before mutating the corpus. No chunks are deleted:
+    only the ``project_id`` column is updated.
+    """
+    _require_admin(auth)
+
+    from sqlalchemy import text
+    from app.core.db import SessionLocal
+
+    mismatches: List[Dict[str, Any]] = []
+    dangling: List[Dict[str, Any]] = []
+    summary: Dict[str, Dict[str, int]] = {}
+
+    with SessionLocal() as session:
+        # 1) Chunks whose project_id disagrees with their parent document.
+        mismatch_rows = session.execute(
+            text(
+                """
+                SELECT c.chunk_id, c.doc_id,
+                       c.project_id AS current_project_id,
+                       d.project_id AS correct_project_id
+                FROM chunks c
+                JOIN documents d ON c.doc_id = d.id
+                WHERE c.project_id != d.project_id
+                ORDER BY c.project_id, d.project_id, c.doc_id
+                """
+            )
+        ).all()
+
+        for row in mismatch_rows:
+            cur = row.current_project_id
+            corr = row.correct_project_id
+            summary.setdefault(cur, {"chunks": 0, "mismatched_to": {}})
+            summary.setdefault(corr, {"chunks": 0, "mismatched_from": {}})
+            summary[cur]["mismatched_to"][corr] = (
+                summary[cur]["mismatched_to"].get(corr, 0) + 1
+            )
+            summary[corr]["mismatched_from"][cur] = (
+                summary[corr]["mismatched_from"].get(cur, 0) + 1
+            )
+            if len(mismatches) < sample_limit:
+                mismatches.append({
+                    "chunk_id": row.chunk_id,
+                    "doc_id": row.doc_id,
+                    "current_project_id": cur,
+                    "correct_project_id": corr,
+                })
+
+        # 2) Chunks whose doc_id has no parent document at all.
+        dangling_rows = session.execute(
+            text(
+                """
+                SELECT c.chunk_id, c.project_id, c.doc_id
+                FROM chunks c
+                LEFT JOIN documents d ON c.doc_id = d.id
+                WHERE d.id IS NULL
+                ORDER BY c.project_id, c.doc_id
+                """
+            )
+        ).all()
+        for row in dangling_rows:
+            if len(dangling) < sample_limit:
+                dangling.append({
+                    "chunk_id": row.chunk_id,
+                    "project_id": row.project_id,
+                    "doc_id": row.doc_id,
+                })
+
+        repaired = 0
+        if execute and mismatch_rows:
+            # Align chunks.project_id with documents.project_id. This is a
+            # single bulk update; unique-constraint collisions would indicate
+            # duplicate chunks and will raise so the operator can inspect.
+            result = session.execute(
+                text(
+                    """
+                    UPDATE chunks
+                    SET project_id = (
+                        SELECT project_id FROM documents WHERE id = chunks.doc_id
+                    )
+                    WHERE doc_id IN (
+                        SELECT doc_id FROM chunks c2
+                        JOIN documents d2 ON c2.doc_id = d2.id
+                        WHERE c2.project_id != d2.project_id
+                    )
+                    AND project_id != (
+                        SELECT project_id FROM documents WHERE id = chunks.doc_id
+                    )
+                    """
+                )
+            )
+            session.commit()
+            repaired = result.rowcount or 0
+
+    return {
+        "dry_run": not execute,
+        "execute": execute,
+        "mismatches_sample": mismatches,
+        "mismatches_total": len(mismatch_rows),
+        "dangling_sample": dangling,
+        "dangling_total": len(dangling_rows),
+        "repaired": repaired,
+        "summary": summary,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────

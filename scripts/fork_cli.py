@@ -38,6 +38,13 @@ import httpx
 DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork.onrender.com")
 DEFAULT_AGENT = os.getenv("FORK_AGENT", "project-assistant")
 
+# Windows consoles default to cp1252; force utf-8 so event traces with unicode
+# source content don't crash the client before the summary line is printed.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 # ── auth ─────────────────────────────────────────────────────────────────────
 
@@ -173,7 +180,7 @@ def stream_turn(client: httpx.Client, args, cred: str, message: str,
                 print(f"[{fmt_delta(t0)}] {etype}: {json.dumps(evt, default=str)[:300]}")
 
     total = time.monotonic() - t0
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"turn summary: total={total:.2f}s  "
           f"first_token={'-' if first_token_at is None else f'{first_token_at:.2f}s'}  "
           f"events={n_events}  answer_chars={sum(len(p) for p in answer_parts)}  "

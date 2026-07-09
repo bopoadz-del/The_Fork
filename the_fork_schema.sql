@@ -62,7 +62,8 @@ CREATE TABLE documents (
                    )),
     size           INTEGER NOT NULL DEFAULT 0,
     uploaded_at    TEXT NOT NULL,
-    content_sha256 TEXT
+    content_sha256 TEXT,
+    metadata       JSONB
 );
 
 CREATE INDEX idx_documents_project_uploaded ON documents (project_id, uploaded_at);

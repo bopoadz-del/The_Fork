@@ -3,6 +3,176 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-07-08 — FINAL PROVIDER RESOLUTION (v2 freeze)
+
+**Decision:** Pilot primary provider is **OpenAI `gpt-4o-mini`**.
+Fallback is **Ollama native `/api/chat` with `glm-5.2:cloud`**.
+All other providers are **permanently removed from consideration** for the
+pilot.
+
+### Rationale
+
+- **OpenAI gpt-4o-mini** passed the acceptance gate cleanly:
+  `smoke --runs 10` against prod = **10/10 PASS**, all tool-backed,
+  model column = `gpt-4o-mini-2024-07-18`, zero `_TOOL_FORMAT_FALLBACK`,
+  zero silent fallbacks. Per-run latency ~11s, well inside the 90s timeout.
+- **Ollama native `/api/chat`** is kept as the fallback layer. It was the
+  path that restored prod service and passed `smoke --runs 3`, but its
+  10-run gate was inconsistent under rapid-fire execution (timeout/queueing
+  variability). It remains a valid fallback on OpenAI retryable failures.
+- **Groq/Scout, Kimi K2.6, Moonshot v1, DeepSeek, and any other provider**
+  are out. They consumed multiple days without producing a clean, repeatable
+  10/10 smoke gate on prod.
+
+### Operational env (Render prod)
+
+- `LLM_PROVIDER=openai`
+- `OPENAI_MODEL=gpt-4o-mini`
+- `OPENAI_API_KEY=<set>`
+- `LLM_FALLBACK_PROVIDER=ollama`
+- `OLLAMA_URL=https://ollama.com/api/chat`
+- `OLLAMA_MODEL=glm-5.2:cloud`
+- `OLLAMA_API_KEY=<set>`
+
+### Acceptance gate (already passed)
+
+- `smoke --runs 10` on prod: **10/10 PASS** (saved to
+  `review_pack/openai/smoke10_*.log`)
+- 3 deliverable outputs saved to `review_pack/openai/deliverables/` for
+  quality review
+
+### Freeze rule
+
+Provider work is **permanently out of scope** for the remainder of the
+pilot program. The only remaining provider knob is `OPENAI_MODEL`, and it
+may be bumped **only on Chadi's explicit written instruction** citing this
+freeze. Any exception must also be written and reference this decision.
+
+## 2026-07-07 — Provider switch: Ollama native `/api/chat` primary
+
+**Decision:** Prod is now running **Ollama `glm-5.2:cloud` via the native
+`/api/chat` protocol**. Groq/Scout is parked pending a clean 10/10 smoke gate.
+OpenAI support is added but not yet tested.
+
+### Rationale
+
+- **Groq/Scout** could not hold the smoke gate: intermittent
+  `_TOOL_FORMAT_FALLBACK` 120-char answers persisted after the raw-args
+  recovery fix. The failure correlated with the Ollama OpenAI-compatible
+  `/v1/chat/completions` endpoint leaking raw internal tool/search args as
+  `content`; the recovery regexes did not cover every shape the model emitted.
+- **Ollama native `/api/chat`** returns properly structured `tool_calls` and
+  usable `message.content`. Tool-result messages must be recast from the
+  OpenAI `tool` role to `user` role, and `function.arguments` must be sent as
+  parsed dicts rather than JSON strings. With those adaptations the smoke
+  gate passes (`smoke --runs 3`: 3/3, tool-backed, model=glm-5.2:cloud).
+- **OpenAI gpt-4o-mini** provider support was added to `runtime.py` at the
+  user's request as an alternative to test, but no `OPENAI_API_KEY` is set
+  locally or on Render, so it has not been exercised.
+
+### Operational env
+
+- `LLM_PROVIDER=ollama`
+- `OLLAMA_URL=https://ollama.com/api/chat`
+- `OLLAMA_MODEL=glm-5.2:cloud`
+- `OLLAMA_API_KEY=<set>`
+- `LLM_FALLBACK_PROVIDER=` (unset until Groq is re-verified)
+
+### Acceptance gate
+
+- `smoke --runs 10` against prod must be **10/10 PASS**, zero
+  `_TOOL_FORMAT_FALLBACK`, and model reported as `glm-5.2:cloud` (no silent
+  fallback).
+- First 10-run attempt: 3/10 PASS, then 7 transient failures. A fresh single
+  run passed immediately after. The gate is provisional until a clean 10/10
+  re-run completes.
+
+### Parked items
+
+- **Groq/Scout re-verification:** Parked. If the user wants Scout back as
+  primary, re-run `smoke --runs 10` on a branch with `LLM_PROVIDER=groq` and
+  `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`. Do not flip prod
+  without the gate.
+- **OpenAI gpt-4o-mini:** Parked on key availability. Set
+  `OPENAI_API_KEY` on Render and run the same smoke gate before any prod
+  flip.
+
+## 2026-07-07 — LLM provider ladder FROZEN for pilot
+
+**Decision:** Pilot default is **Groq `meta-llama/llama-4-scout-17b-16e-instruct`**.
+Kimi K2.6 and Moonshot v1 are **out of the active chain** for the pilot.
+
+### Rationale
+
+- **Kimi K2.6** first-token latency is routinely 70–120s, exceeding the
+  reader-tolerance threshold and frequently hitting the chat timeout even at
+  120s. Not acceptable as a pilot default.
+- **Moonshot v1-32k** tokenizes and responds fast, but the stripped-payload
+  compatibility path (no tools, no message history) cannot run the
+  project-assistant deliverable tools; answers are ~580 chars of prose and
+  fail the smoke gate. Not viable for a construction-deliverable pilot.
+- **Scout** was intermittent with `_TOOL_FORMAT_FALLBACK` until the raw-args
+  recovery fix (`feat/scout-tool-recovery`). With the fix it passes the smoke
+  gate and produces tool-backed deliverables.
+
+### Frozen ladder
+
+1. **Primary:** Groq — `meta-llama/llama-4-scout-17b-16e-instruct` (pinned in
+   Render env as `GROQ_MODEL`).
+2. **Fallback:** Ollama — `glm-5.2:cloud` ( Render env `OLLAMA_*` ), used only
+   on Groq retryable failures (429, 5xx, timeout).
+3. **Kimi / Moonshot:** parked. Any post-pilot re-evaluation requires Chadi's
+   explicit written instruction naming this freeze.
+
+### Operational env
+
+- `LLM_PROVIDER=groq`
+- `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e- instruct`
+- `LLM_FALLBACK_PROVIDER=ollama`
+- `CHAT_STREAM_TIMEOUT_SECONDS=90`
+
+### Acceptance gate
+
+- `smoke --runs 10` against prod must be **10/10 PASS**, zero
+  `_TOOL_FORMAT_FALLBACK`, and zero silent fallbacks to Ollama. Until that
+  gate is met the provider choice is provisional and this entry must be
+  updated.
+
+## 2026-07-07 T3 — Migration reconciliation
+
+### GK identity
+
+- **Single GK project: `training_material`.** After the drive_archive migration,
+  the curated general-knowledge corpus lives in `training_material` (241 docs).
+  `curated_kb` exists but is empty (0 docs). `RAG_GENERAL_KNOWLEDGE_PROJECTS`
+  is therefore `training_material` in prod and in `render.yaml`.
+- **Consequence:** Any eval harness or manifest that still points GK at
+  `curated_kb` is stale and has been updated.
+
+### Fixes landed
+
+- **chunk_count aggregation now uses the vector store.** `GET /v1/projects/{id}`
+  previously counted per-document chunks from the legacy `doc_index` JSON blob,
+  which bulk-inserted chunks never populate. It now reads from the `chunks`
+  table (cheap indexed `COUNT` / `GROUP BY`), so migrated projects never show
+  `chunk_count: 0` or `None`.
+- **training_material scoping anomaly root cause:** chunks whose `doc_id`
+  belongs to `training_material` documents were stored with `project_id=
+  projects_folder` during migration. Direct search on `training_material`
+  returned 0; search on `projects_folder` returned those chunks. Added
+  `POST /v1/admin/corpus/reconcile` (dry-run by default, `execute=true` to
+  repair) which aligns `chunks.project_id` with `documents.project_id`.
+- **Reconciliation script:** `scripts/reconcile_migration.py` prints the
+  project_id/name/docs/chunks/API-chunk-count/admin-chunk-count table and
+  flags mismatches. It is read-only unless the operator explicitly calls the
+  repair endpoint.
+
+### Operational note
+
+- The repair endpoint is gated on admin role and defaults to dry-run. Against
+  prod it must be used only after the reconciliation script is reviewed; no
+  destructive ops are performed by the script itself.
+
 ## 2026-07-06
 
 - **TASK H evals run against a LOCAL uvicorn instance, not prod.** The sweep is
@@ -201,3 +371,33 @@ correctly in a PowerShell/Windows environment with Python on PATH.
 **Disposition:** Use `.venv/Scripts/python.exe scripts/fork_cli.py` directly for
 manual prod health checks in this shell. Do not alter `smoke.sh` unless the
 project standardizes a cross-shell python launcher.
+## Interim provider state (T0, 2026-07-07)
+
+**Decision:** Prod stays on `LLM_PROVIDER=kimi` (Kimi K2.6) tonight. This is **not**
+an R10 override; it is R1 compliance — prod must keep serving, Kimi passes smoke 3/3,
+and Scout demonstrably does not on the current (migrated) corpus.
+
+**Evidence:**
+- `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct` deployed.
+- Scout smoke: intermittent FAIL (~1/3 runs). Failing runs return the
+  `_TOOL_FORMAT_FALLBACK` message: "I hit an internal search formatting issue
+  before I could produce a grounded answer." The model emits raw internal
+  tool/search arguments instead of a user-facing answer.
+- Kimi smoke: PASS 3/3, all runs tool=Y, first token 70–90s, answer 8.5–10.8k chars.
+
+**Next steps before provider verdict:**
+1. T3: Reconcile the migrated corpus (chunk_count aggregation,
+   `training_material` scoping anomaly, one GK identity). Re-smoke Scout on
+   clean ground. If `_TOOL_FORMAT_FALLBACK` vanishes, it was a corpus symptom,
+   not a Scout defect. If it persists, capture the raw failing turn and diagnose
+   the runtime formatting interaction.
+2. Run the Kimi+streaming gate on branch config (`SYNTHESIS_STREAMING=1`,
+   smoke 10, tool=Y, first_token < 50% of total, browser check). If it passes,
+   the 90s timeout risk evaporates.
+3. Chadi to read `K2_QUALITY_SAMPLES.md` against `review_pack/` Scout outputs
+   (G2 verdict).
+
+**Open risk:** Kimi first token is at 70–90s, close to `CHAT_STREAM_TIMEOUT_SECONDS=90`.
+The streaming gate is the intended mitigation. Until that gate passes and G2 is
+recorded, the provider ladder remains officially: Scout default / Kimi parked /
+Ollama fallback only.

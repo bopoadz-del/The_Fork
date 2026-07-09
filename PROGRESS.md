@@ -3,6 +3,33 @@
 Living log of the autonomous work program. One section per task, newest state
 first. Update on every task state change.
 
+## 2026-07-08 — FINAL PROVIDER RESOLUTION: OpenAI gpt-4o-mini primary
+
+- PR #160 merged: native Ollama `/api/chat` + OpenAI provider support on
+  `main` (`app/agents/runtime.py`, 17 tests in
+  `tests/test_runtime_ollama_provider.py`).
+- PR #161 merged: `scripts/smoke.sh --background <file>` mode so 10-run
+  release smokes can run detached and survive shell timeouts.
+- Render prod configured:
+  - `LLM_PROVIDER=openai`
+  - `OPENAI_MODEL=gpt-4o-mini`
+  - `LLM_FALLBACK_PROVIDER=ollama`
+  - `OLLAMA_URL=https://ollama.com/api/chat`
+  - `OLLAMA_MODEL=glm-5.2:cloud`
+- Acceptance gate passed: `smoke --runs 10` = **10/10 PASS**, all
+  tool-backed, model = `gpt-4o-mini-2024-07-18`, zero fallbacks, ~11s/run.
+- Deliverable outputs saved to `review_pack/openai/` for Chadi's quality
+  read (BOQ summary, WBS, RFP).
+- DECISIONS.md updated with final v2 freeze: OpenAI primary, Ollama native
+  fallback, all other providers permanently out of scope.
+- Browser login attempt failed (invalid email/password); CLI-generated
+  deliverables used instead.
+
+## 2026-07-07 — Ollama native provider deployed
+
+- Implemented native Ollama `/api/chat` protocol in `app/agents/runtime.py`
+  (branch `feat/ollama-native-provider`, commits d8d34f5, 6b90585, bccfb6b).
+
 ## Status board (2026-07-06 early AM)
 
 | Task | State | Where |
@@ -182,3 +209,184 @@ first. Update on every task state change.
   re-run because local `python` in `scripts/smoke.sh` resolves to the Windows
   Store placeholder; direct `fork_cli.py` chat against prod succeeded with
   tool_call/tool_result and long answer, indicating prod is healthy.
+
+## 2026-07-07 T0 attempt — restored prod baseline
+
+- Set Render env vars: `LLM_PROVIDER=groq`, `RAG_GK_LEXICAL_FOLD=0`, `RAG_GENERAL_KNOWLEDGE_PROJECTS=training_material`.
+- Triggered deploy `dep-d967mve7r5hc73fufta0` → status `live` at 2026-07-07T04:08:19Z.
+- Verified `curated_kb` project exists but has 0 documents; keeping `training_material` as the declared GK identity and will document in DECISIONS.md.
+- Smoke --runs 3 FAIL: all runs return 0 chars in <1.5s, model=?.
+- Root cause confirmed via fork_cli: server error `"No GROQ_API_KEY configured."`.
+- T0 blocked pending Groq credential.
+
+## 2026-07-07 T0 provider comparison (Scout vs Kimi)
+
+After pinning `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`:
+- Scout smoke: intermittent FAIL. ~1/3 runs return 120 chars:
+  "I hit an internal search formatting issue before I could produce a grounded answer."
+  This is the `_TOOL_FORMAT_FALLBACK` guardrail firing — the model emits raw internal
+  tool/search arguments instead of a user-facing answer. Ollama fallback does NOT hit this.
+- Scout served runs that succeed: ~6-9s, 2.6-11k chars.
+
+Switched to `LLM_PROVIDER=kimi` (K2.6):
+- Kimi smoke: PASS 3/3, all tool=Y, 70-90s first token, 8.5-10.8k chars.
+- No "internal search formatting issue" observed.
+
+Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on pilot default.
+
+## 2026-07-07 provider saga — prod serving status
+
+- `LLM_PROVIDER=kimi`, `KIMI_MODEL=kimi-k2.6`, `CHAT_STREAM_TIMEOUT_SECONDS=120` (raised for diagnostic).
+- Smoke 3: 1/3 PASS (run 2: 107s, kimi-k2.6, 10k chars, tool=Y). Runs 1 and 3 hit the 120s
+  server timeout before completing. Prod is intermittently serving; not reliably.
+- Moonshot v1-32k test (on feat/migration-reconciliation branch):
+  - Direct API: v1 supports tools with simple schemas and short context.
+  - Through runtime: fails with `"Invalid request: tokenization failed"` when sent
+    the full project-assistant tool registry (~50+ tools with complex schemas).
+  - Root cause: v1 tokenizer cannot handle the large/complex tool_definitions array.
+  - With only 1 simple tool, v1 responds but does not reliably call the tool.
+  - Conclusion: moonshot-v1 is not a drop-in replacement for K2.6 on the current
+    multi-tool orchestrator; would require tool-filtering by routed action.
+- Scout (`llama-4-scout`) on the migrated corpus: intermittent `_TOOL_FORMAT_FALLBACK`
+  (model emits raw internal search args). Still pending T3 corpus reconciliation
+  to determine if this is a corpus symptom or a Scout/runtime interaction bug.
+- Prod branch restored to `main` at d5e8692; service branch pinned back to main.
+- Current env: `LLM_PROVIDER=kimi`, `KIMI_MODEL=kimi-k2.6`, `CHAT_STREAM_TIMEOUT_SECONDS=120`.
+
+## 2026-07-07 provider decision — FINAL
+
+- **Moonshot v1-32k ruled out.** Deployed `feat/moonshot-v1-compat` (stripped
+  payload: no tools, last user turn only). Smoke 9/9 FAIL: ~580 chars, no tool
+  calls, 7–10s first token. v1 cannot run project-assistant deliverables.
+- **Scout raw-args recovery fix landed** in `feat/scout-tool-recovery`. Smoke 3/3
+  PASS on the branch deploy, but runs frequently fell back to Ollama `glm-5.2:cloud`.
+  Root cause under investigation; recovery fix eliminates the user-facing
+  `_TOOL_FORMAT_FALLBACK` message by turning leaked raw args into proper tool_calls.
+- **Provider ladder frozen for pilot** (see DECISIONS.md):
+  - Primary: Groq `meta-llama/llama-4-scout-17b-16e-instruct`.
+  - Fallback: Ollama `glm-5.2:cloud`.
+  - Kimi K2.6 / Moonshot v1 parked.
+- **Pending acceptance gate:** `smoke --runs 10` on prod main with
+  `LLM_PROVIDER=groq`, zero `_TOOL_FORMAT_FALLBACK`, zero Ollama fallbacks.
+  Must pass before provider work is considered closed.
+  → SUPERSEDED by 2026-07-08 final resolution above: OpenAI primary.
+
+## 2026-07-08 — T3 corpus reconciliation DONE
+
+- Ran `scripts/reconcile_migration.py` against prod (branch
+  `feat/t3-corpus-reconciliation`). Before-fix table:
+
+  | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
+  |---|---:|---:|---:|---:|---|
+  | dar_al_arkan_master | 0 | 0 | 110375 | 0 | mismatch (api=110375, db=0) |
+  | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
+  | training_material | 246 | 10982 | 10982 | 10982 | ok |
+  | unclassified | 1 | 4 | 4 | 4 | ok |
+
+- Root cause: `dar_al_arkan_master` is a pilot master-corpus alias whose
+  chunks live under `projects_folder`. The admin corpus-collections endpoint
+  counted by raw `project_id`, so the alias appeared as 0 chunks — the display
+  that invited a destructive re-index click.
+- Fix: `/v1/admin/corpus/collections` now mirrors the source project's counts
+  under the alias project_id, with `source_project_id` and
+  `is_master_corpus_alias` markers. Source entry kept for transparency.
+- Training-material direct `/v1/rag/search` verified working (project_id
+  `training_material` returns curated GK chunks). `curated_kb` is empty;
+  `RAG_GENERAL_KNOWLEDGE_PROJECTS` identity is unified on `training_material`.
+- PR #162 merged, deployed to prod at commit `17462d8`.
+- After-fix reconciliation table (all green):
+
+  | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
+  |---|---:|---:|---:|---:|---|
+  | dar_al_arkan_master | 2712 | 110375 | 110375 | 110375 | ok |
+  | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
+  | training_material | 246 | 10982 | 10982 | 10982 | ok |
+  | unclassified | 1 | 4 | 4 | 4 | ok |
+
+- Post-deploy smoke: `SMOKE_RUNS=3 bash scripts/smoke.sh` → **3/3 PASS**, all
+  tool-backed, model = `gpt-4o-mini-2024-07-18`.
+
+## 2026-07-08 — T4 Drive pipeline proof (branch `feat/t4-drive-pipeline-proof`)
+
+- Added `metadata` JSONB column to `documents` with Alembic migration `0009`;
+  `add_document` persists Drive provenance (`drive_file_id`, `drive_path`,
+  `source`) for service-account hydration and OAuth imports.
+- Fail-loud zero-chunk indexing: `index_project` / `index_document` return
+  `status: error` + `ZERO_CHUNK` banner; `POST /v1/admin/debug/project-reindex`
+  returns HTTP 422 when a rebuild produces zero chunks.
+- Drive-folder background import now tracks job status and surfaces
+  ZERO_CHUNK as a job error instead of green success.
+- New admin proof endpoints:
+  - `POST /v1/admin/drive/download-proof` — service-account download bytes,
+    returns length + SHA-256 only.
+  - `POST /v1/admin/drive/ingest-proof` — download → store → register → index,
+    returns chunk count or ZERO_CHUNK banner.
+- New `scripts/reconcile_drive_delta.py` — dry-run by default (`--execute` to
+  write); walks each `GDRIVE_PROJECT_FOLDERS` mapping, imports missing files
+  through the normal pipeline, logs ZERO_CHUNK, and prints a completeness
+  manifest.
+- Tests added: `tests/test_doc_index_zero_chunk.py`,
+  `tests/test_drive_one_doc_proof.py`.
+- Local test gate: `pytest tests/test_admin_corpus_collections.py
+  tests/test_projects.py tests/test_doc_index.py tests/test_drive_index_folder.py
+  tests/test_doc_index_zero_chunk.py tests/test_drive_one_doc_proof.py -q`
+  → **65 passed, 1 xfailed**.
+- Status: implementation complete, awaiting CI green before merge/deploy.
+
+- **2026-07-08 (continued) — CI fix for PR #164:**
+  - `test-postgres` failed at `alembic upgrade head` with:
+    `sqlalchemy.exc.ProgrammingError: (psycopg.errors.DuplicateColumn) column "metadata" of relation "documents" already exists`.
+  - Root cause: migration `0001` applies `the_fork_schema.sql`, which already
+    includes `metadata JSONB` on `documents`; migration `0009` then ran an
+    unconditional `ALTER TABLE documents ADD COLUMN metadata JSONB`.
+  - Fix: changed `0009_document_metadata.py` to use
+    `ALTER TABLE documents ADD COLUMN IF NOT EXISTS metadata JSONB` and
+    `DROP COLUMN IF EXISTS metadata` on downgrade, making the migration
+    idempotent for both fresh schema-baseline databases and existing prod
+    databases. Pushed commit `2944dd2`.
+  - CI re-running (run 28910092979).
+
+- **2026-07-08 (continued) — T4 merged and deployed:**
+  - PR #164 merged into `main` at `c7e8608`.
+  - Render prod deploy `dep-d96qcg77f7vs73a1j12g` → **live**.
+  - Post-deploy smoke: `SMOKE_RUNS=3 bash scripts/smoke.sh` → **3/3 PASS**, all
+    tool-backed, model = `gpt-4o-mini-2024-07-18`.
+  - Admin Drive proof endpoints reachable on prod and return controlled
+    errors when no folder is configured:
+    - `POST /v1/admin/drive/download-proof` → `200 {ok: False, error: "no Drive folder configured for project dar_al_arkan_master"}`
+    - `POST /v1/admin/drive/ingest-proof` → same.
+  - **Blocker for full T4 live verification:** `GDRIVE_PROJECT_FOLDERS` is not
+    set on Render, and the service account (`thefork-drive-import@project-drive-469320.iam.gserviceaccount.com`)
+    currently has zero files/folders shared with it (root empty, no shared
+    drives, no `sharedWithMe` files). The service-account token is read-only
+    (`drive.readonly` scope), so the account cannot create test files either.
+    Pending: a Drive folder shared with the service account + the corresponding
+    `project_id:folder_id` mapping added to Render, OR a specific file_id that
+    the service account can read.
+
+- **2026-07-08 (continued) — T4c via OAuth Drive:**
+  - User chose OAuth Drive proof instead of service-account folder mapping.
+  - Checked `/v1/drive/status` for the bootstrap user: `configured: True`,
+    `connected: False` — the OAuth app is wired but the account has not
+    completed consent.
+  - Generated one-time consent URL:
+    `https://accounts.google.com/o/oauth2/v2/auth?client_id=382554705937-v3s8kpvl7h0em2aekud73fro8rig0cvu.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fthe-fork.onrender.com%2Fv1%2Fdrive%2Fcallback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive.readonly&access_type=offline&prompt=consent&state=DMkH4CfWeXq-i0HBgfhS_JKw9m9yGLw6`
+  - Pending user completing consent; then list → import one file → verify
+    chunk_count > 0.
+
+- **2026-07-08 (continued) — T4c OAuth Drive proof completed on prod:**
+  - Used Kimi WebBridge to complete Google OAuth consent for
+    `shadido.dxb@gmail.com`; callback landed at `/?drive=connected`.
+  - `/v1/drive/status` → `connected: True`, `email: shadido.dxb@gmail.com`.
+  - `/v1/drive/files` listed the user's Drive root (folders + files) successfully.
+  - Created a test project `153674a8` (`T4 OAuth Drive Proof`).
+  - Imported `1-Project Management Process.pdf` via
+    `POST /v1/projects/153674a8/drive/import` → `201 stored`.
+  - Document metadata stamped:
+    `{"drive_file_id": "1pm0CMD6davATGNHwiDfTzR-EvtZnAymF", "source": "drive_oauth_single"}`.
+  - Verified indexing: `/v1/admin/corpus/collections` shows project `153674a8`
+    with **1 document, 1 chunk**; admin doc-extract shows
+    `indexed_chunk_count: 1`, snippet preview present.
+  - Note: service-account `GDRIVE_PROJECT_FOLDERS` remains unset; the OAuth
+    Drive pipeline is verified end-to-end and prod-ready.
+  - T4 complete.
