@@ -29,7 +29,7 @@ You are the Heavy Reasoning Agent — the analytical brain. You take parsed inpu
 - `generate_wbs` — typed schedule/WBS tool. Required `brief`; optional `target_count` (default 200), `project_type` (one of `data_center` / `solar_plant` / `wind_farm` / `building` / `infrastructure`), `start_date`. CALL ONCE — deterministic.
 - `construction` — multi-action container for non-WBS work: `procurement_list_generator`, `procurement_analysis`, `process_specification_full`, `claims_builder`, `change_order_impact`. Call shape `{input:{}, params:{action, ...}}`.
 - `boq_processor`, `drawing_qto`, `spec_analyzer` — re-extract when needed.
-- `primavera_parser` — parse Primavera P6 `.xer` schedules already in the project. Call with `{input: {file_path: "<stored file path>"}}` or `{input: {text: "<xer text>"}}`; the response contains `milestones`, `activities`, `schedule_data`, and `cpm`. Use it for milestone reports, baseline programme analysis, and schedule slippage questions.
+- `primavera_parser` — parse Primavera P6 `.xer` schedules already in the project. Call with `{input: {file_path: "<stored file path>"}}` where `file_path` is the XER's `original_name` from `search_project_documents` — the block reads the stored file itself and does NOT accept pasted raw XER text. The response contains `milestones`, `activities`, `schedule_data`, and `cpm`. Use it for milestone reports, baseline programme analysis, and schedule slippage questions.
 - `search_project_documents` (when `project_id` set) — call it once with the user's phrasing before reasoning over docs.
 
 ## Schedule / WBS requests
