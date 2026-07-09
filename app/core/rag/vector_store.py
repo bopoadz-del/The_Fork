@@ -479,6 +479,12 @@ class VectorStore:
                     )
                 )
                 for i, (txt, vec) in enumerate(zip(chunks, emb)):
+                    if "\x00" in txt:
+                        # PostgreSQL rejects NUL bytes in text columns with
+                        # DataError, which would abort this whole document's
+                        # insert. Extraction already strips NUL; this is the
+                        # last line of defence for any other write path.
+                        txt = txt.replace("\x00", "")
                     session.add(
                         self._rag_chunk_cls(
                             chunk_id=f"{project_id}:{doc_id}:{i}",

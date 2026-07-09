@@ -679,6 +679,11 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
     when the document was OCR'd and the OCR quality verdict flagged it as a poor
     scan (omitted otherwise). Never raises — returns ``("", {})`` on any error.
 
+    Output is guaranteed NUL-free: malformed PDFs (broken font CID maps —
+    the same files that spray MuPDF warnings) yield literal ``\\x00`` bytes in
+    the text layer, and PostgreSQL rejects any INSERT whose text contains
+    NUL, which zero-chunked whole documents during the P1b Drive ingestion.
+
     Supports:
     * .txt/.md/.csv/.json/.xml — via file_crypto.read_document
     * .pdf — fitz / PyMuPDF text layer; if that text is effectively empty
@@ -686,6 +691,14 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
     * .docx — python-docx; .xlsx — openpyxl
     * image extensions (.jpg/.png/.webp/...) — OCR via OCRBlock
     """
+    text, meta = _extract_with_meta_impl(file_path, filename)
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+    return text, meta
+
+
+def _extract_with_meta_impl(file_path: str, filename: str) -> Tuple[str, Dict[str, Any]]:
+    """Format dispatch for ``_extract_with_meta``. May return NUL bytes."""
     try:
         _, ext = os.path.splitext((filename or "").lower())
         if ext not in _SUPPORTED_EXTS:

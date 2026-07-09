@@ -62,8 +62,16 @@ def _ingest_file(
     data_dir: Path,
     run_id: str,
     gdrive_service: Any,
+    existing_doc: Dict[str, Any] | None = None,
 ) -> Tuple[str, Dict[str, Any]]:
-    """Download one Drive file and index it. Returns (drive_path, result)."""
+    """Download one Drive file and index it. Returns (drive_path, result).
+
+    ``existing_doc`` — a document row already registered for this Drive file
+    (a previous pass added the row but indexing produced zero chunks, e.g.
+    the NUL-byte DataError). The file is re-downloaded to the same
+    deterministic path and re-indexed into the SAME document row instead of
+    creating a duplicate.
+    """
     from app.core import doc_index, file_crypto, projects as projects_mod
 
     rel = file_meta.get("_drive_path") or file_meta.get("name", "")
@@ -106,6 +114,14 @@ def _ingest_file(
     stored_name = f"{hashlib.sha256(rel.encode()).hexdigest()[:8]}_{_safe_stored_name(Path(rel).name)}"
     dest = data_dir / stored_name
     file_crypto.write_document(str(dest), raw_bytes)
+
+    if existing_doc is not None:
+        # Zero-chunk retry: the row exists from a failed pass; re-index it
+        # in place. The stored name is deterministic, so the fresh download
+        # above landed at the same path the row's file_path points to.
+        result = doc_index.index_document(project_id, existing_doc["id"])
+        result["reindexed_existing_doc"] = True
+        return rel, result
 
     doc = projects_mod.add_document(
         project_id=project_id,
@@ -221,8 +237,13 @@ def main() -> int:
             for err in walk_errors:
                 print(f"[p1b-server] WALK ERROR: {err}", file=sys.stderr)
 
-        # Filter already-indexed files when resuming.
+        # Filter already-indexed files when resuming. A document row alone is
+        # NOT proof of success — add_document runs before indexing, so a doc
+        # whose chunk insert failed (e.g. the NUL-byte DataError) has a row
+        # and zero chunks. Skip only files whose doc actually has chunks in
+        # the active namespace; zero-chunk docs are re-indexed in place.
         already_indexed: set[str] = set()
+        retry_doc_by_fid: Dict[str, Dict[str, Any]] = {}
         existing = None
         if args.resume:
             # Find the platform project for this folder; create if missing.
@@ -231,13 +252,31 @@ def main() -> int:
                     existing = p
                     break
             if existing:
+                chunk_counts: Dict[str, int] = {}
+                counts_available = True
+                try:
+                    chunk_counts = _vs.get_store().count_by_doc(existing["id"])
+                except Exception as exc:  # noqa: BLE001 — degrade to row-only resume
+                    print(f"[p1b-server] WARN: chunk-count resume check failed "
+                          f"({type(exc).__name__}: {exc}); falling back to "
+                          f"row-presence resume", file=sys.stderr)
+                    counts_available = False
                 for doc in projects_mod.list_documents(existing["id"]):
                     fid = (doc.get("metadata") or {}).get("drive_file_id")
-                    if fid:
+                    if not fid:
+                        continue
+                    if not counts_available:
+                        # Row-presence resume (legacy behaviour): can't tell
+                        # zero-chunk docs apart, so skip anything with a row.
                         already_indexed.add(fid)
+                    elif chunk_counts.get(doc["id"], 0) > 0:
+                        already_indexed.add(fid)
+                    elif fid not in retry_doc_by_fid:
+                        retry_doc_by_fid[fid] = doc
 
         filtered_files = [f for f in files if f["id"] not in already_indexed]
-        print(f"[p1b-server] {folder_name}: {len(files)} files, {len(filtered_files)} to ingest", file=sys.stderr)
+        print(f"[p1b-server] {folder_name}: {len(files)} files, {len(filtered_files)} to ingest "
+              f"({len(retry_doc_by_fid)} zero-chunk retries)", file=sys.stderr)
 
         # Ensure platform project exists.
         project = existing
@@ -251,7 +290,10 @@ def main() -> int:
             rel = file_meta.get("_drive_path") or file_meta.get("name", "")
             print(f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} {rel}", file=sys.stderr)
             try:
-                _, result = _ingest_file(file_meta, project_id, data_dir, run_id, gdrive_service)
+                _, result = _ingest_file(
+                    file_meta, project_id, data_dir, run_id, gdrive_service,
+                    existing_doc=retry_doc_by_fid.get(file_meta["id"]),
+                )
                 results.append({"folder": folder_name, "path": rel, "result": result})
                 if result.get("status") == "error":
                     err = result.get("error")
