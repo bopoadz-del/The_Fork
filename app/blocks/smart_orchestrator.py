@@ -272,6 +272,8 @@ class SmartOrchestratorBlock(UniversalBlock):
                     source="learned", session_context=session_context,
                 )
 
+                cm_meta = self._cross_domain_enrichment(user_message, action_queue)
+
                 return {
                     "status": "success",
                     "action_queue": action_queue,
@@ -289,6 +291,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                     "model_confidence": learned_prediction["confidence"],
                     "fallback_used": False,
                     "top_k": learned_prediction.get("top_k", []),
+                    **cm_meta,
                 }
             # else: model not loaded OR low confidence → fall through to keyword
 
@@ -315,6 +318,11 @@ class SmartOrchestratorBlock(UniversalBlock):
                 source="keyword_fallback", session_context=session_context,
             )
 
+        # Cross-domain reasoner hook (non-competing): after keyword routing,
+        # attach template match + post-tool follow-ups. Does not replace
+        # ACTION_PATTERNS ownership — suggestions only.
+        cm_meta = self._cross_domain_enrichment(user_message, action_queue)
+
         return {
             "status": "success",
             "action_queue": action_queue,
@@ -325,10 +333,65 @@ class SmartOrchestratorBlock(UniversalBlock):
             "file_type_hint": file_type,
             "session_context": session_context,
             "routing_mode": routing_mode,
+            **cm_meta,
             **({"fallback_used": True, "model_confidence": (learned_prediction or {}).get("confidence", 0.0),
                 "fallback_reason": (learned_prediction or {}).get("reason")}
                if routing_mode == "learned" else {}),
         }
+
+    def _cross_domain_enrichment(
+        self, user_message: str, action_queue: List[str]
+    ) -> Dict[str, Any]:
+        """Attach CM template / post-tool suggestions without changing the queue.
+
+        Prefer generate_wbs / procurement_list_generator as the post-tool
+        seed when present; otherwise use the primary matched action.
+        """
+        try:
+            from app.core.cross_domain_reasoner import CrossDomainReasoner
+
+            reasoner = CrossDomainReasoner()
+            analysis = reasoner.analyze_turn(user_message)
+            seed = None
+            for preferred in ("generate_wbs", "procurement_list_generator"):
+                if preferred in action_queue:
+                    seed = preferred
+                    break
+            if seed is None and action_queue:
+                seed = action_queue[0]
+            follow_ups: List[str] = []
+            if seed:
+                follow_ups = reasoner.get_post_tool_suggestions(seed, user_message)
+            # Drop tools already in the queue
+            queued = set(action_queue)
+            follow_ups = [t for t in follow_ups if t not in queued]
+
+            out: Dict[str, Any] = {
+                "cm_follow_up_tools": follow_ups[:5],
+                "cm_suggested_tools": analysis.get("suggested_tools") or [],
+            }
+            if analysis.get("matched_template"):
+                out["cm_matched_template"] = analysis["matched_template"]
+                out["cm_matched_template_score"] = analysis["matched_template_score"]
+                plan = reasoner.build_plan(analysis["matched_template"])
+                if plan:
+                    out["cm_workflow_plan"] = {
+                        "template_id": plan["template_id"],
+                        "template_name": plan["template_name"],
+                        "step_count": len(plan["steps"]),
+                        "steps": [
+                            {
+                                "block": s["block"],
+                                "action": s["params"].get("action"),
+                                "step_type": s.get("step_type"),
+                                "description": s.get("description"),
+                            }
+                            for s in plan["steps"][:12]
+                        ],
+                    }
+            return out
+        except Exception:  # noqa: BLE001 — never break keyword routing
+            return {}
 
     def _predict_learned(self, message: str) -> Optional[Dict[str, Any]]:
         """Consult learning_engine's predict_route op. Returns None on any error
