@@ -154,6 +154,8 @@ def _load_priority_manifest(path: Path) -> Dict[str, Any]:
 
 
 def main() -> int:
+    from app.core import ingest_sharding as sharding
+
     ap = argparse.ArgumentParser(description="Server-side Drive ingestion by priority tier")
     ap.add_argument("--priority-manifest", default="manifests/p1b_priority_manifest.json",
                     help="Path to the priority manifest")
@@ -165,7 +167,29 @@ def main() -> int:
                     help="Skip files already indexed in the project (by drive_file_id)")
     ap.add_argument("--keep-alive", action="store_true",
                     help="After the ingestion pass completes, sleep forever so a background worker stays live")
+    ap.add_argument("--total-shards", type=int, default=None,
+                    help="Total worker shards (env: INGEST_TOTAL_SHARDS)")
+    ap.add_argument("--shard-index", type=int, default=None,
+                    help="This worker's shard index (env: INGEST_SHARD_INDEX)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Plan only — walk + shard, no DB/index writes (env: INGEST_DRY_RUN)")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="Process at most N files after shard filter (env: INGEST_LIMIT)")
+    ap.add_argument("--offset", type=int, default=None,
+                    help="Skip first N files after shard filter (env: INGEST_OFFSET)")
     args = ap.parse_args()
+
+    try:
+        total_shards, shard_index = sharding.resolve_shard_env(
+            total_shards=args.total_shards,
+            shard_index=args.shard_index,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    dry_run = sharding.resolve_dry_run(args.dry_run)
+    limit, offset = sharding.resolve_limit_offset(limit=args.limit, offset=args.offset)
 
     from app.core import gdrive_service, projects as projects_mod
     from app.core.rag import embeddings as _emb, vector_store as _vs
@@ -174,11 +198,13 @@ def main() -> int:
         print("ERROR: GDRIVE_SERVICE_ACCOUNT_JSON is not set.", file=sys.stderr)
         return 1
 
-    _emb.reset_embedder_cache()
-    _vs.reset_store_cache()
+    if not dry_run:
+        _emb.reset_embedder_cache()
+        _vs.reset_store_cache()
 
     data_dir = Path(os.getenv("DATA_DIR", "./data"))
-    data_dir.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        data_dir.mkdir(parents=True, exist_ok=True)
 
     priority_manifest = _load_priority_manifest(Path(args.priority_manifest))
     tier_key = str(args.tier)
@@ -188,7 +214,11 @@ def main() -> int:
         return 1
 
     run_id = uuid.uuid4().hex[:12]
-    print(f"[p1b-server] run_id={run_id} tier={args.tier} folders={len(tier['folders'])}", file=sys.stderr)
+    print(
+        f"[p1b-server] run_id={run_id} tier={args.tier} folders={len(tier['folders'])} "
+        f"shard_index={shard_index} total_shards={total_shards} dry_run={dry_run}",
+        file=sys.stderr,
+    )
 
     # Track per-folder tally.
     folder_tallies: Dict[str, Dict[str, Any]] = {}
@@ -200,6 +230,7 @@ def main() -> int:
         "skipped_empty": 0,
         "download_failed": 0,
         "errors": 0,
+        "already_indexed": 0,
     }
     results: List[Dict[str, Any]] = []
 
@@ -227,6 +258,12 @@ def main() -> int:
             json.dump(partial, fh, indent=2, ensure_ascii=False)
 
     t0_global = time.monotonic()
+    if dry_run:
+        # Fresh dry-run manifest each invocation (multi-folder appends below).
+        dry_manifest = sharding.shard_manifest_path(shard_index, total_shards)
+        if dry_manifest.exists():
+            dry_manifest.unlink()
+
     for folder_entry in tier["folders"]:
         folder_id = folder_entry.get("folder_id")
         folder_name = folder_entry.get("folder_name") or folder_entry.get("project_id")
@@ -242,54 +279,153 @@ def main() -> int:
             for err in walk_errors:
                 print(f"[p1b-server] WALK ERROR: {err}", file=sys.stderr)
 
-        # Resume is ALWAYS on. It used to be gated behind --resume, which the
-        # Render worker's start command never passed — so every redeploy
-        # created a duplicate project and restarted ingestion from file 1.
-        # A document row alone is NOT proof of success — add_document runs
-        # before indexing, so a doc whose chunk insert failed (e.g. the
-        # NUL-byte DataError) has a row and zero chunks. Skip only files
-        # whose doc actually has chunks in the active namespace; zero-chunk
-        # docs are re-indexed in place.
+        # Ensure ONE project row for this folder BEFORE sharding / resume.
+        # projects.name is not UNIQUE — parallel shard workers that each
+        # create_project(folder_name) would mint separate random ids and
+        # split documents/chunks across projects. Prefer the manifest's
+        # stable project_id; fall back to a name-derived id.
         already_indexed: set[str] = set()
         retry_doc_by_fid: Dict[str, Dict[str, Any]] = {}
-        existing = None
-        for p in projects_mod.list_projects():
-            if p.get("name") == folder_name:
-                existing = p
-                break
-        if existing:
+        project_id: str | None = None
+        if not dry_run:
+            preferred_id = (project_id_for_folder or "").strip() or None
+            project, created = projects_mod.get_or_create_project(
+                folder_name,
+                project_id=preferred_id,
+                origin="user_drive_import",
+            )
+            project_id = project["id"]
+            print(
+                f"[p1b-server] {'created' if created else 'using'} project "
+                f"{project_id} for {folder_name} "
+                f"(shard={shard_index}/{total_shards})",
+                file=sys.stderr,
+            )
+
+            # Resume is ALWAYS on for live runs. A document row alone is
+            # NOT proof of success — skip only files whose doc actually
+            # has chunks; zero-chunk docs are re-indexed in place.
             chunk_counts: Dict[str, int] = {}
             counts_available = True
             try:
-                chunk_counts = _vs.get_store().count_by_doc(existing["id"])
+                chunk_counts = _vs.get_store().count_by_doc(project_id)
             except Exception as exc:  # noqa: BLE001 — degrade to row-only resume
                 print(f"[p1b-server] WARN: chunk-count resume check failed "
                       f"({type(exc).__name__}: {exc}); falling back to "
                       f"row-presence resume", file=sys.stderr)
                 counts_available = False
-            for doc in projects_mod.list_documents(existing["id"]):
+            for doc in projects_mod.list_documents(project_id):
                 fid = (doc.get("metadata") or {}).get("drive_file_id")
                 if not fid:
                     continue
                 if not counts_available:
-                    # Row-presence resume (legacy behaviour): can't tell
-                    # zero-chunk docs apart, so skip anything with a row.
                     already_indexed.add(fid)
                 elif chunk_counts.get(doc["id"], 0) > 0:
                     already_indexed.add(fid)
                 elif fid not in retry_doc_by_fid:
                     retry_doc_by_fid[fid] = doc
 
-        filtered_files = [f for f in files if f["id"] not in already_indexed]
-        print(f"[p1b-server] {folder_name}: {len(files)} files, {len(filtered_files)} to ingest "
-              f"({len(retry_doc_by_fid)} zero-chunk retries)", file=sys.stderr)
+        # Drop unsupported before sharding so every worker sees the same
+        # supported universe and sha256 assignment stays partition-complete.
+        def _is_unsupported(fm: Dict[str, Any]) -> bool:
+            mime = fm.get("mimeType", "")
+            ext = Path(fm.get("_drive_path") or fm.get("name") or "").suffix.lower()
+            return mime in _UNSUPPORTED_MIMES or ext in _UNSUPPORTED_EXTS
 
-        # Ensure platform project exists.
-        project = existing
-        if project is None:
-            project = projects_mod.create_project(folder_name)
-            print(f"[p1b-server] created project {project['id']} for {folder_name}", file=sys.stderr)
-        project_id = project["id"]
+        unsupported_files = [f for f in files if _is_unsupported(f)]
+        supported_files = [f for f in files if not _is_unsupported(f)]
+        filtered_files = [f for f in supported_files if f["id"] not in already_indexed]
+        skipped_already = len(supported_files) - len(filtered_files)
+
+        def _drive_identity(fm: Dict[str, Any]) -> str:
+            return sharding.file_identity(
+                drive_file_id=fm.get("id"),
+                source_path=fm.get("_drive_path") or fm.get("name"),
+            )
+
+        def _drive_path(fm: Dict[str, Any]) -> str:
+            return fm.get("_drive_path") or fm.get("name") or fm.get("id") or ""
+
+        shard_files = sharding.filter_by_shard(
+            filtered_files,
+            identity_fn=_drive_identity,
+            shard_index=shard_index,
+            total_shards=total_shards,
+        )
+        # Offset/limit AFTER shard filter so assignment stays stable.
+        batch_files = sharding.apply_offset_limit(
+            shard_files, offset=offset, limit=limit,
+        )
+        print(
+            f"[p1b-server] {folder_name}: discovered={len(files)} "
+            f"supported={len(supported_files)} unsupported={len(unsupported_files)} "
+            f"already_indexed={skipped_already} "
+            f"shard={shard_index}/{total_shards} assigned={len(shard_files)} "
+            f"batch={len(batch_files)} "
+            f"({len(retry_doc_by_fid)} zero-chunk retries)",
+            file=sys.stderr,
+        )
+        global_tally["skipped_unsupported"] += len(unsupported_files)
+        global_tally["already_indexed"] += skipped_already
+        if skipped_already:
+            print(
+                f"[p1b-server] skipped_already_indexed={skipped_already} "
+                f"for {folder_name}",
+                file=sys.stderr,
+            )
+
+        if dry_run:
+            report = sharding.dry_run_report(
+                total_discovered=len(files),
+                supported_items=filtered_files,
+                unsupported_count=len(unsupported_files),
+                shard_index=shard_index,
+                total_shards=total_shards,
+                identity_fn=_drive_identity,
+                path_fn=_drive_path,
+                already_indexed_count=skipped_already,
+            )
+            report.update({
+                "folder": folder_name,
+                "folder_id": folder_id,
+                "run_id": run_id,
+                "tier": args.tier,
+                "offset": offset,
+                "limit": limit,
+                "batch_after_offset_limit": len(batch_files),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            })
+            out_path = sharding.shard_manifest_path(shard_index, total_shards)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            # Merge multi-folder dry-runs into one manifest when possible.
+            existing_report: Dict[str, Any] = {}
+            if out_path.exists():
+                try:
+                    existing_report = json.loads(out_path.read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    existing_report = {}
+            folders = list(existing_report.get("folders") or [])
+            folders.append(report)
+            merged = {
+                "dry_run": True,
+                "db_writes": False,
+                "shard_index": shard_index,
+                "total_shards": total_shards,
+                "run_id": run_id,
+                "tier": args.tier,
+                "folders": folders,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            with open(out_path, "w", encoding="utf-8") as fh:
+                json.dump(merged, fh, indent=2, ensure_ascii=False)
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+            print(f"[p1b-server] dry-run manifest → {out_path}", file=sys.stderr)
+            continue
+
+        assert project_id is not None  # set above for live runs
+
+        # Use the sharded (+offset/limit) batch for live work.
+        filtered_files = batch_files
 
         t0_folder = time.monotonic()
 
@@ -384,17 +520,46 @@ def main() -> int:
         print(f"[p1b-server] {folder_name} done in {elapsed_folder:.1f}s", file=sys.stderr)
 
     elapsed_global = time.monotonic() - t0_global
-    _write_partial_report()
-    print(f"[p1b-server] report written to {args.output}", file=sys.stderr)
+    if not dry_run:
+        _write_partial_report()
+        shard_manifest = sharding.empty_shard_manifest(
+            shard_index=shard_index,
+            total_shards=total_shards,
+            extra={
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "run_id": run_id,
+                "tier": args.tier,
+                "embedder": os.environ["RAG_EMBEDDING_MODEL"],
+                "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
+                "processed": global_tally["succeeded"],
+                "skipped": global_tally["skipped_too_large"] + global_tally["skipped_empty"],
+                "failed": global_tally["errors"] + global_tally["zero_chunk"]
+                + global_tally["download_failed"],
+                "unsupported": global_tally["skipped_unsupported"],
+                "already_indexed": global_tally["already_indexed"],
+                "durations_sec": {"_total": round(elapsed_global, 3)},
+                "global_tally": global_tally,
+                "folder_tallies": folder_tallies,
+                "results": results,
+            },
+        )
+        shard_out = sharding.shard_manifest_path(shard_index, total_shards)
+        shard_out.parent.mkdir(parents=True, exist_ok=True)
+        with open(shard_out, "w", encoding="utf-8") as fh:
+            json.dump(shard_manifest, fh, indent=2, ensure_ascii=False)
+        print(f"[p1b-server] report written to {args.output}", file=sys.stderr)
+        print(f"[p1b-server] shard manifest → {shard_out}", file=sys.stderr)
     print(
         f"[p1b-server] tier {args.tier}: {global_tally['succeeded']} succeeded, "
         f"{global_tally['zero_chunk']} zero-chunk, "
         f"{global_tally['skipped_too_large']} too-large, "
         f"{global_tally['skipped_unsupported']} unsupported, "
-        f"{global_tally['errors']} errors, {elapsed_global:.1f}s",
+        f"{global_tally['already_indexed']} already_indexed, "
+        f"{global_tally['errors']} errors, {elapsed_global:.1f}s "
+        f"shard={shard_index}/{total_shards} dry_run={dry_run}",
         file=sys.stderr,
     )
-    if args.keep_alive:
+    if args.keep_alive and not dry_run:
         print("[p1b-server] pass complete; keeping container alive for log inspection.", file=sys.stderr)
         while True:
             time.sleep(3600)

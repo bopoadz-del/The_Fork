@@ -31,6 +31,9 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# Render / non-root containers can't write ~/.config/Ultralytics.
+os.environ.setdefault("YOLO_CONFIG_DIR", "/tmp/Ultralytics")
+
 try:
     from ultralytics import YOLO
 except ImportError:

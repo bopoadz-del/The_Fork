@@ -11,14 +11,15 @@ SQLAlchemy-backed via app.core.db — unified The Fork schema.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import delete, func, select, text as sqla_text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.models import Document, Project, ProjectFact
@@ -229,6 +230,28 @@ def classify_doc_role(filename: str) -> str:
 
 # ── projects ────────────────────────────────────────────────────────────────
 
+def _stable_project_id_for_name(name: str) -> str:
+    """Deterministic id so parallel ingest workers converge without UNIQUE(name)."""
+    digest = hashlib.sha256(name.strip().lower().encode("utf-8")).hexdigest()[:16]
+    return f"p_{digest}"
+
+
+def _find_active_project_by_name(name: str) -> Optional[Dict[str, Any]]:
+    """Return the oldest active project with this exact name, if any."""
+    _ensure_db()
+    with SessionLocal() as session:
+        row = session.execute(
+            select(Project)
+            .where(Project.name == name)
+            .where(Project.status != "archived")
+            .order_by(Project.created_at.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if not row:
+        return None
+    return _project_as_dict(row)
+
+
 def create_project(
     name: str,
     client: Optional[str] = None,
@@ -274,6 +297,58 @@ def create_project(
             )
             session.commit()
     return get_project(pid)
+
+
+def get_or_create_project(
+    name: str,
+    client: Optional[str] = None,
+    user_id: str = "system",
+    *,
+    is_approved: bool = True,
+    project_id: Optional[str] = None,
+    origin: str = "user_create",
+) -> Tuple[Dict[str, Any], bool]:
+    """Ensure exactly one project row for this ingest target (id-primary).
+
+    ``projects.name`` is not UNIQUE, so parallel shard workers that each call
+    ``create_project(folder_name)`` would mint separate random ids and split
+    the corpus. This helper:
+
+    1. Uses a stable ``project_id`` (caller-supplied, else derived from name).
+    2. Returns an existing row by id, else by name (oldest active — resume).
+    3. Creates with that primary key; on ``IntegrityError`` re-fetches.
+
+    Returns ``(project_dict, created)``.
+    """
+    _ensure_db()
+    pid = (project_id or "").strip() or _stable_project_id_for_name(name)
+
+    existing = get_project(pid)
+    if existing:
+        return existing, False
+
+    by_name = _find_active_project_by_name(name)
+    if by_name:
+        # Legacy / pre-shard rows: keep ingesting into the oldest name match
+        # rather than creating a second project under the stable id.
+        return by_name, False
+
+    try:
+        created = create_project(
+            name,
+            client=client,
+            user_id=user_id,
+            is_approved=is_approved,
+            project_id=pid,
+            origin=origin,
+        )
+        return created, True
+    except IntegrityError:
+        # Another worker won the insert race on the same primary key.
+        raced = get_project(pid) or _find_active_project_by_name(name)
+        if raced is None:
+            raise
+        return raced, False
 
 
 def list_projects(
