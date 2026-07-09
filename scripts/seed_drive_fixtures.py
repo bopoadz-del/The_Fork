@@ -5,8 +5,15 @@ Searches the connected Google Drive for files by name, creates the fixture
 projects if missing, and imports matches through the normal
 POST /v1/projects/{id}/drive/import endpoint. Only imports allowed extensions;
 DWG is allowed by the API but will not produce chunks (BIM block rejects it),
-so the seeder skips DWG unless no other drawing candidate exists, and verifies
-only imported files have chunks > 0.
+so the seeder skips DWG unless no other drawing candidate exists.
+
+Verification: every fixture must contain at least one expected candidate per
+candidate group (existing or imported), and every doc that RAG can index must
+reach chunk_count > 0. Schedule (.xer) and CAD (.dxf/.dwg) files register as
+project documents but are never text-indexed (app/core/doc_index.py supports
+text/PDF/Office/image extensions only) — they are consumed by their parser
+blocks (primavera_parser, drawing_qto) instead, so they are excluded from the
+chunk gate.
 """
 from __future__ import annotations
 
@@ -41,6 +48,11 @@ DRAWING_CANDIDATES = [
     "BLVD conditional IFC DWGs - caw.pdf",
     "ground_floor_plan.dxf",
 ]
+
+# Accepted project documents that are handled by parser blocks rather than the
+# RAG text indexer — they legitimately stay at chunk_count == 0 forever, so the
+# chunk gate must not wait on them (see app/core/doc_index.py _SUPPORTED_EXTS).
+NO_CHUNK_EXTENSIONS = (".xer", ".mpp", ".dxf", ".dwg", ".ifc", ".rvt")
 
 
 def _auth_header(base: str) -> dict:
@@ -101,19 +113,31 @@ def _list_docs(client: httpx.Client, project_id: str) -> List[Dict[str, Any]]:
     return r.json().get("documents", []) or []
 
 
+def _is_chunkable(doc: Dict[str, Any]) -> bool:
+    """True when the doc's type is text-indexed by RAG (so chunks are expected)."""
+    name = doc.get("original_name") or doc.get("name") or ""
+    return Path(name).suffix.lower() not in NO_CHUNK_EXTENSIONS
+
+
 def _verify_chunks(client: httpx.Client, project_id: str, max_wait: int = 180, poll_interval: int = 5) -> Tuple[int, int, List[str]]:
+    """Wait until every RAG-indexable doc in the project has chunks.
+
+    Docs with NO_CHUNK_EXTENSIONS (e.g. .xer schedules consumed by
+    primavera_parser) are excluded from the gate — they never chunk by design.
+    """
     waited = 0
     while waited <= max_wait:
         docs = _list_docs(client, project_id)
-        if docs and all("chunk_count" in d for d in docs):
-            zero_chunk = [d["id"] for d in docs if (d.get("chunk_count") or 0) == 0]
+        chunkable = [d for d in docs if _is_chunkable(d)]
+        if docs and all("chunk_count" in d for d in chunkable):
+            zero_chunk = [d["id"] for d in chunkable if (d.get("chunk_count") or 0) == 0]
             total_chunks = sum((d.get("chunk_count") or 0) for d in docs)
             if not zero_chunk:
                 return len(docs), total_chunks, []
         time.sleep(poll_interval)
         waited += poll_interval
     docs = _list_docs(client, project_id)
-    zero_chunk = [d["id"] for d in docs if (d.get("chunk_count") or 0) == 0]
+    zero_chunk = [d["id"] for d in docs if _is_chunkable(d) and (d.get("chunk_count") or 0) == 0]
     total_chunks = sum((d.get("chunk_count") or 0) for d in docs)
     return len(docs), total_chunks, zero_chunk
 
@@ -146,6 +170,17 @@ def _find_and_import(client: httpx.Client, project_id: str, candidates: List[str
     return imported
 
 
+def _missing_groups(client: httpx.Client, project_id: str, groups: List[Tuple[str, List[str]]]) -> List[str]:
+    """Return labels of candidate groups with no document present in the project.
+
+    Guards against Drive search misses and import errors that are only logged:
+    each fixture must end up with at least one expected document per group,
+    otherwise the acceptance battery would run against an empty fixture.
+    """
+    present = {d.get("original_name") for d in _list_docs(client, project_id)}
+    return [label for label, candidates in groups if not present.intersection(candidates)]
+
+
 def main() -> int:
     base = os.getenv("FORK_BASE_URL", DEFAULT_BASE)
     headers = _auth_header(base)
@@ -166,6 +201,7 @@ def main() -> int:
         "docs": boq_docs,
         "chunks": boq_chunks,
         "zero_chunk_docs": boq_zero,
+        "missing_groups": _missing_groups(client, boq_proj["id"], [("boq", BOQ_CANDIDATES)]),
     })
 
     # Programme+Drawings fixture — skip .dwg because it registers but does not chunk.
@@ -185,6 +221,10 @@ def main() -> int:
         "docs": pd_docs,
         "chunks": pd_chunks,
         "zero_chunk_docs": pd_zero,
+        "missing_groups": _missing_groups(
+            client, pd_proj["id"],
+            [("programme", PROGRAMME_CANDIDATES), ("drawing", DRAWING_CANDIDATES)],
+        ),
     })
 
     print("\n" + "=" * 80)
@@ -192,11 +232,19 @@ def main() -> int:
     print("-" * 80)
     failed = False
     for r in results:
-        status = "OK" if not r["zero_chunk_docs"] else "ZERO_CHUNK"
+        problems = []
+        if r["zero_chunk_docs"]:
+            problems.append("ZERO_CHUNK")
+        if r["missing_groups"]:
+            problems.append("MISSING_FIXTURE")
+        status = "OK" if not problems else "+".join(problems)
         print(f"{r['name']:<32} {r['project_id']:<12} {r['docs']:>6} {r['chunks']:>8} {status:<15}")
         if r["zero_chunk_docs"]:
             failed = True
             print(f"  ZERO_CHUNK docs: {', '.join(r['zero_chunk_docs'])}")
+        if r["missing_groups"]:
+            failed = True
+            print(f"  MISSING fixture groups (no candidate present): {', '.join(r['missing_groups'])}")
         for imp in r["imported"]:
             print(f"  - {imp['name']} -> {imp['doc_id']}")
     print("=" * 80)
