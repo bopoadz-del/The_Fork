@@ -15,9 +15,16 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 # (block_name, canonical_action_or_None)
-# - block_name: registry key passed to /v1/execute
+# - block_name: registry key passed to /v1/execute; empty string = no auto-dispatch
 # - action: params["action"] for containers; None means the block's default process
+#   (or, with empty block_name, that the caller must materialize / deliver)
 StepTarget = Tuple[str, Optional[str]]
+
+# Sentinel: step is in the alias table but must NOT be routed to a container /
+# block action. Plan builder emits dispatch=False so callers
+# (PlanExecutor._step_render_artifact, agent synthesis, etc.) handle it.
+# Never map these to health_check — that falsely reports delivery success.
+NO_AUTO_DISPATCH: StepTarget = ("", None)
 
 # Every STEP_* constant in workflow_templates.py must appear here.
 STEP_TO_TARGET: Dict[str, StepTarget] = {
@@ -109,9 +116,11 @@ STEP_TO_TARGET: Dict[str, StepTarget] = {
     "carbon_calc": ("construction", "carbon_footprint_calculator"),
     "sustainable_alternatives": ("construction", "procurement_optimizer"),
     "esg_report": ("construction", "esg_sustainability_report"),
-    # Delivery / render (no-op-ish health / pipeline wrap)
-    "render_artifact": ("construction", "health_check"),
-    "deliver": ("construction", "health_check"),
+    # Delivery / render — caller-handled; no container action produces the
+    # promised report/package. Keep step_type visible; do not alias to
+    # health_check (that masks missing delivery with a false success).
+    "render_artifact": NO_AUTO_DISPATCH,
+    "deliver": NO_AUTO_DISPATCH,
 }
 
 # Flat action alias: step type OR short name → ConstructionContainer action
@@ -123,8 +132,18 @@ ACTION_ALIASES: Dict[str, str] = {
 }
 
 
+def is_auto_dispatch(target: Optional[StepTarget]) -> bool:
+    """True when resolve_step yielded a block that /v1/execute can run."""
+    return bool(target and target[0])
+
+
 def resolve_step(step_type: str) -> Optional[StepTarget]:
-    """Return (block, action) for a workflow step type, or None if unknown."""
+    """Return (block, action) for a workflow step type, or None if unknown.
+
+    Delivery steps (render_artifact, deliver) resolve to NO_AUTO_DISPATCH
+    (``("", None)``) — known, but not auto-executable. Callers must check
+    ``is_auto_dispatch`` / plan ``dispatch`` before routing.
+    """
     return STEP_TO_TARGET.get(step_type)
 
 

@@ -15,7 +15,10 @@ async def test_template_steps_dispatch_via_construction_route():
     assert plan is not None
     container = ConstructionContainer()
 
-    construction_steps = [s for s in plan["steps"] if s["block"] == "construction"]
+    construction_steps = [
+        s for s in plan["steps"]
+        if s.get("dispatch", True) and s["block"] == "construction"
+    ]
     assert len(construction_steps) >= 3
 
     for step in construction_steps[:4]:
@@ -57,7 +60,14 @@ async def test_project_dashboard_run_workflow():
     assert result["template_id"] == "new_project_setup"
     assert len(result["steps"]) > 0
     construction_actions = [
-        s["params"]["action"] for s in result["steps"] if s["block"] == "construction"
+        s["params"]["action"]
+        for s in result["steps"]
+        if s.get("dispatch", True) and s["block"] == "construction"
     ]
     assert "generate_wbs" in construction_actions
     assert "build_wbs" not in construction_actions
+    assert "health_check" not in construction_actions
+    render_steps = [s for s in result["steps"] if s.get("step_type") == "render_artifact"]
+    assert render_steps
+    assert all(s.get("dispatch") is False for s in render_steps)
+    assert all(s.get("params", {}).get("action") != "health_check" for s in render_steps)

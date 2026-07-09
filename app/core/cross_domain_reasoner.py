@@ -287,12 +287,24 @@ class MultiDomainPlanBuilder:
             return None
 
         plan = template.build_plan(params or {})
-        from app.core.cm_step_aliases import resolve_step
+        from app.core.cm_step_aliases import is_auto_dispatch, resolve_step
 
         steps: List[Dict[str, Any]] = []
         for step in plan.steps:
             target = resolve_step(step.type)
-            if not target:
+            if target is None:
+                continue
+            # Caller-handled delivery/render: keep step_type visible, do not
+            # invent a block/action that would silently succeed (e.g. health_check).
+            if not is_auto_dispatch(target):
+                steps.append({
+                    "block": None,
+                    "description": step.description,
+                    "params": {**step.args, "action": None},
+                    "step_type": step.type,
+                    "dispatch": False,
+                    "needs_caller_render": True,
+                })
                 continue
             block_name, canonical_action = target
             params_out: Dict[str, Any] = {**step.args}
@@ -307,6 +319,7 @@ class MultiDomainPlanBuilder:
                 "description": step.description,
                 "params": params_out,
                 "step_type": step.type,
+                "dispatch": True,
             })
 
         return {
@@ -319,10 +332,17 @@ class MultiDomainPlanBuilder:
 
     @staticmethod
     def _step_type_block_map() -> Dict[str, str]:
-        """Map workflow step types to block names (compat wrapper)."""
+        """Map workflow step types to block names (compat wrapper).
+
+        Omits NO_AUTO_DISPATCH targets (empty block) — those are caller-handled.
+        """
         from app.core.cm_step_aliases import STEP_TO_TARGET
 
-        return {step: block for step, (block, _action) in STEP_TO_TARGET.items()}
+        return {
+            step: block
+            for step, (block, _action) in STEP_TO_TARGET.items()
+            if block
+        }
 
 
 class SystemPromptInjector:
