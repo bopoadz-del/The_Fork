@@ -287,18 +287,27 @@ class MultiDomainPlanBuilder:
             return None
 
         plan = template.build_plan(params or {})
-        # Map PlanStep types to block names
-        step_type_to_block = self._step_type_block_map()
+        from app.core.cm_step_aliases import resolve_step
 
         steps: List[Dict[str, Any]] = []
         for step in plan.steps:
-            block_name = step_type_to_block.get(step.type)
-            if block_name:
-                steps.append({
-                    "block": block_name,
-                    "description": step.description,
-                    "params": {"action": step.type, **step.args},
-                })
+            target = resolve_step(step.type)
+            if not target:
+                continue
+            block_name, canonical_action = target
+            params_out: Dict[str, Any] = {**step.args}
+            # Prefer canonical ConstructionContainer / block action so
+            # /v1/execute can dispatch without a second alias hop.
+            if canonical_action:
+                params_out["action"] = canonical_action
+            elif block_name == "construction":
+                params_out["action"] = step.type
+            steps.append({
+                "block": block_name,
+                "description": step.description,
+                "params": params_out,
+                "step_type": step.type,
+            })
 
         return {
             "template_id": template_id,
@@ -310,101 +319,10 @@ class MultiDomainPlanBuilder:
 
     @staticmethod
     def _step_type_block_map() -> Dict[str, str]:
-        """Map workflow step types to block names in the registry."""
-        return {
-            # Document extraction
-            "extract_document": "document_engine",
-            "extract_risks": "document_engine",
-            "extract_equipment_list": "document_engine",
-            "extract_clauses": "document_engine",
-            # Schedule
-            "build_wbs": "construction",
-            "float_analysis": "construction",
-            "recovery_options": "construction",
-            "time_impact_analysis": "construction",
-            "delay_analysis": "construction",
-            "critical_path_impact": "construction",
-            "link_procurement": "construction",
-            # Cost
-            "extract_boq": "boq_processor",
-            "cost_load": "construction",
-            "earned_value": "construction",
-            "cost_variance": "construction",
-            "cost_impact": "construction",
-            "prolongation_cost": "construction",
-            "rework_cost": "construction",
-            "carbon_cost_premium": "construction",
-            # Quality
-            "inspection_summary": "construction",
-            "defect_trends": "construction",
-            "defect_register": "construction",
-            "severity_scoring": "construction",
-            "hold_point": "construction",
-            "release_hold_point": "construction",
-            "incoming_inspection": "construction",
-            "test_results": "construction",
-            "deficiency_tracking": "construction",
-            "ncr_issue": "construction",
-            "rectification_track": "construction",
-            "close_out": "construction",
-            # Safety
-            "incident_report": "construction",
-            "root_cause": "construction",
-            "stop_work_order": "construction",
-            "safety_summary": "construction",
-            "incident_summary": "construction",
-            # Procurement
-            "procurement_plan": "construction",
-            "approval_tracking": "construction",
-            "po_trigger": "construction",
-            # Contract
-            "entitlement_check": "construction",
-            "clause_reference": "construction",
-            "eot_entitlement": "construction",
-            "claim_strength": "claims_builder",
-            "counter_arguments": "claims_builder",
-            # Risk
-            "populate_risk_register": "construction",
-            "update_risk_register": "construction",
-            "escalate_risk": "construction",
-            "mitigation_plan": "construction",
-            "coordination_risks": "construction",
-            "regulatory_compliance": "construction",
-            # Payment
-            "payment_cert": "construction",
-            "cash_flow_update": "construction",
-            "generate_pay_app": "construction",
-            # Commissioning / Handover
-            "pc_cert": "construction",
-            "om_manual": "construction",
-            "training_plan": "construction",
-            "warranty_register": "construction",
-            "update_commissioning_plan": "construction",
-            # BIM
-            "bim_analysis": "construction",
-            "clash_detection": "construction",
-            "qto_extraction": "construction",
-            "wbs_from_bim": "construction",
-            "boq_reconcile": "construction",
-            # Document
-            "submittal_log": "construction",
-            "spec_analyze": "spec_analyzer",
-            "rfi_generation": "construction",
-            "generate_rfi": "construction",
-            "update_drawings": "construction",
-            "create_submittal": "construction",
-            "lessons_learned": "construction",
-            # Sustainability
-            "carbon_calc": "construction",
-            "sustainable_alternatives": "construction",
-            "esg_report": "construction",
-            # Render
-            "render_artifact": "construction",
-            "deliver": "construction",
-            # Progress
-            "progress_tracker": "construction",
-            "obligation_register": "construction",
-        }
+        """Map workflow step types to block names (compat wrapper)."""
+        from app.core.cm_step_aliases import STEP_TO_TARGET
+
+        return {step: block for step, (block, _action) in STEP_TO_TARGET.items()}
 
 
 class SystemPromptInjector:

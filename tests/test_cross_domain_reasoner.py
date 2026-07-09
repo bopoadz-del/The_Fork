@@ -190,8 +190,10 @@ class TestMultiDomainPlanBuilder:
         builder = MultiDomainPlanBuilder()
         plan = builder.build_from_template("commissioning_to_handover")
         assert plan is not None
-        step_types = [s["params"].get("action", "") for s in plan["steps"]]
-        assert "test_results" in step_types or any("test" in s for s in step_types)
+        step_types = [s.get("step_type", "") for s in plan["steps"]]
+        actions = [s["params"].get("action", "") for s in plan["steps"]]
+        assert "test_results" in step_types
+        assert "commissioning_checklist" in actions
 
     def test_step_type_block_map_coverage(self):
         builder = MultiDomainPlanBuilder()
