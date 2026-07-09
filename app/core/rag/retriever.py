@@ -423,7 +423,17 @@ def retrieve_with_filter(
     raw_active = store.search(project_id, query_vec, k=over_fetch, query_text=query)
 
     # General-knowledge projects (cross-project background context).
-    gk_ids = [pid for pid in _general_knowledge_project_ids() if pid != project_id]
+    # Only merge GK when the active project already has indexed chunks.
+    # An empty/unindexed project must return [] — not training_material
+    # hits — or search_project_documents, lazy bootstrap, and the
+    # "unindexed project" contract all break (Postgres CI shares a DB where
+    # GK rows exist from other tests / the migrated corpus).
+    include_gk = store.count(project_id) > 0
+    gk_ids = (
+        [pid for pid in _general_knowledge_project_ids() if pid != project_id]
+        if include_gk
+        else []
+    )
     raw_gk: List[Chunk] = []
     for gk_pid in gk_ids:
         try:
