@@ -24,9 +24,22 @@ def _data_dir() -> str:
 
 
 def get_database_url() -> str:
-    """Resolve DATABASE_URL from env, honoring DATA_DIR at call time."""
+    """Resolve DATABASE_URL from env, honoring DATA_DIR at call time.
+
+    Render/Postgres URLs are typically `postgresql://...`. SQLAlchemy maps
+    that dialect to psycopg2, but this project installs psycopg v3 only
+    (`psycopg[binary]`). Rewrite bare `postgresql://` /
+    `postgres://` to `postgresql+psycopg://` so create_engine imports
+    the installed driver.
+    """
     explicit = os.getenv("DATABASE_URL")
     if explicit:
+        if explicit.startswith("postgresql+psycopg://") or explicit.startswith("postgresql+psycopg2://"):
+            return explicit
+        if explicit.startswith("postgresql://"):
+            return "postgresql+psycopg://" + explicit[len("postgresql://"):]
+        if explicit.startswith("postgres://"):
+            return "postgresql+psycopg://" + explicit[len("postgres://"):]
         return explicit
     db_path = os.path.join(_data_dir(), "the_fork.db")
     return f"sqlite:///{db_path}"
