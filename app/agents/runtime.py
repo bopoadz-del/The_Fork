@@ -609,6 +609,9 @@ def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
 _INTENT_TOOL_MAP = (
     (("commissioning checklist", "commissioning plan", "commissioning schedule",
       "testing and commissioning", "t&c checklist"), "commissioning_checklist"),
+    (("primavera", "xer", "p6", "baseline programme", "baseline program",
+      "programme milestones", "program milestones", "project milestones",
+      "schedule milestones", "milestones from"), "primavera_parser"),
 )
 
 
@@ -1741,6 +1744,25 @@ class Agent:
                         "description": (
                             "The spec doc's original_name. MUST come from a "
                             "prior search_project_documents call."
+                        ),
+                    },
+                },
+                "required": ["file_path"],
+            },
+            "primavera_parser": {
+                "description": (
+                    "Parse a Primavera P6 .xer schedule file from the project. "
+                    "Returns activities, milestones, WBS, schedule_data, and CPM "
+                    "output. file_path must be the original_name from "
+                    "search_project_documents — never guess paths."
+                ),
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "The XER file's original_name (e.g. "
+                            "'Annexure 2 - Baseline Program XER.xer'). MUST come "
+                            "from a prior search_project_documents call."
                         ),
                     },
                 },
@@ -3131,7 +3153,7 @@ class Agent:
             tool_names = {t.get("function", {}).get("name") for t in tools}
             forced_tool = (
                 _forced_specific_tool(messages, tool_names)
-                if self.name == "project-assistant" else None
+                if self.name in ("project-assistant", "heavy-reasoning") else None
             )
             requires_tool = (
                 self.name == "project-assistant"

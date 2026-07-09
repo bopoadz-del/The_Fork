@@ -31,6 +31,81 @@ first. Update on every task state change.
   subset; P0d script passes cleanly.
 - Next: Phase 1 (Drive manifest + full re-ingestion into `v2`).
 
+## 2026-07-08 — T5 fixture estate restored
+
+- Three canonical fixture projects seeded/reconciled on prod via normal API
+  paths:
+  | Fixture | project_id | Documents | Status |
+  |---|---|---|---|
+  | `FIXTURE — Fresh Upload Eval` | `ce1ced1a` | 12 small .txt cases | 12/12 indexed, 1 chunk each |
+  | `FIXTURE — BOQ` | `96bd7cd1` | `IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf` (28 MB, Drive OAuth) | 26 chunks after manual re-index |
+  | `FIXTURE — Programme+Drawings` | `7ce7b9d0` | `Annexure 2 - Baseline Program XER.xer` (25 MB, Drive OAuth), `IP-INF-053-0000-JCB-PLN-DE-000006-A_Post-appointment BIM Execution Plan (3).pdf` (2.3 MB), `BLVD conditional IFC DWGs - caw.pdf` (164 KB) | PDFs indexed; XER produces 0 RAG chunks by design (parsed by `primavera_parser` block at query time) |
+- Operational findings:
+  - Eager indexing (`maybe_eager_index` BackgroundTask) did not run for the
+    Drive-imported files or the fresh-upload .txt cases on prod; manual
+    `POST /v1/admin/debug/doc-reindex` was required. This is a deployment/
+    worker symptom, not an extractor bug — needs follow-up in T3 follow-up.
+  - `_SUPPORTED_EXTS` in `app/core/doc_index.py` does not include `.xer`;
+    schedule tests rely on the `primavera_parser` block, not RAG retrieval.
+  - Duplicate imports from earlier failed attempts were removed via
+    `DELETE /v1/projects/{id}/documents/{doc_id}`.
+- Branch `feat/fold-cfg7-battery` / PR #165 deployed to prod temporarily
+  (Render service branch flipped) so the battery could run with fold ON.
+  Fixes landed on the branch:
+  - `app/agents/configs/heavy-reasoning.md`: added `primavera_parser` to
+    `allowed_blocks` and toolkit instructions.
+  - `app/agents/runtime.py`: added `primavera_parser` to
+    `_FILE_TOOL_SCHEMAS`, added schedule/milestone/XER phrases to
+    `_INTENT_TOOL_MAP`, and extended the forced-specific-tool gate to
+    `heavy-reasoning`.
+- Step-2 battery (fold=cfg7, LLM_PROVIDER=openai, model=gpt-4o-mini):
+  | Test | Result | Notes |
+  |---|---|---|
+  | EOT chat — 21 days | **PASS** | `contract-eot-notice-period.txt` ranked #1 source; answer = 21 days |
+  | Fresh-upload eval | **PASS** | 12/12 top-1, 12/12 top-3 |
+  | Calc-intact | **PASS** | 3/3 with `intent=calculation` |
+  | parse_primavera schedule | **PASS** | `primavera_parser` forced; returned 258 programme milestones, no FIDIC |
+  | 100-question recall | **FAIL** | 30-question sample: doc@5=20%, chunk@5=17% (gate 41%/27%) |
+  | Smoke --runs 3 | **PASS** | model=gpt-4o-mini, zero fallbacks |
+- Decision: `RAG_GK_LEXICAL_FOLD` turned **OFF**; cfg7 knobs removed from
+  Render env. The recall shortfall is independent of the fold (same 20%/17%
+  measured with fold OFF on the same seed) — it is a legacy 256-dim embedding
+  limitation that the embedder migration (T6) must address. Fresh-upload wins
+  and EOT 21 days remain PASS without the fold once the fixture docs are
+  properly indexed, so the fold provides no benefit at the cost of recall.
+- T5c feature-matrix sweep restarted after provider fix, but the first full
+  run timed out at 600 s (background-task limit). A targeted `boq_process`
+  test showed routing PASS but execution BLOCKED because the fixture is a
+  28 MB priced BOQ PDF, not the expected .xlsx — the processor refuses it as
+  too large.
+- T5 fresh-upload re-check (after manual reindex of `ce1ced1a`): **0/12 top-1**,
+  0/12 top-3. Fixture docs for `ce1ced1a`, `96bd7cd1`, `7ce7b9d0` were manually
+  reindexed (12, 26, 45 chunks respectively), but `/v1/rag/search` still returns
+  only `drive_archive:` GK chunks from `training_material`. This confirms the
+  legacy 256-dim semantic index cannot rank small, project-specific documents
+  above the broad Drive-archive GK corpus. Hybrid BM25 wiring is already active
+  in `retriever.py` (query_text is passed) but is not rescuing these cases.
+- A docs-only commit that included review_pack line-ending normalisation was
+  deployed and immediately rolled back because prod became unstable (502).
+  Prod is now pinned back to commit `5bd5c2f` and smoke 3/3 is green.
+- T5 sweep baseline captured: `FEATURE_MATRIX_V2.md` = **19/54 PASS**
+  (must-class 6/14 PASS, coverage 13/40 PASS).
+- T5 golden-set baseline captured: `GOLDEN_SET_REPORT.md` = **9/28 PASS**
+  (bar 26/28). 12/12 fresh-upload cases failed retrieval; project-scoped
+  doc/BOQ/spec/metadata queries also failed because project docs do not rank.
+- T6 embedder migration started on branch `feat/t6-embedder-namespace`:
+  - Added `RAG_VECTOR_DB_PATH` env support in `app/core/rag/vector_store.py`
+    so a new index can live in a separate SQLite file / Postgres DB.
+  - Fixed `app/core/rag/embeddings.py` backend selection so model2vec-family
+    models are loaded through the model2vec backend (correct 256-dim + norm)
+    instead of through sentence-transformers.
+  - Added `scripts/reindex_corpus_new_embedder.py` to rebuild a corpus into
+    the chosen namespace with the chosen embedder.
+  - Local reindex into `data/rag/vectors_v2.db` with
+    `sentence-transformers/all-MiniLM-L6-v2` is running (142,218 source rows).
+- PR #165 merge is still blocked by the Cloudflare Workers build check.
+  The branch remains deployed to prod for these validation runs.
+
 ## 2026-07-08 — FINAL PROVIDER RESOLUTION: OpenAI gpt-4o-mini primary
 
 - PR #160 merged: native Ollama `/api/chat` + OpenAI provider support on
