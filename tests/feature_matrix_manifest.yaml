@@ -55,7 +55,7 @@ features:
     feature: BOQ queries
     class: must
     handler: container (boq_processor)
-    project: "5c13510e"   # DG2 Bills of Quantities (Drive-approved; files restored)
+    project: "96bd7cd1"   # FIXTURE — BOQ
     prompts:
       - text: "process the bill of quantities and give me the total value"
         expect_route: [boq_process]
@@ -125,7 +125,7 @@ features:
     structure: [has_period_buckets]
 
   - action: parse_primavera_schedule
-    project: "ff905e29"   # Pilot Feature Sweep (project_programme.xer restored)
+    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
     feature: milestones extraction / report
     class: must
     handler: container (primavera_parser)
@@ -184,7 +184,7 @@ features:
     structure: [has_numbers, shows_working_or_rule]
 
   - action: drawing_qto
-    project: "ff905e29"   # Pilot Feature Sweep (ground_floor_plan.dxf restored)
+    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
     feature: QTO from drawings
     class: must
     handler: container (drawing_qto block)
@@ -364,7 +364,7 @@ features:
         expect_route: [forensic_delay_analysis, claims_builder]
 
   - action: bim_analysis
-    project: "ff905e29"   # Pilot Feature Sweep (sample_office.ifc restored)
+    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
     class: coverage
     handler: container (bim block)
     prompts:
@@ -373,7 +373,7 @@ features:
     needs: UPLOADED sample_office.ifc in project ff905e29
 
   - action: bim_clash_detection
-    project: "ff905e29"   # Pilot Feature Sweep (sample_office.ifc restored)
+    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
     class: coverage
     handler: container
     prompts:
@@ -382,7 +382,7 @@ features:
     needs: UPLOADED sample_office.ifc in project ff905e29
 
   - action: bim_extractor
-    project: "ff905e29"   # Pilot Feature Sweep (sample_office.ifc restored)
+    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
     class: coverage
     handler: container (bim_extractor block)
     prompts:
