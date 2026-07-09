@@ -42,6 +42,8 @@ def test_group(name):
         return wrapper
     return decorator
 
+test_group.__test__ = False  # decorator factory, not a pytest test
+
 def check(condition, label, errors_list):
     if condition:
         RESULTS["passed"] += 1

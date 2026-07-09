@@ -104,6 +104,8 @@ _CROSS_DOMAIN_KEYWORDS: Dict[str, List[Domain]] = {
     "long lead": [Domain.SCHEDULE, Domain.RISK],
     "procurement": [Domain.SCHEDULE],
     "purchase order": [Domain.SCHEDULE, Domain.QUALITY],
+    "material shortage": [Domain.PROCUREMENT, Domain.SCHEDULE],
+    "lead time": [Domain.PROCUREMENT, Domain.SCHEDULE],
     # Contract-related keywords that should also check schedule/cost/risk
     "claim": [Domain.SCHEDULE, Domain.COST, Domain.RISK],
     "dispute": [Domain.SCHEDULE, Domain.COST, Domain.RISK],
@@ -155,9 +157,14 @@ class TemplateMatcher:
         Normalized by number of trigger phrases for the template.
         """
         text = user_message.lower()
+        words = set(re.findall(r"[a-z0-9']+", text))
         scores: List[Tuple[str, float]] = []
         for template_id, triggers in _TEMPLATE_TRIGGERS.items():
-            hits = sum(1 for t in triggers if t in text)
+            hits = sum(
+                1
+                for t in triggers
+                if t in text or all(w in words for w in t.split())
+            )
             if hits > 0:
                 score = hits / len(triggers)  # normalize
                 scores.append((template_id, score))
