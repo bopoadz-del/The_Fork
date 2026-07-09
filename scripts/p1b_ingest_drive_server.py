@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 import uuid
+import zlib
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
@@ -188,7 +189,10 @@ def main() -> int:
         return 1
 
     run_id = uuid.uuid4().hex[:12]
-    print(f"[p1b-server] run_id={run_id} tier={args.tier} folders={len(tier['folders'])}", file=sys.stderr)
+    shard_count = max(1, int(os.getenv("P1B_SHARD_COUNT", "1")))
+    shard_index = int(os.getenv("P1B_SHARD_INDEX", "0"))
+    print(f"[p1b-server] run_id={run_id} tier={args.tier} folders={len(tier['folders'])} "
+          f"shard={shard_index}/{shard_count}", file=sys.stderr)
 
     # Track per-folder tally.
     folder_tallies: Dict[str, Dict[str, Any]] = {}
@@ -281,6 +285,27 @@ def main() -> int:
                     retry_doc_by_fid[fid] = doc
 
         filtered_files = [f for f in files if f["id"] not in already_indexed]
+
+        # Horizontal scale: N identical Pro workers each take 1/N of the
+        # remaining files (stable hash of Drive file id). Set on each
+        # temporary clone: P1B_SHARD_COUNT=10, P1B_SHARD_INDEX=0..9.
+        # Delete the clones when the pass finishes — no merge needed.
+        shard_count = max(1, int(os.getenv("P1B_SHARD_COUNT", "1")))
+        shard_index = int(os.getenv("P1B_SHARD_INDEX", "0"))
+        if shard_index < 0 or shard_index >= shard_count:
+            print(f"ERROR: P1B_SHARD_INDEX={shard_index} out of range for "
+                  f"P1B_SHARD_COUNT={shard_count}", file=sys.stderr)
+            return 1
+        if shard_count > 1:
+            before = len(filtered_files)
+            filtered_files = [
+                f for f in filtered_files
+                if (zlib.crc32(f["id"].encode("utf-8")) % shard_count) == shard_index
+            ]
+            print(f"[p1b-server] shard {shard_index}/{shard_count}: "
+                  f"{len(filtered_files)}/{before} files for this worker",
+                  file=sys.stderr)
+
         print(f"[p1b-server] {folder_name}: {len(files)} files, {len(filtered_files)} to ingest "
               f"({len(retry_doc_by_fid)} zero-chunk retries)", file=sys.stderr)
 
