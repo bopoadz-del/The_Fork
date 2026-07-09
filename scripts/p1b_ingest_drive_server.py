@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -88,12 +88,12 @@ def _ingest_file(
             "mimeType": mime,
         }
 
-    # Size guard before download. Default 500 MB — Tier-1 DG2 contract
-    # volumes (signed PSA, drawing packs, schedule PDFs) routinely exceed
-    # 100 MB and were being SKIPPED_TOO_LARGE on the Render worker, which
-    # is exactly the golden-set corpus. Set P1B_MAX_FILE_SIZE_MB=0 to disable.
+    # Size guard before download. Default OFF (0) — Tier-1 DG2 contract
+    # volumes (signed PSA, drawing packs) exceed 500 MB and were still
+    # SKIPPED_TOO_LARGE after the 100→500 bump. Set P1B_MAX_FILE_SIZE_MB
+    # to a positive number to re-enable a cap.
     size = int(file_meta.get("size") or 0)
-    max_size = int(os.getenv("P1B_MAX_FILE_SIZE_MB", "500")) * 1024 * 1024
+    max_size = int(os.getenv("P1B_MAX_FILE_SIZE_MB", "0")) * 1024 * 1024
     if max_size > 0 and size > max_size:
         return rel, {
             "status": "error",
@@ -334,36 +334,51 @@ def main() -> int:
             return rel, result
 
         # Parallel ingestion: downloads are network-bound and extraction
-        # releases the GIL in fitz/torch, so a small pool gives a 2-4x
-        # wall-clock speedup on the 4 GB worker. DB writes stay safe — the
-        # vector store serialises inserts behind its own lock.
-        pool_size = max(1, int(os.getenv("P1B_PARALLELISM", "4")))
+        # releases the GIL in fitz/torch. Keep only ``pool_size`` futures
+        # in flight — submitting all 6k at once made the 4 GB worker OOM
+        # after the first few SKIPPED_TOO_LARGE completions (the other
+        # workers were already downloading multi-hundred-MB PDFs).
+        # Smallest files first so we make visible progress before the
+        # Tier-1 contract volumes.
+        filtered_files.sort(key=lambda f: int(f.get("size") or 0))
+        pool_size = max(1, int(os.getenv("P1B_PARALLELISM", "2")))
         tally_lock = threading.Lock()
         done_count = 0
-        if pool_size == 1:
-            for idx, file_meta in enumerate(filtered_files, start=1):
-                rel = file_meta.get("_drive_path") or file_meta.get("name", "")
-                print(f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} {rel}", file=sys.stderr)
-                rel, result = _process_one(file_meta)
-                _tally_result(rel, result)
-                if idx % 10 == 0:
-                    _write_partial_report()
-        else:
-            print(f"[p1b-server] parallel ingestion with {pool_size} workers", file=sys.stderr)
-            with ThreadPoolExecutor(max_workers=pool_size) as pool:
-                futures = {
-                    pool.submit(_process_one, fm): fm for fm in filtered_files
-                }
-                for fut in as_completed(futures):
+        print(f"[p1b-server] parallel ingestion with {pool_size} workers "
+              f"(smallest-first, {len(filtered_files)} files)", file=sys.stderr)
+        with ThreadPoolExecutor(max_workers=pool_size) as pool:
+            pending: Dict[Future, Dict[str, Any]] = {}
+            file_iter = iter(filtered_files)
+
+            def _submit_next() -> bool:
+                try:
+                    fm = next(file_iter)
+                except StopIteration:
+                    return False
+                pending[pool.submit(_process_one, fm)] = fm
+                return True
+
+            for _ in range(pool_size):
+                if not _submit_next():
+                    break
+            while pending:
+                done, _ = wait(pending.keys(), return_when=FIRST_COMPLETED)
+                for fut in done:
+                    pending.pop(fut, None)
                     rel, result = fut.result()
                     with tally_lock:
                         done_count += 1
                         idx = done_count
                         _tally_result(rel, result)
                         status = result.get("error") or result.get("status", "ok")
-                        print(f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} [{status}] {rel}", file=sys.stderr)
+                        print(
+                            f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} "
+                            f"[{status}] {rel}",
+                            file=sys.stderr,
+                        )
                         if idx % 10 == 0:
                             _write_partial_report()
+                    _submit_next()
 
         elapsed_folder = time.monotonic() - t0_folder
         print(f"[p1b-server] {folder_name} done in {elapsed_folder:.1f}s", file=sys.stderr)
