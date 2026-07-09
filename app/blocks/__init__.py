@@ -36,7 +36,6 @@ _GENERIC_BLOCK_SPECS: List[Tuple[str, str, str]] = [
     ("orchestrator",     "app.blocks.orchestrator",    "OrchestratorBlock"),
     ("validation_pipeline", "app.blocks.validation_pipeline", "ValidationPipelineBlock"),
     ("async_processor",  "app.blocks.async_processor", "AsyncProcessorBlock"),
-    ("project_dashboard", "app.blocks.project_dashboard", "ProjectDashboardBlock"),
 ]
 
 # Extended platform blocks — loaded when CEREBRUM_VIRGIN=false (legacy production).

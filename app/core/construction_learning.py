@@ -22,10 +22,16 @@ from typing import Any, Dict, List, Optional, Tuple
 # ── Storage ───────────────────────────────────────────────────────────────
 
 def _storage_path() -> str:
-    return os.environ.get(
-        "CONSTRUCTION_LEARNING_STORAGE",
-        "/tmp/cerebrum_construction_learning.json",
-    )
+    """Resolve learning JSON path at call time (tests can swap via env).
+
+    Prefer CONSTRUCTION_LEARNING_STORAGE; else DATA_DIR/learning/… so
+    Render/ephemeral hosts do not default to /tmp (lost on restart).
+    """
+    explicit = os.environ.get("CONSTRUCTION_LEARNING_STORAGE")
+    if explicit:
+        return explicit
+    data_dir = os.environ.get("DATA_DIR", "./data")
+    return os.path.join(data_dir, "learning", "cerebrum_construction_learning.json")
 
 
 # ── Duration Calibration ──────────────────────────────────────────────────
@@ -523,6 +529,9 @@ class ConstructionLearningEngine:
         path = _storage_path()
         try:
             import json
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with self._state_lock:
                 state = {
                     "duration": self.duration.to_dict(),

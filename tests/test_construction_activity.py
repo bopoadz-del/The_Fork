@@ -24,7 +24,7 @@ class TestActivityTypeEnum:
     def test_all_types_present(self):
         types = {t.value for t in ActivityType}
         expected = {
-            "schedule", "quality", "safety", "procurement", "contract",
+            "schedule", "cost", "quality", "safety", "procurement", "contract",
             "risk", "resource", "commissioning", "handover",
             "document", "reporting", "bim",
         }

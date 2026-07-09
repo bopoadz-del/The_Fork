@@ -17,8 +17,13 @@ from pydantic import BaseModel, Field
 
 
 class ActivityType(str, Enum):
-    """Construction management domain categories."""
+    """Construction management domain categories.
+
+    Aligned with dependency_graph.Domain where possible. COST is included
+    so cost-domain activities are not silently dropped when aggregating.
+    """
     SCHEDULE = "schedule"
+    COST = "cost"
     QUALITY = "quality"
     SAFETY = "safety"
     PROCUREMENT = "procurement"

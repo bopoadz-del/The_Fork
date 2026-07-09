@@ -253,6 +253,29 @@ class TestConstructionLearningEngine:
         assert "defect_patterns" in summary
         assert "template_tracks" in summary
 
+    def test_storage_defaults_under_data_dir(self, monkeypatch, tmp_path):
+        from app.core import construction_learning as cl
+
+        monkeypatch.delenv("CONSTRUCTION_LEARNING_STORAGE", raising=False)
+        monkeypatch.setenv("DATA_DIR", str(tmp_path))
+        cl.ConstructionLearningEngine.reset_shared_instance_cache()
+        path = cl._storage_path()
+        assert str(tmp_path) in path
+        assert path.endswith("cerebrum_construction_learning.json")
+        # DATA_DIR may itself live under /tmp (pytest tmp_path on Linux); assert
+        # the learning file is under DATA_DIR/learning/, not a bare /tmp default.
+        norm = path.replace("\\", "/")
+        assert "/learning/cerebrum_construction_learning.json" in norm
+        assert norm.startswith(str(tmp_path).replace("\\", "/"))
+
+    def test_storage_explicit_env(self, monkeypatch, tmp_path):
+        from app.core import construction_learning as cl
+
+        custom = tmp_path / "custom_learning.json"
+        monkeypatch.setenv("CONSTRUCTION_LEARNING_STORAGE", str(custom))
+        cl.ConstructionLearningEngine.reset_shared_instance_cache()
+        assert cl._storage_path() == str(custom)
+
     def test_reset(self):
         engine = ConstructionLearningEngine()
         engine.record_duration("P-001", "test", 5, 7)

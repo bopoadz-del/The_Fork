@@ -53,9 +53,9 @@ def check(condition, label, errors_list):
         errors_list.append(label)
         return False
 
-@test_group("Activity Types (12/12)")
+@test_group("Activity Types (13/13)")
 def test_activity_types(gp, gf, errs):
-    expected = {"schedule", "quality", "safety", "procurement", "contract", "risk",
+    expected = {"schedule", "cost", "quality", "safety", "procurement", "contract", "risk",
                 "resource", "commissioning", "handover", "document", "reporting", "bim"}
     check({t.value for t in ActivityType} == expected, f"ActivityType mismatch", errs)
 
@@ -64,10 +64,11 @@ def test_status_risk(gp, gf, errs):
     check({s.value for s in Status} == {"planned", "in_progress", "complete", "blocked", "overdue", "on_hold"}, "Status enum", errs)
     check({r.value for r in RiskLevel} == {"low", "medium", "high", "critical"}, "RiskLevel enum", errs)
 
-@test_group("ConstructionActivity per Type (12 types)")
+@test_group("ConstructionActivity per Type (13 types)")
 def test_all_activity_types(gp, gf, errs):
     for atype, name, extras in [
         (ActivityType.SCHEDULE, "Pour Concrete", {"schedule": {"duration_days": 5, "is_critical": True}}),
+        (ActivityType.COST, "Cost Control", {"cost": {"budgeted": 10000, "currency": "USD"}}),
         (ActivityType.QUALITY, "Inspect Rebar", {"quality_gates": [{"gate_type": "inspection", "result": "pass"}]}),
         (ActivityType.SAFETY, "Safety Audit", {"safety_gates": [{"gate_type": "permit", "status": "planned"}]}),
         (ActivityType.PROCUREMENT, "Order Switchgear", {"procurement_links": [{"item_id": "P-001", "is_long_lead": True}]}),
@@ -97,6 +98,7 @@ def test_activity_graph(gp, gf, errs):
     for a in [
         ConstructionActivity(id="PROC-001", type=ActivityType.PROCUREMENT),
         ConstructionActivity(id="SCH-001", type=ActivityType.SCHEDULE, cost=CostMeta(budgeted=50000)),
+        ConstructionActivity(id="COST-001", type=ActivityType.COST),
         ConstructionActivity(id="Q-001", type=ActivityType.QUALITY),
         ConstructionActivity(id="R-001", type=ActivityType.RISK),
         ConstructionActivity(id="SAF-001", type=ActivityType.SAFETY),
@@ -109,7 +111,7 @@ def test_activity_graph(gp, gf, errs):
         ConstructionActivity(id="CON-001", type=ActivityType.CONTRACT),
     ]:
         g.add_activity(a)
-    check(len(g.activities) == 12, "12 activities", errs)
+    check(len(g.activities) == 13, "13 activities", errs)
     g.link_activities("PROC-001", "SCH-001")
     check("SCH-001" in g.get_by_id("PROC-001").dependents, "Proc->Schedule link", errs)
     s = g.summary()
