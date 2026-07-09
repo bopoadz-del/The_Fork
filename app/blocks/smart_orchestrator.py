@@ -339,6 +339,19 @@ class SmartOrchestratorBlock(UniversalBlock):
                if routing_mode == "learned" else {}),
         }
 
+    # Orchestrator keyword → CrossDomainReasoner post-tool trigger keys.
+    # ACTION_PATTERNS uses boq_process; reasoner triggers are keyed boq_processor.
+    _POST_TOOL_SEED_ALIASES: Dict[str, str] = {
+        "boq_process": "boq_processor",
+    }
+    # Same floor as TemplateMatcher.best_match / get_matched_template.
+    _CM_TEMPLATE_SCORE_THRESHOLD: float = 0.15
+
+    def _normalize_post_tool_seed(self, seed: Optional[str]) -> Optional[str]:
+        if not seed:
+            return seed
+        return self._POST_TOOL_SEED_ALIASES.get(seed, seed)
+
     def _cross_domain_enrichment(
         self, user_message: str, action_queue: List[str]
     ) -> Dict[str, Any]:
@@ -359,6 +372,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                     break
             if seed is None and action_queue:
                 seed = action_queue[0]
+            seed = self._normalize_post_tool_seed(seed)
             follow_ups: List[str] = []
             if seed:
                 follow_ups = reasoner.get_post_tool_suggestions(seed, user_message)
@@ -370,10 +384,14 @@ class SmartOrchestratorBlock(UniversalBlock):
                 "cm_follow_up_tools": follow_ups[:5],
                 "cm_suggested_tools": analysis.get("suggested_tools") or [],
             }
-            if analysis.get("matched_template"):
-                out["cm_matched_template"] = analysis["matched_template"]
+            # analyze_turn returns the raw top hit; only publish a workflow plan
+            # when score clears TemplateMatcher.best_match's 0.15 threshold.
+            score = float(analysis.get("matched_template_score") or 0.0)
+            template_id = analysis.get("matched_template")
+            if template_id and score >= self._CM_TEMPLATE_SCORE_THRESHOLD:
+                out["cm_matched_template"] = template_id
                 out["cm_matched_template_score"] = analysis["matched_template_score"]
-                plan = reasoner.build_plan(analysis["matched_template"])
+                plan = reasoner.build_plan(template_id)
                 if plan:
                     out["cm_workflow_plan"] = {
                         "template_id": plan["template_id"],
@@ -389,6 +407,9 @@ class SmartOrchestratorBlock(UniversalBlock):
                             for s in plan["steps"][:12]
                         ],
                     }
+            elif template_id:
+                # Expose weak score for debugging without advertising a plan.
+                out["cm_matched_template_score"] = analysis["matched_template_score"]
             return out
         except Exception:  # noqa: BLE001 — never break keyword routing
             return {}
