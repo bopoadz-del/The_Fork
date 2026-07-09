@@ -192,7 +192,6 @@ class TestWorkflowActions:
         assert result["status"] == "error"
         assert "available" in result
 
-
 class TestUnknownAction:
     async def test_unknown_action(self):
         block = ProjectDashboardBlock()
@@ -200,3 +199,4 @@ class TestUnknownAction:
         assert result["status"] == "error"
         assert "known_actions" in result
         assert "health_check" in result["known_actions"]
+        assert "run_workflow" not in result["known_actions"]
