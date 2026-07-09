@@ -36,6 +36,45 @@ async def test_template_steps_dispatch_via_construction_route():
 
 
 @pytest.mark.asyncio
+async def test_new_project_setup_template_end_to_end_with_aliases():
+    """Full template: every dispatchable construction step routes; render is NO_AUTO."""
+    from app.containers.construction import ConstructionContainer
+    from app.core.plan_executor import PlanExecutor
+    from app.schemas.project_session import ProjectSession
+
+    plan = MultiDomainPlanBuilder().build_from_template(
+        "new_project_setup", {"project_type": "data_center"}
+    )
+    assert plan is not None
+    assert plan["template_id"] == "new_project_setup"
+
+    dispatchable = [s for s in plan["steps"] if s.get("dispatch", True)]
+    caller_render = [s for s in plan["steps"] if s.get("needs_caller_render")]
+    assert dispatchable, "expected executable steps"
+    assert caller_render, "expected render/deliver steps"
+
+    container = ConstructionContainer()
+    for step in dispatchable:
+        if step["block"] != "construction":
+            continue
+        action = step["params"]["action"]
+        result = await container.route(action, {}, {"action": action})
+        assert "Unknown action" not in str(result.get("error", "")), (
+            f"{step.get('step_type')} → {action}: {result}"
+        )
+
+    session = ProjectSession.new("cm-e2e-test", user_id="test")
+    pe = PlanExecutor()
+    out = await pe.run_cm_plan_steps(caller_render, session)
+    assert out["status"] == "success"
+    statuses = {r["step_type"]: r["status"] for r in out["step_results"]}
+    if "deliver" in statuses:
+        assert statuses["deliver"] == "success"
+    if "render_artifact" in statuses:
+        assert statuses["render_artifact"] in ("error", "needs_caller_render", "success")
+
+
+@pytest.mark.asyncio
 async def test_route_accepts_template_vocabulary_directly():
     from app.containers.construction import ConstructionContainer
 

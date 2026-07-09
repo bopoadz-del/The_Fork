@@ -242,6 +242,97 @@ class PlanExecutor:
         session.data[step.output_key or "artifact"] = value
         return value
 
+    async def _step_deliver(self, step, session):
+        """Caller-handled delivery step (NO_AUTO_DISPATCH / needs_caller_render).
+
+        Marks the plan as ready for the caller to materialize exports. Does
+        not invent files — only records intent when an artifact was staged.
+        """
+        arts = list(getattr(session, "artifacts", None) or [])
+        value = {
+            "needs_caller_render": True,
+            "artifact_count": len(arts),
+            "artifacts": [
+                {"name": getattr(a, "name", None), "path": getattr(a, "path", None)}
+                for a in arts[:10]
+            ],
+        }
+        session.data[step.output_key or "deliver"] = value
+        return value
+
+    async def run_cm_plan_steps(self, steps, session):
+        """Execute MultiDomainPlanBuilder steps that PlanExecutor can handle.
+
+        Construction-block steps that need files are skipped with
+        ``status=skipped`` (not fabricated). ``needs_caller_render`` /
+        ``dispatch=False`` steps map to ``render_artifact`` / ``deliver``
+        handlers when the step_type matches.
+        """
+        from app.schemas.execution_plan import PlanStep
+
+        results = []
+        for raw in steps:
+            step_type = raw.get("step_type") or (raw.get("params") or {}).get("action")
+            if not step_type:
+                results.append({"step_type": None, "status": "skipped", "reason": "no step_type"})
+                continue
+            if raw.get("needs_caller_render") or raw.get("dispatch") is False:
+                handler = getattr(self, f"_step_{step_type}", None)
+                if handler is None:
+                    results.append({
+                        "step_type": step_type,
+                        "status": "needs_caller_render",
+                        "reason": "NO_AUTO_DISPATCH — caller must materialize",
+                    })
+                    continue
+                try:
+                    pseudo = PlanStep(
+                        type=step_type,
+                        args=dict(raw.get("params") or {}),
+                        description=raw.get("description") or "",
+                    )
+                    value = await handler(pseudo, session)
+                    results.append({
+                        "step_type": step_type,
+                        "status": "success",
+                        "output": value,
+                    })
+                except Exception as exc:  # noqa: BLE001
+                    results.append({
+                        "step_type": step_type,
+                        "status": "error",
+                        "error": str(exc),
+                    })
+                continue
+            handler = getattr(self, f"_step_{step_type}", None)
+            if handler is None:
+                results.append({
+                    "step_type": step_type,
+                    "status": "skipped",
+                    "reason": "no PlanExecutor handler — use ConstructionContainer.route",
+                    "block": raw.get("block"),
+                    "action": (raw.get("params") or {}).get("action"),
+                })
+                continue
+            try:
+                pseudo = PlanStep(
+                    type=step_type,
+                    args=dict(raw.get("params") or {}),
+                )
+                value = await handler(pseudo, session)
+                results.append({
+                    "step_type": step_type,
+                    "status": "success",
+                    "output": value,
+                })
+            except Exception as exc:  # noqa: BLE001
+                results.append({
+                    "step_type": step_type,
+                    "status": "error",
+                    "error": str(exc),
+                })
+        return {"status": "success", "step_results": results}
+
     # ── code-generation step handler (delegates to Plan 4) ───────────────
     async def _step_generate_code(self, step, session):
         task = step.args.get("task")

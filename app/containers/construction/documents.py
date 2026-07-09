@@ -1670,11 +1670,19 @@ class ConstructionDocumentsMixin:
         from app.core.panels import validate_panel
         validated_panels = [validate_panel(p) for p in panels]
 
+        # ActivityGraph-ish domain_status for project_dashboard.health_check —
+        # derived only from real panel outputs (no synthetic BOQ/procurement).
+        from app.core.cm_domain_status import panels_to_domain_status
+        domain_status = panels_to_domain_status(
+            validated_panels, pipeline_warnings=pipeline_warnings
+        )
+
         return {
             "status": "success",
             "action": "auto_pipeline",
             "doc_type": doc_type,
             "panels": validated_panels,
+            "domain_status": domain_status,
             "downstream_actions_run": list(downstream.keys()),
             "next_actions": next_actions,
             "pipeline_warnings": pipeline_warnings,
