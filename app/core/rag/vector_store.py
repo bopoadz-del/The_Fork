@@ -231,6 +231,28 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
                 index.create(bind=eng, checkfirst=True)
             except Exception:  # noqa: BLE001 — never block startup on an index
                 pass
+        # PostgreSQL BM25 leg: the ``text_search`` GENERATED column + GIN
+        # index. Alembic 0003 only covers the legacy ``chunks`` table;
+        # namespaced tables (chunks_v2, ...) are created HERE, so they must
+        # get the column here too or ``_bm25_postgres`` fails with
+        # UndefinedColumn. Idempotent via IF NOT EXISTS.
+        if eng.dialect.name == "postgresql":
+            try:
+                with eng.begin() as conn:
+                    conn.execute(text(
+                        f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "
+                        "text_search tsvector GENERATED ALWAYS AS "
+                        "(to_tsvector('english', text)) STORED"
+                    ))
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS {table_name}_fts_gin "
+                        f"ON {table_name} USING GIN (text_search)"
+                    ))
+            except Exception:  # noqa: BLE001 — BM25 degrades, never block startup
+                logger.warning(
+                    "could not ensure text_search column on %s", table_name,
+                    exc_info=True,
+                )
         _INITIALIZED_NAMESPACES.add(init_key)
 
 
