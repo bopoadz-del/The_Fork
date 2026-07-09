@@ -1,4 +1,4 @@
-﻿"""Project Dashboard Block ΓÇö Phase 5 of the Construction Management Engine.
+"""Project Dashboard Block — Phase 5 of the Construction Management Engine.
 
 Aggregates data from all construction management domains via the unified
 activity model and dependency graph. Produces a unified project health view
@@ -63,9 +63,9 @@ class ProjectDashboardBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "≡ƒôè", "label": "Project Health", "prompt": "Generate project health dashboard"},
-            {"icon": "ΓÜá∩╕Å", "label": "Critical Issues", "prompt": "Show critical cross-domain issues"},
-            {"icon": "≡ƒôï", "label": "Workflows", "prompt": "List available multi-domain workflows"},
+            {"icon": "📊", "label": "Project Health", "prompt": "Generate project health dashboard"},
+            {"icon": "⚠️", "label": "Critical Issues", "prompt": "Show critical cross-domain issues"},
+            {"icon": "📋", "label": "Workflows", "prompt": "List available multi-domain workflows"},
         ],
     }
 
@@ -84,7 +84,7 @@ class ProjectDashboardBlock(UniversalBlock):
             self._template_library = WorkflowTemplateLibrary()
         return self._template_library
 
-    # ΓöÇΓöÇ Public operations ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    # ── Public operations ──────────────────────────────────────────────────
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
         params = params or {}
@@ -106,7 +106,7 @@ class ProjectDashboardBlock(UniversalBlock):
             }
         return await handler(data, params)
 
-    # ΓöÇΓöÇ Action handlers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    # ── Action handlers ────────────────────────────────────────────────────
 
     async def _health_check(self, data: Dict, params: Dict) -> Dict:
         """Aggregate domain status into unified health view."""
@@ -119,7 +119,7 @@ class ProjectDashboardBlock(UniversalBlock):
                 "domain_scores": {},
                 "cross_domain_flags": [],
                 "suggested_actions": [],
-                "note": "No domain status provided ΓÇö pass domain_status with per-domain entries",
+                "note": "No domain status provided — pass domain_status with per-domain entries",
             }
 
         # Normalize domain_status keys to Domain enum
