@@ -112,6 +112,11 @@ def main() -> int:
     def is_gk(chunk: dict, signature: str) -> bool:
         if gk_ids and str(chunk.get("doc_id")) in gk_ids:
             return True
+        # training_material is a virtual alias project, so doc listing may 404.
+        # Its chunk_id is stamped with the project prefix (e.g. "training_material:<doc_id>:<idx>").
+        cid = (chunk.get("chunk_id") or "")
+        if cid.startswith(f"{args.gk_project}:"):
+            return True
         return signature.lower() in (chunk.get("text") or "").lower()
 
     results = []
