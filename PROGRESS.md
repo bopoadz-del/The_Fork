@@ -242,6 +242,48 @@ first. Update on every task state change.
   (`has_activities_and_durations`, `has_checklist_items`). Two relaxations
   REVERTED because the failing outputs were thin/malformed (`has_period_buckets`,
   `milestones_have_dates`). Branch force-pushed; CI restarted.
+- Step 1 merge + deploy: PR #153 merged to main (b54a2a4). Render auto-deployed.
+  Smoke --runs 3: PASS 3/3 after one transient 90s timeout/93-char run on first
+  attempt. Clean full FEATURE_MATRIX_V2 sweep started on branch
+  feat/feature-matrix-v2-results (post-fix, fresh conversation IDs).
+- BLOCKER (2026-07-06): all three pilot fixture projects are missing on prod:
+  `5c13510e` (BOQ), `ff905e29` (schedule/drawings), and `bc812f36` (fresh-upload
+  / golden set). This BLOCKS `boq_process`, `parse_primavera_schedule`, and
+  `drawing_qto` in the feature matrix; it also blocks Step 2 fresh-upload eval
+  and Step 3 golden-set gate. Chadi must restore/recreate fixtures before those
+  gates can run. DECISIONS.md updated.
+
+## 2026-07-06 recovery session
+
+- Correction: `5c13510e` (DG2 Bills of Quantities) DOES exist on prod as a
+  Drive-approved project (4 docs / 179 chunks). The earlier 404 was caused by the
+  chat stream ownership check missing `include_admin_approved=True` (PR D
+  inconsistency). Fixed in `app/routers/agents.py` and merged as PR #154.
+- Persistent disk double-deploy survival test PASSED: created marker project,
+  uploaded a document, triggered two Render deploys, document preview still 200
+  with original content after both deploys. Disk is non-ephemeral.
+- Storage map confirmed: Postgres (metadata + vector chunks) persists; `/app/data`
+  persistent disk survives deploys. `dar_al_arkan_master` / `projects_folder`
+  blobs are missing because those early imports pre-date the proven disk state;
+  later Drive imports (`dg2_infra_pack_1`, `5c13510e`, `ha_long_xanh_2`) retained
+  blobs.
+- Fixture projects as code: added `scripts/seed_fixtures.py` (idempotent,
+  API-only, ZERO_CHUNK check). Seeded `FIXTURE — Fresh Upload Eval` from the 12
+  CASES texts (project `b5a0fed8`, 12 docs / 12 chunks). Verified
+  `rag_fresh_upload_eval.py` resolves by name and runs idempotently.
+- Refactored `tests/feature_matrix_manifest.yaml` and
+  `scripts/feature_matrix_sweep.py` to resolve fixtures by canonical name at
+  runtime; missing fixtures are auto-marked BLOCKED. Added `--auto-seed` hook.
+- Added `scripts/inspect_drive_projects.py` and
+  `docs/recovery/re_import_manifest.md` with the Drive-linked damage snapshot.
+- Re-import is blocked pending: (1) `GDRIVE_SERVICE_ACCOUNT_JSON` env var on
+  Render, (2) complete `GDRIVE_PROJECT_FOLDERS` mapping for every Drive-linked
+  project, including sibling packs under the DG2 parent. Folder IDs are not in
+  surviving metadata.
+- Merged PR #155 (fixture seeder + recovery manifest). Deploy live; smoke not
+  re-run because local `python` in `scripts/smoke.sh` resolves to the Windows
+  Store placeholder; direct `fork_cli.py` chat against prod succeeded with
+  tool_call/tool_result and long answer, indicating prod is healthy.
 
 ## 2026-07-07 T0 attempt — restored prod baseline
 
