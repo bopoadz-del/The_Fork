@@ -331,7 +331,15 @@ class PlanExecutor:
                     "status": "error",
                     "error": str(exc),
                 })
-        return {"status": "success", "step_results": results}
+        any_error = any(r.get("status") == "error" for r in results)
+        any_ok = any(r.get("status") == "success" for r in results)
+        if not any_error:
+            status = "success"
+        elif any_ok:
+            status = "partial"
+        else:
+            status = "error"
+        return {"status": status, "step_results": results}
 
     # ── code-generation step handler (delegates to Plan 4) ───────────────
     async def _step_generate_code(self, step, session):
