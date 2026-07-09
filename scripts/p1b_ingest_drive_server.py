@@ -223,9 +223,9 @@ def main() -> int:
 
         # Filter already-indexed files when resuming.
         already_indexed: set[str] = set()
+        existing = None
         if args.resume:
             # Find the platform project for this folder; create if missing.
-            existing = None
             for p in projects_mod.list_projects():
                 if p.get("name") == folder_name:
                     existing = p
