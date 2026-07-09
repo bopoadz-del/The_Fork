@@ -88,9 +88,12 @@ def _ingest_file(
             "mimeType": mime,
         }
 
-    # Size guard before download.
+    # Size guard before download. Default 500 MB — Tier-1 DG2 contract
+    # volumes (signed PSA, drawing packs, schedule PDFs) routinely exceed
+    # 100 MB and were being SKIPPED_TOO_LARGE on the Render worker, which
+    # is exactly the golden-set corpus. Set P1B_MAX_FILE_SIZE_MB=0 to disable.
     size = int(file_meta.get("size") or 0)
-    max_size = int(os.getenv("P1B_MAX_FILE_SIZE_MB", "100")) * 1024 * 1024
+    max_size = int(os.getenv("P1B_MAX_FILE_SIZE_MB", "500")) * 1024 * 1024
     if max_size > 0 and size > max_size:
         return rel, {
             "status": "error",
