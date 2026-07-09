@@ -1,4 +1,4 @@
-"""Project Dashboard Block — Phase 5 of the Construction Management Engine.
+﻿"""Project Dashboard Block ΓÇö Phase 5 of the Construction Management Engine.
 
 Aggregates data from all construction management domains via the unified
 activity model and dependency graph. Produces a unified project health view
@@ -63,9 +63,9 @@ class ProjectDashboardBlock(UniversalBlock):
             ],
         },
         "quick_actions": [
-            {"icon": "📊", "label": "Project Health", "prompt": "Generate project health dashboard"},
-            {"icon": "⚠️", "label": "Critical Issues", "prompt": "Show critical cross-domain issues"},
-            {"icon": "📋", "label": "Workflows", "prompt": "List available multi-domain workflows"},
+            {"icon": "≡ƒôè", "label": "Project Health", "prompt": "Generate project health dashboard"},
+            {"icon": "ΓÜá∩╕Å", "label": "Critical Issues", "prompt": "Show critical cross-domain issues"},
+            {"icon": "≡ƒôï", "label": "Workflows", "prompt": "List available multi-domain workflows"},
         ],
     }
 
@@ -84,7 +84,7 @@ class ProjectDashboardBlock(UniversalBlock):
             self._template_library = WorkflowTemplateLibrary()
         return self._template_library
 
-    # ── Public operations ──────────────────────────────────────────────────
+    # ΓöÇΓöÇ Public operations ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
         params = params or {}
@@ -106,7 +106,7 @@ class ProjectDashboardBlock(UniversalBlock):
             }
         return await handler(data, params)
 
-    # ── Action handlers ────────────────────────────────────────────────────
+    # ΓöÇΓöÇ Action handlers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     async def _health_check(self, data: Dict, params: Dict) -> Dict:
         """Aggregate domain status into unified health view."""
@@ -119,7 +119,7 @@ class ProjectDashboardBlock(UniversalBlock):
                 "domain_scores": {},
                 "cross_domain_flags": [],
                 "suggested_actions": [],
-                "note": "No domain status provided — pass domain_status with per-domain entries",
+                "note": "No domain status provided ΓÇö pass domain_status with per-domain entries",
             }
 
         # Normalize domain_status keys to Domain enum
@@ -156,7 +156,8 @@ class ProjectDashboardBlock(UniversalBlock):
         high_risk = graph.high_risk_activities()
         critical = graph.critical_path_activities()
 
-        # Derive domain status from activities
+        # Derive domain status from activities.
+        # Quality blocks → "failed" (R002 NCR/hold), not "critical" (R003 safety).
         domain_status: Dict[str, Dict[str, Any]] = {}
         for activity in graph.activities:
             domain_key = activity.type.value
@@ -171,7 +172,13 @@ class ProjectDashboardBlock(UniversalBlock):
             domain_status[domain_key]["count"] += 1
             if activity.is_blocked():
                 domain_status[domain_key]["blocked"] += 1
-                domain_status[domain_key]["status"] = "critical"
+                if domain_key == Domain.QUALITY.value:
+                    domain_status[domain_key]["status"] = "failed"
+                elif domain_key == Domain.SAFETY.value:
+                    domain_status[domain_key]["status"] = "critical"
+                else:
+                    # Non-QA/safety holds still surface as failed for R002-style holds
+                    domain_status[domain_key]["status"] = "failed"
             if activity.status == Status.OVERDUE:
                 domain_status[domain_key]["overdue"] += 1
                 if domain_status[domain_key]["status"] == "healthy":

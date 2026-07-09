@@ -192,6 +192,20 @@ class TestWorkflowActions:
         assert result["status"] == "error"
         assert "available" in result
 
+    async def test_run_workflow(self):
+        block = ProjectDashboardBlock()
+        result = await block.process({
+            "action": "run_workflow",
+            "template_id": "delay_to_claim",
+        })
+        assert result["status"] == "success"
+        assert result["template_id"] == "delay_to_claim"
+        assert any(
+            s["params"].get("action") == "forensic_delay_analysis"
+            for s in result["steps"]
+            if s["block"] == "construction"
+        )
+
 
 class TestUnknownAction:
     async def test_unknown_action(self):
@@ -200,3 +214,4 @@ class TestUnknownAction:
         assert result["status"] == "error"
         assert "known_actions" in result
         assert "health_check" in result["known_actions"]
+        assert "run_workflow" in result["known_actions"]

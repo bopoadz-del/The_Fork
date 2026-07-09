@@ -194,3 +194,11 @@ class TestUtilityFunctions:
         assert _status_to_trigger("overrun") == TriggerCondition.VARIANCE_THRESHOLD
         assert _status_to_trigger("detected") == TriggerCondition.DETECTED
         assert _status_to_trigger("unknown") is None
+
+    def test_quality_critical_maps_to_failed(self):
+        assert _status_to_trigger("critical", domain=Domain.QUALITY) == TriggerCondition.FAILED
+        assert _status_to_trigger("failed", domain=Domain.QUALITY) == TriggerCondition.FAILED
+        assert (
+            _status_to_trigger("critical", domain=Domain.SAFETY)
+            == TriggerCondition.CRITICAL_INCIDENT
+        )

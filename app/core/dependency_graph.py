@@ -492,8 +492,9 @@ class ProjectHealthAggregator:
             scores.append(score_map.get(s, 75))
             health["domain_scores"][domain.value] = status
 
-            # Check for cross-domain triggers
-            trigger = _status_to_trigger(s)
+            # Check for cross-domain triggers (domain-aware: quality "critical"
+            # must map to FAILED → R002 NCR/hold, not CRITICAL_INCIDENT/safety)
+            trigger = _status_to_trigger(s, domain=domain)
             if trigger:
                 affected, actions = self.graph.trigger_analysis(domain, trigger)
                 if affected:
@@ -520,8 +521,23 @@ class ProjectHealthAggregator:
         return health
 
 
-def _status_to_trigger(status: str) -> Optional[TriggerCondition]:
-    """Map a domain status string to the most likely trigger condition."""
+def _status_to_trigger(
+    status: str,
+    domain: Optional[Domain] = None,
+) -> Optional[TriggerCondition]:
+    """Map a domain status string to the most likely trigger condition.
+
+    Domain-aware: quality failures must fire FAILED (R002 NCR/hold), not
+    CRITICAL_INCIDENT (R003 safety stop-work). Safety keeps critical→incident.
+    """
+    s = (status or "").lower().strip()
+    if domain == Domain.QUALITY and s in ("failed", "critical", "blocked", "ncr", "fail"):
+        return TriggerCondition.FAILED
+    if domain == Domain.SAFETY and s in ("critical", "incident", "failed"):
+        return TriggerCondition.CRITICAL_INCIDENT
+    if domain == Domain.COMMISSIONING and s in ("failed", "critical"):
+        return TriggerCondition.FAILED
+
     mapping = {
         "delayed": TriggerCondition.DELAYED,
         "failed": TriggerCondition.FAILED,
@@ -530,5 +546,7 @@ def _status_to_trigger(status: str) -> Optional[TriggerCondition]:
         "overrun": TriggerCondition.VARIANCE_THRESHOLD,
         "detected": TriggerCondition.DETECTED,
         "incident": TriggerCondition.CRITICAL_INCIDENT,
+        "blocked": TriggerCondition.FAILED,
+        "ncr": TriggerCondition.FAILED,
     }
-    return mapping.get(status)
+    return mapping.get(s)
