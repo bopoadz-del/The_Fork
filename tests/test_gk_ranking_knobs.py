@@ -89,8 +89,7 @@ def test_margin_filters_gk_below_bar_keeps_gk_above(monkeypatch):
 
 
 def test_margin_leaves_gk_untouched_for_empty_project(monkeypatch):
-    """H1: a project with zero candidates must keep the GK-only fallback
-    (empty projects still get grounded answers from the curated KB)."""
+    """H1: an unindexed project must not merge GK fallback candidates."""
     ret = _install(
         monkeypatch,
         active_chunks=[],
@@ -98,7 +97,7 @@ def test_margin_leaves_gk_untouched_for_empty_project(monkeypatch):
     )
     monkeypatch.setenv("RAG_GK_SCORE_MARGIN", "5.0")
     chunks, _ = ret.retrieve_with_filter("query", ACTIVE, k=3)
-    assert [c.chunk_id for c in chunks] == ["gk1", "gk2"]
+    assert [c.chunk_id for c in chunks] == []
 
 
 def test_own_doc_boost_reorders_project_above_gk(monkeypatch):
@@ -138,8 +137,7 @@ def test_gk_topk_cap_backfills_with_project_chunks(monkeypatch):
 
 
 def test_gk_topk_cap_drops_excess_when_no_project_chunks_remain(monkeypatch):
-    """H3: when the pool has nothing to backfill with, excess GK chunks
-    are dropped and the result simply comes back shorter."""
+    """H3: on an unindexed project the GK pool is not merged at all."""
     ret = _install(
         monkeypatch,
         active_chunks=[],
@@ -148,7 +146,7 @@ def test_gk_topk_cap_drops_excess_when_no_project_chunks_remain(monkeypatch):
     )
     monkeypatch.setenv("RAG_GK_TOPK_CAP", "1")
     chunks, _ = ret.retrieve_with_filter("query", ACTIVE, k=5)
-    assert [c.chunk_id for c in chunks] == ["gk1"]
+    assert [c.chunk_id for c in chunks] == []
 
 
 @pytest.mark.parametrize("intent", ["calculation", "standards", "knowledge"])

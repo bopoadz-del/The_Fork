@@ -181,9 +181,8 @@ def test_calc_kb_intent_bypasses_fold_and_knobs(monkeypatch, intent):
     ]
 
 
-def test_flag_on_empty_project_keeps_gk_fallback(monkeypatch):
-    """Empty project: the margin gate (and therefore the fold) is skipped;
-    GK-only fallback returns bonused GK results untouched."""
+def test_flag_on_empty_project_skips_gk_merge(monkeypatch):
+    """Empty project: GK merge is skipped, so lexical fold has no effect."""
     ret = _install(
         monkeypatch,
         active_chunks=[],
@@ -195,9 +194,7 @@ def test_flag_on_empty_project_keeps_gk_fallback(monkeypatch):
     _set_cfg7(monkeypatch)
     monkeypatch.setenv("RAG_GK_LEXICAL_FOLD", "1")
     chunks, _ = ret.retrieve_with_filter(QUERY, ACTIVE, k=3)
-    assert [(c.chunk_id, c.score) for c in chunks] == [
-        ("gk1", pytest.approx(1.35)), ("gk2", pytest.approx(0.10)),
-    ]
+    assert [(c.chunk_id, c.score) for c in chunks] == []
 
 
 @pytest.mark.parametrize("garbage", ["2", "yep", "enabled", "tru"])

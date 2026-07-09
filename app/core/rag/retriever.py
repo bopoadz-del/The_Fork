@@ -428,7 +428,10 @@ def retrieve_with_filter(
     # hits — or search_project_documents, lazy bootstrap, and the
     # "unindexed project" contract all break (Postgres CI shares a DB where
     # GK rows exist from other tests / the migrated corpus).
-    include_gk = store.count(project_id) > 0
+    # Prefer authoritative corpus-size check, but fall back to the fetched
+    # active candidates for mocked/in-memory test stores that don't model
+    # ``count`` consistently with ``search``.
+    include_gk = store.count(project_id) > 0 or bool(raw_active)
     gk_ids = (
         [pid for pid in _general_knowledge_project_ids() if pid != project_id]
         if include_gk
