@@ -142,6 +142,8 @@ def main() -> int:
                     help="Report path")
     ap.add_argument("--resume", action="store_true",
                     help="Skip files already indexed in the project (by drive_file_id)")
+    ap.add_argument("--keep-alive", action="store_true",
+                    help="After the ingestion pass completes, sleep forever so a background worker stays live")
     args = ap.parse_args()
 
     from app.core import gdrive_service, projects as projects_mod
@@ -303,6 +305,10 @@ def main() -> int:
         f"{global_tally['errors']} errors, {elapsed_global:.1f}s",
         file=sys.stderr,
     )
+    if args.keep_alive:
+        print("[p1b-server] pass complete; keeping container alive for log inspection.", file=sys.stderr)
+        while True:
+            time.sleep(3600)
     return 0
 
 
