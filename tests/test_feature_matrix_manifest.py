@@ -90,8 +90,9 @@ def test_every_prompt_has_expected_route(manifest):
 
 def test_defaults_are_applied_with_per_feature_overrides(manifest):
     by_action = {f["action"]: f for f in manifest["features"]}
-    # boq_process overrides the default project to the DG2 BOQ project
-    assert by_action["boq_process"]["project"] == "5c13510e"
+    # boq_process overrides the default project to the seeded BOQ fixture
+    # project (5bd5c2f repointed fixture-bound features at seeded IDs).
+    assert by_action["boq_process"]["project"] == "96bd7cd1"
     # estimate_costs inherits the default
     assert by_action["estimate_costs"]["project"] == manifest["defaults"]["project"]
     # generate_wbs raises min_chars above the default
