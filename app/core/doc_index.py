@@ -1620,8 +1620,12 @@ def index_document(
         except Exception as exc:  # noqa: BLE001
             # Never let a RAG failure abort the primary doc-index path
             import logging as _logging
+            import traceback as _traceback
             _logging.getLogger(__name__).warning(
                 "RAG indexing skipped for %s: %s", document_id, exc
+            )
+            _logging.getLogger(__name__).warning(
+                "RAG indexing traceback for %s:\n%s", document_id, _traceback.format_exc()
             )
 
     # Load-modify-write inside one SQLite transaction — a concurrent
