@@ -199,18 +199,18 @@ def main() -> int:
         data_dir = Path(os.getenv("DATA_DIR", "./data"))
         data_dir.mkdir(parents=True, exist_ok=True)
 
-        existing = None
-        for p in projects_mod.list_projects():
-            if p.get("name") == project_name:
-                existing = p
-                break
-        if existing:
-            project = existing
-            print(f"[p1b] using existing project {project['id']} for {project_name}")
-        else:
-            project = projects_mod.create_project(project_name)
-            print(f"[p1b] created project {project['id']} for {project_name}")
+        # Atomic get-or-create BEFORE shard filtering so parallel workers
+        # share one project id (projects.name is not UNIQUE).
+        project, created = projects_mod.get_or_create_project(
+            project_name,
+            origin="user_drive_import",
+        )
         project_id = project["id"]
+        print(
+            f"[p1b] {'created' if created else 'using'} project {project_id} "
+            f"for {project_name} (shard={shard_index}/{total_shards})",
+            file=sys.stderr,
+        )
 
         # Idempotency: skip when the doc already has chunks. If chunk counts
         # are unavailable, --resume falls back to path-row presence.

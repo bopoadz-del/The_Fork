@@ -279,37 +279,51 @@ def main() -> int:
             for err in walk_errors:
                 print(f"[p1b-server] WALK ERROR: {err}", file=sys.stderr)
 
-        # Resume is ALWAYS on for live runs. Dry-run never touches the DB.
-        # A document row alone is NOT proof of success — skip only files
-        # whose doc actually has chunks; zero-chunk docs are re-indexed.
+        # Ensure ONE project row for this folder BEFORE sharding / resume.
+        # projects.name is not UNIQUE — parallel shard workers that each
+        # create_project(folder_name) would mint separate random ids and
+        # split documents/chunks across projects. Prefer the manifest's
+        # stable project_id; fall back to a name-derived id.
         already_indexed: set[str] = set()
         retry_doc_by_fid: Dict[str, Dict[str, Any]] = {}
-        existing = None
+        project_id: str | None = None
         if not dry_run:
-            for p in projects_mod.list_projects():
-                if p.get("name") == folder_name:
-                    existing = p
-                    break
-            if existing:
-                chunk_counts: Dict[str, int] = {}
-                counts_available = True
-                try:
-                    chunk_counts = _vs.get_store().count_by_doc(existing["id"])
-                except Exception as exc:  # noqa: BLE001 — degrade to row-only resume
-                    print(f"[p1b-server] WARN: chunk-count resume check failed "
-                          f"({type(exc).__name__}: {exc}); falling back to "
-                          f"row-presence resume", file=sys.stderr)
-                    counts_available = False
-                for doc in projects_mod.list_documents(existing["id"]):
-                    fid = (doc.get("metadata") or {}).get("drive_file_id")
-                    if not fid:
-                        continue
-                    if not counts_available:
-                        already_indexed.add(fid)
-                    elif chunk_counts.get(doc["id"], 0) > 0:
-                        already_indexed.add(fid)
-                    elif fid not in retry_doc_by_fid:
-                        retry_doc_by_fid[fid] = doc
+            preferred_id = (project_id_for_folder or "").strip() or None
+            project, created = projects_mod.get_or_create_project(
+                folder_name,
+                project_id=preferred_id,
+                origin="user_drive_import",
+            )
+            project_id = project["id"]
+            print(
+                f"[p1b-server] {'created' if created else 'using'} project "
+                f"{project_id} for {folder_name} "
+                f"(shard={shard_index}/{total_shards})",
+                file=sys.stderr,
+            )
+
+            # Resume is ALWAYS on for live runs. A document row alone is
+            # NOT proof of success — skip only files whose doc actually
+            # has chunks; zero-chunk docs are re-indexed in place.
+            chunk_counts: Dict[str, int] = {}
+            counts_available = True
+            try:
+                chunk_counts = _vs.get_store().count_by_doc(project_id)
+            except Exception as exc:  # noqa: BLE001 — degrade to row-only resume
+                print(f"[p1b-server] WARN: chunk-count resume check failed "
+                      f"({type(exc).__name__}: {exc}); falling back to "
+                      f"row-presence resume", file=sys.stderr)
+                counts_available = False
+            for doc in projects_mod.list_documents(project_id):
+                fid = (doc.get("metadata") or {}).get("drive_file_id")
+                if not fid:
+                    continue
+                if not counts_available:
+                    already_indexed.add(fid)
+                elif chunk_counts.get(doc["id"], 0) > 0:
+                    already_indexed.add(fid)
+                elif fid not in retry_doc_by_fid:
+                    retry_doc_by_fid[fid] = doc
 
         # Drop unsupported before sharding so every worker sees the same
         # supported universe and sha256 assignment stays partition-complete.
@@ -408,12 +422,7 @@ def main() -> int:
             print(f"[p1b-server] dry-run manifest → {out_path}", file=sys.stderr)
             continue
 
-        # Ensure platform project exists.
-        project = existing
-        if project is None:
-            project = projects_mod.create_project(folder_name)
-            print(f"[p1b-server] created project {project['id']} for {folder_name}", file=sys.stderr)
-        project_id = project["id"]
+        assert project_id is not None  # set above for live runs
 
         # Use the sharded (+offset/limit) batch for live work.
         filtered_files = batch_files
