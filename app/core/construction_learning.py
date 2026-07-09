@@ -390,7 +390,7 @@ class TemplateEffectivenessTracker:
     """Learn which workflow templates are most effective per project type.
 
     Tracks template usage outcomes: completion rate, user satisfaction signals,
-    and time-to-completion.
+        and time-to-completion.
     """
 
     _state_lock = threading.RLock()
@@ -550,8 +550,9 @@ class ConstructionLearningEngine:
 
     def get_calibrated_duration(
         self, project_id: str, activity_type: str, default_days: int = 5,
+        min_samples: int = 3,
     ) -> Dict[str, Any]:
-        return self.duration.get_calibrated_duration(project_id, activity_type, default_days)
+        return self.duration.get_calibrated_duration(project_id, activity_type, default_days, min_samples)
 
     def record_procurement_delivery(
         self, item_category: str, item_name: str,
