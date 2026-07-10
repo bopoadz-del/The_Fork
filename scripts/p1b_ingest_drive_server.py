@@ -452,10 +452,14 @@ def main() -> int:
         # documents during testing). Files with no reported size (0) go to
         # the end regardless.
         largest_first = os.getenv("P1B_LARGEST_FIRST", "").strip().lower() in {"1", "true", "yes"}
-        shard_files.sort(
-            key=lambda f: (int(f.get("size") or 0) == 0, int(f.get("size") or 0)),
-            reverse=largest_first,
-        )
+
+        def _sort_key(f: Dict[str, Any]) -> Tuple[bool, int]:
+            size = int(f.get("size") or 0)
+            # size==0 always sorts last; otherwise largest-first uses
+            # negative size so the reverse flag is not needed.
+            return (size == 0, -size if largest_first else size)
+
+        shard_files.sort(key=_sort_key)
         # Offset/limit AFTER shard filter so assignment stays stable.
         batch_files = sharding.apply_offset_limit(
             shard_files, offset=offset, limit=limit,
