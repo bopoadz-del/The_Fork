@@ -377,6 +377,9 @@ def main() -> int:
             shard_index=shard_index,
             total_shards=total_shards,
         )
+        # Sort smallest-first before offset/limit so a limited batch picks
+        # tractable files first, while the shard partition itself stays stable.
+        shard_files.sort(key=lambda f: int(f.get("size") or 0))
         # Offset/limit AFTER shard filter so assignment stays stable.
         batch_files = sharding.apply_offset_limit(
             shard_files, offset=offset, limit=limit,
