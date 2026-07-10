@@ -50,6 +50,14 @@ _UNSUPPORTED_MIMES = {
 _UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar"}
 
 
+def _is_geodatabase_internal(path: str) -> bool:
+    """Esri geodatabase folders contain non-indexable internal files (gdb,
+    timestamps, a00000001.gdbtable, etc.) that Drive reports as tiny
+    application/octet-stream blobs. Skip any file inside a ``*.gdb`` folder.
+    """
+    return any(part.lower().endswith(".gdb") for part in Path(path).parts[:-1])
+
+
 def _safe_stored_name(original: str) -> str:
     """Filesystem-safe stored name; preserves extension."""
     base = Path(original).stem
@@ -74,14 +82,18 @@ def _ingest_file(
     deterministic path and re-indexed into the SAME document row instead of
     creating a duplicate.
     """
-    from app.core import doc_index, file_crypto, projects as projects_mod
+    from app.core import doc_index, file_crypto, projects as projects_mod, r2_storage
 
     rel = file_meta.get("_drive_path") or file_meta.get("name", "")
     mime = file_meta.get("mimeType", "")
     ext = Path(rel).suffix.lower()
 
-    # Skip Google-native and known-unsupported files cleanly.
-    if mime in _UNSUPPORTED_MIMES or ext in _UNSUPPORTED_EXTS:
+    # Skip Google-native, known-unsupported, and geodatabase internal files.
+    if (
+        mime in _UNSUPPORTED_MIMES
+        or ext in _UNSUPPORTED_EXTS
+        or _is_geodatabase_internal(rel)
+    ):
         return rel, {
             "status": "error",
             "error": "SKIPPED_UNSUPPORTED",
@@ -99,6 +111,17 @@ def _ingest_file(
             "status": "error",
             "error": "SKIPPED_TOO_LARGE",
             "size_mb": round(size / (1024 * 1024), 1),
+        }
+
+    # Minimum useful size guard. Files below this threshold cannot produce
+    # indexable content (empty placeholders, geodatabase internals, etc.).
+    # Default OFF (0); set P1B_MIN_FILE_SIZE_BYTES to skip them cleanly.
+    min_size = int(os.getenv("P1B_MIN_FILE_SIZE_BYTES", "0"))
+    if min_size > 0 and size < min_size:
+        return rel, {
+            "status": "error",
+            "error": "SKIPPED_TOO_SMALL",
+            "size_bytes": size,
         }
 
     # Download from Drive.
@@ -120,12 +143,53 @@ def _ingest_file(
     dest = data_dir / stored_name
     file_crypto.write_document(str(dest), raw_bytes)
 
+    # Archive raw bytes to R2 before indexing. The local copy is only needed
+    # for the extractors/indexers and is deleted afterwards.
+    archive = r2_storage.archive_document(
+        project_id=project_id,
+        drive_file_id=file_meta["id"],
+        original_name=Path(rel).name,
+        raw_bytes=raw_bytes,
+        content_sha256=content_sha,
+    )
+
+    common_meta = {
+        "drive_file_id": file_meta["id"],
+        "drive_path": rel,
+        "source": "p1b_server_drive_reingestion",
+        "ingestion_run_id": run_id,
+        "mimeType": mime,
+        "content_sha256": content_sha,
+    }
+    if archive.get("r2_object_key"):
+        common_meta["r2_object_key"] = archive["r2_object_key"]
+        common_meta["r2_bucket"] = archive.get("r2_bucket")
+        common_meta["r2_endpoint"] = archive.get("r2_endpoint")
+        common_meta["r2_account_id"] = archive.get("r2_account_id")
+    if archive.get("error"):
+        common_meta["r2_archive_error"] = archive["error"]
+
     if existing_doc is not None:
         # Zero-chunk retry: the row exists from a failed pass; re-index it
         # in place. The stored name is deterministic, so the fresh download
         # above landed at the same path the row's file_path points to.
+        projects_mod.update_document_metadata(existing_doc["id"], common_meta)
         result = doc_index.index_document(project_id, existing_doc["id"])
         result["reindexed_existing_doc"] = True
+        r2_storage.delete_local_archive(str(dest))
+        result["r2_archive"] = archive
+        print(
+            f"[p1b-server] VERIFICATION doc_id={existing_doc['id']} "
+            f"drive_file_id={file_meta['id']} drive_path={rel!r} "
+            f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
+            f"rag_indexed={result.get('rag_indexed', 0)} "
+            f"r2_archived={archive.get('archived')} "
+            f"r2_object_key={archive.get('r2_object_key')} "
+            f"r2_error={archive.get('error')} "
+            f"index_status={result.get('status')} "
+            f"index_error={result.get('error')}",
+            file=sys.stderr,
+        )
         return rel, result
 
     doc = projects_mod.add_document(
@@ -135,15 +199,23 @@ def _ingest_file(
         file_path=str(dest),
         size=size,
         content_sha256=content_sha,
-        metadata={
-            "drive_file_id": file_meta["id"],
-            "drive_path": rel,
-            "source": "p1b_server_drive_reingestion",
-            "ingestion_run_id": run_id,
-            "mimeType": mime,
-        },
+        metadata=common_meta,
     )
     result = doc_index.index_document(project_id, doc["id"])
+    r2_storage.delete_local_archive(str(dest))
+    result["r2_archive"] = archive
+    print(
+        f"[p1b-server] VERIFICATION doc_id={doc['id']} "
+        f"drive_file_id={file_meta['id']} drive_path={rel!r} "
+        f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
+        f"rag_indexed={result.get('rag_indexed', 0)} "
+        f"r2_archived={archive.get('archived')} "
+        f"r2_object_key={archive.get('r2_object_key')} "
+        f"r2_error={archive.get('error')} "
+        f"index_status={result.get('status')} "
+        f"index_error={result.get('error')}",
+        file=sys.stderr,
+    )
     return rel, result
 
 
@@ -226,6 +298,7 @@ def main() -> int:
         "succeeded": 0,
         "zero_chunk": 0,
         "skipped_too_large": 0,
+        "skipped_too_small": 0,
         "skipped_unsupported": 0,
         "skipped_empty": 0,
         "download_failed": 0,
@@ -237,8 +310,8 @@ def main() -> int:
     def _bump_folder(folder_name: str, key: str) -> None:
         folder_tallies.setdefault(folder_name, {
             "succeeded": 0, "zero_chunk": 0, "skipped_too_large": 0,
-            "skipped_unsupported": 0, "skipped_empty": 0,
-            "download_failed": 0, "errors": 0,
+            "skipped_too_small": 0, "skipped_unsupported": 0,
+            "skipped_empty": 0, "download_failed": 0, "errors": 0,
         })[key] += 1
 
     def _write_partial_report() -> None:
@@ -314,6 +387,17 @@ def main() -> int:
                       f"({type(exc).__name__}: {exc}); falling back to "
                       f"row-presence resume", file=sys.stderr)
                 counts_available = False
+            def _doc_is_unsupported(doc: Dict[str, Any]) -> bool:
+                meta = doc.get("metadata") or {}
+                path = meta.get("drive_path") or ""
+                mime = meta.get("mimeType", "")
+                ext = Path(path).suffix.lower()
+                return (
+                    mime in _UNSUPPORTED_MIMES
+                    or ext in _UNSUPPORTED_EXTS
+                    or _is_geodatabase_internal(path)
+                )
+
             for doc in projects_mod.list_documents(project_id):
                 fid = (doc.get("metadata") or {}).get("drive_file_id")
                 if not fid:
@@ -322,15 +406,24 @@ def main() -> int:
                     already_indexed.add(fid)
                 elif chunk_counts.get(doc["id"], 0) > 0:
                     already_indexed.add(fid)
+                elif _doc_is_unsupported(doc):
+                    # Legacy zero-chunk row for a file we now know is
+                    # unsupported (e.g. geodatabase internals). Don't retry.
+                    continue
                 elif fid not in retry_doc_by_fid:
                     retry_doc_by_fid[fid] = doc
 
         # Drop unsupported before sharding so every worker sees the same
         # supported universe and sha256 assignment stays partition-complete.
         def _is_unsupported(fm: Dict[str, Any]) -> bool:
+            path = fm.get("_drive_path") or fm.get("name") or ""
             mime = fm.get("mimeType", "")
-            ext = Path(fm.get("_drive_path") or fm.get("name") or "").suffix.lower()
-            return mime in _UNSUPPORTED_MIMES or ext in _UNSUPPORTED_EXTS
+            ext = Path(path).suffix.lower()
+            return (
+                mime in _UNSUPPORTED_MIMES
+                or ext in _UNSUPPORTED_EXTS
+                or _is_geodatabase_internal(path)
+            )
 
         unsupported_files = [f for f in files if _is_unsupported(f)]
         supported_files = [f for f in files if not _is_unsupported(f)]
@@ -352,6 +445,21 @@ def main() -> int:
             shard_index=shard_index,
             total_shards=total_shards,
         )
+        # Sort before offset/limit so a limited batch picks the intended
+        # end of the size distribution, while the shard partition itself
+        # stays stable. Default smallest-first; set P1B_LARGEST_FIRST=1
+        # to process largest files first (useful for quickly reaching real
+        # documents during testing). Files with no reported size (0) go to
+        # the end regardless.
+        largest_first = os.getenv("P1B_LARGEST_FIRST", "").strip().lower() in {"1", "true", "yes"}
+
+        def _sort_key(f: Dict[str, Any]) -> Tuple[bool, int]:
+            size = int(f.get("size") or 0)
+            # size==0 always sorts last; otherwise largest-first uses
+            # negative size so the reverse flag is not needed.
+            return (size == 0, -size if largest_first else size)
+
+        shard_files.sort(key=_sort_key)
         # Offset/limit AFTER shard filter so assignment stays stable.
         batch_files = sharding.apply_offset_limit(
             shard_files, offset=offset, limit=limit,
@@ -439,6 +547,9 @@ def main() -> int:
                 elif err == "SKIPPED_TOO_LARGE":
                     global_tally["skipped_too_large"] += 1
                     _bump_folder(folder_name, "skipped_too_large")
+                elif err == "SKIPPED_TOO_SMALL":
+                    global_tally["skipped_too_small"] += 1
+                    _bump_folder(folder_name, "skipped_too_small")
                 elif err == "SKIPPED_UNSUPPORTED":
                     global_tally["skipped_unsupported"] += 1
                     _bump_folder(folder_name, "skipped_unsupported")
@@ -474,14 +585,13 @@ def main() -> int:
         # in flight — submitting all 6k at once made the 4 GB worker OOM
         # after the first few SKIPPED_TOO_LARGE completions (the other
         # workers were already downloading multi-hundred-MB PDFs).
-        # Smallest files first so we make visible progress before the
-        # Tier-1 contract volumes.
-        filtered_files.sort(key=lambda f: int(f.get("size") or 0))
+        # Ordering is already applied before offset/limit via P1B_LARGEST_FIRST.
+        sort_label = "largest-first" if largest_first else "smallest-first"
         pool_size = max(1, int(os.getenv("P1B_PARALLELISM", "2")))
         tally_lock = threading.Lock()
         done_count = 0
         print(f"[p1b-server] parallel ingestion with {pool_size} workers "
-              f"(smallest-first, {len(filtered_files)} files)", file=sys.stderr)
+              f"({sort_label}, {len(filtered_files)} files)", file=sys.stderr)
         with ThreadPoolExecutor(max_workers=pool_size) as pool:
             pending: Dict[Future, Dict[str, Any]] = {}
             file_iter = iter(filtered_files)
@@ -532,7 +642,8 @@ def main() -> int:
                 "embedder": os.environ["RAG_EMBEDDING_MODEL"],
                 "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
                 "processed": global_tally["succeeded"],
-                "skipped": global_tally["skipped_too_large"] + global_tally["skipped_empty"],
+                "skipped": global_tally["skipped_too_large"] + global_tally["skipped_too_small"]
+                + global_tally["skipped_empty"],
                 "failed": global_tally["errors"] + global_tally["zero_chunk"]
                 + global_tally["download_failed"],
                 "unsupported": global_tally["skipped_unsupported"],
@@ -553,6 +664,7 @@ def main() -> int:
         f"[p1b-server] tier {args.tier}: {global_tally['succeeded']} succeeded, "
         f"{global_tally['zero_chunk']} zero-chunk, "
         f"{global_tally['skipped_too_large']} too-large, "
+        f"{global_tally['skipped_too_small']} too-small, "
         f"{global_tally['skipped_unsupported']} unsupported, "
         f"{global_tally['already_indexed']} already_indexed, "
         f"{global_tally['errors']} errors, {elapsed_global:.1f}s "
