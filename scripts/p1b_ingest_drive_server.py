@@ -155,6 +155,18 @@ def _ingest_file(
         result["reindexed_existing_doc"] = True
         r2_storage.delete_local_archive(str(dest))
         result["r2_archive"] = archive
+        print(
+            f"[p1b-server] VERIFICATION doc_id={existing_doc['id']} "
+            f"drive_file_id={file_meta['id']} drive_path={rel!r} "
+            f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
+            f"rag_indexed={result.get('rag_indexed', 0)} "
+            f"r2_archived={archive.get('archived')} "
+            f"r2_object_key={archive.get('r2_object_key')} "
+            f"r2_error={archive.get('error')} "
+            f"index_status={result.get('status')} "
+            f"index_error={result.get('error')}",
+            file=sys.stderr,
+        )
         return rel, result
 
     doc = projects_mod.add_document(
@@ -169,6 +181,18 @@ def _ingest_file(
     result = doc_index.index_document(project_id, doc["id"])
     r2_storage.delete_local_archive(str(dest))
     result["r2_archive"] = archive
+    print(
+        f"[p1b-server] VERIFICATION doc_id={doc['id']} "
+        f"drive_file_id={file_meta['id']} drive_path={rel!r} "
+        f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
+        f"rag_indexed={result.get('rag_indexed', 0)} "
+        f"r2_archived={archive.get('archived')} "
+        f"r2_object_key={archive.get('r2_object_key')} "
+        f"r2_error={archive.get('error')} "
+        f"index_status={result.get('status')} "
+        f"index_error={result.get('error')}",
+        file=sys.stderr,
+    )
     return rel, result
 
 
