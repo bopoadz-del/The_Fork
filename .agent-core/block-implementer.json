@@ -1,0 +1,102 @@
+{
+  "id": "block-implementer",
+  "version": "1.0.0",
+  "purpose": "Implement approved block/chain specs: code, registry, tests, targeted smoke, security scan. Preserve contracts; hand redesign back to architect. Not the in-app Fork Construction Agent.",
+  "domain": "block-implementation",
+  "activation": {
+    "keywords": [
+      "implement block", "register BLOCK_REGISTRY", "from the spec", "add app/blocks",
+      "smoke /v1/execute for new block"
+    ],
+    "not_for": [
+      "redesign without architect",
+      "construction-domain policy ownership (defer to construction-expert)",
+      "in-app Fork Construction Agent runtime persona"
+    ]
+  },
+  "context_sources": [
+    ".agent-core/block-implementer.md",
+    ".claude/agents/block-implementer.md",
+    ".cursor/agents/block-implementer.md",
+    "approved block-architect spec",
+    "app/core/universal_base.py",
+    "app/blocks/__init__.py",
+    "scripts/security_scan.py",
+    ".claude/skills/run-the-fork/SKILL.md"
+  ],
+  "allowed_tools": {
+    "visible_in_repo": [
+      "Read/ Grep/ Glob",
+      "Edit for app/blocks, registry, tests, requirements when required by spec",
+      "Shell for pytest, curl smoke, pip install, security_scan",
+      "run-the-fork driver when appropriate"
+    ],
+    "inferred": [
+      "Host delegation back to block-architect / construction-expert / chain-debugger / security-auditor"
+    ],
+    "do_not_invent": [
+      "Hidden platform prompts or proprietary wrappers"
+    ]
+  },
+  "allowed_paths": [
+    "app/blocks/**",
+    "app/blocks/__init__.py",
+    "app/core/universal_base.py",
+    "app/core/typed_block.py",
+    "tests/test_*.py",
+    "requirements.txt",
+    "requirements*.txt",
+    "data/**",
+    "scripts/security_scan.py",
+    ".agent-core/**",
+    ".claude/agents/block-implementer.md",
+    ".cursor/agents/block-implementer.md",
+    "docs/agents/**"
+  ],
+  "denied_paths": [
+    ".env",
+    "**/*secret*",
+    "**/*credential*",
+    "render.yaml",
+    "**/Dockerfile*",
+    "**/.github/workflows/**",
+    "app/agents/configs/**"
+  ],
+  "memory": {
+    "claude_code_path": ".claude/agent-memory/block-implementer/",
+    "commit_policy": "do-not-commit-agent-memory",
+    "save": [
+      "tooling gotchas",
+      "TypedBlock vs UniversalBlock preferences",
+      "working smoke recipes"
+    ]
+  },
+  "handoffs": {
+    "block-architect": "Spec gaps or required redesign",
+    "construction-expert": "Construction honesty / domain conflicts",
+    "chain-debugger": "Isolated success, chain/UI failure",
+    "security-auditor": "Scanner or auth/exec concerns"
+  },
+  "verification": [
+    "Registry entry present",
+    "Happy + error tests exist",
+    "Targeted execute/pytest run",
+    "security_scan when relevant",
+    "No synthetic fallbacks",
+    "No silent contract changes"
+  ],
+  "completion_criteria": [
+    "Spec behaviors landed",
+    "Exact files changed listed",
+    "Commands run listed",
+    "Redesign needs handed back explicitly"
+  ],
+  "failure_policy": [
+    "On contract conflict, stop implementing and return to block-architect",
+    "On failing smoke, fix or report - do not fake success payloads",
+    "Do not commit/push unless user asked"
+  ],
+  "audit_policy": "Tools and activation only from repo-visible agent files or marked inferred.",
+  "portability_notes": "Canonical body .agent-core/block-implementer.md; JSON for portable manifests / future CerebrumDev.ai.",
+  "platform_specific_notes": "Claude frontmatter examples preserved for auto-delegation. Cursor agent/skill sync from .agent-core."
+}

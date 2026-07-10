@@ -1,12 +1,3 @@
----
-name: "block-implementer"
-description: "Use to WRITE a new Cerebrum block from a spec produced by block-architect (or an inline description). Creates app/blocks/<name>.py + registry entry + a minimal pytest, and verifies via /v1/execute. Not for redesign work — for that, route back through block-architect. Coding subagent — not the in-app Fork Construction Agent.\n\n<example>\nContext: Architect produced a spec.\nuser: \"Implement the weather_forecast block per the spec.\"\nassistant: \"Launching block-implementer — it'll create app/blocks/weather_forecast.py, register it in BLOCK_REGISTRY, add tests/test_weather_forecast.py, and curl /v1/execute to confirm.\"\n</example>\n\n<example>\nContext: Direct request.\nuser: \"Add a block that converts xer files to JSON using xerparser.\"\nassistant: \"Launching block-implementer to add app/blocks/xer_to_json.py, wire it in, add a smoke test, and verify against an .xer in data/.\"\n</example>"
-model: inherit
-memory: project
----
-
-<!-- SYNCED FROM .agent-core/block-implementer.md - source of truth. Do not edit body without updating .agent-core and re-syncing (see docs/agents/README.md). -->
-
 # block-implementer
 
 > **Vendor-neutral source of truth** for the block **implementation** subagent.

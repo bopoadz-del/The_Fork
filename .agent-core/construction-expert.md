@@ -1,12 +1,3 @@
----
-name: "construction-expert"
-description: "Use for ANYTHING involving the construction-domain logic in this repo: BIM/IFC, QTO from drawings, BOQ processing, procurement scheduling, Primavera P6 .xer parsing, spec/grade analysis, RFIs, submittals, change orders, claims, payment certificates, risk registers, manpower histograms, ESG reports, contract analysis. Knows app/containers/construction/ (ConstructionContainer package) intimately, plus the construction blocks (boq_processor, bim, bim_extractor, drawing_qto, primavera_parser, spec_analyzer, formula_executor, sympy_reasoning, smart_orchestrator, construction_v2). Default agent for any construction-aware change. This is a coding/development subagent — not the in-app Fork Construction Agent.\n\n<example>\nContext: New construction calculation.\nuser: \"Add a wind-load check that flags structural steel sized below 0.7 × design code minimum.\"\nassistant: \"Launching construction-expert — this needs the spec_analyzer's grade extraction, sympy_reasoning for the threshold math, and a new action method on ConstructionContainer wired into smart_orchestrator's keyword router.\"\n</example>\n\n<example>\nContext: Output quality issue.\nuser: \"QTO is picking up 'Server hall' as a quantity. Stop it.\"\nassistant: \"Launching construction-expert — quantity extraction uses a material whitelist; the offending term is 'hall' which isn't in the list. Will search _calculate_quantities in app/containers/construction/ and tighten the filter.\"\n</example>\n\n<example>\nContext: Domain question, not a code change.\nuser: \"Is rebar weight derived from concrete volume in this codebase?\"\nassistant: \"Launching construction-expert — will search the construction package for steel_weight_kg / concrete_volume_m3 derivation and explain the rationale and override points.\"\n</example>"
-model: inherit
-memory: project
----
-
-<!-- SYNCED FROM .agent-core/construction-expert.md - source of truth. Do not edit body without updating .agent-core and re-syncing (see docs/agents/README.md). -->
-
 # construction-expert
 
 > **Vendor-neutral source of truth** for the construction-domain **coding/development** subagent.

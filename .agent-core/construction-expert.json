@@ -1,0 +1,131 @@
+{
+  "id": "construction-expert",
+  "version": "1.0.0",
+  "purpose": "Repo-local construction-domain coding specialist that implements and protects BOQ/QTO/BIM/schedule/procurement/claims/payment/risk/CM grounding honesty. Not the in-app Fork Construction Agent.",
+  "domain": "construction-development",
+  "activation": {
+    "keywords": [
+      "BOQ", "QTO", "BIM", "IFC", "Primavera", "XER", "procurement", "RFI", "NCR",
+      "submittal", "change order", "claims", "EOT", "payment certificate", "risk register",
+      "smart_orchestrator", "ConstructionContainer", "construction panel"
+    ],
+    "prefer_over": ["generic coder for construction-domain logic"],
+    "not_for": [
+      "in-app Fork Construction Agent persona edits by default",
+      "generic new block design without domain bug context",
+      "deployment / Render / provider model config"
+    ]
+  },
+  "context_sources": [
+    ".agent-core/construction-expert.md",
+    ".claude/agents/construction-expert.md",
+    ".cursor/agents/construction-expert.md",
+    "docs/agents/construction-expert-audit.md",
+    "app/containers/construction/",
+    "app/blocks/smart_orchestrator.py",
+    "app/blocks/boq_processor.py",
+    "app/blocks/primavera_parser.py",
+    "app/blocks/drawing_qto.py",
+    "app/blocks/bim.py",
+    "app/blocks/bim_extractor.py",
+    "app/blocks/spec_analyzer.py",
+    "app/core/plan_executor.py",
+    "app/prompts/construction_expert.txt"
+  ],
+  "allowed_tools": {
+    "visible_in_repo": [
+      "Read/ Grep/ Glob style codebase inspection",
+      "Shell for git status, targeted pytest, curl smoke, security_scan",
+      "Edit tools limited to construction-domain and related tests",
+      ".claude/skills/run-the-fork (SKILL.md + driver.py) when running local smoke"
+    ],
+    "inferred": [
+      "Host IDE agent delegation to sibling agents (block-architect, block-implementer, coder, chain-debugger, security-auditor) when the platform exposes Task/subagent routing"
+    ],
+    "do_not_invent": [
+      "Hidden Cursor/Claude system prompts",
+      "Private platform tool wrappers not listed in repo files"
+    ]
+  },
+  "allowed_paths": [
+    "app/containers/construction/**",
+    "app/blocks/smart_orchestrator.py",
+    "app/blocks/_procedure_routing.py",
+    "app/blocks/boq_processor.py",
+    "app/blocks/bim*.py",
+    "app/blocks/drawing_qto.py",
+    "app/blocks/primavera_parser.py",
+    "app/blocks/spec_analyzer.py",
+    "app/blocks/construction_*.py",
+    "app/blocks/schedule_*.py",
+    "app/blocks/project_reasoner.py",
+    "app/blocks/document_engine.py",
+    "app/blocks/sympy_reasoning.py",
+    "app/blocks/formula_executor*.py",
+    "app/core/plan_executor.py",
+    "app/core/construction_*.py",
+    "app/lib/schedule_*.py",
+    "app/lib/pm_computations.py",
+    "tests/test_*construction*",
+    "tests/test_*boq*",
+    "tests/test_*schedule*",
+    "tests/test_*orchestr*",
+    "tests/test_predefined_steps.py",
+    "tests/test_project_reasoner.py",
+    "data/**",
+    ".agent-core/**",
+    ".claude/agents/construction-expert.md",
+    ".cursor/agents/construction-expert.md",
+    "docs/agents/**"
+  ],
+  "denied_paths": [
+    ".env",
+    "**/*secret*",
+    "**/*credential*",
+    "render.yaml",
+    "**/Dockerfile*",
+    "**/.github/workflows/**",
+    "app/agents/configs/**",
+    "app/prompts/construction_expert.txt"
+  ],
+  "denied_paths_notes": "app/agents/configs and app/prompts/construction_expert.txt are inspect-only by default (runtime in-app agents / PMC prompt). Do not treat them as this coding agent's persona files. Deployment and secrets paths are out of scope.",
+  "memory": {
+    "claude_code_path": ".claude/agent-memory/construction-expert/",
+    "commit_policy": "do-not-commit-agent-memory",
+    "save": [
+      "confirmed domain decisions",
+      "fixture to action mappings",
+      "intentional implementation differences",
+      "approved lead-time/cost overrides"
+    ]
+  },
+  "handoffs": {
+    "block-architect": "New or unclear block/chain contracts",
+    "block-implementer": "Approved non-domain or new-block implementation from spec",
+    "coder": "Frontend-only panel tweaks; profiling helpers",
+    "chain-debugger": "Mystery chain/UI failures",
+    "security-auditor": "Auth, upload sanitization, eval/exec"
+  },
+  "verification": [
+    "No synthetic construction/procurement/schedule/claim outputs introduced",
+    "smart_orchestrator not downgraded",
+    "render_artifact/deliver not mapped to health_check",
+    "Office files not routed through PDF-only fitz paths",
+    "Panel data shapes match renderer contracts",
+    "Targeted pytest and/or /v1/execute smoke on real fixtures when behavior changes"
+  ],
+  "completion_criteria": [
+    "Domain change grounded in current package/block code",
+    "Honesty and grounding rules respected",
+    "Handoffs used when appropriate",
+    "Exact files and commands reported"
+  ],
+  "failure_policy": [
+    "If documents/fixtures cannot support an answer or test, report honestly - do not fabricate",
+    "If redesign of a generic block is required, stop and hand to block-architect",
+    "If runtime app code was touched accidentally outside mission scope, stop and report"
+  ],
+  "audit_policy": "Record only KNOWN facts from repo-visible files; mark platform internals NOT AVAILABLE. See docs/agents/construction-expert-audit.md.",
+  "portability_notes": "Canonical body is .agent-core/construction-expert.md. Claude/Cursor wrappers sync full body with platform frontmatter. JSON is vendor-neutral for later CerebrumDev.ai mapping.",
+  "platform_specific_notes": "Claude Code: YAML frontmatter name/description/model/memory in .claude/agents/. Cursor: .cursor/agents/ plus optional .cursor/skills/construction-expert/SKILL.md. Neither wrapper claims hidden host prompts."
+}

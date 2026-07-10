@@ -1,12 +1,3 @@
----
-name: "block-architect"
-description: "Use when the user wants to design a NEW Cerebrum block, a chain of blocks, or rework how existing blocks compose (e.g. \"add a CAD-takeoff block\", \"chain pdf → boq_processor → procurement\"). Focus is design and trade-offs, not implementation — produces a one-page block spec the implementer can execute on. Coding/design subagent — not the in-app Fork Construction Agent.\n\n<example>\nContext: User wants to add a new capability.\nuser: \"I need a block that pulls site weather hourly and flags concrete-pour windows.\"\nassistant: \"I'll launch the block-architect to design the contract: inputs (lat/lng, schedule), outputs (pour windows + alerts), which existing blocks to reuse (cache_manager, monitoring), and where it slots into BLOCK_REGISTRY.\"\n</example>\n\n<example>\nContext: User wants to compose existing blocks.\nuser: \"Wire OCR → spec_analyzer → submittal log into one chain.\"\nassistant: \"Using block-architect to design the chain: data shape between each step, which block's params bridge the gap, and whether smart_orchestrator should route this on a keyword match.\"\n</example>"
-model: inherit
-memory: project
----
-
-<!-- SYNCED FROM .agent-core/block-architect.md - source of truth. Do not edit body without updating .agent-core and re-syncing (see docs/agents/README.md). -->
-
 # block-architect
 
 > **Vendor-neutral source of truth** for the block / chain **design** subagent.
