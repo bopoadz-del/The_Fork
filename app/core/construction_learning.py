@@ -616,6 +616,37 @@ class ConstructionLearningEngine:
             "template_tracks": len(self.templates.to_dict()),
         }
 
+    def list_surfaces(self) -> Dict[str, Any]:
+        """Minimal list surface for CM wiring — no synthetic observations."""
+        return {
+            "status": "success",
+            "execution_mode": "list_only",
+            "surfaces": [
+                {
+                    "id": "duration_calibration",
+                    "description": "Record actual vs planned activity durations",
+                    "method": "record_duration",
+                },
+                {
+                    "id": "procurement_lead_times",
+                    "description": "Learn delivery lead times by category",
+                    "method": "record_procurement_delivery",
+                },
+                {
+                    "id": "defect_patterns",
+                    "description": "Track defect rates by trade/activity type",
+                    "method": "record_defect",
+                },
+                {
+                    "id": "template_effectiveness",
+                    "description": "Score workflow template success by project type",
+                    "method": "record_template_usage",
+                },
+            ],
+            "summary": self.get_summary(),
+            "note": "Recording requires real project observations; no fabricated defaults.",
+        }
+
     def reset(self) -> Dict[str, str]:
         self.duration = DurationCalibration()
         self.procurement = ProcurementLeadTimeLearner()

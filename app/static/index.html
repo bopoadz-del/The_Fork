@@ -529,6 +529,8 @@ const connectedDrives = {};
 //
 // Shape: [{name, content, driveName, kind, sizeBytes, pipelineResult?, ...}]
 let sessionFileContexts = [];
+// domain_status from the latest auto_pipeline — fed to project_dashboard.health_check.
+let sessionDomainStatus = null;
 // Legacy alias: most call sites still reference `activeFileContext` meaning
 // "the most-recently-attached file". Keep it as a *view* over the array so
 // existing helpers (panel rendering, file-specific actions) continue to work
@@ -2289,6 +2291,9 @@ async function triggerAction(action) {
         };
         const data = await client.execute('construction', inputData, { action });
         const result = data.result || {};
+        if (result.domain_status) {
+            sessionDomainStatus = result.domain_status;
+        }
         const artifacts = data.artifacts || [];
         const panelTitle = action === 'procurement_list_generator' ? 'Procurement List' : action;
         if (artifacts.length) {
@@ -2301,6 +2306,62 @@ async function triggerAction(action) {
         addMessage(`${panelTitle} ready — see the artifacts panel.`, 'assistant');
     } catch(e) {
         addMessage(`${action} failed: ${e.message}`, 'error');
+    }
+    showIndicator(false);
+}
+
+/** Run auto_pipeline on the active file and stash domain_status for health_check. */
+async function runAutoPipelineOnActiveFile() {
+    if (!activeFileContext?.pipelineResult?.file_path) {
+        addMessage('No file ready for full analysis — upload a construction document first.', 'error');
+        return;
+    }
+    showIndicator(true);
+    addMessage('Running full construction analysis (auto_pipeline)...', 'system');
+    try {
+        const data = await client.execute('construction', {
+            file_path: activeFileContext.pipelineResult.file_path,
+            extracted_text: activeFileContext.pipelineResult.extracted_text || '',
+        }, { action: 'auto_pipeline' });
+        const result = data.result || {};
+        sessionDomainStatus = result.domain_status || null;
+        const panels = result.panels || [];
+        if (panels.length) {
+            setOutcomes(renderPanels(panels, result.next_actions || [], activeFileContext.name, ''));
+            openArtifactPanel('Construction Analysis');
+        }
+        addMessage(
+            sessionDomainStatus
+                ? 'Analysis complete — domain status ready for project health.'
+                : 'Analysis complete — no domain_status derived (health will report unknown).',
+            'assistant'
+        );
+    } catch (e) {
+        addMessage(`auto_pipeline failed: ${e.message}`, 'error');
+    }
+    showIndicator(false);
+}
+
+/** project_dashboard.health_check using auto_pipeline domain_status when present. */
+async function refreshProjectHealth() {
+    showIndicator(true);
+    try {
+        const data = await client.execute('project_dashboard', {
+            action: 'health_check',
+            domain_status: sessionDomainStatus || {},
+        }, {});
+        const result = data.result || {};
+        const overall = result.overall_status || 'unknown';
+        const score = result.overall_score != null ? result.overall_score : '—';
+        const note = result.note ? `<div style="color:#888;font-size:11px;margin-top:6px;">${escapeHtml(result.note)}</div>` : '';
+        setOutcomes(`<div class="outcome-item">
+            <div class="outcome-label">📊 Project Health</div>
+            <div style="font-size:13px;margin-top:6px;">Overall: <strong>${escapeHtml(String(overall))}</strong> · Score: ${escapeHtml(String(score))}</div>
+            ${note}
+        </div>`);
+        openArtifactPanel('Project Health');
+    } catch (e) {
+        addMessage(`Health check failed: ${e.message}`, 'error');
     }
     showIndicator(false);
 }

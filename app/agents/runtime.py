@@ -1663,6 +1663,22 @@ def _parse_dsml_tool_calls(content: str) -> tuple[str, list[dict]]:
     return cleaned, tool_calls
 
 
+_CM_INJECT_AGENTS = frozenset({"heavy-reasoning", "project-assistant"})
+
+
+def _cm_prompt_fragment_for_turn(user_message: str) -> str:
+    """Compact CrossDomainReasoner inject for construction agent paths."""
+    try:
+        from app.core.cross_domain_reasoner import CrossDomainReasoner
+
+        reasoner = CrossDomainReasoner()
+        injected = reasoner.inject_prompt("", user_message or "")
+        text = (injected or "").strip()
+        return text[:800] if text else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 @dataclass
 class Agent:
     """Declarative agent definition."""
@@ -2897,6 +2913,12 @@ class Agent:
             for f in facts:
                 lines.append(f"- {f['key']}: {f['value']}")
             msgs.append({"role": "system", "content": "\n".join(lines)})
+
+        # CM cross-domain inject (compact metadata; preserves RAG grounding).
+        if self.name in _CM_INJECT_AGENTS:
+            cm_fragment = _cm_prompt_fragment_for_turn(user_message)
+            if cm_fragment:
+                msgs.append({"role": "system", "content": cm_fragment})
 
         for turn in (history or [])[-MAX_HISTORY_TURNS:]:
             role = (turn.get("role") or "user").lower()

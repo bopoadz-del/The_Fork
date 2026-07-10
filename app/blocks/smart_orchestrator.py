@@ -238,6 +238,11 @@ class SmartOrchestratorBlock(UniversalBlock):
             or params.get("file_type")
             or self._detect_file_type(data, session_context)
         )
+        promote_cm_followups = bool(
+            data.get("promote_cm_followups")
+            or params.get("promote_cm_followups")
+            or self.config.get("promote_cm_followups", False)
+        )
 
         if user_message.strip().lower() in ("list actions", "help", "what can you do"):
             return self._list_actions()
@@ -272,7 +277,9 @@ class SmartOrchestratorBlock(UniversalBlock):
                     source="learned", session_context=session_context,
                 )
 
-                cm_meta = self._cross_domain_enrichment(user_message, action_queue)
+                cm_meta = self._cross_domain_enrichment(
+                    user_message, action_queue, promote_cm_followups=promote_cm_followups
+                )
                 # Enrichment may append high-confidence follow-ups; refresh parallel.
                 parallel_group = self._detect_parallel_group(action_queue)
                 parallel_flag = parallel_group is not None or len(action_queue) > 1
@@ -325,7 +332,9 @@ class SmartOrchestratorBlock(UniversalBlock):
         # attach template match + post-tool follow-ups. May append up to two
         # high-confidence follow-ups for WBS/procurement seeds only — still
         # does not replace ACTION_PATTERNS ownership.
-        cm_meta = self._cross_domain_enrichment(user_message, action_queue)
+        cm_meta = self._cross_domain_enrichment(
+            user_message, action_queue, promote_cm_followups=promote_cm_followups
+        )
         parallel_group = self._detect_parallel_group(action_queue)
         parallel_flag = parallel_group is not None or len(action_queue) > 1
 
@@ -379,11 +388,13 @@ class SmartOrchestratorBlock(UniversalBlock):
         seed: Optional[str],
         template_score: float,
         suggested_tools: List[str],
+        promote_cm_followups: bool = False,
     ) -> List[str]:
         """Promote high-confidence follow-ups onto action_queue (in place).
 
         Safety gates (all required):
-          1. Seed is generate_wbs or procurement_list_generator.
+          1. Seed is generate_wbs, procurement_list_generator, or (when
+             promote_cm_followups=true) boq_process.
           2. Template match score >= 0.15 OR the tool also appears in
              analyze_turn suggested_tools (cross-domain intent overlap).
           3. Tool is a known ACTION_PATTERNS action (no alien reasoner names).
@@ -391,7 +402,10 @@ class SmartOrchestratorBlock(UniversalBlock):
 
         Returns the list of tools actually appended (for cm_queue_appended).
         """
-        if seed not in self._CM_QUEUE_APPEND_SEEDS or not follow_ups:
+        allowed_seeds = set(self._CM_QUEUE_APPEND_SEEDS)
+        if promote_cm_followups:
+            allowed_seeds.add("boq_process")
+        if seed not in allowed_seeds or not follow_ups:
             return []
         known = self._known_orchestrator_actions()
         # boq_processor is the reasoner key; orchestrator owns boq_process.
@@ -414,7 +428,7 @@ class SmartOrchestratorBlock(UniversalBlock):
         return appended
 
     def _cross_domain_enrichment(
-        self, user_message: str, action_queue: List[str]
+        self, user_message: str, action_queue: List[str], *, promote_cm_followups: bool = False
     ) -> Dict[str, Any]:
         """Attach CM template / post-tool suggestions; optionally grow the queue.
 
@@ -426,7 +440,7 @@ class SmartOrchestratorBlock(UniversalBlock):
           - cm_suggested_tools: cross-domain intent tools from analyze_turn.
           - cm_matched_template / cm_workflow_plan: only when score >= 0.15.
           - cm_queue_appended: tools promoted onto action_queue this turn
-            (empty unless seed is WBS/procurement and safety gates pass).
+            (empty unless seed is WBS/procurement/BOQ-with-flag and safety gates pass).
           - cm_prompt_inject: CrossDomainReasoner.inject_prompt fragment for
             runtime system-prompt enrichment (empty when no cross-domain hit).
         """
@@ -460,6 +474,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                 seed=seed,
                 template_score=score,
                 suggested_tools=suggested,
+                promote_cm_followups=promote_cm_followups,
             )
 
             # Prompt inject for chat/agent runtime (deterministic, no LLM).
