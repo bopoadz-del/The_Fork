@@ -1568,10 +1568,15 @@ class ConstructionContainer(
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
         action = data.get("action") or p.get("action") or action
-    
+
         if not action:
             return {"status": "error", "error": "No action specified"}
-    
+
+        # Workflow-template step types (payment_cert, float_analysis, …)
+        # resolve to canonical ConstructionContainer actions.
+        from app.core.cm_step_aliases import resolve_action
+        action = resolve_action(action)
+
         handlers = {
             "chat": self.chat,
             "process_document": self.process_document,

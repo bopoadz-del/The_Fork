@@ -272,6 +272,11 @@ class SmartOrchestratorBlock(UniversalBlock):
                     source="learned", session_context=session_context,
                 )
 
+                cm_meta = self._cross_domain_enrichment(user_message, action_queue)
+                # Enrichment may append high-confidence follow-ups; refresh parallel.
+                parallel_group = self._detect_parallel_group(action_queue)
+                parallel_flag = parallel_group is not None or len(action_queue) > 1
+
                 return {
                     "status": "success",
                     "action_queue": action_queue,
@@ -289,6 +294,7 @@ class SmartOrchestratorBlock(UniversalBlock):
                     "model_confidence": learned_prediction["confidence"],
                     "fallback_used": False,
                     "top_k": learned_prediction.get("top_k", []),
+                    **cm_meta,
                 }
             # else: model not loaded OR low confidence → fall through to keyword
 
@@ -315,6 +321,14 @@ class SmartOrchestratorBlock(UniversalBlock):
                 source="keyword_fallback", session_context=session_context,
             )
 
+        # Cross-domain reasoner hook (non-competing): after keyword routing,
+        # attach template match + post-tool follow-ups. May append up to two
+        # high-confidence follow-ups for WBS/procurement seeds only — still
+        # does not replace ACTION_PATTERNS ownership.
+        cm_meta = self._cross_domain_enrichment(user_message, action_queue)
+        parallel_group = self._detect_parallel_group(action_queue)
+        parallel_flag = parallel_group is not None or len(action_queue) > 1
+
         return {
             "status": "success",
             "action_queue": action_queue,
@@ -325,10 +339,170 @@ class SmartOrchestratorBlock(UniversalBlock):
             "file_type_hint": file_type,
             "session_context": session_context,
             "routing_mode": routing_mode,
+            **cm_meta,
             **({"fallback_used": True, "model_confidence": (learned_prediction or {}).get("confidence", 0.0),
                 "fallback_reason": (learned_prediction or {}).get("reason")}
                if routing_mode == "learned" else {}),
         }
+
+    # Orchestrator keyword → CrossDomainReasoner post-tool trigger keys.
+    # ACTION_PATTERNS uses boq_process; reasoner triggers are keyed boq_processor.
+    _POST_TOOL_SEED_ALIASES: Dict[str, str] = {
+        "boq_process": "boq_processor",
+    }
+    # Same floor as TemplateMatcher.best_match / get_matched_template.
+    _CM_TEMPLATE_SCORE_THRESHOLD: float = 0.15
+    # Seeds that may promote post-tool follow-ups onto action_queue.
+    # Contract: only these primary actions may grow the queue; other seeds
+    # keep follow-ups as cm_follow_up_tools metadata only (no second router).
+    _CM_QUEUE_APPEND_SEEDS = frozenset({
+        "generate_wbs",
+        "procurement_list_generator",
+    })
+    # Max follow-ups promoted onto action_queue per turn.
+    _CM_QUEUE_APPEND_CAP: int = 2
+
+    def _normalize_post_tool_seed(self, seed: Optional[str]) -> Optional[str]:
+        if not seed:
+            return seed
+        return self._POST_TOOL_SEED_ALIASES.get(seed, seed)
+
+    def _known_orchestrator_actions(self) -> set:
+        """Action names owned by ACTION_PATTERNS (single router vocabulary)."""
+        return {action for action, _ in ACTION_PATTERNS}
+
+    def _safe_queue_follow_ups(
+        self,
+        action_queue: List[str],
+        follow_ups: List[str],
+        *,
+        seed: Optional[str],
+        template_score: float,
+        suggested_tools: List[str],
+    ) -> List[str]:
+        """Promote high-confidence follow-ups onto action_queue (in place).
+
+        Safety gates (all required):
+          1. Seed is generate_wbs or procurement_list_generator.
+          2. Template match score >= 0.15 OR the tool also appears in
+             analyze_turn suggested_tools (cross-domain intent overlap).
+          3. Tool is a known ACTION_PATTERNS action (no alien reasoner names).
+          4. Cap at _CM_QUEUE_APPEND_CAP; never duplicate queue entries.
+
+        Returns the list of tools actually appended (for cm_queue_appended).
+        """
+        if seed not in self._CM_QUEUE_APPEND_SEEDS or not follow_ups:
+            return []
+        known = self._known_orchestrator_actions()
+        # boq_processor is the reasoner key; orchestrator owns boq_process.
+        known_aliases = {"boq_processor": "boq_process", "cost_estimate": "estimate_costs"}
+        suggested = set(suggested_tools or [])
+        high_conf_template = template_score >= self._CM_TEMPLATE_SCORE_THRESHOLD
+        queued = set(action_queue)
+        appended: List[str] = []
+        for raw in follow_ups:
+            if len(appended) >= self._CM_QUEUE_APPEND_CAP:
+                break
+            tool = known_aliases.get(raw, raw)
+            if tool not in known or tool in queued:
+                continue
+            if not (high_conf_template or raw in suggested or tool in suggested):
+                continue
+            action_queue.append(tool)
+            queued.add(tool)
+            appended.append(tool)
+        return appended
+
+    def _cross_domain_enrichment(
+        self, user_message: str, action_queue: List[str]
+    ) -> Dict[str, Any]:
+        """Attach CM template / post-tool suggestions; optionally grow the queue.
+
+        Prefer generate_wbs / procurement_list_generator as the post-tool
+        seed when present; otherwise use the primary matched action.
+
+        Document contract for consumers (chat hint, agent gate, UI):
+          - cm_follow_up_tools: advisory list (always, capped).
+          - cm_suggested_tools: cross-domain intent tools from analyze_turn.
+          - cm_matched_template / cm_workflow_plan: only when score >= 0.15.
+          - cm_queue_appended: tools promoted onto action_queue this turn
+            (empty unless seed is WBS/procurement and safety gates pass).
+          - cm_prompt_inject: CrossDomainReasoner.inject_prompt fragment for
+            runtime system-prompt enrichment (empty when no cross-domain hit).
+        """
+        try:
+            from app.core.cross_domain_reasoner import CrossDomainReasoner
+
+            reasoner = CrossDomainReasoner()
+            analysis = reasoner.analyze_turn(user_message)
+            seed = None
+            for preferred in ("generate_wbs", "procurement_list_generator"):
+                if preferred in action_queue:
+                    seed = preferred
+                    break
+            if seed is None and action_queue:
+                seed = action_queue[0]
+            seed_for_triggers = self._normalize_post_tool_seed(seed)
+            follow_ups: List[str] = []
+            if seed_for_triggers:
+                follow_ups = reasoner.get_post_tool_suggestions(
+                    seed_for_triggers, user_message
+                )
+            # Drop tools already in the queue
+            queued = set(action_queue)
+            follow_ups = [t for t in follow_ups if t not in queued]
+
+            score = float(analysis.get("matched_template_score") or 0.0)
+            suggested = analysis.get("suggested_tools") or []
+            appended = self._safe_queue_follow_ups(
+                action_queue,
+                follow_ups,
+                seed=seed,
+                template_score=score,
+                suggested_tools=suggested,
+            )
+
+            # Prompt inject for chat/agent runtime (deterministic, no LLM).
+            injected = reasoner.inject_prompt("", user_message)
+            prompt_fragment = injected.strip() if injected and injected.strip() else ""
+
+            out: Dict[str, Any] = {
+                "cm_follow_up_tools": follow_ups[:5],
+                "cm_suggested_tools": suggested,
+                "cm_queue_appended": appended,
+            }
+            if prompt_fragment:
+                out["cm_prompt_inject"] = prompt_fragment
+            # analyze_turn returns the raw top hit; only publish a workflow plan
+            # when score clears TemplateMatcher.best_match's 0.15 threshold.
+            template_id = analysis.get("matched_template")
+            if template_id and score >= self._CM_TEMPLATE_SCORE_THRESHOLD:
+                out["cm_matched_template"] = template_id
+                out["cm_matched_template_score"] = analysis["matched_template_score"]
+                plan = reasoner.build_plan(template_id)
+                if plan:
+                    out["cm_workflow_plan"] = {
+                        "template_id": plan["template_id"],
+                        "template_name": plan["template_name"],
+                        "step_count": len(plan["steps"]),
+                        "steps": [
+                            {
+                                "block": s["block"],
+                                "action": s["params"].get("action"),
+                                "step_type": s.get("step_type"),
+                                "description": s.get("description"),
+                                "dispatch": s.get("dispatch", True),
+                                "needs_caller_render": s.get("needs_caller_render", False),
+                            }
+                            for s in plan["steps"][:12]
+                        ],
+                    }
+            elif template_id:
+                # Expose weak score for debugging without advertising a plan.
+                out["cm_matched_template_score"] = analysis["matched_template_score"]
+            return out
+        except Exception:  # noqa: BLE001 — never break keyword routing
+            return {}
 
     def _predict_learned(self, message: str) -> Optional[Dict[str, Any]]:
         """Consult learning_engine's predict_route op. Returns None on any error
