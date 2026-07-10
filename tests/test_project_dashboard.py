@@ -182,6 +182,8 @@ class TestWorkflowActions:
         assert result["status"] == "success"
         assert result["template"]["id"] == "new_project_setup"
         assert "sample_plan" in result
+        plan = result.get("executable_plan") or {}
+        assert plan.get("execution_mode") == "plan_only"
 
     async def test_workflow_detail_unknown(self):
         block = ProjectDashboardBlock()

@@ -1,8 +1,10 @@
 """Construction Container - Full AEC Industry Domain Container v3.1"""
 
 import logging
+import os
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.universal_base import UniversalContainer
@@ -605,6 +607,56 @@ class ConstructionContainer(
             "dependencies": available_deps,
             "all_deps_available": all(available_deps.values()),
         }
+
+    async def _handle_procedure_action(
+        self, action: str, input_data: Any, params: Dict, handlers: Dict
+    ) -> Dict:
+        """Honest procedure routing: delegate when a real handler exists, else metadata."""
+        from app.core.procedure_actions import (
+            is_procedure_action,
+            normalize_rfi_issues,
+            procedure_metadata,
+        )
+
+        if not is_procedure_action(action):
+            return {
+                "status": "error",
+                "error": f"Unknown procedure action: {action}",
+            }
+        meta = procedure_metadata(action)
+        delegate = meta.get("delegate_action")
+        data = input_data if isinstance(input_data, dict) else {}
+        p = dict(params or {})
+        needs_file = delegate in {"qa_qc_inspection", "drawing_qto", "bim_analysis"}
+        has_file = bool(
+            data.get("file_path") or p.get("file_path") or data.get("spec_file") or p.get("spec_file")
+        )
+        # Gate rfi_generator: only delegate when runnable issues exist.
+        # Normalize singular `issue` → issues list; otherwise keep PRC metadata.
+        if delegate == "rfi_generator":
+            issues = normalize_rfi_issues(data, p)
+            if not issues:
+                return meta
+            # Ensure the generator sees the normalized list shape.
+            if isinstance(input_data, dict):
+                data = dict(data)
+                data["issues"] = issues
+                input_data = data
+            p["issues"] = issues
+            params = p
+        if delegate and delegate in handlers and not (needs_file and not has_file):
+            result = await handlers[delegate](input_data, params)
+            if isinstance(result, dict):
+                result = dict(result)
+                result["procedure_context"] = {
+                    "orchestrator_action": action,
+                    "procedure_id": meta.get("procedure_id"),
+                    "execution_mode": "delegated",
+                    "delegate_action": delegate,
+                }
+            return result
+        return meta
+
     def _detect_trade_from_text(self, text: str) -> str:
         trades = ["concrete", "steel", "electrical", "plumbing", "hvac", "masonry", "finishes", "fire protection"]
         return next((t for t in trades if t in text.lower()), "general")
@@ -1649,7 +1701,17 @@ class ConstructionContainer(
 
         handler = handlers.get(action)
         if not handler:
-            return {"status": "error", "error": f"Unknown action: {action}", "known_actions": sorted(handlers.keys())}
+            from app.core.procedure_actions import is_procedure_action
+
+            if is_procedure_action(action):
+                return await self._handle_procedure_action(
+                    action, input_data, params, handlers
+                )
+            return {
+                "status": "error",
+                "error": f"Unknown action: {action}",
+                "known_actions": sorted(handlers.keys()),
+            }
 
         return await handler(input_data, params)
     def get_actions(self) -> Dict[str, Any]:

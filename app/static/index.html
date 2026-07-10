@@ -139,6 +139,12 @@
         .session-file-chip .size { color: #666; font-size: 10px; }
         .session-file-chip .remove { background: transparent; border: none; color: #666; cursor: pointer; padding: 0 0 0 2px; font-size: 13px; line-height: 1; }
         .session-file-chip .remove:hover { color: #ef4444; }
+        /* CM wiring — visible controls for auto_pipeline + project health */
+        .cm-actions { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; }
+        .cm-btn { width: 100%; padding: 10px 12px; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left; }
+        .cm-btn:hover:not(:disabled) { background: #252525; border-color: #8b5cf6; color: #fff; }
+        .cm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .cm-btn.secondary { color: #aaa; }
         /* Reasoning trace — collapsible sub-bubble shown above the assistant's
            final answer while the heavy-reasoning agent is iterating. */
         .reasoning-trace { background: #11091e; border: 1px solid #2d1d4a; border-radius: 8px; margin-bottom: 8px; font-size: 12px; color: #bba6ee; }
@@ -160,6 +166,14 @@
         <div class="logo">Cerebrum</div>
         <button class="new-btn" onclick="resetChat()">+ New Chat</button>
         <button class="connect-btn" onclick="showDriveModal()">☁️ Connect Drive</button>
+
+        <div class="section">
+            <span>Construction</span>
+        </div>
+        <div class="cm-actions">
+            <button class="cm-btn" id="runAutoPipelineBtn" type="button" onclick="runAutoPipelineOnActiveFile()" title="Run full construction analysis on the active file" disabled>⚡ Run Auto Pipeline</button>
+            <button class="cm-btn secondary" id="refreshHealthBtn" type="button" onclick="refreshProjectHealth()" title="Health check using domain_status from the latest auto_pipeline">📊 Refresh Project Health</button>
+        </div>
         
         <div class="section">
             <span>Projects</span>
@@ -529,6 +543,16 @@ const connectedDrives = {};
 //
 // Shape: [{name, content, driveName, kind, sizeBytes, pipelineResult?, ...}]
 let sessionFileContexts = [];
+// domain_status from the latest auto_pipeline — fed to project_dashboard.health_check.
+let sessionDomainStatus = null;
+
+/** Enable/disable CM sidebar controls based on active file readiness. */
+function updateCmControls() {
+    const pipelineBtn = document.getElementById('runAutoPipelineBtn');
+    if (pipelineBtn) {
+        pipelineBtn.disabled = !activeFileContext?.pipelineResult?.file_path;
+    }
+}
 // Legacy alias: most call sites still reference `activeFileContext` meaning
 // "the most-recently-attached file". Keep it as a *view* over the array so
 // existing helpers (panel rendering, file-specific actions) continue to work
@@ -641,6 +665,7 @@ function renderSessionFiles() {
             <button class="remove" title="Remove from this chat" onclick="removeSessionFile('${safeNameJs}')">×</button>
         </span>`;
     }).join('');
+    updateCmControls();
 }
 
 function buildSessionFilesPromptBlock() {
@@ -1501,6 +1526,7 @@ async function selectDriveFile(driveId, fileName) {
 
                 setActiveFileContext(fileName, extractedText || `File: ${fileName} (${kind})`, drive.name);
                 activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
+                updateCmControls();
                 setOutcomes(`<div class="outcome-item">
                     <div class="outcome-label">📎 ${escapeHtml(fileName)}</div>
                     <div style="color:#888;font-size:12px;margin-top:4px;">${sizeKb} KB · ${kind.toUpperCase()} · From ${escapeHtml(drive.name)} · stored, not analysed</div>
@@ -2289,6 +2315,9 @@ async function triggerAction(action) {
         };
         const data = await client.execute('construction', inputData, { action });
         const result = data.result || {};
+        if (result.domain_status) {
+            sessionDomainStatus = result.domain_status;
+        }
         const artifacts = data.artifacts || [];
         const panelTitle = action === 'procurement_list_generator' ? 'Procurement List' : action;
         if (artifacts.length) {
@@ -2301,6 +2330,62 @@ async function triggerAction(action) {
         addMessage(`${panelTitle} ready — see the artifacts panel.`, 'assistant');
     } catch(e) {
         addMessage(`${action} failed: ${e.message}`, 'error');
+    }
+    showIndicator(false);
+}
+
+/** Run auto_pipeline on the active file and stash domain_status for health_check. */
+async function runAutoPipelineOnActiveFile() {
+    if (!activeFileContext?.pipelineResult?.file_path) {
+        addMessage('No file ready for full analysis — upload a construction document first.', 'error');
+        return;
+    }
+    showIndicator(true);
+    addMessage('Running full construction analysis (auto_pipeline)...', 'system');
+    try {
+        const data = await client.execute('construction', {
+            file_path: activeFileContext.pipelineResult.file_path,
+            extracted_text: activeFileContext.pipelineResult.extracted_text || '',
+        }, { action: 'auto_pipeline' });
+        const result = data.result || {};
+        sessionDomainStatus = result.domain_status || null;
+        const panels = result.panels || [];
+        if (panels.length) {
+            setOutcomes(renderPanels(panels, result.next_actions || [], activeFileContext.name, ''));
+            openArtifactPanel('Construction Analysis');
+        }
+        addMessage(
+            sessionDomainStatus
+                ? 'Analysis complete — domain status ready for project health.'
+                : 'Analysis complete — no domain_status derived (health will report unknown).',
+            'assistant'
+        );
+    } catch (e) {
+        addMessage(`auto_pipeline failed: ${e.message}`, 'error');
+    }
+    showIndicator(false);
+}
+
+/** project_dashboard.health_check using auto_pipeline domain_status when present. */
+async function refreshProjectHealth() {
+    showIndicator(true);
+    try {
+        const data = await client.execute('project_dashboard', {
+            action: 'health_check',
+            domain_status: sessionDomainStatus || {},
+        }, {});
+        const result = data.result || {};
+        const overall = result.overall_status || 'unknown';
+        const score = result.overall_score != null ? result.overall_score : '—';
+        const note = result.note ? `<div style="color:#888;font-size:11px;margin-top:6px;">${escapeHtml(result.note)}</div>` : '';
+        setOutcomes(`<div class="outcome-item">
+            <div class="outcome-label">📊 Project Health</div>
+            <div style="font-size:13px;margin-top:6px;">Overall: <strong>${escapeHtml(String(overall))}</strong> · Score: ${escapeHtml(String(score))}</div>
+            ${note}
+        </div>`);
+        openArtifactPanel('Project Health');
+    } catch (e) {
+        addMessage(`Health check failed: ${e.message}`, 'error');
     }
     showIndicator(false);
 }
@@ -2426,6 +2511,7 @@ async function _processSingleUpload(file) {
 
             setActiveFileContext(file.name, extractedText || `File: ${file.name} (${kind})`, 'Upload');
             activeFileContext.pipelineResult = { file_path: filePath, extracted_text: extractedText };
+            updateCmControls();
             const ready = !!extractedText && extractedText.length > 50;
             const methodLabel = extractionMethod ? ` · ${extractionMethod}` : '';
             setOutcomes(`<div class="outcome-item">
@@ -2652,6 +2738,7 @@ renderDrives();
 
 // Load the real project list into the sidebar (Roadmap V2 · Epic 4 Slice B).
 loadProjects();
+updateCmControls();
 
 // Probe Google Drive connection state on load (Task 6) — also re-fetched
 // when the Connect Drive modal opens and after the OAuth redirect returns.

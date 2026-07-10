@@ -255,8 +255,32 @@ class ProjectDashboardBlock(UniversalBlock):
                 "domains": template.domains,
             },
             "sample_plan": plan.model_dump(mode="json"),
-            "executable_plan": executable,
+            "executable_plan": self._label_executable_plan(executable),
         }
+
+    @staticmethod
+    def _label_executable_plan(plan: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Annotate a built plan — plan_only labels, not fake execution."""
+        if not plan:
+            return plan
+        labeled = dict(plan)
+        labeled["execution_mode"] = "plan_only"
+        labeled["execution_note"] = (
+            "Aliased steps for dispatch — this endpoint builds the plan only; "
+            "it does not execute construction actions or fabricate deliverables."
+        )
+        steps_out = []
+        for step in plan.get("steps") or []:
+            s = dict(step)
+            if step.get("dispatch") is False or step.get("needs_caller_render"):
+                s["execution_label"] = "caller_render"
+            elif step.get("block"):
+                s["execution_label"] = "dispatchable"
+            else:
+                s["execution_label"] = "unmapped"
+            steps_out.append(s)
+        labeled["steps"] = steps_out
+        return labeled
 
     async def _run_workflow(self, data: Dict, params: Dict) -> Dict:
         """Build an aliased executable plan for a template (dispatch-ready).
@@ -278,4 +302,5 @@ class ProjectDashboardBlock(UniversalBlock):
                 "error": f"Unknown template: {template_id}",
                 "available": self._get_template_library().all_template_ids(),
             }
-        return {"status": "success", **plan}
+        labeled = self._label_executable_plan(plan)
+        return {"status": "success", **labeled}
