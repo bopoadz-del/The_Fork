@@ -612,7 +612,11 @@ class ConstructionContainer(
         self, action: str, input_data: Any, params: Dict, handlers: Dict
     ) -> Dict:
         """Honest procedure routing: delegate when a real handler exists, else metadata."""
-        from app.core.procedure_actions import is_procedure_action, procedure_metadata
+        from app.core.procedure_actions import (
+            is_procedure_action,
+            normalize_rfi_issues,
+            procedure_metadata,
+        )
 
         if not is_procedure_action(action):
             return {
@@ -622,11 +626,24 @@ class ConstructionContainer(
         meta = procedure_metadata(action)
         delegate = meta.get("delegate_action")
         data = input_data if isinstance(input_data, dict) else {}
-        p = params or {}
+        p = dict(params or {})
         needs_file = delegate in {"qa_qc_inspection", "drawing_qto", "bim_analysis"}
         has_file = bool(
             data.get("file_path") or p.get("file_path") or data.get("spec_file") or p.get("spec_file")
         )
+        # Gate rfi_generator: only delegate when runnable issues exist.
+        # Normalize singular `issue` → issues list; otherwise keep PRC metadata.
+        if delegate == "rfi_generator":
+            issues = normalize_rfi_issues(data, p)
+            if not issues:
+                return meta
+            # Ensure the generator sees the normalized list shape.
+            if isinstance(input_data, dict):
+                data = dict(data)
+                data["issues"] = issues
+                input_data = data
+            p["issues"] = issues
+            params = p
         if delegate and delegate in handlers and not (needs_file and not has_file):
             result = await handlers[delegate](input_data, params)
             if isinstance(result, dict):

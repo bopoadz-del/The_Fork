@@ -32,8 +32,38 @@ def test_procedure_metadata_is_honest_not_fake_execution():
     assert "fabricated" in meta["note"].lower() or "guidance" in meta["note"].lower()
 
 
+def test_procedure_metadata_preserves_prc501_schema_fields():
+    """PRC-501 uses review_statuses / forbidden_term / timeline / workflow / raci — not statuses/rules."""
+    meta = procedure_metadata("design_review_workflow")
+    assert meta["status"] == "success"
+    assert meta["procedure_id"] == "PRC-501"
+    assert meta.get("forbidden_term")
+    assert "APPROVED" in str(meta["forbidden_term"])
+    assert isinstance(meta.get("review_statuses"), dict) and meta["review_statuses"]
+    assert isinstance(meta.get("timeline"), dict) and meta["timeline"]
+    assert isinstance(meta.get("workflow"), list) and meta["workflow"]
+    assert isinstance(meta.get("raci"), dict) and meta["raci"]
+    # Raw payload must also be present (honesty: return the DB record).
+    proc = meta.get("procedure") or {}
+    assert proc.get("forbidden_term") == meta["forbidden_term"]
+    assert proc.get("review_statuses") == meta["review_statuses"]
+
+
+def test_procedure_metadata_preserves_prc404_schema_fields():
+    """PRC-404 uses prerequisites / handover_documents — not statuses/rules."""
+    meta = procedure_metadata("handover_management")
+    assert meta["status"] == "success"
+    assert meta["procedure_id"] == "PRC-404"
+    assert isinstance(meta.get("prerequisites"), list) and meta["prerequisites"]
+    assert isinstance(meta.get("handover_documents"), list) and meta["handover_documents"]
+    proc = meta.get("procedure") or {}
+    assert proc.get("prerequisites") == meta["prerequisites"]
+    assert proc.get("handover_documents") == meta["handover_documents"]
+
+
 @pytest.mark.asyncio
 async def test_rfi_management_delegates_to_rfi_generator():
+    """Singular `issue` is normalized into issues list so rfi_generator can run."""
     from app.containers.construction import ConstructionContainer
 
     result = await ConstructionContainer().route(
@@ -43,6 +73,25 @@ async def test_rfi_management_delegates_to_rfi_generator():
     ctx = result.get("procedure_context") or {}
     assert ctx.get("delegate_action") == "rfi_generator"
     assert ctx.get("execution_mode") == "delegated"
+    assert result.get("total_rfis", 0) >= 1
+    assert result.get("rfis")
+
+
+@pytest.mark.asyncio
+async def test_rfi_management_without_issues_returns_metadata_only():
+    """No runnable issues → keep PRC-301 guidance; do not empty-delegate to rfi_generator."""
+    from app.containers.construction import ConstructionContainer
+
+    result = await ConstructionContainer().route(
+        "rfi_management", {}, {"action": "rfi_management"}
+    )
+    assert result.get("status") == "success"
+    assert result.get("execution_mode") == "metadata_only"
+    assert result.get("procedure_id") == "PRC-301"
+    assert result.get("procedure_title")
+    assert result.get("rules") or result.get("statuses") or result.get("procedure")
+    assert result.get("procedure_context") is None
+    assert result.get("rfis") in (None, [])
 
 
 @pytest.mark.asyncio
