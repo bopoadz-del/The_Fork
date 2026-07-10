@@ -50,6 +50,14 @@ _UNSUPPORTED_MIMES = {
 _UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar"}
 
 
+def _is_geodatabase_internal(path: str) -> bool:
+    """Esri geodatabase folders contain non-indexable internal files (gdb,
+    timestamps, a00000001.gdbtable, etc.) that Drive reports as tiny
+    application/octet-stream blobs. Skip any file inside a ``*.gdb`` folder.
+    """
+    return any(part.lower().endswith(".gdb") for part in Path(path).parts[:-1])
+
+
 def _safe_stored_name(original: str) -> str:
     """Filesystem-safe stored name; preserves extension."""
     base = Path(original).stem
@@ -80,8 +88,12 @@ def _ingest_file(
     mime = file_meta.get("mimeType", "")
     ext = Path(rel).suffix.lower()
 
-    # Skip Google-native and known-unsupported files cleanly.
-    if mime in _UNSUPPORTED_MIMES or ext in _UNSUPPORTED_EXTS:
+    # Skip Google-native, known-unsupported, and geodatabase internal files.
+    if (
+        mime in _UNSUPPORTED_MIMES
+        or ext in _UNSUPPORTED_EXTS
+        or _is_geodatabase_internal(rel)
+    ):
         return rel, {
             "status": "error",
             "error": "SKIPPED_UNSUPPORTED",
@@ -377,9 +389,14 @@ def main() -> int:
         # Drop unsupported before sharding so every worker sees the same
         # supported universe and sha256 assignment stays partition-complete.
         def _is_unsupported(fm: Dict[str, Any]) -> bool:
+            path = fm.get("_drive_path") or fm.get("name") or ""
             mime = fm.get("mimeType", "")
-            ext = Path(fm.get("_drive_path") or fm.get("name") or "").suffix.lower()
-            return mime in _UNSUPPORTED_MIMES or ext in _UNSUPPORTED_EXTS
+            ext = Path(path).suffix.lower()
+            return (
+                mime in _UNSUPPORTED_MIMES
+                or ext in _UNSUPPORTED_EXTS
+                or _is_geodatabase_internal(path)
+            )
 
         unsupported_files = [f for f in files if _is_unsupported(f)]
         supported_files = [f for f in files if not _is_unsupported(f)]
