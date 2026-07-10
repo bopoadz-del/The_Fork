@@ -575,9 +575,11 @@ def main() -> int:
         # in flight — submitting all 6k at once made the 4 GB worker OOM
         # after the first few SKIPPED_TOO_LARGE completions (the other
         # workers were already downloading multi-hundred-MB PDFs).
-        # Smallest files first so we make visible progress before the
-        # Tier-1 contract volumes.
-        filtered_files.sort(key=lambda f: int(f.get("size") or 0))
+        # Default: smallest-first for visible progress. Set
+        # P1B_LARGEST_FIRST=1 to process largest files first (useful for
+        # quickly reaching real documents during testing).
+        largest_first = os.getenv("P1B_LARGEST_FIRST", "").strip().lower() in {"1", "true", "yes"}
+        filtered_files.sort(key=lambda f: int(f.get("size") or 0), reverse=largest_first)
         pool_size = max(1, int(os.getenv("P1B_PARALLELISM", "2")))
         tally_lock = threading.Lock()
         done_count = 0
