@@ -445,11 +445,17 @@ def main() -> int:
             shard_index=shard_index,
             total_shards=total_shards,
         )
-        # Sort smallest-first before offset/limit so a limited batch picks
-        # tractable files first, while the shard partition itself stays stable.
-        # Files with no reported size (0) go to the end so we try files whose
-        # size is known first.
-        shard_files.sort(key=lambda f: (int(f.get("size") or 0) == 0, int(f.get("size") or 0)))
+        # Sort before offset/limit so a limited batch picks the intended
+        # end of the size distribution, while the shard partition itself
+        # stays stable. Default smallest-first; set P1B_LARGEST_FIRST=1
+        # to process largest files first (useful for quickly reaching real
+        # documents during testing). Files with no reported size (0) go to
+        # the end regardless.
+        largest_first = os.getenv("P1B_LARGEST_FIRST", "").strip().lower() in {"1", "true", "yes"}
+        shard_files.sort(
+            key=lambda f: (int(f.get("size") or 0) == 0, int(f.get("size") or 0)),
+            reverse=largest_first,
+        )
         # Offset/limit AFTER shard filter so assignment stays stable.
         batch_files = sharding.apply_offset_limit(
             shard_files, offset=offset, limit=limit,
@@ -575,16 +581,13 @@ def main() -> int:
         # in flight — submitting all 6k at once made the 4 GB worker OOM
         # after the first few SKIPPED_TOO_LARGE completions (the other
         # workers were already downloading multi-hundred-MB PDFs).
-        # Default: smallest-first for visible progress. Set
-        # P1B_LARGEST_FIRST=1 to process largest files first (useful for
-        # quickly reaching real documents during testing).
-        largest_first = os.getenv("P1B_LARGEST_FIRST", "").strip().lower() in {"1", "true", "yes"}
-        filtered_files.sort(key=lambda f: int(f.get("size") or 0), reverse=largest_first)
+        # Ordering is already applied before offset/limit via P1B_LARGEST_FIRST.
+        sort_label = "largest-first" if largest_first else "smallest-first"
         pool_size = max(1, int(os.getenv("P1B_PARALLELISM", "2")))
         tally_lock = threading.Lock()
         done_count = 0
         print(f"[p1b-server] parallel ingestion with {pool_size} workers "
-              f"(smallest-first, {len(filtered_files)} files)", file=sys.stderr)
+              f"({sort_label}, {len(filtered_files)} files)", file=sys.stderr)
         with ThreadPoolExecutor(max_workers=pool_size) as pool:
             pending: Dict[Future, Dict[str, Any]] = {}
             file_iter = iter(filtered_files)
