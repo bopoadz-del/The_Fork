@@ -304,9 +304,43 @@ def hint_for_orchestrator_result(orchestrator_result: dict) -> Optional[str]:
     """End-to-end: orchestrator result → hint sentence (or None).
 
     Returns None when the top match is below the confidence threshold or when
-    the matched action has no registered hint.
+    the matched action has no registered hint *and* there is no CM prompt
+    inject / follow-up context to surface.
+
+    When smart_orchestrator attaches ``cm_prompt_inject`` (from
+    CrossDomainReasoner.inject_prompt) or high-confidence follow-ups, those
+    are folded into the hint so the chat path actually uses reasoner output
+    beyond metadata — without a second router.
     """
+    parts: list[str] = []
     action, score = best_action(orchestrator_result)
-    if not action or score < HINT_CONFIDENCE_THRESHOLD:
+    if action and score >= HINT_CONFIDENCE_THRESHOLD:
+        base = hint_for_action(action)
+        if base:
+            parts.append(base)
+
+    cm_inject = (orchestrator_result.get("cm_prompt_inject") or "").strip()
+    if cm_inject:
+        # Keep inject compact — chat piggybacks on the user message.
+        parts.append(cm_inject[:800])
+
+    follow_ups = orchestrator_result.get("cm_follow_up_tools") or []
+    appended = orchestrator_result.get("cm_queue_appended") or []
+    usable = appended or follow_ups[:2]
+    if usable:
+        parts.append(
+            "Consider related construction actions next: "
+            + ", ".join(usable)
+            + "."
+        )
+
+    template = orchestrator_result.get("cm_matched_template")
+    if template and orchestrator_result.get("cm_workflow_plan"):
+        parts.append(
+            f"A multi-domain workflow template matched ({template}); "
+            "prefer chaining across its domains when answering."
+        )
+
+    if not parts:
         return None
-    return hint_for_action(action)
+    return " ".join(parts)

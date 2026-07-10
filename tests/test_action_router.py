@@ -59,6 +59,25 @@ def test_hint_for_orchestrator_result_above_threshold_returns_hint():
     assert "specification" in hint.lower()
 
 
+def test_hint_folds_cm_prompt_inject_and_follow_ups():
+    """Reasoner inject + follow-ups must reach the chat hint path."""
+    result = {
+        "matched_actions": [
+            {"action": "generate_wbs", "confidence": 0.8, "keywords_matched": ["wbs"]},
+        ],
+        "cm_prompt_inject": "[Workflow Template Match: New Project Setup]",
+        "cm_follow_up_tools": ["procurement_list_generator", "cash_flow_forecast"],
+        "cm_queue_appended": ["procurement_list_generator"],
+        "cm_matched_template": "new_project_setup",
+        "cm_workflow_plan": {"template_id": "new_project_setup", "step_count": 5},
+    }
+    hint = hint_for_orchestrator_result(result)
+    assert hint is not None
+    assert "Workflow Template Match" in hint
+    assert "procurement_list_generator" in hint
+    assert "new_project_setup" in hint
+
+
 def test_hint_returns_none_when_no_matched_actions():
     """SmartOrchestratorBlock returns fallback action_queue when nothing matches
     — but matched_actions is the empty list. The hint should be None then."""
