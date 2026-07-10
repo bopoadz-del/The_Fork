@@ -40,15 +40,20 @@ def main() -> int:
         print("[one-file-test] FAIL: GDRIVE_SERVICE_ACCOUNT_JSON not configured", file=sys.stderr)
         return 1
 
-    # 1. Fetch Drive metadata.
+    # 1. Fetch Drive metadata via httpx (googleapiclient is not in the worker image).
     try:
-        from googleapiclient.discovery import build
-        creds = gdrive_service._load_service_account_credentials()
-        service = build("drive", "v3", credentials=creds)
-        meta = service.files().get(
-            fileId=drive_file_id,
-            fields="id, name, mimeType, size, modifiedTime"
-        ).execute()
+        import httpx
+        token = gdrive_service._mint_access_token()
+        if not token:
+            raise RuntimeError("service account token unavailable")
+        resp = httpx.get(
+            f"https://www.googleapis.com/drive/v3/files/{drive_file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"fields": "id,name,mimeType,size,modifiedTime"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        meta = resp.json()
         file_name = meta.get("name", "unknown")
         mime = meta.get("mimeType", "application/octet-stream")
         drive_size = int(meta.get("size") or 0)
@@ -161,3 +166,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
