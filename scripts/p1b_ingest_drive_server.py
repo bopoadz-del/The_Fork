@@ -74,7 +74,7 @@ def _ingest_file(
     deterministic path and re-indexed into the SAME document row instead of
     creating a duplicate.
     """
-    from app.core import doc_index, file_crypto, projects as projects_mod
+    from app.core import doc_index, file_crypto, projects as projects_mod, r2_storage
 
     rel = file_meta.get("_drive_path") or file_meta.get("name", "")
     mime = file_meta.get("mimeType", "")
@@ -120,12 +120,41 @@ def _ingest_file(
     dest = data_dir / stored_name
     file_crypto.write_document(str(dest), raw_bytes)
 
+    # Archive raw bytes to R2 before indexing. The local copy is only needed
+    # for the extractors/indexers and is deleted afterwards.
+    archive = r2_storage.archive_document(
+        project_id=project_id,
+        drive_file_id=file_meta["id"],
+        original_name=Path(rel).name,
+        raw_bytes=raw_bytes,
+        content_sha256=content_sha,
+    )
+
+    common_meta = {
+        "drive_file_id": file_meta["id"],
+        "drive_path": rel,
+        "source": "p1b_server_drive_reingestion",
+        "ingestion_run_id": run_id,
+        "mimeType": mime,
+        "content_sha256": content_sha,
+    }
+    if archive.get("r2_object_key"):
+        common_meta["r2_object_key"] = archive["r2_object_key"]
+        common_meta["r2_bucket"] = archive.get("r2_bucket")
+        common_meta["r2_endpoint"] = archive.get("r2_endpoint")
+        common_meta["r2_account_id"] = archive.get("r2_account_id")
+    if archive.get("error"):
+        common_meta["r2_archive_error"] = archive["error"]
+
     if existing_doc is not None:
         # Zero-chunk retry: the row exists from a failed pass; re-index it
         # in place. The stored name is deterministic, so the fresh download
         # above landed at the same path the row's file_path points to.
+        projects_mod.update_document_metadata(existing_doc["id"], common_meta)
         result = doc_index.index_document(project_id, existing_doc["id"])
         result["reindexed_existing_doc"] = True
+        r2_storage.delete_local_archive(str(dest))
+        result["r2_archive"] = archive
         return rel, result
 
     doc = projects_mod.add_document(
@@ -135,15 +164,11 @@ def _ingest_file(
         file_path=str(dest),
         size=size,
         content_sha256=content_sha,
-        metadata={
-            "drive_file_id": file_meta["id"],
-            "drive_path": rel,
-            "source": "p1b_server_drive_reingestion",
-            "ingestion_run_id": run_id,
-            "mimeType": mime,
-        },
+        metadata=common_meta,
     )
     result = doc_index.index_document(project_id, doc["id"])
+    r2_storage.delete_local_archive(str(dest))
+    result["r2_archive"] = archive
     return rel, result
 
 

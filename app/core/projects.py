@@ -644,6 +644,27 @@ def add_document(
     return _document_as_dict(document)
 
 
+def update_document_metadata(doc_id: str, metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Merge ``metadata`` into the document's existing metadata_ column.
+
+    Returns the updated document dict, or None if the document was not found.
+    """
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None:
+                return None
+            current = document.metadata_ or {}
+            current.update(metadata)
+            document.metadata_ = current
+            session.commit()
+    with SessionLocal() as session:
+        document = session.get(Document, doc_id)
+    assert document is not None
+    return _document_as_dict(document)
+
+
 def find_document_by_sha(
     project_id: str, content_sha256: str,
 ) -> Optional[Dict[str, Any]]:
