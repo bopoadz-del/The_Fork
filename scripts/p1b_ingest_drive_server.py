@@ -113,6 +113,17 @@ def _ingest_file(
             "size_mb": round(size / (1024 * 1024), 1),
         }
 
+    # Minimum useful size guard. Files below this threshold cannot produce
+    # indexable content (empty placeholders, geodatabase internals, etc.).
+    # Default OFF (0); set P1B_MIN_FILE_SIZE_BYTES to skip them cleanly.
+    min_size = int(os.getenv("P1B_MIN_FILE_SIZE_BYTES", "0"))
+    if min_size > 0 and size < min_size:
+        return rel, {
+            "status": "error",
+            "error": "SKIPPED_TOO_SMALL",
+            "size_bytes": size,
+        }
+
     # Download from Drive.
     raw_bytes, dl_err = gdrive_service.download_file_bytes(file_meta["id"])
     if dl_err:
@@ -287,6 +298,7 @@ def main() -> int:
         "succeeded": 0,
         "zero_chunk": 0,
         "skipped_too_large": 0,
+        "skipped_too_small": 0,
         "skipped_unsupported": 0,
         "skipped_empty": 0,
         "download_failed": 0,
@@ -298,8 +310,8 @@ def main() -> int:
     def _bump_folder(folder_name: str, key: str) -> None:
         folder_tallies.setdefault(folder_name, {
             "succeeded": 0, "zero_chunk": 0, "skipped_too_large": 0,
-            "skipped_unsupported": 0, "skipped_empty": 0,
-            "download_failed": 0, "errors": 0,
+            "skipped_too_small": 0, "skipped_unsupported": 0,
+            "skipped_empty": 0, "download_failed": 0, "errors": 0,
         })[key] += 1
 
     def _write_partial_report() -> None:
@@ -375,6 +387,17 @@ def main() -> int:
                       f"({type(exc).__name__}: {exc}); falling back to "
                       f"row-presence resume", file=sys.stderr)
                 counts_available = False
+            def _doc_is_unsupported(doc: Dict[str, Any]) -> bool:
+                meta = doc.get("metadata") or {}
+                path = meta.get("drive_path") or ""
+                mime = meta.get("mimeType", "")
+                ext = Path(path).suffix.lower()
+                return (
+                    mime in _UNSUPPORTED_MIMES
+                    or ext in _UNSUPPORTED_EXTS
+                    or _is_geodatabase_internal(path)
+                )
+
             for doc in projects_mod.list_documents(project_id):
                 fid = (doc.get("metadata") or {}).get("drive_file_id")
                 if not fid:
@@ -383,6 +406,10 @@ def main() -> int:
                     already_indexed.add(fid)
                 elif chunk_counts.get(doc["id"], 0) > 0:
                     already_indexed.add(fid)
+                elif _doc_is_unsupported(doc):
+                    # Legacy zero-chunk row for a file we now know is
+                    # unsupported (e.g. geodatabase internals). Don't retry.
+                    continue
                 elif fid not in retry_doc_by_fid:
                     retry_doc_by_fid[fid] = doc
 
@@ -510,6 +537,9 @@ def main() -> int:
                 elif err == "SKIPPED_TOO_LARGE":
                     global_tally["skipped_too_large"] += 1
                     _bump_folder(folder_name, "skipped_too_large")
+                elif err == "SKIPPED_TOO_SMALL":
+                    global_tally["skipped_too_small"] += 1
+                    _bump_folder(folder_name, "skipped_too_small")
                 elif err == "SKIPPED_UNSUPPORTED":
                     global_tally["skipped_unsupported"] += 1
                     _bump_folder(folder_name, "skipped_unsupported")
@@ -603,7 +633,8 @@ def main() -> int:
                 "embedder": os.environ["RAG_EMBEDDING_MODEL"],
                 "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
                 "processed": global_tally["succeeded"],
-                "skipped": global_tally["skipped_too_large"] + global_tally["skipped_empty"],
+                "skipped": global_tally["skipped_too_large"] + global_tally["skipped_too_small"]
+                + global_tally["skipped_empty"],
                 "failed": global_tally["errors"] + global_tally["zero_chunk"]
                 + global_tally["download_failed"],
                 "unsupported": global_tally["skipped_unsupported"],
@@ -624,6 +655,7 @@ def main() -> int:
         f"[p1b-server] tier {args.tier}: {global_tally['succeeded']} succeeded, "
         f"{global_tally['zero_chunk']} zero-chunk, "
         f"{global_tally['skipped_too_large']} too-large, "
+        f"{global_tally['skipped_too_small']} too-small, "
         f"{global_tally['skipped_unsupported']} unsupported, "
         f"{global_tally['already_indexed']} already_indexed, "
         f"{global_tally['errors']} errors, {elapsed_global:.1f}s "
