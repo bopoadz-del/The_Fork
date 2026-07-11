@@ -261,7 +261,10 @@ class PostgresStore:
     def __init__(self, database_url: str):
         from sqlalchemy import create_engine
 
+        # Keep the original URL string for psycopg — str(engine.url) can
+        # mangle/hide passwords and break auth.
         self.url = database_url
+        self._psycopg_url = database_url.replace("postgresql+psycopg://", "postgresql://")
         self.engine = create_engine(
             database_url,
             pool_pre_ping=True,
@@ -306,7 +309,6 @@ class PostgresStore:
         if len(rows) != len(embeddings):
             raise ValueError(f"rows/emb mismatch {len(rows)} vs {len(embeddings)}")
         now = datetime.now(timezone.utc).isoformat()
-        raw_url = str(self.url).replace("postgresql+psycopg://", "postgresql://")
         sql = """
             INSERT INTO chunks_v2 (
                 chunk_id, project_id, doc_id, chunk_index, text,
@@ -339,7 +341,7 @@ class PostgresStore:
                     normalized,
                 )
             )
-        with psycopg.connect(raw_url, connect_timeout=60) as conn:
+        with psycopg.connect(self._psycopg_url, connect_timeout=60) as conn:
             try:
                 with conn.cursor() as cur:
                     cur.executemany(sql, params)
@@ -348,7 +350,7 @@ class PostgresStore:
                 conn.rollback()
                 raise
         # confirm count for this batch's ids
-        with psycopg.connect(raw_url, connect_timeout=60) as conn:
+        with psycopg.connect(self._psycopg_url, connect_timeout=60) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT COUNT(*) FROM chunks_v2 WHERE chunk_id = ANY(%s)",
