@@ -65,6 +65,12 @@ def load_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         actual = counts.get(doc_id, 0)
         expected = doc["chunk_count"]
         if actual != expected:
+            results["errors"].append(
+                {
+                    "doc_id": doc_id,
+                    "error": f"VERIFY FAIL: expected {expected}, got {actual}",
+                }
+            )
             print(f"[batch-loader] VERIFY FAIL {doc_id}: expected {expected}, got {actual}", file=sys.stderr)
         else:
             print(f"[batch-loader] VERIFY OK {doc_id}: {actual} chunks")

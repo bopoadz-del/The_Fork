@@ -34,7 +34,8 @@ os.environ.setdefault("RAG_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 os.environ.setdefault("RAG_VECTOR_NAMESPACE", "v2")
 
 from app.core import doc_index, file_crypto, gdrive_service, projects as projects_mod, r2_storage
-from app.db.base import Document, SessionLocal
+from app.core.db import SessionLocal
+from app.core.models import Document
 
 
 def _safe_stored_name(original: str) -> str:
