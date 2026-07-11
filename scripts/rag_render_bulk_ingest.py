@@ -48,6 +48,7 @@ EXPECTED_DOCS = 27
 EXPECTED_CHUNKS = 7538
 DEFAULT_BATCH = 256
 CHECKPOINT_PATH = REPO / "rag_render_bulk_ingest_checkpoint.json"
+LOCK_PATH = REPO / "rag_render_bulk_ingest.lock"
 NAMESPACE = "v2"
 
 
@@ -612,8 +613,13 @@ def plan_work(
 
 
 def load_jsonl(path: Path) -> Tuple[Dict[str, DocMeta], List[ChunkRow]]:
+    """Load JSONL and re-index chunk_index sequentially per doc.
+
+    The source JSONL has duplicate (doc_id, chunk_index) keys with *different*
+    texts (7538 lines → ~4748 unique keys). Re-indexing preserves all texts.
+    """
     docs: Dict[str, DocMeta] = {}
-    flat: List[ChunkRow] = []
+    per_doc: Dict[str, List[str]] = {}
     with path.open(encoding="utf-8") as f:
         for line_no, line in enumerate(f, 1):
             line = line.strip()
@@ -632,14 +638,13 @@ def load_jsonl(path: Path) -> Tuple[Dict[str, DocMeta], List[ChunkRow]]:
                     ext=o.get("ext"),
                     content_sha256=o.get("content_sha256"),
                 )
-            flat.append(
-                ChunkRow(
-                    doc_id=doc_id,
-                    chunk_index=int(o["chunk_index"]),
-                    text=(o["text"] or "").replace("\x00", ""),
-                )
-            )
-    flat.sort(key=lambda r: (r.doc_id, r.chunk_index))
+                per_doc[doc_id] = []
+            per_doc[doc_id].append((o["text"] or "").replace("\x00", ""))
+
+    flat: List[ChunkRow] = []
+    for doc_id in sorted(per_doc.keys()):
+        for i, txt in enumerate(per_doc[doc_id]):
+            flat.append(ChunkRow(doc_id=doc_id, chunk_index=i, text=txt))
     return docs, flat
 
 
@@ -868,6 +873,64 @@ def install_signal_handlers(stop_flag: StopFlag) -> None:
             pass
 
 
+class ProcessLock:
+    """Exclusive lock so only one live ingest runs at a time (Windows-safe)."""
+
+    def __init__(self, path: Path = LOCK_PATH):
+        self.path = path
+        self._fh = None
+
+    def acquire(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Stale lock cleanup: if pid in lock is dead, remove.
+        if self.path.exists():
+            try:
+                text = self.path.read_text(encoding="utf-8").strip()
+                old_pid = int(text.split("=", 1)[-1]) if text else -1
+            except (OSError, ValueError):
+                old_pid = -1
+            alive = False
+            if old_pid > 0:
+                try:
+                    import psutil
+
+                    alive = psutil.pid_exists(old_pid)
+                except Exception:  # noqa: BLE001
+                    alive = False
+            if alive:
+                raise RuntimeError(
+                    f"another ingest holds {self.path} (pid={old_pid}) — single process only"
+                )
+            try:
+                self.path.unlink()
+            except OSError:
+                pass
+
+        # Atomic create — fails if another process wins the race.
+        try:
+            fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as exc:
+            raise RuntimeError(
+                f"another ingest holds {self.path} — single process only"
+            ) from exc
+        self._fh = os.fdopen(fd, "w", encoding="utf-8")
+        self._fh.write(f"pid={os.getpid()}\n")
+        self._fh.flush()
+
+    def release(self) -> None:
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except OSError:
+                pass
+            self._fh = None
+        try:
+            if self.path.exists():
+                self.path.unlink()
+        except OSError:
+            pass
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -919,71 +982,96 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         f"preview={args.preview} wipe={args.destructive_wipe}"
     )
 
-    store = PostgresStore(url)
-    docs, flat = load_jsonl(args.jsonl)
-    log(f"[ingest] jsonl docs={len(docs)} chunks={len(flat)}")
-
-    stop_flag = StopFlag()
-    install_signal_handlers(stop_flag)
-
-    from app.core.rag.embeddings import get_embedder, reset_embedder_cache
-
-    reset_embedder_cache()
-    model = "fake" if args.fake_embedder else EMBED_MODEL
-    # fake embedder is 256-dim — only for offline unit wiring, not live
-    if args.fake_embedder and not args.verify_only:
-        log("[error] --fake-embedder cannot write to live Render (dim mismatch)")
-        return 1
-    embedder = get_embedder(model)
-    if not args.fake_embedder:
-        if embedder.model_name != EMBED_MODEL or int(embedder.dim) != EXPECTED_DIM:
-            log(f"[error] bad embedder identity {embedder.model_name}/{embedder.dim}")
-            return 1
-    log(f"[ingest] embedder={embedder.model_name} dim={embedder.dim}")
+    lock = ProcessLock()
+    try:
+        lock.acquire()
+    except RuntimeError as exc:
+        log(f"[fatal] {exc}")
+        return 3
 
     try:
-        stats = run_ingest(
-            store,
-            flat,
-            docs,
-            embedder,
-            batch_size=args.batch_size,
-            max_batches=args.max_batches,
-            resume=resume,
-            verify_only=args.verify_only,
-            preview=args.preview,
-            destructive_wipe=args.destructive_wipe,
-            stop_flag=stop_flag,
-            checkpoint_path=None if (args.verify_only or args.preview) else args.checkpoint,
-            expected_model=EMBED_MODEL if not args.fake_embedder else embedder.model_name,
-            expected_dim=EXPECTED_DIM if not args.fake_embedder else int(embedder.dim),
-        )
-    except Exception as exc:  # noqa: BLE001
-        log(f"[fatal] {exc}")
-        return 1
+        store = PostgresStore(url)
+        docs, flat = load_jsonl(args.jsonl)
+        log(f"[ingest] jsonl docs={len(docs)} chunks={len(flat)}")
 
-    report = store.acceptance_report() if hasattr(store, "acceptance_report") else {}
-    if report:
-        log(f"[report] {json.dumps(report, default=str)}")
+        stop_flag = StopFlag()
+        install_signal_handlers(stop_flag)
 
-    log(
-        f"[final] written={stats.written} skipped={stats.valid_skipped} "
-        f"batches={stats.batches} reason={stats.stopped_reason}"
-    )
-    if args.verify_only:
-        missing = stats.total - stats.valid_skipped
-        ok = (
-            report.get("documents") == EXPECTED_DOCS
-            and report.get("chunks_v2") == EXPECTED_CHUNKS
-            and missing == 0
-            and report.get("dup_chunk_ids", 0) == 0
-            and report.get("wrong_dim", 0) == 0
-            and report.get("wrong_model", 0) == 0
-            and report.get("null_embeddings", 0) == 0
+        # verify/preview: no embedder needed — plan against Render only
+        if args.verify_only or args.preview:
+            class _MetaEmbedder:
+                model_name = EMBED_MODEL
+                dim = EXPECTED_DIM
+
+                def encode(self, texts):  # pragma: no cover
+                    raise RuntimeError("encode not used in verify/preview")
+
+            embedder: Any = _MetaEmbedder()
+            expected_model = EMBED_MODEL
+            expected_dim = EXPECTED_DIM
+        else:
+            from app.core.rag.embeddings import get_embedder, reset_embedder_cache
+
+            reset_embedder_cache()
+            model = "fake" if args.fake_embedder else EMBED_MODEL
+            if args.fake_embedder:
+                log("[error] --fake-embedder cannot write to live Render (dim mismatch)")
+                return 1
+            embedder = get_embedder(model)
+            if embedder.model_name != EMBED_MODEL or int(embedder.dim) != EXPECTED_DIM:
+                log(f"[error] bad embedder identity {embedder.model_name}/{embedder.dim}")
+                return 1
+            expected_model = EMBED_MODEL
+            expected_dim = EXPECTED_DIM
+            log(f"[ingest] embedder={embedder.model_name} dim={embedder.dim}")
+
+        try:
+            stats = run_ingest(
+                store,
+                flat,
+                docs,
+                embedder,
+                batch_size=args.batch_size,
+                max_batches=args.max_batches,
+                resume=resume,
+                verify_only=args.verify_only,
+                preview=args.preview,
+                destructive_wipe=args.destructive_wipe,
+                stop_flag=stop_flag,
+                checkpoint_path=None
+                if (args.verify_only or args.preview)
+                else args.checkpoint,
+                expected_model=expected_model,
+                expected_dim=expected_dim,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log(f"[fatal] {exc}")
+            return 1
+
+        report = store.acceptance_report() if hasattr(store, "acceptance_report") else {}
+        if report:
+            log(f"[report] {json.dumps(report, default=str)}")
+
+        log(
+            f"[final] written={stats.written} skipped={stats.valid_skipped} "
+            f"batches={stats.batches} reason={stats.stopped_reason}"
         )
-        log(f"[final] verify status={'PASS' if ok else 'INCOMPLETE'}")
-        return 0 if ok else 2
-    return 0
+        if args.verify_only:
+            missing = stats.total - stats.valid_skipped
+            ok = (
+                report.get("documents") == EXPECTED_DOCS
+                and report.get("chunks_v2") == EXPECTED_CHUNKS
+                and missing == 0
+                and report.get("dup_chunk_ids", 0) == 0
+                and report.get("wrong_dim", 0) == 0
+                and report.get("wrong_model", 0) == 0
+                and report.get("null_embeddings", 0) == 0
+            )
+            log(f"[final] verify status={'PASS' if ok else 'INCOMPLETE'}")
+            return 0 if ok else 2
+        return 0
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":
