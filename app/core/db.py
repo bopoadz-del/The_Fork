@@ -23,24 +23,35 @@ def _data_dir() -> str:
     return os.getenv("DATA_DIR", "./data")
 
 
+def to_psycopg_url(url: str) -> str:
+    """Rewrite a bare Postgres URL to the installed psycopg v3 driver scheme.
+
+    SQLAlchemy maps ``postgresql://`` / ``postgres://`` to psycopg2, which this
+    project does NOT install (psycopg v3 only). Any code that builds an engine
+    from a raw ``DATABASE_URL`` must route through here, or it crashes with
+    ``ModuleNotFoundError: No module named 'psycopg2'``. Idempotent; non-Postgres
+    URLs (e.g. sqlite) pass through unchanged.
+    """
+    if url.startswith("postgresql+psycopg://") or url.startswith("postgresql+psycopg2://"):
+        return url
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://"):]
+    return url
+
+
 def get_database_url() -> str:
     """Resolve DATABASE_URL from env, honoring DATA_DIR at call time.
 
     Render/Postgres URLs are typically `postgresql://...`. SQLAlchemy maps
     that dialect to psycopg2, but this project installs psycopg v3 only
-    (`psycopg[binary]`). Rewrite bare `postgresql://` /
-    `postgres://` to `postgresql+psycopg://` so create_engine imports
-    the installed driver.
+    (`psycopg[binary]`), so the scheme is normalized to `postgresql+psycopg://`
+    via ``to_psycopg_url``.
     """
     explicit = os.getenv("DATABASE_URL")
     if explicit:
-        if explicit.startswith("postgresql+psycopg://") or explicit.startswith("postgresql+psycopg2://"):
-            return explicit
-        if explicit.startswith("postgresql://"):
-            return "postgresql+psycopg://" + explicit[len("postgresql://"):]
-        if explicit.startswith("postgres://"):
-            return "postgresql+psycopg://" + explicit[len("postgres://"):]
-        return explicit
+        return to_psycopg_url(explicit)
     db_path = os.path.join(_data_dir(), "the_fork.db")
     return f"sqlite:///{db_path}"
 
