@@ -555,3 +555,9 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     to avoid copying huge files from the Drive mount before indexing.
   - Added `PDF_OCR_MAX_SIZE_MB=25` guard: disable OCR for PDFs > 25 MB and
     rely on the text layer only (this was the timeout/OOM path).
+
+## 2026-07-12 — Autonomous completion run (T-ladder)
+- **T1 DONE**: 44→17 block collapse = construction kit unset. Set CEREBRUM_DOMAIN_KITS=construction on prod; /v1/health now 40 blocks, 0 failures. Old `chunks` table empty (0), chunks_v2 canonical (10,502).
+- **T2 PARKED**: SENTRY_DSN unset (Chadi secret — needs his DSN to restore). Set AGENT_TIMING_LOG=1 for T3 tracing.
+- **T3 in-flight**: root cause = RAG embedder (bge-small) not warm-loaded at startup (safety detector is, embedder isn't); seed_knowledge skips on already-seeded restart → lazy load on first query eats stream deadline → hang. Fix: explicit embedder warm-load in lifespan (main.py). Smoke 4/4.
+- **T4 data**: chunks_v2 53 docs / 10,502 chunks, avg 198 chunks/doc (min 1 max 1936), 0 dup chunk_ids. "<2 chunks/file" was wrong denominator (6,178 expected vs 53 ingested). Coverage gap: only DG2 pkg + GK + a little Ha Long Xanh in v2; full Drive archive NOT in v2 (no drive_archive table). RECONCILIATION.md pending.
