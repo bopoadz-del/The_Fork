@@ -167,6 +167,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Safety Observation AI v2 warm-load failed; "
                          "/v1/chat/analyze-photo will lazy-load on first request")
+    # Warm-load the RAG embedder (bge-small, ~8-40s cold) at startup, same
+    # rationale as the safety detector above. seed_knowledge() only loads it
+    # when it actually re-indexes; on an instance restart where the notes are
+    # already seeded (matched by sha) it skips, leaving the embedder to
+    # lazy-load on the FIRST /v1/chat/stream RAG query — which then eats the
+    # cold load inside the stream deadline and manifests as an intermittent
+    # chat hang / empty bubble. Preloading makes readiness == model-loaded.
+    try:
+        from app.core.rag.embeddings import get_embedder
+        _emb = get_embedder()
+        _emb.encode(["warmup"])
+        logger.info("RAG embedder warm-loaded: %s dim=%d", _emb.model_name, _emb.dim)
+    except Exception:
+        logger.exception("RAG embedder warm-load failed; first RAG query will lazy-load")
     from app.core import hydration_scheduler
     hydration_scheduler.start()
     try:

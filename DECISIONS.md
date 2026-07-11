@@ -423,3 +423,9 @@ and Scout demonstrably does not on the current (migrated) corpus.
 The streaming gate is the intended mitigation. Until that gate passes and G2 is
 recorded, the provider ladder remains officially: Scout default / Kimi parked /
 Ollama fallback only.
+
+## 2026-07-12 — T1: Restore construction kit (44→17 block collapse)
+**Finding:** Prod /v1/health = 17 blocks (base only); local `main` = same 17. Not a Docker/deploy discrepancy — the construction domain kit was never activated on the rebuilt service. `CEREBRUM_DOMAIN_KITS` UNSET on prod; `blocks_failed:{}` because the 27+ construction blocks are absent from the registry, not failing.
+**Root cause:** the rebuild deployed without `CEREBRUM_DOMAIN_KITS=construction`; the construction container + boq_processor/drawing_qto/bim_extractor/primavera_parser/spec_analyzer/cpm_engine/schedule_generator/sympy_reasoning/smart_orchestrator/project_reasoner blocks live behind the kit and never loaded.
+**Smoke (local):** `CEREBRUM_DOMAIN_KITS=construction` → 40 blocks, FAILED={} (0 failures); with VIRGIN=false → 51 blocks, 0 failures. Chose default mode (40, minimal, construction present).
+**Decision:** set `CEREBRUM_DOMAIN_KITS=construction` on srv-d8hdc6ek1jcs739rq5sg. Env-only, smoke-clean, reversible. Gates T6 (construction feature verification).
