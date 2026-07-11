@@ -6,6 +6,7 @@ token, a secret — is persisted via file_crypto, so it is encrypted at rest
 when DATA_ENCRYPTION_KEY is set. Tokens are NOT shared between users.
 """
 import json
+import logging
 import os
 import re
 import time
@@ -15,6 +16,8 @@ from typing import Any, Dict, Optional
 import httpx
 
 from app.core import file_crypto
+
+logger = logging.getLogger(__name__)
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -52,7 +55,22 @@ def load_token(user_id: str) -> Optional[Dict[str, Any]]:
     path = _token_path(user_id)
     if not path.exists():
         return None
-    return json.loads(file_crypto.read_document(str(path)).decode("utf-8"))
+    try:
+        return json.loads(file_crypto.read_document(str(path)).decode("utf-8"))
+    except (file_crypto.DecryptionError, ValueError, UnicodeDecodeError) as exc:
+        # The token was written with a different DATA_ENCRYPTION_KEY (rotated),
+        # or is corrupt, and can no longer be read. Treat the user as not
+        # connected and remove the dead file so the UI prompts a fresh Drive
+        # connect instead of surfacing a 500 on every admin/drive call.
+        logger.warning(
+            "Drive token for %s is unreadable (%s); clearing it so the user can reconnect.",
+            _safe_user(user_id), type(exc).__name__,
+        )
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
 
 
 def clear_token(user_id: str) -> bool:

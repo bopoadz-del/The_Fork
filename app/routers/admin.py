@@ -647,7 +647,8 @@ def admin_migrate_sqlite(
     if not data_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"DATA_DIR not found: {data_dir}")
 
-    engine = create_engine(db_url, pool_pre_ping=True)
+    from app.core.db import to_psycopg_url
+    engine = create_engine(to_psycopg_url(db_url), pool_pre_ping=True)
     try:
         counts = migrate(engine, data_dir, dry_run=dry_run)
     except Exception as exc:  # noqa: BLE001 — operator diagnostic
@@ -691,7 +692,8 @@ def admin_pilot_preflight(auth: dict = Depends(require_api_key)):
         return out
 
     try:
-        engine = create_engine(db_url)
+        from app.core.db import to_psycopg_url
+        engine = create_engine(to_psycopg_url(db_url))
         with engine.connect() as conn:
             emb = conn.execute(
                 text(
@@ -804,7 +806,8 @@ def admin_corpus_collections(
         db_path = os.path.join(data_dir, "the_fork.db")
         db_url = f"sqlite:///{db_path}"
 
-    engine = create_engine(db_url)
+    from app.core.db import to_psycopg_url
+    engine = create_engine(to_psycopg_url(db_url))
     collections: List[Dict[str, Any]] = []
 
     with engine.connect() as conn:
