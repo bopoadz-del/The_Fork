@@ -964,6 +964,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.destructive_wipe and (args.verify_only or args.preview):
         log("refusing --destructive-wipe with --verify-only/--preview")
         return 1
+    if args.destructive_wipe and os.environ.get("CONFIRM_DESTRUCTIVE_WIPE") != "YES":
+        log(
+            "refusing --destructive-wipe without CONFIRM_DESTRUCTIVE_WIPE=YES "
+            "(production protection)"
+        )
+        return 1
 
     _tune_torch(args.threads)
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
