@@ -35,6 +35,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
+def _iso(value: Any) -> Optional[str]:
+    """Serialize a datetime or ISO string to ISO format."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def fetch_documents(project_id: str) -> List[Dict[str, Any]]:
     engine = get_engine()
     with engine.connect() as conn:
@@ -102,51 +113,58 @@ def build_audit(project_id: str) -> Dict[str, Any]:
 
     drive_id_map: Dict[str, List[str]] = {}
     sha_map: Dict[str, List[str]] = {}
+    audit["document_errors"] = []
 
     for d in docs:
         doc_id = d["id"]
-        meta = d.get("metadata") or {}
-        if isinstance(meta, str):
-            try:
-                meta = json.loads(meta)
-            except json.JSONDecodeError:
-                meta = {}
-        chunk_count = chunk_counts.get(doc_id, 0)
-        has_source = source_exists(d.get("file_path"))
-        drive_file_id = meta.get("drive_file_id") or meta.get("driveFileId")
-        r2_key = meta.get("r2_object_key")
+        try:
+            meta = d.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except json.JSONDecodeError:
+                    meta = {}
+            chunk_count = chunk_counts.get(doc_id, 0)
+            has_source = source_exists(d.get("file_path"))
+            drive_file_id = meta.get("drive_file_id") or meta.get("driveFileId")
+            r2_key = meta.get("r2_object_key")
 
-        record = {
-            "doc_id": doc_id,
-            "original_name": d["original_name"],
-            "stored_as": d["stored_as"],
-            "file_path": d["file_path"],
-            "size": d["size"],
-            "content_sha256": d["content_sha256"],
-            "metadata": meta,
-            "chunk_count": chunk_count,
-            "has_source_file": has_source,
-            "drive_file_id": drive_file_id,
-            "r2_object_key": r2_key,
-            "uploaded_at": d["uploaded_at"].isoformat() if d["uploaded_at"] else None,
-        }
-        audit["all_documents"].append(record)
+            record = {
+                "doc_id": doc_id,
+                "original_name": d["original_name"],
+                "stored_as": d["stored_as"],
+                "file_path": d["file_path"],
+                "size": d["size"],
+                "content_sha256": d["content_sha256"],
+                "metadata": meta,
+                "chunk_count": chunk_count,
+                "has_source_file": has_source,
+                "drive_file_id": drive_file_id,
+                "r2_object_key": r2_key,
+                "uploaded_at": _iso(d["uploaded_at"]),
+            }
+            audit["all_documents"].append(record)
 
-        if chunk_count == 0:
-            audit["zero_chunk_documents"].append(record)
-        if not chunk_count:
-            audit["unindexed_documents"].append(record)
-        if not has_source and not r2_key and not drive_file_id:
-            audit["missing_source_documents"].append(record)
-        if r2_key:
-            audit["docs_with_r2_key"] += 1
-        if drive_file_id:
-            audit["docs_with_drive_id"] += 1
-            drive_id_map.setdefault(drive_file_id, []).append(doc_id)
-        if has_source:
-            audit["docs_with_source_file"] += 1
-        if d["content_sha256"]:
-            sha_map.setdefault(d["content_sha256"], []).append(doc_id)
+            if chunk_count == 0:
+                audit["zero_chunk_documents"].append(record)
+            if not chunk_count:
+                audit["unindexed_documents"].append(record)
+            if not has_source and not r2_key and not drive_file_id:
+                audit["missing_source_documents"].append(record)
+            if r2_key:
+                audit["docs_with_r2_key"] += 1
+            if drive_file_id:
+                audit["docs_with_drive_id"] += 1
+                drive_id_map.setdefault(drive_file_id, []).append(doc_id)
+            if has_source:
+                audit["docs_with_source_file"] += 1
+            if d["content_sha256"]:
+                sha_map.setdefault(d["content_sha256"], []).append(doc_id)
+        except Exception as exc:  # noqa: BLE001
+            audit["document_errors"].append({
+                "doc_id": doc_id,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
 
     audit["duplicate_drive_file_ids"] = {
         k: v for k, v in drive_id_map.items() if len(v) > 1
@@ -192,6 +210,7 @@ def main() -> int:
         "docs_with_r2_key": audit["docs_with_r2_key"],
         "docs_with_drive_id": audit["docs_with_drive_id"],
         "docs_with_source_file": audit["docs_with_source_file"],
+        "document_errors": len(audit.get("document_errors", [])),
     }
     print(f"[audit] summary={json.dumps(summary, indent=2)}")
 
