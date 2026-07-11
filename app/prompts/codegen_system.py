@@ -13,8 +13,12 @@ HARD RULES:
 - Assign the final answer to a variable named `result`.
 - Use ONLY the input variables listed below — they are already in scope.
 - You MAY import ONLY from these modules: `math`, `statistics`, `datetime`, \
-`json`, `app.lib.pm_computations`, `app.schemas.cpm`.
+`json`, `numpy`, `sympy`, `pint`, `app.lib.pm_computations`, `app.schemas.cpm`.
 - Do NOT read files, make network calls, or import anything else.
+  - `numpy` is allowed for array/numeric/vector calculations.
+  - `sympy` is allowed for auditable symbolic formulas.
+  - `pint` is allowed for unit-aware calculations.
+  - `scipy` is NOT allowed.
 - Return ONLY a single fenced ```python code block — no prose.
 
 PROJECT-MANAGEMENT LIBRARY — `app.lib.pm_computations`:

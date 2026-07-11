@@ -25,6 +25,24 @@ def test_prompt_advertises_the_pm_library():
     assert "compute_cpm" in p
 
 
+def test_prompt_allows_numpy_sympy_pint():
+    p = build_codegen_prompt("compute volume with units", {})
+    assert "numpy" in p
+    assert "sympy" in p
+    assert "pint" in p
+
+
+def test_prompt_does_not_allow_scipy():
+    p = build_codegen_prompt("compute volume", {})
+    # SciPy must remain blocked; it may appear only in the explicit denial.
+    assert "scipy" in p.lower()
+    # The allowed-import line must not list scipy.
+    allowed_line = next(
+        line for line in p.splitlines() if "MAY import ONLY" in line
+    )
+    assert "scipy" not in allowed_line
+
+
 def test_prompt_includes_retry_context_when_given():
     p = build_codegen_prompt(
         "area", {"length_m": 10},
@@ -138,6 +156,50 @@ async def test_v2_passes_traceback_into_the_retry_prompt():
     # Second prompt must carry the prior code + error for self-correction.
     assert "bad_name" in captured[1]
     assert "previous attempt" in captured[1].lower()
+
+
+# --------------------------------------------------------------------------
+# Task 3b: Allowed third-party imports run in the sandbox
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_v2_runs_generated_numpy_code():
+    block = _MockLLMBlock([
+        "import numpy as np\nresult = int(np.array([1, 2, 3]).sum())"
+    ])
+    out = await block.process({
+        "task": "sum an array with numpy",
+        "variables": {},
+    })
+    assert out["status"] == "success"
+    assert out["result"] == 6
+    assert "numpy" in out["generated_code"]
+
+
+@pytest.mark.asyncio
+async def test_v2_runs_generated_sympy_code():
+    block = _MockLLMBlock([
+        "import sympy as sp\nx = sp.Symbol('x')\nresult = str(sp.expand((x + 1) ** 2))"
+    ])
+    out = await block.process({
+        "task": "expand a symbolic expression",
+        "variables": {},
+    })
+    assert out["status"] == "success"
+    assert "x**2" in out["result"]
+
+
+# --------------------------------------------------------------------------
+# Task 3c: Sandbox rejects blocked imports directly
+# --------------------------------------------------------------------------
+
+from app.core.sandbox import run_sandboxed
+
+
+def test_sandbox_rejects_scipy_import():
+    out = run_sandboxed("import scipy\nresult = 1")
+    assert out.success is False
+    assert "scipy" in (out.error or "").lower()
 
 
 # --------------------------------------------------------------------------
