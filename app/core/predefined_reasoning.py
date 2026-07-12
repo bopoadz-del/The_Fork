@@ -14,11 +14,25 @@ question" — the plan composition, not "a tool ran", decides.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Tuple
+import logging
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.schemas.execution_plan import ExecutionPlan, PlanStep
 from app.schemas.project_session import ProjectSession
 from app.core.plan_executor import PlanExecutor
+
+logger = logging.getLogger(__name__)
+
+
+def container_action_names() -> set:
+    """The set of construction-container actions eligible for generic
+    reasoner-driven dispatch. Empty when the construction kit isn't loaded."""
+    try:
+        from app.dependencies import get_block_instance
+        con = get_block_instance("construction")
+        return set(con.get_actions().keys()) if hasattr(con, "get_actions") else set()
+    except Exception:
+        return set()
 
 # Verbs that mean "I want the artifact", not "answer my question".
 _DELIVERABLE_RE = re.compile(
@@ -115,12 +129,98 @@ WORKFLOW_REGISTRY = {
 }
 
 
+def _render_container_result(action: str, result: Any) -> str:
+    """Turn a container action's return value into a human-readable answer.
+    Prefers an explicit answer/summary/markdown/report field; otherwise renders
+    the salient fields so the deliverable is substantial rather than a stub."""
+    import json as _json
+    if isinstance(result, str):
+        return result
+    if not isinstance(result, dict):
+        return str(result)
+    for k in ("answer", "markdown", "report", "summary", "text", "narrative"):
+        v = result.get(k)
+        if isinstance(v, str) and v.strip():
+            return v
+    # Build a readable rendering from the structured payload.
+    title = action.replace("_", " ").title()
+    lines = [f"# {title}", ""]
+    for k, v in result.items():
+        if k in ("status", "action", "ok"):
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            lines.append(f"- **{k.replace('_',' ')}:** {v}")
+        elif isinstance(v, list) and v:
+            lines.append(f"\n## {k.replace('_',' ').title()} ({len(v)})")
+            for item in v[:40]:
+                if isinstance(item, dict):
+                    lines.append("- " + "; ".join(f"{ik}: {iv}" for ik, iv in list(item.items())[:6]))
+                else:
+                    lines.append(f"- {item}")
+        elif isinstance(v, dict) and v:
+            lines.append(f"\n## {k.replace('_',' ').title()}")
+            for ik, iv in list(v.items())[:30]:
+                lines.append(f"- **{ik}:** {iv}")
+    rendered = "\n".join(lines).strip()
+    return rendered or _json.dumps(result, indent=2, default=str)
+
+
+async def _run_container_action(action: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Generic reasoner-driven dispatch: if `action` is a real construction
+    container action, run it via the container's own execute() and format the
+    result. Returns None when the action isn't a container action (so the caller
+    keeps its handled=False fallthrough). No per-action wiring — the reasoner
+    picks the action, the container implements it, this runs it."""
+    try:
+        from app.dependencies import get_block_instance
+        con = get_block_instance("construction")
+    except Exception:
+        return None
+    try:
+        actions = set(con.get_actions().keys()) if hasattr(con, "get_actions") else set()
+    except Exception:
+        actions = set()
+    if action not in actions:
+        return None
+    envelope: Dict[str, Any] = {
+        "action": action,
+        "project_id": context.get("project_id"),
+        "message": context.get("message"),
+        "document_ids": context.get("document_ids") or [],
+    }
+    envelope.update({k: v for k, v in (context.get("params") or {}).items() if v is not None})
+    try:
+        result = await con.execute(envelope)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("generic container action %s failed", action)
+        return {"handled": True, "status": "error",
+                "answer": f"The {action.replace('_',' ')} step could not complete: {e}",
+                "deliverable": context.get("deliverable"), "exports": [], "plan_steps": [action]}
+    answer = _render_container_result(action, result)
+    exports = result.get("exports", []) if isinstance(result, dict) else []
+    return {
+        "handled": True,
+        "status": (result.get("status") if isinstance(result, dict) else None) or "success",
+        "answer": answer,
+        "deliverable": context.get("deliverable"),
+        "export": exports[0] if exports else None,
+        "exports": exports,
+        "plan_steps": [action],
+    }
+
+
 async def run_workflow(action: str, context: Dict[str, Any],
                        session: ProjectSession) -> Dict[str, Any]:
     """Run the predefined workflow for `action`. Returns handled=False for
     unknown actions so the orchestrator falls through to a dynamic agent."""
     builder = WORKFLOW_REGISTRY.get(action)
     if builder is None:
+        # No bespoke plan builder — try the generic container dispatch. This is
+        # what makes every container-implemented action a first-class,
+        # reasoner-driven deliverable instead of falling to a short chat answer.
+        generic = await _run_container_action(action, context)
+        if generic is not None:
+            return generic
         return {"handled": False}
     # Prefer the dynamic UNDERSTAND verdict (context["deliverable"]) when the
     # orchestrator supplied it; fall back to the keyword heuristic otherwise.
