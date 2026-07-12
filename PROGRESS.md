@@ -556,7 +556,16 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
   - Added `PDF_OCR_MAX_SIZE_MB=25` guard: disable OCR for PDFs > 25 MB and
     rely on the text layer only (this was the timeout/OOM path).
 
-## 2026-07-12 — Autonomous completion run (T-ladder)
+## 2026-07-12 — T-ladder outcomes (autonomous run)
+- **T1 DONE**: construction kit restored (40 blocks, 0 failures verified on prod).
+- **T2 PARKED**: SENTRY_DSN needed from Chadi (G-gated). AGENT_TIMING_LOG=1 set.
+- **T3 DONE(backend)/PARKED(20-turn)**: backend healthy — AGENT_TIMING shows chat_stream 2-4s successful completions w/ RAG tool calls. Embedder preload shipped (#189), deploy-churn stream-kills fixed by freezing deploys. Browser automation unreliable for SSE (sends don't fire/render — automation artifact, not backend). Formal 20-turn fork_cli verification parked with timing evidence.
+- **T4 DONE**: RECONCILIATION.md (#190). 53 docs/10,502 chunks, avg 198/doc, 0 dups, chunks_v2 canonical, DB fail-loud guard shipped (#190). PARKED: full Drive coverage, RFP under-extraction (2 chunks), .kmz over-chunk.
+- **T5 PARKED w/ evidence**: recall 15/15 HIT but GK note 980e19f6 dominates top → precision issue. cfg7 knobs BREAK v2 retrieval (return empty) — old-index tuning doesn't transfer. Keep knobs OFF; re-sweep required.
+- **T6 PARKED**: construction kit now loaded (features available); full 68-run matrix / golden 28 / 100-q recall not executed (LLM compute + prod auth). Attachment: files index but [attached:X] marker unparsed + RFP under-extracted.
+- **T7 DONE**: PILOT_READINESS.md written.
+
+## 2026-07-12 — Autonomous completion run (T-ladder, earlier snapshot)
 - **T1 DONE**: 44→17 block collapse = construction kit unset. Set CEREBRUM_DOMAIN_KITS=construction on prod; /v1/health now 40 blocks, 0 failures. Old `chunks` table empty (0), chunks_v2 canonical (10,502).
 - **T2 PARKED**: SENTRY_DSN unset (Chadi secret — needs his DSN to restore). Set AGENT_TIMING_LOG=1 for T3 tracing.
 - **T3 in-flight**: root cause = RAG embedder (bge-small) not warm-loaded at startup (safety detector is, embedder isn't); seed_knowledge skips on already-seeded restart → lazy load on first query eats stream deadline → hang. Fix: explicit embedder warm-load in lifespan (main.py). Smoke 4/4.
