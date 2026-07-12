@@ -220,8 +220,13 @@ def _predefined_enabled() -> bool:
 
 
 def _predefined_workflows() -> set:
-    from app.core.predefined_reasoning import WORKFLOW_REGISTRY
-    return set(WORKFLOW_REGISTRY)
+    # Bespoke plan-builder workflows PLUS every construction-container action:
+    # the reasoner picks any of ~55 container actions and run_workflow dispatches
+    # it generically (container.execute) instead of falling to a short chat
+    # answer. A non-construction / unknown action still isn't here, so Q&A and
+    # chat keep the fast path.
+    from app.core.predefined_reasoning import WORKFLOW_REGISTRY, container_action_names
+    return set(WORKFLOW_REGISTRY) | container_action_names()
 
 
 async def _stream_from_predefined(
