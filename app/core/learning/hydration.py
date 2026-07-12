@@ -68,6 +68,14 @@ async def run(
     else:
         pids = _projects_active_in_window(window_start, window_end)
 
+    # Drop project_ids with no row in the projects table before doing any
+    # (expensive) per-project work: hydration_runs.project_id is a FK to
+    # projects, so an orphan pid — a deleted or never-persisted project still
+    # referenced by an old conversation — would raise ForeignKeyViolation on
+    # Postgres (PYTHON-FASTAPI-7). Skip silently; a deleted project has nothing
+    # to hydrate.
+    pids = _filter_existing_projects(pids)
+
     results_per_project: List[Dict[str, Any]] = []
     total_files_indexed = 0
     global_errors: List[str] = []
@@ -374,6 +382,41 @@ def _projects_active_in_window(window_start: str, window_end: str) -> List[str]:
             if pid and pid not in seen:
                 seen.append(pid)
     return seen
+
+
+def _filter_existing_projects(pids: List[str]) -> List[str]:
+    """Keep only project_ids that have a row in the ``projects`` table.
+
+    Pids arrive from conversation activity (see ``_projects_active_in_window``)
+    or an explicit forced-rerun list, either of which can reference a project
+    that was deleted or never persisted. ``hydration_runs.project_id`` is a FK
+    to ``projects`` — hydrating an orphan raises ForeignKeyViolation on Postgres
+    (SQLite enforces it too when foreign_keys is ON). The master-corpus alias is
+    resolved to its backing project so the virtual pilot project is retained.
+    """
+    if not pids:
+        return pids
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    from app.core.projects import _master_corpus_source
+
+    kept: List[str] = []
+    skipped: List[str] = []
+    with SessionLocal() as session:
+        for pid in pids:
+            source_id = _master_corpus_source(pid) or pid
+            if session.get(Project, source_id) is not None:
+                kept.append(pid)
+            else:
+                skipped.append(pid)
+    if skipped:
+        logger.info(
+            "hydration: skipping %d project(s) with no projects-table row "
+            "(deleted or never persisted): %s",
+            len(skipped),
+            skipped,
+        )
+    return kept
 
 
 def _collect_project_messages(
