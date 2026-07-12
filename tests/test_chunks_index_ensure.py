@@ -84,3 +84,61 @@ def test_index_created_on_preexisting_table_without_it():
     finally:
         _dispose(url)
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ── pgvector HNSW ANN index (semantic search must not seq-scan) ──────────────
+
+
+class _RecConn:
+    def __init__(self, sink):
+        self._sink = sink
+
+    def execute(self, stmt):
+        self._sink.append(str(stmt))
+
+
+class _RecCtx:
+    def __init__(self, sink):
+        self._sink = sink
+
+    def __enter__(self):
+        return _RecConn(self._sink)
+
+    def __exit__(self, *a):
+        return False
+
+
+class _RecEngine:
+    def __init__(self):
+        self.executed = []
+
+    def begin(self):
+        return _RecCtx(self.executed)
+
+
+def test_ensure_hnsw_index_issues_create_using_hnsw():
+    """The retriever ranks by ``embedding <=> q``; without an HNSW index that is
+    a full sequential scan. _ensure_hnsw_index must issue the CREATE INDEX."""
+    from app.core.rag import vector_store as vs
+
+    eng = _RecEngine()
+    vs._ensure_hnsw_index(eng, "chunks_v2")
+    assert any(
+        "chunks_v2_embedding_hnsw" in s
+        and "using hnsw" in s.lower()
+        and "vector_cosine_ops" in s
+        and "if not exists" in s.lower()
+        for s in eng.executed
+    ), eng.executed
+
+
+def test_ensure_hnsw_index_never_raises_on_db_error():
+    """A missing index degrades to full-scan; it must NOT crash startup."""
+    from app.core.rag import vector_store as vs
+
+    class _BadEngine:
+        def begin(self):
+            raise RuntimeError("connection dropped mid-DDL")
+
+    # Must swallow the error (logged, not raised).
+    vs._ensure_hnsw_index(_BadEngine(), "chunks_v2")
