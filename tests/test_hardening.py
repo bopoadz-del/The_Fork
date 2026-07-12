@@ -44,8 +44,12 @@ def test_production_startup_requires_secret_key(monkeypatch):
     with pytest.raises(RuntimeError, match="SECRET_KEY"):
         _validate_startup_env()
 
-    # With SECRET_KEY set, startup validation passes.
+    # With SECRET_KEY and DATABASE_URL set, startup validation passes.
+    # DATABASE_URL is required in production too (#190) and is read from the
+    # ambient env, so set it explicitly to keep this test hermetic across CI
+    # lanes that don't provision a database.
     monkeypatch.setenv("SECRET_KEY", "a-real-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
     _validate_startup_env()
 
 
