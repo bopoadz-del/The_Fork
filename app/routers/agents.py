@@ -277,6 +277,44 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
         # observability. Type is "route" (new) — clients that don't know
         # the event ignore it harmlessly per SSE conventions.
         yield f"data: {json.dumps({'type': 'route', **routing})}\n\n"
+
+        # Reasoner-driven predefined dispatch: when the orchestrator picked a
+        # real construction-container action, run it generically via the
+        # predefined path (container.execute → rendered deliverable) instead of
+        # the agent tool loop, which only hand-wires a couple of actions and
+        # otherwise falls to a short chat answer. Gated by ORCHESTRATOR_PREDEFINED.
+        try:
+            from app.routers.chat import (
+                _predefined_enabled,
+                _predefined_workflows,
+                _stream_from_predefined,
+            )
+            _pd_action = routing.get("action")
+            _use_predefined = bool(
+                _pd_action and _predefined_enabled()
+                and _pd_action in _predefined_workflows()
+            )
+        except Exception:  # noqa: BLE001 — never block the normal agent path
+            _pd_action, _use_predefined = None, False
+
+        if _use_predefined:
+            try:
+                async for chunk in _stream_from_predefined(
+                    action=_pd_action,
+                    user_message=message,
+                    project_id=resolved_project_id,
+                    user_id=auth["user_id"],
+                    session_id=conversation_id or f"ag-{auth['user_id']}",
+                    document_ids=body.get("document_ids") or [],
+                    params=body.get("params") or {},
+                    emit_start=True,
+                ):
+                    yield chunk
+                    await asyncio.sleep(0)
+                return
+            except Exception:  # noqa: BLE001 — fall back to the agent path on any error
+                logger.exception("predefined dispatch failed for %s; falling back", _pd_action)
+
         try:
             async for evt in agent.chat_stream(
                 message,
