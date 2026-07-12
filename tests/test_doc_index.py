@@ -177,8 +177,23 @@ def test_extract_docx_mocked(tmp_path, monkeypatch):
         def __init__(self, txt):
             self.text = txt
 
+    class FakeCell:
+        def __init__(self, txt):
+            self.text = txt
+
+    class FakeRow:
+        def __init__(self, cells):
+            self.cells = [FakeCell(c) for c in cells]
+
+    class FakeTable:
+        def __init__(self, rows):
+            self.rows = [FakeRow(r) for r in rows]
+
     class FakeDocxDoc:
         paragraphs = [FakePara("Clause one text."), FakePara("Clause two text.")]
+        # python-docx `.paragraphs` excludes table cells; the extractor must
+        # pull both so BOQ/spec tables aren't dropped.
+        tables = [FakeTable([["Item", "Qty"], ["Excavation", "100 m3"]])]
 
     import docx as real_docx
     monkeypatch.setattr(real_docx, "Document", lambda path: FakeDocxDoc())
@@ -188,6 +203,8 @@ def test_extract_docx_mocked(tmp_path, monkeypatch):
     text = doc_index.extract_document_text(doc_path, "contract.docx")
     assert "Clause one text." in text
     assert "Clause two text." in text
+    # Table cells are extracted too (pipe-joined per row).
+    assert "Excavation" in text and "100 m3" in text
 
 
 def test_extract_xlsx_mocked(tmp_path, monkeypatch):

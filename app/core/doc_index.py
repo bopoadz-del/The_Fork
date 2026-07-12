@@ -756,7 +756,10 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> Tuple[str, Dict[st
                 # 5.6k para chars + 5.3k table chars → only ~2 chunks). Include
                 # both.
                 parts = [p.text for p in document.paragraphs if p.text.strip()]
-                for _tbl in document.tables:
+                # getattr guard: real python-docx always exposes .tables, but a
+                # malformed/partial document (or a test double) may not — don't
+                # let a missing .tables drop the paragraph text we already have.
+                for _tbl in getattr(document, "tables", None) or []:
                     for _row in _tbl.rows:
                         _cells = [c.text.strip() for c in _row.cells if c.text.strip()]
                         if _cells:
