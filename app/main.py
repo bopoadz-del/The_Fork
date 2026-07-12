@@ -111,6 +111,14 @@ def _validate_startup_env() -> None:
             "signing secret is regenerated per process, invalidating all "
             "tokens on restart. Set SECRET_KEY in the environment."
         )
+    if not os.getenv("DATABASE_URL"):
+        raise RuntimeError(
+            "DATABASE_URL is required when ENV=production — without it the app "
+            "silently falls back to sqlite:///{DATA_DIR}/the_fork.db, stranding "
+            "the Postgres corpus (the 'empty SQLite' incident: the app read an "
+            "empty local DB while the whole corpus sat in Postgres). Set "
+            "DATABASE_URL to the Postgres connection string."
+        )
     if not os.getenv("DATA_ENCRYPTION_KEY"):
         logger.warning(
             "DATA_ENCRYPTION_KEY is not set — uploaded documents are stored "
