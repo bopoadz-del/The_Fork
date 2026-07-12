@@ -208,6 +208,30 @@ def _ensure_sqlite_parent_dir(url: str) -> None:
             os.makedirs(parent, exist_ok=True)
 
 
+def _ensure_hnsw_index(eng, table_name: str) -> None:
+    """Ensure the pgvector HNSW ANN index on ``{table}.embedding`` exists.
+
+    Semantic search runs ``ORDER BY embedding <=> q``; WITHOUT this index that
+    is an exact sequential scan — fine at ~10k chunks, catastrophic at 100k+
+    (the drive_archive GK layer is 133k: per-query full-scan hit tens of
+    seconds and dropped the DB). HNSW + ``vector_cosine_ops`` matches the
+    ``<=>`` cosine operator the retriever uses. ``IF NOT EXISTS`` makes this a
+    one-time build; later boots skip it. Never raises — a missing index
+    degrades to full-scan, it must not crash startup.
+    """
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS {table_name}_embedding_hnsw "
+                f"ON {table_name} USING hnsw (embedding vector_cosine_ops)"
+            ))
+    except Exception:  # noqa: BLE001 — full-scan fallback, never block startup
+        logger.warning(
+            "could not ensure hnsw index on %s (semantic search will "
+            "seq-scan until it exists)", table_name, exc_info=True,
+        )
+
+
 def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
     global _INITIALIZED_NAMESPACES
     table_name = rag_chunk_cls.__tablename__
@@ -253,6 +277,7 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
                     "could not ensure text_search column on %s", table_name,
                     exc_info=True,
                 )
+            _ensure_hnsw_index(eng, table_name)
         _INITIALIZED_NAMESPACES.add(init_key)
 
 
