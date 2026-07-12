@@ -177,8 +177,23 @@ def test_extract_docx_mocked(tmp_path, monkeypatch):
         def __init__(self, txt):
             self.text = txt
 
+    class FakeCell:
+        def __init__(self, txt):
+            self.text = txt
+
+    class FakeRow:
+        def __init__(self, cells):
+            self.cells = [FakeCell(c) for c in cells]
+
+    class FakeTable:
+        def __init__(self, rows):
+            self.rows = [FakeRow(r) for r in rows]
+
     class FakeDocxDoc:
         paragraphs = [FakePara("Clause one text."), FakePara("Clause two text.")]
+        # python-docx `.paragraphs` excludes table cells; the extractor must
+        # pull both so BOQ/spec tables aren't dropped.
+        tables = [FakeTable([["Item", "Qty"], ["Excavation", "100 m3"]])]
 
     import docx as real_docx
     monkeypatch.setattr(real_docx, "Document", lambda path: FakeDocxDoc())
@@ -188,6 +203,50 @@ def test_extract_docx_mocked(tmp_path, monkeypatch):
     text = doc_index.extract_document_text(doc_path, "contract.docx")
     assert "Clause one text." in text
     assert "Clause two text." in text
+    # Table cells are extracted too (pipe-joined per row).
+    assert "Excavation" in text and "100 m3" in text
+
+
+def test_extract_kmz_indexes_labels_not_coordinates(tmp_path, monkeypatch):
+    """KMZ extraction indexes the human-meaningful <name>/<description> labels
+    and drops the raw <coordinates> dump (which otherwise explodes into
+    coordinate-noise chunks). Duplicate labels are de-duped."""
+    import io
+    import zipfile
+
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+
+    kml = (
+        '<?xml version="1.0"?>\n'
+        "<kml><Document>\n"
+        "  <name>Site Boundary</name>\n"
+        "  <Placemark>\n"
+        "    <name>Manhole MH-12</name>\n"
+        "    <description>Invert level 45.20</description>\n"
+        "    <Point><coordinates>46.6,24.7,0 46.7,24.8,0</coordinates></Point>\n"
+        "  </Placemark>\n"
+        "  <Placemark>\n"
+        "    <name>Manhole MH-12</name>\n"            # duplicate -> de-duped
+        "    <description>-46.6,24.7</description>\n"  # pure coords -> dropped
+        "  </Placemark>\n"
+        "</Document></kml>\n"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("doc.kml", kml)
+    doc_path = str(tmp_path / "survey.kmz")
+    file_crypto.write_document(doc_path, buf.getvalue())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    text = doc_index.extract_document_text(doc_path, "survey.kmz")
+
+    assert "Site Boundary" in text
+    assert "Manhole MH-12" in text
+    assert "Invert level 45.20" in text
+    assert text.count("Manhole MH-12") == 1        # de-duped
+    assert "46.6,24.7,0" not in text               # raw coordinate dump excluded
+    assert "-46.6,24.7" not in text                # pure-coordinate label dropped
 
 
 def test_extract_xlsx_mocked(tmp_path, monkeypatch):

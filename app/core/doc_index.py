@@ -366,10 +366,24 @@ def _extract_kmz(file_path: str) -> str:
                     return ""
                 kml_bytes = zf.read(kml_names[0])
         kml_text = kml_bytes.decode("utf-8", errors="replace")
-        # Strip XML tags and collapse whitespace.
-        plain = re.sub(r"<[^>]+>", " ", kml_text)
-        plain = re.sub(r"\s+", " ", plain).strip()
-        return plain
+        # Metadata-only: index the human-meaningful <name>/<description> labels,
+        # NOT the raw <coordinates> dump. A large KMZ otherwise explodes into
+        # hundreds of coordinate-noise chunks (one file produced 810) that
+        # pollute retrieval. Keeps the file locatable by its placemark names.
+        labels = re.findall(r"<(?:name|description)>(.*?)</(?:name|description)>",
+                            kml_text, flags=re.IGNORECASE | re.DOTALL)
+        cleaned = []
+        for lab in labels:
+            lab = re.sub(r"<[^>]+>", " ", lab)  # strip any nested CDATA/markup
+            lab = re.sub(r"\s+", " ", lab).strip()
+            if lab and not re.fullmatch(r"[-\d.,\s]+", lab):  # drop pure coord strings
+                cleaned.append(lab)
+        # De-dup while preserving order; cap to keep the doc metadata-sized.
+        seen, out = set(), []
+        for lab in cleaned:
+            if lab not in seen:
+                seen.add(lab); out.append(lab)
+        return " | ".join(out[:500])
     except Exception:
         return ""
 
@@ -736,7 +750,21 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> Tuple[str, Dict[st
             import docx
             with file_crypto.open_plaintext(file_path) as readable_path:
                 document = docx.Document(readable_path)
-                return "\n".join(p.text for p in document.paragraphs), {}
+                # python-docx `.paragraphs` EXCLUDES table cells. RFP/BOD/spec
+                # docs put requirements, schedules and specs in tables — dropping
+                # them under-extracts ~half the document (Anthropic/Kenya RFPs:
+                # 5.6k para chars + 5.3k table chars → only ~2 chunks). Include
+                # both.
+                parts = [p.text for p in document.paragraphs if p.text.strip()]
+                # getattr guard: real python-docx always exposes .tables, but a
+                # malformed/partial document (or a test double) may not — don't
+                # let a missing .tables drop the paragraph text we already have.
+                for _tbl in getattr(document, "tables", None) or []:
+                    for _row in _tbl.rows:
+                        _cells = [c.text.strip() for c in _row.cells if c.text.strip()]
+                        if _cells:
+                            parts.append(" | ".join(_cells))
+                return "\n".join(parts), {}
 
         # ── XLSX ─────────────────────────────────────────────────────────────
         if ext == ".xlsx":
