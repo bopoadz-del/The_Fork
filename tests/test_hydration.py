@@ -261,6 +261,42 @@ async def test_run_isolates_project_failures(isolated_data_dir, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_skips_projects_without_projects_row(isolated_data_dir, monkeypatch):
+    """A conversation whose project was deleted (no ``projects`` row) must be
+    skipped, not hydrated. ``hydration_runs.project_id`` is a FK to ``projects``;
+    hydrating an orphan raises ForeignKeyViolation on Postgres (PYTHON-FASTAPI-7).
+    The pass must drop it silently, record no run for it, and surface no error."""
+    from app.core.learning import hydration as hydration_module
+    from app.core import hydration_store
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+
+    target = "2026-05-26"
+    ts = "2026-05-26T10:00:00Z"
+    _seed_conversation("real", ts, "q", "a")
+    _seed_conversation("ghost", ts, "q", "a")
+    # Simulate a deleted project: drop ghost's projects-table row, keep its
+    # conversation (exactly the orphan state prod hit for project 36576239).
+    with SessionLocal() as s:
+        obj = s.get(Project, "ghost")
+        if obj is not None:
+            s.delete(obj)
+            s.commit()
+
+    async def fake_chat(prompt, max_tokens=600):
+        return ("ok summary", "deepseek")
+
+    monkeypatch.setattr(hydration_module, "_call_chat", fake_chat)
+
+    result = await hydration_module.run(target_date=target)
+
+    assert result["projects_processed"] == 1                     # only 'real'
+    assert hydration_store.get_latest("project", "real") is not None
+    assert hydration_store.get_latest("project", "ghost") is None  # orphan skipped
+    assert result["errors"] == []                                # no FK error surfaced
+
+
+@pytest.mark.asyncio
 async def test_latest_operation_via_block(isolated_data_dir, monkeypatch):
     """The module's get_latest() — same path the router uses."""
     from app.core import hydration_store
