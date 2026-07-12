@@ -51,8 +51,45 @@ CHECKPOINT_PATH = REPO / "rag_render_bulk_ingest_checkpoint.json"
 LOCK_PATH = REPO / "rag_render_bulk_ingest.lock"
 NAMESPACE = "v2"
 
+# Write resilience/pacing (Render Postgres drops connections under sustained
+# bulk load). Tunable via env; defaults chosen for a starter-tier DB.
+_RETRY_ATTEMPTS = max(1, int(os.getenv("INGEST_RETRY_ATTEMPTS", "5")))
+_RETRY_BACKOFF_S = float(os.getenv("INGEST_RETRY_BACKOFF_S", "2.0"))
+_PACING_MS = int(os.getenv("INGEST_PACING_MS", "150"))
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _with_db_retry(fn: "Callable[[], Any]") -> Any:
+    """Run a DB operation, reconnecting and retrying on a dropped/failed
+    connection. Retries only transient connectivity errors (OperationalError /
+    "server closed the connection" / connection failures); logic errors
+    (IntegrityError, DataError, etc.) propagate immediately. Exponential
+    backoff between attempts."""
+    last: Exception | None = None
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 — classify below
+            msg = str(exc).lower()
+            transient = (
+                exc.__class__.__name__ in ("OperationalError", "InterfaceError")
+                or "server closed the connection" in msg
+                or "connection failed" in msg
+                or "connection is closed" in msg
+                or "consuming input failed" in msg
+                or "ssl connection has been closed" in msg
+            )
+            if not transient or attempt == _RETRY_ATTEMPTS:
+                raise
+            last = exc
+            sleep_s = _RETRY_BACKOFF_S * (2 ** (attempt - 1))
+            print(f"[retry] DB op failed ({exc.__class__.__name__}); "
+                  f"attempt {attempt}/{_RETRY_ATTEMPTS}, backoff {sleep_s:.1f}s",
+                  flush=True)
+            time.sleep(sleep_s)
+    raise last  # unreachable, satisfies type checkers
 
 
 def text_hash(text: str) -> str:
@@ -342,26 +379,40 @@ class PostgresStore:
                     normalized,
                 )
             )
-        with psycopg.connect(self._psycopg_url, connect_timeout=60) as conn:
-            try:
+        def _insert() -> None:
+            with psycopg.connect(self._psycopg_url, connect_timeout=60) as conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.executemany(sql, params)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+
+        def _confirm() -> int:
+            with psycopg.connect(self._psycopg_url, connect_timeout=60) as conn:
                 with conn.cursor() as cur:
-                    cur.executemany(sql, params)
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-        # confirm count for this batch's ids
-        with psycopg.connect(self._psycopg_url, connect_timeout=60) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) FROM chunks_v2 WHERE chunk_id = ANY(%s)",
-                    ([r.chunk_id for r in rows],),
-                )
-                confirmed = int(cur.fetchone()[0])
+                    cur.execute(
+                        "SELECT COUNT(*) FROM chunks_v2 WHERE chunk_id = ANY(%s)",
+                        ([r.chunk_id for r in rows],),
+                    )
+                    return int(cur.fetchone()[0])
+
+        # A struggling Render Postgres closes the connection mid-write under
+        # sustained bulk load ("server closed the connection unexpectedly").
+        # Raw psycopg has no pool_pre_ping safety net (unlike the app's
+        # SQLAlchemy engine), so reconnect-and-retry here. INSERT is idempotent
+        # (ON CONFLICT DO UPDATE) so a retried batch can't double-write.
+        _with_db_retry(_insert)
+        confirmed = _with_db_retry(_confirm)
         if confirmed != len(rows):
             raise RuntimeError(
                 f"post-commit confirm failed: expected {len(rows)} got {confirmed}"
             )
+        # Pace writes so sustained ingestion never starves live chat retrieval
+        # sharing this DB (INGEST_PACING_MS, default 150ms between batches).
+        if _PACING_MS:
+            time.sleep(_PACING_MS / 1000.0)
         return confirmed
 
     def count_chunks(self, project_id: str) -> int:
