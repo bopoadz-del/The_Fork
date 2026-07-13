@@ -15,6 +15,7 @@ from app.blocks.historical_benchmark import (
     HistoricalBenchmarkBlock, supported_locations, _BASE_RATES,
 )
 from app.containers.construction import ConstructionContainer
+from tests.conftest import requires_construction_kit
 
 
 @pytest.fixture
@@ -81,6 +82,10 @@ class TestBasisHonesty:
 
 
 class TestCostEstimateBasisWarning:
+    # generate_cost_estimate delegates to the historical_benchmark block, which
+    # is only registered when the construction kit is loaded (production-like);
+    # in virgin mode it honestly errors, so gate these on the kit.
+    @requires_construction_kit
     @pytest.mark.asyncio
     async def test_mixed_basis_estimate_is_flagged(self, container):
         r = await container.generate_cost_estimate({}, {
@@ -95,6 +100,7 @@ class TestCostEstimateBasisWarning:
         assert r["basis_warning"] and "understates" in r["basis_warning"]
         assert r["rate_source"] == "indicative_benchmark_fallback"
 
+    @requires_construction_kit
     @pytest.mark.asyncio
     async def test_single_basis_estimate_no_warning(self, container):
         r = await container.generate_cost_estimate({}, {
