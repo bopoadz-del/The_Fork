@@ -10,18 +10,25 @@ HONEST-STUB (named requirement) / PARKED-BY-DESIGN (verified dormant). No FAKE /
 |---|---|
 | REAL | 86 |
 | REAL-BUT-UNREACHABLE | 4 |
-| HONEST-STUB | 11 |
-| FAKE | 3 |
+| HONEST-STUB | 14 |
+| FAKE | 0 |
 | BROKEN | 0 |
 | **Total** | **104** |
+
+> **2026-07-13 — F1/F2/F3 CLOSED (PR #206 merged, deployed, live-accepted).** The 3 FAKE rows now
+> return honest, requirement-naming errors instead of fabricated facts. Live acceptance via fork_cli
+> through prod-config chat on `dar_al_arkan_master` (evidence: `review_pack/brain/accept_*_20260713.txt`):
+> as_built (no files) → "requires as-built+design files or measurements+design_measurements", **no APPROVED**;
+> tender_bid (1 bid) → "requires at least two real bids", **no award**; claim (no events, routed to
+> forensic_delay_analysis) → "requires baseline + updated XER", **no invented quantum**. FAKE count 3→0.
 
 ## ACTION QUEUE (what the program must flip)
 | # | item | verdict | fix | file:line | oracle |
 |---|---|---|---|---|---|
-| F1 | `as_built_deviation_report` (file path) | **FAKE** | delete hardcoded "Column grid A-1" deviation; real dimension/annotation compare OR honest "needs 2 files"; no-files must NOT return APPROVED | `__init__.py:523-536`, `documents.py:583-633` | two file pairs → different results; file-vs-itself → 0 deviations; no files → honest error |
-| F2 | `claims_builder` | **FAKE** | delete invented DE-001/DE-002 fallback → honest "needs delay_events" | `schedule.py:609-613` | no events → error, never a $-quantified claim |
-| F3 | `tender_bid_analysis` | **FAKE** | delete 3 invented bidders → honest "needs ≥2 bids" | `boq.py:1138-1143` | <2 bids → error, never an award recommendation |
-| F4 | `daily_site_report._fetch_weather` | REAL-w/-fab-peripheral | real Open-Meteo call (free, no key) + honest "weather unavailable"; empty sections honest-empty | `__init__.py:724-735` | real date/location → real weather; offline → honest-unavailable |
+| F1 | `as_built_deviation_report` (file path) | **DONE #206 ✓live** | real drawing_qto extraction+compare; None→honest error; no-files never APPROVED | `__init__.py:523-548`, `documents.py:583-633` | ✓ live: no files → "requires files/measurements", no APPROVED |
+| F2 | `claims_builder` | **DONE #206 ✓live** | invented DE-001/DE-002 fallback removed → honest "needs delay_events" | `schedule.py:609-613` | ✓ live: no events → honest error, no $-quantum |
+| F3 | `tender_bid_analysis` | **DONE #206 ✓live** | 3 invented bidders removed → honest "needs ≥2 bids" | `boq.py:1138-1143` | ✓ live: 1 bid → honest error, no award |
+| F4 | `daily_site_report._fetch_weather` | **DONE (branch) ✓unit** | real Open-Meteo (geocode→archive/forecast, keyless) + honest `status:unavailable` on geocode-miss/bad-date/no-record/network; WMO code→conditions, real precip+wind→impact; narrative shows "unavailable(reason)" not fabricated | `__init__.py:736-838` | ✓ 9 unit tests: no-loc/bad-date/geocode-miss/no-record/network→unavailable; real payload→real reading (WMO0→clear, not "sunny"); archive path→adverse |
 | W1 | orphaned: `track_progress`, `generate_construction_report`, `qa_inspection`, `progress_tracking` | REAL-BUT-UNREACHABLE | wire routing (or delete the 2 redundant) | `__init__.py:1410-1542` | reachable via chat phrasing |
 | W2 | `digital_twin_sync` | REAL (name overpromises) | rename or wire a real push; add sync_status | `documents.py:1004-1054` | honest about no live push |
 | W3 | `document_engine`/`process_document` llm_enhancer | dead sub-feature | fix `json` NameError (swallowed) or remove | `documents.py:167` | enhancement runs or is removed |
@@ -41,7 +48,7 @@ om_manual_generator, intelligent_workflow, auto_pipeline, health_check, generate
 spec_analyze, sympy_reason, drawing_qto, primavera_parse, orchestrate, formula_execute, bim_extract,
 learn, benchmark_lookup, recommend + 8 route()-only aliases (cost_estimate, analyze_spec,
 schedule_risk, contract_review, safety_audit, carbon_report, procurement, status) + handover_management.
-FAKE: as_built_deviation_report(file-path), claims_builder, tender_bid_analysis. [F1–F3]
+FAKE: none — as_built_deviation_report/claims_builder/tender_bid_analysis fixed to honest-gate [F1–F3 DONE #206, live-accepted 2026-07-13].
 REAL-BUT-UNREACHABLE: track_progress, generate_construction_report, qa_inspection, progress_tracking. [W1]
 HONEST-STUB: jetson_dispatch (not-implemented), + 10 procedure actions (PRC-501/502/301/303/401/402/405/601/602/604) that return cited DB procedure metadata when no qualifying input, delegate to a real handler when input present. [acceptable — honest]
 

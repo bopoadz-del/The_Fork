@@ -1,0 +1,11 @@
+
+[   0.81s] ROUTE       {"requested": "project-assistant", "final": "project-assistant", "action": "tender_bid_analysis", "confidence": 0.4, "reason": "below_routing_gate"}
+
+[   0.81s] START       {"session_id": "ws-dar_al_arkan_master", "mode": "predefined", "request_id": "a56d0819-4e1"}
+The tender bid analysis has encountered an error. The analysis requires at least two real bids to proceed, but only one bid from Contractor Alpha was provided. 
+
+To move forward, please supply additional bids in the required format: `{contractor_name, total_price, duration_days, experience_score, financial_stability, safety_rating, quality_score}`. 
+[   3.06s] END         {"complete": true, "mode": "predefined", "workflow": "tender_bid_analysis", "plan_steps": ["tender_bid_analysis"], "exports": [], "request_id": "a56d0819-4e1"}
+
+------------------------------------------------------------
+turn summary: total=3.08s  first_token=2.61s  events=48  answer_chars=351  model=?
