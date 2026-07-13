@@ -544,57 +544,171 @@ class ConstructionScheduleMixin:
             }
         }
     async def resource_histogram(self, input_data: Any, params: Dict) -> Dict:
+        """Time-phased manpower histogram from a real Primavera P6 ``.xer``.
+
+        Delegates to the proven, hand-verified library
+        (:func:`app.lib.pm_computations.resource_histogram`, TASKRSRC path):
+        parse the ``.xer``, run CPM for the early-date timeline, then time-phase
+        the schedule's REAL per-task resource assignments (TASKRSRC rows) into
+        periods. A schedule with no resource loading (no TASKRSRC rows) returns
+        an honest error — never a fabricated or all-zero histogram, and never a
+        hardcoded trade split.
+        """
+        import os
+
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
         schedule_file = data.get("schedule_file") or p.get("schedule_file")
-        productivity_curves = data.get("productivity") or p.get("productivity", {})
-        trade_breakdown = p.get("trade_breakdown", True)
-    
+        period_unit = (p.get("period_unit") or "week").lower()
+
         if not schedule_file:
             return {
                 "status": "error",
                 "action": "resource_histogram",
                 "error": "No schedule file provided — pass schedule_file pointing to a .xer schedule",
             }
+        if not os.path.exists(schedule_file):
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": f"Schedule file not found: {schedule_file}",
+            }
+        if not str(schedule_file).lower().endswith(".xer"):
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": "Resource histogram requires a Primavera P6 .xer schedule",
+            }
 
-        schedule_data = await self._parse_xer_file(schedule_file)
-        if schedule_data.get("status") == "error":
-            return schedule_data
-        activities = schedule_data.get("activities", [])
+        # Read the raw .xer text (open_plaintext transparently decrypts when a
+        # DATA_ENCRYPTION_KEY is configured) — the library parser needs the text
+        # blob, not the block's flattened per-activity shape (which drops the
+        # resource assignments this histogram is built from).
+        try:
+            from app.core.file_crypto import open_plaintext
+            with open_plaintext(schedule_file) as plain_path:
+                with open(plain_path, "r", encoding="cp1252", errors="replace") as f:
+                    xer_text = f.read()
+        except Exception as exc:  # noqa: BLE001 — surface the read failure honestly
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": f"Could not read schedule file: {exc}",
+            }
+
+        try:
+            from app.lib.pm_computations import (
+                parse_xer_full, compute_cpm,
+                resource_histogram as _lib_resource_histogram,
+                CircularDependencyError,
+            )
+            from app.schemas.cpm import CPMInput
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": f"pm_computations library unavailable: {exc}",
+            }
+
+        try:
+            bundle = parse_xer_full(xer_text)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": f"XER parse failed: {exc}",
+            }
+
+        activities = bundle.get("activities") or []
+        task_resources = bundle.get("task_resources") or []
+        resources_meta = bundle.get("resources") or {}
         if not activities:
             return {
                 "status": "error",
                 "action": "resource_histogram",
                 "error": "Schedule contains no activities — cannot build a resource histogram",
             }
+        if not task_resources:
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": (
+                    "Schedule has no resource assignments (no TASKRSRC rows) — cannot "
+                    "build a labor histogram from this .xer. Re-export the programme "
+                    "with resource loading, or provide a resource-loaded schedule."
+                ),
+            }
 
-        histogram_data = self._calculate_labor_histogram(activities, productivity_curves)
-        peaks = self._identify_resource_peaks(histogram_data)
-        conflicts = self._identify_resource_conflicts(histogram_data)
-        optimizations = self._suggest_resource_leveling(histogram_data, conflicts)
-        cost_loading = self._calculate_cost_histogram(histogram_data)
-    
+        # A LABOR histogram counts man-hours from RT_Labor resources ONLY. A
+        # TASKRSRC target_qty for RT_Mat/RT_Equip is a material/cost/equipment
+        # quantity in its own unit — summing it as "man-hours" fabricates the
+        # total (a real DG2 baseline mixes a cost resource whose qty dwarfs all
+        # labor by ~1000x). Relabel each labor row's trade to the human resource
+        # short_name. When the schedule carries no RSRC dictionary at all, no
+        # type is knowable, so every assignment is treated as labor (best effort).
+        labor_rows: List[Dict[str, Any]] = []
+        for tr in task_resources:
+            meta = resources_meta.get(tr.get("rsrc_id")) or {}
+            rtype = meta.get("type")
+            if rtype == "RT_Labor" or (not resources_meta and not rtype):
+                labeled = dict(tr)
+                labeled["rsrc_id"] = meta.get("short_name") or tr.get("rsrc_id")
+                labor_rows.append(labeled)
+        if not labor_rows:
+            n_types = sorted({(resources_meta.get(tr.get("rsrc_id")) or {}).get("type", "?")
+                              for tr in task_resources})
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": (
+                    "Schedule has resource assignments but none are labor resources "
+                    f"(RT_Labor) — found types {n_types}. Cannot build a labor histogram; "
+                    "the non-labor quantities (material/cost/equipment) are not man-hours."
+                ),
+            }
+
+        try:
+            cpm_out = compute_cpm(CPMInput(activities=activities))
+        except (CircularDependencyError, ValueError) as exc:
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": f"CPM computation failed: {exc}",
+            }
+
+        try:
+            hist = _lib_resource_histogram(
+                cpm_out.results, activities,
+                period_unit=period_unit, task_resources=labor_rows,
+            )
+        except ValueError as exc:
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": f"Histogram computation failed: {exc}",
+            }
+
+        hist_dict = hist.model_dump()
         return {
             "status": "success",
             "action": "resource_histogram_generated",
-            "project_duration_weeks": len(histogram_data),
-            "resource_summary": {
-                "total_labor_hours": sum(week.get("total_labor", 0) for week in histogram_data),
-                "peak_labor_count": max((week.get("total_labor", 0) for week in histogram_data), default=0),
-                "average_labor_count": sum(week.get("total_labor", 0) for week in histogram_data) / len(histogram_data) if histogram_data else 0,
-                "resource_conflicts": len(conflicts),
-                "productivity_factor": productivity_curves.get("overall_factor", 1.0)
-            },
-            "by_trade": self._breakdown_by_trade(histogram_data) if trade_breakdown else None,
-            "weekly_histogram": histogram_data[:52] if not p.get("full_data") else histogram_data,
-            "peak_periods": peaks,
-            "resource_conflicts": conflicts,
-            "leveling_opportunities": optimizations,
-            "cost_loaded_histogram": cost_loading,
-            "recommendations": [
-                "Consider overtime during peak weeks" if any(p["labor_count"] > 100 for p in peaks) else "Labor loading is balanced",
-                "Float available to shift non-critical activities" if optimizations else "Schedule is fully constrained"
-            ]
+            "period_unit": hist.period_unit,
+            "period_count": len(hist.periods),
+            "periods": hist_dict.get("periods", []),
+            "peak_total": hist.peak_total,
+            "peak_period": hist.peak_period,
+            "by_trade_totals": hist_dict.get("by_trade_totals", {}),
+            "total_manhours": hist.total_manhours,
+            "resource_assignments": len(labor_rows),
+            "labor_resource_count": len(labor_rows),
+            "total_assignments_in_schedule": len(task_resources),
+            "resource_types_included": "RT_Labor",
+            "source": "primavera_taskrsrc",
+            "note": (
+                "Time-phased man-hours from the schedule's real P6 TASKRSRC "
+                "RT_Labor assignments only (material/cost/equipment excluded); "
+                "trades are the P6 resource short names."
+            ),
         }
     async def claims_builder(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}

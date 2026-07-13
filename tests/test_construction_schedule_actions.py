@@ -504,3 +504,90 @@ class TestFetchWeatherHonestOrReal:
         assert container._weather_impact(0.0, 30.0) == "marginal"
         assert container._weather_impact(20.0, 10.0) == "adverse"
         assert container._weather_impact(None, None) == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# V1 — resource_histogram: real P6 TASKRSRC histogram or honest error,
+# never the old fake-success all-zero histogram with hardcoded trade ratios.
+# ---------------------------------------------------------------------------
+
+# A minimal resource-loaded .xer (PROJECT/CALENDAR/TASK/TASKPRED/TASKRSRC):
+#   A1010 Excavation (5d) -> A1020 Foundation (10d) -> A1030 Backfill (5d)
+#   TASKRSRC: A1010 LAB 200h, A1020 LAB 400h, A1030 CARP 100h  => 700 man-hours
+_RESLOADED_XER = "tests/fixtures/resource_loaded.xer"
+# A real .xer with NO TASKRSRC rows (no resource loading).
+_NORSRC_XER = "uploads/_synthetic/schedules/sample.xer"
+
+
+class TestResourceHistogramRealOrHonest:
+    """V1 — the container action must produce a real time-phased histogram from
+    the schedule's own TASKRSRC assignments, or an honest error — never a
+    fabricated/zeroed histogram."""
+
+    @pytest.mark.asyncio
+    async def test_real_taskrsrc_produces_nonzero_histogram(self, container):
+        import os
+        if not os.path.exists(_RESLOADED_XER):
+            pytest.skip("resource-loaded fixture missing")
+        r = await container.resource_histogram({}, {"schedule_file": _RESLOADED_XER})
+        assert r["status"] == "success"
+        # Real man-hours from TASKRSRC target_qty (200+400+100), not zero.
+        assert r["total_manhours"] == 700.0
+        # Real per-resource totals keyed on P6 rsrc_id — not a hardcoded
+        # 30/20/15/15/20 concrete/masonry/steel/... split.
+        assert r["by_trade_totals"] == {"LAB": 600.0, "CARP": 100.0}
+        assert r["period_count"] >= 1
+        assert r["source"] == "primavera_taskrsrc"
+        # The fabricated fixed-ratio trades must be gone.
+        assert "concrete" not in r["by_trade_totals"]
+
+    @pytest.mark.asyncio
+    async def test_labor_filter_excludes_material_and_cost(self, container):
+        # Regression for the real DG2 baseline finding: a .xer whose TASKRSRC
+        # mixes RT_Labor with an RT_Mat resource (STEEL, target_qty 999999) must
+        # count man-hours from labor ONLY — never sum the material quantity.
+        import os
+        fx = "tests/fixtures/resource_loaded_mixed.xer"
+        if not os.path.exists(fx):
+            pytest.skip("mixed-resource fixture missing")
+        r = await container.resource_histogram({}, {"schedule_file": fx})
+        assert r["status"] == "success"
+        assert r["resource_types_included"] == "RT_Labor"
+        # 200 + 400 + 100 labor hours; the 999999 material qty is excluded.
+        assert r["total_manhours"] == 700.0
+        assert r["by_trade_totals"] == {"LAB": 600.0, "CARP": 100.0}
+        assert "STEEL" not in r["by_trade_totals"]
+        assert r["labor_resource_count"] == 3
+        assert r["total_assignments_in_schedule"] == 4
+
+    @pytest.mark.asyncio
+    async def test_xer_without_resources_errors_not_zeroed(self, container):
+        import os
+        if not os.path.exists(_NORSRC_XER):
+            pytest.skip("no-resource fixture missing")
+        r = await container.resource_histogram({}, {"schedule_file": _NORSRC_XER})
+        assert r["status"] == "error"
+        assert "TASKRSRC" in r["error"] or "resource assignment" in r["error"]
+        # No fake-success payload leaked through.
+        assert "total_manhours" not in r
+        assert "by_trade_totals" not in r
+
+    @pytest.mark.asyncio
+    async def test_no_file_errors(self, container):
+        r = await container.resource_histogram({}, {})
+        assert r["status"] == "error"
+        assert "schedule file" in r["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_missing_file_errors(self, container):
+        r = await container.resource_histogram(
+            {}, {"schedule_file": "tests/fixtures/nope_does_not_exist.xer"})
+        assert r["status"] == "error"
+        assert "not found" in r["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_non_xer_errors(self, container):
+        r = await container.resource_histogram(
+            {}, {"schedule_file": "tests/fixtures/sample.txt"})
+        assert r["status"] == "error"
+        assert ".xer" in r["error"]
