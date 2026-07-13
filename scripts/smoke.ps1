@@ -78,7 +78,13 @@ for ($i = 1; $i -le $Runs; $i++) {
     $mm    = [regex]::Match($out, "model=(\S+)")
     $model = if ($mm.Success) { $mm.Groups[1].Value } else { "?" }
 
-    $hasTool = ($out -match "TOOL_CALL") -and ($out -match "TOOL_RESULT")
+    # A deliverable run = the orchestrator executed a REAL action, via EITHER
+    # the agent tool-loop (TOOL_CALL + TOOL_RESULT) OR predefined dispatch
+    # (END event with mode:predefined + a non-empty plan_steps). The latter was
+    # invisible to the old detector, so a healthy predefined deliverable
+    # (e.g. commissioning_checklist) wrongly read as tool=n.
+    $hasTool = (($out -match "TOOL_CALL") -and ($out -match "TOOL_RESULT")) -or `
+               (($out -match '"mode":\s*"predefined"') -and ($out -match '"plan_steps":\s*\[\s*"[A-Za-z]'))
     # Success requires a substantive answer, not just non-empty — a degenerate
     # short answer must FAIL.
     $ok = $m.Success -and ($chars -ge $MinChars)

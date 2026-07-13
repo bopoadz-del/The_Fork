@@ -8,8 +8,10 @@
 # short/empty answer, and the tool path is exactly what breaks.
 #
 # VERDICT: PASS iff all N runs succeed (answer_chars >= MIN_ANSWER_CHARS,
-#          default 1500) AND >= max(1, floor(N*0.3)) runs contain a
-#          tool_call/tool_result pair (1 for N=3, 3 for N=10). Otherwise FAIL
+#          default 1500) AND >= max(1, floor(N*0.3)) runs executed a REAL
+#          deliverable (1 for N=3, 3 for N=10) — either via the agent tool-loop
+#          (tool_call/tool_result) OR via predefined dispatch (mode:predefined
+#          with a non-empty plan_steps). Otherwise FAIL
 #          with a nonzero exit code. Each run prints the served model, so a
 #          silent fallback (e.g. Kimi K2 -> Ollama) is visible, not hidden.
 #
@@ -102,8 +104,18 @@ for i in $(seq 1 "$RUNS"); do
   chars="${chars:-0}"
   model="${model:-?}"
 
+  # A "deliverable run" is one where the orchestrator executed a REAL action,
+  # by EITHER path:
+  #   (a) the agent tool-loop — a TOOL_CALL + TOOL_RESULT pair; or
+  #   (b) predefined dispatch — the END event carries mode:predefined with a
+  #       non-empty plan_steps (the container action ran via run_workflow).
+  # (b) was invisible to the old detector, so a healthy predefined deliverable
+  # (e.g. commissioning_checklist -> mode:predefined) wrongly read as tool=n.
   has_tool=n
   if printf '%s\n' "$out" | grep -q 'TOOL_CALL' && printf '%s\n' "$out" | grep -q 'TOOL_RESULT'; then
+    has_tool=Y
+  elif printf '%s\n' "$out" | grep -q '"mode": "predefined"' \
+       && printf '%s\n' "$out" | grep -qE '"plan_steps": \[[[:space:]]*"[A-Za-z]'; then
     has_tool=Y
   fi
 
