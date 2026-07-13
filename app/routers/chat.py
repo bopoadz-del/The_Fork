@@ -305,6 +305,7 @@ async def _stream_from_predefined(
     # Tenant gate — same as the heavy path: drop project_id when not owned.
     safe_project_id = project_id
     project_name = None
+    project_location = None
     if project_id:
         try:
             from app.core import projects as projects_store
@@ -313,6 +314,7 @@ async def _stream_from_predefined(
                 safe_project_id = None
             else:
                 project_name = proj.get("name")
+                project_location = proj.get("location")
         except Exception:  # noqa: BLE001
             logger.exception("predefined: ownership check failed; dropping project_id")
             safe_project_id = None
@@ -340,6 +342,14 @@ async def _stream_from_predefined(
         yield f"data: {json.dumps({'type': 'end', 'complete': True, 'mode': 'predefined', 'workflow': action, 'plan_steps': [], 'exports': [], 'request_id': rid})}\n\n"
         return
     context["params"] = resolved_params
+
+    # Fill scalar params from the project's CONFIRMED metadata (never from the
+    # chat message). daily_site_report's weather location comes from here (F4);
+    # unset → the action's honest "no location" path, never a scraped/fabricated
+    # city. A caller-supplied location always wins.
+    if (action == "daily_site_report" and safe_project_id
+            and project_location and not context["params"].get("location")):
+        context["params"]["location"] = project_location
 
     try:
         from app.core.predefined_reasoning import run_workflow

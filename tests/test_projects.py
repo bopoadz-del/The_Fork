@@ -46,6 +46,44 @@ def test_create_and_get_project(client):
     assert got.json()["documents"] == []
 
 
+# ── F4: project location (daily_site_report weather source) ─────────────────
+
+def test_create_project_with_location(client):
+    r = client.post("/v1/projects",
+                    json={"name": "Riyadh Tower", "location": "Riyadh"}, headers=H)
+    assert r.status_code == 201, r.text
+    proj = r.json()
+    assert proj["location"] == "Riyadh"
+
+
+def test_create_project_without_location_is_none(client):
+    proj = _new_project(client, "No Location Project")
+    assert proj["location"] is None
+
+
+def test_patch_project_sets_and_clears_location(client):
+    proj = _new_project(client, "Location Update Project")
+    assert proj["location"] is None
+    # set
+    r = client.patch(f"/v1/projects/{proj['id']}",
+                     json={"location": "Jeddah"}, headers=H)
+    assert r.status_code == 200, r.text
+    assert r.json()["location"] == "Jeddah"
+    # confirm it persisted on GET
+    got = client.get(f"/v1/projects/{proj['id']}", headers=H)
+    assert got.json()["location"] == "Jeddah"
+    # clear (empty string -> None)
+    r2 = client.patch(f"/v1/projects/{proj['id']}",
+                      json={"location": ""}, headers=H)
+    assert r2.status_code == 200
+    assert r2.json()["location"] is None
+
+
+def test_patch_missing_project_404(client):
+    assert client.patch("/v1/projects/nope1234",
+                        json={"location": "X"}, headers=H).status_code == 404
+
+
 def test_list_projects_includes_created(client):
     proj = _new_project(client, "Listed Project")
     r = client.get("/v1/projects", headers=H)

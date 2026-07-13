@@ -384,7 +384,11 @@ class ConstructionScheduleMixin:
         p = params or {}
         voice_notes = data.get("voice_files") or p.get("voice_files", [])
         photos = data.get("photos") or p.get("photos", [])
-        site_location = p.get("location")
+        # Read from BOTH input_data and params: the generic predefined dispatcher
+        # (_run_container_action) merges resolved params into the envelope and
+        # passes it as input_data, so a params-only read would miss the project
+        # location resolved by chat.py. (Same convention as every other action.)
+        site_location = p.get("location") or data.get("location")
         date = p.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         supervisor = p.get("supervisor", "Site Manager")
         project_name = p.get("project_name", "Project")

@@ -104,6 +104,55 @@ class TestStreamWiring:
         assert captured["context"]["params"]["schedule_file"] == "/data/b.xer"
 
     @pytest.mark.asyncio
+    async def test_daily_site_report_location_from_project_metadata(self, monkeypatch):
+        # F4: daily_site_report's weather location comes from the project's
+        # confirmed metadata, never from the message.
+        import app.core.projects as projects
+        import app.core.predefined_reasoning as pr
+        monkeypatch.setattr(projects, "list_documents", lambda pid, **k: [])
+        captured = {}
+
+        async def fake_run_workflow(action, context, session):
+            captured["params"] = dict(context["params"])
+            return {"handled": True, "answer": "ok", "plan_steps": [action], "exports": []}
+        monkeypatch.setattr(pr, "run_workflow", fake_run_workflow)
+
+        async def run(loc, caller_params):
+            monkeypatch.setattr(projects, "get_project",
+                                lambda pid, user_id=None: {"id": pid, "name": "P", "location": loc})
+            captured.clear()
+            async for _ in chat._stream_from_predefined(
+                action="daily_site_report", user_message="daily site report",
+                project_id="p1", user_id="u", session_id="s",
+                document_ids=[], params=caller_params, emit_start=False):
+                pass
+            return captured["params"].get("location")
+
+        assert await run("Riyadh", {}) == "Riyadh"          # from project metadata
+        assert await run(None, {}) is None                   # unset -> honest, no inject
+        assert await run("Riyadh", {"location": "Jeddah"}) == "Jeddah"  # caller wins
+
+    @pytest.mark.asyncio
+    async def test_non_daily_action_gets_no_location(self, monkeypatch):
+        import app.core.projects as projects
+        import app.core.predefined_reasoning as pr
+        monkeypatch.setattr(projects, "get_project",
+                            lambda pid, user_id=None: {"id": pid, "name": "P", "location": "Riyadh"})
+        monkeypatch.setattr(projects, "list_documents", lambda pid, **k: [])
+        captured = {}
+
+        async def fake_run_workflow(action, context, session):
+            captured["params"] = dict(context["params"])
+            return {"handled": True, "answer": "ok"}
+        monkeypatch.setattr(pr, "run_workflow", fake_run_workflow)
+
+        async for _ in chat._stream_from_predefined(
+            action="resource_histogram", user_message="x", project_id="p1",
+            user_id="u", session_id="s", document_ids=[], params={}, emit_start=False):
+            pass
+        assert "location" not in captured["params"]
+
+    @pytest.mark.asyncio
     async def test_two_xer_streams_ask_which_without_running_action(self, monkeypatch):
         import app.core.projects as projects
         monkeypatch.setattr(projects, "get_project",

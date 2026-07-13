@@ -71,6 +71,7 @@ def _project_as_dict(project: Project) -> Dict[str, Any]:
         "id": project.id,
         "name": project.name,
         "client": project.client,
+        "location": getattr(project, "location", None),
         "status": project.status,
         "aconex_connected": bool(project.aconex_connected),
         "user_id": project.user_id,
@@ -167,6 +168,11 @@ def _patch_legacy_columns() -> None:
                     "ADD COLUMN origin TEXT NOT NULL DEFAULT 'user_create'"
                 ))
                 conn.commit()
+            if "location" not in cols:  # 0010 (F4 — daily_site_report weather)
+                conn.execute(sqla_text(
+                    "ALTER TABLE projects ADD COLUMN location TEXT"
+                ))
+                conn.commit()
 
             doc_cols = {row[1] for row in conn.execute(
                 sqla_text("PRAGMA table_info(documents)")
@@ -257,6 +263,7 @@ def create_project(
     client: Optional[str] = None,
     user_id: str = "system",
     *,
+    location: Optional[str] = None,
     is_approved: bool = True,
     project_id: Optional[str] = None,
     origin: str = "user_create",
@@ -287,6 +294,7 @@ def create_project(
                     id=pid,
                     name=name,
                     client=client,
+                    location=(location or "").strip() or None,
                     status="active",
                     aconex_connected=False,
                     user_id=user_id,
@@ -297,6 +305,20 @@ def create_project(
             )
             session.commit()
     return get_project(pid)
+
+
+def set_project_location(project_id: str, location: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Set (or clear, with None) a project's confirmed site location. Returns the
+    updated project dict, or None if the project does not exist."""
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                return None
+            project.location = (location or "").strip() or None
+            session.commit()
+    return get_project(project_id)
 
 
 def get_or_create_project(
