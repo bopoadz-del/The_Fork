@@ -54,10 +54,9 @@ class ConstructionBoqMixin:
                 "status": "error",
                 "action": "cost_estimate",
                 "error": (
-                    "No historical benchmark source configured. The hardcoded "
-                    "2024 USD rate book was removed; the system will accumulate "
-                    "real rates via learning_engine over time. Provide unit "
-                    "rates directly in the BOQ, or request supplier quotes."
+                    "Benchmark rate source unavailable (construction kit not "
+                    "loaded). Provide unit rates directly in the BOQ, or request "
+                    "supplier quotes."
                 ),
             }
 
@@ -117,6 +116,7 @@ class ConstructionBoqMixin:
                 "base_rate": base_rate,
                 "adjusted_rate": adjusted_rate,
                 "location_factor": location_factor,
+                "basis": result.get("basis"),
                 "total": round(total, 2),
             })
 
@@ -126,6 +126,20 @@ class ConstructionBoqMixin:
         contingency = subtotal * 0.05
         total = subtotal + overhead + profit + contingency
 
+        # Honesty: the benchmark rates carry different bases (material-only vs
+        # supply-and-fix vs plant+labour). Summing a material-only line (e.g.
+        # concrete supply, no placing) with an all-in line understates the
+        # labour-heavy trades — so flag when the priced lines mix bases.
+        priced_bases = {li.get("basis") for li in line_items
+                        if li.get("total") is not None and li.get("basis")}
+        mixed_basis = len(priced_bases) > 1
+        basis_warning = (
+            "Indicative benchmark rates mix cost bases "
+            f"({sorted(priced_bases)}): material-only lines exclude their "
+            "placing/fixing labour, so this total understates labour-heavy "
+            "trades. Load your own project rates for a coherent total."
+        ) if mixed_basis else None
+
         return {
             "status": "success",
             "action": "cost_estimate",
@@ -133,6 +147,10 @@ class ConstructionBoqMixin:
             "project_type": project_type,
             "line_items": line_items,
             "unpriced_items": unpriced_items,
+            "rate_source": "indicative_benchmark_fallback",
+            "bases_used": sorted(priced_bases),
+            "mixed_basis": mixed_basis,
+            "basis_warning": basis_warning,
             "summary": {
                 "subtotal": round(subtotal, 2),
                 "overhead": round(overhead, 2),
@@ -140,7 +158,9 @@ class ConstructionBoqMixin:
                 "contingency": round(contingency, 2),
                 "total_estimate": round(total, 2)
             },
-            "confidence": "medium"
+            "confidence": "low",
+            "note": ("Priced from indicative general-knowledge benchmark rates — "
+                     "replace with your project/supplier rates for a real estimate."),
         }
     async def _lookup_unit_cost(
         self, item_name: str, unit: str,
@@ -1001,10 +1021,11 @@ class ConstructionBoqMixin:
         """Quick cost estimate from a quantities dict.
 
         Rates ($/m³ concrete, $/kg steel, etc.) MUST be supplied by the
-        caller — there is no longer a hardcoded $150/m³ default. The earlier
-        rate-book block (historical_benchmark) was removed because its 2024
-        USD snapshot would drift silently; this method follows the same
-        principle. Returns an error dict when no rates are provided.
+        caller — this method has no hardcoded $150/m³ default and does not
+        consult the benchmark. (For an INDICATIVE benchmark-priced estimate,
+        use `cost_estimate`, which delegates to the historical_benchmark block
+        and clearly flags the rates as indicative fallbacks.) Returns an error
+        dict when no rates are provided.
 
         Note: the previous version also tried to read a `rebar_length_m`
         quantity key that `_calculate_quantities` never emits — the rebar
