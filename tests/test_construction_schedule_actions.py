@@ -365,3 +365,21 @@ async def test_commissioning_checklist_respects_input_data(container):
     assert result["substantial_completion_target"] == "2025-09-01"
     assert result["commissioning_period_weeks"] == 2
     assert result["completion_target"] == "2025-09-15T00:00:00"
+
+
+class TestClaimsBuilderHonestGate:
+    """F2 — claims_builder must never invent delay events (was DE-001/DE-002)."""
+
+    @pytest.mark.asyncio
+    async def test_no_delay_events_errors_not_fabricates(self, container):
+        result = await container.claims_builder({}, {})
+        assert result["status"] == "error"
+        assert "delay_events" in result["error"]
+        assert "quantum" not in result and "total_claim" not in result
+
+    @pytest.mark.asyncio
+    async def test_real_delay_events_build_claim(self, container):
+        events = [{"event_id": "DE-01", "description": "employer delay",
+                   "delay_days": 10, "responsibility": "employer", "cost_impact": 50000}]
+        result = await container.claims_builder({"delay_events": events}, {})
+        assert result["status"] == "success"

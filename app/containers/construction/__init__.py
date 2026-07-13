@@ -522,18 +522,30 @@ class ConstructionContainer(
         return recs
     async def _compare_as_built_to_design(
         self, as_built_path: str, design_path: str, tolerance_mm: float
-    ) -> List[Dict]:
-        return [
-            {
-                "element": "Column grid A-1",
-                "design_value": "3600mm",
-                "as_built_value": "3618mm",
-                "deviation_mm": 18,
-                "tolerance_mm": tolerance_mm,
-                "severity": "major" if 18 > tolerance_mm * 1.5 else "minor",
-                "action_required": "Verify structural impact",
-            }
-        ]
+    ):
+        """Real dimension comparison: extract measurements from BOTH files via the
+        drawing_qto block, then compare like-typed dimensions. Returns None when
+        comparable dimensions cannot be extracted from one or both files so the
+        caller emits an honest 'needs comparable dimensions' error — NEVER a
+        fabricated deviation. (The prior implementation returned a hardcoded
+        'Column grid A-1, 18mm' record for every file pair.)"""
+        qto = None
+        try:
+            qto = self._resolve_block("drawing_qto")
+        except Exception:  # noqa: BLE001
+            qto = None
+        if qto is None:
+            return None
+        try:
+            ab = await qto.process({"file_path": as_built_path})
+            dg = await qto.process({"file_path": design_path})
+        except Exception:  # noqa: BLE001
+            return None
+        ab_m = (ab or {}).get("measurements") or []
+        dg_m = (dg or {}).get("measurements") or []
+        if not ab_m or not dg_m:
+            return None
+        return self._compare_measurement_sets(ab_m, dg_m, tolerance_mm)
     def _group_submittals_by_type(self, submittals: List[Dict]) -> Dict:
         grouped: Dict = {}
         for s in submittals:

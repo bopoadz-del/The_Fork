@@ -385,14 +385,19 @@ class TestValueEngineering:
 
 class TestTenderBidAnalysis:
     @pytest.mark.asyncio
-    async def test_tender_bid_analysis_default_bids(self, container):
-        result = await container.tender_bid_analysis({}, {})
-        assert result["status"] == "success"
-        assert result["action"] == "tender_bid_analysis"
-        assert result["bids_received"] == 3
-        assert result["ranking"]["first"]["rank"] == 1
-        assert result["price_analysis"]["lowest_bid"] > 0
-        assert result["recommendation"]["award_to"] is not None
+    async def test_tender_bid_analysis_requires_two_bids(self, container):
+        # <2 bids must NEVER fabricate bidders or an award recommendation — the
+        # previous behaviour injected 3 fictitious contractors. Honest error only.
+        for payload in (
+            {},
+            {"bids": []},
+            {"bids": [{"contractor_name": "A", "total_price": 1_000_000}]},
+        ):
+            result = await container.tender_bid_analysis(payload, {})
+            assert result["status"] == "error", payload
+            assert "at least two" in result["error"].lower()
+            assert "recommendation" not in result
+            assert "ranking" not in result
 
     @pytest.mark.asyncio
     async def test_tender_bid_analysis_custom_bids(self, container):
@@ -558,3 +563,96 @@ class TestProcurementAnalysis:
         assert result["action"] == "procurement_analysis"
         assert result["procurement_list"]["status"] == "success"
         assert result["optimization"]["status"] == "success"
+
+
+class TestAsBuiltDeviationHonestGate:
+    """F1 — as_built must never return APPROVED without a real comparison
+    (was a hardcoded 'Column grid A-1, 18mm' deviation / a false 0-deviation APPROVED)."""
+
+    @pytest.mark.asyncio
+    async def test_no_inputs_errors_not_approved(self, container):
+        result = await container.as_built_deviation_report({}, {})
+        assert result["status"] == "error"
+        assert "sign_off_status" not in result
+        assert "deviation_summary" not in result
+
+    @pytest.mark.asyncio
+    async def test_measurements_path_real_compare(self, container):
+        result = await container.as_built_deviation_report(
+            {"measurements": [{"type": "length", "value": 3.6, "unit": "m"}]},
+            {"design_measurements": [{"type": "length", "value": 3.618, "unit": "m"}]},
+        )
+        assert result["status"] == "success"
+        assert result["deviation_summary"]["total_deviations"] >= 1
+
+
+    @pytest.mark.asyncio
+    async def test_file_path_real_extraction_and_compare(self, container, monkeypatch):
+        # File path: _compare_as_built_to_design extracts via drawing_qto and
+        # compares like-typed dimensions. Monkeypatch drawing_qto so the full
+        # extraction->compare path runs deterministically (no real DXF/CAD).
+        class _FakeQTO:
+            async def process(self, data):
+                if "asbuilt" in (data.get("file_path") or ""):
+                    return {"measurements": [{"type": "length", "value": 3.618, "unit": "m"}]}
+                return {"measurements": [{"type": "length", "value": 3.6, "unit": "m"}]}
+        monkeypatch.setattr(container, "_resolve_block",
+                            lambda name: _FakeQTO() if name == "drawing_qto" else None)
+        result = await container.as_built_deviation_report(
+            {"as_built_file": "asbuilt.dxf", "design_file": "design.dxf"}, {})
+        assert result["status"] == "success"
+        # 18mm diff > 10mm tolerance -> a real, source-derived deviation
+        assert result["deviation_summary"]["total_deviations"] >= 1
+        # never the old hardcoded stub
+        assert "column grid a-1" not in str(result).lower()
+
+    @pytest.mark.asyncio
+    async def test_file_path_no_extractable_dimensions_errors(self, container, monkeypatch):
+        class _EmptyQTO:
+            async def process(self, data):
+                return {"measurements": []}
+        monkeypatch.setattr(container, "_resolve_block",
+                            lambda name: _EmptyQTO() if name == "drawing_qto" else None)
+        result = await container.as_built_deviation_report(
+            {"as_built_file": "a.dxf", "design_file": "b.dxf"}, {})
+        assert result["status"] == "error"
+        assert "comparable dimensions" in result["error"].lower()
+        assert "sign_off_status" not in result
+
+    @pytest.mark.asyncio
+    async def test_file_path_no_qto_block_errors(self, container, monkeypatch):
+        # drawing_qto unavailable (e.g. kit not loaded) -> None -> honest error.
+        monkeypatch.setattr(container, "_resolve_block", lambda name: None)
+        result = await container.as_built_deviation_report(
+            {"as_built_file": "a.dxf", "design_file": "b.dxf"}, {})
+        assert result["status"] == "error"
+        assert "sign_off_status" not in result
+
+    @pytest.mark.asyncio
+    async def test_measurements_without_design_errors(self, container):
+        result = await container.as_built_deviation_report(
+            {"measurements": [{"type": "length", "value": 3.6, "unit": "m"}]}, {})
+        assert result["status"] == "error"
+        assert "design_measurements" in result["error"]
+
+
+    @pytest.mark.asyncio
+    async def test_file_path_qto_raises_errors(self, container, monkeypatch):
+        class _BoomQTO:
+            async def process(self, data):
+                raise RuntimeError("qto boom")
+        monkeypatch.setattr(container, "_resolve_block", lambda name: _BoomQTO())
+        result = await container.as_built_deviation_report(
+            {"as_built_file": "a.dxf", "design_file": "b.dxf"}, {})
+        assert result["status"] == "error"
+        assert "sign_off_status" not in result
+
+    @pytest.mark.asyncio
+    async def test_file_path_resolve_raises_errors(self, container, monkeypatch):
+        def _boom(name):
+            raise RuntimeError("resolve boom")
+        monkeypatch.setattr(container, "_resolve_block", _boom)
+        result = await container.as_built_deviation_report(
+            {"as_built_file": "a.dxf", "design_file": "b.dxf"}, {})
+        assert result["status"] == "error"
+        assert "sign_off_status" not in result
