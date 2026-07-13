@@ -229,6 +229,59 @@ def _predefined_workflows() -> set:
     return set(WORKFLOW_REGISTRY) | container_action_names()
 
 
+# Predefined actions whose required FILE param can be resolved deterministically
+# from the project's uploaded documents by extension — so an NL turn ("build the
+# resource histogram") reaches the calculator with the project's own schedule,
+# without a per-turn LLM extraction call. Extend as more file-param actions are
+# wired (as_built_deviation_report → as_built_file/design_file, etc.).
+_ACTION_FILE_PARAMS: Dict[str, List[tuple]] = {
+    "resource_histogram": [("schedule_file", (".xer",))],
+}
+
+
+def _resolve_predefined_file_params(
+    action: str, project_id: Optional[str], params: Dict[str, Any]
+) -> tuple:
+    """Populate an action's file params from the project's uploaded documents.
+
+    Returns ``(params, error_or_None)``. Deterministic (no LLM). Honesty rules:
+      * a param the caller already supplied is never overridden;
+      * NO matching file → leave the slot unset so the action returns its own
+        honest "needs X" error;
+      * 2+ matching files → return an honest ask-which message instead of
+        silently picking one (the no-assumptions rule applies to files too).
+    """
+    specs = _ACTION_FILE_PARAMS.get(action)
+    if not specs or not project_id:
+        return params, None
+    try:
+        from app.core import projects as projects_store
+        docs = projects_store.list_documents(project_id)
+    except Exception:  # noqa: BLE001 — resolution is best-effort
+        return params, None
+
+    resolved = dict(params)
+    for slot, exts in specs:
+        if resolved.get(slot):
+            continue  # caller-supplied value wins
+        matches = [
+            d for d in docs
+            if (d.get("original_name") or "").lower().endswith(exts)
+            and d.get("file_path")
+        ]
+        if not matches:
+            continue  # let the action honest-error on the missing input
+        if len(matches) > 1:
+            names = ", ".join(sorted((d.get("original_name") or "?") for d in matches))
+            return resolved, (
+                f"This project has {len(matches)} Primavera schedule files ({names}). "
+                f"Tell me which one to use for the {action.replace('_', ' ')} (by name), "
+                f"or attach a single schedule."
+            )
+        resolved[slot] = matches[0]["file_path"]
+    return resolved, None
+
+
 async def _stream_from_predefined(
     action: str,
     user_message: str,
@@ -273,6 +326,21 @@ async def _stream_from_predefined(
     }
     if deliverable is not None:
         context["deliverable"] = deliverable   # dynamic UNDERSTAND verdict wins
+
+    # Deterministically resolve an action's file params from the project's own
+    # uploaded documents (e.g. resource_histogram → the project's .xer). An
+    # honest ask-which is streamed as the answer when the project holds >1
+    # candidate — never silently pick one.
+    resolved_params, param_error = _resolve_predefined_file_params(
+        action, safe_project_id, context["params"])
+    if param_error:
+        for word in param_error.split(" "):
+            yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
+            await asyncio.sleep(0.01)
+        yield f"data: {json.dumps({'type': 'end', 'complete': True, 'mode': 'predefined', 'workflow': action, 'plan_steps': [], 'exports': [], 'request_id': rid})}\n\n"
+        return
+    context["params"] = resolved_params
+
     try:
         from app.core.predefined_reasoning import run_workflow
         from app.schemas.project_session import ProjectSession
