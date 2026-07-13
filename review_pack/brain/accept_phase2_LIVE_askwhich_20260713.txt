@@ -1,0 +1,9 @@
+
+[   0.95s] ROUTE       {"requested": "project-assistant", "final": "heavy-reasoning", "action": "resource_histogram", "confidence": 0.6, "reason": "needs_planning"}
+
+[   0.95s] START       {"session_id": "ws-31df5b9d", "mode": "predefined", "request_id": "84abe92f-eb2"}
+This project has 2 Primavera schedule files (baseline_rev2.xer, small.xer). Tell me which one to use for the resource histogram (by name), or attach a single schedule. 
+[   1.27s] END         {"complete": true, "mode": "predefined", "workflow": "resource_histogram", "plan_steps": [], "exports": [], "request_id": "84abe92f-eb2"}
+
+------------------------------------------------------------
+turn summary: total=1.27s  first_token=0.95s  events=29  answer_chars=168  model=?

@@ -3,6 +3,27 @@
 Living log of the autonomous work program. One section per task, newest state
 first. Update on every task state change.
 
+## 2026-07-13 — STEP 0+1: PR queue merged, V1 + Phase-2 LIVE-through-brain
+
+- **STEP 0 (merge queue):** merged #208→#209→#210→#211→#212 in order under R8
+  (all checks green; #212 rebased `--onto main` after #209 landed, ledger
+  conflicts resolved by rebase). Then #213 (smoke tripwire fix). All deployed;
+  #212 (Phase-2) live on prod `871724a`. Smoke-3 on prod PASS (3/3 deliverables).
+- **Smoke fix (#213):** the pre-deploy smoke only recognized the agent tool-loop
+  (TOOL_CALL/TOOL_RESULT); predefined-dispatch deliverables (`mode:predefined` +
+  plan_steps) read as tool=n → false FAIL on a healthy commissioning_checklist.
+  Now counts both paths. smoke.sh + smoke.ps1.
+- **STEP 1 (live verification, V1 + Phase-2):** uploaded a real resource-loaded
+  `.xer` through the normal flow (encrypted at rest) into prod project
+  `31df5b9d`. NL "build the manpower resource histogram" → `mode:predefined` →
+  resolver → **decrypt-on-read** → 700 man-hrs RT_Labor-only (LAB 600/CARP 100).
+  2 .xer → honest ask-which. no .xer → honest error. Evidence:
+  `review_pack/brain/accept_phase2_LIVE_*.txt`. V1 flipped to REAL/live on the
+  ledger.
+- **Finding U1:** the full 25MB DG2 baseline .xer 502s on upload (synchronous
+  buffer+encrypt exceeds the gateway timeout). Small/mid .xer fine. Logged as
+  ledger row U1 + task #28 (upload-capacity, not a fabrication).
+
 ## 2026-07-08 — P0d: one-document BGE proof passed
 
 - Branch: `feat/clean-rebuild-rag`.

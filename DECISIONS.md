@@ -3,6 +3,34 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-07-13 — Phase-2 param resolution: deterministic doc→slot, not LLM
+
+**Decision:** resolve an action's FILE param from the project's uploaded
+documents deterministically (by extension → slot), NOT via a per-turn LLM
+extraction call.
+**Why:** the file-param majority (schedule_file, as_built drawings, etc.) can't
+be extracted from prose anyway — the real source is the project's documents. A
+per-turn LLM call adds latency (the K2/Scout deadline scar) and cost for no gain.
+**Honesty rule (files inherit no-assumptions):** caller-supplied wins; no match →
+leave empty so the action honest-errors; **2+ matches → honest ask-which, never
+silently pick one.** Verified live on prod (project `31df5b9d`).
+
+## 2026-07-13 — F4 daily_site_report location: DEFERRED to a project field
+
+**Decision:** do NOT scrape `location` from the chat message for the weather
+lookup. Add a project-metadata location field; `daily_site_report` reads it; no
+field → honest "set the project location". Tracked as task #26.
+**Why:** message-scraping is fabrication-adjacent — a mis-parsed token yields
+wrong-city weather in a formal site report. Project metadata is the authoritative
+source (uploads inherit active-project metadata — the no-assumptions rule).
+
+## 2026-07-13 — historical_benchmark config-rot: NEEDS-DECISION (parked)
+
+**Parked for Chadi:** 4 agent configs say historical_benchmark "was removed" but
+it exists + is contract-tested. The wording is an LLM-facing steer; rewriting it
+could change routing behavior, so it needs a product call (truthfully reword vs.
+actually retire the block + its contract test), not a unilateral guess.
+
 ## 2026-07-13 — FROZEN: pilot retrieval configuration (Step 3 winner)
 
 **Decision:** The pilot retrieval config is `RAG_GK_SCORE_MARGIN=0.10` +
