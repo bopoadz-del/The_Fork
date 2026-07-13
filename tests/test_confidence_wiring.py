@@ -1,4 +1,4 @@
-"""Tests for Stream E: measured confidence wired into construction_v2 and envelope.
+"""Tests for Stream E: measured confidence wired into the confidence envelope.
 
 Covers:
 1. Each _analyze_* method produces a measured confidence (not hardcoded).
@@ -59,100 +59,6 @@ RICH_SCHEDULE_TEXT = (
     "Activity 1003 duration 30 days structural steel\n"
     "Gantt milestone handover completion duration week\n"
 ) * 40
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Task 1: construction_v2 measured confidence
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestConstructionV2MeasuredConfidence:
-    """Each _analyze_* method should emit measured confidence, not hardcoded."""
-
-    def _run(self, coro):
-        return asyncio.run(coro)
-
-    def setup_method(self):
-        from app.blocks.construction_v2 import ConstructionBlockV2
-        self.block = ConstructionBlockV2()
-
-    # — drawing —
-
-    def test_drawing_confidence_is_not_hardcoded(self):
-        rich = self._run(self.block._analyze_drawing(RICH_DRAWING_TEXT, {}))
-        assert rich["confidence"] not in OLD_HARDCODED, (
-            f"drawing confidence {rich['confidence']} is still a hardcoded constant"
-        )
-
-    def test_drawing_confidence_measured_flag(self):
-        rich = self._run(self.block._analyze_drawing(RICH_DRAWING_TEXT, {}))
-        assert rich["confidence_report"]["measured"] is True
-
-    def test_drawing_rich_beats_sparse(self):
-        rich = self._run(self.block._analyze_drawing(RICH_DRAWING_TEXT, {}))
-        sparse = self._run(self.block._analyze_drawing(SPARSE_TEXT, {}))
-        assert rich["confidence"] > sparse["confidence"], (
-            f"rich={rich['confidence']}, sparse={sparse['confidence']}"
-        )
-
-    # — specification —
-
-    def test_specification_confidence_is_not_hardcoded(self):
-        result = self._run(self.block._analyze_specification(RICH_SPEC_TEXT, {}))
-        assert result["confidence"] not in OLD_HARDCODED
-
-    def test_specification_confidence_measured_flag(self):
-        result = self._run(self.block._analyze_specification(RICH_SPEC_TEXT, {}))
-        assert result["confidence_report"]["measured"] is True
-
-    def test_specification_rich_beats_sparse(self):
-        rich = self._run(self.block._analyze_specification(RICH_SPEC_TEXT, {}))
-        sparse = self._run(self.block._analyze_specification(SPARSE_TEXT, {}))
-        assert rich["confidence"] > sparse["confidence"]
-
-    # — contract —
-
-    def test_contract_confidence_is_not_hardcoded(self):
-        result = self._run(self.block._analyze_contract(RICH_CONTRACT_TEXT, {}))
-        assert result["confidence"] not in OLD_HARDCODED
-
-    def test_contract_confidence_measured_flag(self):
-        result = self._run(self.block._analyze_contract(RICH_CONTRACT_TEXT, {}))
-        assert result["confidence_report"]["measured"] is True
-
-    def test_contract_rich_beats_sparse(self):
-        rich = self._run(self.block._analyze_contract(RICH_CONTRACT_TEXT, {}))
-        sparse = self._run(self.block._analyze_contract(SPARSE_TEXT, {}))
-        assert rich["confidence"] > sparse["confidence"]
-
-    # — schedule —
-
-    def test_schedule_confidence_is_not_hardcoded(self):
-        result = self._run(self.block._analyze_schedule(RICH_SCHEDULE_TEXT, {}))
-        assert result["confidence"] not in OLD_HARDCODED
-
-    def test_schedule_confidence_measured_flag(self):
-        result = self._run(self.block._analyze_schedule(RICH_SCHEDULE_TEXT, {}))
-        assert result["confidence_report"]["measured"] is True
-
-    def test_schedule_rich_beats_sparse(self):
-        rich = self._run(self.block._analyze_schedule(RICH_SCHEDULE_TEXT, {}))
-        sparse = self._run(self.block._analyze_schedule(SPARSE_TEXT, {}))
-        assert rich["confidence"] > sparse["confidence"]
-
-    # — generic —
-
-    def test_generic_confidence_is_not_hardcoded(self):
-        result = self._run(self.block._analyze_generic(RICH_DRAWING_TEXT, {}))
-        assert result["confidence"] not in OLD_HARDCODED
-
-    def test_generic_confidence_measured_flag(self):
-        result = self._run(self.block._analyze_generic(RICH_DRAWING_TEXT, {}))
-        assert result["confidence_report"]["measured"] is True
-
-    def test_generic_rich_beats_sparse(self):
-        rich = self._run(self.block._analyze_generic(RICH_DRAWING_TEXT, {}))
-        sparse = self._run(self.block._analyze_generic(SPARSE_TEXT, {}))
-        assert rich["confidence"] > sparse["confidence"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

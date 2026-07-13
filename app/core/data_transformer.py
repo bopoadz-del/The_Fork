@@ -96,7 +96,6 @@ class DataTransformer:
         self.register("code", "CodeResult", self._code_to_result)
         
         # Construction blocks
-        self.register("construction_v2", "TextContent", self._construction_to_text)
         self.register("construction", "TextContent", self._construction_to_text)
     
     # ========================================================================
