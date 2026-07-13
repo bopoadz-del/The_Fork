@@ -590,14 +590,39 @@ class ConstructionDocumentsMixin:
         tolerance_mm = float(p.get("tolerance_mm", 10))
         element_type = p.get("element_type", "general")
 
-        deviations = []
-
+        # Honest gate — NEVER return a conformance/APPROVED verdict without a real
+        # comparison. No inputs => error, not "0 deviations, APPROVED".
         if as_built_file and design_file:
             deviations = await self._compare_as_built_to_design(as_built_file, design_file, tolerance_mm)
+            if deviations is None:
+                return {
+                    "status": "error",
+                    "action": "as_built_deviation_report",
+                    "error": (
+                        "Could not extract comparable dimensions from the as-built and design "
+                        "files. Provide DXF/PDF drawings with measurable dimensions, or supply "
+                        "measurements + design_measurements as [{type, value, unit}]."
+                    ),
+                }
         elif data.get("measurements") or p.get("as_built_measurements"):
             as_built_m = data.get("measurements") or p.get("as_built_measurements", [])
             design_m = p.get("design_measurements", [])
+            if not design_m:
+                return {
+                    "status": "error",
+                    "action": "as_built_deviation_report",
+                    "error": "as-built measurements supplied but no design_measurements to compare against.",
+                }
             deviations = self._compare_measurement_sets(as_built_m, design_m, tolerance_mm)
+        else:
+            return {
+                "status": "error",
+                "action": "as_built_deviation_report",
+                "error": (
+                    "As-built deviation report requires either (as_built_file + design_file) or "
+                    "(measurements + design_measurements). No comparison inputs supplied."
+                ),
+            }
 
         critical = [d for d in deviations if d.get("severity") == "critical"]
         major = [d for d in deviations if d.get("severity") == "major"]

@@ -606,11 +606,18 @@ class ConstructionScheduleMixin:
         notification_date = p.get("notification_date", datetime.now(timezone.utc).isoformat())
         claim_type = p.get("claim_type", "eot")
     
-        if not delay_events:
-            delay_events = [
-                {"event_id": "DE-001", "description": "Late design information from employer", "delay_days": 21, "responsibility": "employer", "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "cost_impact": 45000},
-                {"event_id": "DE-002", "description": "Unforeseen ground conditions requiring redesign", "delay_days": 14, "responsibility": "neutral", "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "cost_impact": 28000},
-            ]
+        if not delay_events and not (schedule_file and baseline_file):
+            # Honest gate — NEVER fabricate delay events. A claim built on invented
+            # events produces a $-quantified EOT/quantum figure with no basis.
+            return {
+                "status": "error",
+                "action": "claims_builder",
+                "error": (
+                    "Claim building requires delay_events (or a schedule_file + "
+                    "baseline_file to derive them). Provide delay_events as a list of "
+                    "{event_id, description, delay_days, responsibility, date, cost_impact}."
+                ),
+            }
     
         if schedule_file and baseline_file:
             delay_analysis = await self.parse_primavera_schedule({"file_path": schedule_file}, {"baseline_file": baseline_file})

@@ -1136,11 +1136,18 @@ class ConstructionBoqMixin:
         weights = p.get("weights", {"price": 0.30, "schedule": 0.20, "experience": 0.15, "financial": 0.15, "safety": 0.10, "quality": 0.10})
     
         if not bids or len(bids) < 2:
-            bids = [
-                {"contractor_name": "Bid A — Al Fara Construction", "total_price": 4850000, "duration_days": 540, "experience_score": 85, "financial_stability": 88, "safety_rating": 90, "quality_score": 82},
-                {"contractor_name": "Bid B — Gulf Builders LLC", "total_price": 4620000, "duration_days": 580, "experience_score": 78, "financial_stability": 80, "safety_rating": 85, "quality_score": 79},
-                {"contractor_name": "Bid C — Precision Contracting", "total_price": 5100000, "duration_days": 510, "experience_score": 92, "financial_stability": 95, "safety_rating": 94, "quality_score": 91},
-            ]
+            # Honest gate — NEVER fabricate bidders. A tender analysis that
+            # invents contractors and prices could drive a real award decision.
+            return {
+                "status": "error",
+                "action": "tender_bid_analysis",
+                "error": (
+                    "Tender bid analysis requires at least two real bids. Provide "
+                    "bids as a list of {contractor_name, total_price, duration_days, "
+                    "experience_score, financial_stability, safety_rating, quality_score}."
+                ),
+                "bids_supplied": len(bids),
+            }
 
         # Normalize common aliases so callers can pass either total_price/amount
         # or duration_days/duration without KeyError crashes.
