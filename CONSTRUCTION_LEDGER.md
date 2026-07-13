@@ -21,6 +21,14 @@ HONEST-STUB (named requirement) / PARKED-BY-DESIGN (verified dormant). No FAKE /
 > as_built (no files) → "requires as-built+design files or measurements+design_measurements", **no APPROVED**;
 > tender_bid (1 bid) → "requires at least two real bids", **no award**; claim (no events, routed to
 > forensic_delay_analysis) → "requires baseline + updated XER", **no invented quantum**. FAKE count 3→0.
+>
+> **2026-07-13 — F4 CLOSED (PR #207 merged, live on 0a27dad, live-accepted).** `daily_site_report`
+> weather now real Open-Meteo or honest "unavailable(reason)", never fabricated. Live on `dar_al_arkan_master`:
+> report renders **"Weather: Not requested"** — the old hardcoded 35°C/sunny/favorable is gone (evidence:
+> `review_pack/brain/accept_dailyreport_answer_20260713.txt`; a full-corpus scan of `review_pack/brain/`
+> finds zero fabrication markers). The real-weather leg (geocode Riyadh → live reading) awaits Phase-2
+> location passthrough — the NL "Riyadh" doesn't reach `_fetch_weather` through predefined dispatch, so the
+> action takes the honest empty-weather path rather than fabricating. **FAKE count 4→0 — Phase-1 fabrication kill COMPLETE.**
 
 ## ACTION QUEUE (what the program must flip)
 | # | item | verdict | fix | file:line | oracle |
@@ -28,7 +36,7 @@ HONEST-STUB (named requirement) / PARKED-BY-DESIGN (verified dormant). No FAKE /
 | F1 | `as_built_deviation_report` (file path) | **DONE #206 ✓live** | real drawing_qto extraction+compare; None→honest error; no-files never APPROVED | `__init__.py:523-548`, `documents.py:583-633` | ✓ live: no files → "requires files/measurements", no APPROVED |
 | F2 | `claims_builder` | **DONE #206 ✓live** | invented DE-001/DE-002 fallback removed → honest "needs delay_events" | `schedule.py:609-613` | ✓ live: no events → honest error, no $-quantum |
 | F3 | `tender_bid_analysis` | **DONE #206 ✓live** | 3 invented bidders removed → honest "needs ≥2 bids" | `boq.py:1138-1143` | ✓ live: 1 bid → honest error, no award |
-| F4 | `daily_site_report._fetch_weather` | **DONE (branch) ✓unit** | real Open-Meteo (geocode→archive/forecast, keyless) + honest `status:unavailable` on geocode-miss/bad-date/no-record/network; WMO code→conditions, real precip+wind→impact; narrative shows "unavailable(reason)" not fabricated | `__init__.py:736-838` | ✓ 9 unit tests: no-loc/bad-date/geocode-miss/no-record/network→unavailable; real payload→real reading (WMO0→clear, not "sunny"); archive path→adverse |
+| F4 | `daily_site_report._fetch_weather` | **DONE #207 ✓live** | real Open-Meteo (geocode→archive/forecast, keyless) + honest `status:unavailable` on geocode-miss/bad-date/no-record/network; WMO code→conditions, real precip+wind→impact; narrative shows "unavailable(reason)" not fabricated | `__init__.py:736-838` | ✓ 9 unit tests: no-loc/bad-date/geocode-miss/no-record/network→unavailable; real payload→real reading (WMO0→clear, not "sunny"); archive path→adverse. ✓LIVE-accepted 2026-07-13 on dar_al_arkan_master: report renders "Weather: Not requested" — fabricated 35°C/sunny/favorable GONE (evidence `review_pack/brain/accept_dailyreport_answer_20260713.txt`). Real-weather leg awaits Phase-2 location passthrough (`p.get("location")` empty in predefined dispatch → honest empty-weather path, never fabricated) |
 | W1 | orphaned: `track_progress`, `generate_construction_report`, `qa_inspection`, `progress_tracking` | REAL-BUT-UNREACHABLE | wire routing (or delete the 2 redundant) | `__init__.py:1410-1542` | reachable via chat phrasing |
 | W2 | `digital_twin_sync` | REAL (name overpromises) | rename or wire a real push; add sync_status | `documents.py:1004-1054` | honest about no live push |
 | W3 | `document_engine`/`process_document` llm_enhancer | dead sub-feature | fix `json` NameError (swallowed) or remove | `documents.py:167` | enhancement runs or is removed |
@@ -91,7 +99,7 @@ New block-level actionables:
 ---
 ## LEDGER STATUS
 Container(A+B) ✓ · Blocks(B) ✓ · Lib(C) ✓ · Agents(D) ✓ · Docs(E) ✓ — **full designed surface covered.**
-Overwhelmingly REAL. Fabrication surface: **3 container rows (F1/F2/F3 — FIXED, PR #206)** + weather stub (F4) + construction_v2 (deleted). Remaining program = wire BUILT-UNWIRED (EVM, project_reasoner, dormant agents — decide), fix broken (scope_extractor brief-path, resource_histogram verify), reconcile config-rot (historical_benchmark), Phase-2 param-extraction + grounding gate, correct 10 stale docs, then battery.
+Overwhelmingly REAL. Fabrication surface: **ALL 4 killed — F1/F2/F3 (PR #206, live-accepted) + F4 weather (PR #207, live-accepted 2026-07-13)** + construction_v2 (deleted). FAKE count 4→0. Remaining program = wire BUILT-UNWIRED (EVM, project_reasoner, dormant agents — decide), fix broken (scope_extractor brief-path, resource_histogram verify), reconcile config-rot (historical_benchmark), Phase-2 param-extraction + grounding gate, correct 10 stale docs, then battery.
 
 ## SECTION E — docs/README designed-vs-built (census landed): 18 LIVE · 8 BUILT-UNWIRED · 5 PARKED-BY-DESIGN · 3 DOC-ONLY · 10 STALE
 **BUILT-UNWIRED (code real, no live product caller — wire or ledger why):**
