@@ -656,3 +656,47 @@ class TestAsBuiltDeviationHonestGate:
             {"as_built_file": "a.dxf", "design_file": "b.dxf"}, {})
         assert result["status"] == "error"
         assert "sign_off_status" not in result
+
+
+class TestEsgAvailabilityGatedScoring:
+    """V2 — esg must not invent a rating for pillars with no supplied data.
+    Social/governance metrics are placeholder zeros; scoring them anyway fabricated
+    a composite + letter grade from nothing (social 80 for 'ltifr==0'=no-data,
+    governance a flat 70)."""
+
+    _BOQ = [{"description": "Concrete", "total_cost": 1_000_000, "quantity": 500, "unit": "m3"}]
+
+    @pytest.mark.asyncio
+    async def test_no_data_yields_no_score_no_rating(self, container):
+        r = await container.esg_sustainability_report({}, {})
+        s = r["esg_scores"]
+        assert s["overall"] is None
+        assert s["rating"] is None
+        assert s["social"] is None and s["governance"] is None
+        assert set(s["data_status"]["pillars_missing_data"]) == {
+            "environmental", "social", "governance"}
+        assert s["data_status"]["complete"] is False
+
+    @pytest.mark.asyncio
+    async def test_env_only_is_honest_partial(self, container):
+        r = await container.esg_sustainability_report({"boq": self._BOQ}, {})
+        s = r["esg_scores"]
+        assert s["environmental"] is not None
+        assert s["social"] is None and s["governance"] is None
+        # Overall reflects the single assessed pillar; rating is a labelled partial.
+        assert s["overall"] == s["environmental"]
+        assert s["rating"].startswith("partial")
+        assert "environmental" in s["rating"]
+
+    @pytest.mark.asyncio
+    async def test_all_pillars_present_gives_full_letter_rating(self, container):
+        r = await container.esg_sustainability_report({
+            "boq": self._BOQ,
+            "manpower": {"total_workers": 200, "local_percent": 85},
+            "safety_records": [{"type": "near_miss"}],
+            "project_data": {"anti_corruption": True, "ethics_training": 95},
+        }, {})
+        s = r["esg_scores"]
+        assert s["data_status"]["complete"] is True
+        assert all(s[p] is not None for p in ("environmental", "social", "governance"))
+        assert s["rating"] in ("A", "B", "C", "D")
