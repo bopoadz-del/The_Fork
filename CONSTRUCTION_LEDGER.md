@@ -63,7 +63,7 @@ honest auth/empty-input gating. (construction_v2 row from census = now REMOVED.)
 
 ## SECTION B — blocks (census landed): 47 REAL · 2 dead-twin (pdf_v2, ocr_v2 REAL-BUT-UNREACHABLE) · android_drive HONEST-STUB · construction_v2 FAKE→**DELETED #204**.
 New block-level actionables:
-- `scope_extractor` brief-only path **BROKEN** (document_engine only detects files by extension; text brief → error). fix: accept `{"text":...}` synthetic doc. `scope_extractor.py:76-80` / `document_engine.py:103-113`.
+- `scope_extractor` brief-only path **FIXED (branch) ✓unit** — document_engine treated `{"text": brief}` as a file path (`splitext` on prose → no ext → "No input files"). Now: an inline brief (or `brief` key) that isn't a recognised document path is wrapped in a synthetic text document and reasoned over by the same reasoner/mapper pipeline files use. Verified: a 3-sentence brief → 4 real obligations extracted verbatim (`documents_parsed=1`), empty input still honest-errors. `document_engine.py:102-126,128-210` + `tests/test_scope_extractor.py`.
 - `code.execute` runs **unsandboxed** despite "Sandboxed" docstring (security-label, not fabrication). gate through `_analyze`/`sandbox`. `code.py:171-215`.
 - `pdf_v2`/`ocr_v2` dead twins → delete or wire in place of `pdf`/`ocr`.
 - `historical_benchmark` REAL + self-disclosing (source_note/confidence) — name overclaims; rename candidate.

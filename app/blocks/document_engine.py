@@ -109,8 +109,18 @@ class DocumentEngineBlock(UniversalBlock):
             "xlsx": data.get("xlsx_path") or data.get("xlsx") or params.get("xlsx_path") or (raw_path if raw_ext in (".xlsx", ".xls") else None),
         }
 
-        if not any(file_paths.values()):
-            return {"status": "error", "error": "No input files provided (pdf/docx/xlsx). Pass file_path as pdf_path, docx_path, or xlsx_path."}
+        # A raw string that is NOT a recognised document path is an inline brief:
+        # reason over it directly via a synthetic text document instead of
+        # erroring. This is the no-file path used by scope_extractor and the
+        # generate-from-brief flows. An explicit ``brief`` key also feeds here.
+        brief_text = data.get("brief") or params.get("brief") or ""
+        if not brief_text and raw_path and not any(file_paths.values()):
+            known_ext = raw_ext in (".pdf", ".docx", ".doc", ".xlsx", ".xls")
+            if not known_ext and not os.path.exists(raw_path):
+                brief_text = raw_path
+
+        if not any(file_paths.values()) and not (brief_text and brief_text.strip()):
+            return {"status": "error", "error": "No input provided — pass a document (pdf/docx/xlsx) via pdf_path/docx_path/xlsx_path, or inline text via 'text'/'brief'."}
 
         # Decrypt-to-temp if the stored files are encrypted at rest. Both the
         # platform pdf/ocr blocks and the fallback parsers (fitz / python-docx /
@@ -123,10 +133,15 @@ class DocumentEngineBlock(UniversalBlock):
                 key: (_crypto_stack.enter_context(open_plaintext(p)) if p else None)
                 for key, p in file_paths.items()
             }
-            return await self._run_pipeline(file_paths)
+            return await self._run_pipeline(file_paths, brief_text=brief_text)
 
-    async def _run_pipeline(self, file_paths: Dict) -> Dict:
-        """Run the 3-layer pipeline on already-decrypted plaintext paths."""
+    async def _run_pipeline(self, file_paths: Dict, brief_text: str = "") -> Dict:
+        """Run the 3-layer pipeline on already-decrypted plaintext paths.
+
+        When ``brief_text`` is provided (and no files), the brief is wrapped in a
+        synthetic text document so the reasoner/mapper run over it exactly like a
+        parsed PDF — this is the inline-brief scope-extraction path.
+        """
         try:
             from app.document_engine.main import parse_all
             from app.document_engine.reasoner import DocumentReasoner
@@ -198,6 +213,13 @@ class DocumentEngineBlock(UniversalBlock):
             if file_paths.get("xlsx"):
                 parser = XLSXParser(config)
                 documents.append(parser.parse(file_paths["xlsx"]))
+
+            # Inline brief → synthetic text document (no file). PDFDocument is a
+            # plain (source, text) carrier; the reasoner reads `.text` the same
+            # way it reads a parsed PDF, so scope/requirements/constraints/etc.
+            # are extracted from the brief itself — not fabricated.
+            if brief_text and brief_text.strip():
+                documents.append(PDFDocument(source="inline-brief", text=brief_text))
 
             # ------------------------------------------------------------------
             # Layer 2: Reason
