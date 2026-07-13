@@ -733,18 +733,107 @@ class ConstructionContainer(
         return result
     def _generate_coordination_agenda(self, clashes: List[Dict]) -> List[str]:
         return [f"Review {c['description']} ({c['clash_id']})" for c in clashes[:10]]
-    async def _fetch_weather(self, location: str, date: str) -> Dict:
-        return {
-            "location": location,
-            "date": date,
-            "temperature_high": 35,
-            "temperature_low": 22,
-            "conditions": "sunny",
-            "wind_speed": "15 km/h",
-            "humidity": "65%",
-            "precipitation": "0mm",
-            "impact": "favorable"
+    @staticmethod
+    def _wmo_conditions(code) -> str:
+        """Map a WMO weather-interpretation code to a human label. 'unknown' when
+        the code is absent/unrecognised — never guesses 'sunny'."""
+        m = {
+            0: "clear", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
+            45: "fog", 48: "depositing rime fog",
+            51: "light drizzle", 53: "drizzle", 55: "dense drizzle",
+            56: "freezing drizzle", 57: "dense freezing drizzle",
+            61: "slight rain", 63: "rain", 65: "heavy rain",
+            66: "freezing rain", 67: "heavy freezing rain",
+            71: "slight snow", 73: "snow", 75: "heavy snow", 77: "snow grains",
+            80: "slight rain showers", 81: "rain showers", 82: "violent rain showers",
+            85: "snow showers", 86: "heavy snow showers",
+            95: "thunderstorm", 96: "thunderstorm with hail",
+            99: "thunderstorm with heavy hail",
         }
+        try:
+            return m.get(int(code), "unknown")
+        except (ValueError, TypeError):
+            return "unknown"
+
+    @staticmethod
+    def _weather_impact(precip, wind) -> str:
+        """Construction-work impact from real precipitation (mm) + max wind (km/h).
+        'unknown' when neither figure is available — never assumes 'favorable'."""
+        if precip is None and wind is None:
+            return "unknown"
+        try:
+            p = float(precip) if precip is not None else 0.0
+            w = float(wind) if wind is not None else 0.0
+        except (ValueError, TypeError):
+            return "unknown"
+        if p >= 10.0 or w >= 40.0:
+            return "adverse"      # heavy rain or high wind — likely work stoppage
+        if p >= 1.0 or w >= 25.0:
+            return "marginal"
+        return "favorable"
+
+    async def _fetch_weather(self, location: str, date: str) -> Dict:
+        """Real daily weather for a site via Open-Meteo (free, keyless). Geocodes the
+        location, then reads the daily record for `date` (archive API for dates >5 days
+        past, forecast API otherwise). Returns status:'unavailable' with a reason on any
+        failure — geocode miss, bad date, no record, or network error. NEVER fabricates
+        a figure."""
+        import httpx
+        from datetime import datetime, timezone as _tz
+
+        def unavailable(reason: str) -> Dict:
+            return {"location": location, "date": date,
+                    "status": "unavailable", "reason": reason, "source": "open-meteo"}
+
+        if not location:
+            return unavailable("no site location provided")
+        try:
+            d = datetime.strptime(date, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return unavailable(f"invalid date '{date}' (expected YYYY-MM-DD)")
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                geo = await client.get(
+                    "https://geocoding-api.open-meteo.com/v1/search",
+                    params={"name": location, "count": 1, "format": "json"},
+                )
+                results = (geo.json() or {}).get("results") or []
+                if not results:
+                    return unavailable(f"could not geocode location '{location}'")
+                lat, lon = results[0].get("latitude"), results[0].get("longitude")
+                days_ahead = (d - datetime.now(_tz.utc).date()).days
+                base = ("https://archive-api.open-meteo.com/v1/archive"
+                        if days_ahead < -5
+                        else "https://api.open-meteo.com/v1/forecast")
+                wx = await client.get(base, params={
+                    "latitude": lat, "longitude": lon,
+                    "daily": ("temperature_2m_max,temperature_2m_min,"
+                              "precipitation_sum,windspeed_10m_max,weathercode"),
+                    "timezone": "auto", "start_date": date, "end_date": date,
+                })
+                daily = (wx.json() or {}).get("daily") or {}
+                if not (daily.get("time") or []):
+                    return unavailable("no weather record for that date/location")
+
+                def first(key):
+                    seq = daily.get(key) or []
+                    return seq[0] if seq else None
+
+                hi, lo = first("temperature_2m_max"), first("temperature_2m_min")
+                precip, wind = first("precipitation_sum"), first("windspeed_10m_max")
+                code = first("weathercode")
+                return {
+                    "location": location, "date": date, "status": "success",
+                    "latitude": lat, "longitude": lon,
+                    "temperature_high": hi, "temperature_low": lo,
+                    "conditions": self._wmo_conditions(code),
+                    "wind_speed": f"{wind} km/h" if wind is not None else None,
+                    "precipitation": f"{precip}mm" if precip is not None else None,
+                    "impact": self._weather_impact(precip, wind),
+                    "source": "open-meteo",
+                }
+        except Exception as exc:
+            return unavailable(f"weather service error: {exc}")
     async def _analyze_site_photo(self, photo_path: str) -> Dict:
         image_block = self.get_dep("image")
         if image_block:
@@ -813,7 +902,12 @@ class ConstructionContainer(
     def _generate_daily_narrative(self, date: str, activities: List, issues: List, weather: Dict, manpower: Dict) -> str:
         parts = []
         parts.append(f"DAILY SITE REPORT - {date}")
-        parts.append(f"Weather: {weather.get('conditions', 'N/A')}, High: {weather.get('temperature_high')}°C")
+        if weather.get("status") == "unavailable":
+            parts.append(f"Weather: unavailable ({weather.get('reason', 'no data')})")
+        elif weather.get("conditions") is not None:
+            parts.append(f"Weather: {weather.get('conditions')}, High: {weather.get('temperature_high')}°C")
+        else:
+            parts.append("Weather: not requested")
         parts.append("")
         parts.append("MANPOWER:")
         parts.append(f"Total: {manpower.get('total', 0)} workers present")

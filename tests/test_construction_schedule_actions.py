@@ -383,3 +383,124 @@ class TestClaimsBuilderHonestGate:
                    "delay_days": 10, "responsibility": "employer", "cost_impact": 50000}]
         result = await container.claims_builder({"delay_events": events}, {})
         assert result["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# F4 — _fetch_weather: real Open-Meteo or honest 'unavailable', never fabricated
+# ---------------------------------------------------------------------------
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _FakeClient:
+    """Async-context httpx stand-in returning canned payloads in .get() order."""
+
+    def __init__(self, payloads, raise_on_get=False):
+        self._payloads = list(payloads)
+        self._raise = raise_on_get
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, params=None):
+        if self._raise:
+            raise RuntimeError("network down")
+        return _FakeResp(self._payloads.pop(0))
+
+
+def _patch_httpx(monkeypatch, payloads=None, raise_on_get=False):
+    import httpx
+    monkeypatch.setattr(
+        httpx, "AsyncClient",
+        lambda *a, **k: _FakeClient(payloads or [], raise_on_get=raise_on_get),
+    )
+
+
+_GEO_OK = {"results": [{"latitude": 24.7, "longitude": 46.6}]}
+_DAILY_OK = {"daily": {
+    "time": ["2026-07-10"],
+    "temperature_2m_max": [44.1], "temperature_2m_min": [29.3],
+    "precipitation_sum": [0.0], "windspeed_10m_max": [18.0],
+    "weathercode": [0],
+}}
+
+
+class TestFetchWeatherHonestOrReal:
+    """F4 — weather must be a real Open-Meteo reading or an honest 'unavailable';
+    it must NEVER return the old fabricated 35C/sunny/favorable block."""
+
+    @pytest.mark.asyncio
+    async def test_no_location_unavailable(self, container):
+        r = await container._fetch_weather("", "2026-07-10")
+        assert r["status"] == "unavailable"
+        assert "location" in r["reason"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_date_unavailable(self, container):
+        r = await container._fetch_weather("Riyadh", "not-a-date")
+        assert r["status"] == "unavailable"
+        assert "invalid date" in r["reason"]
+
+    @pytest.mark.asyncio
+    async def test_geocode_miss_unavailable(self, container, monkeypatch):
+        _patch_httpx(monkeypatch, payloads=[{"results": []}])
+        r = await container._fetch_weather("Nowheresville XYZ", "2026-07-10")
+        assert r["status"] == "unavailable"
+        assert "geocode" in r["reason"]
+
+    @pytest.mark.asyncio
+    async def test_no_record_unavailable(self, container, monkeypatch):
+        _patch_httpx(monkeypatch, payloads=[_GEO_OK, {"daily": {"time": []}}])
+        r = await container._fetch_weather("Riyadh", "2026-07-10")
+        assert r["status"] == "unavailable"
+        assert "no weather record" in r["reason"]
+
+    @pytest.mark.asyncio
+    async def test_network_error_unavailable(self, container, monkeypatch):
+        _patch_httpx(monkeypatch, raise_on_get=True)
+        r = await container._fetch_weather("Riyadh", "2026-07-10")
+        assert r["status"] == "unavailable"
+        assert "weather service error" in r["reason"]
+
+    @pytest.mark.asyncio
+    async def test_success_returns_real_reading(self, container, monkeypatch):
+        _patch_httpx(monkeypatch, payloads=[_GEO_OK, _DAILY_OK])
+        r = await container._fetch_weather("Riyadh", "2026-07-10")
+        assert r["status"] == "success"
+        assert r["temperature_high"] == 44.1
+        assert r["conditions"] == "clear"          # WMO 0, not fabricated "sunny"
+        assert r["impact"] == "favorable"           # 0mm precip, 18 km/h wind
+        assert r["source"] == "open-meteo"
+
+    @pytest.mark.asyncio
+    async def test_archive_path_for_old_date(self, container, monkeypatch):
+        old = {"daily": {"time": ["2020-01-01"],
+                         "temperature_2m_max": [12.0], "temperature_2m_min": [4.0],
+                         "precipitation_sum": [15.0], "windspeed_10m_max": [45.0],
+                         "weathercode": [65]}}
+        _patch_httpx(monkeypatch, payloads=[_GEO_OK, old])
+        r = await container._fetch_weather("London", "2020-01-01")
+        assert r["status"] == "success"
+        assert r["conditions"] == "heavy rain"      # WMO 65
+        assert r["impact"] == "adverse"             # 15mm precip / 45 km/h wind
+
+    def test_wmo_conditions_mapping(self, container):
+        assert container._wmo_conditions(0) == "clear"
+        assert container._wmo_conditions(95) == "thunderstorm"
+        assert container._wmo_conditions(999) == "unknown"
+        assert container._wmo_conditions(None) == "unknown"
+
+    def test_weather_impact_bands(self, container):
+        assert container._weather_impact(0.0, 10.0) == "favorable"
+        assert container._weather_impact(2.0, 10.0) == "marginal"
+        assert container._weather_impact(0.0, 30.0) == "marginal"
+        assert container._weather_impact(20.0, 10.0) == "adverse"
+        assert container._weather_impact(None, None) == "unknown"
