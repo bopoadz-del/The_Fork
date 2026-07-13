@@ -80,3 +80,75 @@ class TestGateNeverBlocks:
         # The original text is preserved in full; only a caveat is appended.
         assert out.startswith(original)
         assert len(out) > len(original)
+
+
+# ── increment 2: money/rate figure grounding ────────────────────────────────
+
+import pytest  # noqa: E402
+from app.core.predefined_reasoning import (  # noqa: E402
+    _gate_money_figures as mgate,
+    _collect_result_numbers,
+)
+
+
+def _mflagged(text, result):
+    return "could not be traced" in mgate(text, result)
+
+
+class TestMoneyFiguresFlaggedWhenUngrounded:
+    def test_fabricated_rate_flagged(self):
+        assert _mflagged("The rate is SAR 1,200/day.", {"total": 100}) is True
+
+    def test_fabricated_currency_amount_flagged(self):
+        assert _mflagged("Estimated cost: SAR 5,000,000.", {"subtotal": 42}) is True
+
+    def test_multiple_ungrounded_listed(self):
+        out = mgate("Day rate SAR 999,999/day and material USD 12,345.", {"x": 1})
+        assert "999,999" in out and "12,345" in out
+
+
+class TestMoneyFiguresNotFlaggedWhenGrounded:
+    def test_grounded_amount_not_flagged(self):
+        # 120000 is in the result → the SAR figure grounds.
+        assert _mflagged("Net due: SAR 120,000.",
+                         {"payment": {"net_due": 120000.0}}) is False
+
+    def test_rounding_tolerance(self):
+        # LLM renders 300000.0 as 'SAR 300,000' → still grounds.
+        assert _mflagged("Gross: SAR 300,000.", {"gross_valuation": 300000.0}) is False
+
+    def test_number_embedded_in_result_string_grounds(self):
+        assert _mflagged("IPC total SAR 220,000.",
+                         {"summary": "Cumulative certified SAR 220,000 to date"}) is False
+
+    def test_bare_non_currency_numbers_never_checked(self):
+        # counts / weeks / years are not currency-shaped → never flagged
+        assert _mflagged("700 man-hours across 42 trades, 34 months.", {}) is False
+
+
+class TestMoneyGateZeroFalsePositivesOnRealDeliverables:
+    """The real acceptance (per plan): render every money number in a real
+    financial result as currency and confirm the gate flags NONE of them."""
+
+    @pytest.mark.asyncio
+    async def test_payment_certificate_zero_fp(self):
+        from app.containers.construction import ConstructionContainer
+        c = ConstructionContainer()
+        r = await c.payment_certificate(
+            {"contract_value": 1_000_000, "work_done_percent": 30,
+             "previous_certified": 100_000, "retention_percent": 10,
+             "advance_payment": 50_000, "advance_recovery_percent": 20},
+            {"payment_period": "Month 3"})
+        answer = "Payment certificate. " + "; ".join(
+            f"SAR {n:,.2f}" for n in sorted(_collect_result_numbers(r)) if n >= 1)
+        assert _mflagged(answer, r) is False  # every figure is result-derived
+
+    @pytest.mark.asyncio
+    async def test_cash_flow_forecast_zero_fp(self):
+        from app.containers.construction import ConstructionContainer
+        c = ConstructionContainer()
+        r = await c.cash_flow_forecast(
+            {"contract_value": 5_000_000, "duration_months": 12}, {})
+        answer = "Cash flow. " + "; ".join(
+            f"SAR {n:,.2f}" for n in sorted(_collect_result_numbers(r)) if n >= 1)
+        assert _mflagged(answer, r) is False

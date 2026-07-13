@@ -275,14 +275,95 @@ def _gate_confidence_stamps(text: str, result: Any) -> str:
         "such rating as unverified._"
     )
 
+# ── Grounding gate increment 2 — money/rate figure grounding ────────────────
+# NARROWLY scoped to money/rate-shaped figures ONLY (currency symbol / SAR|USD…
+# / rate unit like "/day", "per m³"). Deliberately does NOT check bare integers
+# (counts, weeks, years) — a derived count like "42 trades" is not currency-
+# shaped, so it is never checked and never false-flagged. A fabricated
+# "SAR 1,200/day" that appears in a financial deliverable but nowhere in the
+# computed result is exactly what this catches.
+_CURRENCY = r"(?:SAR|USD|AED|EUR|GBP|QAR|KWD|OMR|BHD|\$|€|£)"
+_RATE_UNIT = (r"(?:/|per\s+)\s*(?:day|month|week|year|hour|hr|man-?hour|m3|m²|m2|"
+              r"m³|sqm|sq\s?m|kg|tonne|ton|t|lm|l\.?m|no\.?|unit|each|ea)")
+_NUM = r"\d[\d,]*(?:\.\d+)?"
+# money figure with the currency on either side, OR a number followed by a rate unit.
+_MONEY_FIG_RE = re.compile(
+    rf"{_CURRENCY}\s*({_NUM})"                      # $ 1,200  / SAR 300,000
+    rf"|({_NUM})\s*{_CURRENCY}"                     # 300,000 SAR
+    rf"|({_NUM})\s*{_RATE_UNIT}",                   # 1,200 /day  / 55 per m³
+    re.IGNORECASE,
+)
+_NUM_IN_TEXT_RE = re.compile(_NUM)
+
+def _to_number(s: str):
+    try:
+        return float(str(s).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+def _collect_result_numbers(result: Any) -> set:
+    """Every numeric value anywhere in the result — real fields AND numbers
+    embedded in result strings (e.g. 'IPC: SAR 120,000' in a summary). The LLM
+    only saw the payload truncated to 6000 chars, so matching against the FULL
+    result strictly REDUCES false-positives."""
+    nums: set = set()
+    stack = [result]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, bool):
+            continue
+        if isinstance(cur, (int, float)):
+            nums.add(round(float(cur), 2))
+        elif isinstance(cur, str):
+            for m in _NUM_IN_TEXT_RE.findall(cur):
+                v = _to_number(m)
+                if v is not None:
+                    nums.add(round(v, 2))
+        elif isinstance(cur, dict):
+            stack.extend(cur.values())
+        elif isinstance(cur, (list, tuple)):
+            stack.extend(cur)
+    return nums
+
+def _is_grounded_number(value: float, result_nums: set) -> bool:
+    """value grounds if some result number matches within a rounding tolerance
+    (0.5 absolute or 0.5% relative — covers '300,000.0' vs '300000' and the
+    LLM rounding 120,000.50 -> 120,001)."""
+    tol = max(0.5, abs(value) * 0.005)
+    return any(abs(value - r) <= tol for r in result_nums)
+
+def _gate_money_figures(text: str, result: Any) -> str:
+    """FLAG (append a caveat) money/rate figures in the prose that do NOT trace
+    to any number in the computed result — treat them as unverified estimates.
+    FLAG-only; never blocks. Bare non-currency numbers are never checked."""
+    result_nums = _collect_result_numbers(result)
+    ungrounded: list = []
+    for m in _MONEY_FIG_RE.finditer(text):
+        raw = next((g for g in m.groups() if g), None)
+        v = _to_number(raw)
+        if v is None or v == 0:
+            continue
+        if not _is_grounded_number(v, result_nums):
+            frag = m.group(0).strip()
+            if frag not in ungrounded:
+                ungrounded.append(frag)
+    if not ungrounded:
+        return text
+    listed = "; ".join(ungrounded[:8])
+    return text + (
+        "\n\n> _Note: the following figure(s) could not be traced to the computed "
+        f"result and should be treated as estimates, not calculated values: {listed}._"
+    )
+
 def _apply_grounding_gate(text: str, result: Any) -> str:
     """Run the enabled post-synthesis grounding checks (FLAG-only)."""
     if not _grounding_gate_enabled():
         return text
-    try:
-        text = _gate_confidence_stamps(text, result)
-    except Exception:  # noqa: BLE001 — a gate must never break a deliverable
-        logger.exception("grounding gate failed; returning ungated answer")
+    for check in (_gate_confidence_stamps, _gate_money_figures):
+        try:
+            text = check(text, result)
+        except Exception:  # noqa: BLE001 — a gate must never break a deliverable
+            logger.exception("grounding gate %s failed; skipping it", getattr(check, "__name__", "?"))
     return text
 
 
