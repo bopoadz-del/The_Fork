@@ -23,6 +23,24 @@ async def test_scope_extractor_returns_error_when_no_input(block):
 
 
 @pytest.mark.asyncio
+async def test_scope_extractor_brief_path_extracts_real_scope(block):
+    # The inline-brief path (no file) must reason over the brief text itself,
+    # not error with "No input files" (the former BROKEN behaviour).
+    brief = (
+        "The Contractor shall construct a 3-storey office building of 5,000 sqm. "
+        "The main chiller must be procured with a 120 day lead time. "
+        "The generator will be required for standby power."
+    )
+    result = await block.process({"text": brief})
+    assert result["status"] == "success"
+    assert result["documents_parsed"] == 1
+    # Real obligations are extracted verbatim from the brief — not fabricated.
+    reqs = result.get("requirements", [])
+    assert len(reqs) >= 1
+    assert any("Contractor shall construct" in (r.get("text") or "") for r in reqs)
+
+
+@pytest.mark.asyncio
 async def test_scope_extractor_focuses_output_shape(block, tmp_path):
     from docx import Document
 
