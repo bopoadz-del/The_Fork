@@ -3,6 +3,52 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-07-13 — FROZEN: pilot retrieval configuration (Step 3 winner)
+
+**Decision:** The pilot retrieval config is `RAG_GK_SCORE_MARGIN=0.10` +
+`RAG_GK_LEXICAL_FOLD=1` (paired). Deployed to `the-fork`
+(srv-d8hdc6ek1jcs739rq5sg), deploy `dep-d9a15o4s728c73e1rfh0`, live.
+
+**Supersedes** the 2026-07-08 park ("do not tune RAG knobs; proceed to embedder
+migration"). That park was correct for the legacy 256-dim embedder. The embedder
+migration to BGE-384 (v2 namespace) has since completed and the corpus was
+rebuilt; on the new embedder the knobs are the correct fix, not a symptom mask —
+the failure is a specific, measured scoring-math flaw (below), not an embedding
+weakness.
+
+**Evidence (live golden re-run, apples-to-apples with the 10/28 baseline):**
+- Golden **10/28 -> 22/28**. All 12 fresh-upload cases flipped 0 -> PASS.
+- **Zero regressions** among the baseline-10 (doc_qa still grounded at 939 chars,
+  wbs/manpower/s_curve/procurement/rfp/4 demo all held).
+- calc/dg2 referee verified ON THE LIVE RUN: GK not strangled.
+- In-process finalist cleared all 3 columns: fresh_win@1 12/12, dg2 8/8, calc 5/5.
+
+**Mechanism:** the 12 fresh misses were GK lexical-bonus inflation — an unbounded
+additive `_gk_lexical_bonus` lifting GK chunks to 1.1-2.0 vs own docs at
+0.80-0.91 (the EOT/FIDIC bug at 140k-chunk scale). The lexical fold only acts
+inside the margin gate, so the knobs MUST be paired.
+
+**Standing authorization (Chadi):** if this config ever regresses dg2/calc, the
+fix is a small PR bounding the lexical component (clamp GK total <= cosine + eps,
+or project-scope the bonus), same referee set — NOT further env-knob tuning.
+
+**Config freeze in force:** from here, nothing changes on the measured path
+except the sanctioned Step 4 dispatch-flag evaluation. `ORCHESTRATOR_PREDEFINED`
+stays false until the scoped-v2 code is merged and validated.
+
+### Residual after the knob (6 FAILs — the readiness packet's work list)
+None are retrieval problems any longer. Two feature-classes:
+- **Test-data / fixture-missing (3):** pilot_boq_total (96bd7cd1),
+  pilot_milestones (7ce7b9d0), pilot_qto_floor_area (7ce7b9d0) — target projects
+  do not exist (empty answer every run). Mechanical: seed or repoint.
+- **Synthesis-strictness (3):** pilot_spec_extraction (1222 chars, matched
+  "grade" not a standards body), pilot_document_metadata (76 chars, wrong
+  format), pilot_kb_mass_concrete (828 chars, peak 70 C not the 20 C
+  differential). Feature/prompt or oracle-strictness, not retrieval.
+
+Path to the 26/28 bar: 3 fixture seeds -> ~25/28; one synthesis fix clears it.
+Neither touches retrieval.
+
 ## 2026-07-08 — FINAL PROVIDER RESOLUTION (v2 freeze)
 
 **Decision:** Pilot primary provider is **OpenAI `gpt-4o-mini`**.
