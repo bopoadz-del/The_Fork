@@ -5,7 +5,7 @@ Prevents the T1 recurrence (44→17 collapse from an unset `CEREBRUM_DOMAIN_KITS
 ## Expected set: 40 blocks (with `CEREBRUM_DOMAIN_KITS=construction`, default VIRGIN)
 ```
 async_processor bim bim_extractor boq_processor cache_manager chat code
-construction construction_advisor construction_v2 cpm_engine document_engine
+construction construction_advisor cpm_engine document_engine
 drawing_qto fasttrack_analyzer file_hasher formula_executor_v2 historical_benchmark
 image learning_engine manpower_planner ocr orchestrator pdf primavera_parser
 project_dashboard project_reasoner recommendation_template schedule_excel_writer

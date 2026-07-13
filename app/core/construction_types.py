@@ -1,11 +1,9 @@
 """Shared dataclasses for construction-domain code.
 
-Both `app/containers/construction.py` and `app/blocks/construction_v2.py`
-historically defined `Measurement`, `SpecItem`, and `RiskItem` independently
-— identical fields, but two source-of-truth copies. Any future field
-change to one would diverge silently.
-
-This module is now the single definition; both files import from here.
+`Measurement`, `SpecItem`, and `RiskItem` historically had duplicate
+definitions across construction modules (the container and the now-removed
+`construction_v2` block). This module is the single source of truth; the
+construction container imports from here.
 """
 
 from dataclasses import dataclass

@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 _KIT_BLOCK_SPECS: Dict[str, List[Tuple[str, str, str]]] = {
     "construction": [
         ("construction", "app.containers.construction", "ConstructionContainer"),
-        ("construction_v2", "app.blocks.construction_v2", "ConstructionBlockV2"),
         ("construction_advisor", "app.blocks.construction_advisor", "ConstructionAdvisorBlock"),
         ("boq_processor", "app.blocks.boq_processor", "BOQProcessorBlock"),
         ("bim", "app.blocks.bim", "BIMBlock"),
