@@ -39,6 +39,14 @@ def _ensure_schema():
 def _stub_admin(monkeypatch):
     """Force require_api_key to return an admin identity so we can test
     the endpoint's business logic without exercising JWT/users flow."""
+    # The endpoint counts the RAG store the retriever actually reads —
+    # rag_chunk_table_name(RAG_VECTOR_NAMESPACE), which defaults to the
+    # namespaced `chunks_v2`. This fixture seeds the legacy `chunks` table
+    # (RagChunk), so pin the namespace to "" (→ `chunks`) to keep the seed
+    # and the count on the same table. Production runs namespace="v2" and the
+    # same code path counts `chunks_v2`; the drive_archive count post-deploy
+    # is the real-world proof.
+    monkeypatch.setenv("RAG_VECTOR_NAMESPACE", "")
     from app.routers import admin as admin_mod
     from app.dependencies import require_api_key as real_require_api_key
 
