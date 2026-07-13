@@ -24,13 +24,52 @@ from app.core.plan_executor import PlanExecutor
 logger = logging.getLogger(__name__)
 
 
+# Scoped Dispatch v2 — the EXPLICIT allowlist of container actions eligible for
+# reasoner-driven predefined dispatch. These are deliverable-PRODUCING actions
+# (they generate a register / schedule / certificate / report from project data)
+# where deterministic container execution + LLM synthesis beats the agent tool
+# loop's short answer. Q&A / lookup / document-processing / RAG-grounded actions
+# (chat, process_document, process_contract, process_specification_full,
+# benchmark_lookup, recommend, learn, analyze_spec, spec_analyze, health_check,
+# status) are DELIBERATELY excluded: they must stay on the RAG-grounded agent
+# path, never be intercepted. Membership is explicit, not a heuristic — adding an
+# action here is a reviewed decision.
+SCOPED_DISPATCH_ALLOWLIST = frozenset({
+    "cash_flow_forecast",
+    "resource_histogram",
+    "risk_register_auto_populate",
+    "procurement_list_generator",
+    "procurement_optimizer",
+    "commissioning_checklist",
+    "rfi_generator",
+    "submittal_log_generator",
+    "payment_certificate",
+    "change_order_impact",
+    "value_engineering",
+    "claims_builder",
+    "variation_order_manager",
+    "warranty_maintenance_schedule",
+    "as_built_deviation_report",
+    "om_manual_generator",
+    "esg_sustainability_report",
+    "carbon_footprint_calculator",
+    "safety_compliance_audit",
+    "tender_bid_analysis",
+    "daily_site_report",
+    "forensic_delay_analysis",
+})
+
+
 def container_action_names() -> set:
-    """The set of construction-container actions eligible for generic
-    reasoner-driven dispatch. Empty when the construction kit isn't loaded."""
+    """Construction-container actions eligible for reasoner-driven predefined
+    dispatch: the explicit SCOPED_DISPATCH_ALLOWLIST intersected with the actions
+    the loaded container actually implements. Empty when the kit isn't loaded.
+    Never returns Q&A/lookup actions even if they exist on the container."""
     try:
         from app.dependencies import get_block_instance
         con = get_block_instance("construction")
-        return set(con.get_actions().keys()) if hasattr(con, "get_actions") else set()
+        impl = set(con.get_actions().keys()) if hasattr(con, "get_actions") else set()
+        return impl & SCOPED_DISPATCH_ALLOWLIST
     except Exception:
         return set()
 
@@ -165,12 +204,47 @@ def _render_container_result(action: str, result: Any) -> str:
     return rendered or _json.dumps(result, indent=2, default=str)
 
 
+async def _synthesize_answer(action: str, result: Any, message: Optional[str]) -> str:
+    """LLM synthesis of a container action's structured result into a grounded,
+    professional narrative. Scoped Dispatch v2 BANS raw-render as the delivered
+    answer — the deterministic render is kept only as an emergency fallback if
+    the LLM call fails, so we never emit nothing. The LLM is instructed to ground
+    every figure strictly in the tool result (no invention)."""
+    raw = _render_container_result(action, result)
+    try:
+        import json as _json
+        from app.core import llm_client
+        payload = (_json.dumps(result, default=str)[:6000]
+                   if isinstance(result, (dict, list)) else str(result)[:6000])
+        system = (
+            "You are a construction project assistant. A deterministic tool has "
+            "already run and produced the structured result below. Write a clear, "
+            "professional answer for a construction PM that presents that result. "
+            "Ground EVERY figure, name and date strictly in the tool result - do "
+            "not invent, estimate, or add facts not present. Be concise, use "
+            "markdown. If the result is empty or an error, say so plainly."
+        )
+        user = (f"User request: {message or action}\n\nTool: {action}\n"
+                f"Structured result (JSON):\n{payload}")
+        text = await llm_client.complete(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.0, max_tokens=900,
+        )
+        return text.strip() or raw
+    except Exception:
+        logger.exception("synthesis for %s failed; using deterministic render", action)
+        return raw
+
+
 async def _run_container_action(action: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Generic reasoner-driven dispatch: if `action` is a real construction
-    container action, run it via the container's own execute() and format the
-    result. Returns None when the action isn't a container action (so the caller
-    keeps its handled=False fallthrough). No per-action wiring — the reasoner
-    picks the action, the container implements it, this runs it."""
+    """Scoped reasoner-driven dispatch: if `action` is in the explicit
+    SCOPED_DISPATCH_ALLOWLIST (deliverable-producing) AND implemented by the
+    container, run it via the container's own execute() and LLM-synthesize the
+    result. Returns None otherwise (so the caller keeps its handled=False
+    fallthrough to the RAG-grounded agent path). Q&A / lookup / document actions
+    are never in the allowlist, so they are never intercepted here."""
+    if action not in SCOPED_DISPATCH_ALLOWLIST:
+        return None
     try:
         from app.dependencies import get_block_instance
         con = get_block_instance("construction")
@@ -196,7 +270,7 @@ async def _run_container_action(action: str, context: Dict[str, Any]) -> Optiona
         return {"handled": True, "status": "error",
                 "answer": f"The {action.replace('_',' ')} step could not complete: {e}",
                 "deliverable": context.get("deliverable"), "exports": [], "plan_steps": [action]}
-    answer = _render_container_result(action, result)
+    answer = await _synthesize_answer(action, result, context.get("message"))
     exports = result.get("exports", []) if isinstance(result, dict) else []
     return {
         "handled": True,
