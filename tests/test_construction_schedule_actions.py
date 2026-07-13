@@ -519,6 +519,41 @@ _RESLOADED_XER = "tests/fixtures/resource_loaded.xer"
 _NORSRC_XER = "uploads/_synthetic/schedules/sample.xer"
 
 
+class TestDailySiteReportLocation:
+    """F4 — daily_site_report must read the weather location from input_data too,
+    not only params: the generic predefined dispatcher merges resolved params
+    into the envelope and passes it as input_data. A params-only read silently
+    dropped the project location (regression caught in review)."""
+
+    @pytest.mark.asyncio
+    async def test_location_from_input_data_reaches_weather(self, container, monkeypatch):
+        seen = {}
+
+        async def fake_fetch(location, date):
+            seen["location"] = location
+            return {"location": location, "date": date, "status": "success",
+                    "conditions": "clear", "temperature_high": 30, "impact": "favorable",
+                    "source": "test"}
+        monkeypatch.setattr(container, "_fetch_weather", fake_fetch)
+
+        # location supplied via input_data (the envelope), params empty — the
+        # exact shape the dispatcher produces.
+        result = await container.daily_site_report(
+            {"location": "Riyadh", "date": "2026-07-10"}, {})
+        assert seen.get("location") == "Riyadh"
+        w = result["report_metadata"]["weather_conditions"]
+        assert w["status"] == "success"
+        assert w["location"] == "Riyadh"
+
+    @pytest.mark.asyncio
+    async def test_no_location_leaves_weather_empty_not_fabricated(self, container, monkeypatch):
+        async def fake_fetch(location, date):  # pragma: no cover — must NOT be called
+            raise AssertionError("_fetch_weather called without a location")
+        monkeypatch.setattr(container, "_fetch_weather", fake_fetch)
+        result = await container.daily_site_report({"date": "2026-07-10"}, {})
+        assert result["report_metadata"]["weather_conditions"] == {}
+
+
 class TestResourceHistogramRealOrHonest:
     """V1 — the container action must produce a real time-phased histogram from
     the schedule's own TASKRSRC assignments, or an honest error — never a
