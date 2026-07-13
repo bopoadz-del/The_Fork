@@ -204,6 +204,88 @@ def _render_container_result(action: str, result: Any) -> str:
     return rendered or _json.dumps(result, indent=2, default=str)
 
 
+# ── Grounding gate (Phase-2 2a) ─────────────────────────────────────────────
+# Post-synthesis, FLAG-only checks. The synthesis prompt already TELLS the LLM to
+# ground every figure in the tool result, but nothing ENFORCES it. These checks
+# add honest enforcement WITHOUT ever blocking or regenerating a deliverable — a
+# heuristic must not suppress a real answer. Flag-gated so it can be turned off
+# instantly in prod. Soundness: this is correct because predefined-dispatch
+# synthesis receives ONLY the container `result`; if RAG chunks are ever added to
+# the synthesis input, the backing/source sets below MUST expand to cover them.
+import os as _os
+
+def _grounding_gate_enabled() -> bool:
+    return _os.getenv("GROUNDING_GATE", "1") not in ("0", "false", "False", "")
+
+# A confidence/validation STAMP asserted in prose ("confidence: high",
+# "validation passed", "quality-assured"). Deliberately NARROW — bare
+# "verify"/"validated" appears in legitimate checklist content, so only
+# stamp-shaped phrases are matched to keep false-positives near zero.
+_CONF_RATING = r"(?:very\s+high|high|moderate|medium|low|strong|\d{1,3}\s*%|0?\.\d\d?)"
+_CONFIDENCE_STAMP_RE = re.compile(
+    # rating on either side of the word: "confidence: high" OR "95% confidence".
+    rf"\bconfidence\b[\s:*_()-]{{0,4}}{_CONF_RATING}"
+    rf"|{_CONF_RATING}[\s-]{{0,4}}\bconfidence\b",
+    re.IGNORECASE,
+)
+_VALIDATION_STAMP_RE = re.compile(
+    r"\b(validation\s+(passed|complete|completed|successful|status)|"
+    r"independently\s+validated|cross[- ]validated|quality[- ]assured|"
+    r"verified\s+against\s+(the\s+)?(tool|engine|calculation|model))\b",
+    re.IGNORECASE,
+)
+# Result keys that legitimately BACK a confidence/validation stamp. When any of
+# these is present in the structured result, a stamp in the prose is honest and
+# is left untouched (e.g. drawing_qto / historical_benchmark carry real
+# confidence / source_note; validation_pipeline results carry pass/checks).
+_STAMP_BACKING_KEYS = frozenset({
+    "confidence", "confidence_score", "confidence_level", "confidence_interval",
+    "validation", "validated", "verified", "validation_report",
+    "validation_status", "source_note", "checks", "pass", "passed",
+    "quality_check", "qa", "overall_pass", "stage_results",
+})
+
+def _result_has_backing_field(result: Any) -> bool:
+    """True iff the structured result carries any confidence/validation-style
+    field that would legitimately back a stamp in the prose. Walks the whole
+    result (dicts + lists), case-insensitive on keys."""
+    stack = [result]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                if str(k).lower() in _STAMP_BACKING_KEYS:
+                    return True
+                stack.append(v)
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return False
+
+def _gate_confidence_stamps(text: str, result: Any) -> str:
+    """FLAG (append a caveat) when the prose asserts a validation/confidence
+    stamp that the computed result does NOT back with a corresponding field.
+    Never edits a stamp the result actually backs; never blocks the answer."""
+    if not (_CONFIDENCE_STAMP_RE.search(text) or _VALIDATION_STAMP_RE.search(text)):
+        return text
+    if _result_has_backing_field(result):
+        return text
+    return text + (
+        "\n\n> _Note: this response mentions validation/confidence, but the "
+        "computed result carries no validation or confidence field — treat any "
+        "such rating as unverified._"
+    )
+
+def _apply_grounding_gate(text: str, result: Any) -> str:
+    """Run the enabled post-synthesis grounding checks (FLAG-only)."""
+    if not _grounding_gate_enabled():
+        return text
+    try:
+        text = _gate_confidence_stamps(text, result)
+    except Exception:  # noqa: BLE001 — a gate must never break a deliverable
+        logger.exception("grounding gate failed; returning ungated answer")
+    return text
+
+
 async def _synthesize_answer(action: str, result: Any, message: Optional[str]) -> str:
     """LLM synthesis of a container action's structured result into a grounded,
     professional narrative. Scoped Dispatch v2 BANS raw-render as the delivered
@@ -230,10 +312,10 @@ async def _synthesize_answer(action: str, result: Any, message: Optional[str]) -
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=0.0, max_tokens=900,
         )
-        return text.strip() or raw
+        return _apply_grounding_gate(text.strip() or raw, result)
     except Exception:
         logger.exception("synthesis for %s failed; using deterministic render", action)
-        return raw
+        return _apply_grounding_gate(raw, result)
 
 
 async def _run_container_action(action: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
