@@ -1685,15 +1685,30 @@ class ConstructionBoqMixin:
         env_metrics = await self._calculate_environmental_metrics(boq, project_data)
         social_metrics = self._calculate_social_metrics(manpower_data, safety_records)
         gov_metrics = self._calculate_governance_metrics(project_data)
-    
-        scores = {
-            "environmental": self._score_environmental(env_metrics),
-            "social": self._score_social(social_metrics),
-            "governance": self._score_governance(gov_metrics),
-            "overall": 0
+
+        # Score a pillar ONLY when its inputs were supplied. Social/governance
+        # metrics are placeholder zeros without project data; scoring them anyway
+        # invents a rating — _score_social returns 80 for ltifr==0 (which means
+        # "no data", not "zero injuries") and _score_governance a flat 70 — and
+        # folds that fiction into the composite + letter grade. (V2)
+        env_available = bool(boq)
+        social_available = bool(manpower_data or safety_records)
+        gov_available = bool(project_data)
+
+        pillar_scores = {
+            "environmental": self._score_environmental(env_metrics) if env_available else None,
+            "social": self._score_social(social_metrics) if social_available else None,
+            "governance": self._score_governance(gov_metrics) if gov_available else None,
         }
-        scores["overall"] = (scores["environmental"] + scores["social"] + scores["governance"]) / 3
-    
+        assessed = {k: v for k, v in pillar_scores.items() if v is not None}
+        overall = (sum(assessed.values()) / len(assessed)) if assessed else None
+        complete = len(assessed) == 3
+
+        # None-safe view for the eligibility / recommendation / narrative helpers:
+        # a pillar with no data counts as 0 there (never grants false credit).
+        scores = {k: (v if v is not None else 0) for k, v in pillar_scores.items()}
+        scores["overall"] = overall if overall is not None else 0
+
         benchmarks = {"industry_average": 65, "best_practice": 85, "your_score": scores["overall"]}
         certifications = self._check_certification_eligibility(scores, env_metrics)
         sdg_alignment = self._map_to_sdgs(env_metrics, social_metrics)
@@ -1703,11 +1718,26 @@ class ConstructionBoqMixin:
             "action": "esg_sustainability_report",
             "reporting_period": reporting_period,
             "esg_scores": {
-                "environmental": round(scores["environmental"], 1),
-                "social": round(scores["social"], 1),
-                "governance": round(scores["governance"], 1),
-                "overall": round(scores["overall"], 1),
-                "rating": "A" if scores["overall"] >= 80 else "B" if scores["overall"] >= 65 else "C" if scores["overall"] >= 50 else "D"
+                "environmental": round(pillar_scores["environmental"], 1) if pillar_scores["environmental"] is not None else None,
+                "social": round(pillar_scores["social"], 1) if pillar_scores["social"] is not None else None,
+                "governance": round(pillar_scores["governance"], 1) if pillar_scores["governance"] is not None else None,
+                "overall": round(overall, 1) if overall is not None else None,
+                "rating": (
+                    None if overall is None
+                    else ("A" if overall >= 80 else "B" if overall >= 65 else "C" if overall >= 50 else "D")
+                    if complete
+                    else f"partial ({len(assessed)}/3 pillars: {', '.join(sorted(assessed))})"
+                ),
+                "data_status": {
+                    "pillars_assessed": sorted(assessed.keys()),
+                    "pillars_missing_data": sorted(k for k, v in pillar_scores.items() if v is None),
+                    "complete": complete,
+                    "note": None if complete else (
+                        "Overall score and rating reflect only pillars with supplied data; "
+                        "pillars without data are excluded, not scored as zero. Provide "
+                        "manpower/safety_records (social) and project_data (governance) for a full ESG rating."
+                    ),
+                },
             },
             "environmental": {
                 "carbon_emissions_tons": env_metrics.get("total_carbon", 0),

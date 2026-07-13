@@ -159,21 +159,13 @@ class ConstructionDocumentsMixin:
         p["file_path"] = file_path
         result = await processor(file_path, p)
 
-        llm_block = BLOCK_REGISTRY.get("llm_enhancer")
-        if llm_block and isinstance(result, dict) and result.get("status") == "success":
-            try:
-                llm_instance = llm_block()
-                enhanced = await llm_instance.execute(
-                    {"text": json.dumps(result)},
-                    {
-                        "action": "structure_json",
-                        "schema": "structured construction document data",
-                    },
-                )
-                if enhanced.get("status") == "success":
-                    result["llm_enhanced"] = enhanced.get("structured") or enhanced
-            except Exception:
-                pass
+        # NOTE: a former llm_enhancer post-process was removed here (W3). It had
+        # been dead since it was written — it called `json.dumps(result)` without
+        # `json` imported, so every invocation raised NameError, was swallowed by
+        # a bare `except: pass`, and `llm_enhanced` was never set. Re-enabling it
+        # would fire an LLM call on every successful document parse (a cost /
+        # latency / provider-routing change), so it is intentionally not revived
+        # here; the document processors already return real structured data.
 
         if cache_block:
             try:
