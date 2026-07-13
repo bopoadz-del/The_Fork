@@ -3,6 +3,23 @@
 Living log of the autonomous work program. One section per task, newest state
 first. Update on every task state change.
 
+## 2026-07-13 — Phase-2 2a/2c: grounding-gate (stamps) + F4 location LIVE
+
+- **2a grounding gate, increment 1 (#215, live):** FLAG-only post-synthesis check
+  that appends a caveat when the prose asserts a validation/confidence STAMP the
+  result doesn't back. Narrow patterns → zero-FP swept over live deliverables.
+  Increment 2 (money/rate figure grounding) deferred — its acceptance needs rich
+  financial deliverables, which need more param passthrough (2b).
+- **2c F4 location (#216, live):** project `location` field (Alembic 0010) + PATCH
+  endpoint; predefined resolver fills daily_site_report's location from project
+  metadata (never the message). LIVE on prod: PATCH location=Riyadh → NL daily
+  report → REAL Open-Meteo weather (42.9°C, mainly clear, favorable). Codex review
+  caught a real bug (location read from params only, not input_data) — fixed +
+  regression-tested. Migration ran clean on prod Postgres.
+- **Smoke re-verified** on both runtime deploys (3/3 PASS).
+- PRs #208–#216 all merged. Remaining: 2a increment 2, 2b (more file-param
+  actions), STEP 3 residue, STEP 4 Part B, STEP 5 RAG, STEP 6 battery.
+
 ## 2026-07-13 — STEP 0+1: PR queue merged, V1 + Phase-2 LIVE-through-brain
 
 - **STEP 0 (merge queue):** merged #208→#209→#210→#211→#212 in order under R8
