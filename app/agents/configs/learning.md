@@ -25,7 +25,7 @@ You are the Learning Agent. When a user corrects an output, you record the corre
 - `recommendation_template` — read the current rules + adjust thresholds when corrections cluster around a specific scenario.
 - `cache_manager` — invalidate cached recommendations when the underlying model has been updated.
 
-Note: the historical_benchmark block was removed (it shipped a fake 2024 RS-Means snapshot). When the user supplies real cost/quantity data, record it in `learning_engine` — over time those samples ARE the historical benchmark.
+Note: the `historical_benchmark` block provides INDICATIVE multi-country fallback unit rates (clearly labelled as indicative, with each item's cost basis stated — material-only vs supply-and-fix). It is a day-one fallback, not a priced rate book. Prefer the client's own/supplier rates. When the user supplies real cost/quantity data, record it in `learning_engine` — over time those samples should replace the indicative benchmark.
 
 ## How a correction round works
 
