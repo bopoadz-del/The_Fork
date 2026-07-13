@@ -76,10 +76,16 @@ function isIncompleteShell(project: Project): boolean {
   )
 }
 
-// A knowledge corpus (master corpus or any Drive-approved pack) is not a
-// progress-tracked project, so the progress-readiness badge does not apply.
+// A knowledge / document corpus is not a progress-tracked project, so the
+// readiness gate does not apply. This covers every way a corpus enters the
+// system: the master corpus, an admin Drive-approved pack
+// (origin='admin_drive_approved'), a USER Drive import from the New Project
+// modal (origin='user_drive_import'), and seeded knowledge bases
+// (origin='system_seed'). Missing user_drive_import here left those packs
+// showing the same misleading "Not ready" badge this change removes.
+const CORPUS_ORIGINS = ['admin_drive_approved', 'user_drive_import', 'system_seed']
 function isDocumentCorpus(project: Project): boolean {
-  return !!project.is_master_corpus || project.origin === 'admin_drive_approved'
+  return !!project.is_master_corpus || CORPUS_ORIGINS.includes(project.origin ?? '')
 }
 
 export default function ProjectCard({ project, onDelete }: ProjectCardProps) {
