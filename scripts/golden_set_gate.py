@@ -479,6 +479,29 @@ def run_gate(args, golden: dict) -> int:
           f"delay={args.delay}s  bar>={pass_bar(len(queries))}/{len(queries)}")
     print("=" * 76)
 
+    _project_cache: dict = {}
+
+    def _resolve_project(client, value):
+        """Resolve a golden `project` field (canonical NAME or id) to a live
+        project id BY NAME against the projects API — a rebuilt namespace can no
+        longer drift the fixtures (hardcoded-ID drift, third occurrence). The
+        master-corpus alias passes through unchanged."""
+        if not value or value == "dar_al_arkan_master":
+            return value
+        if value in _project_cache:
+            return _project_cache[value]
+        resolved = value
+        try:
+            r = client.get(f"{args.base}/v1/projects", headers=headers, timeout=30)
+            for p in (r.json().get("projects", []) or []):
+                if p.get("name") == value or p.get("id") == value:
+                    resolved = p.get("id")
+                    break
+        except Exception:
+            pass
+        _project_cache[value] = resolved
+        return resolved
+
     with httpx.Client() as client:
         for n, (idx, entry) in enumerate(plan):
             if n and args.delay:
@@ -488,9 +511,10 @@ def run_gate(args, golden: dict) -> int:
             conversation_id = f"gsg-{uuid.uuid4().hex[:12]}"
             print(f"[{idx:>2}] {entry['id']}: {entry['prompt'][:60]}")
 
+            resolved_pid = _resolve_project(client, entry["project"])
             res = execute_with_retry(client, args.base, entry["agent"],
                                      headers, entry["prompt"],
-                                     entry["project"], conversation_id)
+                                     resolved_pid, conversation_id)
             oracle = judge(entry, res)
 
             record = {
