@@ -125,3 +125,37 @@ def test_compress_schedule_noop_when_cut_has_no_float_impact():
     revised, delta = compress_schedule(CPMInput(activities=acts), {"C": 1})
     assert delta == 0
     assert revised.project_duration == 10
+
+
+# ── W2 (schedule engine) — hand-solved CPM oracle ───────────────────────────
+# A classic textbook AON network with a fully hand-solved critical path. This is
+# the committed hand-oracle for Part-B W2: the schedule engine's forward/backward
+# pass, float, and critical-path selection must reproduce it EXACTLY.
+#
+#   A(3);  B(4)<-A;  C(2)<-A;  D(5)<-B;  E(1)<-C;  F(2)<-D,E
+#   Forward: A ES0/EF3, B 3/7, C 3/5, D 7/12, E 5/6, F 12/14  -> duration 14
+#   Backward from 14: F 12/14, D 7/12, E 11/12, B 3/7, C 9/11, A 0/3
+#   Total float: A0 B0 C6 D0 E6 F0  ->  critical path A-B-D-F
+def test_cpm_matches_hand_solved_textbook_network():
+    acts = [_act("A", 3), _act("B", 4, ["A"]), _act("C", 2, ["A"]),
+            _act("D", 5, ["B"]), _act("E", 1, ["C"]), _act("F", 2, ["D", "E"])]
+    out = compute_cpm(CPMInput(activities=acts))
+
+    assert out.project_duration == 14
+    assert list(out.critical_path) == ["A", "B", "D", "F"]
+
+    expected = {
+        # id:  (ES, EF, LS, LF, total_float, is_critical)
+        "A": (0, 3, 0, 3, 0, True),
+        "B": (3, 7, 3, 7, 0, True),
+        "C": (3, 5, 9, 11, 6, False),
+        "D": (7, 12, 7, 12, 0, True),
+        "E": (5, 6, 11, 12, 6, False),
+        "F": (12, 14, 12, 14, 0, True),
+    }
+    for aid, (es, ef, ls, lf, tf, crit) in expected.items():
+        r = _index(out.results, aid)
+        assert (r.early_start_day, r.early_finish_day) == (es, ef), aid
+        assert (r.late_start_day, r.late_finish_day) == (ls, lf), aid
+        assert r.total_float == tf, aid
+        assert r.is_critical is crit, aid
