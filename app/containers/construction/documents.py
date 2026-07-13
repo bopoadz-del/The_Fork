@@ -1042,6 +1042,18 @@ class ConstructionDocumentsMixin:
         return {
             "status": "success",
             "action": "digital_twin_sync",
+            # W2 — the name overpromises: this PREPARES the platform sync payloads
+            # (transform + operations + api_payloads + connection/auth info) but
+            # does NOT push to any live digital-twin platform. status:"success"
+            # means "prepared", not "synced". A real push needs the platform
+            # credentials/connection described in connection_strings + auth below.
+            "sync_status": "prepared_not_pushed",
+            "note": (
+                "Sync payloads and platform API operations were PREPARED. No live "
+                "push occurred — the platform is not connected. Use the "
+                "connection_strings + authentication_required below (or wire a "
+                "platform connector) to execute the actual sync."
+            ),
             "platform": twin_platform,
             "sync_mode": sync_mode,
             "project_id": project_id,
