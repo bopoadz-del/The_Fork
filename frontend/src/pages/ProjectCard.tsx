@@ -41,6 +41,19 @@ function formatDate(iso: string): string {
   }
 }
 
+// The `readiness` object comes from the backend PROGRESS-TRACKING gate
+// (compute_readiness, Roadmap V2 · 0.2). A project is "ready" ONLY once it has
+// a baseline schedule + >=1 daily report + >=1 weekly report AND Aconex is
+// connected — i.e. it is set up for live progress tracking (S-curve / EVM /
+// daily-weekly progress). It is NOT a RAG/indexing status: a corpus can retrieve
+// and answer perfectly and still be "Not ready" by this gate.
+//
+// We HIDE this badge for document corpora (master corpus + Drive-approved packs)
+// because progress-readiness does not apply to them — they are knowledge packs,
+// not tracked projects — and because Aconex is not wired yet (aconex_connected
+// is never true), so "Ready" is currently unreachable for any project. Showing
+// "Not ready" on a working corpus reads as "broken" when it is not. See
+// isDocumentCorpus() below and the gate in the card footer.
 function readinessHint(readiness: unknown): string | null {
   if (!readiness) return null
   if (typeof readiness !== 'object') return null
@@ -63,10 +76,18 @@ function isIncompleteShell(project: Project): boolean {
   )
 }
 
+// A knowledge corpus (master corpus or any Drive-approved pack) is not a
+// progress-tracked project, so the progress-readiness badge does not apply.
+function isDocumentCorpus(project: Project): boolean {
+  return !!project.is_master_corpus || project.origin === 'admin_drive_approved'
+}
+
 export default function ProjectCard({ project, onDelete }: ProjectCardProps) {
-  const hint = readinessHint(project.readiness)
   const master = project.is_master_corpus
   const incomplete = isIncompleteShell(project)
+  // Progress-readiness is meaningless for document corpora — hide the badge
+  // there (see readinessHint docblock). Keep it for real tracked projects.
+  const hint = isDocumentCorpus(project) ? null : readinessHint(project.readiness)
 
   async function handleDelete(e: React.MouseEvent) {
     e.preventDefault()
