@@ -445,12 +445,15 @@ function DetectedFromDriveSection({ onApproved }: { onApproved?: () => void }) {
   const [approvedFlash, setApprovedFlash] = useState<string | null>(null)
   const [approveErrors, setApproveErrors] = useState<Record<string, string>>({})
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  // Two-step confirm: first click flips the button to "Click again to
-  // confirm" for 5s, second click within that window fires the approve.
-  // Replaces native window.confirm(), which silently no-ops if the
-  // browser throttles dialogs (the symptom from the "I approved 2 and
-  // nothing showed" report).
-  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  // Type-to-confirm gate on Approve. Approving a folder creates a project AND
+  // kicks off a full recursive ingest of every file inside it — heavy enough
+  // to OOM the box on a large folder (e.g. Master Folder, ~196 files). Arm an
+  // inline input and only fire once the admin types the folder's exact name.
+  // Throttle-proof (no native dialog) and no shared secret in the bundle;
+  // mirrors the Re-index gate in ApprovedProjectsSection. Replaces the old
+  // 5-second "click again to confirm" two-step, which was too easy to trip.
+  const [approveArmId, setApproveArmId] = useState<string | null>(null)
+  const [approveConfirmText, setApproveConfirmText] = useState('')
   const [approvedIds, setApprovedIds] = useState<Set<string>>(new Set())
 
   async function load() {
@@ -474,20 +477,6 @@ function DetectedFromDriveSection({ onApproved }: { onApproved?: () => void }) {
   }
 
   useEffect(() => { void load() }, [])
-
-  function handleApproveClick(folder: ScanFolder) {
-    // First click on a folder: arm the confirm state for 5 seconds.
-    // Second click within that window: actually fire the approve.
-    if (confirmingId !== folder.folder_id) {
-      setConfirmingId(folder.folder_id)
-      window.setTimeout(() => {
-        setConfirmingId((cur) => (cur === folder.folder_id ? null : cur))
-      }, 5000)
-      return
-    }
-    setConfirmingId(null)
-    void handleApprove(folder)
-  }
 
   async function handleApprove(folder: ScanFolder) {
     setApprovingId(folder.folder_id)
@@ -549,23 +538,47 @@ function DetectedFromDriveSection({ onApproved }: { onApproved?: () => void }) {
                 <span className="admin-tree__approved-flag">
                   <CheckCircle2 size={13} /> Approved
                 </span>
+              ) : approveArmId === folder.folder_id ? (
+                <span className="admin-corpus__reindex-confirm">
+                  <input
+                    type="text"
+                    className="admin-corpus__confirm-input"
+                    style={{ minWidth: 150, padding: '2px 6px' }}
+                    placeholder={`Type "${folder.name}" to confirm`}
+                    value={approveConfirmText}
+                    onChange={(e) => setApproveConfirmText(e.target.value)}
+                    autoFocus
+                    aria-label={`Type the folder name to confirm approving ${folder.name}`}
+                  />
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn--small admin-btn--danger"
+                    onClick={() => {
+                      setApproveArmId(null); setApproveConfirmText(''); void handleApprove(folder)
+                    }}
+                    disabled={approveConfirmText.trim() !== folder.name || approvingId !== null}
+                  >
+                    Confirm approve
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn--ghost admin-btn--small"
+                    onClick={() => { setApproveArmId(null); setApproveConfirmText('') }}
+                  >
+                    Cancel
+                  </button>
+                </span>
               ) : (
                 <button
                   type="button"
-                  className={
-                    'admin-btn admin-btn--small '
-                    + (confirmingId === folder.folder_id
-                        ? 'admin-btn--danger'
-                        : 'admin-btn--primary')
-                  }
-                  onClick={() => handleApproveClick(folder)}
-                  disabled={approvingId !== null}
+                  className="admin-btn admin-btn--small admin-btn--primary"
+                  onClick={() => { setApproveArmId(folder.folder_id); setApproveConfirmText('') }}
+                  disabled={approvingId !== null || approveArmId !== null}
+                  title="Creates a project and ingests every file in this folder (heavy on large folders)."
                 >
                   {approvingId === folder.folder_id
                     ? 'Approving…'
-                    : confirmingId === folder.folder_id
-                      ? 'Click again to confirm'
-                      : <><CheckCircle2 size={13} /><span>Approve</span></>}
+                    : <><CheckCircle2 size={13} /><span>Approve</span></>}
                 </button>
               )
             ) : (
