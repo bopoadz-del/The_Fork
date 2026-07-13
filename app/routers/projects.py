@@ -94,6 +94,11 @@ def _owned_or_404(
 class CreateProjectRequest(BaseModel):
     name: str
     client: Optional[str] = None
+    location: Optional[str] = None
+
+
+class UpdateProjectRequest(BaseModel):
+    location: Optional[str] = None
 
 
 class CreateProjectFromDriveRequest(BaseModel):
@@ -134,9 +139,29 @@ async def create_project(req: CreateProjectRequest, auth: dict = Depends(require
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(400, "Project name is required")
-    proj = store.create_project(name, (req.client or "").strip() or None, user_id=auth["user_id"])
+    proj = store.create_project(
+        name, (req.client or "").strip() or None, user_id=auth["user_id"],
+        location=(req.location or "").strip() or None,
+    )
     audit.record("project.created", project_id=proj["id"], name=name, user_id=auth["user_id"])
     return proj
+
+
+@router.patch("/v1/projects/{project_id}")
+async def update_project(project_id: str, req: UpdateProjectRequest,
+                         auth: dict = Depends(require_user)):
+    """Update a project's confirmed metadata (currently: site location).
+
+    The location set here is what ``daily_site_report`` reads for weather — it is
+    NEVER inferred from a chat message. Setting to empty clears it.
+    """
+    _owned_or_404(project_id, auth["user_id"])
+    updated = store.set_project_location(
+        project_id, (req.location or "").strip() or None)
+    if updated is None:
+        raise HTTPException(404, "Project not found")
+    audit.record("project.updated", project_id=project_id, user_id=auth["user_id"])
+    return updated
 
 
 @router.post("/v1/projects/from-drive", status_code=201)

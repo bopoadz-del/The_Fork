@@ -181,6 +181,9 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     client: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Confirmed site location (city/site) — daily_site_report reads its weather
+    # from here, never from the chat message (F4). Nullable: unset → no weather.
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
     aconex_connected: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
