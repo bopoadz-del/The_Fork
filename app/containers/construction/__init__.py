@@ -1466,11 +1466,10 @@ class ConstructionContainer(
         p = dict(params or {})
         p["file_path"] = file_path
         return await self.parse_primavera_schedule({"file_path": file_path}, p)
-    async def qa_inspection(self, input_data: Any, params: Dict) -> Dict:
-        """Legacy QA inspection wrapper"""
-        p = params or {}
-        p.setdefault("type", p.get("trade", "concrete"))
-        return await self.qa_qc_inspection(input_data, p)
+    # NOTE: qa_inspection (a redundant wrapper that only defaulted `type` and
+    # delegated to qa_qc_inspection) was deleted (W1) — it was never in the
+    # dispatch handlers, so nothing reached it; qa_qc_inspection is the real,
+    # reachable action and already handles the `type`/`trade` default.
     def _parse_defects(self, description: str) -> List[Dict[str, Any]]:
         """Keyword-extract defect candidates from an inspection description.
 
@@ -1571,12 +1570,9 @@ class ConstructionContainer(
             "details": results,
             "delay_risk": self._assess_delay_risk(results)
         }
-    async def progress_tracking(self, input_data: Any, params: Dict) -> Dict:
-        """Legacy progress tracking — superseded by progress_tracker."""
-        return {
-            "status": "error",
-            "error": "Use progress_tracker (line 1791) for live progress data; this legacy method is no longer maintained.",
-        }
+    # NOTE: progress_tracking (a dead legacy method that only returned an
+    # honest-error redirect to progress_tracker) was deleted (W1) — it was never
+    # dispatched; progress_tracker is the real, reachable progress action.
     async def generate_construction_report(self, input_data: Any, params: Dict) -> Dict:
         """Generate comprehensive construction document report"""
         doc_result = await self.process_document(input_data, params)
