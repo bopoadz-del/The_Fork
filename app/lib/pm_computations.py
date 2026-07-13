@@ -418,6 +418,23 @@ def parse_xer_full(text: str) -> Dict[str, Any]:
     pred_rows = tables.get("TASKPRED", {}).get("rows", [])
     taskrsrc_rows = tables.get("TASKRSRC", {}).get("rows", [])
 
+    # --- RSRC: resource dictionary (rsrc_id -> type/name/unit) -----------
+    # Needed to distinguish labor from material/cost/equipment resources: a
+    # TASKRSRC target_qty is man-hours ONLY for an RT_Labor resource; for
+    # RT_Mat/RT_Equip it is a material/cost/equipment quantity in its own unit.
+    # Callers building a *labor* histogram must filter on this.
+    resources: Dict[str, Dict[str, Any]] = {}
+    for r in tables.get("RSRC", {}).get("rows", []):
+        rid = r.get("rsrc_id")
+        if not rid:
+            continue
+        resources[rid] = {
+            "type": r.get("rsrc_type") or "",
+            "short_name": r.get("rsrc_short_name") or r.get("rsrc_name") or rid,
+            "name": r.get("rsrc_name") or "",
+            "unit_id": r.get("unit_id") or "",
+        }
+
     # --- helper: hours-per-day for a given activity ---------------------
     fallback_logged = {"flag": False}
 
@@ -437,6 +454,7 @@ def parse_xer_full(text: str) -> Dict[str, Any]:
             "activities": [],
             "calendars_parsed": calendars,
             "task_resources": [],
+            "resources": resources,
         }
 
     # task_id -> task_code (human-readable id used as Activity.id)
@@ -498,6 +516,7 @@ def parse_xer_full(text: str) -> Dict[str, Any]:
         "activities": activities,
         "calendars_parsed": calendars,
         "task_resources": task_resources,
+        "resources": resources,
     }
 
 

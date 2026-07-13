@@ -1015,60 +1015,13 @@ class ConstructionContainer(
         return [f"{s}_commissioning_report.pdf" for s in systems]
     def _generate_training_requirements(self, systems: List[str]) -> List[Dict]:
         return [{"system": s, "training": f"Operator training for {s}"} for s in systems]
-    def _calculate_labor_histogram(self, activities: List[Dict], productivity: Dict) -> List[Dict]:
-        dates = [a.get("early_start") for a in activities if a.get("early_start")]
-        weeks = []
-        for week in range(26):
-            week_labor = 0
-            week_activities = []
-            for act in activities:
-                labor_units = act.get("resources", {}).get("labor", 0)
-                if labor_units:
-                    week_labor += labor_units / (act.get("duration", 1) or 1)
-                    week_activities.append(act.get("id"))
-            weeks.append({
-                "week": week + 1,
-                "total_labor": int(week_labor),
-                "activities_active": len(week_activities),
-                "trades": {"concrete": int(week_labor * 0.3), "masonry": int(week_labor * 0.2), 
-                          "steel": int(week_labor * 0.15), "electrical": int(week_labor * 0.15),
-                          "finishes": int(week_labor * 0.2)}
-            })
-        return weeks
-    def _identify_resource_peaks(self, histogram: List[Dict]) -> List[Dict]:
-        if not histogram:
-            return []
-        avg_labor = sum(w.get("total_labor", 0) for w in histogram) / len(histogram)
-        threshold = avg_labor * 1.5
-        peaks = [w for w in histogram if w.get("total_labor", 0) > threshold]
-        return sorted(peaks, key=lambda x: x.get("total_labor", 0), reverse=True)[:5]
-    def _identify_resource_conflicts(self, histogram: List[Dict]) -> List[Dict]:
-        return []
-    def _suggest_resource_leveling(self, histogram: List[Dict], conflicts: List[Dict]) -> List[Dict]:
-        optimizations = []
-        if len(conflicts) > 3:
-            optimizations.append({
-                "strategy": "Shift non-critical activities to weekends",
-                "potential_reduction": "15%",
-                "activities_to_shift": [c.get("activity") for c in conflicts[:3]]
-            })
-        peaks = self._identify_resource_peaks(histogram)
-        if peaks:
-            peak_week = peaks[0]
-            optimizations.append({
-                "strategy": f"Add second shift during week {peak_week.get('week')}",
-                "potential_reduction": "40% peak reduction",
-                "cost_impact": "+20% labor cost (overtime)"
-            })
-        return optimizations
-    def _breakdown_by_trade(self, histogram: List[Dict]) -> Dict:
-        result = {}
-        for week in histogram:
-            for trade, count in week.get("trades", {}).items():
-                result.setdefault(trade, []).append(count)
-        return result
-    def _calculate_cost_histogram(self, histogram: List[Dict]) -> List[Dict]:
-        return [{"week": w.get("week"), "estimated_labor_cost": w.get("total_labor", 0) * 50} for w in histogram]
+    # NOTE: the former _calculate_labor_histogram / _identify_resource_peaks /
+    # _identify_resource_conflicts / _suggest_resource_leveling / _breakdown_by_trade /
+    # _calculate_cost_histogram cluster was deleted (V1). It fabricated an all-zero
+    # 26-week histogram with a hardcoded 30/20/15/15/20 trade split (it read
+    # early_start/resources.labor keys the parser never produces). resource_histogram
+    # now delegates to the hand-verified app.lib.pm_computations.resource_histogram
+    # (real TASKRSRC time-phasing) or returns an honest error.
     def _generate_claim_narrative(self, events: List[Dict], delay_analysis: Dict, entitlement: Dict) -> Dict:
         total_delay = delay_analysis.get("total_delay_days", 0)
         exec_summary = f"""EXTENSION OF TIME CLAIM
