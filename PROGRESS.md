@@ -3,6 +3,24 @@
 Living log of the autonomous work program. One section per task, newest state
 first. Update on every task state change.
 
+## 2026-07-14 — STEP 3 residue + STEP 4 W1/W2 (fresh session)
+
+- **STEP 3 (#218):** U1 upload-502 DIAGNOSED transfer-bound (Fernet 25MB=0.27s;
+  prod scaling test linear ~2.3s/MB, all 201, no cliff) → PARKED-with-evidence
+  (real fix = chunked upload). W1: 2 redundant orphans deleted (qa_inspection,
+  progress_tracking), 2 real parked-by-design (track_progress,
+  generate_construction_report — need multi-file resolution). W2:
+  digital_twin_sync honest sync_status:prepared_not_pushed. historical_benchmark
+  still parked (ruling placeholder [REWORD/RETIRE] unfilled).
+- **STEP 4 W1+W2 (#219):** money/rate grounding gate (2a inc.2) — zero-FP on 147
+  real financial figures, true-positive on fabricated rates; hand-solved CPM
+  oracle committed. Grounding gate now COMPLETE (both increments).
+- **W3–W10 + STEP 5 + STEP 6:** PARKED-with-evidence in the ledger + HANDOFF.md
+  (genuinely multi-day; "PARK-with-evidence beats rushed green").
+- CI note: #218 production-like stalled 35min on an infra flake (virgin + 4 prior
+  PRs passed; bounded local kit-test run showed no hang); a fresh re-trigger
+  passed clean.
+
 ## 2026-07-13 — Phase-2 2a/2c: grounding-gate (stamps) + F4 location LIVE
 
 - **2a grounding gate, increment 1 (#215, live):** FLAG-only post-synthesis check
