@@ -640,6 +640,16 @@ function ApprovedProjectsSection({
   const [reindexingId, setReindexingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
+  // Type-to-confirm gate on the Re-index action. Re-index re-extracts + re-embeds
+  // EVERY document in a project; on a large corpus (e.g. drive_archive, ~3k docs)
+  // that is heavy enough to OOM the box, so a stray click is dangerous. Native
+  // window.confirm can be silently throttled away by the browser (see the
+  // Detected-from-Drive note above), so this guard lives in the DOM: Re-index
+  // arms an inline input, and the run only fires once the operator types the
+  // project's exact name — no shared password to leak into the bundle, and
+  // immune to dialog throttling.
+  const [reindexArmId, setReindexArmId] = useState<string | null>(null)
+  const [reindexConfirmText, setReindexConfirmText] = useState('')
 
   async function load() {
     setLoading(true); setError(null)
@@ -664,8 +674,9 @@ function ApprovedProjectsSection({
   // landed) so the new row appears without a manual click.
   useEffect(() => { void load() }, [refreshKey])
 
-  async function handleReindex(p: ProjectRow) {
-    if (!window.confirm(`Re-index "${p.name}"? This re-extracts text + rebuilds chunks for every document in this project.`)) return
+  async function runReindex(p: ProjectRow) {
+    setReindexArmId(null)
+    setReindexConfirmText('')
     setReindexingId(p.id)
     setFlash(null)
     try {
@@ -693,13 +704,15 @@ function ApprovedProjectsSection({
 
   async function handleDelete(p: ProjectRow) {
     if (!window.confirm(
-      `Delete project "${p.name}"? This removes the project and all its documents + chunks. This cannot be undone.`,
+      `Hide project "${p.name}"? It disappears from the app and from retrieval, ` +
+      `but its documents and RAG chunks are preserved on the server — this is a ` +
+      `reversible archive, not a permanent delete.`,
     )) return
     setDeletingId(p.id)
     setFlash(null)
     try {
       await apiDelete(`/v1/projects/${encodeURIComponent(p.id)}`)
-      setFlash(`Deleted "${p.name}".`)
+      setFlash(`Archived "${p.name}" (hidden; RAG preserved).`)
       await load()
     } catch (err) {
       setFlash(`Delete failed: ${(err as Error).message}`)
@@ -709,7 +722,18 @@ function ApprovedProjectsSection({
   // The filter that solves the operator's "no chadi no bopo" requirement.
   // Only rows the admin explicitly approved via /v1/admin/projects/approve-from-drive
   // make it into this table.
-  const approved = projects.filter((p) => (p.origin ?? 'user_create') === 'admin_drive_approved')
+  const approved = projects
+    .filter((p) => (p.origin ?? 'user_create') === 'admin_drive_approved')
+    // Hide genuinely-empty approved rows (0 documents AND 0 chunks) so junk
+    // like an abandoned "DG2 Bills of Quantities" (0/0) doesn't clutter the
+    // list. Only hide once the corpus counts for that project_id have loaded —
+    // never hide a row whose counts we simply haven't fetched yet (that would
+    // make a mid-ingest or slow-count project vanish).
+    .filter((p) => {
+      const c = corpus[p.id]
+      if (!c) return true
+      return (c.documents ?? 0) > 0 || (c.chunks ?? 0) > 0
+    })
 
   return (
     <section className="admin-section">
@@ -767,22 +791,53 @@ function ApprovedProjectsSection({
                   <td className="num">{c?.documents ?? 0}</td>
                   <td className="num">{c?.chunks ?? 0}</td>
                   <td className="num admin-corpus__actions">
-                    <button
-                      type="button"
-                      className="admin-btn admin-btn--ghost admin-btn--small"
-                      onClick={() => void handleReindex(p)}
-                      disabled={reindexingId !== null || deletingId !== null}
-                    >
-                      {reindexingId === p.id ? '…' : 'Re-index'}
-                    </button>
+                    {reindexArmId === p.id ? (
+                      <span className="admin-corpus__reindex-confirm">
+                        <input
+                          type="text"
+                          className="admin-corpus__confirm-input"
+                          style={{ minWidth: 150, padding: '2px 6px' }}
+                          placeholder={`Type "${p.name}" to confirm`}
+                          value={reindexConfirmText}
+                          onChange={(e) => setReindexConfirmText(e.target.value)}
+                          autoFocus
+                          aria-label={`Type the project name to confirm re-indexing ${p.name}`}
+                        />
+                        <button
+                          type="button"
+                          className="admin-btn admin-btn--small admin-btn--danger"
+                          onClick={() => void runReindex(p)}
+                          disabled={reindexConfirmText.trim() !== p.name}
+                        >
+                          Confirm re-index
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-btn admin-btn--ghost admin-btn--small"
+                          onClick={() => { setReindexArmId(null); setReindexConfirmText('') }}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="admin-btn admin-btn--ghost admin-btn--small"
+                        onClick={() => { setReindexArmId(p.id); setReindexConfirmText('') }}
+                        disabled={reindexingId !== null || deletingId !== null || reindexArmId !== null}
+                        title="Re-extracts + re-embeds every document in this project (heavy on large corpora)."
+                      >
+                        {reindexingId === p.id ? '…' : 'Re-index'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="admin-btn admin-btn--ghost admin-btn--small admin-btn--danger"
                       onClick={() => void handleDelete(p)}
-                      disabled={reindexingId !== null || deletingId !== null}
-                      aria-label={`Delete ${p.name}`}
+                      disabled={reindexingId !== null || deletingId !== null || reindexArmId !== null}
+                      aria-label={`Hide ${p.name}`}
                     >
-                      {deletingId === p.id ? '…' : <><Trash2 size={13} /><span>Delete</span></>}
+                      {deletingId === p.id ? '…' : <><Trash2 size={13} /><span>Hide</span></>}
                     </button>
                   </td>
                 </tr>

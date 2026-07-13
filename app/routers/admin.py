@@ -807,6 +807,15 @@ def admin_corpus_collections(
         db_url = f"sqlite:///{db_path}"
 
     from app.core.db import to_psycopg_url
+    from app.core.models import rag_chunk_table_name
+    # Count against the SAME table the retriever reads/writes — the namespaced
+    # store (chunks_v2 by default), NOT the retired legacy `chunks` table. The
+    # old code counted `chunks`, which is empty post-v2-migration, so the admin
+    # page showed 0 chunks for every project even though retrieval worked. That
+    # false zero is what "invited a destructive re-index click" (see below).
+    chunks_table = rag_chunk_table_name(
+        os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
+    )
     engine = create_engine(to_psycopg_url(db_url))
     collections: List[Dict[str, Any]] = []
 
@@ -819,25 +828,35 @@ def admin_corpus_collections(
                 row[0]
                 for row in conn.execute(text("SELECT DISTINCT project_id FROM documents"))
             }
-            project_ids.update(
-                row[0]
-                for row in conn.execute(text("SELECT DISTINCT project_id FROM chunks"))
-            )
         except Exception as exc:  # noqa: BLE001 — diagnostic
             raise HTTPException(
                 status_code=500,
                 detail=f"Corpus query failed: {type(exc).__name__}: {exc}",
             )
+        try:
+            project_ids.update(
+                row[0]
+                for row in conn.execute(
+                    text(f"SELECT DISTINCT project_id FROM {chunks_table}")
+                )
+            )
+        except Exception:  # noqa: BLE001
+            # The namespaced chunk table may not exist yet in a fresh SQLite
+            # dev DB — the documents side already covers approved projects.
+            pass
 
         for pid in sorted(project_ids):
             doc_count = conn.execute(
                 text("SELECT COUNT(*) FROM documents WHERE project_id = :pid"),
                 {"pid": pid},
             ).scalar() or 0
-            chunk_count = conn.execute(
-                text("SELECT COUNT(*) FROM chunks WHERE project_id = :pid"),
-                {"pid": pid},
-            ).scalar() or 0
+            try:
+                chunk_count = conn.execute(
+                    text(f"SELECT COUNT(*) FROM {chunks_table} WHERE project_id = :pid"),
+                    {"pid": pid},
+                ).scalar() or 0
+            except Exception:  # noqa: BLE001
+                chunk_count = 0
 
             entry: Dict[str, Any] = {
                 "project_id": pid,
