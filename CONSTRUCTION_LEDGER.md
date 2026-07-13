@@ -112,3 +112,23 @@ Overwhelmingly REAL. Fabrication surface: **ALL 4 killed — F1/F2/F3 (PR #206, 
 **PARKED-BY-DESIGN (verified dormant, must not fire):** EDGE_PORT/Orin (jetson_gateway.py doesn't exist), layered-RAG (single Master Corpus only), self-coding agent (router only redirects to heavy-reasoning, never self-coding), photo-BIM geo-anchoring, ResNet-18 CNN head (no code).
 **STALE docs to correct:** README "RRF fused" (RRF discarded — retriever.py fusion seam, HIGH), photo_chunks removed (migration 0008), self-hosted-llm "no failover" (now built), reasoning-consolidation "paper only" (shipped, flag ON), ROADMAP_ML embedding stack (superseded by model2vec+pgvector).
 **LIVE (confirmed):** doc-grounded Q&A+citations, BOQ extraction, QTO(PDF), CPM-WBS, drawing-vs-BOQ variance, cited KB, RAG injection gate, Ollama provider, predefined schedule workflow, Scoped-Dispatch allowlist (reachable — but subset fabricates, = the F1-F3 fixes + remaining).
+
+## PART B / STEP 4 STATUS (2026-07-14)
+**Phase-2 grounding gate: COMPLETE** — inc.1 stamps (#215) + inc.2 money/rate (#219), FLAG-only, flag-gated `GROUNDING_GATE`, zero-FP verified (147 real financial figures). `predefined_reasoning._apply_grounding_gate`.
+
+| W | area | status | evidence |
+|---|---|---|---|
+| W1 | financial | **DONE** | money/rate grounding gate (#219) + financial arithmetic hand-tested (payment_certificate net_due=120000 etc.) |
+| W2 | schedule engine | **DONE** | hand-solved CPM oracle committed (#219, textbook net → dur 14, path A-B-D-F, all ES/EF/LS/LF/float); .xer round-trip + resource_histogram live-verified (#212); pm_excel EVM value-proven (§C) |
+| W3 | drawings/BIM/vision | **PARKED-w-evidence** | needs DXF regression suite + planted-clash IFC fixture + photo-path smoke. Blocks REAL (ezdxf/ifcopenshell); gap = committed oracle fixtures. Multi-day. |
+| W4 | document intelligence | **PARKED-w-evidence** | needs contract/spec extraction oracles + Arabic e2e. Multi-day. |
+| W5 | orchestration | **PARKED-w-evidence** | needs full routing matrix (intent→action table+test) + dual-orchestrator reconciliation (keyword vs dynamic understand_intent). Partially mapped. |
+| W6 | reasoning-engine live activation | **PARKED-w-evidence** | the #166/#167 finding — construction_learning recorders never called; no ActivityGraph built from a live project. Wiring a real data feed = the activation. Substantial. |
+| W7 | 14-agent liveness | **PARKED-w-evidence** | §D audit: 3 reachable, ~10 dormant, 1 parked. Needs decision to wire vs ledger-PARK each dormant agent. |
+| W8 | KB & prompts coverage | **PARKED-w-evidence** | knowledge-md→GK seeding live (FIDIC); needs coverage-vs-gaps audit. |
+| W9 | dashboard/exports | **PARKED-w-evidence** | export libs value-proven (§C); needs endpoint round-trip smoke (files OPEN correctly). |
+| W10 | designed-vs-built | **PARKED-w-evidence** | largely captured in §E (BUILT-UNWIRED/PARKED/STALE); needs final sweep. |
+
+**STEP 5 (RAG SOP ingestion): NOT STARTED** — 5a SOP folders (no approval; needs Drive access this session), 5b ⛔ SOURCE_MANIFEST gate (Chadi), 5c referee.
+**STEP 6 (battery + PILOT_READINESS rebuild): TERMINAL, not yet run.**
+See `HANDOFF.md` for the full continuation plan.
