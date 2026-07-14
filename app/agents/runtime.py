@@ -879,6 +879,22 @@ def _cost_grounding_enabled() -> bool:
     return os.getenv("COST_GROUNDING_GATE", "1") not in ("0", "false", "False", "")
 
 
+# A cost/rate-shaped user question. Token streaming yields the answer before the
+# cost gate can act, so a fabricated price would reach the client (Codex
+# #223/#224). For these queries only, streaming is disabled so the full answer is
+# gated before emission. Non-cost queries (the common case) stream normally.
+_CG_COST_QUERY_RE = re.compile(
+    r"\b(rate|rates|unit\s*rate|cost|costs|price|priced|pricing|how\s+much|"
+    r"quote|quotation|sar|usd|aed|qar|/\s*m[23³²]|per\s+m[23³²]|per\s+tonne|"
+    r"per\s+kg|bill\s+of\s+quantit|boq)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_cost_shaped_query(user_message: Optional[str]) -> bool:
+    return bool(user_message and _CG_COST_QUERY_RE.search(user_message))
+
+
 def _cg_to_number(s: Any) -> Optional[float]:
     try:
         return round(float(str(s).replace(",", "").strip()), 2)
@@ -922,27 +938,31 @@ def _cg_grounded_numbers(rag_context: str, messages: List[Dict[str, Any]]) -> se
       cost_estimate) is authoritative, so all of its numbers ground.
     """
     grounded: set = set()
+
+    def _add_numbers(text: str, all_numbers: bool) -> None:
+        # Bare numbers (only in rate-semantic / authoritative text)...
+        if all_numbers:
+            for tok in _CG_NUM_RE.findall(text):
+                v = _cg_to_number(tok)
+                if v is not None:
+                    grounded.add(v)
+        # ...plus magnitude-FOLDED money values, so a chunk/tool that says
+        # "SAR 1.25 million" grounds an answer that repeats it (Codex #226 —
+        # symmetric with the answer-side fold in _cg_money_values).
+        for _frag, v in _cg_money_values(text):
+            grounded.add(v)
+
     # RAG context, per injected chunk (marker from format_chunks_as_system_message).
     for block in re.split(r"\[doc_id=", rag_context or ""):
         if not block.strip():
             continue
-        if _CG_RATE_SEMANTIC_RE.search(block):
-            for tok in _CG_NUM_RE.findall(block):
-                v = _cg_to_number(tok)
-                if v is not None:
-                    grounded.add(v)
-        else:
-            for frag, v in _cg_money_values(block):
-                grounded.add(v)
+        _add_numbers(block, all_numbers=bool(_CG_RATE_SEMANTIC_RE.search(block)))
     # Tool results this turn (authoritative computed numbers).
     for msg in messages or []:
         if isinstance(msg, dict) and msg.get("role") == "tool":
             content = msg.get("content")
             if isinstance(content, str):
-                for tok in _CG_NUM_RE.findall(content):
-                    v = _cg_to_number(tok)
-                    if v is not None:
-                        grounded.add(v)
+                _add_numbers(content, all_numbers=True)
     return grounded
 
 
@@ -2804,14 +2824,14 @@ class Agent:
             # A/B in the non-streaming branch; don't stream those turns.
             and not rag_debug
             # Token streaming yields the answer BEFORE _postprocess_answer can
-            # act, so a fabricated price / standards deviation would already be
-            # on the client with only the persisted copy corrected (Codex
-            # #223/#224). While either post-answer gate is enabled, the gate
-            # wins: streaming disables itself so the whole answer is gated
-            # before emission. (Both gates default on, so this is a no-op in
-            # prod today, where SYNTHESIS_STREAMING is also off.)
-            and not _cost_grounding_enabled()
-            and not _standards_advisory_enabled()
+            # act, so a fabricated price would already be on the client with
+            # only the persisted copy corrected (Codex #223/#224). For
+            # COST-SHAPED queries only, the gate wins: streaming disables itself
+            # so the whole answer is price-gated before emission. Non-cost turns
+            # stream normally. (The standards advisory is non-blocking, so under
+            # streaming it remains best-effort on the persisted copy — an
+            # accepted minor gap; streaming is off in prod regardless.)
+            and not (_cost_grounding_enabled() and _is_cost_shaped_query(user_message))
         )
         # WARNING-level timing instrumentation: Render drops INFO app logs on this
         # service, so the deliverable-hang call-count/latency was invisible.
