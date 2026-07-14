@@ -89,3 +89,25 @@ def test_calc_queries_force_construction_calc():
     # ...but a general question is NOT forced onto the calculator.
     assert _forced_specific_tool(
         [{"role": "user", "content": "what is this project about?"}], avail) is None
+
+
+def test_business_calculators_dispatch_via_construction_calc():
+    # EVM / payment / tender / risk are REFERENCED from construction_knowledge
+    # (single source) and callable through the same tool — no duplicated maths.
+    agent = _agent(["construction"])
+    evm = _call(agent, "calculate_evm",
+                {"bac": 1_000_000, "bcwp": 400_000, "bcws": 500_000, "acwp": 450_000})
+    assert evm["ok"] is True
+    assert evm["result"]["result"]["CPI"] == 0.889 and evm["result"]["result"]["SPI"] == 0.8
+    risk = _call(agent, "score_risk", {"probability": 4, "impact": 5})
+    assert risk["result"]["result"]["band"] == "RED"
+
+
+def test_business_calc_queries_force_the_tool():
+    from app.agents.runtime import _forced_specific_tool
+    avail = {"construction_calc"}
+    for q in ("compute the earned value / EVM for this month",
+              "what is the interim payment due after retention",
+              "run a tender evaluation on the three bids",
+              "give me the risk score for probability 4 and impact 5"):
+        assert _forced_specific_tool([{"role": "user", "content": q}], avail) == "construction_calc", q
