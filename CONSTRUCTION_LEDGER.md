@@ -88,6 +88,20 @@ New block-level actionables:
   quote a rate ONLY from retrieved context (company→GK, cite source+year) else REFUSE. The
   `historical_benchmark` dict is now a last-resort labelled fallback only; learned rates over
   time route through the existing `ProcurementLeadTimeLearner`/`DurationCalibration`, not json.
+  **COST-FABRICATION FIX (2026-07-14, branch fix/cost-query-fabrication).** Live test found the
+  rates-in-RAG work was necessary but not sufficient: a query "concrete (250 kg/cm2)" made
+  `extract_query_identifiers` emit the unit `kg/cm2`, whose +2.0 identifier bonus pulled DG2
+  drawing dimension-tables above the real rate chunk, and the LLM fabricated "450 SAR/m³" from
+  the number-soup. Two fixes in one PR: **(a)** `_looks_like_unit()` excludes measurement units
+  from identifiers (doc-codes IP-INF-054/PRC-501/D999.46 untouched); **(b)** `_cost_grounding_gate`
+  in `agents/runtime.py` — a cost/rate figure must trace to a RATE-SEMANTIC retrieved chunk
+  (currency/price context) or a computed tool result, else the answer is refused (flag
+  `COST_GROUNDING_GATE`, default on). The gate grounds figure+semantics, NOT the bare number, so
+  the incident refuses even though "450" is in retrieval. Golden case `cost_fabrication_concrete_rate`
+  added. **DEFERRED CLASS FIX (own row):** drawing number-table chunks are low-semantic content
+  that pollutes ANY numeric query — tag them at ingestion and exclude from cost/rate answering.
+  This PR fixes the instance (unit-identifier + gate); the class fix (chunk classification) is
+  separate.
 
 ## SECTION C — app/lib modules (census landed): 8 REAL, 0 FAKE/BROKEN — the best-tested code in the repo
 - `pm_computations` (CPM: topo/forward/backward/float/resource_histogram/xer parse/compress) — REAL, ~40 assertions, hand-verified networks. No gaps in the math.

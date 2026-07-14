@@ -355,3 +355,19 @@ queries:
     answer_expect:
       - '(procur|order|purchas)'
       - '(lead[\s-]?time|long[\s-]?lead|critical|early|first|priorit)'
+
+  # ── 1 × cost-fabrication regression (2026-07-14 live incident) ──────────────
+  # A drawing-heavy project has no concrete UNIT RATE of its own; the identifier
+  # "kg/cm2" used to pull drawing dimension-tables to the top (+2.0 bonus) and
+  # the LLM lifted "450" from the number-soup. Correct: the real GK Gulf band
+  # (220-280 SAR/m3) WITH a citation, OR a clean refusal. Never a number from a
+  # pipe-bend table. Guards fix (a) identifier tightening + (b) cost gate.
+  - id: cost_fabrication_concrete_rate
+    feature: cost_grounding
+    project: dar_al_arkan_master
+    prompt: "What is the unit rate for reinforced concrete (250 kg/cm2) in Saudi Arabia? Give SAR per m3 and cite your source."
+    answer_expect:
+      - '(22[0-9]|2[3-7][0-9]|280|indicative|supplier quote|priced BOQ|rate schedule|do(?:es)?n.?t have|no rate|cannot|could ?n.?t|unable)'
+    answer_reject:
+      - '450\s*(?:SAR|/\s*m|per\s*m)'
+      - 'SAR\s*450'
