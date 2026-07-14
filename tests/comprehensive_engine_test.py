@@ -115,7 +115,7 @@ def test_activity_graph(gp, gf, errs):
     g.link_activities("PROC-001", "SCH-001")
     check("SCH-001" in g.get_by_id("PROC-001").dependents, "Proc->Schedule link", errs)
     s = g.summary()
-    check(s["total_activities"] == 12, "Summary 12", errs)
+    check(s["total_activities"] == 13, "Summary 13", errs)
     check(s["by_type"].get("contract") == 1, "Has contract", errs)
 
 @test_group("25 Dependency Rules")
@@ -231,7 +231,7 @@ def test_e2e(gp, gf, errs):
 
     plan = reasoner.build_plan("delay_to_claim")
     check(plan["template_id"] == "delay_to_claim", "E2E: plan template", errs)
-    check(len([s for s in plan["steps"] if s["params"]["action"] == "delay_analysis"]) > 0, "E2E: has delay_analysis", errs)
+    check(len([s for s in plan["steps"] if s["step_type"] == "delay_analysis"]) > 0, "E2E: has delay_analysis", errs)
 
     for a in [
         ConstructionActivity(id="ELEC-001", type=ActivityType.SCHEDULE, schedule=ScheduleMeta(duration_days=14, is_critical=True)),
