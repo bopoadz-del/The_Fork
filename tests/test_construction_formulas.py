@@ -1,0 +1,144 @@
+"""Verification of the construction_formulas library (integrated from the
+operator's SMGT-C552 formula upgrade). Every expected value below is hand-
+computed from the formula definition, so this proves the maths — not just that
+the functions run. Also pins the rates-as-parameters contract that keeps cost
+build-ups grounded (real rates flow in from RAG; hardcoded defaults are
+indicative fallbacks only).
+"""
+from __future__ import annotations
+
+import pytest
+
+from app.lib import construction_formulas as cf
+
+
+def test_dewatering_uplift_check_cannot_stop():
+    # uplift = 23; counter = 2.0*2.5 + 5*0.3*2.5 = 5.0 + 3.75 = 8.75; FOS = 0.380
+    r = cf.dewatering_uplift_check(water_depth=23, raft_thickness=2.0, floor_count=5)
+    assert r.uplift_force_t_m2 == 23.0
+    assert r.counter_weight_t_m2 == 8.75
+    assert r.fos == pytest.approx(0.380, abs=0.001)
+    assert r.can_stop is False
+    assert r.needs_tension_piles is True
+    # min floors: ceil((23*1.25 - 5.0)/0.75) = ceil(31.67) = 32
+    assert r.min_floors_for_stop == 32
+
+
+def test_diaphragm_wall_volume_with_tremie_waste():
+    r = cf.diaphragm_wall_panel_volume(panel_length=6, wall_thickness=0.8,
+                                       excavation_depth=20, panel_count=3)
+    assert r["volume_per_panel_m3"] == 96.0
+    assert r["total_volume_m3"] == 288.0
+    assert r["volume_with_waste_m3"] == 316.8  # 288 * 1.10
+
+
+def test_well_point_spacing_by_permeability():
+    r = cf.dewatering_well_point_spacing(soil_permeability_m_s=2e-3, required_drawdown_m=12)
+    assert r["soil_type"] == "coarse sand/gravel"
+    assert r["well_point_spacing_m"] == 1.5
+    assert r["stages_needed"] == 3  # ceil(12/5)
+
+
+def test_fineness_modulus():
+    assert cf.fineness_modulus([10, 25, 45, 70, 90, 98]) == 3.38  # 338/100
+
+
+def test_cost_buildup_concrete_arithmetic():
+    # material = 0.4*190 + 1.839*29 + 0.16*10 + 12*1.5 + 5*2.4 = 160.93
+    r = cf.cost_buildup_concrete(quantity_m3=100)
+    assert r["material_cost_sar_m3"] == pytest.approx(160.93, abs=0.01)
+    # direct 217.63 -> *1.03 waste -> *1.18 indirect -> /0.85 markup = 311.19
+    assert r["selling_price_sar_m3"] == pytest.approx(311.19, abs=0.1)
+    assert r["total_project_value_sar"] == pytest.approx(31119, abs=2)
+
+
+def test_cost_buildup_rebar_arithmetic():
+    r = cf.cost_buildup_rebar(quantity_kg=1000)
+    # material = 1t * 2600 * 1.10 = 2860
+    assert r["material_sar_t"] == 2860
+    # (2860 + 90*4.1 + 2*134.6) * 1.18 / 0.85 = 4856
+    assert r["selling_price_sar_t"] == pytest.approx(4856, abs=2)
+
+
+def test_rates_are_parameters_not_hardcoded():
+    # The RAG-grounding contract: a real rate passed in flows through the maths.
+    base = cf.cost_buildup_rebar(quantity_kg=1000)
+    with_real_rate = cf.cost_buildup_rebar(quantity_kg=1000, material_price_sar_t=3000)
+    assert with_real_rate["material_sar_t"] == 3300  # 1t * 3000 * 1.10
+    assert with_real_rate["material_sar_t"] != base["material_sar_t"]
+
+
+def test_modulus_of_rupture_runs_and_is_sane():
+    r = cf.modulus_of_rupture(fck_n_mm2=40)
+    # fr ~ 0.7*sqrt(fck) family — just assert a positive, plausible value + keys.
+    assert isinstance(r, dict)
+    assert any(isinstance(v, (int, float)) and v > 0 for v in r.values())
+
+
+def test_library_surface_is_broad():
+    # Sanity: the integrated library exposes the full calculator set.
+    for fn in ("dewatering_uplift_check", "concrete_mix_design_sg", "crane_planning",
+               "crane_cost_estimate", "cost_buildup_formwork", "mobilization_cost_estimate",
+               "beam_deflection_ss_udl", "foundation_bearing_pressure"):
+        assert callable(getattr(cf, fn)), fn
+
+
+# Valid inputs for every public calculator — smoke-executes each body so the
+# whole library is exercised (each returns a dict/dataclass, never raises).
+import dataclasses  # noqa: E402
+
+_SMOKE_INPUTS = {
+    "beam_deflection_cantilever_udl": dict(w_kn_m=10, span_m=5, ec_mpa=30000, i_mm4=1e9),
+    "beam_deflection_ss_udl": dict(w_kn_m=10, span_m=5, ec_mpa=30000, i_mm4=1e9),
+    "composite_column_design": dict(axial_load_kn=5000, column_diameter_mm=800),
+    "concrete_maturity_strength": dict(temperature_history_c=[20, 22, 25],
+                                       time_intervals_hours=[6, 6, 6]),
+    "concrete_mix_design_sg": dict(w_c_ratio=0.48),
+    "concrete_mix_slip_form": dict(),
+    "concrete_thermal_cracking_check": dict(core_temp_c=60, surface_temp_c=40),
+    "cost_buildup_concrete": dict(quantity_m3=100),
+    "cost_buildup_formwork": dict(area_m2=500),
+    "cost_buildup_rebar": dict(quantity_kg=1000),
+    "crane_cost_estimate": dict(num_cranes=2, crane_capacity_tons=50, duration_months=12),
+    "crane_planning": dict(total_lift_demand_tons=1000, crane_capacity_tons=50),
+    "dewatering_uplift_check": dict(water_depth=23, raft_thickness=2, floor_count=5),
+    "dewatering_well_point_spacing": dict(soil_permeability_m_s=2e-3, required_drawdown_m=12),
+    "diaphragm_wall_panel_volume": dict(panel_length=6, wall_thickness=0.8, excavation_depth=20),
+    "electrical_installation_sequence": dict(floor_area_m2=1000, num_floors=3),
+    "fineness_modulus": dict(sieve_retained_percentages=[10, 25, 45, 70, 90, 98]),
+    "formwork_striking_time": dict(),
+    "foundation_bearing_pressure": dict(foundation_width_m=3, foundation_length_m=3,
+                                        column_load_kn=2000, soil_bearing_capacity_kn_m2=300),
+    "grout_pressure_calc": dict(tendon_duct_diameter_mm=80),
+    "mobilization_cost_estimate": dict(num_personnel=100, duration_months=18),
+    "modulus_of_elasticity_concrete": dict(fck_n_mm2=40),
+    "modulus_of_rupture": dict(fck_n_mm2=40),
+    "plumbing_flow_programme": dict(floor_area_m2=1000, num_floors=3),
+    "post_tensioning_force": dict(span_m=8, slab_thickness_m=0.25, live_load_kn_m2=5),
+    "precast_beam_erection_check": dict(beam_weight_t=20, beam_length_m=15,
+                                        crane_capacity_t=50, lift_radius_m=12),
+    "shear_stress_check": dict(v_kn=200, b_mm=300, d_mm=550),
+    "supervision_ratio": dict(concrete_m3=5000, area_m2=10000),
+    "thermal_shrinkage_equivalence": dict(),
+    "unit_weight_concrete": dict(),
+    "wind_load_on_formwork": dict(wind_velocity_m_s=30, formwork_area_m2=50,
+                                  formwork_height_m=3, formwork_width_m=8),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_SMOKE_INPUTS))
+def test_every_calculator_runs(name):
+    result = getattr(cf, name)(**_SMOKE_INPUTS[name])
+    assert result is not None
+    assert isinstance(result, (dict, float, int)) or dataclasses.is_dataclass(result), name
+
+
+def test_smoke_inputs_cover_all_public_calculators():
+    # Guard: if a new calculator is added, this fails until it gets a smoke input.
+    import inspect
+    public = {
+        n for n, o in inspect.getmembers(cf, inspect.isfunction)
+        if not n.startswith("_") and o.__module__ == cf.__name__
+    }
+    missing = public - set(_SMOKE_INPUTS)
+    assert not missing, f"calculators missing smoke inputs: {sorted(missing)}"
