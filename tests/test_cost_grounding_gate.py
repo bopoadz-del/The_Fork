@@ -88,6 +88,32 @@ def test_dimension_not_mistaken_for_rate():
     assert out == answer
 
 
+def test_magnitude_suffix_matches_raw_tool_number():
+    # Tool returns 1250000; model writes "SAR 1.25 million" — must PASS, not be
+    # false-refused (Codex #223 magnitude-suffix finding).
+    answer = "The estimated total cost is SAR 1.25 million for the package."
+    tool_msgs = [{"role": "tool", "content": '{"total_cost": 1250000}'}]
+    out = _cost_grounding_gate(answer, None, messages=tool_msgs)
+    assert out == answer
+
+
+def test_magnitude_suffix_still_refuses_ungrounded():
+    # A magnitude-suffixed figure with nothing to ground it is still refused.
+    answer = "The cost is USD 2 million."
+    out = _cost_grounding_gate(answer, None, messages=[])
+    assert out == _CG_REFUSAL
+
+
+def test_magnitude_in_rate_chunk_grounds_repeated_answer():
+    # The retrieved rate chunk itself says "SAR 1.25 million"; an answer that
+    # repeats it must PASS even with no tool emitting the raw number (Codex #226
+    # — grounded side must fold magnitude symmetrically with the answer side).
+    chunk = "Contract sum for the package: SAR 1.25 million (priced BOQ)."
+    answer = "The package cost is SAR 1.25 million per the priced BOQ."
+    out = _cost_grounding_gate(answer, _sys(chunk), messages=[])
+    assert out == answer
+
+
 def test_gate_disabled_by_env(monkeypatch):
     monkeypatch.setenv("COST_GROUNDING_GATE", "0")
     out = _cost_grounding_gate(_FABRICATED_ANSWER, _sys(_DRAWING_SOUP), messages=[])

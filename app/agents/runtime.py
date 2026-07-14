@@ -857,6 +857,17 @@ _CG_RATE_SEMANTIC_RE = re.compile(
     re.IGNORECASE,
 )
 _CG_NUM_RE = re.compile(_CG_NUM)
+# Magnitude suffixes: a tool returns 1250000 while the model naturally writes
+# "SAR 1.25 million". Fold the suffix so the figure compares to the raw grounded
+# number instead of being false-refused (Codex #223). Applied to CURRENCY money
+# forms only — a rate unit ("1.25 /m3") never carries a magnitude word, and a
+# bare "1.25 m" without a currency could be metres.
+_CG_MAGNITUDE = {
+    "thousand": 1e3, "k": 1e3,
+    "million": 1e6, "mn": 1e6, "mln": 1e6, "m": 1e6,
+    "billion": 1e9, "bn": 1e9, "b": 1e9,
+}
+_CG_SUFFIX_RE = re.compile(r"\s*(thousand|million|billion|mln|mn|bn|[kmb])\b", re.IGNORECASE)
 _CG_REFUSAL = (
     "I don't have a rate on file for that in the project documents or the "
     "knowledge base. Please upload your priced BOQ / rate schedule, or get a "
@@ -868,6 +879,22 @@ def _cost_grounding_enabled() -> bool:
     return os.getenv("COST_GROUNDING_GATE", "1") not in ("0", "false", "False", "")
 
 
+# A cost/rate-shaped user question. Token streaming yields the answer before the
+# cost gate can act, so a fabricated price would reach the client (Codex
+# #223/#224). For these queries only, streaming is disabled so the full answer is
+# gated before emission. Non-cost queries (the common case) stream normally.
+_CG_COST_QUERY_RE = re.compile(
+    r"\b(rate|rates|unit\s*rate|cost|costs|price|priced|pricing|how\s+much|"
+    r"quote|quotation|sar|usd|aed|qar|/\s*m[23³²]|per\s+m[23³²]|per\s+tonne|"
+    r"per\s+kg|bill\s+of\s+quantit|boq)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_cost_shaped_query(user_message: Optional[str]) -> bool:
+    return bool(user_message and _CG_COST_QUERY_RE.search(user_message))
+
+
 def _cg_to_number(s: Any) -> Optional[float]:
     try:
         return round(float(str(s).replace(",", "").strip()), 2)
@@ -876,13 +903,26 @@ def _cg_to_number(s: Any) -> Optional[float]:
 
 
 def _cg_money_values(text: str) -> List[Tuple[str, float]]:
-    """Every money/rate-shaped figure in ``text`` as (fragment, value)."""
+    """Every money/rate-shaped figure in ``text`` as (fragment, value).
+
+    Folds a trailing magnitude word (million/billion/k) for CURRENCY money forms
+    so "SAR 1.25 million" -> 1_250_000 and matches a tool's raw 1250000 instead
+    of being false-refused. Group 3 is the rate-unit form ("1.25 /m3"), which
+    never carries a magnitude word, so it is left as-is."""
+    text = text or ""
     out: List[Tuple[str, float]] = []
-    for m in _CG_MONEY_RE.finditer(text or ""):
+    for m in _CG_MONEY_RE.finditer(text):
         raw = next((g for g in m.groups() if g), None)
         v = _cg_to_number(raw)
-        if v is not None and v != 0:
-            out.append((m.group(0).strip(), v))
+        if v is None or v == 0:
+            continue
+        frag = m.group(0).strip()
+        if m.group(3) is None:  # currency money form (not a rate unit)
+            suf = _CG_SUFFIX_RE.match(text, m.end())
+            if suf:
+                v = round(v * _CG_MAGNITUDE[suf.group(1).lower()], 2)
+                frag = text[m.start():suf.end()].strip()
+        out.append((frag, v))
     return out
 
 
@@ -898,27 +938,31 @@ def _cg_grounded_numbers(rag_context: str, messages: List[Dict[str, Any]]) -> se
       cost_estimate) is authoritative, so all of its numbers ground.
     """
     grounded: set = set()
+
+    def _add_numbers(text: str, all_numbers: bool) -> None:
+        # Bare numbers (only in rate-semantic / authoritative text)...
+        if all_numbers:
+            for tok in _CG_NUM_RE.findall(text):
+                v = _cg_to_number(tok)
+                if v is not None:
+                    grounded.add(v)
+        # ...plus magnitude-FOLDED money values, so a chunk/tool that says
+        # "SAR 1.25 million" grounds an answer that repeats it (Codex #226 —
+        # symmetric with the answer-side fold in _cg_money_values).
+        for _frag, v in _cg_money_values(text):
+            grounded.add(v)
+
     # RAG context, per injected chunk (marker from format_chunks_as_system_message).
     for block in re.split(r"\[doc_id=", rag_context or ""):
         if not block.strip():
             continue
-        if _CG_RATE_SEMANTIC_RE.search(block):
-            for tok in _CG_NUM_RE.findall(block):
-                v = _cg_to_number(tok)
-                if v is not None:
-                    grounded.add(v)
-        else:
-            for frag, v in _cg_money_values(block):
-                grounded.add(v)
+        _add_numbers(block, all_numbers=bool(_CG_RATE_SEMANTIC_RE.search(block)))
     # Tool results this turn (authoritative computed numbers).
     for msg in messages or []:
         if isinstance(msg, dict) and msg.get("role") == "tool":
             content = msg.get("content")
             if isinstance(content, str):
-                for tok in _CG_NUM_RE.findall(content):
-                    v = _cg_to_number(tok)
-                    if v is not None:
-                        grounded.add(v)
+                _add_numbers(content, all_numbers=True)
     return grounded
 
 
@@ -2779,6 +2823,15 @@ class Agent:
             # rag_debug needs the whole final text to run its with/without-RAG
             # A/B in the non-streaming branch; don't stream those turns.
             and not rag_debug
+            # Token streaming yields the answer BEFORE _postprocess_answer can
+            # act, so a fabricated price would already be on the client with
+            # only the persisted copy corrected (Codex #223/#224). For
+            # COST-SHAPED queries only, the gate wins: streaming disables itself
+            # so the whole answer is price-gated before emission. Non-cost turns
+            # stream normally. (The standards advisory is non-blocking, so under
+            # streaming it remains best-effort on the persisted copy — an
+            # accepted minor gap; streaming is off in prod regardless.)
+            and not (_cost_grounding_enabled() and _is_cost_shaped_query(user_message))
         )
         # WARNING-level timing instrumentation: Render drops INFO app logs on this
         # service, so the deliverable-hang call-count/latency was invisible.
