@@ -77,6 +77,17 @@ New block-level actionables:
 - `code.execute` runs **unsandboxed** despite "Sandboxed" docstring (security-label, not fabrication). gate through `_analyze`/`sandbox`. `code.py:171-215`.
 - `pdf_v2`/`ocr_v2` dead twins → delete or wire in place of `pdf`/`ocr`.
 - `historical_benchmark` **RESOLVED (branch) — KEPT + IMPROVED** (operator decision 2026-07-14: keep as the day-one fallback, expand to multi-country). Now: 108 location keys across all regions (was ~22 GCC-centric); each of the 14 base rates declares its cost **basis** (material-only / all_in / plant_labour) in the response; unknown location → `location_matched:False` (priced at US base, disclosed not silent); `list_locations` action. `generate_cost_estimate` surfaces per-line basis + a `mixed_basis` warning (material-only lines exclude placing/fixing labour → total understates labour-heavy trades) + `rate_source:indicative_benchmark_fallback`. **Config-rot fixed in the same pass:** the "was removed" claim corrected in 3 agent configs (learning/quantity-surveyor/validation) + 2 boq.py messages — the block is a labelled indicative fallback, prefer client/supplier rates. Long-term: client-loaded rates + wired learning loop (W6) supersede it.
+  **DEMOTED 2026-07-14 (PR #222) — rates moved to RAG.** Operator directive: the LLM
+  must never answer cost from parametric knowledge. New two-layer model: (1) COMPANY —
+  the client's priced-BOQ unit rates, now retrievable as clean project-RAG chunks after
+  fixing the `.xlsx` extractor to be row-wise (was a space-joined cell blob that
+  separated a rate from its item); (2) GK FALLBACK — real sourced Gulf/KSA benchmarks
+  (`docs/knowledge/construction_rates_gulf_ksa_2025.md`, Turner & Townsend/AECOM/Saudi
+  Contractors Authority) auto-seeded into the GK project. Company rates outrank GK via the
+  existing `RAG_GK_SCORE_MARGIN`. Agent configs (project-assistant/heavy-reasoning) tightened:
+  quote a rate ONLY from retrieved context (company→GK, cite source+year) else REFUSE. The
+  `historical_benchmark` dict is now a last-resort labelled fallback only; learned rates over
+  time route through the existing `ProcurementLeadTimeLearner`/`DurationCalibration`, not json.
 
 ## SECTION C — app/lib modules (census landed): 8 REAL, 0 FAKE/BROKEN — the best-tested code in the repo
 - `pm_computations` (CPM: topo/forward/backward/float/resource_histogram/xer parse/compress) — REAL, ~40 assertions, hand-verified networks. No gaps in the math.

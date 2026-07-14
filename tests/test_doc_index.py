@@ -207,6 +207,39 @@ def test_extract_docx_mocked(tmp_path, monkeypatch):
     assert "Excavation" in text and "100 m3" in text
 
 
+def test_extract_xlsx_keeps_priced_boq_row_intact(tmp_path, monkeypatch):
+    """A priced-BOQ .xlsx must extract row-wise, so each unit rate stays
+    adjacent to its item description in one line. The old cell-wise flatten
+    ("<all cells> ".join) scattered a rate away from its item and made company
+    unit rates unretrievable."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    openpyxl = pytest.importorskip("openpyxl")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["Description", "Qty", "Unit", "Rate (SAR)", "Amount"])
+    ws.append(["Ready-mix concrete C30", 500, "m3", 220, 110000])
+    ws.append(["Rebar 12mm", 40, "tonne", 3000, 120000])
+    raw_path = str(tmp_path / "_raw.xlsx")
+    wb.save(raw_path)
+    with open(raw_path, "rb") as fh:
+        xlsx_bytes = fh.read()
+
+    doc_path = str(tmp_path / "priced_boq.xlsx")
+    file_crypto.write_document(doc_path, xlsx_bytes)
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    text = doc_index.extract_document_text(doc_path, "priced_boq.xlsx")
+
+    # The concrete rate (220) must sit on the same line as its description.
+    line = next(ln for ln in text.splitlines() if "Ready-mix concrete C30" in ln)
+    assert "220" in line and "m3" in line
+    # Rebar row is a distinct line — rows are not merged into one blob.
+    assert "Rebar 12mm" not in line
+    assert any("Rebar 12mm" in ln and "3000" in ln for ln in text.splitlines())
+
+
 def test_extract_kmz_indexes_labels_not_coordinates(tmp_path, monkeypatch):
     """KMZ extraction indexes the human-meaningful <name>/<description> labels
     and drops the raw <coordinates> dump (which otherwise explodes into

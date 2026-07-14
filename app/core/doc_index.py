@@ -774,11 +774,20 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> Tuple[str, Dict[st
                 parts: List[str] = []
                 for sheet_name in wb.sheetnames:
                     ws = wb[sheet_name]
+                    # Row-wise, not cell-wise: keep each row's cells together so
+                    # a priced-BOQ line stays intact ("<desc> | <qty> | <unit> |
+                    # <rate> | <total>"). Flattening every cell into one
+                    # space-joined blob separates a rate from its item
+                    # description and makes company unit rates unretrievable.
                     for row in ws:
-                        for cell in row:
-                            if cell.value is not None and str(cell.value).strip():
-                                parts.append(str(cell.value))
-                return " ".join(parts), {}
+                        cells = [
+                            str(cell.value).strip()
+                            for cell in row
+                            if cell.value is not None and str(cell.value).strip()
+                        ]
+                        if cells:
+                            parts.append(" | ".join(cells))
+                return "\n".join(parts), {}
 
         # ── PPTX ─────────────────────────────────────────────────────────────
         if ext == ".pptx":
