@@ -106,8 +106,13 @@ def test_business_calculators_dispatch_via_construction_calc():
 def test_business_calc_queries_force_the_tool():
     from app.agents.runtime import _forced_specific_tool
     avail = {"construction_calc"}
-    for q in ("compute the earned value / EVM for this month",
+    for q in ("compute the earned value for this month",
+              "compute EVM: BAC 1M BCWP 400k",   # the bare "EVM" phrasing must also force
               "what is the interim payment due after retention",
               "run a tender evaluation on the three bids",
               "give me the risk score for probability 4 and impact 5"):
         assert _forced_specific_tool([{"role": "user", "content": q}], avail) == "construction_calc", q
+    # "evm" must not false-trigger inside ordinary words (movement/pavement have
+    # 'vem', not 'evm') — sanity that a non-calc sentence is not forced.
+    assert _forced_specific_tool(
+        [{"role": "user", "content": "summarise the site movement and pavement works"}], avail) is None

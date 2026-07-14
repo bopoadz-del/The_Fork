@@ -622,7 +622,7 @@ _INTENT_TOOL_MAP = (
       "diaphragm wall volume", "crane capacity", "crane planning",
       "bearing pressure", "beam deflection",
       # reporting / commercial / procurement / risk calculators
-      "earned value", "cost performance index", "schedule performance index",
+      "earned value", "evm", "cost performance index", "schedule performance index",
       "estimate at completion", "interim payment", "net payment due",
       "tender evaluation", "evaluate tenders", "score the tenders", "bid evaluation",
       "risk score", "probability and impact"), "construction_calc"),
