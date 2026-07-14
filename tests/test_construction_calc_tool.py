@@ -74,3 +74,18 @@ def test_bad_params_return_the_real_signature():
     assert r["ok"] is False
     assert "signature" in r["result"]
     assert "quantity_kg" in r["result"]["signature"]  # the real required input
+
+
+def test_calc_queries_force_construction_calc():
+    # Steering: unambiguous engineering-calc phrases force the tool so the model
+    # runs the exact maths instead of doing (wrong) prose-math. Observed live:
+    # gpt-4o-mini computed a dewatering check in prose and got it wrong.
+    from app.agents.runtime import _forced_specific_tool
+    avail = {"construction_calc", "generate_wbs"}
+    for q in ("Run a dewatering uplift check for 23 m water depth",
+              "crane capacity for a 20 t lift", "concrete mix design for W/C 0.48",
+              "bearing pressure for a 3x3 m footing"):
+        assert _forced_specific_tool([{"role": "user", "content": q}], avail) == "construction_calc", q
+    # ...but a general question is NOT forced onto the calculator.
+    assert _forced_specific_tool(
+        [{"role": "user", "content": "what is this project about?"}], avail) is None
