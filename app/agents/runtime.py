@@ -955,6 +955,59 @@ def _cost_grounding_gate(
         return text
 
 
+# ── Standards advisory (ADVISORY, never blocks) ─────────────────────────────
+# Highlights a deviation from a critical construction standard (e.g. 'APPROVED'
+# used on a design document, PRC-501) by APPENDING a note — it never rejects,
+# edits, or halts the answer. Operators bend rules deliberately in the field; the
+# platform's job is to flag the deviation so the choice is informed, not to
+# enforce a stop. Flag STANDARDS_ADVISORY (default on); never raises. This is the
+# advisory wiring for the previously-dormant construction_knowledge enforcement.
+def _standards_advisory_enabled() -> bool:
+    return os.getenv("STANDARDS_ADVISORY", "1") not in ("0", "false", "False", "")
+
+
+def _standards_advisory(text: str) -> str:
+    try:
+        if not _standards_advisory_enabled() or not text or not text.strip():
+            return text
+        from app.core.construction_knowledge import enforce_critical_rules
+        violations = enforce_critical_rules(text)
+        if not violations:
+            return text
+        seen: set = set()
+        lines: List[str] = []
+        for v in violations:
+            rid = v.get("rule_id")
+            if rid in seen:
+                continue
+            seen.add(rid)
+            proc = v.get("procedure", "")
+            msg = v.get("violation_message") or v.get("rule", "")
+            lines.append(f"> - **{proc}** — {msg}" if proc else f"> - {msg}")
+        if not lines:
+            return text
+        return text + (
+            "\n\n> **Standards note (advisory — flagging, not blocking):**\n"
+            + "\n".join(lines)
+        )
+    except Exception:  # noqa: BLE001 — advisory must never break an answer
+        logger.exception("standards advisory failed; passing answer through")
+        return text
+
+
+def _postprocess_answer(
+    text: str,
+    rag_sys_msg: Optional[Dict[str, Any]],
+    messages: List[Dict[str, Any]],
+) -> str:
+    """Final-answer post-processing: cost-grounding gate (may refuse an
+    ungrounded cost claim) then the standards advisory (appends a non-blocking
+    deviation note). Order matters — don't annotate a refusal for cost figures
+    it no longer contains."""
+    text = _cost_grounding_gate(text, rag_sys_msg, messages)
+    return _standards_advisory(text)
+
+
 def _parse_source_tail(tail: str) -> Tuple[str, str]:
     """Split a source mention into filename and optional chunk-number blob.
 
@@ -2309,7 +2362,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -2404,7 +2457,7 @@ class Agent:
         if not final_text.strip():
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -2787,7 +2840,7 @@ class Agent:
                     final_text = _sanitize_inline_paths(
                         _sanitize_citation_labels(_sanitize_final_text(raw))
                     )
-                    final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
                     if not final_text.strip():
                         # Nothing usable streamed (empty response) — preserve the
                         # empty-final forced-retry path (non-streamed, chunked).
@@ -2804,7 +2857,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                        final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
+                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     if _timing:
@@ -2893,7 +2946,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -3004,7 +3057,7 @@ class Agent:
             _LOG.warning("chat_stream: forced final returned empty, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:
