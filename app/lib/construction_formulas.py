@@ -858,6 +858,20 @@ def _build_calculator_registry() -> "Dict[str, Any]":
         if getattr(_obj, "__module__", None) != __name__:
             continue  # skip imported names (dataclass/field/etc.)
         reg[_name] = _obj
+    # Also expose the reporting / commercial / procurement / risk calculators
+    # that live in construction_knowledge (EVM, IPC payment, tender scoring,
+    # PRC-302 risk). REFERENCED, not copied — construction_knowledge stays the
+    # single source of that maths; construction_calc just makes them callable
+    # (they were tested but 0-caller). Optional import: if unavailable, the
+    # engineering calculators above still work.
+    try:
+        from app.core import construction_knowledge as _ck
+        for _n in ("calculate_evm", "calculate_payment", "evaluate_tender", "score_risk"):
+            _f = getattr(_ck, _n, None)
+            if callable(_f):
+                reg[_n] = _f
+    except Exception:  # noqa: BLE001 — never break the formula registry on import
+        pass
     return reg
 
 

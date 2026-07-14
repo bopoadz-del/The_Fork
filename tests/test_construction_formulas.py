@@ -123,12 +123,21 @@ _SMOKE_INPUTS = {
     "unit_weight_concrete": dict(),
     "wind_load_on_formwork": dict(wind_velocity_m_s=30, formwork_area_m2=50,
                                   formwork_height_m=3, formwork_width_m=8),
+    # Referenced from construction_knowledge (reporting/commercial/procurement/risk).
+    "calculate_evm": dict(bac=1_000_000, bcwp=400_000, bcws=500_000, acwp=450_000),
+    "calculate_payment": dict(claimed_amount=100_000, certified_amount=90_000),
+    "evaluate_tender": dict(tenderers=[
+        {"name": "A", "technical_score": 80, "commercial_score": 70,
+         "hse_score": 90, "local_content_score": 50}]),
+    "score_risk": dict(probability=4, impact=5),
 }
 
 
 @pytest.mark.parametrize("name", sorted(_SMOKE_INPUTS))
 def test_every_calculator_runs(name):
-    result = getattr(cf, name)(**_SMOKE_INPUTS[name])
+    # Call through the registry (the real dispatch surface) — covers both the
+    # module's own calculators and the ones referenced from construction_knowledge.
+    result = cf.CALCULATORS[name](**_SMOKE_INPUTS[name])
     assert result is not None
     assert isinstance(result, (dict, float, int)) or dataclasses.is_dataclass(result), name
 

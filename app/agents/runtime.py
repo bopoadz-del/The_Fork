@@ -620,7 +620,12 @@ _INTENT_TOOL_MAP = (
     (("dewatering", "uplift check", "mix design", "formwork striking",
       "modulus of rupture", "well point spacing", "well-point spacing",
       "diaphragm wall volume", "crane capacity", "crane planning",
-      "bearing pressure", "beam deflection"), "construction_calc"),
+      "bearing pressure", "beam deflection",
+      # reporting / commercial / procurement / risk calculators
+      "earned value", "cost performance index", "schedule performance index",
+      "estimate at completion", "interim payment", "net payment due",
+      "tender evaluation", "evaluate tenders", "score the tenders", "bid evaluation",
+      "risk score", "probability and impact"), "construction_calc"),
 )
 
 
