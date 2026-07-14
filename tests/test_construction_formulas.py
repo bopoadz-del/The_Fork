@@ -81,3 +81,64 @@ def test_library_surface_is_broad():
                "crane_cost_estimate", "cost_buildup_formwork", "mobilization_cost_estimate",
                "beam_deflection_ss_udl", "foundation_bearing_pressure"):
         assert callable(getattr(cf, fn)), fn
+
+
+# Valid inputs for every public calculator — smoke-executes each body so the
+# whole library is exercised (each returns a dict/dataclass, never raises).
+import dataclasses  # noqa: E402
+
+_SMOKE_INPUTS = {
+    "beam_deflection_cantilever_udl": dict(w_kn_m=10, span_m=5, ec_mpa=30000, i_mm4=1e9),
+    "beam_deflection_ss_udl": dict(w_kn_m=10, span_m=5, ec_mpa=30000, i_mm4=1e9),
+    "composite_column_design": dict(axial_load_kn=5000, column_diameter_mm=800),
+    "concrete_maturity_strength": dict(temperature_history_c=[20, 22, 25],
+                                       time_intervals_hours=[6, 6, 6]),
+    "concrete_mix_design_sg": dict(w_c_ratio=0.48),
+    "concrete_mix_slip_form": dict(),
+    "concrete_thermal_cracking_check": dict(core_temp_c=60, surface_temp_c=40),
+    "cost_buildup_concrete": dict(quantity_m3=100),
+    "cost_buildup_formwork": dict(area_m2=500),
+    "cost_buildup_rebar": dict(quantity_kg=1000),
+    "crane_cost_estimate": dict(num_cranes=2, crane_capacity_tons=50, duration_months=12),
+    "crane_planning": dict(total_lift_demand_tons=1000, crane_capacity_tons=50),
+    "dewatering_uplift_check": dict(water_depth=23, raft_thickness=2, floor_count=5),
+    "dewatering_well_point_spacing": dict(soil_permeability_m_s=2e-3, required_drawdown_m=12),
+    "diaphragm_wall_panel_volume": dict(panel_length=6, wall_thickness=0.8, excavation_depth=20),
+    "electrical_installation_sequence": dict(floor_area_m2=1000, num_floors=3),
+    "fineness_modulus": dict(sieve_retained_percentages=[10, 25, 45, 70, 90, 98]),
+    "formwork_striking_time": dict(),
+    "foundation_bearing_pressure": dict(foundation_width_m=3, foundation_length_m=3,
+                                        column_load_kn=2000, soil_bearing_capacity_kn_m2=300),
+    "grout_pressure_calc": dict(tendon_duct_diameter_mm=80),
+    "mobilization_cost_estimate": dict(num_personnel=100, duration_months=18),
+    "modulus_of_elasticity_concrete": dict(fck_n_mm2=40),
+    "modulus_of_rupture": dict(fck_n_mm2=40),
+    "plumbing_flow_programme": dict(floor_area_m2=1000, num_floors=3),
+    "post_tensioning_force": dict(span_m=8, slab_thickness_m=0.25, live_load_kn_m2=5),
+    "precast_beam_erection_check": dict(beam_weight_t=20, beam_length_m=15,
+                                        crane_capacity_t=50, lift_radius_m=12),
+    "shear_stress_check": dict(v_kn=200, b_mm=300, d_mm=550),
+    "supervision_ratio": dict(concrete_m3=5000, area_m2=10000),
+    "thermal_shrinkage_equivalence": dict(),
+    "unit_weight_concrete": dict(),
+    "wind_load_on_formwork": dict(wind_velocity_m_s=30, formwork_area_m2=50,
+                                  formwork_height_m=3, formwork_width_m=8),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_SMOKE_INPUTS))
+def test_every_calculator_runs(name):
+    result = getattr(cf, name)(**_SMOKE_INPUTS[name])
+    assert result is not None
+    assert isinstance(result, (dict, float, int)) or dataclasses.is_dataclass(result), name
+
+
+def test_smoke_inputs_cover_all_public_calculators():
+    # Guard: if a new calculator is added, this fails until it gets a smoke input.
+    import inspect
+    public = {
+        n for n, o in inspect.getmembers(cf, inspect.isfunction)
+        if not n.startswith("_") and o.__module__ == cf.__name__
+    }
+    missing = public - set(_SMOKE_INPUTS)
+    assert not missing, f"calculators missing smoke inputs: {sorted(missing)}"
