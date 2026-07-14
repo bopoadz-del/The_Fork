@@ -857,6 +857,17 @@ _CG_RATE_SEMANTIC_RE = re.compile(
     re.IGNORECASE,
 )
 _CG_NUM_RE = re.compile(_CG_NUM)
+# Magnitude suffixes: a tool returns 1250000 while the model naturally writes
+# "SAR 1.25 million". Fold the suffix so the figure compares to the raw grounded
+# number instead of being false-refused (Codex #223). Applied to CURRENCY money
+# forms only — a rate unit ("1.25 /m3") never carries a magnitude word, and a
+# bare "1.25 m" without a currency could be metres.
+_CG_MAGNITUDE = {
+    "thousand": 1e3, "k": 1e3,
+    "million": 1e6, "mn": 1e6, "mln": 1e6, "m": 1e6,
+    "billion": 1e9, "bn": 1e9, "b": 1e9,
+}
+_CG_SUFFIX_RE = re.compile(r"\s*(thousand|million|billion|mln|mn|bn|[kmb])\b", re.IGNORECASE)
 _CG_REFUSAL = (
     "I don't have a rate on file for that in the project documents or the "
     "knowledge base. Please upload your priced BOQ / rate schedule, or get a "
@@ -876,13 +887,26 @@ def _cg_to_number(s: Any) -> Optional[float]:
 
 
 def _cg_money_values(text: str) -> List[Tuple[str, float]]:
-    """Every money/rate-shaped figure in ``text`` as (fragment, value)."""
+    """Every money/rate-shaped figure in ``text`` as (fragment, value).
+
+    Folds a trailing magnitude word (million/billion/k) for CURRENCY money forms
+    so "SAR 1.25 million" -> 1_250_000 and matches a tool's raw 1250000 instead
+    of being false-refused. Group 3 is the rate-unit form ("1.25 /m3"), which
+    never carries a magnitude word, so it is left as-is."""
+    text = text or ""
     out: List[Tuple[str, float]] = []
-    for m in _CG_MONEY_RE.finditer(text or ""):
+    for m in _CG_MONEY_RE.finditer(text):
         raw = next((g for g in m.groups() if g), None)
         v = _cg_to_number(raw)
-        if v is not None and v != 0:
-            out.append((m.group(0).strip(), v))
+        if v is None or v == 0:
+            continue
+        frag = m.group(0).strip()
+        if m.group(3) is None:  # currency money form (not a rate unit)
+            suf = _CG_SUFFIX_RE.match(text, m.end())
+            if suf:
+                v = round(v * _CG_MAGNITUDE[suf.group(1).lower()], 2)
+                frag = text[m.start():suf.end()].strip()
+        out.append((frag, v))
     return out
 
 
@@ -2779,6 +2803,15 @@ class Agent:
             # rag_debug needs the whole final text to run its with/without-RAG
             # A/B in the non-streaming branch; don't stream those turns.
             and not rag_debug
+            # Token streaming yields the answer BEFORE _postprocess_answer can
+            # act, so a fabricated price / standards deviation would already be
+            # on the client with only the persisted copy corrected (Codex
+            # #223/#224). While either post-answer gate is enabled, the gate
+            # wins: streaming disables itself so the whole answer is gated
+            # before emission. (Both gates default on, so this is a no-op in
+            # prod today, where SYNTHESIS_STREAMING is also off.)
+            and not _cost_grounding_enabled()
+            and not _standards_advisory_enabled()
         )
         # WARNING-level timing instrumentation: Render drops INFO app logs on this
         # service, so the deliverable-hang call-count/latency was invisible.

@@ -282,9 +282,11 @@ When `search_project_documents` returns no relevant chunks, the question referen
 
    > "I searched the project documents for [topic] but could not find specific information. Based on general construction knowledge: [direct answer using construction-domain reasoning]. To get a project-specific answer, ensure the relevant document is uploaded and indexed."
 
-3. The "general construction knowledge" portion must be a real answer, not a placeholder. If the question is "what is the rate for stormwater culvert removal", answer with realistic regional rate bands and the typical pricing structure (e.g., per linear metre vs per cubic metre of fill).
+3. The "general construction knowledge" portion must be a real answer, not a placeholder. If the question is "what is the typical curing period for a mass-concrete raft", answer with the real domain guidance (e.g., temperature-differential limits and time to equilibrium).
 
-Never end a "not found" reply with an offer of options. End with the general-knowledge answer or, if you have no general-knowledge answer either, a single specific request for the document the user should upload.
+**EXCEPTION — cost, unit rates, and prices are NOT covered by this general-knowledge fallback.** This fallback applies to construction *method/standards* questions only. For any cost/rate/price question, rule 5a governs: you may quote a figure ONLY if it was retrieved (project priced BOQ first, then the indicative general-knowledge rate table). If neither was retrieved, do NOT invent a regional rate band — refuse with exactly: **"No rate on file for that — upload your priced BOQ / rate schedule, or get a supplier quote."**
+
+Never end a "not found" reply with an offer of options. End with the general-knowledge answer (or, for cost/rate questions with nothing retrieved, the rule-5a refusal), or a single specific request for the document the user should upload.
 
 ## When to delegate
 
