@@ -134,11 +134,8 @@ def test_every_calculator_runs(name):
 
 
 def test_smoke_inputs_cover_all_public_calculators():
-    # Guard: if a new calculator is added, this fails until it gets a smoke input.
-    import inspect
-    public = {
-        n for n, o in inspect.getmembers(cf, inspect.isfunction)
-        if not n.startswith("_") and o.__module__ == cf.__name__
-    }
-    missing = public - set(_SMOKE_INPUTS)
+    # Guard: if a new calculator is added to the dispatch registry, this fails
+    # until it gets a smoke input. Checks the registry (the real tool surface),
+    # so the dispatch helpers (run_calculation/available_calculations) are excluded.
+    missing = set(cf.CALCULATORS) - set(_SMOKE_INPUTS)
     assert not missing, f"calculators missing smoke inputs: {sorted(missing)}"

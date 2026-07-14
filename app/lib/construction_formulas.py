@@ -831,3 +831,87 @@ def concrete_maturity_strength(
         "predicted_strength_n_mm2": round(strength_28d_n_mm2 * ratio, 1),
         "percent_of_28d": round(ratio * 100, 1),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  DETERMINISTIC DISPATCH — the agent's `construction_calc` tool routes here.
+# ═══════════════════════════════════════════════════════════════════════════
+
+import dataclasses as _dc
+import inspect as _inspect
+
+
+# Public functions in this module that are DISPATCH infrastructure, not
+# calculators — excluded from the registry regardless of definition order.
+_NON_CALCULATORS = {"available_calculations", "run_calculation"}
+
+
+def _build_calculator_registry() -> "Dict[str, Any]":
+    """Every public calculator defined in this module, by name. Drift-free:
+    a new calculator is exposed automatically (and its smoke-input guard test
+    fails until it is covered)."""
+    reg: Dict[str, Any] = {}
+    for _name, _obj in _inspect.getmembers(__import__(__name__, fromlist=["*"]),
+                                           _inspect.isfunction):
+        if _name.startswith("_") or _name in _NON_CALCULATORS:
+            continue
+        if getattr(_obj, "__module__", None) != __name__:
+            continue  # skip imported names (dataclass/field/etc.)
+        reg[_name] = _obj
+    return reg
+
+
+CALCULATORS: Dict[str, Any] = _build_calculator_registry()
+
+
+def available_calculations() -> List[str]:
+    return sorted(CALCULATORS)
+
+
+def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Run one whitelisted deterministic calculator by name with keyword params.
+
+    Returns a standard envelope: {status, calculation, result, note} on success,
+    or {status:error, error, ...} on a bad name / bad params. COST build-ups use
+    the unit rates passed in ``params``; the built-in defaults are indicative GCC
+    fallbacks only — pass the project's priced-BOQ rates (from RAG) for a firm
+    cost so the answer stays grounded.
+    """
+    fn = CALCULATORS.get(name)
+    if fn is None:
+        return {
+            "status": "error",
+            "error": f"Unknown calculation '{name}'.",
+            "available": available_calculations(),
+        }
+    params = params or {}
+    if not isinstance(params, dict):
+        return {"status": "error", "error": "params must be an object of keyword arguments."}
+    try:
+        result = fn(**params)
+    except TypeError as exc:
+        # Wrong / missing kwargs — surface the real signature, don't fabricate.
+        sig = str(_inspect.signature(fn))
+        return {
+            "status": "error",
+            "error": f"Bad parameters for {name}: {exc}",
+            "signature": f"{name}{sig}",
+        }
+    except Exception as exc:  # noqa: BLE001 — never raise into the agent loop
+        return {"status": "error", "error": f"{name} failed: {exc}"}
+
+    if _dc.is_dataclass(result):
+        result = _dc.asdict(result)
+    elif not isinstance(result, dict):
+        result = {"value": result}
+
+    return {
+        "status": "success",
+        "calculation": name,
+        "result": result,
+        "note": (
+            "Deterministic engineering calculation. Any cost figure uses the unit "
+            "rates provided (or indicative GCC defaults if none were given) — for a "
+            "firm cost, supply the project's priced-BOQ / rate-schedule rates."
+        ),
+    }

@@ -895,6 +895,48 @@ def _is_cost_shaped_query(user_message: Optional[str]) -> bool:
     return bool(user_message and _CG_COST_QUERY_RE.search(user_message))
 
 
+def _construction_calc_tool_schema() -> Dict[str, Any]:
+    """Schema for the `construction_calc` deterministic-calculator tool. The
+    calculation enum is built from the live registry so it never drifts from the
+    library. For cost build-ups the model is told to pass real rates from RAG;
+    the library's defaults are indicative fallbacks only (keeps cost grounded)."""
+    from app.lib import construction_formulas as _cf
+    return {
+        "type": "function",
+        "function": {
+            "name": "construction_calc",
+            "description": (
+                "Run a DETERMINISTIC construction engineering or cost calculation "
+                "(deep foundations, concrete technology, structural, crane planning, "
+                "cost build-up, MEP, QC). Returns the computed result. For COST "
+                "build-ups, pass the project's real unit rates in `params` (from the "
+                "priced BOQ / rate schedule) when available — the built-in defaults "
+                "are indicative GCC fallbacks only. Deterministic: call once."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "calculation": {
+                        "type": "string",
+                        "enum": _cf.available_calculations(),
+                        "description": "Which calculator to run.",
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": (
+                            "Keyword arguments for the chosen calculation (e.g. "
+                            "cost_buildup_rebar needs quantity_kg and optionally "
+                            "material_price_sar_t / labour_rate_sar_hr / ...). On a bad "
+                            "call the tool returns the exact required signature."
+                        ),
+                    },
+                },
+                "required": ["calculation"],
+            },
+        },
+    }
+
+
 def _cg_to_number(s: Any) -> Optional[float]:
     try:
         return round(float(str(s).replace(",", "").strip()), 2)
@@ -2177,6 +2219,8 @@ class Agent:
                     },
                 },
             })
+            # ── synthetic tool: construction_calc (deterministic formulas) ───
+            tools.append(_construction_calc_tool_schema())
 
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
@@ -4026,6 +4070,16 @@ class Agent:
                     "status": "success",
                     "remembered": {key: value},
                 },
+            }
+
+        # ── synthetic tool: construction_calc (deterministic formula library) ─
+        if name == "construction_calc":
+            from app.lib import construction_formulas as _cf
+            result = _cf.run_calculation(args.get("calculation"), args.get("params"))
+            return {
+                "name": "construction_calc",
+                "ok": isinstance(result, dict) and result.get("status") != "error",
+                "result": result,
             }
 
         if name not in BLOCK_REGISTRY:
