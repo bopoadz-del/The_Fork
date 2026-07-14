@@ -822,6 +822,139 @@ def _sanitize_citation_labels(text: str) -> str:
     return text
 
 
+# ── Cost-grounding gate ─────────────────────────────────────────────────────
+# A cost/rate figure in a chat answer must trace to a RATE-SEMANTIC retrieved
+# chunk (currency/price context) or a computed tool result — otherwise the
+# answer is refused. The unit of grounding is figure + rate-semantics, NOT the
+# bare number: on 2026-07-14 a live cost query answered "450 SAR/m³" by lifting
+# "450" out of a DG2 drawing dimension-table chunk. A naive "the number appears
+# somewhere in retrieval" gate would PASS that fabrication because 450 is in the
+# soup; this gate does not, because that chunk is not rate-semantic and 450 does
+# not sit next to a currency/rate-unit. Flag-controlled (COST_GROUNDING_GATE,
+# default on); never raises (a gate must never break an answer).
+_CG_CURRENCY = r"(?:SAR|SR|USD|US\$|AED|EUR|GBP|QAR|KWD|OMR|BHD|﷼|\$|€|£)"
+# Pricing DENOMINATORS only (per-unit rate units), never bare dimensions like
+# mm/cm — a "450 mm" dimension must never read as a rate.
+_CG_RATE_UNIT = (
+    r"(?:/|per\s+)\s*"
+    r"(?:day|month|week|year|hour|hr|man-?hour|m3|m²|m2|m³|sqm|sq\s?m|cum|"
+    r"kg|tonne|ton|lm|l\.?m|no\.?|nr|unit|each|ea|item|m)\b"
+)
+_CG_NUM = r"\d[\d,]*(?:\.\d+)?"
+_CG_MONEY_RE = re.compile(
+    rf"{_CG_CURRENCY}\s*({_CG_NUM})"       # SAR 300 / $1,200
+    rf"|({_CG_NUM})\s*{_CG_CURRENCY}"      # 300 SAR
+    rf"|({_CG_NUM})\s*{_CG_RATE_UNIT}",    # 55 /m³ / 1,200 per day
+    re.IGNORECASE,
+)
+# A chunk is rate-semantic if it carries currency or explicit rate/price
+# vocabulary. Drawing dimension-tables (pure numbers + BEND/PIPE/mm labels)
+# match none of these, so their numbers never ground a cost claim.
+_CG_RATE_SEMANTIC_RE = re.compile(
+    rf"{_CG_CURRENCY}|\b(?:unit\s*rate|rate\b|priced?|pricing|tender\s*price|"
+    r"bill\s+of\s+quantit|boq|cost\s*/|/\s*m[23³²]|per\s+m[23³²]|per\s+tonne|"
+    r"per\s+kg|sar/|usd/)\b",
+    re.IGNORECASE,
+)
+_CG_NUM_RE = re.compile(_CG_NUM)
+_CG_REFUSAL = (
+    "I don't have a rate on file for that in the project documents or the "
+    "knowledge base. Please upload your priced BOQ / rate schedule, or get a "
+    "supplier quote for a firm figure — I won't quote a price I can't ground."
+)
+
+
+def _cost_grounding_enabled() -> bool:
+    return os.getenv("COST_GROUNDING_GATE", "1") not in ("0", "false", "False", "")
+
+
+def _cg_to_number(s: Any) -> Optional[float]:
+    try:
+        return round(float(str(s).replace(",", "").strip()), 2)
+    except (ValueError, TypeError):
+        return None
+
+
+def _cg_money_values(text: str) -> List[Tuple[str, float]]:
+    """Every money/rate-shaped figure in ``text`` as (fragment, value)."""
+    out: List[Tuple[str, float]] = []
+    for m in _CG_MONEY_RE.finditer(text or ""):
+        raw = next((g for g in m.groups() if g), None)
+        v = _cg_to_number(raw)
+        if v is not None and v != 0:
+            out.append((m.group(0).strip(), v))
+    return out
+
+
+def _cg_grounded_numbers(rag_context: str, messages: List[Dict[str, Any]]) -> set:
+    """Numbers a cost claim may be grounded against:
+
+    * RAG context, classified PER CHUNK — in a rate-semantic chunk every number
+      grounds (rate tables split figure/unit across columns); in a non-rate
+      chunk only figures adjacent to currency/rate-unit ground. Per-chunk is
+      essential: a rate keyword in one chunk must NOT ground a bare number in a
+      drawing chunk.
+    * Tool-result messages this turn — a computed deliverable (e.g. a real
+      cost_estimate) is authoritative, so all of its numbers ground.
+    """
+    grounded: set = set()
+    # RAG context, per injected chunk (marker from format_chunks_as_system_message).
+    for block in re.split(r"\[doc_id=", rag_context or ""):
+        if not block.strip():
+            continue
+        if _CG_RATE_SEMANTIC_RE.search(block):
+            for tok in _CG_NUM_RE.findall(block):
+                v = _cg_to_number(tok)
+                if v is not None:
+                    grounded.add(v)
+        else:
+            for frag, v in _cg_money_values(block):
+                grounded.add(v)
+    # Tool results this turn (authoritative computed numbers).
+    for msg in messages or []:
+        if isinstance(msg, dict) and msg.get("role") == "tool":
+            content = msg.get("content")
+            if isinstance(content, str):
+                for tok in _CG_NUM_RE.findall(content):
+                    v = _cg_to_number(tok)
+                    if v is not None:
+                        grounded.add(v)
+    return grounded
+
+
+def _cg_is_grounded(value: float, grounded: set) -> bool:
+    tol = max(0.5, abs(value) * 0.005)
+    return any(abs(value - g) <= tol for g in grounded)
+
+
+def _cost_grounding_gate(
+    text: str,
+    rag_sys_msg: Optional[Dict[str, Any]],
+    messages: List[Dict[str, Any]],
+) -> str:
+    """Refuse a cost/rate answer whose figures don't trace to a rate-semantic
+    retrieved chunk or a computed tool result. Non-cost answers pass untouched.
+    Never raises."""
+    try:
+        if not _cost_grounding_enabled():
+            return text
+        figs = _cg_money_values(text)
+        if not figs:
+            return text  # not a cost/rate answer — leave it alone
+        rag_context = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        grounded = _cg_grounded_numbers(rag_context, messages)
+        if all(_cg_is_grounded(v, grounded) for _, v in figs):
+            return text
+        _LOG.warning(
+            "cost_grounding_gate: refused ungrounded cost figure(s) %s",
+            [f for f, _ in figs],
+        )
+        return _CG_REFUSAL
+    except Exception:  # noqa: BLE001 — a gate must never break an answer
+        logger.exception("cost_grounding_gate failed; passing answer through")
+        return text
+
+
 def _parse_source_tail(tail: str) -> Tuple[str, str]:
     """Split a source mention into filename and optional chunk-number blob.
 
@@ -2176,6 +2309,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+                    final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -2270,6 +2404,7 @@ class Agent:
         if not final_text.strip():
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+        final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -2652,6 +2787,7 @@ class Agent:
                     final_text = _sanitize_inline_paths(
                         _sanitize_citation_labels(_sanitize_final_text(raw))
                     )
+                    final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
                     if not final_text.strip():
                         # Nothing usable streamed (empty response) — preserve the
                         # empty-final forced-retry path (non-streamed, chunked).
@@ -2668,6 +2804,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+                        final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     if _timing:
@@ -2756,6 +2893,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+                    final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -2866,6 +3004,7 @@ class Agent:
             _LOG.warning("chat_stream: forced final returned empty, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+        final_text = _cost_grounding_gate(final_text, _rag_sys_msg, messages)
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:

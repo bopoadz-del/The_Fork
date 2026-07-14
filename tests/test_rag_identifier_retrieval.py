@@ -102,6 +102,34 @@ def test_extract_identifiers_preserves_quoted_phrases():
     assert '"vo ref 31"' in ids or 'vo ref 31' in ids
 
 
+def test_extract_identifiers_excludes_measurement_units():
+    """A spec unit in a query is NOT a reference code. Before this guard,
+    "concrete (250 kg/cm2)" extracted 'kg/cm2' as an identifier, which earned
+    the +2.0 identifier bonus and matched every drawing dimension-table chunk
+    containing the same numbers — burying the real rate chunk and inducing a
+    fabricated figure lifted from the number-soup (2026-07-14 live incident)."""
+    from app.core.rag.retriever import extract_query_identifiers, _looks_like_unit
+
+    # The exact live-incident query must yield NO polluting identifier.
+    assert extract_query_identifiers(
+        "What is the unit rate for ready-mix concrete (250 kg/cm2) in Saudi Arabia?"
+    ) == []
+    # Unit-ratios and bare units never become identifiers.
+    for unit_q in ("rebar n/mm2 grade", "density kn/m3", "pour 350 kg/cm2",
+                   "area in m2", "volume m3"):
+        assert extract_query_identifiers(unit_q) == [], unit_q
+    for unit in ("kg/cm2", "n/mm2", "kn/m3", "m3", "cm2", "mm2"):
+        assert _looks_like_unit(unit), unit
+
+    # ...but real document reference codes are UNTOUCHED (identifier lane intact).
+    for code in ("prc-501", "ip-inf-054", "d999.46", "ncr-007", "12-a", "13.1"):
+        assert not _looks_like_unit(code), code
+    assert any("prc-501" in i for i in extract_query_identifiers("valid per PRC-501?"))
+    assert any("d999.46" in i for i in extract_query_identifiers("BOQ item D999.46"))
+    assert any("ip-inf-054" in i for i in
+               extract_query_identifiers("Show drawing IP-INF-054-0000-JCB-DWG"))
+
+
 def test_identifier_chunk_outranks_semantic_boilerplate(isolated_store, monkeypatch):
     """A generic chunk with high semantic similarity must not beat the
     chunk that actually contains the requested identifier."""

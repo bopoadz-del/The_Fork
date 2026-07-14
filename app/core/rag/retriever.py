@@ -67,6 +67,50 @@ def _is_prose_compound(token: str) -> bool:
     return False
 
 
+# Measurement units / unit-ratios are NOT reference codes. A spec unit in the
+# query (e.g. "concrete 250 kg/cm2") otherwise slips through _ALPHANUMERIC_RE
+# (letters + a digit + a slash) and earns the +2.0 identifier bonus, which then
+# matches every drawing dimension-table chunk that happens to contain the same
+# number — burying the real answer and inducing a fabricated figure lifted from
+# the number-soup (2026-07-14 live cost-query incident). Unit atoms are short
+# symbols; a trailing exponent digit (m2, m3, cm2, mm2) is stripped before the
+# vocabulary check. Reference codes (IP-INF-054, PRC-501, D999.46) are NOT unit
+# atoms, so they survive untouched.
+_UNIT_ATOMS = frozenset({
+    "kg", "g", "mg", "t", "ton", "tonne", "lb", "kn", "mn", "n",
+    "pa", "kpa", "mpa", "gpa", "bar", "psi",
+    "mm", "cm", "m", "km", "in", "ft", "yd", "mil",
+    "sqm", "cum", "rm", "lm", "ha",
+    "l", "ml", "kl", "cc",
+    "s", "sec", "min", "hr", "h",
+    "w", "kw", "mw", "kwh", "wh", "v", "kv", "a", "ma", "hz", "khz",
+    "c", "f", "k",
+    "pcs", "pc", "no", "nos", "ea", "each", "unit",
+})
+
+
+def _strip_exponent(seg: str) -> str:
+    """'cm2' -> 'cm', 'm3' -> 'm', 'mm2' -> 'mm'; leaves 'd999' unchanged
+    (only a SINGLE trailing exponent digit after an alpha base is stripped)."""
+    m = re.fullmatch(r"([a-z]{1,4})([23])", seg)
+    return m.group(1) if m else seg
+
+
+def _looks_like_unit(token: str) -> bool:
+    """True when the token is a measurement unit or unit-ratio (kg/cm2, n/mm2,
+    kn/m3, m3) rather than a document reference code. Ratios split on '/' (or the
+    middot); every part, once its exponent is stripped, must be a known unit
+    atom. A bare single unit (m3) also qualifies. Reference codes use '-'/'.'
+    separators and non-unit alpha stems, so they are never flagged."""
+    t = token.lower().strip()
+    parts = [p for p in re.split(r"[/·]", t) if p]
+    if not parts:
+        return False
+    if all(_strip_exponent(p) in _UNIT_ATOMS for p in parts):
+        return True
+    return False
+
+
 def extract_query_identifiers(query: str) -> List[str]:
     """Pull construction reference identifiers out of a user query.
 
@@ -118,10 +162,11 @@ def extract_query_identifiers(query: str) -> List[str]:
         if len(token) >= 5 and not _is_prose_compound(token):
             found.add(token.lower())
 
-    # Filter out trivial stopwords and very short tokens.
+    # Filter out trivial stopwords, very short tokens, and measurement units
+    # (a spec unit like "kg/cm2" is not a reference code — see _looks_like_unit).
     result = [
         t for t in found
-        if len(t) >= 2 and t not in _STOPWORDS
+        if len(t) >= 2 and t not in _STOPWORDS and not _looks_like_unit(t)
     ]
     # Prefer longer, more specific identifiers first.
     result.sort(key=lambda t: (-len(t), t))
