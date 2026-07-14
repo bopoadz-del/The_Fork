@@ -612,6 +612,15 @@ _INTENT_TOOL_MAP = (
     (("primavera", "xer", "p6", "baseline programme", "baseline program",
       "programme milestones", "program milestones", "project milestones",
       "schedule milestones", "milestones from"), "primavera_parser"),
+    # Engineering CALCULATIONS: force the deterministic calculator so the model
+    # runs the exact maths instead of computing the formula in prose (observed
+    # gpt-4o-mini doing wrong prose-math + claiming it "cannot run the tool").
+    # Only unambiguous calc phrases — cost build-ups stay on tool_choice=auto so
+    # the cost-grounding path isn't forced.
+    (("dewatering", "uplift check", "mix design", "formwork striking",
+      "modulus of rupture", "well point spacing", "well-point spacing",
+      "diaphragm wall volume", "crane capacity", "crane planning",
+      "bearing pressure", "beam deflection"), "construction_calc"),
 )
 
 
