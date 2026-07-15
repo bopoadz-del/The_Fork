@@ -8,11 +8,21 @@ These cover gaps found in the 13-query battery:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+import pytest
+
 from app.lib.construction_formulas_additions import (
     ADDITIONAL_CALCULATORS,
     calculate_interim_payment,
     guardrail_top_rail_height,
 )
+
+# Same pattern as test_manifest_bindings.py — add app/agents to path
+# so we can import formulas.py and verify the binding registry.
+AGENTS_DIR = Path(__file__).parent.parent / "app" / "agents"
+sys.path.insert(0, str(AGENTS_DIR))
 
 
 # -- Guardrail Height -----------------------------------------------------
@@ -149,3 +159,36 @@ class TestAdditionalCalculatorsRegistry:
         fn = ADDITIONAL_CALCULATORS["calculate_interim_payment"]
         result = fn(100000, 10)
         assert "net_payment" in result
+
+
+# -- Binding Resolver Coverage --------------------------------------------
+# These exercise the NEW lines in formulas.py (_get_additional_calculators
+# and the registry loop) so diff-cover sees them covered.
+
+
+class TestBindingResolver:
+    """Verify formulas.py _build_registry includes additions namespace."""
+
+    def test_registry_includes_guardrail(self):
+        from formulas import resolve_binding
+        fn = resolve_binding("guardrail_top_rail_height")
+        assert fn is not None
+        result = fn()
+        assert result["top_rail_height_in"] == 42
+
+    def test_registry_includes_interim_payment(self):
+        from formulas import resolve_binding
+        fn = resolve_binding("calculate_interim_payment")
+        assert fn is not None
+        result = fn(900000, 10)
+        assert result["net_payment"] == 810000.0
+
+    def test_registry_includes_full_path(self):
+        from formulas import resolve_binding
+        fn = resolve_binding("app.lib.construction_formulas_additions.guardrail_top_rail_height")
+        assert fn is not None
+
+    def test_registry_includes_bare_names(self):
+        from formulas import resolve_binding
+        assert resolve_binding("guardrail_top_rail_height") is not None
+        assert resolve_binding("calculate_interim_payment") is not None
