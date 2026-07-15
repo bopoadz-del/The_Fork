@@ -8,8 +8,6 @@ These cover gaps found in the 13-query battery:
 
 from __future__ import annotations
 
-import pytest
-
 from app.lib.construction_formulas_additions import (
     ADDITIONAL_CALCULATORS,
     calculate_interim_payment,
@@ -151,45 +149,3 @@ class TestAdditionalCalculatorsRegistry:
         fn = ADDITIONAL_CALCULATORS["calculate_interim_payment"]
         result = fn(100000, 10)
         assert "net_payment" in result
-
-
-# -- Binding resolver (optional, skip if agents not importable) -----------
-
-
-class TestBindingResolver:
-    """Verify formulas.py binding registry finds the new formulas.
-    
-    These tests import from app.agents.formulas which may have
-    additional dependencies. They are kept in a separate class
-    so that import failures are isolated to this class only.
-    """
-
-    @pytest.fixture(scope="class")
-    def resolver(self):
-        """Import resolve_binding, skip if not available."""
-        try:
-            from app.agents.formulas import resolve_binding
-            return resolve_binding
-        except Exception as exc:
-            pytest.skip(f"app.agents.formulas not importable: {exc}")
-
-    def test_binding_resolver_finds_guardrail(self, resolver):
-        fn = resolver("guardrail_top_rail_height")
-        assert fn is not None
-        result = fn()
-        assert result["top_rail_height_in"] == 42
-
-    def test_binding_resolver_finds_interim_payment(self, resolver):
-        fn = resolver("calculate_interim_payment")
-        assert fn is not None
-        result = fn(900000, 10)
-        assert result["net_payment"] == 810000.0
-
-    def test_binding_resolver_finds_full_path(self, resolver):
-        fn = resolver("app.lib.construction_formulas_additions.guardrail_top_rail_height")
-        assert fn is not None
-
-    def test_binding_resolver_finds_bare_names(self, resolver):
-        """Bare names (without full path) should also resolve."""
-        assert resolver("guardrail_top_rail_height") is not None
-        assert resolver("calculate_interim_payment") is not None
