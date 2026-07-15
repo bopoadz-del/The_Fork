@@ -55,6 +55,13 @@
         "implemented_by": "app.lib.construction_formulas.modulus_of_elasticity_concrete",
         "domain": "materials",
         "tier": "foundational"
+      },
+      {
+        "id": "guardrail_top_rail_height",
+        "description": "OSHA guardrail top-rail height for fall protection (OSHA 29 CFR 1926.502(b))",
+        "implemented_by": "app.lib.construction_formulas_additions.guardrail_top_rail_height",
+        "domain": "safety",
+        "tier": "foundational"
       }
     ],
     "flows": [

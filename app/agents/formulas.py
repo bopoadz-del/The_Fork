@@ -22,6 +22,15 @@ def _get_construction_calculators() -> Dict[str, Callable]:
         return {}
 
 
+def _get_construction_additional_calculators() -> Dict[str, Callable]:
+    """Lazy-load the ADDITIONAL_CALCULATORS dict from construction_formulas_additions."""
+    try:
+        mod = importlib.import_module("app.lib.construction_formulas_additions")
+        return getattr(mod, "ADDITIONAL_CALCULATORS", {})
+    except Exception:
+        return {}
+
+
 def _get_construction_knowledge_functions() -> Dict[str, Callable]:
     """Lazy-load functions from construction_knowledge."""
     try:
@@ -64,7 +73,13 @@ def _build_registry() -> Dict[str, Callable]:
         registry[f"app.lib.construction_formulas.{name}"] = fn
         registry[name] = fn  # Also allow bare names
 
-    # Namespace 2: construction_knowledge functions
+    # Namespace 2: construction_formulas_additions.ADDITIONAL_CALCULATORS
+    additional_calculators = _get_construction_additional_calculators()
+    for name, fn in additional_calculators.items():
+        registry[f"app.lib.construction_formulas_additions.{name}"] = fn
+        registry[name] = fn  # Also allow bare names
+
+    # Namespace 3: construction_knowledge functions
     knowledge_fns = _get_construction_knowledge_functions()
     for name, fn in knowledge_fns.items():
         registry[f"app.core.construction_knowledge.{name}"] = fn

@@ -96,6 +96,13 @@
         "implemented_by": "app.core.construction_knowledge.calculate_payment",
         "domain": "commercial",
         "tier": "strategic"
+      },
+      {
+        "id": "calculate_interim_payment",
+        "description": "Interim payment after retention deduction (FIDIC Red Book Clause 14.3)",
+        "implemented_by": "app.lib.construction_formulas_additions.calculate_interim_payment",
+        "domain": "commercial",
+        "tier": "operational"
       }
     ],
     "flows": [
