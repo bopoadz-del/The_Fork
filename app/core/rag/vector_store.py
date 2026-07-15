@@ -588,6 +588,40 @@ class VectorStore:
                 )
                 return {row[0]: int(row[1]) for row in session.execute(stmt).all()}
 
+    def doc_chunk_texts(
+        self, project_id: str, doc_ids: List[str]
+    ) -> Dict[str, List[str]]:
+        """Return ``{doc_id: [chunk_text, ...]}`` (ordered by chunk_index) for
+        the given docs in ``project_id``.
+
+        Used by the corpus delete-docs admin endpoint to export a restore
+        bundle *before* deleting — so the exact text leaving the RAG is
+        captured. Bounded by the caller's doc-id list, not the corpus size.
+        """
+        if not doc_ids:
+            return {}
+        out: Dict[str, List[str]] = {d: [] for d in doc_ids}
+        with self._lock:
+            with self._session_factory()() as session:
+                stmt = (
+                    select(
+                        self._rag_chunk_cls.doc_id,
+                        self._rag_chunk_cls.chunk_index,
+                        self._rag_chunk_cls.text,
+                    )
+                    .where(
+                        self._rag_chunk_cls.project_id == project_id,
+                        self._rag_chunk_cls.doc_id.in_(doc_ids),
+                    )
+                    .order_by(
+                        self._rag_chunk_cls.doc_id,
+                        self._rag_chunk_cls.chunk_index,
+                    )
+                )
+                for did, _idx, txt in session.execute(stmt).all():
+                    out.setdefault(did, []).append(txt or "")
+        return out
+
     def search(
         self,
         project_id: str,
