@@ -1044,6 +1044,121 @@ def admin_corpus_bulk_insert(
     return {"status": "ok", "counts": counts}
 
 
+class _DeleteDocsRequest(BaseModel):
+    doc_ids: List[str]
+    # Safety scope: every doc must belong to this project_id or it is skipped.
+    # Required so a bad id-list can't reach across corpora.
+    project_id: str
+    # "export" returns the docs' text + metadata WITHOUT deleting (the restore
+    # bundle); "delete" removes each document row + its chunks (document-level,
+    # no project cascade). Default is the safe read-only export.
+    mode: str = "export"
+
+
+@router.post("/v1/admin/corpus/delete-docs")
+def admin_corpus_delete_docs(
+    req: _DeleteDocsRequest,
+    auth: dict = Depends(require_api_key),
+):
+    """Export or delete a specific list of documents from one corpus.
+
+    Purpose: prune project-specific content that was indexed into a general
+    corpus (e.g. company procedure folders in ``drive_archive``) without
+    touching the rest. Operates on an explicit ``doc_ids`` list scoped to one
+    ``project_id`` — it never deletes a whole project and never cascades.
+
+    Two modes:
+      * ``export`` (default, read-only) — returns each doc's metadata and its
+        concatenated chunk text. Use this to save a restore bundle BEFORE
+        deleting; re-ingest is also possible from the source (the file_path
+        points at the original).
+      * ``delete`` — removes each document row and its chunks via the same
+        ``projects.delete_document`` used by the normal delete path (chunk
+        cleanup included). Files on disk are only touched if they exist on
+        this host; Drive-sourced docs (``G:\\...`` paths) have no server file,
+        so only the index row + chunks go.
+
+    A doc whose ``project_id`` does not match the request scope is skipped, not
+    deleted. Admin-only.
+    """
+    _require_admin(auth)
+
+    mode = (req.mode or "export").strip().lower()
+    if mode not in ("export", "delete"):
+        raise HTTPException(status_code=400, detail="mode must be 'export' or 'delete'")
+    if not req.doc_ids:
+        raise HTTPException(status_code=400, detail="doc_ids is empty")
+    if len(req.doc_ids) > 5000:
+        raise HTTPException(status_code=400, detail="doc_ids capped at 5000 per call")
+
+    from app.core import projects as _projects
+
+    # Resolve + scope-check every id first (both modes need this).
+    in_scope: List[Dict[str, Any]] = []
+    not_found: List[str] = []
+    wrong_project: List[str] = []
+    for did in req.doc_ids:
+        doc = _projects.get_document(did)
+        if not doc:
+            not_found.append(did)
+            continue
+        if doc.get("project_id") != req.project_id:
+            wrong_project.append(did)
+            continue
+        in_scope.append(doc)
+
+    if mode == "export":
+        texts: Dict[str, List[str]] = {}
+        try:
+            from app.core.rag import retriever as _rag, vector_store as _vs
+            if _rag.available():
+                store = _vs.get_store()
+                texts = store.doc_chunk_texts(
+                    req.project_id, [d["id"] for d in in_scope]
+                )
+        except Exception as exc:  # noqa: BLE001 — export must still return metadata
+            texts = {}
+        docs_out = []
+        for d in in_scope:
+            chunks = texts.get(d["id"], [])
+            docs_out.append({
+                "id": d["id"],
+                "name": d.get("original_name") or d.get("name"),
+                "file_path": d.get("file_path"),
+                "size": d.get("size"),
+                "chunk_count": len(chunks),
+                "text": "\n".join(chunks),
+            })
+        return {
+            "mode": "export",
+            "project_id": req.project_id,
+            "requested": len(req.doc_ids),
+            "in_scope": len(in_scope),
+            "not_found": not_found,
+            "wrong_project": wrong_project,
+            "docs": docs_out,
+        }
+
+    # mode == "delete"
+    deleted: List[str] = []
+    failed: List[Dict[str, str]] = []
+    for d in in_scope:
+        try:
+            _projects.delete_document(d["id"])
+            deleted.append(d["id"])
+        except Exception as exc:  # noqa: BLE001
+            failed.append({"id": d["id"], "error": str(exc)})
+    return {
+        "mode": "delete",
+        "project_id": req.project_id,
+        "requested": len(req.doc_ids),
+        "deleted": len(deleted),
+        "failed": failed,
+        "not_found": not_found,
+        "wrong_project": wrong_project,
+    }
+
+
 @router.post("/v1/admin/corpus/reconcile")
 def admin_corpus_reconcile(
     execute: bool = Query(
