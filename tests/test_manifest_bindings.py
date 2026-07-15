@@ -63,6 +63,13 @@ MOCK_CALCULATORS = {
     "crane_planning": lambda: None,
 }
 
+# Namespace: construction_formulas_additions.ADDITIONAL_CALCULATORS
+# (post-live-chat-test additions; mirrors formulas._get_construction_additional_calculators)
+MOCK_ADDITIONAL_CALCULATORS = {
+    "guardrail_top_rail_height": lambda: None,
+    "calculate_interim_payment": lambda **_: None,
+}
+
 MOCK_KNOWLEDGE_FNS = {
     "calculate_evm": lambda: None,
     "calculate_payment": lambda: None,
@@ -81,6 +88,9 @@ def _build_mock_registry():
     registry = {}
     for name, fn in MOCK_CALCULATORS.items():
         registry[f"app.lib.construction_formulas.{name}"] = fn
+        registry[name] = fn
+    for name, fn in MOCK_ADDITIONAL_CALCULATORS.items():
+        registry[f"app.lib.construction_formulas_additions.{name}"] = fn
         registry[name] = fn
     for name, fn in MOCK_KNOWLEDGE_FNS.items():
         registry[f"app.core.construction_knowledge.{name}"] = fn
