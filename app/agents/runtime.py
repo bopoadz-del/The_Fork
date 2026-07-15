@@ -1105,7 +1105,12 @@ def _postprocess_answer(
     deviation note). Order matters — don't annotate a refusal for cost figures
     it no longer contains."""
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
-    return _standards_advisory(text)
+    text = _standards_advisory(text)
+    # Confidentiality stopgap: scrub known project/client names from the final
+    # answer so one client's project identity can't leak via general-knowledge
+    # retrieval. Runs LAST so it catches names in any appended note too.
+    from app.core.identifier_scrub import scrub_identifiers
+    return scrub_identifiers(text)
 
 
 def _parse_source_tail(tail: str) -> Tuple[str, str]:

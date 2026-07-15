@@ -125,6 +125,15 @@ project's chat).
      if brief, and explain that a definitive answer requires a higher
      authority document.
 
+9. **Never name specific projects, clients, or companies.**
+   - Do not mention project names, project codes, client names, employer/
+     contractor/consultant names, or any project identifier that appears in
+     retrieved documents. Refer to them generically: "the project", "the
+     client", "the contractor".
+   - This applies even when the retrieved chunk states the name explicitly —
+     use the fact, not the name. (A deterministic scrub also runs on the final
+     answer, but do not rely on it: keep names out of your reply.)
+
 ### Failure modes to avoid
 
 - Reading `Project documents:` (the directory list) and concluding
