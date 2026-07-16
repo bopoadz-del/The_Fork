@@ -78,8 +78,10 @@ _RAG_CHUNK_CLASS_CACHE: dict[tuple[str, int, str, bool], type] = {}
 
 
 #: RAG namespaces are interpolated into raw SQL table identifiers, which cannot
-#: be parameterised. Restrict them to a safe identifier charset.
-_SAFE_NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_]+$")
+#: be parameterised. Restrict them to a safe identifier charset. Matched with
+#: ``fullmatch`` — NOT ``match`` + ``$`` — because ``$`` also matches just before
+#: a trailing newline, so ``"foo\n"`` would slip a newline into the identifier.
+_SAFE_NAMESPACE_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
 def rag_chunk_table_name(namespace: str) -> str:
@@ -97,7 +99,7 @@ def rag_chunk_table_name(namespace: str) -> str:
     """
     if not namespace:
         return "chunks"
-    if not _SAFE_NAMESPACE_RE.match(namespace):
+    if not _SAFE_NAMESPACE_RE.fullmatch(namespace):
         raise ValueError(
             f"unsafe RAG namespace {namespace!r}: only [A-Za-z0-9_] allowed"
         )

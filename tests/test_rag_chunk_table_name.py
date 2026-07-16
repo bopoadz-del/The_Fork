@@ -43,6 +43,14 @@ def test_valid_internal_namespaces_pass(namespace):
         "a)b",
         "a\nb",
         "évil",
+        # Trailing-newline bypass: re `$` matches before a final newline, so a
+        # `match()`-based guard accepted "foo\n" and leaked \n into the table
+        # identifier. fullmatch closes it. Regression guard.
+        "foo\n",
+        "foo\r",
+        "foo\r\n",
+        "foo\n; DROP TABLE users",
+        "\n",
     ],
 )
 def test_unsafe_namespace_raises(namespace):
