@@ -73,7 +73,7 @@ rarfile>=4.0
 olefile>=0.47
 
 # MCP
-mcp>=1.0.0
+mcp>=1.28.1
 
 # AI APIs
 anthropic>=0.40.0
