@@ -196,3 +196,65 @@
 .chat-composer__popover-item--rec {
   color: #dc2626;
 }
+
+/* ── / agent-picker ─────────────────────────────────────────────────────── */
+.chat-composer__pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-bottom: var(--space-2);
+  padding: 3px 6px 3px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-family: var(--font-display);
+}
+.chat-composer__pin-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 1px;
+  border-radius: 999px;
+}
+.chat-composer__pin-x:hover { color: var(--text-primary); }
+
+.chat-composer__slash {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: var(--space-2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+}
+.chat-composer__slash-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  border-radius: var(--radius-input);
+  cursor: pointer;
+}
+.chat-composer__slash-item--active { background: var(--bg-panel); }
+.chat-composer__slash-name { font-size: 0.85rem; font-weight: 600; }
+.chat-composer__slash-desc {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
