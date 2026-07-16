@@ -80,7 +80,7 @@ class HALBlock:
             result = subprocess.run(['nvidia-smi'], capture_output=True)
             if result.returncode == 0:
                 return True
-        except:
+        except Exception:
             pass
         
         # Check for Metal (Mac)
@@ -90,7 +90,7 @@ class HALBlock:
                 result = subprocess.run(['system_profiler', 'SPDisplaysDataType'], capture_output=True, text=True)
                 if "Metal" in result.stdout:
                     return True
-            except:
+            except Exception:
                 pass
         
         return False
@@ -100,7 +100,7 @@ class HALBlock:
         try:
             import psutil
             return psutil.virtual_memory().total // (1024**3)
-        except:
+        except Exception:
             # Fallback - assume 8GB
             return 8
     

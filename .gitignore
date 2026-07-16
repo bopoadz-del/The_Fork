@@ -95,3 +95,9 @@ data/chroma_db/
 /weights/
 coverage.xml
 .worktrees/
+
+# Runtime / diagnostic logs — written by the app (sandbox shell audit,
+# migration runs) and by review tooling. Never track log output.
+logs/
+*.log
+review_pack/**/*.log

@@ -1,0 +1,46 @@
+name: dependency-audit
+
+# Closes the "no CI-gated dependency-vuln scan" gap from the repo audit.
+# Runs pip-audit against requirements.txt on every PR and on push to main,
+# plus a weekly schedule so newly-disclosed advisories surface even when the
+# tree is quiet.
+#
+# ROLLOUT: report-only for now (continue-on-error) so a single pre-existing
+# or unfixable transitive advisory does not red-wall main the day this lands.
+# The findings are visible in the job log / summary. Promote to a hard gate
+# (remove continue-on-error) once the current advisory list is triaged to zero
+# or captured in an ignore list.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      - name: Audit requirements.txt
+        continue-on-error: true # report-only during rollout — see header note
+        run: |
+          pip-audit --requirement requirements.txt --progress-spinner off || true

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Optional, Type
 
 import numpy as np
@@ -76,14 +77,33 @@ class EmbeddingVector(make_embedding_vector(EMBEDDING_DIM)):
 _RAG_CHUNK_CLASS_CACHE: dict[tuple[str, int, str, bool], type] = {}
 
 
+#: RAG namespaces are interpolated into raw SQL table identifiers, which cannot
+#: be parameterised. Restrict them to a safe identifier charset. Matched with
+#: ``fullmatch`` — NOT ``match`` + ``$`` — because ``$`` also matches just before
+#: a trailing newline, so ``"foo\n"`` would slip a newline into the identifier.
+_SAFE_NAMESPACE_RE = re.compile(r"[A-Za-z0-9_]+")
+
+
 def rag_chunk_table_name(namespace: str) -> str:
     """Table name for a RAG vector namespace.
 
     The legacy ``chunks`` table uses namespace ``""``. Every other namespace
     gets ``chunks_<namespace>``. The old contaminated table is retired in
     place — new writes go to namespaced tables only.
+
+    This is the single chokepoint for the RAG chunk table identifier, which is
+    interpolated into raw SQL (``FROM {table}``) at ~15 call sites. Namespaces
+    are internal today, but validate the identifier here so a malformed or
+    hostile namespace can never produce an injectable table name — defence in
+    depth for the dynamic-``FROM`` sites flagged in the repo audit.
     """
-    return "chunks" if not namespace else f"chunks_{namespace}"
+    if not namespace:
+        return "chunks"
+    if not _SAFE_NAMESPACE_RE.fullmatch(namespace):
+        raise ValueError(
+            f"unsafe RAG namespace {namespace!r}: only [A-Za-z0-9_] allowed"
+        )
+    return f"chunks_{namespace}"
 
 
 def make_rag_chunk_class(
