@@ -872,6 +872,20 @@ def _build_calculator_registry() -> "Dict[str, Any]":
                 reg[_n] = _f
     except Exception:  # noqa: BLE001 — never break the formula registry on import
         pass
+    # Post-live-chat additions (guardrail height, interim payment) live in a
+    # separate module so they can also feed the discipline-hats binding
+    # resolver. Merge them here too so the LIVE construction_calc tool can
+    # actually call them — before this they resolved ONLY through the flag-off
+    # hats resolver and were unreachable from the running agent (the Q2/Q12
+    # "registered in CALCULATORS" gap). REFERENCED, single source stays in the
+    # additions module.
+    try:
+        from app.lib.construction_formulas_additions import ADDITIONAL_CALCULATORS as _add
+        for _n, _f in _add.items():
+            if callable(_f):
+                reg[_n] = _f
+    except Exception:  # noqa: BLE001 — never break the formula registry on import
+        pass
     return reg
 
 

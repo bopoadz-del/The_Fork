@@ -130,6 +130,9 @@ _SMOKE_INPUTS = {
         {"name": "A", "technical_score": 80, "commercial_score": 70,
          "hse_score": 90, "local_content_score": 50}]),
     "score_risk": dict(probability=4, impact=5),
+    # Referenced from construction_formulas_additions (post-live-chat Q2/Q12).
+    "guardrail_top_rail_height": dict(),
+    "calculate_interim_payment": dict(gross_valuation=900_000, retention_percent=10),
 }
 
 
