@@ -14,7 +14,7 @@ import WorkspaceShell from '../layout/WorkspaceShell'
 import LeftPanel from '../layout/LeftPanel'
 import RightPanel from '../layout/RightPanel'
 import ChatList from '../chat/ChatList'
-import ChatComposer from '../chat/ChatComposer'
+import ChatComposer, { type AgentOption } from '../chat/ChatComposer'
 import SourcesList from '../chat/SourcesList'
 import DocumentGraph from '../documents/DocumentGraph'
 import './pages.css'
@@ -702,6 +702,19 @@ export default function ProjectWorkspace() {
   const [rightExpanded, setRightExpanded] = useState(false)
   const [driveModalOpen, setDriveModalOpen] = useState(false)
 
+  // ── / agent-picker: available agents + the user's pinned choice ───────────
+  // A pinned agent is sent as `agent` on /v1/chat/stream and runs directly
+  // (bypassing the auto-router). null = automatic routing (today's behavior).
+  const [agents, setAgents] = useState<AgentOption[]>([])
+  const [pinnedAgent, setPinnedAgent] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    apiGet<{ agents: AgentOption[] }>('/v1/agents')
+      .then((r) => { if (!cancelled) setAgents(r.agents ?? []) })
+      .catch(() => { /* picker is optional — silent on failure */ })
+    return () => { cancelled = true }
+  }, [])
+
   // Stable conversation id tied to this project — persists across page reloads
   // so the backend agent memory carries context forward.
   const conversationId = id ? `ws-${id}` : null
@@ -876,6 +889,8 @@ export default function ProjectWorkspace() {
           conversation_id: conversationId,
           session_id: conversationId ?? undefined,
           history: historyForRequest,
+          // / agent-picker: omit (or "auto") = today's automatic routing.
+          agent: pinnedAgent ?? undefined,
         }),
         signal: controller.signal,
       })
@@ -1321,6 +1336,9 @@ export default function ProjectWorkspace() {
             hasHistory={messages.length > 0}
             onOpenDrive={() => setDriveModalOpen(true)}
             onClear={clearConversation}
+            agents={agents}
+            pinnedAgent={pinnedAgent}
+            onPinAgent={setPinnedAgent}
           />
         </div>
       }

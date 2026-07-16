@@ -12,14 +12,26 @@
  * Google Drive item invokes the parent-supplied onOpenDrive callback so
  * ProjectWorkspace can surface its DrivePanel as a modal.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Plus, Paperclip, Camera, Mic, MicOff, RotateCcw, ArrowUp, Cloud,
+  Plus, Paperclip, Camera, Mic, MicOff, RotateCcw, ArrowUp, Cloud, Bot, X,
 } from 'lucide-react'
 import { getToken } from '../lib/token'
 import './ChatComposer.css'
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000'
+
+export interface AgentOption {
+  name: string
+  description?: string
+  icon?: string
+}
+
+/** The pseudo-agent that restores today's automatic routing. */
+const AUTO_AGENT: AgentOption = {
+  name: 'auto',
+  description: 'Automatic — let the assistant route to the right agent.',
+}
 
 interface Props {
   onSend: (text: string) => void
@@ -31,17 +43,48 @@ interface Props {
   hasHistory?: boolean
   /** Open the Google Drive picker (parent renders DrivePanel as a modal). */
   onOpenDrive?: () => void
+  /** The / agent-picker: available agents (from GET /v1/agents). */
+  agents?: AgentOption[]
+  /** Currently pinned agent name, or null for automatic routing. */
+  pinnedAgent?: string | null
+  /** Pin an agent (or null to return to automatic routing). */
+  onPinAgent?: (name: string | null) => void
 }
 
 export default function ChatComposer({
   onSend, disabled, disabledReason, projectId,
   onAttached, onClear, hasHistory, onOpenDrive,
+  agents, pinnedAgent, onPinAgent,
 }: Props) {
   const [text, setText] = useState('')
   const [uploading, setUploading] = useState(false)
   const [attachStatus, setAttachStatus] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
   const [popoverOpen, setPopoverOpen] = useState(false)
+  const [slashIdx, setSlashIdx] = useState(0)
+
+  // ── / agent-picker ──────────────────────────────────────────────────────
+  // The menu opens when the message is a single "/word" token (no space yet):
+  // "/", "/qs", "/quantity". Selecting pins the agent and clears the slash text.
+  const slashQuery = /^\/(\S*)$/.exec(text)?.[1]
+  const slashMenuItems = useMemo<AgentOption[]>(() => {
+    if (slashQuery === undefined) return []
+    const q = slashQuery.toLowerCase()
+    const pool = [AUTO_AGENT, ...(agents ?? [])]
+    return pool.filter(
+      (a) => a.name.toLowerCase().includes(q)
+        || (a.description ?? '').toLowerCase().includes(q),
+    )
+  }, [slashQuery, agents])
+  const slashOpen = slashQuery !== undefined && slashMenuItems.length > 0
+
+  function pinFromMenu(a: AgentOption) {
+    onPinAgent?.(a.name === 'auto' ? null : a.name)
+    setText('')
+    setSlashIdx(0)
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
+    textareaRef.current?.focus()
+  }
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -78,6 +121,28 @@ export default function ChatComposer({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (slashOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashIdx((i) => (i + 1) % slashMenuItems.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashIdx((i) => (i - 1 + slashMenuItems.length) % slashMenuItems.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        pinFromMenu(slashMenuItems[slashIdx] ?? slashMenuItems[0])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setText('')
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()
@@ -86,6 +151,7 @@ export default function ChatComposer({
 
   function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setText(e.target.value)
+    setSlashIdx(0)
     const el = e.target
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`
@@ -222,13 +288,56 @@ export default function ChatComposer({
           }}
         />
 
+        {pinnedAgent && (
+          <div className="chat-composer__pin" title="Pinned agent — the message goes straight to this agent">
+            <Bot size={13} />
+            <span>{pinnedAgent}</span>
+            <button
+              type="button"
+              className="chat-composer__pin-x"
+              aria-label="Unpin agent (back to automatic)"
+              onClick={() => onPinAgent?.(null)}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
+        {slashOpen && (
+          <div className="chat-composer__slash" role="listbox" aria-label="Pick an agent">
+            {slashMenuItems.map((a, i) => (
+              <button
+                type="button"
+                key={a.name}
+                role="option"
+                aria-selected={i === slashIdx}
+                className={
+                  'chat-composer__slash-item'
+                  + (i === slashIdx ? ' chat-composer__slash-item--active' : '')
+                }
+                onMouseEnter={() => setSlashIdx(i)}
+                onClick={() => pinFromMenu(a)}
+              >
+                <span className="chat-composer__slash-name">
+                  {a.icon ? `${a.icon} ` : ''}{a.name === 'auto' ? 'Auto (default)' : a.name}
+                </span>
+                {a.description && (
+                  <span className="chat-composer__slash-desc">{a.description}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
         <textarea
           ref={textareaRef}
           className="chat-composer__textarea"
           value={text}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="Ask about your project documents..."
+          placeholder={pinnedAgent
+            ? `Message ${pinnedAgent} directly…  (type / to change)`
+            : 'Ask about your project documents...  (type / to pick an agent)'}
           disabled={disabled}
           rows={1}
           aria-label="Chat message"

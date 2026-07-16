@@ -282,6 +282,57 @@ def _resolve_predefined_file_params(
     return resolved, None
 
 
+async def _stream_from_pinned_agent(
+    agent_name: str,
+    prompt: str,
+    project_id: Optional[str],
+    user_id: Optional[str],
+    history: List[Any],
+    conversation_id: Optional[str],
+):
+    """Run a user-PINNED agent (the / picker) directly. Bypasses the predefined
+    shortcut and the smart-orchestrator auto-override — the user's explicit
+    choice wins. Same tenant gate + SSE shape as the auto path. Yields SSE
+    strings. Never raises (a bad agent name / stream error becomes an event)."""
+    rid = get_request_id()
+    from app.agents import get_agent
+    from app.core import projects as projects_store
+
+    agent = get_agent(agent_name)
+    if agent is None:
+        yield f"data: {json.dumps({'type': 'error', 'message': f'Unknown agent: {agent_name}', 'request_id': rid})}\n\n"
+        return
+
+    # Tenant gate — identical to the auto path: drop an unowned project_id,
+    # resolve the public master-corpus alias to its source project.
+    pin_pid = project_id
+    if project_id and project_id != projects_store.MASTER_CORPUS_PROJECT_ID:
+        try:
+            if projects_store.get_project(project_id, user_id=user_id) is None:
+                pin_pid = None
+        except Exception:  # noqa: BLE001
+            pin_pid = None
+    if pin_pid == projects_store.MASTER_CORPUS_PROJECT_ID:
+        pin_pid = projects_store.MASTER_CORPUS_SOURCE_PROJECT_ID
+
+    routing = {
+        "requested": agent.name, "final": agent.name,
+        "action": None, "confidence": 1.0, "reason": "user_pinned",
+    }
+    yield f"data: {json.dumps({'type': 'route', **routing})}\n\n"
+    try:
+        async for evt in agent.chat_stream(
+            prompt, history=history, project_id=pin_pid,
+            conversation_id=conversation_id, user_id=user_id,
+        ):
+            yield f"data: {json.dumps(evt, default=str)}\n\n"
+            await asyncio.sleep(0)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("pinned agent stream failed: %s", e)
+        _report_sse_llm_failure(str(e), path="/v1/chat/stream")
+        yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
+
+
 async def _stream_from_predefined(
     action: str,
     user_message: str,
@@ -604,6 +655,11 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     session_id = body.get("session_id", "default")
     history = body.get("history", []) or []
     project_id = body.get("project_id")
+    # ── / agent-picker: the user can pin a specific agent for this turn. A
+    # pinned agent (anything other than unset / "auto") bypasses BOTH the
+    # predefined shortcut AND the smart-orchestrator auto-override — the user's
+    # explicit choice wins. "auto"/unset = today's automatic routing, unchanged.
+    pinned_agent_name = (body.get("agent") or "").strip()
 
     # ── Intent classification: route generative multi-step intents to the
     # heavy-reasoning agent; everything else stays on the fast chat path.
@@ -641,6 +697,17 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     async def event_stream():
         rid = get_request_id()
         yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'request_id': rid})}\n\n"
+
+        # 0) Pinned agent (the / picker). A user-chosen agent wins outright:
+        #    skip the predefined shortcut and the auto-router entirely and run
+        #    exactly the requested agent. "auto"/unset falls through to 1) & 2).
+        if pinned_agent_name and pinned_agent_name.lower() != "auto":
+            async for evt in _stream_from_pinned_agent(
+                agent_name=pinned_agent_name, prompt=prompt, project_id=project_id,
+                user_id=user_id, history=history, conversation_id=conversation_id,
+            ):
+                yield evt
+            return
 
         # 1) Predefined reasoning for a known workflow (flagged; dynamic UNDERSTAND).
         if _predefined_enabled():
