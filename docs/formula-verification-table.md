@@ -79,7 +79,45 @@ Note: catalog `beam_moment_uniform` ≡ `beam_moment_simple` (both simply-suppor
 UDL); the distinct fixed-end case is `beam_moment_fixed_udl`. `column_axial_capacity`
 partly overlaps existing `composite_column_design` — plain-RC/steel variant TBD.
 
-## Pending batches (scoped, not yet built — see additive-formula-library-scope.md)
+## Batch 5 — QC + commercial + planning + safety
+
+Modules: `_qc.py`, `_commercial.py`, `_planning.py`, `_safety.py`
+Tests: `tests/test_formula_qc_commercial_safety.py`
+
+| Formula | Inputs | Oracle | Basis | Status | Sign-off |
+|---------|--------|--------|-------|--------|----------|
+| concrete_cylinders | P=530 kN, d=150 | **30.0 MPa** (P/A) | ASTM C39 | GATED | |
+| concrete_shrinkage | t=365 d | **711.75 µε** (365/400·780) | ACI 209R | GATED | |
+| concrete_curing_time | 70% f28 | **6.91 days** | ACI 209/308 | GATED | |
+| roi_calculator | gain 1.2M, cost 1.0M | **20%** | arithmetic | GATED | |
+| unit_cost_total | 100 × 250 | **25,000** | BOQ line | GATED | |
+| cost_per_area | 1.0M / 5000 | **200 /unit** | arithmetic | GATED | |
+| productivity_rate | 500 / 40 h, crew 4 | **12.5/hr, 3.125/wkr-hr** | arithmetic | GATED | |
+| critical_path_float | ES5 EF10 LS8 LF13 | **TF=3**, not critical | CPM | GATED | |
+| scaffold_load_capacity | 10 m², medium | intended **24**, req **96 kN** (4:1) | OSHA 1926.451 | GATED | |
+| fall_arrest_force | 100 kg, H1.8, d1.0 | **2.75 kN** (<8 kN) | OSHA 1926.502 | GATED | |
+| crane_lift_capacity | chart50, ded3, load38 | net 47, **80.85%** → PASS | lift plan | GATED | |
+
+## Batch 6 — Reference tables (cited lookups, `kind=reference_table` — NOT derived)
+
+Module: `_reference_tables.py` · Tests: `tests/test_formula_reference_tables.py`
+
+| Formula | Inputs | Oracle | Source (indicative) | Status | Sign-off |
+|---------|--------|--------|---------------------|--------|----------|
+| carbon_footprint_concrete | 100 m³ C30 | **32,000 kgCO2e** (×320) | ICE/EPD | GATED | |
+| leed_points_estimate | 62 pts | **Gold** | LEED v4 BD+C | GATED | |
+| bim_clash_tolerance | LOD 350 | **±12 mm** | BEP convention | GATED | |
+| laser_scan_accuracy | 40 m, 2 mm@10 m | **8 mm** | scanner datasheet | GATED | |
+
+Reference-table results are labelled `kind=reference_table` with a project/vendor
+caveat in the note — they return cited values, not derivations.
+
+## Complete — 37 net-new formulas GATED (registry 37 → 74)
+
+Still deliberately deferred (need slenderness/eccentricity — won't fake precision):
+`masonry_wall_capacity`, a plain-RC/steel `column_axial_capacity` variant.
+
+## Pending batches: none (library complete)
 - Batch 5 — QC: concrete_cylinders, concrete_shrinkage, concrete_curing_time
 - Batch 6 — Cost/PM/planning: roi_calculator, unit_cost_total, cost_per_sf, productivity_rate, critical_path_float
 - Batch 7 — Safety (OSHA): scaffold_load_capacity, fall_arrest_force, crane_lift_capacity

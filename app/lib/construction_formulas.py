@@ -911,6 +911,11 @@ _EXTENSION_MODULES: Tuple[str, ...] = (
     "app.lib.construction_formulas_earthwork",
     "app.lib.construction_formulas_beam_analysis",
     "app.lib.construction_formulas_structural_rc",
+    "app.lib.construction_formulas_qc",
+    "app.lib.construction_formulas_commercial",
+    "app.lib.construction_formulas_planning",
+    "app.lib.construction_formulas_safety",
+    "app.lib.construction_formulas_reference_tables",
 )
 
 
