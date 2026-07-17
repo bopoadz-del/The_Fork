@@ -101,13 +101,20 @@ offline flags + `RAG_EMBEDDING_MODEL=fake` to stand in for the baked embedder):
 | Boot manifest surfaces | **PASS** — `profile=onprem, llm=ollama@localhost, embedder=fake/256, offline flags=true, sentry=false, db=sqlite` |
 | Disk-survival canary | **PASS** — seeded on boot 1; boot 2 reported "volume persisted" with the same first_seen timestamp |
 | Chat via LOCAL Ollama | **PASS** — answered via `qwen2.5:3b-instruct` (model confirmed in the END event), no cloud |
-| Egress snapshot during operation | **PASS** — no non-loopback ESTABLISHED connections |
+| Egress snapshot during operation | **INCONCLUSIVE** — no non-loopback connections seen, but the Windows `netstat` filter matches PIDs not process names, so a null result can't distinguish "clean" from "filter missed." Real verification is the target-box tcpdump / firewall deny-log. |
 | Live gate `/v1/drive/connect` | **PASS** — HTTP 503 under onprem |
 
-Caveat: `fake` embedder stands in for the baked `bge-small` (the dev box has no
-bundled weights); the real offline embedder load is self-tested at image build
-in `Dockerfile.onprem`. CPU latency (chat ~70 s) is not representative of the GPU
-box.
+Caveats:
+- `fake` embedder stands in for the baked `bge-small` (the dev box has no bundled
+  weights); the real offline embedder load is self-tested at image build in
+  `Dockerfile.onprem`. CPU latency (chat ~70 s) is not representative of the GPU box.
+- The STEP 5-lite app chat exercised the LLM path but returned prose (empty
+  sources/exports), i.e. it did NOT drive a deliverable **tool call through the
+  agent loop**. `scripts/bench_local_model.py` proves tool-calling against
+  Ollama's **native** `/api/chat` tools API — strong evidence the model *can*,
+  but not the app's runtime tool path (`tool_choice` + outbound message
+  sanitization). The target-box run (R3–R6) must include a real deliverable tool
+  call through the app before 14B is treated as blessed.
 
 ### Full air-gap acceptance — PREPARED (needs the egress-blocked target box)
 
