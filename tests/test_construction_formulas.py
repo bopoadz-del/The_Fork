@@ -133,6 +133,19 @@ _SMOKE_INPUTS = {
     # Referenced from construction_formulas_additions (post-live-chat Q2/Q12).
     "guardrail_top_rail_height": dict(),
     "calculate_interim_payment": dict(gross_valuation=900_000, retention_percent=10),
+    # Additive discipline library — structural steel (dual-code).
+    "steel_tension_capacity": dict(gross_area_mm2=3000, net_area_mm2=2550,
+                                   fy_mpa=345, fu_mpa=450, code="aci"),
+    "bolt_shear_capacity": dict(bolt_area_mm2=380, shear_strength_mpa=372,
+                                n_shear_planes=1, code="aci"),
+    "weld_capacity": dict(leg_size_mm=6, length_mm=100,
+                          electrode_strength_mpa=490, code="aci"),
+    # Additive discipline library — design loads (dual-code).
+    "wind_pressure": dict(wind_speed_m_s=50, code="aci"),
+    "seismic_base_shear": dict(seismic_weight_kn=10000, code="aci",
+                               sds=1.0, r=8.0, ie=1.0),
+    "live_load_reduction": dict(base_live_load_kn_m2=4.79, tributary_area_m2=40,
+                                code="aci", kll=4),
 }
 
 
