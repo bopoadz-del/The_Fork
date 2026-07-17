@@ -70,6 +70,7 @@ interface ProjectRow {
   user_id?: string
   is_approved?: boolean
   origin?: string
+  is_master_corpus?: boolean
 }
 
 interface CorpusCollection {
@@ -667,14 +668,18 @@ function ApprovedProjectsSection({
   async function load() {
     setLoading(true); setError(null)
     try {
-      const [pResp, cResp] = await Promise.all([
-        apiGet<{ projects: ProjectRow[] }>('/v1/projects'),
-        apiGet<CorpusResponse>('/v1/admin/corpus/collections?folder_breakdown=false'),
-      ])
+      // Projects load unconditionally. Corpus counts are best-effort: the
+      // admin-only COUNT over the full (~70GB) corpus can 403 for a non-admin
+      // or time out on a large corpus — that must NOT blank the projects table
+      // and its per-row Hide controls (the "Hide button not visible" bug).
+      const pResp = await apiGet<{ projects: ProjectRow[] }>('/v1/projects')
       setProjects(pResp.projects ?? [])
-      const map: Record<string, CorpusCollection> = {}
-      for (const c of cResp.collections ?? []) map[c.project_id] = c
-      setCorpus(map)
+      try {
+        const cResp = await apiGet<CorpusResponse>('/v1/admin/corpus/collections?folder_breakdown=false')
+        const map: Record<string, CorpusCollection> = {}
+        for (const c of cResp.collections ?? []) map[c.project_id] = c
+        setCorpus(map)
+      } catch { /* counts optional; rows + Hide still render */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load approved projects.'
       setError(err instanceof ApiError && err.status === 403
@@ -843,15 +848,17 @@ function ApprovedProjectsSection({
                         {reindexingId === p.id ? '…' : 'Re-index'}
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className="admin-btn admin-btn--ghost admin-btn--small admin-btn--danger"
-                      onClick={() => void handleDelete(p)}
-                      disabled={reindexingId !== null || deletingId !== null || reindexArmId !== null}
-                      aria-label={`Hide ${p.name}`}
-                    >
-                      {deletingId === p.id ? '…' : <><Trash2 size={13} /><span>Hide</span></>}
-                    </button>
+                    {!p.is_master_corpus && (
+                      <button
+                        type="button"
+                        className="admin-btn admin-btn--ghost admin-btn--small admin-btn--danger"
+                        onClick={() => void handleDelete(p)}
+                        disabled={reindexingId !== null || deletingId !== null || reindexArmId !== null}
+                        aria-label={`Hide ${p.name}`}
+                      >
+                        {deletingId === p.id ? '…' : <><Trash2 size={13} /><span>Hide</span></>}
+                      </button>
+                    )}
                   </td>
                 </tr>
               )

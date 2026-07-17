@@ -56,6 +56,102 @@ def _is_generative_request(text: str) -> bool:
     return bool(_GENERATIVE_VERB_RE.search(text or ""))
 
 
+# ── Capability / self-introspection questions ────────────────────────────────
+# Questions ABOUT the agent ("what tools do you have", "what can you do", "what
+# documents can you access") must be answered from the agent's REAL tool roster
+# and the project's REAL document list — NOT from retrieved document text. The
+# grounded-RAG clamp (_apply_rag_context: "answer ONLY from the reference
+# context") otherwise makes the agent answer a question about ITSELF using
+# whatever documents happened to match the word "tools" (e.g. construction
+# power-tool specs), which is confidently wrong. This is a deterministic
+# short-circuit, mirroring the rag-miss fast path.
+_CAPABILITY_META_PHRASES = (
+    "what can you do", "what do you do", "who are you", "what are you",
+    "what are your capabilities", "what are your abilities",
+    "how can you help", "what can you help", "what help can you",
+    "what tools do you", "what tools can you", "what tools you",
+    "which tools do you", "which tools can you", "list your tools",
+    "what functions do you", "what features do you",
+    "what documents can you access", "what files can you access",
+    "what can you access", "what documents can you see",
+    "what can you work on", "what documents can you work",
+)
+
+
+def _first_sentence(text: str, cap: int = 160) -> str:
+    """First sentence (or first ``cap`` chars) of a description, single-lined."""
+    s = " ".join((text or "").split())
+    if not s:
+        return ""
+    head = s.split(". ")[0].rstrip(".")
+    return head if len(head) <= cap else head[:cap].rstrip() + "…"
+
+
+def _is_capability_request(text: str) -> bool:
+    """True when the user is asking about the AGENT itself (its tools, abilities,
+    or what documents it can access) — not about the content of a document."""
+    t = " ".join((text or "").lower().split())
+    if not t:
+        return False
+    if any(p in t for p in _CAPABILITY_META_PHRASES):
+        return True
+    # Generic: self-reference ("you"/"your") + a capability keyword, unless the
+    # phrasing is clearly asking what a DOCUMENT states (a real RAG lookup).
+    if re.search(r"\byou(r)?\b", t) and any(
+        k in t for k in ("tool", "capabilit", "able to", "function", "feature")
+    ):
+        if not any(
+            c in t for c in (
+                "does the", "according to", "per the", "spec say",
+                "document say", "drawing say", "as per",
+            )
+        ):
+            return True
+    return False
+
+
+def _build_capability_answer(agent: "Agent", project_id: Optional[str]) -> str:
+    """Deterministic answer describing the agent's REAL tools + the project's
+    REAL documents. No LLM, no RAG — cannot fabricate or answer the wrong thing."""
+    lines = [f"I'm the **{agent.name}** agent."]
+    try:
+        defs = agent.tool_definitions(project_id)
+    except Exception:
+        defs = []
+    tool_lines = []
+    for d in defs or []:
+        if not isinstance(d, dict):
+            continue
+        fn = d.get("function") if isinstance(d.get("function"), dict) else d
+        name = fn.get("name")
+        tdesc = fn.get("description", "")
+        if name:
+            tool_lines.append(f"- **{name}** — {_first_sentence(tdesc)}")
+    if tool_lines:
+        lines.append("\n**Tools I can use:**\n" + "\n".join(tool_lines))
+    if project_id:
+        try:
+            from app.core import projects as _store
+            n = _store.count_documents(project_id)
+        except Exception:
+            n = 0
+        if n:
+            docs = _store.list_documents(project_id, limit=15, newest_first=True)
+            listing = "\n".join(f"- {d['original_name']}" for d in docs)
+            more = n - len(docs)
+            tail = f"\n- …and {more} more (ask me to search for a specific one)." if more > 0 else ""
+            lines.append(
+                f"\n**Documents in this project ({n} total):**\n{listing}{tail}"
+            )
+        else:
+            lines.append(
+                "\nThis project has **no documents** uploaded yet, so there's "
+                "nothing here for me to read. Upload files or pick a project "
+                "that has documents."
+            )
+    return "\n".join(lines)
+
+
 def _apply_rag_context(messages: list, rag_sys_msg: dict) -> bool:
     """Fold retrieved RAG context INTO the final user turn rather than adding a
     separate system message.
@@ -2380,6 +2476,24 @@ class Agent:
         if _rag_sys_msg and _rag_sys_msg.get("content"):
             _apply_rag_context(messages, _rag_sys_msg)
 
+        # Capability / self-introspection short-circuit: a question ABOUT this
+        # agent (its tools, abilities, accessible documents) is answered from the
+        # REAL tool roster + REAL document list, not from matched document text.
+        if _is_capability_request(user_message):
+            answer = _build_capability_answer(self, project_id)
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": messages + [{"role": "assistant", "content": answer}],
+                "sources": [],
+            }
+
         # Fast path: exact reference miss with no RAG context.  Skip the
         # model/tool loop entirely and return a controlled not-found answer
         # immediately.  Project facts / document listings are not useful for
@@ -2832,6 +2946,21 @@ class Agent:
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
             _apply_rag_context(messages, _rag_sys_msg)
+
+        # Capability / self-introspection short-circuit: a question ABOUT this
+        # agent (its tools, abilities, accessible documents) is answered from the
+        # REAL tool roster + REAL document list, bypassing the grounded-RAG clamp
+        # that would otherwise answer it from matched document text (e.g. "what
+        # tools do you have" -> construction power saws). See _is_capability_request.
+        if _is_capability_request(user_message):
+            answer = _build_capability_answer(self, project_id)
+            if conversation_id:
+                from app.core import agent_memory
+                agent_memory.append_message(conversation_id, "assistant", answer)
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {"type": "end", "iterations": 0, "sources": []}
+            return
 
         # Fast path: exact reference miss with no RAG context.  Skip the
         # model/tool loop entirely.  Project facts / document listings are not

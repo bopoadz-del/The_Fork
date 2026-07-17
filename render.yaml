@@ -32,10 +32,14 @@ services:
         value: utf-8
 
       # ── Pilot master-corpus alias (match app/core/projects.py defaults) ─
+      # NOTE: these are the intended live values; render.yaml env does NOT
+      # auto-sync to the dashboard, so the live env must be set to match.
       - key: MASTER_CORPUS_PROJECT_ID
         value: dar_al_arkan_master
       - key: MASTER_CORPUS_SOURCE_PROJECT_ID
-        value: projects_folder
+        value: drive_archive
+      - key: MASTER_CORPUS_NAME
+        value: Master Corpus
       # GK = the migrated drive_archive training corpus (procedures, scanned
       # references, CESMM/FIDIC notes). The drive_archive migration moved the
       # curated GK content into project `training_material`; `curated_kb` now
