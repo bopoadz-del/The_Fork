@@ -54,9 +54,32 @@ Tests: `tests/test_formula_quantities_earthwork.py`
 | compaction_control | field 1.90, MDD 2.00 | **95.0%** → PASS | ASTM D698/D1557 | GATED | |
 | slope_fos_simple | φ=30°, β=20° | **1.586** (cohesionless); +c′ 5 kPa → **1.874** | infinite slope | GATED | |
 
-## Pending batches (scoped, not yet built — see additive-formula-library-scope.md)
+## Batch 4 — Beam analysis (statics) + RC design (dual-code)
 
-- Batch 4 — Structural RC (ACI 318 / EC2): beam_moment_simple, beam_moment_point_load, beam_moment_uniform, beam_shear_simple, slab_thickness_min, rebar_lap_length, masonry_wall_capacity
+**Segregated deliberately:** demand (statics, code-agnostic) vs capacity (dual-code).
+Modules: `_beam_analysis.py` (statics), `_structural_rc.py` (design).
+Tests: `tests/test_formula_rc_beams.py`
+
+| Formula | Kind | Inputs | Oracle | Basis | Status | Sign-off |
+|---------|------|--------|--------|-------|--------|----------|
+| beam_moment_simple | analysis | w=20 kN/m, L=6 m | **90 kN·m** (wL²/8) | statics | GATED | |
+| beam_moment_point_load | analysis | P=50 kN, L=6 (central / a=2) | **75** (PL/4) / **66.67** (Pab/L) | statics | GATED | |
+| beam_shear_simple | analysis | w=20, L=6 | **60 kN** (wL/2) | statics | GATED | |
+| beam_moment_fixed_udl | analysis | w=20, L=6 | support **60**, mid **30 kN·m** | statics (fixed) | GATED | |
+| rc_beam_moment_capacity | design·ACI | As1500, fy420, b300, d550, fc30 | a=82.4 → **288.5 kN·m** | ACI 318-19 §22.2 | GATED | |
+| rc_beam_moment_capacity | design·EC | same | x=114 → **276.3 kN·m** | EN 1992-1-1 §6.1 | GATED | |
+| rc_beam_shear_capacity | design·ACI | b300, d550, fc30 | **115.2 kN** | ACI 318-19 §22.5 | GATED | |
+| rc_beam_shear_capacity | design·EC | +ρl=0.01 | k=1.603 → **98.6 kN** | EN 1992-1-1 §6.2.2 | GATED | |
+| slab_thickness_min | design·ACI | L=6000, SS, fy420 | **300 mm** (L/20) | ACI 318-19 Tbl 7.3.1.1 | GATED | |
+| slab_thickness_min | design·EC | L=6000, cantilever | **750 mm** (L/8) | EN 1992-1-1 §7.4.2 | GATED | |
+| rebar_lap_length | design·ACI | d20, fy420, fc30 | ld=929 → lap **1208 mm** | ACI 318-19 §25.4.2 | GATED | |
+| rebar_lap_length | design·EC | same | lb=600 → lap **900.8 mm** | EN 1992-1-1 §8.4/8.7 | GATED | |
+
+Note: catalog `beam_moment_uniform` ≡ `beam_moment_simple` (both simply-supported
+UDL); the distinct fixed-end case is `beam_moment_fixed_udl`. `column_axial_capacity`
+partly overlaps existing `composite_column_design` — plain-RC/steel variant TBD.
+
+## Pending batches (scoped, not yet built — see additive-formula-library-scope.md)
 - Batch 5 — QC: concrete_cylinders, concrete_shrinkage, concrete_curing_time
 - Batch 6 — Cost/PM/planning: roi_calculator, unit_cost_total, cost_per_sf, productivity_rate, critical_path_float
 - Batch 7 — Safety (OSHA): scaffold_load_capacity, fall_arrest_force, crane_lift_capacity
