@@ -168,6 +168,26 @@ _SMOKE_INPUTS = {
     "slab_thickness_min": dict(span_mm=6000, support_condition="simply_supported",
                                code="aci", fy_mpa=420),
     "rebar_lap_length": dict(bar_diameter_mm=20, fy_mpa=420, fc_mpa=30, code="aci"),
+    # Additive discipline library — QC.
+    "concrete_cylinders": dict(failure_load_kn=530, cylinder_diameter_mm=150),
+    "concrete_shrinkage": dict(time_days=365),
+    "concrete_curing_time": dict(target_strength_fraction=0.70),
+    # Additive discipline library — commercial / PM.
+    "roi_calculator": dict(gain=1_200_000, cost=1_000_000),
+    "unit_cost_total": dict(quantity=100, unit_rate=250),
+    "cost_per_area": dict(total_cost=1_000_000, area=5000),
+    "productivity_rate": dict(output_quantity=500, labor_hours=40, crew_size=4),
+    # Additive discipline library — planning.
+    "critical_path_float": dict(early_start=5, early_finish=10, late_start=8, late_finish=13),
+    # Additive discipline library — safety.
+    "scaffold_load_capacity": dict(platform_area_m2=10, duty="medium"),
+    "fall_arrest_force": dict(worker_mass_kg=100, free_fall_m=1.8, deceleration_distance_m=1.0),
+    "crane_lift_capacity": dict(chart_capacity_t=50, deductions_t=3, load_t=38),
+    # Additive discipline library — reference tables (cited lookups, not physics).
+    "carbon_footprint_concrete": dict(volume_m3=100, grade="c30"),
+    "leed_points_estimate": dict(points=62),
+    "bim_clash_tolerance": dict(lod=350),
+    "laser_scan_accuracy": dict(range_m=40, accuracy_at_10m_mm=2.0),
 }
 
 
