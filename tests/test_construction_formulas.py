@@ -156,6 +156,18 @@ _SMOKE_INPUTS = {
     "cut_fill_balance": dict(cut_volume_m3=5000, fill_volume_m3=3500),
     "compaction_control": dict(field_dry_density=1.90, max_dry_density=2.00),
     "slope_fos_simple": dict(friction_angle_deg=30, slope_angle_deg=20),
+    # Additive discipline library — beam analysis (statics).
+    "beam_moment_simple": dict(udl_w_kn_m=20, span_m=6),
+    "beam_moment_point_load": dict(point_load_kn=50, span_m=6),
+    "beam_shear_simple": dict(udl_w_kn_m=20, span_m=6),
+    "beam_moment_fixed_udl": dict(udl_w_kn_m=20, span_m=6),
+    # Additive discipline library — RC design (dual-code).
+    "rc_beam_moment_capacity": dict(steel_area_mm2=1500, fy_mpa=420, width_mm=300,
+                                    eff_depth_mm=550, fc_mpa=30, code="aci"),
+    "rc_beam_shear_capacity": dict(width_mm=300, eff_depth_mm=550, fc_mpa=30, code="aci"),
+    "slab_thickness_min": dict(span_mm=6000, support_condition="simply_supported",
+                               code="aci", fy_mpa=420),
+    "rebar_lap_length": dict(bar_diameter_mm=20, fy_mpa=420, fc_mpa=30, code="aci"),
 }
 
 
