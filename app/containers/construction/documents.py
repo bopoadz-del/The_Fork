@@ -1764,8 +1764,8 @@ class ConstructionDocumentsMixin:
                 defects.append(yd)
                 seen_descs.add(yd["description"])
         compliance = self._check_compliance(defects, inspection_type)
-    
-        return {
+
+        _result = {
             "status": "success",
             "inspection_type": inspection_type,
             "file": Path(file_path).name,
@@ -1777,6 +1777,14 @@ class ConstructionDocumentsMixin:
             "recommendations": self._generate_recommendations(defects, inspection_type),
             "pass_fail": "PASS" if not defects else "CONDITIONAL" if all(d["severity"] == "minor" for d in defects) else "FAIL"
         }
+        # W6 — live learning capture (default OFF via FORK_LEARNING_CAPTURE).
+        # Best-effort; never affects the inspection result.
+        try:
+            from app.core.learning_capture import capture_qa_defects
+            capture_qa_defects(_result, (params or {}).get("project_id") or "")
+        except Exception:  # noqa: BLE001
+            pass
+        return _result
     _DEFECT_KEYWORDS = {
         "concrete": [
             ("crack", "Crack visible", "major"),
