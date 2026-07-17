@@ -1,6 +1,10 @@
 # Reasoning & Orchestration Consolidation Plan
 
-Status: PROPOSAL (paper only — no code changes). Author-reviewed 2026-07-02.
+Status: SUPERSEDED (2026-07-18). This was a PROPOSAL (paper only — no code
+changes), author-reviewed 2026-07-02. The reasoning/orchestration consolidation
+that actually shipped is the predefined-orchestrator path (`ORCHESTRATOR_PREDEFINED`,
+live=1 on prod) + the discipline-hats layer (`FORK_HATS_ENABLED`, default-off),
+not the design below. Retained for history.
 
 ## Decisions locked (operator, 2026-07-02)
 

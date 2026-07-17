@@ -75,9 +75,11 @@ Storage:
 
 Retrieval:
 - Hybrid: 50 semantic + 50 BM25 candidates fused via Reciprocal Rank
-  Fusion. `app/core/rag/retriever.py`.
-- Embeddings: model2vec / potion-base-8M, 256-dim. Matches the
-  Postgres `chunks.embedding vector(256)` column.
+  Fusion at the store layer, then re-ranked by cosine + identifier/GK
+  signals and a hard project-scope filter. `app/core/rag/retriever.py`,
+  `app/core/rag/vector_store.py`.
+- Embeddings: `BAAI/bge-small-en-v1.5`, 384-dim (`RAG_EMBEDDING_MODEL`).
+  The store table width follows the embedder's actual dimension.
 - RAG injection gate: only the `project-assistant` agent gets
   per-turn RAG context (`app/core/rag/inject.py`). Confidence
   threshold 0.4, daily token budget 500K, fallback prefix on miss.
