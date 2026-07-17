@@ -133,10 +133,19 @@ async def lifespan(app: FastAPI):
     # On-prem sovereignty gate (STEP 2): refuse to boot if DEPLOYMENT_PROFILE=onprem
     # is misconfigured in a way that would egress (cloud LLM provider selected,
     # offline model flags unset, Sentry on). Strict no-op under the cloud profile.
-    from app.core.deployment_profile import assert_onprem_ready, is_onprem
+    from app.core.deployment_profile import (
+        assert_onprem_ready, is_onprem, boot_manifest, disk_survival_canary,
+    )
     assert_onprem_ready()
     if is_onprem():
-        logger.info("DEPLOYMENT_PROFILE=onprem — zero-egress profile active")
+        # print (not logger) so the manifest always surfaces in container logs
+        # regardless of the uvicorn/app log config — this is operator-facing.
+        import json as _json
+        print("DEPLOYMENT_PROFILE=onprem - zero-egress profile active", flush=True)
+        print("on-prem boot manifest: " + _json.dumps(boot_manifest()), flush=True)
+        print("on-prem disk canary: "
+              + _json.dumps(disk_survival_canary(os.getenv("DATA_DIR", "/app/data"))),
+              flush=True)
     await init_blocks()
     from app.core.projects import init_db
     init_db()
