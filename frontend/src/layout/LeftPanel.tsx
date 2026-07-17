@@ -29,12 +29,14 @@ interface ProjectRow {
   is_master_corpus?: boolean
 }
 
-/** The sidebar lists ONLY admin-approved projects (those an admin turned into
- *  a project from Drive) plus the master corpus. Unapproved shells / backing
- *  corpora / personal scratch projects stay out of the list — without deleting
- *  anything. Admins manage + approve the rest from the Admin page. */
+/** The sidebar shows ONLY the Master Corpus (the single all-documents project)
+ *  during the test phase — the operator wants one clean entry, not one row per
+ *  approved pack. This also dissolves the duplicate-row problem: the backing
+ *  corpus (is_master_corpus=false) can no longer self-render as a second row.
+ *  Nothing is deleted — every project stays managed from the Admin page. At
+ *  pilot, restore `|| p.origin === 'admin_drive_approved'` for multi-project. */
 function isSidebarVisible(p: ProjectRow): boolean {
-  return p.is_master_corpus === true || p.origin === 'admin_drive_approved'
+  return p.is_master_corpus === true
 }
 
 interface ProjectsResponse {
