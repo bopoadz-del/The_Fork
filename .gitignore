@@ -102,3 +102,4 @@ logs/
 *.log
 review_pack/**/*.log
 .onprem-lite-data/
+.onprem-accept-data/
