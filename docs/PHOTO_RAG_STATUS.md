@@ -1,5 +1,12 @@
 # Photo RAG — Status (2026-06-24)
 
+> **SUPERSEDED (2026-07-18).** The `photo_chunks` table and the photo-RAG BM25
+> leg described below were **removed in Alembic migration 0008**. Chat-attached
+> photos are now question-context (`POST /v1/chat/analyze-photo`), not corpus
+> material, and site-photo analysis runs through the Safety Observation AI
+> (YOLO-World v2 ONNX). This document is retained for history only; the
+> Phase-2 platform-integration tasks below did not ship as written.
+
 Single source of truth for what shipped, what's running, what's deferred.
 
 ## Shipped

@@ -1,5 +1,11 @@
 # Self-hosted LLM (Ollama) — escape Groq's 30K TPM cap
 
+> **Current (2026-07-18):** Ollama is now the LLM path for the full **on-prem /
+> air-gapped deployment profile** (`DEPLOYMENT_PROFILE=onprem`), not just a
+> cost/rate escape hatch — see `docs/onprem-profile.md` and
+> `deploy/onprem/`. This note still applies for using Ollama on the cloud
+> service; the boot-gated on-prem profile is the productionised version.
+
 The agent runtime supports Ollama as a first-class provider. Set two
 environment variables on Render and every chat in the UI is served by
 your own machine instead of Groq. Zero per-token cost. No TPM rate limits.
