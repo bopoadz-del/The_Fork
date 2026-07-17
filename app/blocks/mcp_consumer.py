@@ -29,6 +29,11 @@ class MCPConsumerBlock(UniversalBlock):
     }
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
+        # On-prem: this block spawns external MCP servers (npx @modelcontextprotocol/*)
+        # that make their own outbound calls — disabled entirely under air-gap.
+        from app.core.deployment_profile import is_onprem, onprem_unavailable
+        if is_onprem():
+            return onprem_unavailable("MCP connector")
         params = params or {}
         data = input_data if isinstance(input_data, dict) else {}
 

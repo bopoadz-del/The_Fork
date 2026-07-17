@@ -42,6 +42,12 @@ class WebhookBlock(UniversalBlock):
         
     async def process(self, input_data: Dict, params: Dict = None) -> Dict:
         action = (params or {}).get("action") or (input_data.get("action") if isinstance(input_data, dict) else None)
+        # On-prem: outbound webhook delivery egresses to an arbitrary URL. Local
+        # register/list stay available; only send/trigger are gated.
+        if action in ("send", "trigger"):
+            from app.core.deployment_profile import is_onprem, onprem_unavailable
+            if is_onprem():
+                return onprem_unavailable("Outbound webhook delivery")
         if action == "register":
             return await self._register_webhook(input_data)
         elif action == "send":

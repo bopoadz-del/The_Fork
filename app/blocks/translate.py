@@ -155,6 +155,10 @@ class TranslateBlock(UniversalBlock):
     }
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
+        # On-prem profile: no outbound egress to translate.googleapis.com.
+        from app.core.deployment_profile import is_onprem, onprem_unavailable
+        if is_onprem():
+            return onprem_unavailable("Translation")
         params = params or {}
 
         text = ""

@@ -130,6 +130,13 @@ def _validate_startup_env() -> None:
 async def lifespan(app: FastAPI):
     """Initialize all blocks + load runtime agents at startup."""
     _validate_startup_env()
+    # On-prem sovereignty gate (STEP 2): refuse to boot if DEPLOYMENT_PROFILE=onprem
+    # is misconfigured in a way that would egress (cloud LLM provider selected,
+    # offline model flags unset, Sentry on). Strict no-op under the cloud profile.
+    from app.core.deployment_profile import assert_onprem_ready, is_onprem
+    assert_onprem_ready()
+    if is_onprem():
+        logger.info("DEPLOYMENT_PROFILE=onprem — zero-egress profile active")
     await init_blocks()
     from app.core.projects import init_db
     init_db()
