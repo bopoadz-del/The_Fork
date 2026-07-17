@@ -907,6 +907,8 @@ def _build_calculator_registry() -> "Dict[str, Any]":
 _EXTENSION_MODULES: Tuple[str, ...] = (
     "app.lib.construction_formulas_structural_steel",
     "app.lib.construction_formulas_loads",
+    "app.lib.construction_formulas_quantities",
+    "app.lib.construction_formulas_earthwork",
 )
 
 

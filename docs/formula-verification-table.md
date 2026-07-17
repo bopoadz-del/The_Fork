@@ -28,11 +28,35 @@ Tests: `tests/test_formula_structural_steel.py`, `tests/test_formula_loads.py`
 | live_load_reduction | ASCE | L0=4.79 kN/m², KLL=4, AT=40 m² | factor 0.611 → **2.928 kN/m²** | ASCE 7-16 §4.7.2 | GATED | |
 | live_load_reduction | EC | L0=4.79, ψ0=0.7, A=40 | αA=0.75 → **3.593 kN/m²** | EN 1991-1-1 §6.3.1.2 | GATED | |
 
+## Batch 2 — Quantities (geometry, code-agnostic)
+
+Module: `app/lib/construction_formulas_quantities.py`
+Tests: `tests/test_formula_quantities_earthwork.py`
+
+| Formula | Inputs | Oracle | Basis | Status | Sign-off |
+|---------|--------|--------|-------|--------|----------|
+| concrete_volume (rect) | 10×5×0.3 m, 5% waste | net **15.0**, +waste **15.75** m³ | geometry | GATED | |
+| concrete_volume (cyl) | D=0.6, H=10 m | **2.827 m³** (π·0.09·10) | geometry | GATED | |
+| concrete_volume (trap) | top2/bot4/dep1.5/L10 | net **45.0**, +waste **47.25** m³ | geometry | GATED | |
+| rebar_weight | d16, 12 m, ×50 | unit **1.578 kg/m** → **947.0 kg** | BS 8666 | GATED | |
+| rebar_by_area | 20 m², 200 mm, d12 | 5 bars/m → **88.8 kg** | geometry | GATED | |
+
+## Batch 3 — Earthwork / geotech (code-agnostic)
+
+Module: `app/lib/construction_formulas_earthwork.py`
+Tests: `tests/test_formula_quantities_earthwork.py`
+
+| Formula | Inputs | Oracle | Basis | Status | Sign-off |
+|---------|--------|--------|-------|--------|----------|
+| excavation_volume | 20×10×3 m, 25% bulk | bank **600**, loose **750 m³** | geometry/bulking | GATED | |
+| backfill_volume | excav 600, struct 200, 20% swell | void **400**, loose **480 m³** | geometry/swell | GATED | |
+| cut_fill_balance | cut 5000, fill 3500 | surplus **1500** (export), haul **1875 m³** | mass balance | GATED | |
+| compaction_control | field 1.90, MDD 2.00 | **95.0%** → PASS | ASTM D698/D1557 | GATED | |
+| slope_fos_simple | φ=30°, β=20° | **1.586** (cohesionless); +c′ 5 kPa → **1.874** | infinite slope | GATED | |
+
 ## Pending batches (scoped, not yet built — see additive-formula-library-scope.md)
 
-- Batch 2 — Structural RC (ACI 318 / EC2): beam_moment_simple, beam_moment_point_load, beam_moment_uniform, beam_shear_simple, slab_thickness_min, rebar_lap_length, masonry_wall_capacity
-- Batch 3 — Earthwork/geotech: excavation_volume, backfill_volume, cut_fill_balance, compaction_control, slope_fos_simple
-- Batch 4 — Quantities: concrete_volume (+ geometry variants), rebar_weight, rebar_by_area
+- Batch 4 — Structural RC (ACI 318 / EC2): beam_moment_simple, beam_moment_point_load, beam_moment_uniform, beam_shear_simple, slab_thickness_min, rebar_lap_length, masonry_wall_capacity
 - Batch 5 — QC: concrete_cylinders, concrete_shrinkage, concrete_curing_time
 - Batch 6 — Cost/PM/planning: roi_calculator, unit_cost_total, cost_per_sf, productivity_rate, critical_path_float
 - Batch 7 — Safety (OSHA): scaffold_load_capacity, fall_arrest_force, crane_lift_capacity

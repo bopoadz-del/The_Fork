@@ -146,6 +146,16 @@ _SMOKE_INPUTS = {
                                sds=1.0, r=8.0, ie=1.0),
     "live_load_reduction": dict(base_live_load_kn_m2=4.79, tributary_area_m2=40,
                                 code="aci", kll=4),
+    # Additive discipline library — quantities (geometry).
+    "concrete_volume": dict(length_m=10, width_m=5, thickness_m=0.3),
+    "rebar_weight": dict(bar_diameter_mm=16, total_length_m=12, quantity=50),
+    "rebar_by_area": dict(area_m2=20, spacing_mm=200, bar_diameter_mm=12),
+    # Additive discipline library — earthwork/geotech.
+    "excavation_volume": dict(length_m=20, width_m=10, depth_m=3),
+    "backfill_volume": dict(excavation_bank_m3=600, structure_volume_m3=200),
+    "cut_fill_balance": dict(cut_volume_m3=5000, fill_volume_m3=3500),
+    "compaction_control": dict(field_dry_density=1.90, max_dry_density=2.00),
+    "slope_fos_simple": dict(friction_angle_deg=30, slope_angle_deg=20),
 }
 
 
