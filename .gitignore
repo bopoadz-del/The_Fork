@@ -101,3 +101,4 @@ coverage.xml
 logs/
 *.log
 review_pack/**/*.log
+.onprem-lite-data/

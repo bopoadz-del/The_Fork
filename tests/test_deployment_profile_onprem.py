@@ -187,6 +187,32 @@ async def test_cloud_profile_gates_are_noops(cloud):
     assert not r2.get("onprem_unavailable")
 
 
+# ── boot manifest + disk-survival canary ───────────────────────────────────
+
+def test_boot_manifest_shape(monkeypatch):
+    monkeypatch.setenv("DEPLOYMENT_PROFILE", "onprem")
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    m = dp.boot_manifest()
+    assert m["profile"] == "onprem"
+    assert m["llm_provider"] == "ollama"
+    assert "embedder" in m and "model" in m["embedder"]
+    assert set(m["offline_flags"]) == {"HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"}
+    assert "db_backend" in m
+
+
+def test_disk_canary_seeds_then_persists(tmp_path):
+    d = str(tmp_path / "data")
+    first = dp.disk_survival_canary(d)
+    assert first["ok"] is True
+    assert "seeded" in first["note"]
+    ts = first["first_seen"]
+    # Second boot on the same dir: sentinel survived, same first_seen.
+    second = dp.disk_survival_canary(d)
+    assert second["ok"] is True
+    assert "persisted" in second["note"]
+    assert second["first_seen"] == ts
+
+
 async def test_weather_not_gated_under_cloud(cloud, monkeypatch):
     """Cloud profile: the weather gate is inert — the method proceeds past it
     (fails later on its own validation, not with the on-prem reason)."""

@@ -143,3 +143,63 @@ def assert_onprem_ready() -> None:
             "DEPLOYMENT_PROFILE=onprem is misconfigured (would egress):\n  - "
             + "\n  - ".join(problems)
         )
+
+
+def boot_manifest() -> Dict[str, Any]:
+    """A one-glance 'what am I running' manifest for on-prem operators: profile,
+    LLM wiring, embedder identity, offline flags, DB backend. Also surfaces the
+    embedding-identity (model + dim) so a mismatch is visible at boot. Pure /
+    best-effort — never raises (the embedder probe is wrapped)."""
+    embedder = {"model": None, "dim": None}
+    try:
+        from app.core.rag.embeddings import get_embedder
+        ident = get_embedder().identity
+        embedder = {"model": ident.get("model"), "dim": ident.get("dim")}
+    except Exception as exc:  # noqa: BLE001
+        embedder = {"model": f"<unavailable: {exc}>", "dim": None}
+
+    db = os.getenv("DATABASE_URL", "")
+    db_backend = "postgres" if db.startswith("postgres") else "sqlite"
+
+    return {
+        "profile": profile(),
+        "llm_provider": os.getenv("LLM_PROVIDER") or "(unset)",
+        "llm_fallback": os.getenv("LLM_FALLBACK_PROVIDER") or "(none)",
+        "ollama_url": os.getenv("OLLAMA_URL") or "http://localhost:11434",
+        "ollama_model": os.getenv("OLLAMA_MODEL") or "(default)",
+        "embedder": embedder,
+        "offline_flags": {f: _is_truthy(f) for f in _REQUIRED_OFFLINE_FLAGS},
+        "sentry": bool((os.getenv("SENTRY_DSN") or "").strip()),
+        "db_backend": db_backend,
+    }
+
+
+def disk_survival_canary(data_dir: str) -> Dict[str, Any]:
+    """Write-then-read a sentinel under DATA_DIR to confirm the persistent volume
+    is mounted and survives restarts. On first boot it seeds the sentinel; on
+    later boots it reports the original first-boot timestamp (proof the volume
+    persisted). Never raises — returns a status dict. Used by the on-prem boot."""
+    import json as _json
+    result: Dict[str, Any] = {"ok": False, "path": None, "first_seen": None, "note": ""}
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+        path = os.path.join(data_dir, ".onprem_canary.json")
+        result["path"] = path
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                data = _json.load(fh)
+            result["first_seen"] = data.get("first_seen")
+            result["note"] = "volume persisted (sentinel survived a prior boot)"
+        else:
+            # Seed. Timestamp comes from the OS clock at write time; this is a
+            # persistence probe, not a security control.
+            from datetime import datetime, timezone
+            stamp = datetime.now(timezone.utc).isoformat()
+            with open(path, "w", encoding="utf-8") as fh:
+                _json.dump({"first_seen": stamp}, fh)
+            result["first_seen"] = stamp
+            result["note"] = "sentinel seeded (first boot on this volume)"
+        result["ok"] = True
+    except Exception as exc:  # noqa: BLE001
+        result["note"] = f"canary failed: {exc}"
+    return result
