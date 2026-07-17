@@ -886,7 +886,30 @@ def _build_calculator_registry() -> "Dict[str, Any]":
                 reg[_n] = _f
     except Exception:  # noqa: BLE001 — never break the formula registry on import
         pass
+    # Additive discipline modules (the drop-catalog gap-fill library). Each
+    # module exposes ADDITIONAL_CALCULATORS; listed here so a new discipline is a
+    # one-line addition and never touches the existing calculators. Every merged
+    # name is gated by the coverage guard + a per-formula oracle test. See
+    # docs/additive-formula-library-scope.md.
+    for _ext in _EXTENSION_MODULES:
+        try:
+            _mod = __import__(_ext, fromlist=["ADDITIONAL_CALCULATORS"])
+            for _n, _f in getattr(_mod, "ADDITIONAL_CALCULATORS", {}).items():
+                if callable(_f):
+                    reg[_n] = _f
+        except Exception:  # noqa: BLE001 — a broken/absent module never breaks the registry
+            pass
     return reg
+
+
+# Discipline extension modules merged into CALCULATORS (order-independent; a
+# later module wins a name collision, but names are unique by design).
+_EXTENSION_MODULES: Tuple[str, ...] = (
+    "app.lib.construction_formulas_structural_steel",
+    "app.lib.construction_formulas_loads",
+    "app.lib.construction_formulas_quantities",
+    "app.lib.construction_formulas_earthwork",
+)
 
 
 CALCULATORS: Dict[str, Any] = _build_calculator_registry()
