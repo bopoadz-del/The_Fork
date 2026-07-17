@@ -1191,22 +1191,42 @@ def _standards_advisory(text: str) -> str:
         return text
 
 
+# STEP 0b — visible disclosure prepended to any answer that fell back to the
+# Master Corpus because the active project has no usable documents of its own.
+# The sources panel is separately tagged (see _build_sources_from_audit); this
+# is the in-answer half of "fallback VISIBLE in response + sources panel."
+_MASTER_CORPUS_FALLBACK_NOTE = (
+    "_This project has no documents of its own for this question — "
+    "answering from the Master Corpus._\n\n"
+)
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: Optional[Dict[str, Any]],
     messages: List[Dict[str, Any]],
+    fallback_used: bool = False,
 ) -> str:
     """Final-answer post-processing: cost-grounding gate (may refuse an
     ungrounded cost claim) then the standards advisory (appends a non-blocking
     deviation note). Order matters — don't annotate a refusal for cost figures
-    it no longer contains."""
+    it no longer contains.
+
+    When ``fallback_used`` is set (the retriever answered from the Master Corpus
+    because the project is empty/thin), a one-line disclosure banner is
+    prepended so the fallback is visible in the answer itself."""
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
     # Confidentiality stopgap: scrub known project/client names from the final
     # answer so one client's project identity can't leak via general-knowledge
     # retrieval. Runs LAST so it catches names in any appended note too.
     from app.core.identifier_scrub import scrub_identifiers
-    return scrub_identifiers(text)
+    text = scrub_identifiers(text)
+    # Disclosure banner goes on AFTER the scrub so it's never mangled, and only
+    # when the banner isn't already present (idempotent across retries).
+    if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
+        text = _MASTER_CORPUS_FALLBACK_NOTE + text
+    return text
 
 
 def _parse_source_tail(tail: str) -> Tuple[str, str]:
@@ -1341,9 +1361,19 @@ def _build_sources_from_audit(
         except Exception:
             return ""
 
+    # STEP 0b — human-readable layer labels for the sources panel so a
+    # Master-Corpus fallback (and disclosed general-knowledge context) is
+    # visible per-source, not just in the answer banner.
+    _LAYER_LABELS = {
+        "own": "Project document",
+        "master_corpus": "Master Corpus (fallback)",
+        "general_knowledge": "Knowledge base",
+    }
+
     def _format(chunk_meta: Dict[str, Any], doc_name: str) -> Dict[str, Any]:
         score = chunk_meta.get("score") or 0.0
         conf = "High" if score >= 0.75 else "Medium" if score >= 0.5 else "Low"
+        layer = chunk_meta.get("layer") or "own"
         return {
             "doc_id": chunk_meta["doc_id"],
             "doc_name": _clean_path_label(doc_name),
@@ -1353,6 +1383,8 @@ def _build_sources_from_audit(
             "project_id": (audit_rec or {}).get("project_id"),
             "score": float(score),
             "confidence": conf,
+            "layer": layer,
+            "layer_label": _LAYER_LABELS.get(layer, "Knowledge base"),
         }
 
     # 1) Try to extract citations from the agent's text first.
@@ -2583,7 +2615,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -2678,7 +2710,7 @@ class Agent:
         if not final_text.strip():
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -3085,7 +3117,7 @@ class Agent:
                     final_text = _sanitize_inline_paths(
                         _sanitize_citation_labels(_sanitize_final_text(raw))
                     )
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
                     if not final_text.strip():
                         # Nothing usable streamed (empty response) — preserve the
                         # empty-final forced-retry path (non-streamed, chunked).
@@ -3102,7 +3134,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
+                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     if _timing:
@@ -3191,7 +3223,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -3302,7 +3334,7 @@ class Agent:
             _LOG.warning("chat_stream: forced final returned empty, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:

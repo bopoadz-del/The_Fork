@@ -40,12 +40,17 @@ services:
         value: drive_archive
       - key: MASTER_CORPUS_NAME
         value: Master Corpus
-      # GK = the migrated drive_archive training corpus (procedures, scanned
-      # references, CESMM/FIDIC notes). The drive_archive migration moved the
-      # curated GK content into project `training_material`; `curated_kb` now
-      # exists but is empty. Keep this in sync with DECISIONS.md T3.
+      # GK = the always-on, DISCLOSED general-knowledge layer only: genuinely
+      # cross-project reference (FIDIC / OSHA / units / rates) in `curated_kb`.
+      # STEP 0 (2026-07-17): client corpora (drive_archive / dg2_infra_pack_1)
+      # were removed from this list — they were silently merging DG2 into every
+      # other project (the ha_long -> DG2 leak). The client/Master corpus now
+      # surfaces ONLY as the labeled empty/thin fallback via
+      # MASTER_CORPUS_SOURCE_PROJECT_ID; the retriever also structurally strips
+      # that id from this list even if a stale env re-adds it. See
+      # docs/step0-retrieval-isolation.md. Set to "" to make GK fallback-only too.
       - key: RAG_GENERAL_KNOWLEDGE_PROJECTS
-        value: training_material
+        value: curated_kb
       # Phase 1 pilot: route the schedule workflow through the orchestrator's
       # predefined reasoning. Non-breaking (only intercepts high-confidence
       # generate_wbs intents); remove to revert to the tool-agent path.

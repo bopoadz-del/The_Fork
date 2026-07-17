@@ -105,6 +105,13 @@ class Chunk:
     text: str
     score: Optional[float] = None  # set on search results, None when raw
     rrf_score: Optional[float] = field(default=None, repr=False, compare=False)
+    # Retrieval layer this chunk came from, set by ``retrieve_with_filter``:
+    # "own" (the active project), "general_knowledge" (a disclosed curated GK
+    # project), or "master_corpus" (the labeled empty/thin fallback corpus).
+    # STEP 0 isolation signal — never sent to the LLM or the wire; the chat
+    # runtime reads it to disclose a Master-Corpus fallback in the answer +
+    # sources panel. compare=False so it never affects Chunk equality in tests.
+    layer: str = field(default="own", compare=False)
     # ── photo_chunks fields (kind="photo") ─────────────────────────────
     # text chunks keep kind="text" and the photo fields default to None.
     kind: str = "text"
@@ -119,6 +126,8 @@ class Chunk:
             d.pop("score")
         # rrf_score is debug-only; never expose it via the wire
         d.pop("rrf_score", None)
+        # layer is an internal isolation signal; keep it off the API payload
+        d.pop("layer", None)
         # Drop photo fields for plain text chunks to keep payloads small
         if d.get("kind") == "text":
             d.pop("sha256", None)

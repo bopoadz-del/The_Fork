@@ -148,6 +148,11 @@ def rag_inject(
         ):
             identifier_miss = True
 
+    # STEP 0b — did the answer fall back to the Master Corpus because this
+    # project has no usable documents of its own? Any chunk tagged
+    # ``master_corpus`` by the retriever means yes; the runtime discloses it.
+    fallback_used = any(getattr(c, "layer", "own") == "master_corpus" for c in chunks)
+
     audit_rec: Dict[str, Any] = {
         "timestamp": now.isoformat() + "Z",
         "project_id": project_id,
@@ -160,6 +165,7 @@ def rag_inject(
         "top_score": top_score,
         "budget_remaining": budget_state["remaining"],
         "budget_degraded": budget_state["degraded"],
+        "fallback_used": fallback_used,
     }
 
     if not chunks or top_score < threshold or identifier_miss:
@@ -172,7 +178,8 @@ def rag_inject(
             "chunks": [
                 {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
                  "chunk_id": c.chunk_id, "project_id": c.project_id,
-                 "score": c.score} for c in chunks
+                 "score": c.score, "layer": getattr(c, "layer", "own")}
+                for c in chunks
             ],
         })
         _audit.write(audit_rec)
@@ -181,14 +188,21 @@ def rag_inject(
     kept, total_tokens = apply_token_cap(chunks)
     sys_msg = format_chunks_as_system_message(kept, total_candidates=len(chunks))
 
+    # Recompute against the injected set: the token cap may have dropped the
+    # master-corpus chunk, in which case the answer is NOT a fallback answer.
+    kept_fallback_used = any(
+        getattr(c, "layer", "own") == "master_corpus" for c in kept
+    )
     audit_rec.update({
         "injected_k": len(kept),
         "injected_tokens": total_tokens,
         "threshold_fired": False,
+        "fallback_used": kept_fallback_used,
         "chunks": [
             {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
              "chunk_id": c.chunk_id, "project_id": c.project_id,
-             "score": c.score} for c in kept
+             "score": c.score, "layer": getattr(c, "layer", "own")}
+            for c in kept
         ],
     })
     _audit.write(audit_rec)

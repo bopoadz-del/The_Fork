@@ -273,7 +273,31 @@ def _general_knowledge_project_ids() -> List[str]:
     project only — the pre-PR-107 behavior).
     """
     raw = os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material")
-    return [p.strip() for p in raw.split(",") if p.strip()]
+    ids = [p.strip() for p in raw.split(",") if p.strip()]
+    # STEP 0 structural isolation: the master-corpus / client fallback corpus
+    # is NEVER part of the always-on GK merge, even when a stale env still lists
+    # it (prod once had drive_archive + dg2_infra_pack_1 in this var, silently
+    # merging the whole DG2 client corpus into every OTHER project's results —
+    # the ha_long -> DG2 leak). It may only surface as the disclosed empty/thin
+    # fallback below. This makes the client corpus structurally unreachable from
+    # another project's populated query regardless of score.
+    fb = _master_corpus_fallback_id()
+    if fb:
+        ids = [p for p in ids if p != fb]
+    return ids
+
+
+def _master_corpus_fallback_id() -> Optional[str]:
+    """The corpus queried ONLY when the active project is empty/thin, and always
+    disclosed as a Master-Corpus fallback (STEP 0b).
+
+    This is the client/master corpus (``MASTER_CORPUS_SOURCE_PROJECT_ID``) —
+    deliberately kept SEPARATE from the general-knowledge layer so it can never
+    silently blend into another project's results. Returns None when unset (the
+    CI / self-host default), so the empty-project contract stays ``[]`` there.
+    """
+    pid = (os.getenv("MASTER_CORPUS_SOURCE_PROJECT_ID") or "").strip()
+    return pid or None
 
 
 def _project_has_any_chunks(store, project_id: str) -> bool:
@@ -467,6 +491,15 @@ def retrieve_with_filter(
     # Active project (operator's own corpus — first so it wins ties).
     raw_active = store.search(project_id, query_vec, k=over_fetch, query_text=query)
 
+    # STEP 0b — empty/thin detection for the labeled Master-Corpus fallback.
+    # "Thin" reuses RAG_CONFIDENCE_THRESHOLD (the same bar rag_inject applies):
+    # a project whose best own chunk can't clear it has nothing usable of its
+    # own, so we disclose-and-fall-back to the Master Corpus rather than answer
+    # from thin air. Empty (no own chunks) is the degenerate thin case.
+    own_top = max((c.score or 0.0) for c in raw_active) if raw_active else 0.0
+    fallback_min = float(os.getenv("RAG_CONFIDENCE_THRESHOLD", "0.4"))
+    own_thin = own_top < fallback_min
+
     # General-knowledge projects (cross-project background context).
     # Only merge GK when the active project already has indexed chunks.
     # An empty/unindexed project must return [] — not training_material
@@ -491,6 +524,31 @@ def retrieve_with_filter(
                 "general-knowledge retrieval for %s failed: %s; primary results stand",
                 gk_pid, exc,
             )
+
+    # STEP 0b — labeled Master-Corpus fallback. Queried ONLY when the active
+    # project is empty/thin, and NEVER silently: the chunks are tagged
+    # ``layer="master_corpus"`` so the chat runtime discloses the fallback in
+    # the answer and the sources panel. The fallback corpus is barred from the
+    # GK merge (see _general_knowledge_project_ids), so this is the ONLY way it
+    # can surface for another project — and only with disclosure.
+    fb_id = _master_corpus_fallback_id()
+    use_fallback = (
+        own_thin
+        and bool(fb_id)
+        and fb_id != project_id
+        and fb_id not in gk_ids
+    )
+    raw_fb: List[Chunk] = []
+    if use_fallback:
+        try:
+            raw_fb = store.search(fb_id, query_vec, k=over_fetch, query_text=query)
+        except Exception as exc:  # noqa: BLE001 — fallback must never break the turn
+            logger.warning(
+                "master-corpus fallback retrieval for %s failed: %s", fb_id, exc,
+            )
+            raw_fb = []
+        if not raw_fb:
+            use_fallback = False
 
     # Identifier-aware lexical rescue for exact reference lookups.
     identifiers = extract_query_identifiers(query)
@@ -521,7 +579,7 @@ def retrieve_with_filter(
     # larger than any pure semantic score, guaranteeing it outranks
     # semantically-similar boilerplate that lacks the exact reference.
     fused: Dict[str, Tuple[Chunk, float]] = {}
-    for c in list(raw_active) + raw_gk:
+    for c in list(raw_active) + raw_gk + raw_fb:
         fused[c.chunk_id] = (c, c.score or 0.0, 0.0)
 
     IDENTIFIER_BONUS_MAX = 2.0
@@ -642,6 +700,19 @@ def retrieve_with_filter(
         kept.append(c)
         if len(kept) == k:
             break
+
+    # Tag each returned chunk with its retrieval layer so the chat runtime can
+    # disclose a Master-Corpus fallback (STEP 0b). "own" is the active project;
+    # a chunk from the fallback corpus is "master_corpus"; anything else that
+    # made it through is a disclosed general-knowledge chunk.
+    for c in kept:
+        if c.project_id == project_id:
+            c.layer = "own"
+        elif use_fallback and c.project_id == fb_id:
+            c.layer = "master_corpus"
+        else:
+            c.layer = "general_knowledge"
+
     return kept, noise_dropped
 
 
