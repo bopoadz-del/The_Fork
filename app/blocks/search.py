@@ -85,6 +85,9 @@ class SearchBlock(UniversalBlock):
     }
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
+        from app.core.deployment_profile import is_onprem, onprem_unavailable
+        if is_onprem():
+            return onprem_unavailable("Web search")
         params = params or {}
         query = ""
         if isinstance(input_data, str):

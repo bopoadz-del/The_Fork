@@ -77,6 +77,9 @@ class WebBlock(UniversalBlock):
     }
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
+        from app.core.deployment_profile import is_onprem, onprem_unavailable
+        if is_onprem():
+            return onprem_unavailable("Web fetch")
         params = params or {}
         url = ""
         if isinstance(input_data, str):
