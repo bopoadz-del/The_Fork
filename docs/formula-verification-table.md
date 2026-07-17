@@ -112,12 +112,26 @@ Module: `_reference_tables.py` · Tests: `tests/test_formula_reference_tables.py
 Reference-table results are labelled `kind=reference_table` with a project/vendor
 caveat in the note — they return cited values, not derivations.
 
-## Complete — 37 net-new formulas GATED (registry 37 → 74)
+## Batch 7 — Columns + masonry, WITH slenderness (dual-code)
 
-Still deliberately deferred (need slenderness/eccentricity — won't fake precision):
-`masonry_wall_capacity`, a plain-RC/steel `column_axial_capacity` variant.
+Modules: `_columns.py`, `_masonry.py` · Tests: `tests/test_formula_columns_masonry.py`
 
-## Pending batches: none (library complete)
+| Formula | Code | Inputs | Oracle | Clause | Status | Sign-off |
+|---------|------|--------|--------|--------|--------|----------|
+| column_axial_capacity | ACI | Ag160k, Ast4000, fc30, fy420, lu3000, r115.47 | φPn **2942.2 kN**; λ **25.98** (slender); Pc **24,091 kN** | ACI 318-19 §22.4/§6.6.4 | GATED | |
+| column_axial_capacity | ACI (magnifier) | +Pu2000, Cm1.0 | δns **1.124** | ACI §6.6.4.5.2 | GATED | |
+| column_axial_capacity | EC | same | NRd **4580.9 kN**; λ 25.98 | EN 1992-1-1 §6.1/§5.8 | GATED | |
+| masonry_wall_capacity | TMS | f'm10, An190k, h3000, t190 | R **0.8474** → Pa **402.5 kN** | TMS 402 §8.2/§8.3 | GATED | |
+| masonry_wall_capacity | EC6 | same, γM2.7 | Φm **0.7288** → NRd **512.9 kN** | EN 1996-1-1 Annex G | GATED | |
+
+Slenderness is treated explicitly: TMS via the [1−(h/140r)²] reduction; EC6 via
+the Annex G Φm method (slenderness λc + eccentricity); the RC column reports the
+short capacity + slenderness ratio + Euler Pc + (with an applied load) the ACI
+moment magnifier.
+
+## Complete — 39 net-new formulas GATED (registry 37 → 76)
+
+Nothing deferred — the full drop-catalog gap-fill is built, each behind its oracle.
 - Batch 5 — QC: concrete_cylinders, concrete_shrinkage, concrete_curing_time
 - Batch 6 — Cost/PM/planning: roi_calculator, unit_cost_total, cost_per_sf, productivity_rate, critical_path_float
 - Batch 7 — Safety (OSHA): scaffold_load_capacity, fall_arrest_force, crane_lift_capacity

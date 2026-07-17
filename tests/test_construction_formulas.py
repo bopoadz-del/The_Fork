@@ -188,6 +188,12 @@ _SMOKE_INPUTS = {
     "leed_points_estimate": dict(points=62),
     "bim_clash_tolerance": dict(lod=350),
     "laser_scan_accuracy": dict(range_m=40, accuracy_at_10m_mm=2.0),
+    # Additive discipline library — columns + masonry (with slenderness, dual-code).
+    "column_axial_capacity": dict(gross_area_mm2=160000, steel_area_mm2=4000,
+                                  fc_mpa=30, fy_mpa=420, unsupported_length_mm=3000,
+                                  radius_gyration_mm=115.47, code="aci"),
+    "masonry_wall_capacity": dict(masonry_strength_mpa=10, net_area_mm2=190000,
+                                  height_mm=3000, thickness_mm=190, code="aci"),
 }
 
 
