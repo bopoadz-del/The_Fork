@@ -48,15 +48,13 @@ class ConstructionScheduleMixin:
         schedule_risks = self._analyze_schedule_risks(cpm_results)
         recovery_options = self._generate_recovery_options(delay_analysis, cpm_results) if delay_analysis else []
 
-        # W6 — live learning capture (default OFF via FORK_LEARNING_CAPTURE).
-        # Best-effort; only records activities with BOTH planned + actual duration.
-        try:
-            if delay_analysis:
-                from app.core.learning_capture import capture_schedule_durations
-                capture_schedule_durations({"delay_analysis": delay_analysis},
-                                           (params or {}).get("project_id") or "")
-        except Exception:  # noqa: BLE001
-            pass
+        # W6 note: duration-learning capture is deliberately NOT wired here. The
+        # parse exposes planned/original durations + start-date delays (delay_days),
+        # not a clean per-activity ACTUAL duration — which is what
+        # record_actual_duration needs. capture_schedule_durations() is ready for
+        # a real {planned_duration, actual_duration} signal (e.g. a progress/
+        # as-built capture), but wiring it to today's delay analysis would record
+        # nothing. Defect-learning IS wired live (see qa_qc_inspection).
 
         return {
             "status": "success",

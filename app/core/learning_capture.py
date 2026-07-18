@@ -66,10 +66,16 @@ def capture_qa_defects(result: Dict[str, Any], project_id: str = "") -> int:
 
 
 def capture_schedule_durations(result: Dict[str, Any], project_id: str = "") -> int:
-    """Record planned-vs-actual activity durations from a parse_primavera_schedule
-    result's delay analysis into the duration learner. Only records activities
-    that carry BOTH a planned and an actual duration. Returns the count. Never
-    raises.
+    """Record planned-vs-actual activity durations into the duration learner.
+    Records only activities carrying BOTH a planned and an actual duration.
+    Returns the count. Never raises.
+
+    NOT wired to parse_primavera_schedule yet (see the note in schedule.py):
+    today's schedule parse exposes planned/original durations + start-date delays,
+    not a clean per-activity ACTUAL duration. This function is ready for a real
+    ``{planned_duration, actual_duration}`` signal (a progress/as-built capture);
+    wiring it to the current delay analysis would record nothing. The unit test
+    exercises the function against the correct input shape.
     """
     if not enabled():
         return 0
