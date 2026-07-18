@@ -1,5 +1,6 @@
 ---
 name: document-ingestion
+can_delegate_when_enabled: true  # W7: delegates only when FORK_AGENT_DELEGATION=on
 description: Ingests BOQ / drawings / specs / schedules from any drive or upload and orchestrates the right parsers.
 icon: 📥
 model: deepseek-chat

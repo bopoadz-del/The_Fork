@@ -4697,8 +4697,31 @@ def _parse_agent_file(path: Path) -> Agent:
         temperature=float(config.get("temperature", 0.3)),
         max_tokens=int(config.get("max_tokens", 2048)),
         icon=config.get("icon", ""),
-        can_delegate=str(config.get("can_delegate", "false")).strip().lower() in ("true", "1", "yes"),
+        can_delegate=_resolve_can_delegate(config),
     )
+
+
+def _agent_delegation_enabled() -> bool:
+    """W7 — master switch for lighting up the dormant delegator agents. Default
+    OFF (unset/false): only agents with an explicit ``can_delegate: true`` (today
+    just heavy-reasoning) can delegate, so the live routing surface is unchanged.
+    Flip ``FORK_AGENT_DELEGATION`` on to activate the ``can_delegate_when_enabled``
+    agents' hand-offs. Kept default-off deliberately — enabling delegation expands
+    the mis-route surface and is a per-pilot decision."""
+    return (os.getenv("FORK_AGENT_DELEGATION") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _resolve_can_delegate(config: Dict[str, Any]) -> bool:
+    """Explicit ``can_delegate`` always wins; otherwise a dormant agent that
+    declares ``can_delegate_when_enabled`` delegates ONLY when the master flag is
+    on (W7). Default-off: unchanged behaviour."""
+    def _truthy(v) -> bool:
+        return str(v).strip().lower() in ("true", "1", "yes", "on")
+    if _truthy(config.get("can_delegate", "false")):
+        return True
+    if _truthy(config.get("can_delegate_when_enabled", "false")):
+        return _agent_delegation_enabled()
+    return False
 
 
 def _chunks(text: str, n: int) -> List[str]:

@@ -1,5 +1,6 @@
 ---
 name: document-analyst
+can_delegate_when_enabled: true  # W7: delegates only when FORK_AGENT_DELEGATION=on
 description: Generic document analyst — parses any uploaded file (PDF, Word, Excel, image) and answers questions about it.
 icon: 📄
 model: deepseek-chat
