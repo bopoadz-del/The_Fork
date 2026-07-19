@@ -56,13 +56,17 @@ services:
       # generate_wbs intents); remove to revert to the tool-agent path.
       - key: ORCHESTRATOR_PREDEFINED
         value: "1"
-      # Intent routing runs on every chat turn. The chat model is
-      # OLLAMA_MODEL=glm-5.2:cloud (Ollama Cloud); intent uses the same model
-      # here — the intent request is tiny (classifier prompt + the user message,
-      # not the project context) so it's cheap even on the heavy model. Swap to
-      # a lighter Ollama Cloud model if intent latency/cost ever matters.
+      # Intent routing runs on every chat turn. The chat/answering model is
+      # OLLAMA_MODEL=glm-5.2:cloud (Ollama Cloud); intent classification is
+      # now pinned to the light gpt-oss:20b-cloud (20B MoE, ~3.6B active,
+      # built for low-latency/agentic routing). The classifier request is
+      # tiny (classifier prompt + the user message, not the project context),
+      # so running it on the heavy model only added per-turn latency.
+      # dynamic_reasoning.py falls back to the provider default when unset.
+      # NOTE: render.yaml env does NOT auto-sync — set the same value in the
+      # Render dashboard (or Apply the blueprint) for prod to pick it up.
       - key: ORCHESTRATOR_INTENT_MODEL
-        value: glm-5.2:cloud
+        value: gpt-oss:20b-cloud
       # Cap document uploads so one large BIM file can't OOM the box.
       - key: MAX_DOC_UPLOAD_SIZE
         value: "52428800" # 50 MB
