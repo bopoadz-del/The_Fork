@@ -9,9 +9,20 @@ WBS generation, and cost analysis.
 
 The deployed instance runs on Render (FastAPI web service + Postgres
 16 with pgvector). Chat routes directly to Ollama Cloud
-(`https://ollama.com`, model `gpt-oss:120b-cloud`). ~142k indexed
+(`https://ollama.com`, model `glm-5.2:cloud`). ~142k indexed
 chunks across two corpus projects
 (`training_material` + `projects_folder`).
+
+---
+
+> ### Part of the CEREBRUM ecosystem — industrialized AI delivery
+>
+> **The Store — [Cerebrum-Blocks](https://github.com/bopoadz-del/Cerebrum-Blocks):** 94+ certified AI blocks, 17 industry kits, one universal API. Build a capability once; every sector inherits it.  
+> **The Factory — [CerebrumDev.ai](https://github.com/bopoadz-del/CerebrumDev.ai):** the client-facing interface that assembles blocks into governed, deployable vertical platforms — evaluation gates in CI, release certification, honest closure reporting.  
+> **The Products — [The Fork](https://github.com/bopoadz-del/The_Fork)** (construction AI — enterprise client pilot) **· [RetailOps](https://github.com/bopoadz-del/TEKsystems_GlobalRetailMNC)** (retail operations — assembled, CI-gated and deployed in under three days).  
+> **The Edge:** sovereign deployment proven — zero-egress on-premise profile, executed air-gap acceptance test, signed sovereignty report.
+>
+> **You are here: A PRODUCT** — the flagship construction vertical, in enterprise client pilot. CerebrumDev's platform generator pins this repo as its reference baseline for new verticals.
 
 ---
 
@@ -58,8 +69,8 @@ schedules, reports) and gives the operator a chat surface that:
       ▼                         ▼
 ┌──────────────┐         ┌──────────────────┐
 │  Postgres 16 │         │  Ollama Cloud    │
-│  + pgvector  │         │  gpt-oss:        │
-│  on Render   │         │  120b-cloud      │
+│  + pgvector  │         │  glm-5.2:cloud   │
+│  on Render   │         │                  │
 └──────────────┘         └──────────────────┘
 ```
 
