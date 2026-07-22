@@ -1,4 +1,4 @@
-# The Fork
+# The First Product that intiated this Syetem - The Fork
 
 A construction-intelligence platform: FastAPI backend + React frontend +
 Postgres with pgvector + hybrid retrieval (BM25 + vector RRF) + an
