@@ -94,7 +94,7 @@ opencv-python==4.13.0.92
     # via ultralytics
 packaging==26.2
     # via matplotlib
-pillow==12.2.0
+pillow==12.3.0
     # via
     #   matplotlib
     #   torchvision

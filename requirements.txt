@@ -224,7 +224,7 @@ pdfplumber==0.11.9
     # via -r requirements.in
 pgvector==0.4.2
     # via -r requirements.in
-pillow==12.2.0
+pillow==12.3.0
     # via
     #   -r requirements.in
     #   pdfplumber
