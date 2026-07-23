@@ -377,6 +377,7 @@ def list_projects(
     user_id: Optional[str] = None,
     *,
     include_admin_approved: bool = False,
+    include_hidden: bool = False,
 ) -> List[Dict[str, Any]]:
     """List projects.
 
@@ -405,6 +406,11 @@ def list_projects(
             .where(Project.status != "archived")
             .order_by(Project.created_at.desc())
         )
+        # Layered RAG (Stage 5): hidden rows (RAG corpora / GK / eval) stay
+        # retrievable but drop out of the sidebar. include_hidden=True is for
+        # internal enumeration / admin tooling only.
+        if not include_hidden:
+            stmt = stmt.where(Project.hidden_from_sidebar.is_(False))
         if user_id is not None:
             if include_admin_approved:
                 stmt = stmt.where(
@@ -534,6 +540,21 @@ def archive_project(project_id: str) -> bool:
             if not project:
                 return False
             project.status = "archived"
+            session.commit()
+            return True
+
+
+def set_hidden_from_sidebar(project_id: str, hidden: bool = True) -> bool:
+    """Hide (or unhide) a project from the sidebar WITHOUT archiving it — the
+    row and its RAG chunks are untouched and stay retrievable. Returns False if
+    the project doesn't exist. Reversible: pass hidden=False to restore."""
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            project.hidden_from_sidebar = bool(hidden)
             session.commit()
             return True
 
