@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import Chunk, get_store
+from app.core.rag import layers
 
 import os
 import re
@@ -734,4 +735,13 @@ def index_chunks(
     embedder = get_embedder()
     embeddings = embedder.encode(chunks)
     store = get_store(dim=embedder.dim)
-    return store.upsert_chunks(project_id, doc_id, chunks, embeddings)
+    # Layered RAG (flag-gated): tag the doc's chunks with their knowledge layer
+    # (L1/L2A/L2B/L3) and authority so retrieval can rank by precedence. Off by
+    # default -> (None, None), i.e. today's behaviour byte-for-byte.
+    knowledge_layer = authority = None
+    if layers.layered_enabled():
+        knowledge_layer, authority = layers.classify(
+            project_id, _doc_name_for_id(doc_id))
+    return store.upsert_chunks(
+        project_id, doc_id, chunks, embeddings,
+        knowledge_layer=knowledge_layer, authority=authority)
