@@ -731,8 +731,14 @@ async def add_document(
             400, f"Invalid role '{role}'. Allowed: {sorted(store.VALID_ROLES)}"
         )
 
+    # Layered RAG (Stage 4): stamp provenance so indexing routes this file to
+    # the uploader's user_session layer, not the authoritative Main corpus. Only
+    # this interactive upload endpoint sets it; seeds/Drive imports do not, so
+    # they keep classifying as shared_domain / project_record. Inert until
+    # RAG_LAYERED is on (classify reads it only then).
     doc = store.add_document(
-        project_id, original_name, stored_as, filepath, size, role=role
+        project_id, original_name, stored_as, filepath, size, role=role,
+        metadata={"provenance": "user_upload", "uploader_id": auth["user_id"]},
     )
     audit.record("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])

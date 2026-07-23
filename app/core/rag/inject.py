@@ -178,7 +178,8 @@ def rag_inject(
             "chunks": [
                 {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
                  "chunk_id": c.chunk_id, "project_id": c.project_id,
-                 "score": c.score, "layer": getattr(c, "layer", "own")}
+                 "score": c.score, "layer": getattr(c, "layer", "own"),
+                 "knowledge_layer": getattr(c, "knowledge_layer", None)}
                 for c in chunks
             ],
         })
@@ -201,7 +202,8 @@ def rag_inject(
         "chunks": [
             {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
              "chunk_id": c.chunk_id, "project_id": c.project_id,
-             "score": c.score, "layer": getattr(c, "layer", "own")}
+             "score": c.score, "layer": getattr(c, "layer", "own"),
+             "knowledge_layer": getattr(c, "knowledge_layer", None)}
             for c in kept
         ],
     })

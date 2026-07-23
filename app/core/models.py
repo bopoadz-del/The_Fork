@@ -147,6 +147,7 @@ def make_rag_chunk_class(
             ),
             Index(f"idx_{table_name}_project", "project_id"),
             Index(f"idx_{table_name}_doc", "project_id", "doc_id"),
+            Index(f"idx_{table_name}_klayer", "knowledge_layer"),
         ),
         "__repr__": _repr,
         "chunk_id": mapped_column(String, primary_key=True),
@@ -156,6 +157,11 @@ def make_rag_chunk_class(
         "text": mapped_column(Text, nullable=False),
         "embedding": mapped_column(vector_type, nullable=False),
         "created_at": mapped_column(String, nullable=False),
+        # Layered RAG (docs/rag-deployment-plan.md) — persisted L1/L2A/L2B/L3
+        # layer; distinct from the Chunk dataclass STEP 0 isolation tag.
+        # Nullable so pre-migration rows and RAG_LAYERED=off read as unlayered.
+        "knowledge_layer": mapped_column(String, nullable=True),
+        "authority": mapped_column(String, nullable=True),
         # Embedding identity — stamped on every row and verified at startup.
         "embedding_model": mapped_column(String, nullable=False, default=model_name),
         "embedding_dim": mapped_column(Integer, nullable=False, default=dim),
@@ -230,6 +236,13 @@ class Project(Base):
     origin: Mapped[str] = mapped_column(
         String(32), nullable=False, default="user_create",
         server_default=sa_text("'user_create'"),
+    )
+    # Layered RAG (Stage 5): hide a row from the sidebar WITHOUT archiving it, so
+    # a RAG corpus / general-knowledge / eval project stays fully RETRIEVABLE
+    # while disappearing from the user's project list. Distinct from status=
+    # 'archived' (which also removes the project from retrieval). Defaults false.
+    hidden_from_sidebar: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_text("FALSE"),
     )
 
 
@@ -427,15 +440,26 @@ class RagChunk(Base):
         ),
         Index("idx_chunks_project", "project_id"),
         Index("idx_chunks_doc", "project_id", "doc_id"),
+        Index("idx_chunks_knowledge_layer", "knowledge_layer"),
     )
 
     chunk_id: Mapped[str] = mapped_column(String, primary_key=True)
-    project_id: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable: the legacy chunks FK is ON DELETE SET NULL (Alembic 0012), so a
+    # chunk survives its workspace's deletion as an orphan rather than being
+    # cascade-deleted. Knowledge is decoupled from the project row.
+    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
     doc_id: Mapped[str] = mapped_column(String, nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[np.ndarray] = mapped_column(EmbeddingVector(), nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    # Layered RAG (docs/rag-deployment-plan.md). ``knowledge_layer`` is the
+    # persisted L1/L2A/L2B/L3 layer of the chunk; distinct from the per-query
+    # STEP 0 isolation tag on the Chunk dataclass (own/master_corpus/gk), which
+    # the retriever recomputes every search. Nullable so pre-migration rows and
+    # the RAG_LAYERED=off path read as unlayered. Values: app/core/rag/layers.py.
+    knowledge_layer: Mapped[str | None] = mapped_column(String, nullable=True)
+    authority: Mapped[str | None] = mapped_column(String, nullable=True)
     # NOTE: the hybrid BM25 leg uses a ``text_search`` tsvector column on
     # PostgreSQL — added by Alembic migration 0003 as GENERATED ALWAYS
     # AS STORED, with a GIN index. It is intentionally NOT declared on

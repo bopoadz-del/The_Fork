@@ -1486,6 +1486,13 @@ def _build_sources_from_audit(
         score = chunk_meta.get("score") or 0.0
         conf = "High" if score >= 0.75 else "Medium" if score >= 0.5 else "Low"
         layer = chunk_meta.get("layer") or "own"
+        # Layered RAG (Stage 4): a user upload is 'own'-tagged for isolation but
+        # should read as "Your upload" so the user sees it came from their own
+        # layer, not the authoritative corpus. knowledge_layer is None unless
+        # RAG_LAYERED is on, so this label never appears in today's behaviour.
+        label = _LAYER_LABELS.get(layer, "Knowledge base")
+        if chunk_meta.get("knowledge_layer") == "user_session":
+            label = "Your upload"
         return {
             "doc_id": chunk_meta["doc_id"],
             "doc_name": _clean_path_label(doc_name),
@@ -1496,7 +1503,7 @@ def _build_sources_from_audit(
             "score": float(score),
             "confidence": conf,
             "layer": layer,
-            "layer_label": _LAYER_LABELS.get(layer, "Knowledge base"),
+            "layer_label": label,
         }
 
     # 1) Try to extract citations from the agent's text first.

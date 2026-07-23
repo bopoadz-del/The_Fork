@@ -191,8 +191,11 @@ CREATE TABLE rag_budget (
 
 CREATE TABLE chunks (
     chunk_id    TEXT PRIMARY KEY,
-    project_id  TEXT NOT NULL
-                REFERENCES projects (id) ON DELETE CASCADE,
+    -- Decoupled from the workspace row: ON DELETE SET NULL (not CASCADE) so
+    -- deleting a project orphans its chunks rather than destroying the RAG.
+    -- (Prod writes to the namespaced chunks_v2 table, which has no FK at all.)
+    project_id  TEXT
+                REFERENCES projects (id) ON DELETE SET NULL,
     doc_id      TEXT NOT NULL
                 REFERENCES documents (id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
@@ -200,10 +203,13 @@ CREATE TABLE chunks (
     text_search tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
     embedding   vector(256) NOT NULL,
     created_at  TEXT NOT NULL,
+    knowledge_layer TEXT,
+    authority       TEXT,
     UNIQUE (project_id, doc_id, chunk_index)
 );
 
 CREATE INDEX idx_chunks_project ON chunks (project_id);
 CREATE INDEX idx_chunks_doc ON chunks (project_id, doc_id);
+CREATE INDEX idx_chunks_knowledge_layer ON chunks (knowledge_layer);
 CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX chunks_fts_gin ON chunks USING GIN (text_search);

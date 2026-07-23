@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import Chunk, get_store
+from app.core.rag import layers
 
 import os
 import re
@@ -675,6 +676,23 @@ def retrieve_with_filter(
                 if c.project_id not in gk_id_set or _margin_score(s, c) >= bar
             ]
 
+    # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
+    # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
+    # outranks a comparably-relevant low-authority one (an L1 historical note).
+    # Applied AFTER the GK-margin gate so it only changes final ordering, and
+    # flag-gated: when RAG_LAYERED is off, `scored` is untouched — today's
+    # ordering byte-for-byte.
+    if layers.layered_enabled():
+        for i, (score, chunk) in enumerate(scored):
+            bonus = layers.precedence_bonus(
+                getattr(chunk, "knowledge_layer", None),
+                getattr(chunk, "authority", None),
+            )
+            if bonus:
+                new_score = score + bonus
+                chunk.score = round(new_score, 6)
+                scored[i] = (new_score, chunk)
+
     # Sort by fused score descending; active-project chunks naturally come
     # first when scores are equal because they were inserted first.
     scored.sort(key=lambda x: -x[0])
@@ -734,4 +752,30 @@ def index_chunks(
     embedder = get_embedder()
     embeddings = embedder.encode(chunks)
     store = get_store(dim=embedder.dim)
-    return store.upsert_chunks(project_id, doc_id, chunks, embeddings)
+    # Layered RAG (flag-gated): tag the doc's chunks with their knowledge layer
+    # (L1/L2A/L2B/L3) and authority so retrieval can rank by precedence. Off by
+    # default -> (None, None), i.e. today's behaviour byte-for-byte. A doc whose
+    # metadata carries provenance="user_upload" (set by the interactive upload
+    # endpoint) is routed to the user_session layer (Stage 4).
+    knowledge_layer = authority = None
+    if layers.layered_enabled():
+        name, is_user_upload = _doc_name_and_provenance(doc_id)
+        knowledge_layer, authority = layers.classify(
+            project_id, name, is_user_upload=is_user_upload)
+    return store.upsert_chunks(
+        project_id, doc_id, chunks, embeddings,
+        knowledge_layer=knowledge_layer, authority=authority)
+
+
+def _doc_name_and_provenance(doc_id: str) -> tuple:
+    """Return ``(original_name, is_user_upload)`` for a doc. is_user_upload is
+    True when the doc's metadata provenance marks it an interactive upload.
+    Safe: unknown/missing doc -> ('', False)."""
+    try:
+        from app.core import projects as _projects
+        doc = _projects.get_document(doc_id) or {}
+        name = doc.get("original_name") or ""
+        prov = (doc.get("metadata") or {}).get("provenance")
+        return name, prov == "user_upload"
+    except Exception:
+        return "", False
