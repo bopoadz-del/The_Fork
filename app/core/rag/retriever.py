@@ -676,6 +676,23 @@ def retrieve_with_filter(
                 if c.project_id not in gk_id_set or _margin_score(s, c) >= bar
             ]
 
+    # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
+    # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
+    # outranks a comparably-relevant low-authority one (an L1 historical note).
+    # Applied AFTER the GK-margin gate so it only changes final ordering, and
+    # flag-gated: when RAG_LAYERED is off, `scored` is untouched — today's
+    # ordering byte-for-byte.
+    if layers.layered_enabled():
+        for i, (score, chunk) in enumerate(scored):
+            bonus = layers.precedence_bonus(
+                getattr(chunk, "knowledge_layer", None),
+                getattr(chunk, "authority", None),
+            )
+            if bonus:
+                new_score = score + bonus
+                chunk.score = round(new_score, 6)
+                scored[i] = (new_score, chunk)
+
     # Sort by fused score descending; active-project chunks naturally come
     # first when scores are equal because they were inserted first.
     scored.sort(key=lambda x: -x[0])
