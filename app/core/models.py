@@ -237,6 +237,13 @@ class Project(Base):
         String(32), nullable=False, default="user_create",
         server_default=sa_text("'user_create'"),
     )
+    # Layered RAG (Stage 5): hide a row from the sidebar WITHOUT archiving it, so
+    # a RAG corpus / general-knowledge / eval project stays fully RETRIEVABLE
+    # while disappearing from the user's project list. Distinct from status=
+    # 'archived' (which also removes the project from retrieval). Defaults false.
+    hidden_from_sidebar: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_text("FALSE"),
+    )
 
 
 class Document(Base):
