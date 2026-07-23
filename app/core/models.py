@@ -427,6 +427,7 @@ class RagChunk(Base):
         ),
         Index("idx_chunks_project", "project_id"),
         Index("idx_chunks_doc", "project_id", "doc_id"),
+        Index("idx_chunks_layer", "layer"),
     )
 
     chunk_id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -436,6 +437,11 @@ class RagChunk(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[np.ndarray] = mapped_column(EmbeddingVector(), nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    # Layered RAG (docs/rag-deployment-plan.md). Nullable so pre-migration
+    # rows and the flag-off path read as unlayered. Values: see
+    # app/core/rag/layers.py LAYERS / AUTHORITIES.
+    layer: Mapped[str | None] = mapped_column(String, nullable=True)
+    authority: Mapped[str | None] = mapped_column(String, nullable=True)
     # NOTE: the hybrid BM25 leg uses a ``text_search`` tsvector column on
     # PostgreSQL — added by Alembic migration 0003 as GENERATED ALWAYS
     # AS STORED, with a GIN index. It is intentionally NOT declared on
