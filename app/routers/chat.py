@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -282,6 +283,72 @@ def _resolve_predefined_file_params(
     return resolved, None
 
 
+# ── S4: attachment-marker parsing ────────────────────────────────────────────
+# The composer inserts `[attached: NAME]` (photos: `[attached: NAME | observations: …]`)
+# into the message text. Until S4 this marker was never parsed server-side, so
+# "work on the attached file" had nothing to route to (PILOT_READINESS T6b).
+# The parser below turns markers into concrete documents, deterministically
+# (no LLM), reusing the doc→slot honesty rules from DECISIONS 2026-07-13.
+_ATTACHED_MARKER_RE = re.compile(r"\[attached:\s*([^\]|]+?)\s*(?:\|[^\]]*)?\]", re.IGNORECASE)
+
+
+def _parse_attached_markers(message: str) -> List[str]:
+    """Extract attached-file names from a chat message, in order, de-duplicated."""
+    if not message:
+        return []
+    seen: set = set()
+    names: List[str] = []
+    for m in _ATTACHED_MARKER_RE.finditer(message):
+        name = m.group(1).strip()
+        key = name.lower()
+        if name and key not in seen:
+            seen.add(key)
+            names.append(name)
+    return names
+
+
+def _resolve_attached_documents(
+    project_id: Optional[str], names: List[str]
+) -> List[Dict[str, Any]]:
+    """Resolve marker names to project documents. Deterministic; best-effort.
+
+    Exact (case-insensitive) name match wins; duplicates resolve to the most
+    recent upload (a re-upload is what "the attached file" means). Falls back
+    to a unique substring match. Unresolvable or ambiguous names are skipped —
+    the agent still sees the marker text and honest-errors/asks on its own;
+    the router never guesses.
+    """
+    if not project_id or not names:
+        return []
+    try:
+        from app.core import projects as projects_store
+        docs = projects_store.list_documents(project_id) or []
+    except Exception:  # noqa: BLE001 — resolution is best-effort
+        return []
+
+    resolved: List[Dict[str, Any]] = []
+    for name in names:
+        needle = name.strip().lower()
+        exact = [d for d in docs if (d.get("original_name") or "").strip().lower() == needle]
+        if exact:
+            resolved.append(exact[-1])
+            continue
+        partial = [
+            d for d in docs if needle in (d.get("original_name") or "").strip().lower()
+        ]
+        if len(partial) == 1:
+            resolved.append(partial[0])
+    # De-dup by id, preserve order.
+    out: List[Dict[str, Any]] = []
+    seen_ids: set = set()
+    for d in resolved:
+        did = d.get("id")
+        if did and did not in seen_ids:
+            seen_ids.add(did)
+            out.append(d)
+    return out
+
+
 async def _stream_from_pinned_agent(
     agent_name: str,
     prompt: str,
@@ -289,6 +356,7 @@ async def _stream_from_pinned_agent(
     user_id: Optional[str],
     history: List[Any],
     conversation_id: Optional[str],
+    attached_documents: Optional[List[Dict[str, Any]]] = None,
 ):
     """Run a user-PINNED agent (the / picker) directly. Bypasses the predefined
     shortcut and the smart-orchestrator auto-override — the user's explicit
@@ -324,6 +392,7 @@ async def _stream_from_pinned_agent(
         async for evt in agent.chat_stream(
             prompt, history=history, project_id=pin_pid,
             conversation_id=conversation_id, user_id=user_id,
+            attached_documents=attached_documents,
         ):
             yield f"data: {json.dumps(evt, default=str)}\n\n"
             await asyncio.sleep(0)
@@ -694,6 +763,27 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     if conversation_id is not None:
         _enforce_conversation_access(conversation_id, auth)
 
+    # ── S4: resolve the composer's `[attached: X]` marker(s) server-side.
+    # Gated on project OWNERSHIP first — marker resolution lists the project's
+    # documents, so it must never run against a project this caller doesn't
+    # own (the master-corpus alias is public-read but takes no attachments).
+    owned_pid = None
+    if project_id and project_id != projects_store.MASTER_CORPUS_PROJECT_ID:
+        try:
+            if projects_store.get_project(project_id, user_id=user_id) is not None:
+                owned_pid = project_id
+        except Exception:  # noqa: BLE001
+            owned_pid = None
+    attached_docs = _resolve_attached_documents(
+        owned_pid, _parse_attached_markers(prompt)
+    )
+    # Explicit client-sent document_ids win; marker resolution fills the gap
+    # for clients (and history replays) that only carry the inline marker.
+    document_ids: List[str] = list(body.get("document_ids") or [])
+    for _d in attached_docs:
+        if _d.get("id") and _d["id"] not in document_ids:
+            document_ids.append(_d["id"])
+
     async def event_stream():
         rid = get_request_id()
         yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'request_id': rid})}\n\n"
@@ -705,6 +795,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             async for evt in _stream_from_pinned_agent(
                 agent_name=pinned_agent_name, prompt=prompt, project_id=project_id,
                 user_id=user_id, history=history, conversation_id=conversation_id,
+                attached_documents=attached_docs,
             ):
                 yield evt
             return
@@ -713,7 +804,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
         if _predefined_enabled():
             try:
                 intent = await understand_intent(
-                    prompt, has_documents=bool(body.get("document_ids")))
+                    prompt, has_documents=bool(document_ids))
             except Exception:  # noqa: BLE001
                 intent = {"action": None}
             if intent.get("action") in _predefined_workflows():
@@ -726,7 +817,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                 async for evt in _stream_from_predefined(
                     action=intent["action"], user_message=prompt,
                     project_id=project_id, user_id=user_id, session_id=session_id,
-                    document_ids=body.get("document_ids") or [], params=merged,
+                    document_ids=document_ids, params=merged,
                     deliverable=intent.get("deliverable"), emit_start=False,
                 ):
                     yield evt
@@ -755,6 +846,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             async for evt in agent.chat_stream(
                 prompt, history=history, project_id=resolved_pid,
                 conversation_id=conversation_id, user_id=user_id,
+                attached_documents=attached_docs,
             ):
                 yield f"data: {json.dumps(evt, default=str)}\n\n"
                 await asyncio.sleep(0)

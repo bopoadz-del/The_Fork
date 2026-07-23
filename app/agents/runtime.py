@@ -591,6 +591,118 @@ def _resolve_file_path(project_id: str, raw: Any) -> Any:
     return raw
 
 
+# Cap on the text a single fetch_document call feeds back into the model.
+# Large contracts run to hundreds of pages; the tool returns the head and
+# marks truncation honestly so the model knows to narrow with
+# search_project_documents instead of assuming it saw everything.
+_FETCH_DOCUMENT_MAX_CHARS = 24_000
+
+
+def _fetch_document_content(
+    project_id: str, doc_id: str, filename: str
+) -> tuple:
+    """Resolve one project document and return its text content.
+
+    Returns ``(content, doc, error)`` where ``content`` is
+    ``{"text", "truncated", "source"}`` and exactly one of
+    ``content``/``error`` is set. Honesty rules mirror the deterministic
+    doc→slot decision (DECISIONS 2026-07-13): no match → honest error;
+    ambiguous name match → ask-which error, never silently pick one.
+    An exact id or exact (case-insensitive) name match is never ambiguous —
+    for duplicate names the most recently uploaded document wins, since a
+    re-upload is what the user means by "the attached file".
+    """
+    try:
+        from app.core import projects as _projects
+        docs = _projects.list_documents(project_id) or []
+    except Exception as exc:  # noqa: BLE001 — surface as tool error, not crash
+        return None, None, f"document lookup unavailable: {exc}"
+
+    doc = None
+    if doc_id:
+        for d in docs:
+            if (d.get("id") or "") == doc_id:
+                doc = d
+                break
+        if doc is None:
+            return None, None, f"no document with id '{doc_id}' in this project"
+    else:
+        needle = filename.strip().lower()
+        exact = [d for d in docs if (d.get("original_name") or "").strip().lower() == needle]
+        if exact:
+            doc = exact[-1]  # duplicates: latest upload wins
+        else:
+            partial = [
+                d for d in docs
+                if needle in (d.get("original_name") or "").strip().lower()
+            ]
+            if not partial:
+                return None, None, f"no document named '{filename}' in this project"
+            if len(partial) > 1:
+                names = ", ".join(sorted((d.get("original_name") or "?") for d in partial))
+                return None, None, (
+                    f"{len(partial)} documents match '{filename}' ({names}) — "
+                    "ask the user which one, or call again with its document_id."
+                )
+            doc = partial[0]
+
+    # Preferred source: the indexed RAG chunks (already extracted/cleaned).
+    text = ""
+    source = "chunks"
+    try:
+        from app.core.rag import retriever as _rag, vector_store as _vs
+        if _rag.available():
+            chunks = _vs.get_store().doc_chunk_texts(project_id, [doc["id"]])
+            text = "\n\n".join(chunks.get(doc["id"], []) or [])
+    except Exception:  # noqa: BLE001 — fall through to raw extraction
+        text = ""
+    if not text.strip():
+        source = "extracted"
+        try:
+            from app.core.doc_index import extract_document_text
+            text = extract_document_text(
+                doc.get("file_path") or "", doc.get("original_name") or ""
+            ) or ""
+        except Exception as exc:  # noqa: BLE001
+            return None, doc, f"could not read document content: {exc}"
+    if not text.strip():
+        return None, doc, (
+            "document has no extractable text (it may be a scanned/raster file "
+            "that is not yet OCR-indexed)"
+        )
+
+    truncated = len(text) > _FETCH_DOCUMENT_MAX_CHARS
+    if truncated:
+        text = text[:_FETCH_DOCUMENT_MAX_CHARS]
+    return {"text": text, "truncated": truncated, "source": source}, doc, None
+
+
+def _build_attached_documents_note(attached: List[Dict[str, Any]]) -> str:
+    """System note pinning this turn's attached document(s) for the model.
+
+    ``attached`` items carry ``id`` / ``original_name`` (and optionally
+    ``file_path`` / ``doc_type``) as resolved by the chat router from the
+    composer's ``[attached: X]`` marker.
+    """
+    entries = []
+    for d in attached or []:
+        name = (d.get("original_name") or d.get("filename") or "").strip()
+        did = (d.get("id") or d.get("document_id") or "").strip()
+        if not name and not did:
+            continue
+        entries.append(f"- {name or '(unnamed)'} (document_id: {did or 'unknown'})")
+    if not entries:
+        return ""
+    return (
+        "ATTACHED DOCUMENT(S) THIS TURN:\n" + "\n".join(entries) + "\n"
+        "When the user says 'the attached file' / 'this document' (or similar), "
+        "they mean the document(s) above. Read it with the fetch_document tool "
+        "(pass the document_id), or pass its filename to a file-consuming block. "
+        "Do NOT ask which file they mean, and do NOT answer about it from memory "
+        "without reading it."
+    )
+
+
 def _resolve_block_file_input(project_id: str, payload: Any) -> Any:
     """Apply :func:`_resolve_file_path` to any ``file_path`` / bare-string
     inputs in a block's ``input`` or ``params`` payload.
@@ -2288,6 +2400,34 @@ class Agent:
                 },
             })
 
+        # ── synthetic tool: fetch_document (project-scoped) ──────────────────
+        # Complements search_project_documents: fetches ONE specific document's
+        # content by document_id or filename. This is what makes "work on the
+        # attached file" actionable — the attachment note gives the agent a
+        # concrete document_id, and this tool reads that document directly
+        # instead of hoping a semantic query happens to surface it.
+        if project_id:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "fetch_document",
+                    "description": (
+                        "Fetch the content of ONE specific project document by "
+                        "document_id or filename. Use this when the user refers to a "
+                        "specific or attached file. For open-ended questions across "
+                        "the corpus use search_project_documents instead."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "document_id": {"type": "string", "description": "The document id (preferred when known, e.g. from an attachment note or a prior search result)."},
+                            "filename": {"type": "string", "description": "The document's original filename (used when the id is not known)."},
+                        },
+                        "required": [],
+                    },
+                },
+            })
+
         # ── synthetic tool: generate_wbs (when construction is allowed) ──────
         # Exposed as a top-level tool with an explicit param schema so the
         # agent never has to guess the params shape. The generic `construction`
@@ -2736,6 +2876,7 @@ class Agent:
         project_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
         rag_debug: bool = False,
+        attached_documents: Optional[List[Dict[str, Any]]] = None,
         _depth: int = 0,
         _call_stack: Optional[List[str]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
@@ -2792,6 +2933,7 @@ class Agent:
                         api_key=api_key,
                         user_id=user_id,
                         project_id=project_id,
+                        attached_documents=attached_documents,
                         conversation_id=conversation_id,
                         rag_debug=rag_debug,
                         _depth=_depth,
@@ -2907,6 +3049,7 @@ class Agent:
         project_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
         rag_debug: bool = False,
+        attached_documents: Optional[List[Dict[str, Any]]] = None,
         _depth: int = 0,
         _call_stack: Optional[List[str]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
@@ -2965,6 +3108,15 @@ class Agent:
         effective_history = _scrub_history(effective_history)
 
         messages = self._build_messages(user_message, effective_history, project_id=project_id)
+        # Attachment grounding (S4). The chat router resolves the composer's
+        # `[attached: X]` marker to concrete documents and passes them here.
+        # A system note pins the reference so "the attached file" is never a
+        # guessing game: the model gets the exact document_id to feed into
+        # fetch_document or a file-consuming block.
+        if attached_documents:
+            _att_note = _build_attached_documents_note(attached_documents)
+            if _att_note:
+                messages.append({"role": "system", "content": _att_note})
         # Pre-iter-0 RAG injection. Runs for any project-scoped turn so that
         # routing to heavy-reasoning (or another agent) does not strip project
         # grounding. Adds a system message AFTER the prompt + project context
@@ -4133,6 +4285,46 @@ class Agent:
                 "name": "search_project_documents",
                 "ok": True,
                 "result": {"results": results},
+            }
+
+        # ── synthetic tool: fetch_document ───────────────────────────────────
+        if name == "fetch_document":
+            if not project_id:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "no project in scope",
+                        "hint": "This tool requires a project-scoped chat.",
+                    },
+                }
+            doc_id = (args.get("document_id") or "").strip()
+            filename = (args.get("filename") or "").strip()
+            if not doc_id and not filename:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "provide document_id or filename",
+                        "hint": "Pass the id from the attachment note or a search result, or the file's name.",
+                    },
+                }
+            content, doc, err = _fetch_document_content(project_id, doc_id, filename)
+            if err:
+                return {"name": name, "ok": False, "result": {"status": "error", "error": err}}
+            return {
+                "name": "fetch_document",
+                "ok": True,
+                "result": {
+                    "document_id": doc.get("id"),
+                    "filename": doc.get("original_name"),
+                    "doc_type": doc.get("doc_type"),
+                    "content": content["text"],
+                    "truncated": content["truncated"],
+                    "source": content["source"],
+                },
             }
 
         # ── synthetic tool: generate_wbs (direct construction shortcut) ──────

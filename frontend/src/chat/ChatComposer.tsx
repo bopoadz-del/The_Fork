@@ -38,7 +38,7 @@ interface Props {
   disabled: boolean
   disabledReason?: string
   projectId: string
-  onAttached?: (docName: string) => void
+  onAttached?: (docName: string, docId?: string) => void
   onClear?: () => void
   hasHistory?: boolean
   /** Open the Google Drive picker (parent renders DrivePanel as a modal). */
@@ -185,6 +185,7 @@ export default function ChatComposer({
       }
       const body = await res.json()
       const docName = body?.document?.original_name || body?.filename || file.name
+      const docId: string | undefined = body?.document?.id || undefined
       // Safety Observation AI v2 returns tiered OBSERVATIONS, never
       // "violations". Use observations[] verbatim so the LLM also reads
       // them as observations rather than as a verdict.
@@ -193,7 +194,7 @@ export default function ChatComposer({
         ? `Attached: ${docName} -- ${observations.join('; ')}`
         : `Attached: ${docName}`
       setAttachStatus(statusMsg)
-      onAttached?.(docName)
+      onAttached?.(docName, docId)
       const inlineTag = observations.length
         ? `[attached: ${docName} | observations: ${observations.join('; ')}] `
         : `[attached: ${docName}] `
