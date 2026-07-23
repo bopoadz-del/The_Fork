@@ -11,6 +11,10 @@ judges each turn on three mechanical oracles:
               zero tool calls on a synthetic-agent-tool feature is TOOL_SKIP
               (routing FAIL subtype).
   execution:  no error events, no HTTP failure, answer_chars >= min_chars.
+              A clean turn whose answer lands below 30% of min_chars is
+              additionally tagged NO_OUTPUT (execution_subtype) — it produced
+              ~nothing and should be triaged as fixture/wiring (class 5),
+              not read as a quality FAIL.
   structure:  named regex/heuristic checks over the answer text. A check that
               cannot be evaluated mechanically returns SKIP, never PASS.
 
@@ -584,6 +588,34 @@ def judge_execution(feature: dict, res: dict) -> tuple:
     return ("PASS" if not reasons else "FAIL"), reasons
 
 
+# A short answer and a NEAR-EMPTY answer are different failures. The 2026-07
+# results audit (docs/PILOT_FOLLOWUP.md on the retrieval-fixes branch) showed
+# most `answer_chars < min_chars` FAILs were 60-250-char husks — a feature that
+# produced essentially nothing (unrouted, fixture-absent, or a silently
+# swallowed block error), not a correct-but-terse answer. Conflating the two
+# made the headline pass-rate untriageable. Threshold per that audit: below
+# 30% of min_chars with no error event = NO_OUTPUT.
+_NO_OUTPUT_FRACTION = 0.3
+
+
+def execution_subtype(feature: dict, res: dict) -> "str | None":
+    """``NO_OUTPUT`` when the turn 'succeeded' but produced almost nothing.
+
+    Only claims NO_OUTPUT when there is no explicit error signal — an HTTP
+    failure or error event already names the real cause and must stay the
+    headline reason.
+    """
+    if res.get("http_error") or (res.get("errors") or []):
+        return None
+    min_chars = int(feature.get("min_chars") or 0)
+    if min_chars <= 0:
+        return None
+    answer_len = len(res.get("answer") or "")
+    if answer_len < max(1, int(min_chars * _NO_OUTPUT_FRACTION)):
+        return "NO_OUTPUT"
+    return None
+
+
 def judge_structure(feature: dict, answer: str) -> dict:
     return {name: STRUCTURE_CHECKS[name](answer) for name in feature["structure"]}
 
@@ -604,13 +636,17 @@ def run_verdict(feature: dict, routing: str, execution: str,
 
 
 def triage_class(record: dict) -> str:
-    """1 routing miss / 2 block crash / 3 structural gap / 4 fixture gap."""
+    """1 routing miss / 2 block crash / 3 structural gap / 4 fixture gap /
+    5 no output (ran 'clean' but produced ~nothing — likely fixture-absent or
+    a silently swallowed block error; triage as wiring, not answer quality)."""
     v = record["verdict"]
     if v == "BLOCKED":
         return "4"
     if v == "FAIL":
         if record["routing"] == "FAIL":
             return "1"
+        if record.get("execution_subtype") == "NO_OUTPUT":
+            return "5"
         return "2"
     if v == "PARTIAL":
         return "3"
@@ -636,6 +672,7 @@ def write_evidence(record: dict, res: dict) -> Path:
         f"- routing oracle: {record['routing']}"
         + (f" ({record['routing_subtype']})" if record.get("routing_subtype") else ""),
         f"- execution oracle: {record['execution']}"
+        + (f" ({record['execution_subtype']})" if record.get("execution_subtype") else "")
         + (f" — {'; '.join(record['execution_reasons'])}" if record["execution_reasons"] else ""),
         f"- structure: {json.dumps(record['structure'])}",
         f"- first_token_s: {res.get('first_token_s')}  total_s: {res.get('total_s')}",
@@ -684,6 +721,7 @@ def generate_report() -> None:
         by_action.setdefault(rec["action"], []).append(rec)
 
     counts = {"PASS": 0, "PARTIAL": 0, "FAIL": 0, "BLOCKED": 0}
+    no_output_features = 0
     table = []
     for action in sorted(by_action, key=lambda a: min(r["ts"] for r in by_action[a])):
         recs = sorted(by_action[action],
@@ -692,6 +730,8 @@ def generate_report() -> None:
         counts[verdict] += 1
         worst = max((r for r in recs if r["verdict"] == verdict),
                     key=lambda r: _SEVERITY[r["verdict"]])
+        if verdict == "FAIL" and triage_class(worst) == "5":
+            no_output_features += 1
         latencies = [r["total_s"] for r in recs if r.get("total_s")]
         latency = f"{max(latencies):.0f}s" if latencies else "-"
         routed = ", ".join(sorted({str(r.get("route_action")) for r in recs}))
@@ -710,10 +750,13 @@ def generate_report() -> None:
         f"from {RESULTS_JSONL.name} ({len(rows)} runs, {len(by_action)} features).",
         "",
         f"PASS {counts['PASS']} | PARTIAL {counts['PARTIAL']} | "
-        f"FAIL {counts['FAIL']} | BLOCKED {counts['BLOCKED']}",
+        f"FAIL {counts['FAIL']}"
+        + (f" (of which NO_OUTPUT {no_output_features})" if no_output_features else "")
+        + f" | BLOCKED {counts['BLOCKED']}",
         "",
         "Triage classes: 1 = routing miss, 2 = block crash / HTTP failure, "
-        "3 = structural gap, 4 = fixture gap.",
+        "3 = structural gap, 4 = fixture gap, 5 = no output (ran clean but "
+        "produced ~nothing — triage as fixture/wiring, not answer quality).",
         "",
         "| action | class | prompt(s) | routed action | verdict | latency | evidence | triage |",
         "|---|---|---|---|---|---|---|---|",
@@ -780,6 +823,7 @@ def run_sweep(args, manifest: dict) -> int:
 
             routing, subtype = judge_routing(feat, prompt, res)
             execution, exec_reasons = judge_execution(feat, res)
+            exec_subtype = execution_subtype(feat, res) if execution == "FAIL" else None
             structure = judge_structure(feat, res.get("answer") or "")
             verdict = run_verdict(feat, routing, execution, exec_reasons,
                                   structure, res)
@@ -800,6 +844,7 @@ def run_sweep(args, manifest: dict) -> int:
                 "tool_results": res.get("tool_results"),
                 "routing": routing, "routing_subtype": subtype,
                 "execution": execution, "execution_reasons": exec_reasons,
+                "execution_subtype": exec_subtype,
                 "structure": structure, "verdict": verdict,
                 "answer_chars": len(res.get("answer") or ""),
                 "first_token_s": res.get("first_token_s"),
@@ -944,6 +989,13 @@ def main() -> int:
     except ManifestError as exc:
         sys.exit(str(exc))
 
+    # Dry-run validates the manifest/plan with NO network calls — so it must
+    # not demand credentials either (fixture-project resolution is a live
+    # lookup and is skipped; unresolved fixtures show under their canonical
+    # names). Same contract as golden_set_gate --dry-run.
+    if args.dry_run:
+        return dry_run(args, manifest)
+
     # Resolve canonical fixture names to live project ids before any planning.
     headers = _auth_header(args.base)
     _resolve_fixture_projects(manifest, args.base, headers)
@@ -978,8 +1030,6 @@ def main() -> int:
             print("[pre-sweep] run with --auto-seed to create self-contained fixtures, "
                   "or set FIXTURES_DIR and run scripts/seed_fixtures.py for dir-based fixtures.")
 
-    if args.dry_run:
-        return dry_run(args, manifest)
     return run_sweep(args, manifest)
 
 
