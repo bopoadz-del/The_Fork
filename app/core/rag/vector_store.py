@@ -112,6 +112,17 @@ class Chunk:
     # runtime reads it to disclose a Master-Corpus fallback in the answer +
     # sources panel. compare=False so it never affects Chunk equality in tests.
     layer: str = field(default="own", compare=False)
+    # Layered RAG (docs/rag-deployment-plan.md). ``knowledge_layer`` is the
+    # PERSISTED L1/L2A/L2B/L3 layer (see app.core.rag.layers.LAYERS), hydrated
+    # by ``search`` from the stored column. It is deliberately a SEPARATE field
+    # from ``layer`` above: ``layer`` is the per-query STEP 0 isolation tag that
+    # the retriever recomputes on every search, so it cannot also carry the
+    # persisted layer. ``authority`` is the persisted authority label (one of
+    # app.core.rag.layers.AUTHORITIES). Both drive the authority-precedence
+    # re-rank when RAG_LAYERED is on, and both are None for unlayered rows.
+    # compare=False so neither affects Chunk equality in tests.
+    knowledge_layer: Optional[str] = field(default=None, compare=False)
+    authority: Optional[str] = field(default=None, compare=False)
     # ── photo_chunks fields (kind="photo") ─────────────────────────────
     # text chunks keep kind="text" and the photo fields default to None.
     kind: str = "text"
@@ -126,8 +137,11 @@ class Chunk:
             d.pop("score")
         # rrf_score is debug-only; never expose it via the wire
         d.pop("rrf_score", None)
-        # layer is an internal isolation signal; keep it off the API payload
+        # layer/knowledge_layer/authority are internal ranking+isolation
+        # signals; keep them off the API payload
         d.pop("layer", None)
+        d.pop("knowledge_layer", None)
+        d.pop("authority", None)
         # Drop photo fields for plain text chunks to keep payloads small
         if d.get("kind") == "text":
             d.pop("sha256", None)
@@ -497,6 +511,9 @@ class VectorStore:
         doc_id: str,
         chunks: List[str],
         embeddings: np.ndarray,
+        *,
+        knowledge_layer: Optional[str] = None,
+        authority: Optional[str] = None,
     ) -> int:
         """Replace all existing chunks for ``(project_id, doc_id)`` with
         the supplied set. Idempotent — calling twice with the same input
@@ -553,6 +570,8 @@ class VectorStore:
                             embedding_dim=self.dim,
                             embedding_normalized=True,
                             created_at=now,
+                            knowledge_layer=knowledge_layer,
+                            authority=authority,
                         )
                     )
                 session.commit()
@@ -734,7 +753,8 @@ class VectorStore:
 
         like_clauses = " OR ".join(ident_clauses)
         sql = text(
-            "SELECT chunk_id, project_id, doc_id, chunk_index, text "
+            "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
+            "knowledge_layer, authority "
             f"FROM {self._table_name} "
             "WHERE project_id = :project_id "
             f"AND ({like_clauses}) "
@@ -773,6 +793,8 @@ class VectorStore:
                     chunk_index=int(r.chunk_index),
                     text=r.text,
                     score=round(score, 4),
+                    knowledge_layer=r.knowledge_layer,
+                    authority=r.authority,
                 )
             )
         # Discard SQL pre-filter false positives: a chunk that passed the
@@ -810,6 +832,8 @@ class VectorStore:
                 self._rag_chunk_cls.doc_id,
                 self._rag_chunk_cls.chunk_index,
                 self._rag_chunk_cls.text,
+                self._rag_chunk_cls.knowledge_layer,
+                self._rag_chunk_cls.authority,
                 score_expr,
             )
             .where(self._rag_chunk_cls.project_id == project_id)
@@ -827,6 +851,8 @@ class VectorStore:
                 chunk_index=int(row.chunk_index),
                 text=row.text,
                 score=float(row.score),
+                knowledge_layer=row.knowledge_layer,
+                authority=row.authority,
             )
             for row in rows
         ]
@@ -856,6 +882,8 @@ class VectorStore:
                     chunk_index=int(r.chunk_index),
                     text=r.text,
                     score=float(sims[int(idx)]),
+                    knowledge_layer=getattr(r, "knowledge_layer", None),
+                    authority=getattr(r, "authority", None),
                 )
             )
         return out
@@ -902,7 +930,7 @@ class VectorStore:
         sql = text(
             f"""
             SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
-                   c.text,
+                   c.text, c.knowledge_layer, c.authority,
                    ts_rank(c.text_search, q) AS rank
             FROM {table} c, plainto_tsquery('english', :q) AS q
             WHERE c.text_search @@ q
@@ -931,6 +959,8 @@ class VectorStore:
                 chunk_index=int(r.chunk_index),
                 text=r.text,
                 score=float(r.rank),
+                knowledge_layer=r.knowledge_layer,
+                authority=r.authority,
             )
             for r in rows
         ]
@@ -948,7 +978,8 @@ class VectorStore:
         sql = text(
             f"""
             SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
-                   c.text, {fts_table}.rank AS bm25_rank
+                   c.text, c.knowledge_layer, c.authority,
+                   {fts_table}.rank AS bm25_rank
             FROM {fts_table}
             JOIN {table} c ON c.rowid = {fts_table}.rowid
             WHERE {fts_table} MATCH :q
@@ -980,6 +1011,8 @@ class VectorStore:
                 chunk_index=int(r.chunk_index),
                 text=r.text,
                 score=float(r.bm25_rank),
+                knowledge_layer=r.knowledge_layer,
+                authority=r.authority,
             )
             for r in rows
         ]
