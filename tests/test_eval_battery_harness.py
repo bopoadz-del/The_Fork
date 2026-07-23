@@ -94,3 +94,58 @@ def test_fmt_counts_ordering_and_table_safety():
     assert out == "PASS 25 · PARTIAL 7 · FAIL 3"
     assert "|" not in out  # lands inside a markdown table cell
     assert _fmt_counts({}) == "no results file"
+
+
+# ── honest-refusal → BLOCKED heuristic ───────────────────────────────────────
+
+def test_blocked_re_matches_honest_refusals():
+    from scripts.feature_matrix_sweep import _BLOCKED_RE
+
+    refusals = [
+        "I don't have that information. The retrieved project context does "
+        "not contain any RFI register, RFI log, or tracking data.",
+        "The retrieved context does not contain specific basement options.",
+        "If you have one, upload it and I'll extract the open items for you.",
+        "To answer this, I would need an RFI register or log document uploaded "
+        "and indexed in the project.",
+        "please upload the priced BOQ first",
+        "No baseline schedule has been uploaded for this project.",
+    ]
+    for text in refusals:
+        assert _BLOCKED_RE.search(text), f"not matched: {text!r}"
+
+
+def test_blocked_re_does_not_match_real_answers():
+    from scripts.feature_matrix_sweep import _BLOCKED_RE
+
+    answers = [
+        "The total BOQ value is SAR 6,938,130 across 13 line items.",
+        "Open VOs: VO-03 (SAR -220,000) and VO-04 (SAR 640,000), both Pending.",
+        "CPI = 0.87 and SPI = 0.91 indicate the project is over budget and behind schedule.",
+    ]
+    for text in answers:
+        assert not _BLOCKED_RE.search(text), f"false positive: {text!r}"
+
+
+def test_manifest_fixture_projects_and_needs_are_declared():
+    """Every data-dependent feature names a canonical FIXTURE project and a
+    needs line — hardcoded live project ids are a defect (they die on every
+    fixture reseed)."""
+    import yaml
+    from scripts.feature_matrix_sweep import DEFAULT_MANIFEST
+
+    m = yaml.safe_load(open(DEFAULT_MANIFEST, encoding="utf-8"))
+    feats = {f["action"]: f for f in m["features"]}
+    for action in (
+        "boq_process", "estimate_costs", "extract_quantities",
+        "procurement_list_generator", "procurement_optimizer",
+        "value_engineering", "spec_analyze", "process_specification_full",
+        "rfi_management", "variation_order_manager", "change_order_impact",
+        "document_metadata", "parse_primavera_schedule", "progress_tracker",
+        "forensic_delay_analysis",
+    ):
+        f = feats[action]
+        assert str(f.get("project", "")).startswith("FIXTURE —"), (
+            f"{action}: project must be a canonical FIXTURE name, got {f.get('project')!r}"
+        )
+        assert f.get("needs"), f"{action}: missing needs declaration"

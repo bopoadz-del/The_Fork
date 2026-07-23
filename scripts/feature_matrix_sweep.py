@@ -548,12 +548,20 @@ def execute_with_retry(client, base, agent, headers, message, project_id,
 # ── oracles ──────────────────────────────────────────────────────────────────
 
 # BLOCKED heuristic: only consulted when the feature declares `needs` and
-# execution already failed — a fixture gap, not a platform bug.
+# execution already failed — a fixture gap, not a platform bug. Includes the
+# platform's honest-refusal phrasings (the fabrication-kill answers: "I don't
+# have that information … upload the register and I'll extract it") so an
+# honest no-data answer on a fixture-dependent feature triages as the fixture
+# gap it is, not as a broken feature.
 _BLOCKED_RE = re.compile(
     r"(no|not|missing|cannot|can't|couldn'?t|unable to)\s+"
     r"(find|found|locate|available|access)"
-    r"|please upload|no (such )?(file|document|drawing|model|programme|"
-    r"schedule|bim|ifc|xer)|not (been )?(uploaded|indexed|provided)",
+    r"|please upload|no (such )?([\w-]+ ){0,2}(file|document|drawing|model|programme|"
+    r"schedule|bim|ifc|xer)|not (been )?(uploaded|indexed|provided)"
+    r"|don'?t have (that|this|the) (information|data)"
+    r"|does not (contain|include)"
+    r"|upload (it|one|the [\w ]{1,30}) and I'?ll"
+    r"|would need [\w ]{0,40}(uploaded|indexed|register|log|document)",
     re.I,
 )
 

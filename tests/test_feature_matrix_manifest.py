@@ -90,11 +90,12 @@ def test_every_prompt_has_expected_route(manifest):
 
 def test_defaults_are_applied_with_per_feature_overrides(manifest):
     by_action = {f["action"]: f for f in manifest["features"]}
-    # boq_process overrides the default project to the seeded BOQ fixture
-    # project (5bd5c2f repointed fixture-bound features at seeded IDs).
-    assert by_action["boq_process"]["project"] == "96bd7cd1"
-    # estimate_costs inherits the default
-    assert by_action["estimate_costs"]["project"] == manifest["defaults"]["project"]
+    # boq_process overrides the default project — to the CANONICAL fixture
+    # name, which the sweep resolves to the live seeded id at run time
+    # (hardcoded ids died on every fixture reseed).
+    assert by_action["boq_process"]["project"] == "FIXTURE — BOQ"
+    # estimate_costs is fixture-bound too (BOQ workbook)
+    assert by_action["estimate_costs"]["project"] == "FIXTURE — BOQ"
     # generate_wbs raises min_chars above the default
     assert by_action["generate_wbs"]["min_chars"] == 1500
     assert by_action["estimate_costs"]["min_chars"] == manifest["defaults"]["min_chars"]

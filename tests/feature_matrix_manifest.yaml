@@ -55,7 +55,7 @@ features:
     feature: BOQ queries
     class: must
     handler: container (boq_processor)
-    project: "96bd7cd1"   # FIXTURE — BOQ
+    project: "FIXTURE — BOQ"
     prompts:
       - text: "process the bill of quantities and give me the total value"
         expect_route: [boq_process]
@@ -65,6 +65,8 @@ features:
     needs: BOQ xlsx in project 5c13510e
 
   - action: estimate_costs
+    project: "FIXTURE — BOQ"
+    needs: BOQ workbook (synthetic_boq.xlsx OK — seed_fixtures --synthetic)
     feature: BOQ generation / cost estimate
     class: must
     handler: container
@@ -76,6 +78,8 @@ features:
     structure: [has_numbers, has_currency_or_units, boq_rows_have_qty_unit]
 
   - action: spec_analyze
+    project: "FIXTURE — Operations Pack"
+    needs: spec section doc (synthetic_spec_section_03_concrete.txt — seed_fixtures --synthetic)
     feature: specs extraction
     class: must
     handler: container (spec_analyzer)
@@ -87,6 +91,8 @@ features:
     structure: [mentions_standard_or_grade]
 
   - action: document_metadata
+    project: "FIXTURE — Operations Pack"
+    needs: any indexed documents in the project (operations pack provides several)
     feature: document metadata queries
     class: must
     handler: container (process_document / document listing)
@@ -125,7 +131,7 @@ features:
     structure: [has_period_buckets]
 
   - action: parse_primavera_schedule
-    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
+    project: "FIXTURE — Programme+Drawings"
     feature: milestones extraction / report
     class: must
     handler: container (primavera_parser)
@@ -149,6 +155,8 @@ features:
     structure: [scurve_cumulative_nondecreasing, has_period_buckets]
 
   - action: procurement_list_generator
+    project: "FIXTURE — BOQ"
+    needs: BOQ workbook (synthetic_boq.xlsx OK — seed_fixtures --synthetic)
     feature: procurement list
     class: must
     handler: container
@@ -184,7 +192,7 @@ features:
     structure: [has_numbers, shows_working_or_rule]
 
   - action: drawing_qto
-    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
+    project: "FIXTURE — Programme+Drawings"
     feature: QTO from drawings
     class: must
     handler: container (drawing_qto block)
@@ -227,6 +235,8 @@ features:
         expect_route: [design_directive]
 
   - action: rfi_management
+    project: "FIXTURE — Operations Pack"
+    needs: RFI register (synthetic_rfi_register.xlsx — seed_fixtures --synthetic)
     class: coverage
     handler: hint-only (PRC-301)
     prompts:
@@ -319,6 +329,8 @@ features:
     structure: [has_numbers, has_currency_or_units]
 
   - action: change_order_impact
+    project: "FIXTURE — Operations Pack"
+    needs: VO log + BOQ (synthetic files — seed_fixtures --synthetic)
     class: coverage
     handler: container
     prompts:
@@ -327,6 +339,8 @@ features:
     structure: [has_numbers]
 
   - action: extract_quantities
+    project: "FIXTURE — BOQ"
+    needs: BOQ workbook (synthetic_boq.xlsx OK — seed_fixtures --synthetic)
     class: coverage
     handler: container
     prompts:
@@ -335,6 +349,8 @@ features:
     structure: [has_numbers]
 
   - action: procurement_optimizer
+    project: "FIXTURE — BOQ"
+    needs: BOQ workbook (synthetic_boq.xlsx OK — seed_fixtures --synthetic)
     class: coverage
     handler: container
     prompts:
@@ -342,6 +358,8 @@ features:
         expect_route: [procurement_optimizer, procurement_list_generator]
 
   - action: process_specification_full
+    project: "FIXTURE — Operations Pack"
+    needs: spec section doc (synthetic_spec_section_03_concrete.txt — seed_fixtures --synthetic)
     class: coverage
     handler: container
     prompts:
@@ -349,6 +367,8 @@ features:
         expect_route: [process_specification_full, spec_analyze]
 
   - action: progress_tracker
+    project: "FIXTURE — Programme+Drawings"
+    needs: baseline programme (project_programme.xer — seed_fixtures --synthetic copies the committed test XER)
     class: coverage
     handler: container
     prompts:
@@ -357,6 +377,8 @@ features:
     min_chars: 300
 
   - action: forensic_delay_analysis
+    project: "FIXTURE — Programme+Drawings"
+    needs: baseline programme (project_programme.xer — seed_fixtures --synthetic copies the committed test XER)
     class: coverage
     handler: container
     prompts:
@@ -364,7 +386,7 @@ features:
         expect_route: [forensic_delay_analysis, claims_builder]
 
   - action: bim_analysis
-    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
+    project: "FIXTURE — Programme+Drawings"
     class: coverage
     handler: container (bim block)
     prompts:
@@ -373,7 +395,7 @@ features:
     needs: UPLOADED sample_office.ifc in project ff905e29
 
   - action: bim_clash_detection
-    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
+    project: "FIXTURE — Programme+Drawings"
     class: coverage
     handler: container
     prompts:
@@ -382,7 +404,7 @@ features:
     needs: UPLOADED sample_office.ifc in project ff905e29
 
   - action: bim_extractor
-    project: "7ce7b9d0"   # FIXTURE — Programme+Drawings
+    project: "FIXTURE — Programme+Drawings"
     class: coverage
     handler: container (bim_extractor block)
     prompts:
@@ -414,6 +436,8 @@ features:
     min_chars: 300
 
   - action: variation_order_manager
+    project: "FIXTURE — Operations Pack"
+    needs: VO log (synthetic_variation_order_log.xlsx — seed_fixtures --synthetic)
     class: coverage
     handler: container
     prompts:
@@ -490,6 +514,8 @@ features:
     structure: [has_sections]
 
   - action: value_engineering
+    project: "FIXTURE — BOQ"
+    needs: BOQ workbook (synthetic_boq.xlsx OK — seed_fixtures --synthetic)
     class: coverage
     handler: container
     prompts:
