@@ -110,3 +110,44 @@ def classify(project_id, doc_name, *, is_user_upload=False):
         layer = "project_record"
     authority = _classify_authority(name) or _LAYER_DEFAULT_AUTHORITY[layer]
     return layer, authority
+
+
+# ── retrieval-time authority precedence (Stage 3) ──────────────────────────
+# How much each layer counts in the precedence bonus. The live project record
+# dominates ("what does this project say"); shared general knowledge is
+# background. Company rules and the user's own session sit between.
+_LAYER_WEIGHT = {
+    "project_record": 1.0,
+    "company_rules": 0.7,
+    "user_session": 0.6,
+    "shared_domain": 0.5,
+}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def layer_weight(layer) -> float:
+    return _LAYER_WEIGHT.get(layer or "", 0.0)
+
+
+def authority_weight(authority) -> float:
+    """1.0 for the strongest authority (contractual), descending to ~1/N for the
+    weakest; 0.0 for unknown/None."""
+    r = authority_rank(authority or "")
+    n = len(AUTHORITIES)
+    return (n - r) / n if r < n else 0.0
+
+
+def precedence_bonus(knowledge_layer, authority) -> float:
+    """Small additive re-rank term so a higher-authority / higher-layer chunk
+    outranks a comparably-relevant low-authority one among the fetched pool.
+    Weights are env-tunable (RAG_AUTHORITY_WEIGHT / RAG_LAYER_WEIGHT) and default
+    small: the term breaks ties and nudges, it does not override cosine."""
+    w_auth = _env_float("RAG_AUTHORITY_WEIGHT", 0.05)
+    w_layer = _env_float("RAG_LAYER_WEIGHT", 0.05)
+    return w_auth * authority_weight(authority) + w_layer * layer_weight(knowledge_layer)
