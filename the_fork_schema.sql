@@ -200,13 +200,13 @@ CREATE TABLE chunks (
     text_search tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
     embedding   vector(256) NOT NULL,
     created_at  TEXT NOT NULL,
-    layer       TEXT,
-    authority   TEXT,
+    knowledge_layer TEXT,
+    authority       TEXT,
     UNIQUE (project_id, doc_id, chunk_index)
 );
 
 CREATE INDEX idx_chunks_project ON chunks (project_id);
 CREATE INDEX idx_chunks_doc ON chunks (project_id, doc_id);
-CREATE INDEX idx_chunks_layer ON chunks (layer);
+CREATE INDEX idx_chunks_knowledge_layer ON chunks (knowledge_layer);
 CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX chunks_fts_gin ON chunks USING GIN (text_search);
