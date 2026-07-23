@@ -14,7 +14,8 @@ class _FakeAgent:
     name = "quantity-surveyor"
 
     async def chat_stream(self, prompt, history=None, project_id=None,
-                          conversation_id=None, user_id=None):
+                          conversation_id=None, user_id=None,
+                          attached_documents=None):
         # Echo the project_id the pin path resolved, so the tenant gate is
         # observable in the test.
         yield {"type": "token", "content": f"QS on {project_id}"}
