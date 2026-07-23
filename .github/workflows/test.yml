@@ -1,0 +1,184 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A new push to the same branch/PR supersedes the old run. Without this,
+# stuck runs stack: 8 zombie "tests" runs were in_progress at once on
+# 2026-07-05, each burning toward GitHub's 6-hour default job timeout.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Hard cap: a healthy run finishes far sooner; anything longer is a hang,
+    # and GitHub's default cap is 6 HOURS of billed minutes per hung job.
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        include:
+          - profile: virgin
+            cerebrum_virgin: "true"
+            cerebrum_domain_kits: ""
+          - profile: production-like
+            cerebrum_virgin: "false"
+            cerebrum_domain_kits: "construction"
+    name: test (${{ matrix.profile }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # diff-cover (per-PR coverage gate below) does a three-dot
+          # diff (origin/<base>...HEAD) which needs the merge base.
+          # The default depth-1 checkout has no ancestry, so diff-cover
+          # dies with "fatal: ... no merge base" before producing any
+          # report (silently, because the step is marked
+          # continue-on-error during initial rollout). fetch-depth: 0
+          # gets full history. Codex P2 fix on PR #31.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system deps for OCR + PDF
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout
+
+      - name: Security scan
+        run: python scripts/security_scan.py
+
+      - name: Run tests
+        # --cov-fail-under is a regression FLOOR (current coverage ~57%);
+        # the global gate fails the job if coverage drops below it or if no
+        # tests collect. The diff-cover step below catches the orthogonal
+        # case: "PR adds 200 lines, tests 5" can stay above 25% global
+        # coverage while ratcheting NEW code toward zero coverage.
+        # --cov-report=xml emits coverage.xml for diff-cover to read.
+        #
+        # --timeout turns a hung test into a FAILURE with a stack dump
+        # instead of a silent 6-hour job. The 2026-07-05 zombie runs all
+        # hung at the same test (first one after test_execute_blocked_
+        # dangerous_code); with this flag the culprit names itself in the
+        # log. 120s is ~40x the slowest healthy test.
+        run: >
+          pytest tests/ -v --tb=short --timeout=120
+          --cov=app --cov-report=term-missing --cov-report=xml
+          --cov-fail-under=25
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data
+          CEREBRUM_VIRGIN: ${{ matrix.cerebrum_virgin }}
+          CEREBRUM_DOMAIN_KITS: ${{ matrix.cerebrum_domain_kits }}
+          # Deterministic 256-dim fake embedder — same as the test-postgres
+          # job and the documented local run. Without it, any test that
+          # touches the embedding path on a fresh runner downloads a real
+          # model from HuggingFace inside the 120s per-test budget
+          # (test_scenario_validation timed out this way on the virgin
+          # profile of run 28755289990).
+          RAG_EMBEDDING_MODEL: fake
+
+      - name: Diff coverage (per-PR gate on lines changed)
+        # Runs only on pull_request events. Compares coverage.xml against
+        # origin/<base>; fails the PR if <50% of newly-changed lines are
+        # covered. Needs the merge-base so diff-cover's three-dot diff
+        # (origin/<base>...HEAD) resolves — fetch-depth: 0 on the checkout
+        # step above provides it.
+        #
+        # Now blocking: the baseline has held green across many PRs, so per
+        # the rollout plan this gate is enforced — a PR whose newly-changed
+        # lines are <50% covered fails, keeping new code from ratcheting
+        # coverage down during the pilot.
+        if: github.event_name == 'pull_request'
+        continue-on-error: false
+        run: |
+          diff-cover coverage.xml \
+            --compare-branch="origin/${{ github.base_ref }}" \
+            --fail-under=50 \
+            --html-report=diff-cover.html \
+            --markdown-report=diff-cover.md
+          echo "::group::diff-cover summary"
+          cat diff-cover.md
+          echo "::endgroup::"
+
+      - name: Upload diff-cover report
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-cover-report
+          path: |
+            diff-cover.html
+            diff-cover.md
+          retention-days: 14
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    # Same hard cap as the matrix job. This job was the 6h0m zombie in every
+    # stuck run on 2026-07-05 (hung inside "Run tests (PostgreSQL)").
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: thefork
+          POSTGRES_PASSWORD: thefork
+          POSTGRES_DB: thefork
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://thefork:thefork@localhost:5432/thefork
+      PYTEST_USE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system deps for OCR + PDF
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout
+
+      - name: Apply Alembic schema
+        run: alembic upgrade head
+
+      - name: Run tests (PostgreSQL)
+        # --timeout: see the matrix job note — a hung test must fail loudly,
+        # not park the job at GitHub's 6-hour cap.
+        run: >
+          pytest tests/ -v --tb=short --timeout=120
+          --cov=app --cov-report=term-missing --cov-fail-under=25
+        env:
+          ENV: testing
+          DATA_DIR: ${{ runner.temp }}/data
+          CEREBRUM_VIRGIN: "true"
+          CEREBRUM_DOMAIN_KITS: ""
+          RAG_EMBEDDING_MODEL: fake
+

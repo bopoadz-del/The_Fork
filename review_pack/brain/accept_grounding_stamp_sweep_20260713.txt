@@ -1,0 +1,8 @@
+Grounding-gate stamp check — zero-FP sweep (2026-07-13)
+Gate applied with result={} (strict: any stamp phrase flags). Real live deliverables from prod dar_al_arkan_master.
+
+commissioning_checklist (3023 chars, contains 'verification' in checklist content): FLAGGED=False
+payment_certificate: FLAGGED=False
+cash_flow_forecast: FLAGGED=False
+
+Synthetic acceptance: unbacked 'Confidence: High' -> FLAGGED; backed (result has confidence/validation) -> not flagged; instructional 'verify the torque' -> not flagged.

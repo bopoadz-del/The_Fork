@@ -1,0 +1,10 @@
+
+[   0.88s] ROUTE       {"requested": "project-assistant", "final": "project-assistant", "action": "as_built_deviation_report", "confidence": 0.4, "reason": "below_routing_gate"}
+
+[   0.89s] START       {"session_id": "ws-dar_al_arkan_master", "mode": "predefined", "request_id": "c0a25237-1cb"}
+[   4.11s] FIRST TOKEN
+
+[   4.75s] END         {"complete": true, "mode": "predefined", "workflow": "as_built_deviation_report", "plan_steps": ["as_built_deviation_report"], "exports": [], "request_id": "c0a25237-1cb"}
+
+------------------------------------------------------------
+turn summary: total=4.75s  first_token=4.11s  events=63  answer_chars=435  model=?

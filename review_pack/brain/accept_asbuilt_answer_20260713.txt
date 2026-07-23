@@ -1,0 +1,18 @@
+
+[   0.78s] ROUTE       {"requested": "project-assistant", "final": "project-assistant", "action": "as_built_deviation_report", "confidence": 0.4, "reason": "below_routing_gate"}
+
+[   0.78s] START       {"session_id": "ws-dar_al_arkan_master", "mode": "predefined", "request_id": "3da1462e-75c"}
+### As-Built Deviation Report Status
+
+The request for the as-built deviation report has encountered an error. The specific issue is that the report requires either:
+
+- An as-built file and a design file, or
+- Measurements and design measurements.
+
+Currently, no comparison inputs have been supplied.
+
+Please provide the necessary files or measurements to proceed with the report. 
+[   3.01s] END         {"complete": true, "mode": "predefined", "workflow": "as_built_deviation_report", "plan_steps": ["as_built_deviation_report"], "exports": [], "request_id": "3da1462e-75c"}
+
+------------------------------------------------------------
+turn summary: total=3.01s  first_token=2.48s  events=56  answer_chars=380  model=?

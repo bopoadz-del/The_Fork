@@ -1,0 +1,121 @@
+# Render Blueprint — version-controlled deploy config for The Shovel / The Fork.
+#
+# Purpose: make the production service reproducible and the env surface
+# reviewable. Secrets are `sync: false` — they are entered once in the Render
+# dashboard and never live in this file or git. Non-secret values below are
+# safe infra config or match the application's code defaults.
+#
+# Live service: srv-d8hdc6ek1jcs739rq5sg (team bopoadz@gmail.com), oregon.
+# Applying this blueprint reconciles that service; review before `Apply`.
+
+services:
+  - type: web
+    name: the-fork
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /health
+    disk:
+      name: the-fork-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      # ── Infra config (safe to commit) ──────────────────────────────────
+      - key: ENV
+        value: production
+      - key: DATA_DIR
+        value: /app/data
+      - key: PYTHONIOENCODING
+        value: utf-8
+
+      # ── Pilot master-corpus alias (match app/core/projects.py defaults) ─
+      # NOTE: these are the intended live values; render.yaml env does NOT
+      # auto-sync to the dashboard, so the live env must be set to match.
+      - key: MASTER_CORPUS_PROJECT_ID
+        value: dar_al_arkan_master
+      - key: MASTER_CORPUS_SOURCE_PROJECT_ID
+        value: drive_archive
+      - key: MASTER_CORPUS_NAME
+        value: Master Corpus
+      # GK = the always-on, DISCLOSED general-knowledge layer only: genuinely
+      # cross-project reference (FIDIC / OSHA / units / rates) in `curated_kb`.
+      # STEP 0 (2026-07-17): client corpora (drive_archive / dg2_infra_pack_1)
+      # were removed from this list — they were silently merging DG2 into every
+      # other project (the ha_long -> DG2 leak). The client/Master corpus now
+      # surfaces ONLY as the labeled empty/thin fallback via
+      # MASTER_CORPUS_SOURCE_PROJECT_ID; the retriever also structurally strips
+      # that id from this list even if a stale env re-adds it. See
+      # docs/step0-retrieval-isolation.md. Set to "" to make GK fallback-only too.
+      - key: RAG_GENERAL_KNOWLEDGE_PROJECTS
+        value: curated_kb
+      # Phase 1 pilot: route the schedule workflow through the orchestrator's
+      # predefined reasoning. Non-breaking (only intercepts high-confidence
+      # generate_wbs intents); remove to revert to the tool-agent path.
+      - key: ORCHESTRATOR_PREDEFINED
+        value: "1"
+      # Intent routing runs on every chat turn. The chat/answering model is
+      # OLLAMA_MODEL=glm-5.2:cloud (Ollama Cloud); intent classification is
+      # now pinned to the light gpt-oss:20b-cloud (20B MoE, ~3.6B active,
+      # built for low-latency/agentic routing). The classifier request is
+      # tiny (classifier prompt + the user message, not the project context),
+      # so running it on the heavy model only added per-turn latency.
+      # dynamic_reasoning.py falls back to the provider default when unset.
+      # NOTE: render.yaml env does NOT auto-sync — set the same value in the
+      # Render dashboard (or Apply the blueprint) for prod to pick it up.
+      - key: ORCHESTRATOR_INTENT_MODEL
+        value: gpt-oss:20b-cloud
+      # Cap document uploads so one large BIM file can't OOM the box.
+      - key: MAX_DOC_UPLOAD_SIZE
+        value: "52428800" # 50 MB
+
+      # ── Required in production (set in dashboard) ──────────────────────
+      - key: SECRET_KEY # JWT signing — app refuses to start in prod without it
+        sync: false
+      - key: DATA_ENCRYPTION_KEY # encrypts uploaded files at rest
+        sync: false
+      - key: CEREBRUM_MASTER_KEY # admin API key
+        sync: false
+
+      # ── LLM providers (set in dashboard) ───────────────────────────────
+      # PRIMARY (pilot): Kimi K2 on Moonshot's native API. Set LLM_PROVIDER=kimi,
+      # KIMI_API_KEY, and KIMI_MODEL (default kimi-k2.6 — a reasoning model, so
+      # the runtime uses tool_choice=auto: forcing a specific tool 400s on a
+      # thinking model). ROLLBACK: flip LLM_PROVIDER=groq with
+      # GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct for an instant
+      # revert to the previous Scout config. LLM_FALLBACK_PROVIDER=ollama stays
+      # as the emergency fallback for either primary.
+      - key: LLM_PROVIDER
+        sync: false
+      - key: KIMI_API_KEY
+        sync: false
+      - key: KIMI_MODEL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+
+      # ── Google Drive integration (set in dashboard) ────────────────────
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+      # ── Bootstrap admin + misc (set in dashboard) ──────────────────────
+      - key: BOOTSTRAP_USER_EMAIL
+        sync: false
+      - key: BOOTSTRAP_USER_PASSWORD
+        sync: false
+      - key: TINKER_API_KEY
+        sync: false

@@ -1,0 +1,2804 @@
+{
+  "generated_at": "2026-07-08T11:11:38.497314+00:00",
+  "source": "local Google Drive sync",
+  "root": "G:\\My Drive",
+  "total_files": 7768,
+  "total_dirs": 558,
+  "folders": [
+    {
+      "path": "(root)",
+      "file_count": 2,
+      "subfolder_count": 10
+    },
+    {
+      "path": "200-Project Controls Procedures",
+      "file_count": 2,
+      "subfolder_count": 2
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts",
+      "file_count": 13,
+      "subfolder_count": 2
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/DPR PQ POLICY",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/DPR PQ POLICY/Forms",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others",
+      "file_count": 45,
+      "subfolder_count": 3
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/Archive",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-611_NDA Templates",
+      "file_count": 0,
+      "subfolder_count": 2
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-611_NDA Templates/1. Dubai Parks and Resorts (24-Dec-14) v2",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-611_NDA Templates/2. Meraas Development",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR",
+      "file_count": 0,
+      "subfolder_count": 2
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES",
+      "file_count": 1,
+      "subfolder_count": 16
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/1. MSA",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/11. Minor Works",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/12. LOA",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/13. Measured Price",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/14. Notice to proceed",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/15. Pre Concept",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/16. Retention Bond",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/17. Supplementary Agreement",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/18.  Maintenance Works Contract",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/2. PO",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/3. CSA (Short)",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/4. CSA (Long)",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/5. Tender Bond",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/7. Lump Sum Contract",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/8. LOIA",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/9. Themepark Schedule of Details",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/SHOW & RIDE",
+      "file_count": 3,
+      "subfolder_count": 1
+    },
+    {
+      "path": "200-Project Controls Procedures/600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/SHOW & RIDE/SUPERCEDED",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/Templates & Others",
+      "file_count": 15,
+      "subfolder_count": 2
+    },
+    {
+      "path": "200-Project Controls Procedures/Templates & Others/As-Built Title Block",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "200-Project Controls Procedures/Templates & Others/CAD Standards Attachments",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "300-Delivery Management Procedures",
+      "file_count": 3,
+      "subfolder_count": 1
+    },
+    {
+      "path": "300-Delivery Management Procedures/Templates & Others",
+      "file_count": 4,
+      "subfolder_count": 1
+    },
+    {
+      "path": "300-Delivery Management Procedures/Templates & Others/Archive",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "400-Construction Management Procedures",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "500-Design Management",
+      "file_count": 4,
+      "subfolder_count": 1
+    },
+    {
+      "path": "500-Design Management/Templates & Others",
+      "file_count": 10,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts",
+      "file_count": 13,
+      "subfolder_count": 2
+    },
+    {
+      "path": "600-Procurement & Contracts/DPR PQ POLICY",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "600-Procurement & Contracts/DPR PQ POLICY/Forms",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others",
+      "file_count": 45,
+      "subfolder_count": 3
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/Archive",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-611_NDA Templates",
+      "file_count": 0,
+      "subfolder_count": 2
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-611_NDA Templates/1. Dubai Parks and Resorts (24-Dec-14) v2",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-611_NDA Templates/2. Meraas Development",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR",
+      "file_count": 0,
+      "subfolder_count": 2
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES",
+      "file_count": 1,
+      "subfolder_count": 16
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/1. MSA",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/11. Minor Works",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/12. LOA",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/13. Measured Price",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/14. Notice to proceed",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/15. Pre Concept",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/16. Retention Bond",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/17. Supplementary Agreement",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/18.  Maintenance Works Contract",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/2. PO",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/3. CSA (Short)",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/4. CSA (Long)",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/5. Tender Bond",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/7. Lump Sum Contract",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/8. LOIA",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/LATEST TEMPLATES/9. Themepark Schedule of Details",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/SHOW & RIDE",
+      "file_count": 3,
+      "subfolder_count": 1
+    },
+    {
+      "path": "600-Procurement & Contracts/Templates& Others/TEM-637_CONTRACT TEMPLATES FROM DPR/SHOW & RIDE/SUPERCEDED",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder",
+      "file_count": 293,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1",
+      "file_count": 2,
+      "subfolder_count": 13
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Admin",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Construction, related docs",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Construction, related docs/Method Statements",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs",
+      "file_count": 1,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/CSC Design",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs NOT SIGNED",
+      "file_count": 45,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED",
+      "file_count": 26,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT",
+      "file_count": 2,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/01-BOQ",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings",
+      "file_count": 2,
+      "subfolder_count": 15
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/EL-Electrical EHV & HV",
+      "file_count": 62,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/EL-Electrical LV",
+      "file_count": 89,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/EL-Electrical MV",
+      "file_count": 77,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/IR-Irrigation",
+      "file_count": 89,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/LI-Lighting",
+      "file_count": 73,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/LP-Liquefied Petroleum Gas",
+      "file_count": 62,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/Pump Stations",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/Pump Stations/IR",
+      "file_count": 11,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/Pump Stations/PWPS01",
+      "file_count": 13,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/Pump Stations/PWPS02",
+      "file_count": 13,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/Pump Stations/WWPS01",
+      "file_count": 10,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/SE-Security",
+      "file_count": 67,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/SF-Traffic Signal",
+      "file_count": 40,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/SG-Sewage",
+      "file_count": 101,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/ST-Structural Engineering",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/SW-Storm Water",
+      "file_count": 106,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/TL-Telecom",
+      "file_count": 69,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/TM-Traffic Management",
+      "file_count": 449,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/02-Drawings/WS-Water Supply - Potable",
+      "file_count": 83,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/ITT/03-SOPR",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/LOA",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/DGCL",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/PMC2",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/XX___Other requirements",
+      "file_count": 1,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/XX___Other requirements/HSE",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/XX___Other requirements/Mobilisation",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/XX___Other requirements/Sustainability",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design",
+      "file_count": 2,
+      "subfolder_count": 11
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/BIM",
+      "file_count": 3,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/BIM/BIM f Model",
+      "file_count": 4,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/BIM/BIM f Model/Documents",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/CRS",
+      "file_count": 12,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/CRS/SEC Workshop Pack",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/DD Design Rep & Extracts",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings",
+      "file_count": 9,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27",
+      "file_count": 1,
+      "subfolder_count": 6
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/MV CVT Structural",
+      "file_count": 84,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/Ped Und 02",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/Ped Und 02/PDF",
+      "file_count": 15,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/Ped Und Blvd",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/Ped Und Blvd/PDF",
+      "file_count": 14,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/Storm",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/Storm/PDF",
+      "file_count": 143,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/Street Light",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/Street Light/PDF",
+      "file_count": 86,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/WW Network",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO27/WW Network/PDF",
+      "file_count": 118,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO29V9",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO29V9/Storm",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO29V9/Storm/CAD",
+      "file_count": 126,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO29V9/Storm/PDF",
+      "file_count": 126,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO29V9/Waste Net",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO29V9/Waste Net/CAD",
+      "file_count": 110,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Design drawings/xx Rev DD Unc Stamp IFC TO29V9/Waste Net/PDF",
+      "file_count": 110,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/KMZ",
+      "file_count": 102,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/KMZ/Existing Utilities KMZ",
+      "file_count": 20,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/KMZ/H&C",
+      "file_count": 13,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/KMZ/H&C/GM",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/KMZ/H&C/underpass",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/KMZ/Joao KMZs Formatted",
+      "file_count": 54,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/KMZ/Joao KMZs Formatted/Utilities",
+      "file_count": 66,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/KMZ/Utilities",
+      "file_count": 68,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates",
+      "file_count": 5,
+      "subfolder_count": 7
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_Dataset_V9_28-Apr-25",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25",
+      "file_count": 1,
+      "subfolder_count": 6
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/01 Geodatabase",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/01 Geodatabase/DG1_Stage4_Masterplan_TO29V9_20250428.gdb",
+      "file_count": 16,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/01 Geodatabase/DG_PH2_DMP_TO29V9_20250428.gdb",
+      "file_count": 298,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/02 Map Package",
+      "file_count": 3,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/02 Map Package/DMP Stage 4 - Maps - TO29_V9_Delivery",
+      "file_count": 2,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/02 Map Package/DMP Stage 4 - Maps - TO29_V9_Delivery/Default.gdb",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/02 Map Package/DMP Stage 4 - Maps - TO29_V9_Delivery/ImportLog",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/03 PDF",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/04 KMZ",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/05 Layer Files",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/06 Plot ID CAD",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/06 Plot ID CAD/06 TO29 V9 Plot ID CAD",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/06 Plot ID CAD/06 TO29 V9 Plot ID CAD/Xref",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/06 Plot ID CAD/06 TO29 V9 Plot ID CAD/Xref/10_DGII_DMP_TO29_Others",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_GIS_V9_28-Apr-25/06 Plot ID CAD/06 TO29 V9 Plot ID CAD/Xref/10_DGII_DMP_TO29_Roads",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/DG II DMP_TO 29_Land Use Plan_V9_28-Apr-25",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP T029 V9/Supplementary Info",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP TO27A",
+      "file_count": 19,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP TO27A/Sherif files",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/DMP Volumes",
+      "file_count": 18,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase",
+      "file_count": 1,
+      "subfolder_count": 8
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/01 Geodatabase",
+      "file_count": 2,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/01 Geodatabase/DG1_Masterplan.gdb",
+      "file_count": 80,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/01 Geodatabase/DG_PH2_DMP_V14_2_1.gdb",
+      "file_count": 746,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/03 MXD",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/04 PDF",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/05 KMZ",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/06 SLPK",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/08 LAYERS FILES",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/09 PLOT ID & CHANGE PLAN",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/10 CAD",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/10 CAD/Xref",
+      "file_count": 1,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/10 CAD/Xref/10_DGII_DMP_Version 14.2_Buidlings",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/10 CAD/Xref/10_DGII_DMP_Version 14.2_Others",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Geodatabase/10 CAD/Xref/10_DGII_DMP_Version 14.2_Roads",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/MP Changes Impact Assess by JCB",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/New Masterplan",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/New Masterplan/Media Asset Road Levels",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan",
+      "file_count": 1,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/LAARs layout with Perm Roads",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Conditional IFCs",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Conditional IFCs/ROADS",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Conditional IFCs/ROADS/Media 1A",
+      "file_count": 11,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Unconditional stamped IFCs",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Unconditional stamped IFCs/Irrigation 15.09.24",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Unconditional stamped IFCs/Irrigation 15.09.24/Stamped Pdf",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Unconditional stamped IFCs/Irrigation 15.09.24/cad",
+      "file_count": 86,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Unconditional stamped IFCs/Storm 22.08.24",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Unconditional stamped IFCs/Storm 22.08.24/CAD",
+      "file_count": 144,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Masterplan Updates/Old Masterplan/XX Unconditional stamped IFCs/Storm 22.08.24/PDF Stamped",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/NOCs",
+      "file_count": 33,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/NOCs/Master Dev. NOC",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/NOCs/old NOCs",
+      "file_count": 14,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/RFI TEAM",
+      "file_count": 19,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Service Diversions",
+      "file_count": 8,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Service Diversions/Existing Utilities Diversion",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Service Diversions/Reports",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Storm Water",
+      "file_count": 2,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Storm Water/Proposed Boundary for SW Outfalls",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Storm Water/Vortex Manholes & Oil Interceptors Locations, Boundary exetened (LOW) & Access to Wadi Issues",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Design/Utility Corridor Dwgs",
+      "file_count": 83,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone",
+      "file_count": 24,
+      "subfolder_count": 6
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/250414 drone shot",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Boulevard",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Boulevard/Photos",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Boulevard/Photos/JPG",
+      "file_count": 12,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Boulevard/Photos/RAW",
+      "file_count": 12,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Boulevard/Videos",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Gateway 1",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Gateway 1/Photos",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Gateway 1/Photos/JPG",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Gateway 1/Photos/RAW",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Gateway 1/Videos",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Infrastructure",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Infrastructure/Photos",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Infrastructure/Photos/JPG",
+      "file_count": 8,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Infrastructure/Photos/RAW",
+      "file_count": 8,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/Infrastructure/Videos",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/MEDIA",
+      "file_count": 3,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/MEDIA/Photos",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/MEDIA/Photos/JPG",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/MEDIA/Photos/RAW",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/MEDIA/Videos",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/March 2025",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/March 2025/Aerial footage 240910",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Drone/March 2025/Aerial footage 250309",
+      "file_count": 31,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/LAT",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/LAT/Trackers",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics",
+      "file_count": 3,
+      "subfolder_count": 9
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings",
+      "file_count": 3,
+      "subfolder_count": 16
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/12-11-24",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/DG PROJECT DRAWINGS",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/GMB",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/Gate 2K",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/Gate 2L",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/Gate 2M",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/KKR PSR",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/LAARS dated",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/LARS UPDATION FOLDER",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/Newimage without Boundaries",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/OPERA ARENA ACCESS",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/PlotCfgs",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/S-02",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/Textures",
+      "file_count": 8,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/WADI SAFAR ROUTE",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/as off 240305",
+      "file_count": 4,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/as off 240305/Fonts",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/as off 240305/LAARS AS PER COORDINATES",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/as off 240305/LARS UPDATION FOLDER",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/as off 240305/PlotCfgs",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Drawings/as off 240305/Textures",
+      "file_count": 14,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Handovers",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/LAARS",
+      "file_count": 20,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24",
+      "file_count": 2,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/LAARS AS PER COORDINATES",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/LARS UPDATION FOLDER",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/PlotCfgs",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures",
+      "file_count": 14,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/LAARS/Media 1",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Misc",
+      "file_count": 29,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/O-A Interface",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/O-A Interface/Presentations",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/O-A Interface/Schedules",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Office Parking",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Presentations",
+      "file_count": 15,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/SWL Support",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/SWL Support/Trackers",
+      "file_count": 11,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Logistics/Signage",
+      "file_count": 11,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc",
+      "file_count": 321,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates",
+      "file_count": 4,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/231231-DG1 Welcome Pack - WSI Stakeholders_Templates",
+      "file_count": 20,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/Roadmap Google Slides",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/Roadmap Google Slides/Presentation Files",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/Roadmap Keynote Slides",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/Roadmap Keynote Slides/Presentation Files",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/Roadmap Powerpoint Slides",
+      "file_count": 3,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/Roadmap Powerpoint Slides/Presentation Files",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA",
+      "file_count": 9,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Const Storm Water Pipes and Manholes Media 1a Rev 2",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/IP-INF-054-0000-AEC-NOC-MN-000011 - 054 - Heritage and Culture - No Objection Certificate",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation",
+      "file_count": 1,
+      "subfolder_count": 10
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/1 Application Form&Focus drawing",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/10 Stakeholder Alignment & Approval",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/10 Stakeholder Alignment & Approval/1 DGDA Internal Aligment",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/10 Stakeholder Alignment & Approval/2 Tree Transplantation Approval -(not applicable)",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/10 Stakeholder Alignment & Approval/3 Local Authourties-(not applicable)",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/10 Stakeholder Alignment & Approval/4 Coordination Certificate-(not applicable)",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/2  Plot Regulation Plan",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/3 Appointment Statement of Project Parties",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/4 Title Deed or Lease Agreement Contract",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/5 Contractor All Risk Insurance Policy",
+      "file_count": 8,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/6 Project Conceptual Design",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/7 Undertaking Letters",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement",
+      "file_count": 1,
+      "subfolder_count": 9
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/a. Focused drawing",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/b. Construction Methodology",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/c. Temporary Site Fence Hoarding Methodology-Not applicable",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/d. Health & Safety Procedures",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/e. Construction phasing strategy Schedule",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/f. Temporary Traffic Control Detour Plan-Not applicable",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/g. Construction Logistic Plan",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/h. Risk Analysis & Mitigation Plan",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/8 Method of Statement/i. Protection and Preservation Methodologies of H&C -Not applicable",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package",
+      "file_count": 1,
+      "subfolder_count": 8
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/i.Site Arrangements Drawings",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/ii.Temporary Site Office Package",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/ii.Temporary Site Office Package/2-Structural",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/ii.Temporary Site Office Package/2-Structural/3CAR SHED",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/ii.Temporary Site Office Package/5-Fire",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/ii.Temporary Site Office Package/5-Fire/Life & Safety",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/iii.Focused drawing",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/iv.Traffic Management Plan",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/iv.Traffic Management Plan/TMP incl. circulation",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/v.Project Sign Board Drawings- Not applicable",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/vi.Construction Safety Plan",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/vii.Temporary Fencing  Hoarding Drawings",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/viii.Temporary Site Utility Setup",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/A Site Mobilization Package/viii.Temporary Site Utility Setup/2External Utilities",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/B Temporary Fencing Installation Package --Not applicable",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/B Temporary Fencing Installation Package --Not applicable/i.Site Layout",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/C Earthworks Package includes-Not applicable",
+      "file_count": 2,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/C Earthworks Package includes-Not applicable/i.Site Plan",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/C Earthworks Package includes-Not applicable/v.Backfill Details and Sections Drawings",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/C Earthworks Package includes-Not applicable/vi.Shoring layout, section, and details",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/C Earthworks Package includes-Not applicable/vii.Detailed calculations for shoring",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/D Temporary Road Package includes-Not applicable",
+      "file_count": 2,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/D Temporary Road Package includes-Not applicable/ii.Pavement layouts & details",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/D Temporary Road Package includes-Not applicable/iii.Road Profiles",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Mobilisation/9 Engineering Package/D Temporary Road Package includes-Not applicable/v.Street Lighting layouts & details",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/UMA_Procedure & Service Cards",
+      "file_count": 10,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Misc/Templates/UMA/Waiver form (NEW) for Infra Package 1 Storm Water lines Media 1a",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C",
+      "file_count": 2,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/7-13 H&C Inspect",
+      "file_count": 3,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/7-13 H&C Inspect/H&C Application",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/7-13 H&C Inspect/NOC Response",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/7-13 H&C Inspect/SWN to H&C",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/7-13 H&C Inspect/UMA Permit Copy",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/DG2 Infra Pack Phase 6 Application Files",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C - NOC",
+      "file_count": 8,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Reports",
+      "file_count": 13,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request",
+      "file_count": 5,
+      "subfolder_count": 11
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C Grand Mosque Trail Pits",
+      "file_count": 6,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C Grand Mosque Trail Pits/Grand Mosque Rev.01 240805 ( redundant )",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C Grand Mosque Trail Pits/Grand Mosque Rev.01 240813",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-5 )",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )",
+      "file_count": 4,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Overall Layout",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing",
+      "file_count": 10,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )",
+      "file_count": 4,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/Overall Layout",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/Sheet Drawing",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )/WWPS ,H&C",
+      "file_count": 3,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )/WWPS ,H&C/Overall Layout",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )/WWPS ,H&C/Sheet Drawings",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg.-1 Underpass",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC MV Culvert",
+      "file_count": 14,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC MV Culvert/Overall Layout",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC MV Culvert/Sheet Drawings",
+      "file_count": 20,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/H&C NOC for Gaps 240408",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/Misc",
+      "file_count": 4,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/Misc/Overall Layout",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/Misc/Sheet Drawing",
+      "file_count": 10,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/New folder",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/Underpass",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/H&C/H&C Request/Underpass/UnderPass and the MV Culvert",
+      "file_count": 15,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/NOC",
+      "file_count": 6,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/Authorities/NOC/NOC Permissions",
+      "file_count": 10,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/CSC",
+      "file_count": 2,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/CSC/CWR",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/CSC/Team Structure",
+      "file_count": 12,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/PMC",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/PMC/Minutes",
+      "file_count": 20,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/PMC/Monthly Report",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/PMC/Org Structure",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/PMC/Plans",
+      "file_count": 14,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES",
+      "file_count": 6,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/Application forms",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/General Standard Document",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities",
+      "file_count": 1,
+      "subfolder_count": 12
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/01. Waste Water Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/02. Transportation Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/03. Telecom Communication Network",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/04. Storm WaterNetwork",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/05. Safety Security",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/06. Road Furniture Network",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/07. Potable Water Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/08. Irrigation Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/09. Fuel Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/10. FireFighting Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/11. Electrical Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/BIM/Utilities/12. District Cooling Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD",
+      "file_count": 2,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Focus Drawing",
+      "file_count": 1,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Focus Drawing/14. Superstructure",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Focus Drawing/15. Infrastructure",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Focus Drawing/16. Licensing",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Focus Drawing/17. LandAlteration",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Focus Drawing/18. Design Complaince",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/General Standard Document",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/General Standard Document/00. General Templates Guidelines",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities",
+      "file_count": 1,
+      "subfolder_count": 13
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/01. Waste Water Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/02. Transportation Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/03. Telecom Communication Network",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/04. Storm Water Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/05. Safety Security",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/06. Road Furniture Network",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/07. Potable Water Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/08. Irrigation Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/09. Fuel Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/10. FireFighting Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/11. Electrical Network",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/12. Landscape",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/DGDA2_BIM & CAD Template/CAD/Utilities/13. District Cooling",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/Permitting & Licensing Submission Guidelines",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/MANUALS PROCEDURES GUIDELINES/Permitting Municipal Briefs",
+      "file_count": 23,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Organizations/UMA/UMA permited packages",
+      "file_count": 14,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Presentations",
+      "file_count": 138,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Presentations/CDO Present",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Presentations/SPD Present",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)",
+      "file_count": 1,
+      "subfolder_count": 7
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Contractor",
+      "file_count": 12,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Contractor/BOQ",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Contractor/MOM",
+      "file_count": 13,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)",
+      "file_count": 2,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Aerial footage 240325",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Aerial footage 240910",
+      "file_count": 88,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Aerial footage 241118",
+      "file_count": 16,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Ground break day 27 March 2024",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Photo Library",
+      "file_count": 129,
+      "subfolder_count": 6
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Photo Library/06.06.24",
+      "file_count": 26,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Photo Library/09.06.24",
+      "file_count": 17,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Photo Library/10.06.24",
+      "file_count": 11,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Photo Library/19.02.24",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Photo Library/23.04.24",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Media (videos, photos, etc)/Photo Library/28.02.24",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/MoM",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/MoM/Progress Meeting",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls",
+      "file_count": 1,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/Planning",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/Planning/DG2 Package 1 Baseline Schedule Rev 1 (under review)",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/SOR",
+      "file_count": 222,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/Trackers",
+      "file_count": 1,
+      "subfolder_count": 5
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/Trackers/Change-Variations-Advance Warnings (by Martin)",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/Trackers/H&C NOCs - UMA Permits (by Aysha)",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/Trackers/QA QC Documents (PBI file by Salman)",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/Trackers/Risk register (by Mohd. Walla)",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Project Controls/Trackers/Stakeholder Submissions Tracker (by Abdullah)",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Risk",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Specialist Area Handover",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Specialist Area Handover/PWPS",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Specialist Area Handover/PWPS/01 As-built drawings",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Specialist Area Handover/PWPS/02_Photographic Report",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Specialist Area Handover/PWPS/03_Hazards & Obstacles",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Specialist Area Handover/PWPS/04 Handover Form",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys",
+      "file_count": 1,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys/PRS",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys/Topographic surveys",
+      "file_count": 3,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys/Topographic surveys/DG2 Infra Topo Survey May 2023",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys/Topographic surveys/DG2 Package 1 Enabling Works",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys/Topographic surveys/Infra-1 Civil 3D",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys/Topographic surveys/Proposed Infra-1 Surface",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys/Utility Survey",
+      "file_count": 4,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Reporting (various)/Surveys/Utility Survey/GPR Gulf Consult",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Trackers",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/DG2 Infra Pack 1/Utility Diversions",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Demo Contract",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/Demo Contract/DD-2022-175 Al Ostool DG2 Dem. Works MC",
+      "file_count": 9,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh",
+      "file_count": 42,
+      "subfolder_count": 8
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Amazi",
+      "file_count": 18,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Custom Office Templates",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Farms landscape",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Malaz",
+      "file_count": 4,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Malaz/Master plan",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Malaz/Plans",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Malaz/Renders",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Malaz/Renders/Type 01",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Malaz/Renders/Type 02",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Malaz/Renders/Type 03",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Malaz/Renders/Type 04",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/New folder",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Sifah Farms",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/Sifah Heights",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Ha Long Xanh/salalah HO",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects",
+      "file_count": 1,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Demolitions by Al Ostool",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Demolitions by Al Ostool/Contract documents",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah",
+      "file_count": 2,
+      "subfolder_count": 6
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW1",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW1/As Built Drawings",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW1/As Built Photos",
+      "file_count": 1,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW1/Handover Form",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW1/Miscellaneous",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2",
+      "file_count": 3,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings",
+      "file_count": 2,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt/CAD",
+      "file_count": 2,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt/CAD/EW-2 GRADING",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt/CAD/EW-2 PLAN & PROFILE",
+      "file_count": 8,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt/CAD/EW-2 SETTING OUT",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt/PDF",
+      "file_count": 2,
+      "subfolder_count": 3
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt/PDF/EW-2 GRADING",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt/PDF/EW-2 PLAN & PROFILE",
+      "file_count": 8,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/01_As-built Drawings/EW2 Asbuilt/PDF/EW-2 SETTING OUT",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report",
+      "file_count": 2,
+      "subfolder_count": 8
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report/CA-06",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report/MS_Arterial",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report/RD-01",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report/RD-03",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report/RD-04",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report/RD-14",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report/RD-15",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/02_Photographic Report/blvd",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/03_Inspection Reports",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW2/04_Hazards & Obstacles",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.1-2-3-5",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4",
+      "file_count": 2,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Dwgs",
+      "file_count": 1,
+      "subfolder_count": 2
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Dwgs/CAD",
+      "file_count": 12,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Dwgs/PDF",
+      "file_count": 12,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos",
+      "file_count": 2,
+      "subfolder_count": 9
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/M_CA-02",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/RD-17",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/RD-18",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/RD-19",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/RD-20",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/RD-21",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/RD-22",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/RD-23",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/As Built Photos/RD-24",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/Handover Form",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/EW3.4/Miscellaneous",
+      "file_count": 7,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/Early Works",
+      "file_count": 1,
+      "subfolder_count": 1
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/Early Works/EW1",
+      "file_count": 1,
+      "subfolder_count": 4
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/Early Works/EW1/As Built Drawings",
+      "file_count": 5,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/Early Works/EW1/As Built Photos",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/Early Works/EW1/Handover Form",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/Early Works/EW1/Miscellaneous",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/Early Works by Binyah/Signed Handover Forms",
+      "file_count": 6,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Master Folder/Other Infra Projects/WRR by HAIF",
+      "file_count": 2,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Scaned Files - High Rise Building",
+      "file_count": 4,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Scaned Files - Road Works",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "Scaned Files -Concrete Problems",
+      "file_count": 3,
+      "subfolder_count": 0
+    },
+    {
+      "path": "construction-3-001",
+      "file_count": 0,
+      "subfolder_count": 1
+    },
+    {
+      "path": "construction-3-001/construction",
+      "file_count": 208,
+      "subfolder_count": 0
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "total_files_discovered": 60,
+  "total_supported_files": 55,
+  "total_skipped_unsupported": 5,
+  "already_indexed_skipped": 0,
+  "total_shards": 5,
+  "shard_index": 2,
+  "files_assigned_to_this_shard": 8,
+  "extension_breakdown": {
+    ".docx": 2,
+    ".pdf": 2,
+    ".xlsx": 2,
+    ".png": 1,
+    ".txt": 1
+  },
+  "first_20_identities": [
+    "construction-3-001/docs/file_1.docx",
+    "construction-3-001/docs/file_10.xlsx",
+    "construction-3-001/docs/file_11.txt",
+    "construction-3-001/docs/file_28.png",
+    "construction-3-001/docs/file_34.xlsx",
+    "construction-3-001/docs/file_40.pdf",
+    "construction-3-001/docs/file_9.docx",
+    "construction-3-001/drawings/dwg_8.pdf"
+  ],
+  "per_shard_counts": [
+    20,
+    7,
+    8,
+    14,
+    6
+  ],
+  "dry_run": true,
+  "db_writes": false,
+  "folder": "construction-3-001",
+  "folder_path": "c:\\Users\\shimm\\The_Fork\\tests\\fixtures\\ingest_shard_sample\\construction-3-001",
+  "offset": 0,
+  "limit": 0,
+  "batch_after_offset_limit": 8,
+  "embedder": "BAAI/bge-small-en-v1.5",
+  "namespace": "v2",
+  "generated_at": "2026-07-09T07:23:16.259211+00:00"
+}
