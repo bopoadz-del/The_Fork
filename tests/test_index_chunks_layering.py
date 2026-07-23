@@ -28,7 +28,10 @@ def _wire(monkeypatch, captured):
     monkeypatch.setattr(ret, "available", lambda: True)
     monkeypatch.setattr(ret, "get_embedder", lambda: _FakeEmbedder())
     monkeypatch.setattr(ret, "get_store", lambda dim=None: _FakeStore())
-    monkeypatch.setattr(ret, "_doc_name_for_id", lambda d: "priced_boq_sewer.xlsx")
+    import app.core.projects as _projects
+    monkeypatch.setattr(_projects, "get_document",
+                        lambda d: {"original_name": "priced_boq_sewer.xlsx"},
+                        raising=False)
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "curated_kb")
 
 
