@@ -1,0 +1,45 @@
+name: lint
+
+# Closes the "no lint CI gate" gap from the repo audit.
+#
+# ROLLOUT: report-only for now (continue-on-error). A blocking ruff gate on a
+# 900+ commit tree with legacy god-files would throw thousands of pre-existing
+# findings and block every PR on day one. Report-only surfaces NEW issues in
+# the job log without red-walling main. Promote to a hard gate — ideally scoped
+# to changed lines, like the diff-cover coverage gate — once the baseline is
+# triaged or an ignore/per-file-ignores baseline is committed.
+#
+# mypy is intentionally NOT added here yet: the tree is largely untyped, so a
+# useful mypy gate needs a config baseline (ignore-missing-imports + gradual
+# typing) first. Tracked as a follow-up.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ruff
+        run: python -m pip install --upgrade pip ruff
+
+      - name: Ruff check (report-only during rollout)
+        continue-on-error: true # see header note — promote to blocking after baseline triage
+        run: ruff check app tests --output-format=github

@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: thefork-postgres
+    environment:
+      POSTGRES_USER: thefork
+      POSTGRES_PASSWORD: thefork
+      POSTGRES_DB: thefork
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thefork -d thefork"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  cerebrum-blocks:
+    build: .
+    container_name: cerebrum-blocks
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - DATA_DIR=/app/data
+      - DATABASE_URL=postgresql+psycopg://thefork:thefork@postgres:5432/thefork
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Redis for caching (future feature)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: ai-block-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   restart: unless-stopped
+
+volumes:
+  postgres_data:
+#   redis_data:

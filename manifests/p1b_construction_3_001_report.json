@@ -1,0 +1,2317 @@
+{
+  "generated_at": "2026-07-08T12:10:40.202178+00:00",
+  "project_id": "1ee147a4",
+  "project_name": "construction-3-001",
+  "folder": "construction-3-001",
+  "folder_path": "G:\\My Drive\\construction-3-001",
+  "embedder": "BAAI/bge-small-en-v1.5",
+  "namespace": "v2",
+  "total_files": 208,
+  "successes": 204,
+  "zero_chunk": 2,
+  "errors": [
+    {
+      "path": "construction-3-001/construction/VID-20170813-WA0005.mp4",
+      "error": "no RAG chunks indexed"
+    },
+    {
+      "path": "construction-3-001/construction/VID-20170909-WA0012.mp4",
+      "error": "no RAG chunks indexed"
+    }
+  ],
+  "elapsed_seconds": 2199.4,
+  "results": [
+    {
+      "path": "construction-3-001/construction/IMG-20150615-WA0006.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20151007-WA0017.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20151228-WA0037.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160112-WA0036.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160112-WA0042.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160112-WA0044.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160112-WA0046.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160117-WA0031.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160120-WA0030.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160120-WA0031.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160120-WA0032.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160121-WA0014.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160121-WA0015.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160121-WA0016.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160121-WA0018.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160214-WA0013.jpg",
+      "result": {
+        "status": "error",
+        "error": "ZERO_CHUNK",
+        "banner": "ERROR: document produced 0 chunks — check extractor/OCR.",
+        "project_id": "1ee147a4",
+        "document_id": "a4aa7566",
+        "filename": "IMG-20160214-WA0013.jpg",
+        "indexed": 0,
+        "skipped_unsupported": 0,
+        "total_chunks": 0
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160216-WA0011.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160216-WA0013.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160216-WA0018.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160217-WA0052.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160228-WA0001.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160320-WA0009.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160320-WA0010.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160320-WA0011.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160321-WA0004.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160321-WA0005.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160321-WA0008.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160321-WA0011.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160324-WA0008.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160328-WA0012.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160407-WA0011.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160413-WA0008.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160413-WA0009.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160415-WA0005.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160417-WA0003.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160417-WA0007.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160417-WA0009.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160419-WA0015.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160421-WA0003.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160421-WA0005.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160421-WA0007.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160501-WA0003.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160508-WA0002.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160508-WA0004.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160508-WA0006.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160509-WA0015.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160511-WA0002.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160516-WA0007.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160516-WA0009.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160516-WA0011.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160516-WA0013.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160518-WA0021.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160518-WA0024.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160518-WA0026.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160518-WA0030.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160518-WA0035.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160522-WA0003.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160524-WA0001.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160531-WA0000.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160531-WA0002.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160531-WA0004.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160601-WA0005.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160601-WA0006.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160601-WA0009.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160601-WA0011.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160602-WA0005.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160605-WA0006.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160612-WA0005.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160612-WA0006.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160612-WA0007.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160612-WA0008.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160612-WA0009.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160704-WA0001.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160714-WA0003.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160714-WA0009.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160717-WA0012.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160719-WA0002.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160719-WA0003.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160725-WA0002.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160801-WA0014.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160801-WA0016.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160801-WA0028.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160807-WA0012.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160807-WA0013.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160807-WA0014.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160807-WA0015.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160807-WA0017.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160808-WA0005.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160809-WA0018.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160815-WA0019.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20160830-WA0004.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20161214-WA0039.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170320-WA0019.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170320-WA0024.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170323-WA0057.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170323-WA0058.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170323-WA0064.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170323-WA0065.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170324-WA0001.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170324-WA0075.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170330-WA0063.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170330-WA0075.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170401-WA0007.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170403-WA0025.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170403-WA0027.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170403-WA0029.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170403-WA0031.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170403-WA0032.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170403-WA0068.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170404-WA0027.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170404-WA0031.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170404-WA0034.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170408-WA0029.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170416-WA0010.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170418-WA0062.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170424-WA0014.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170424-WA0015.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170424-WA0016.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170424-WA0017.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170424-WA0018.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170424-WA0019.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170424-WA0020.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170424-WA0021.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170427-WA0049.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170510-WA0014.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170523-WA0048.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170524-WA0002.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170524-WA0005.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170526-WA0004.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170526-WA0010.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170526-WA0011.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170526-WA0012.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170528-WA0000.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170528-WA0002.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170528-WA0044.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170926-WA0037.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170926-WA0038.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170926-WA0039.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170926-WA0041.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20170927-WA0038.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20171004-WA0024.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20180225-WA0035.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20181009-WA0000.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20181009-WA0001.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20181013-WA0036.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20181013-WA0037.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20181102-WA0010.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20190823-WA0001.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20190922-WA0036.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20191002-WA0035.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20221216-WA0010.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20221216-WA0015.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20230104-WA0043.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20230107-WA0076.jpeg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20230407-WA0034.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20230523-WA0009.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20230523-WA0010.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20230527-WA0015.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG-20230601-WA0004.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20150610_104452.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20150610_104546.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20150610_104818.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20150803_170949.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20150803_170953.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151012_141339.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151018_164934.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151118_164113.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151118_164151.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151118_164158.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151118_164247.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151118_164707.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151217_114009.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151217_114010.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151228_165205.jpg",
+      "result": {
+        "status": "error",
+        "error": "ZERO_CHUNK",
+        "banner": "ERROR: document produced 0 chunks — check extractor/OCR.",
+        "project_id": "1ee147a4",
+        "document_id": "753b52b5",
+        "filename": "IMG_20151228_165205.jpg",
+        "indexed": 0,
+        "skipped_unsupported": 0,
+        "total_chunks": 0
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151228_165507.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151230_163320.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20151231_104657.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160113_093011.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160121_151731.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160124_150508.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160124_150646.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160124_150743.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160131_153652.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160131_155406.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160208_104755.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160208_105359.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160229_160607.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160229_161311.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160327_100400.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160327_100405.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160327_100411.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160327_100448.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160328_150111.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160328_153302.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160328_153458.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160404_091227.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160405_160023.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160405_160034.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160410_142349.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160410_142406.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160410_142419.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160413_095516.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160413_103055.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_20160421_102600.jpg",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_2663.JPG",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/IMG_2664.JPG",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 1,
+        "skipped_unsupported": 0,
+        "total_chunks": 1,
+        "rag_indexed": 1
+      }
+    },
+    {
+      "path": "construction-3-001/construction/VID-20170813-WA0005.mp4",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 0,
+        "skipped_unsupported": 1,
+        "total_chunks": 0
+      }
+    },
+    {
+      "path": "construction-3-001/construction/VID-20170909-WA0012.mp4",
+      "result": {
+        "status": "ok",
+        "project_id": "1ee147a4",
+        "indexed": 0,
+        "skipped_unsupported": 1,
+        "total_chunks": 0
+      }
+    }
+  ]
+}

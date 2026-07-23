@@ -1,0 +1,93 @@
+/* 3-column workspace shell — Quarry palette.
+ *
+ * Layout (per Quarry design): 250px left + flexible center + 360px right.
+ * Outer container is 100vh + overflow hidden; chat list inside main owns
+ * the scrollbar.
+ *
+ * When the right panel is in "expanded overlay" mode the shell stamps a
+ * data-right-expanded="true" attribute on itself; the right panel CSS
+ * picks that up and becomes a full-viewport overlay covering main +
+ * left.
+ */
+.workspace-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  /* PR G — was overflow:hidden. Clip blocks programmatic scroll too;
+   * with overflow:hidden the browser would still pull the shell down
+   * when a deep descendant got focus, shifting scrollTop to 422 and
+   * leaving the composer floating above an empty band. clip prevents
+   * that scroll container from ever forming. */
+  overflow: clip;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+}
+
+.workspace-shell__header {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.workspace-shell__body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  /* PR G — same reason as parent: any overflow from a flex child here
+   * was leaking into shell scroll. clip kills the scroll container. */
+  overflow: clip;
+  position: relative; /* parent for right-panel overlay anchor */
+}
+
+.workspace-shell__left {
+  flex: 0 0 240px;
+  min-height: 0;
+  background: var(--bg-panel-left);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.workspace-shell__main {
+  flex: 1 1 0;
+  min-width: 0;
+  /* PR G — without min-height:0 the chat-list inside this column flex
+   * could grow to its content's intrinsic height and push the composer
+   * out of the visible area, leaving the bottom-half-white band the
+   * operator reported repeatedly. overflow:hidden caps any residual
+   * overflow from descendants that don't respect the bound. */
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-base);
+}
+
+.workspace-shell__right {
+  flex: 0 0 360px;
+  min-height: 0;
+  background: var(--bg-panel-right);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+/* Right-panel expanded overlay mode — toggled by the ↗ button in the
+ * RightPanel header. The panel covers the whole body area (left + main),
+ * the rest stays in the DOM but visually hidden behind. */
+.workspace-shell[data-right-expanded="true"] .workspace-shell__right {
+  position: absolute;
+  inset: 0;
+  flex-basis: 100%;
+  z-index: 20;
+  background: var(--bg-panel-right);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Mobile: collapse side panels into icon rails. */
+@media (max-width: 768px) {
+  .workspace-shell__left,
+  .workspace-shell__right {
+    flex-basis: 56px;
+  }
+}

@@ -1,0 +1,16 @@
+=== resource_histogram on REAL DG2 baseline, labor-only (2.5s) ===
+status: success | source: primavera_taskrsrc
+resource_types_included: RT_Labor
+labor assignments: 22153 / total in schedule: 47615
+total_manhours: 5,672,767
+period_unit: month | periods: 34
+peak_period: M22 | peak_total (concurrent hrs): 673,101
+distinct labor trades: 42
+    DG-II.MP.C.008-4: 2,475,520
+    DG-II.MP.C.006: 676,695
+    DG-II.MP.C.001: 384,510
+    DG-II.MP.C.005: 292,337
+    DG-II.MP.C.001-5: 267,223
+    DG-II.MP.C.001-6: 189,434
+    DG-II.MP.C.001-40: 163,037
+    DG-II.MP.C.001-7: 160,798

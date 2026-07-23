@@ -1,0 +1,10 @@
+=== Phase-2 full chain on REAL DG2 baseline via NL 'build the manpower histogram' ===
+resolved schedule_file from project .xer -> action ran
+status: success
+source: primavera_taskrsrc
+total_manhours: 5,672,767
+labor assignments: 22153 / 47615
+distinct trades: 42 | peak: W90
+
+=== no-xer project ===
+status: error | error: No schedule file provided — pass schedule_file pointing to a .xer sche

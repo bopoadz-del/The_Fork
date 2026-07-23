@@ -1,0 +1,978 @@
+"""Project entity — groups documents and gates project-level analytics.
+
+Roadmap V2 · Part 0.1 (Project entity) + 0.2 (readiness gate).
+
+A Project is the backbone the platform was missing: documents are no longer
+processed in isolation, and project-level analytics (progress tracking, earned
+value) stay inert until the project is genuinely set up.
+
+SQLAlchemy-backed via app.core.db — unified The Fork schema.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import threading
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import delete, func, select, text as sqla_text
+from sqlalchemy.exc import IntegrityError, OperationalError
+
+from app.core.db import SessionLocal, engine, get_database_url
+from app.core.models import Document, Project, ProjectFact
+
+# ── pilot master-corpus alias ───────────────────────────────────────────────
+# Per-project Drive approval/indexing is not pilot-ready. Expose the existing
+# full-drive corpus (currently stored under project_id "projects_folder") as a
+# single admin-visible pilot project without duplicating chunks or re-importing
+# Drive. This is a temporary alias; proper per-project trees come post-pilot.
+MASTER_CORPUS_PROJECT_ID = os.getenv("MASTER_CORPUS_PROJECT_ID", "dar_al_arkan_master")
+MASTER_CORPUS_SOURCE_PROJECT_ID = os.getenv(
+    "MASTER_CORPUS_SOURCE_PROJECT_ID", "projects_folder"
+)
+MASTER_CORPUS_NAME = os.getenv("MASTER_CORPUS_NAME", "Dar Al Arkan Master Corpus")
+
+
+def _master_corpus_source(project_id: Optional[str]) -> Optional[str]:
+    """Return the backing project_id for a master-corpus alias, if any."""
+    if project_id == MASTER_CORPUS_PROJECT_ID:
+        return MASTER_CORPUS_SOURCE_PROJECT_ID
+    return None
+
+
+# ── document roles that feed the readiness gate ─────────────────────────────
+ROLE_BASELINE = "baseline_schedule"
+ROLE_DAILY = "daily_report"
+ROLE_WEEKLY = "weekly_report"
+ROLE_OTHER = "other"
+VALID_ROLES = {ROLE_BASELINE, ROLE_DAILY, ROLE_WEEKLY, ROLE_OTHER}
+
+_lock = threading.Lock()
+_initialized = False
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_sqlite_parent_dir() -> None:
+    url = get_database_url()
+    if url.startswith("sqlite:///"):
+        parent = os.path.dirname(url[len("sqlite:///") :])
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+
+def _project_as_dict(project: Project) -> Dict[str, Any]:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "client": project.client,
+        "location": getattr(project, "location", None),
+        "status": project.status,
+        "aconex_connected": bool(project.aconex_connected),
+        "user_id": project.user_id,
+        "created_at": project.created_at,
+        "is_approved": bool(getattr(project, "is_approved", True)),
+        "origin": getattr(project, "origin", "user_create") or "user_create",
+        "is_master_corpus": False,
+    }
+
+
+def _document_as_dict(document: Document) -> Dict[str, Any]:
+    out = {
+        "id": document.id,
+        "project_id": document.project_id,
+        "original_name": document.original_name,
+        "stored_as": document.stored_as,
+        "file_path": document.file_path,
+        "doc_type": document.doc_type,
+        "doc_role": document.doc_role,
+        "size": document.size,
+        "uploaded_at": document.uploaded_at,
+        "content_sha256": document.content_sha256,
+    }
+    meta = getattr(document, "metadata_", None)
+    if meta is not None:
+        out["metadata"] = meta
+    return out
+
+
+def _fact_as_dict(fact: ProjectFact) -> Dict[str, Any]:
+    return {
+        "id": fact.id,
+        "project_id": fact.project_id,
+        "key": fact.key,
+        "value": fact.value,
+        "source_document": fact.source_document,
+        "confidence": fact.confidence,
+        "updated_at": fact.updated_at,
+    }
+
+
+def init_db() -> None:
+    """Create the schema if absent. Idempotent — safe to call on every startup.
+
+    Also runs lightweight in-place column patches for legacy SQLite
+    databases that were created before recent migrations landed. Prod
+    Postgres applies the same changes via Alembic; this branch keeps
+    local dev / fresh test environments self-healing without requiring
+    an explicit `alembic upgrade head` run.
+    """
+    global _initialized
+    with _lock:
+        from app.core.users import init_db as init_users_db
+
+        init_users_db()
+        _ensure_sqlite_parent_dir()
+        Project.__table__.create(bind=engine, checkfirst=True)
+        Document.__table__.create(bind=engine, checkfirst=True)
+        ProjectFact.__table__.create(bind=engine, checkfirst=True)
+        _patch_legacy_columns()
+        _initialized = True
+
+
+def _patch_legacy_columns() -> None:
+    """Add columns to legacy tables when they're missing.
+
+    SQLite only — Postgres deployments are managed by Alembic. This
+    function exists because checkfirst=True on Table.create() does NOT
+    add new columns to existing tables; we have to ALTER manually for
+    dev environments + tests.
+
+    Currently handles:
+      * projects.is_approved (Alembic 0004)
+      * projects.origin       (Alembic 0005)
+      * documents.metadata    (Alembic 0009)
+    """
+    url = get_database_url()
+    if not url.startswith("sqlite"):
+        return  # Postgres is migration-managed.
+    try:
+        with engine.connect() as conn:
+            cols = {row[1] for row in conn.execute(
+                sqla_text("PRAGMA table_info(projects)")
+            )}
+            if "is_approved" not in cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE projects "
+                    "ADD COLUMN is_approved BOOLEAN NOT NULL DEFAULT 1"
+                ))
+                conn.commit()
+            if "origin" not in cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE projects "
+                    "ADD COLUMN origin TEXT NOT NULL DEFAULT 'user_create'"
+                ))
+                conn.commit()
+            if "location" not in cols:  # 0010 (F4 — daily_site_report weather)
+                conn.execute(sqla_text(
+                    "ALTER TABLE projects ADD COLUMN location TEXT"
+                ))
+                conn.commit()
+
+            doc_cols = {row[1] for row in conn.execute(
+                sqla_text("PRAGMA table_info(documents)")
+            )}
+            if "metadata" not in doc_cols:
+                conn.execute(sqla_text(
+                    "ALTER TABLE documents ADD COLUMN metadata TEXT"
+                ))
+                conn.commit()
+    except Exception:
+        # Don't crash boot on a dev-environment patch failure — the
+        # next call to a feature that needs the column will surface
+        # the real error with a clearer stack.
+        import logging
+        logging.getLogger(__name__).warning(
+            "legacy column patch skipped", exc_info=True,
+        )
+
+
+def _ensure_db() -> None:
+    if not _initialized:
+        init_db()
+
+
+# ── classification ──────────────────────────────────────────────────────────
+
+def classify_doc_type(filename: str) -> str:
+    """Coarse document-type guess from the filename (display only)."""
+    n = (filename or "").lower()
+    _, ext = os.path.splitext(n)
+    if ext in {".xer", ".mpp"} or "primavera" in n or "p6" in n:
+        return "schedule"
+    if ext == ".ifc":
+        return "bim"
+    if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+        return "photo"
+    if "boq" in n or "bill of quant" in n:
+        return "boq"
+    if "contract" in n or "agreement" in n:
+        return "contract"
+    if "spec" in n:
+        return "specification"
+    if "drawing" in n or ext == ".dwg":
+        return "drawing"
+    if "schedule" in n or "programme" in n or "program" in n:
+        return "schedule"
+    return "document"
+
+
+def classify_doc_role(filename: str) -> str:
+    """Map a filename to a readiness role. Conservative — defaults to 'other'."""
+    n = (filename or "").lower()
+    if "baseline" in n:
+        return ROLE_BASELINE
+    if "daily" in n:
+        return ROLE_DAILY
+    if "weekly" in n:
+        return ROLE_WEEKLY
+    return ROLE_OTHER
+
+
+# ── projects ────────────────────────────────────────────────────────────────
+
+def _stable_project_id_for_name(name: str) -> str:
+    """Deterministic id so parallel ingest workers converge without UNIQUE(name)."""
+    digest = hashlib.sha256(name.strip().lower().encode("utf-8")).hexdigest()[:16]
+    return f"p_{digest}"
+
+
+def _find_active_project_by_name(name: str) -> Optional[Dict[str, Any]]:
+    """Return the oldest active project with this exact name, if any."""
+    _ensure_db()
+    with SessionLocal() as session:
+        row = session.execute(
+            select(Project)
+            .where(Project.name == name)
+            .where(Project.status != "archived")
+            .order_by(Project.created_at.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if not row:
+        return None
+    return _project_as_dict(row)
+
+
+def create_project(
+    name: str,
+    client: Optional[str] = None,
+    user_id: str = "system",
+    *,
+    location: Optional[str] = None,
+    is_approved: bool = True,
+    project_id: Optional[str] = None,
+    origin: str = "user_create",
+) -> Dict[str, Any]:
+    """Create a project row.
+
+    PR A: ``is_approved`` defaults to True for both user-created and
+    admin-created flows. The approve-from-Drive endpoint also passes
+    True explicitly. A future "detected but pending" code path can
+    pass False to create a candidate row that's hidden from the user
+    rail until an admin flips it.
+
+    PR B: ``origin`` records how the row was created. The admin page
+    filters on origin='admin_drive_approved' so user-created rows
+    don't appear in the admin's approved list. Allowed values:
+    'user_create' (default), 'admin_drive_approved', 'user_drive_import'.
+
+    ``project_id`` lets a caller pre-supply the id (used by the
+    approve-from-Drive flow so the slug is human-friendly instead of
+    a random hex).
+    """
+    _ensure_db()
+    pid = project_id or str(uuid.uuid4())[:8]
+    with _lock:
+        with SessionLocal() as session:
+            session.add(
+                Project(
+                    id=pid,
+                    name=name,
+                    client=client,
+                    location=(location or "").strip() or None,
+                    status="active",
+                    aconex_connected=False,
+                    user_id=user_id,
+                    is_approved=is_approved,
+                    origin=origin,
+                    created_at=_now(),
+                )
+            )
+            session.commit()
+    return get_project(pid)
+
+
+def set_project_location(project_id: str, location: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Set (or clear, with None) a project's confirmed site location. Returns the
+    updated project dict, or None if the project does not exist."""
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                return None
+            project.location = (location or "").strip() or None
+            session.commit()
+    return get_project(project_id)
+
+
+def get_or_create_project(
+    name: str,
+    client: Optional[str] = None,
+    user_id: str = "system",
+    *,
+    is_approved: bool = True,
+    project_id: Optional[str] = None,
+    origin: str = "user_create",
+) -> Tuple[Dict[str, Any], bool]:
+    """Ensure exactly one project row for this ingest target (id-primary).
+
+    ``projects.name`` is not UNIQUE, so parallel shard workers that each call
+    ``create_project(folder_name)`` would mint separate random ids and split
+    the corpus. This helper:
+
+    1. Uses a stable ``project_id`` (caller-supplied, else derived from name).
+    2. Returns an existing row by id, else by name (oldest active — resume).
+    3. Creates with that primary key; on ``IntegrityError`` re-fetches.
+
+    Returns ``(project_dict, created)``.
+    """
+    _ensure_db()
+    pid = (project_id or "").strip() or _stable_project_id_for_name(name)
+
+    existing = get_project(pid)
+    if existing:
+        return existing, False
+
+    by_name = _find_active_project_by_name(name)
+    if by_name:
+        # Legacy / pre-shard rows: keep ingesting into the oldest name match
+        # rather than creating a second project under the stable id.
+        return by_name, False
+
+    try:
+        created = create_project(
+            name,
+            client=client,
+            user_id=user_id,
+            is_approved=is_approved,
+            project_id=pid,
+            origin=origin,
+        )
+        return created, True
+    except IntegrityError:
+        # Another worker won the insert race on the same primary key.
+        raced = get_project(pid) or _find_active_project_by_name(name)
+        if raced is None:
+            raise
+        return raced, False
+
+
+def list_projects(
+    user_id: Optional[str] = None,
+    *,
+    include_admin_approved: bool = False,
+) -> List[Dict[str, Any]]:
+    """List projects.
+
+    PR D — visibility model:
+      * When ``user_id`` is None: every row (admin / internal use only).
+      * When ``user_id`` is set + ``include_admin_approved=False``: rows
+        owned by the caller only (legacy behaviour).
+      * When ``user_id`` is set + ``include_admin_approved=True``: rows
+        owned by the caller PLUS rows where origin='admin_drive_approved'
+        AND is_approved=True (the platform-wide canonical projects).
+        ``is_approved=False`` rows are hidden from non-owners regardless
+        of origin — defensive against future "detected but not yet
+        approved" rows that could otherwise leak.
+
+    Pilot: if the master-corpus source project is visible to the caller,
+    the virtual ``dar_al_arkan_master`` alias is appended to the list.
+    """
+    from sqlalchemy import or_, and_
+
+    _ensure_db()
+    with SessionLocal() as session:
+        # Soft-archived projects are hidden from every listing (the "Delete"
+        # action archives rather than deletes — see archive_project).
+        stmt = (
+            select(Project)
+            .where(Project.status != "archived")
+            .order_by(Project.created_at.desc())
+        )
+        if user_id is not None:
+            if include_admin_approved:
+                stmt = stmt.where(
+                    or_(
+                        Project.user_id == user_id,
+                        and_(
+                            Project.origin == "admin_drive_approved",
+                            Project.is_approved.is_(True),
+                        ),
+                    )
+                )
+            else:
+                stmt = stmt.where(Project.user_id == user_id)
+        rows = session.scalars(stmt).all()
+    out = []
+    for project in rows:
+        p = _project_as_dict(project)
+        p["readiness"] = compute_readiness(p["id"])
+        p["document_count"] = len(list_documents(p["id"]))
+        out.append(p)
+
+    # Expose the pilot master-corpus alias when the backing corpus is visible.
+    master = get_project(
+        MASTER_CORPUS_PROJECT_ID,
+        user_id=user_id,
+        include_admin_approved=include_admin_approved,
+    )
+    if master is not None:
+        master["is_master_corpus"] = True
+        master["document_count"] = len(list_documents(MASTER_CORPUS_SOURCE_PROJECT_ID))
+        # Pilot: the master corpus is the canonical starting point, so it
+        # always appears first regardless of creation date.
+        out.insert(0, master)
+
+    return out
+
+
+def get_project(
+    project_id: str,
+    user_id: Optional[str] = None,
+    *,
+    include_admin_approved: bool = False,
+    doc_limit: Optional[int] = None,
+    doc_offset: int = 0,
+) -> Optional[Dict[str, Any]]:
+    """Load a project the caller can access.
+
+    PR D — non-owners may also read admin-approved platform projects
+    when ``include_admin_approved=True``. ``is_approved=False`` rows
+    stay owner-only regardless of origin (defensive — admins shouldn't
+    leak detected-but-pending candidates to users).
+
+    Pilot: a virtual master-corpus project (default ``dar_al_arkan_master``)
+    is backed by the existing full-drive corpus (default ``projects_folder``).
+    It appears as a first-class project without duplicating chunks.
+    """
+    _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
+    with SessionLocal() as session:
+        project = session.get(Project, source_id)
+    if not project:
+        return None
+    # Soft-archived projects are treated as gone everywhere they're read
+    # (UI detail, ownership gates, retrieval scoping) — but the row + its RAG
+    # chunks stay in the DB. See archive_project.
+    if getattr(project, "status", "active") == "archived":
+        return None
+    is_alias = source_id != project_id
+    if user_id is not None and project.user_id != user_id:
+        if is_alias:
+            # The master-corpus alias is treated as an admin-approved platform
+            # project: visible to any authenticated user when the caller asks
+            # for platform projects, otherwise owner-only.
+            allowed = include_admin_approved and bool(
+                getattr(project, "is_approved", True)
+            )
+        else:
+            allowed = (
+                include_admin_approved
+                and getattr(project, "origin", "user_create") == "admin_drive_approved"
+                and bool(getattr(project, "is_approved", True))
+            )
+        if not allowed:
+            return None
+    proj = _project_as_dict(project)
+    # Virtual master-corpus project: expose alias id/name but keep the source
+    # corpus behind it.
+    if source_id != project_id:
+        proj["id"] = project_id
+        proj["name"] = MASTER_CORPUS_NAME
+        proj["origin"] = "admin_drive_approved"
+        proj["is_approved"] = True
+        proj["is_master_corpus"] = True
+    # Paginate documents: a large corpus (2713-doc master) must not serialize
+    # every row on every load. doc_limit=None preserves the legacy "all docs"
+    # behaviour for the many internal callers; the detail endpoint passes a
+    # first-page limit. document_count is a cheap COUNT, NOT len() of the page.
+    proj["documents"] = list_documents(
+        source_id,
+        limit=doc_limit,
+        offset=doc_offset,
+        newest_first=doc_limit is not None,
+    )
+    proj["document_count"] = count_documents(source_id)
+    proj["readiness"] = compute_readiness(source_id)
+    return proj
+
+
+def project_owner(project_id: str) -> Optional[str]:
+    """Return the user_id that owns the project, or None if the project doesn't exist."""
+    _ensure_db()
+    with SessionLocal() as session:
+        project = session.get(Project, project_id)
+    return project.user_id if project else None
+
+
+def archive_project(project_id: str) -> bool:
+    """Soft-delete: hide the project from listings, detail, ownership gates and
+    retrieval WITHOUT removing the row. `chunks.project_id` is ON DELETE
+    CASCADE, so keeping the row is what preserves the RAG — the operator
+    principle 'delete the UI, never the RAG; build on it only'. Reversible:
+    set status back to 'active' to restore. Returns False if not found."""
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            project.status = "archived"
+            session.commit()
+            return True
+
+
+def approve_project(project_id: str) -> bool:
+    """Make an EXISTING project admin-visible: set ``is_approved=True`` and
+    ``origin='admin_drive_approved'`` so the sidebar (which filters on that
+    origin) lists it for all users — the same visibility a Drive-approved
+    project gets, without re-importing. Idempotent. Returns False if not found.
+    """
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            project.is_approved = True
+            project.origin = "admin_drive_approved"
+            session.commit()
+            return True
+
+
+def delete_project(project_id: str) -> bool:
+    """HARD delete — removes the row and (via ON DELETE CASCADE) its documents
+    AND RAG chunks. Reserved for genuine admin cleanup; the user-facing Delete
+    action uses archive_project so the RAG is never destroyed."""
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            session.delete(project)
+            session.commit()
+            return True
+
+
+# Projects that may NEVER be hard-purged regardless of status — the master
+# corpus, its backing source, and the shared general-knowledge base.
+_PURGE_PROTECTED_IDS = {
+    MASTER_CORPUS_PROJECT_ID,
+    MASTER_CORPUS_SOURCE_PROJECT_ID,
+    os.getenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "training_material").split(",")[0].strip(),
+}
+
+
+def purge_archived_project(project_id: str) -> str:
+    """PERMANENTLY remove an ARCHIVED project — its RAG chunks AND its row.
+
+    SAFETY (never-delete-RAG rule still holds for everything live):
+      * refuses protected master/backing/general-knowledge ids outright;
+      * refuses any project whose status is not 'archived' — so active
+        projects and the master corpus can never be purged through here.
+    Returns one of: 'protected' | 'not_found' | 'not_archived' | 'purged'.
+    """
+    if project_id in _PURGE_PROTECTED_IDS:
+        return "protected"
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return "not_found"
+            if getattr(project, "status", "active") != "archived":
+                return "not_archived"
+    # Clear the vector store first, then hard-delete the row (cascade clears
+    # the chunks table). Both, belt-and-suspenders.
+    try:
+        from app.core import doc_index
+        doc_index.purge_project_index(project_id)
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "purge_archived_project: index purge failed for %s: %s", project_id, exc)
+    delete_project(project_id)
+    return "purged"
+
+
+def set_aconex(project_id: str, connected: bool) -> bool:
+    """Set the Aconex connection flag. Stub for the full connector (Roadmap V2)."""
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                return False
+            project.aconex_connected = connected
+            session.commit()
+            return True
+
+
+# ── documents ───────────────────────────────────────────────────────────────
+
+def add_document(
+    project_id: str,
+    original_name: str,
+    stored_as: Optional[str] = None,
+    file_path: Optional[str] = None,
+    size: int = 0,
+    role: Optional[str] = None,
+    content_sha256: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Register a document under a project. Storing only — runs no analysis."""
+    _ensure_db()
+    did = str(uuid.uuid4())[:8]
+    doc_type = classify_doc_type(original_name)
+    doc_role = role if role in VALID_ROLES else classify_doc_role(original_name)
+    with _lock:
+        with SessionLocal() as session:
+            session.add(
+                Document(
+                    id=did,
+                    project_id=project_id,
+                    original_name=original_name,
+                    stored_as=stored_as,
+                    file_path=file_path,
+                    doc_type=doc_type,
+                    doc_role=doc_role,
+                    size=size,
+                    uploaded_at=_now(),
+                    content_sha256=content_sha256,
+                    metadata_=metadata,
+                )
+            )
+            session.commit()
+    with SessionLocal() as session:
+        document = session.get(Document, did)
+    assert document is not None
+    return _document_as_dict(document)
+
+
+def update_document_metadata(doc_id: str, metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Merge ``metadata`` into the document's existing metadata_ column.
+
+    Returns the updated document dict, or None if the document was not found.
+    """
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None:
+                return None
+            current = document.metadata_ or {}
+            current.update(metadata)
+            document.metadata_ = current
+            session.commit()
+    with SessionLocal() as session:
+        document = session.get(Document, doc_id)
+    assert document is not None
+    return _document_as_dict(document)
+
+
+def find_document_by_sha(
+    project_id: str, content_sha256: str,
+) -> Optional[Dict[str, Any]]:
+    """Return the FIRST existing document in this project with this content
+    hash, or None. Used by the Drive walker to skip unchanged files on
+    re-walk. Returns None for empty/None hashes so a missing sha cannot
+    accidentally match other null-sha rows."""
+    if not content_sha256:
+        return None
+    _ensure_db()
+    with SessionLocal() as session:
+        document = session.scalars(
+            select(Document)
+            .where(
+                Document.project_id == project_id,
+                Document.content_sha256 == content_sha256,
+            )
+            .order_by(Document.uploaded_at)
+            .limit(1)
+        ).first()
+    return _document_as_dict(document) if document else None
+
+
+def list_documents(
+    project_id: str,
+    *,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    newest_first: bool = False,
+) -> List[Dict[str, Any]]:
+    """List a project's documents.
+
+    ``limit``/``offset`` paginate (used by the workspace + the documents
+    endpoint so a 2700-doc corpus doesn't serialize every row on every load).
+    ``newest_first`` orders by upload time descending — the natural order for a
+    paginated sidebar. Defaults preserve the legacy "all docs, oldest-first"
+    behaviour so existing callers are untouched.
+    """
+    _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
+    order = Document.uploaded_at.desc() if newest_first else Document.uploaded_at
+    with SessionLocal() as session:
+        stmt = (
+            select(Document)
+            .where(Document.project_id == source_id)
+            .order_by(order)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
+        rows = session.scalars(stmt).all()
+    return [_document_as_dict(document) for document in rows]
+
+
+def count_documents(project_id: str) -> int:
+    """Total document count for a project — a cheap indexed COUNT, so a
+    paginated listing can report the total without serializing every row."""
+    _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
+    with SessionLocal() as session:
+        return int(
+            session.scalar(
+                select(func.count())
+                .select_from(Document)
+                .where(Document.project_id == source_id)
+            )
+            or 0
+        )
+
+
+def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
+    _ensure_db()
+    with SessionLocal() as session:
+        document = session.get(Document, doc_id)
+    return _document_as_dict(document) if document else None
+
+
+def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
+    """Delete a document row. Returns the deleted row (so the caller can
+    purge the file from disk), or None if it did not exist.
+
+    Also deletes the document's chunks from the RagChunk table. Postgres
+    has an ON DELETE CASCADE FK so the cascade is implicit there; SQLite
+    (used by dev / tests) doesn't enforce FKs by default, so we delete
+    explicitly to keep search results consistent across backends. Without
+    this, a search after deletion can still surface chunks from the
+    removed document because the hybrid retriever queries the chunks
+    table directly.
+
+    If the chunks table has never been created (e.g. a fresh dev/test DB
+    with the embedding stack not yet initialized), the explicit delete is
+    a no-op — there are no chunks to remove.
+    """
+    doc = get_document(doc_id)
+    if not doc:
+        return None
+    project_id = doc.get("project_id")
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document:
+                session.delete(document)
+                if project_id:
+                    # Delete RAG chunks from the active namespace. The vector
+                    # store knows which namespace (e.g. v2) is current; the
+                    # static RagChunk model only covers the legacy ``chunks``
+                    # table and would leave chunks in a namespaced table behind.
+                    try:
+                        from app.core.rag import retriever as _rag
+                        from app.core.rag import vector_store as _vs
+
+                        if _rag.available():
+                            store = _vs.get_store()
+                            store.delete_doc(project_id, doc_id)
+                        else:
+                            # RAG stack not available (fresh test DB, missing
+                            # model, etc.) — legacy table cleanup, best effort.
+                            from app.core.models import RagChunk  # local: avoid circular
+                            try:
+                                session.execute(
+                                    delete(RagChunk).where(
+                                        RagChunk.project_id == project_id,
+                                        RagChunk.doc_id == doc_id,
+                                    )
+                                )
+                            except OperationalError as exc:
+                                if "no such table" not in str(exc).lower():
+                                    raise
+                    except Exception:
+                        # Document row deletion must never be blocked by RAG
+                        # cleanup; the chunks will become unreachable once the
+                        # document row is gone anyway.
+                        pass
+                session.commit()
+    return doc
+
+
+def purge_documents_older_than(days: int) -> List[Dict[str, Any]]:
+    """Delete document rows older than `days`. Returns the purged rows
+    (Roadmap V2 · Epic 6 — data retention)."""
+    _ensure_db()
+    from datetime import timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(Document).where(Document.uploaded_at < cutoff)
+        ).all()
+        purged = [_document_as_dict(document) for document in rows]
+    with _lock:
+        with SessionLocal() as session:
+            session.execute(delete(Document).where(Document.uploaded_at < cutoff))
+            session.commit()
+    return purged
+
+
+# ── readiness gate (Roadmap V2 · 0.2) ───────────────────────────────────────
+
+def compute_readiness(project_id: str) -> Dict[str, Any]:
+    """A project is 'ready' for progress tracking only once it has a baseline
+    schedule, at least one daily and one weekly report, and Aconex connected."""
+    source_id = _master_corpus_source(project_id) or project_id
+    # Readiness only needs each doc's role — NOT the full serialized rows.
+    # Loading all documents here (via list_documents) meant get_project paid the
+    # full doc-load TWICE (~8s on the 2713-doc master corpus). Select just the
+    # doc_role column instead.
+    with SessionLocal() as session:
+        roles = list(
+            session.scalars(
+                select(Document.doc_role).where(Document.project_id == source_id)
+            ).all()
+        )
+        project = session.get(Project, source_id)
+    aconex = bool(project.aconex_connected) if project else False
+
+    baseline = ROLE_BASELINE in roles
+    daily = roles.count(ROLE_DAILY)
+    weekly = roles.count(ROLE_WEEKLY)
+
+    missing: List[str] = []
+    if not baseline:
+        missing.append("baseline_schedule")
+    if daily < 1:
+        missing.append("daily_reports")
+    if weekly < 1:
+        missing.append("weekly_reports")
+    if not aconex:
+        missing.append("aconex")
+
+    return {
+        "baseline_schedule": baseline,
+        "daily_reports": daily,
+        "weekly_reports": weekly,
+        "aconex_connected": aconex,
+        "ready": not missing,
+        "missing": missing,
+    }
+
+
+# ── project memory / durable facts (Roadmap V2 · Epic 3) ────────────────────
+
+def set_fact(
+    project_id: str,
+    key: str,
+    value: str,
+    source_document: Optional[str] = None,
+    confidence: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    """Upsert a durable fact for a project (one row per project+key)."""
+    _ensure_db()
+    now = _now()
+    with _lock:
+        with SessionLocal() as session:
+            existing = session.scalars(
+                select(ProjectFact).where(
+                    ProjectFact.project_id == project_id,
+                    ProjectFact.key == key,
+                )
+            ).one_or_none()
+            if existing:
+                existing.value = str(value)
+                existing.source_document = source_document
+                existing.confidence = confidence
+                existing.updated_at = now
+            else:
+                session.add(
+                    ProjectFact(
+                        id=str(uuid.uuid4())[:8],
+                        project_id=project_id,
+                        key=key,
+                        value=str(value),
+                        source_document=source_document,
+                        confidence=confidence,
+                        updated_at=now,
+                    )
+                )
+            session.commit()
+    return get_fact(project_id, key)
+
+
+def get_fact(project_id: str, key: str) -> Optional[Dict[str, Any]]:
+    _ensure_db()
+    with SessionLocal() as session:
+        fact = session.scalars(
+            select(ProjectFact).where(
+                ProjectFact.project_id == project_id,
+                ProjectFact.key == key,
+            )
+        ).one_or_none()
+    return _fact_as_dict(fact) if fact else None
+
+
+def list_facts(project_id: str) -> List[Dict[str, Any]]:
+    _ensure_db()
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(ProjectFact)
+            .where(ProjectFact.project_id == project_id)
+            .order_by(ProjectFact.key)
+        ).all()
+    return [_fact_as_dict(fact) for fact in rows]
+
+
+def search_facts(project_id: str, query: str) -> List[Dict[str, Any]]:
+    """Keyword search over fact keys + values (case-insensitive, any-term)."""
+    facts = list_facts(project_id)
+    terms = (query or "").lower().split()
+    if not terms:
+        return facts
+    return [
+        f for f in facts
+        if any(t in f"{f['key']} {f['value']}".lower() for t in terms)
+    ]
+
+
+def delete_fact(project_id: str, key: str) -> bool:
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            fact = session.scalars(
+                select(ProjectFact).where(
+                    ProjectFact.project_id == project_id,
+                    ProjectFact.key == key,
+                )
+            ).one_or_none()
+            if not fact:
+                return False
+            session.delete(fact)
+            session.commit()
+            return True
