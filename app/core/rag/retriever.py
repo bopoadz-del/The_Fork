@@ -754,11 +754,28 @@ def index_chunks(
     store = get_store(dim=embedder.dim)
     # Layered RAG (flag-gated): tag the doc's chunks with their knowledge layer
     # (L1/L2A/L2B/L3) and authority so retrieval can rank by precedence. Off by
-    # default -> (None, None), i.e. today's behaviour byte-for-byte.
+    # default -> (None, None), i.e. today's behaviour byte-for-byte. A doc whose
+    # metadata carries provenance="user_upload" (set by the interactive upload
+    # endpoint) is routed to the user_session layer (Stage 4).
     knowledge_layer = authority = None
     if layers.layered_enabled():
+        name, is_user_upload = _doc_name_and_provenance(doc_id)
         knowledge_layer, authority = layers.classify(
-            project_id, _doc_name_for_id(doc_id))
+            project_id, name, is_user_upload=is_user_upload)
     return store.upsert_chunks(
         project_id, doc_id, chunks, embeddings,
         knowledge_layer=knowledge_layer, authority=authority)
+
+
+def _doc_name_and_provenance(doc_id: str) -> tuple:
+    """Return ``(original_name, is_user_upload)`` for a doc. is_user_upload is
+    True when the doc's metadata provenance marks it an interactive upload.
+    Safe: unknown/missing doc -> ('', False)."""
+    try:
+        from app.core import projects as _projects
+        doc = _projects.get_document(doc_id) or {}
+        name = doc.get("original_name") or ""
+        prov = (doc.get("metadata") or {}).get("provenance")
+        return name, prov == "user_upload"
+    except Exception:
+        return "", False

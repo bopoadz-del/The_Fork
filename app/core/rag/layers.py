@@ -114,13 +114,17 @@ def classify(project_id, doc_name, *, is_user_upload=False):
 
 # ── retrieval-time authority precedence (Stage 3) ──────────────────────────
 # How much each layer counts in the precedence bonus. The live project record
-# dominates ("what does this project say"); shared general knowledge is
-# background. Company rules and the user's own session sit between.
+# dominates ("what does this project say"); company rules and shared general
+# knowledge are the authoritative Main corpus. The user's own session (uploads)
+# is LAST: it surfaces on semantic match but never outranks authoritative Main
+# content at equal cosine — the operator's "uploads land in the user's RAG, not
+# the main RAG" anti-pollution rule (docs/rag-deployment-plan.md L3: "never
+# override project documents").
 _LAYER_WEIGHT = {
     "project_record": 1.0,
     "company_rules": 0.7,
-    "user_session": 0.6,
     "shared_domain": 0.5,
+    "user_session": 0.3,
 }
 
 
