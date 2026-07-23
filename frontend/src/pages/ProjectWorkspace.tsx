@@ -727,6 +727,12 @@ export default function ProjectWorkspace() {
   // Abort controller — cancel in-flight stream on unmount or re-send
   const abortRef = useRef<AbortController | null>(null)
 
+  // S4: document_ids attached via the composer since the last send. The
+  // upload response's real doc id is kept here and shipped alongside the
+  // inline [attached: name] marker (which the backend also parses as a
+  // fallback), then cleared once the send goes out.
+  const pendingAttachedDocIdsRef = useRef<string[]>([])
+
   // ── Load project ──────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -891,9 +897,15 @@ export default function ProjectWorkspace() {
           history: historyForRequest,
           // / agent-picker: omit (or "auto") = today's automatic routing.
           agent: pinnedAgent ?? undefined,
+          // S4: real ids for files attached this turn (marker is the fallback).
+          document_ids: pendingAttachedDocIdsRef.current.length
+            ? [...pendingAttachedDocIdsRef.current]
+            : undefined,
         }),
         signal: controller.signal,
       })
+      // Sent (ok or not) — the server-side marker parser covers any retry.
+      pendingAttachedDocIdsRef.current = []
 
       if (!res.ok || !res.body) {
         let errMsg = `HTTP ${res.status}`
@@ -1339,6 +1351,11 @@ export default function ProjectWorkspace() {
             agents={agents}
             pinnedAgent={pinnedAgent}
             onPinAgent={setPinnedAgent}
+            onAttached={(_name, docId) => {
+              // S4: keep the real document_id so the next send carries it as
+              // document_ids — the [attached: name] marker alone is lossy.
+              if (docId) pendingAttachedDocIdsRef.current.push(docId)
+            }}
           />
         </div>
       }
