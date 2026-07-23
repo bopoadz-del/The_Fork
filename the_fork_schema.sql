@@ -191,8 +191,11 @@ CREATE TABLE rag_budget (
 
 CREATE TABLE chunks (
     chunk_id    TEXT PRIMARY KEY,
-    project_id  TEXT NOT NULL
-                REFERENCES projects (id) ON DELETE CASCADE,
+    -- Decoupled from the workspace row: ON DELETE SET NULL (not CASCADE) so
+    -- deleting a project orphans its chunks rather than destroying the RAG.
+    -- (Prod writes to the namespaced chunks_v2 table, which has no FK at all.)
+    project_id  TEXT
+                REFERENCES projects (id) ON DELETE SET NULL,
     doc_id      TEXT NOT NULL
                 REFERENCES documents (id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,

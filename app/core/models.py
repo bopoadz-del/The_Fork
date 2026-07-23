@@ -437,7 +437,10 @@ class RagChunk(Base):
     )
 
     chunk_id: Mapped[str] = mapped_column(String, primary_key=True)
-    project_id: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable: the legacy chunks FK is ON DELETE SET NULL (Alembic 0012), so a
+    # chunk survives its workspace's deletion as an orphan rather than being
+    # cascade-deleted. Knowledge is decoupled from the project row.
+    project_id: Mapped[str | None] = mapped_column(String, nullable=True)
     doc_id: Mapped[str] = mapped_column(String, nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
