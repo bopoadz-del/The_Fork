@@ -600,12 +600,18 @@ async def clear_project_conversation(
         raise HTTPException(403, "Admin or project owner required")
     from app.core import agent_memory
 
-    # Workspace conversation IDs are deterministic (ws-{project_id}).
-    # Accept both the alias and the backing project id for the master corpus.
-    # Reject any other workspace prefix that doesn't match this project
+    # Workspace conversation IDs are deterministic: ws-{project_id} for the
+    # original single thread, ws-{project_id}-{suffix} for the multi-session
+    # chat history (Quarry parity). Accept both the alias and the backing
+    # project id for the master corpus; reject any other workspace prefix
     # before we let the call near agent_memory.
-    expected_ids = {f"ws-{project_id}", f"ws-{resolved_id}"}
-    if conversation_id.startswith("ws-") and conversation_id not in expected_ids:
+    allowed_prefixes = tuple(
+        p for pid in {project_id, resolved_id} for p in (f"ws-{pid}", f"ws-{pid}-")
+    )
+    if conversation_id.startswith("ws-") and not (
+        conversation_id in {f"ws-{project_id}", f"ws-{resolved_id}"}
+        or conversation_id.startswith(tuple(p for p in allowed_prefixes if p.endswith("-")))
+    ):
         raise HTTPException(404, "Conversation not found")
 
     # For non-workspace conversation IDs, confirm the stored row (if any)
@@ -628,6 +634,44 @@ async def clear_project_conversation(
         "conversation_id": conversation_id,
         **cleared,
     }
+
+
+@router.get("/v1/projects/{project_id}/conversations")
+async def list_project_conversations(
+    project_id: str,
+    auth: dict = Depends(require_user),
+):
+    """List the project's chat sessions, newest-first — the sidebar CHAT
+    HISTORY section (Quarry standalone parity; scoped out of PR #101 as
+    "next PR"). Titles come from each conversation's first user message
+    (stamped in agent_memory.append_message). Owner-only, same auth shape
+    as the clear endpoint above.
+    """
+    resolved_id = store._master_corpus_source(project_id) or project_id
+    proj = store.get_project(
+        project_id, user_id=auth["user_id"], include_admin_approved=True
+    )
+    if not proj:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    if proj.get("user_id") != auth["user_id"] and auth.get("role") != "admin":
+        raise HTTPException(403, "Admin or project owner required")
+    from app.core import agent_memory
+
+    conversations: List[Dict[str, Any]] = []
+    seen: set = set()
+    for pid in {project_id, resolved_id}:
+        for conv in agent_memory.list_conversations(project_id=pid):
+            if conv["id"] in seen:
+                continue
+            seen.add(conv["id"])
+            conversations.append({
+                "id": conv["id"],
+                "title": conv.get("title"),
+                "created_at": conv.get("created_at"),
+                "updated_at": conv.get("updated_at"),
+            })
+    conversations.sort(key=lambda c: str(c.get("updated_at") or ""), reverse=True)
+    return {"conversations": conversations[:50]}
 
 
 @router.post("/v1/projects/{project_id}/connectors/aconex")

@@ -14,7 +14,7 @@
  *   • Sign out — bottom of rail.
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { Plus, LogOut, Download, RotateCcw, Settings } from 'lucide-react'
+import { Plus, LogOut, Download, RotateCcw, Settings, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { apiGet, ApiError } from '../lib/api'
@@ -61,6 +61,31 @@ interface Props {
   onExportConversation?: () => void
   /** Clear the active conversation server-side + reset the UI. */
   onClearConversation?: () => void
+  /** Chat sessions for the CHAT HISTORY section (Quarry parity). */
+  conversations?: Array<{
+    id: string
+    title: string | null
+    updated_at: string | null
+  }>
+  /** Currently open session id. */
+  activeConversationId?: string | null
+  /** Open a past session. */
+  onSelectConversation?: (id: string) => void
+  /** Start a fresh session. */
+  onNewConversation?: () => void
+}
+
+/** "Today" / "Yesterday" / "N days ago" — matches the standalone's history
+ *  labels without pulling in a date library. */
+function relativeDay(iso: string | null): string {
+  if (!iso) return ''
+  const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return ''
+  const days = Math.floor((Date.now() - then.getTime()) / 86_400_000)
+  if (days <= 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return `${days} days ago`
+  return then.toLocaleDateString()
 }
 
 type LoadState =
@@ -75,6 +100,10 @@ export default function LeftPanel({
   messageCount,
   onExportConversation,
   onClearConversation,
+  conversations,
+  activeConversationId,
+  onSelectConversation,
+  onNewConversation,
 }: Props) {
   const { logout } = useAuth()
   const [state, setState] = useState<LoadState>({ tag: 'loading' })
@@ -204,6 +233,49 @@ export default function LeftPanel({
             </>
           ) : (
             <p className="left-panel__empty">No messages yet. Start the chat.</p>
+          )}
+        </section>
+      )}
+
+      {activeProjectId && onSelectConversation && (
+        <section className="left-panel__section">
+          <header className="left-panel__section-head">Chat history</header>
+          {onNewConversation && (
+            <button
+              type="button"
+              className="left-panel__convo-btn left-panel__history-new"
+              onClick={onNewConversation}
+              title="Start a fresh chat session"
+            >
+              <Plus size={13} />
+              <span>New chat</span>
+            </button>
+          )}
+          {conversations && conversations.length > 0 ? (
+            <ul className="left-panel__history">
+              {conversations.map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    className={`left-panel__history-item${
+                      c.id === activeConversationId ? ' left-panel__history-item--active' : ''
+                    }`}
+                    onClick={() => onSelectConversation(c.id)}
+                    title={c.title ?? c.id}
+                  >
+                    <MessageSquare size={12} />
+                    <span className="left-panel__history-title">
+                      {c.title || 'Untitled session'}
+                    </span>
+                    <span className="left-panel__history-when">
+                      {relativeDay(c.updated_at)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="left-panel__empty">No past sessions yet.</p>
           )}
         </section>
       )}

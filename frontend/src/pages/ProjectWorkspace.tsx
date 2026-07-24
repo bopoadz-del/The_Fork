@@ -74,6 +74,13 @@ interface ProjectReadiness {
 
 type MessageRole = 'user' | 'assistant'
 
+export interface ConversationSummary {
+  id: string
+  title: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
 interface ChatMessage {
   id: string
   role: MessageRole
@@ -715,9 +722,20 @@ export default function ProjectWorkspace() {
     return () => { cancelled = true }
   }, [])
 
-  // Stable conversation id tied to this project — persists across page reloads
-  // so the backend agent memory carries context forward.
-  const conversationId = id ? `ws-${id}` : null
+  // Conversation sessions (Quarry CHAT HISTORY parity). The default session
+  // keeps the legacy stable id ws-{project} so existing threads carry
+  // forward; "New chat" mints ws-{project}-{timestamp}. The session list
+  // comes from GET /v1/projects/{id}/conversations.
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  const [conversationList, setConversationList] = useState<ConversationSummary[]>([])
+  const conversationId = activeConversationId ?? (id ? `ws-${id}` : null)
+
+  const refreshConversations = useCallback(() => {
+    if (!id) return
+    apiGet<{ conversations: ConversationSummary[] }>(`/v1/projects/${id}/conversations`)
+      .then((r) => setConversationList(r.conversations ?? []))
+      .catch(() => { /* history list is progressive enhancement */ })
+  }, [id])
 
   // Mirror messages into a ref so handleSend can read current history without
   // being a stale closure or needing messages in its dependency array.
@@ -739,11 +757,14 @@ export default function ProjectWorkspace() {
     // Abort any in-flight stream and reset chat when the project id changes
     abortRef.current?.abort()
     setMessages([])
+    setActiveConversationId(null)
+    setConversationList([])
 
     if (!id) {
       setWsState({ tag: 'not-found' })
       return
     }
+    refreshConversations()
     setWsState({ tag: 'loading' })
     let cancelled = false
     void (async () => {
@@ -787,6 +808,34 @@ export default function ProjectWorkspace() {
       }
     })()
     return () => { cancelled = true }
+  }, [id, refreshConversations])
+
+  // ── Chat session switching (Quarry CHAT HISTORY) ──────────────────────────
+
+  const handleSelectConversation = useCallback((convId: string) => {
+    abortRef.current?.abort()
+    setActiveConversationId(convId)
+    setMessages([])
+    apiGet<{ messages: Array<{ role: string; content: string }> }>(
+      `/v1/agents/conversations/${convId}/messages`,
+    )
+      .then((hist) => {
+        setMessages(
+          (hist.messages ?? []).map((m) => ({
+            id: msgId(),
+            role: (m.role === 'user' ? 'user' : 'assistant') as MessageRole,
+            content: m.content,
+          })),
+        )
+      })
+      .catch(() => { /* empty thread on failure — same as project load */ })
+  }, [])
+
+  const handleNewConversation = useCallback(() => {
+    if (!id) return
+    abortRef.current?.abort()
+    setActiveConversationId(`ws-${id}-${Date.now()}`)
+    setMessages([])
   }, [id])
 
   // ── Document mutation callbacks ───────────────────────────────────────────
@@ -1114,8 +1163,11 @@ export default function ProjectWorkspace() {
     } finally {
       clearReaderDeadline()
       setStreaming(false)
+      // First message stamps the session title server-side — refresh the
+      // sidebar CHAT HISTORY list so the new session appears named.
+      refreshConversations()
     }
-  }, [id, conversationId, streaming])
+  }, [id, conversationId, streaming, refreshConversations])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1261,6 +1313,10 @@ export default function ProjectWorkspace() {
           activeProjectName={projectName}
           messageCount={messages.length}
           onExportConversation={exportConversation}
+          conversations={conversationList}
+          activeConversationId={conversationId}
+          onSelectConversation={handleSelectConversation}
+          onNewConversation={handleNewConversation}
           onClearConversation={clearConversation}
           documents={
             <DocumentsPanel
