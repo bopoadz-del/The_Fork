@@ -18,6 +18,7 @@ import os
 import pytest
 
 from app.containers.construction import ConstructionContainer
+from tests.conftest import requires_construction_kit
 
 XER = os.path.join(os.path.dirname(__file__), "fixtures", "ohdd_baseline_2013.xer")
 
@@ -27,6 +28,7 @@ def container():
     return ConstructionContainer()
 
 
+@requires_construction_kit
 class TestRealBaselineXer:
     @pytest.mark.asyncio
     async def test_parse_real_baseline_programme(self, container):
