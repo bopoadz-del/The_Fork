@@ -1301,6 +1301,11 @@ class ConstructionBoqMixin:
         return {
             "status": "success",
             "action": "tender_bid_analysis",
+            # Sub-analyses that currently return empty results by construction
+            # (_identify_qualification_gaps / _identify_bid_clarifications are
+            # not implemented). Named here so the deliverable cannot read as a
+            # full qualification review.
+            "analysis_gaps": ["qualification_gaps", "clarifications_required"],
             "project_type": project_type,
             "bids_received": len(bids),
             "evaluation_criteria": evaluation_criteria,
