@@ -565,8 +565,35 @@ class ConstructionContainer(
         return await self.generate_carbon_report(input_data, params)
 
     async def jetson_dispatch(self, input_data: Any, params: Dict) -> Dict:
-        """Jetson/edge dispatch stub — not implemented in this release."""
-        return {"status": "error", "error": "jetson_dispatch is not implemented"}
+        """Edge dispatch: validate and stage the job, honestly pending hardware.
+
+        The Orin/Jetson processor has not shipped (docs/EDGE_PORT.md), so no
+        executor exists yet. Rather than a bare not-implemented error, accept
+        the job shape, validate it, and return the staged dispatch plan with
+        ``status: pending_hardware`` — when the board arrives only the
+        executor swaps in; callers and tests already see the real contract.
+        """
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        task = p.get("task") or data.get("task")
+        payload = p.get("payload") or data.get("payload") or {}
+        if not task:
+            return {
+                "status": "error",
+                "error": "jetson_dispatch requires a 'task' (e.g. safety_scan, "
+                         "photo_inference) to stage an edge job",
+            }
+        return {
+            "status": "pending_hardware",
+            "action": "jetson_dispatch",
+            "staged_job": {
+                "task": task,
+                "payload_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
+                "target": p.get("target", data.get("target", "jetson-orin")),
+            },
+            "reason": "edge processor not yet installed — job validated and "
+                      "staged, no executor available (see docs/EDGE_PORT.md)",
+        }
     def _get_maintenance_tasks(self, system_type: str) -> List[tuple]:
         tasks = {
             "mechanical": [

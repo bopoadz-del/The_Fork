@@ -86,7 +86,7 @@ ACTION_HINTS: dict[str, str] = {
     "bim_clash_detection":
         "The user is asking about BIM clashes. Focus on hard/soft clashes by "
         "discipline (MEP/structure/architecture) and priority.",
-    "bim_extractor":
+    "bim_extract":
         "The user wants quantities extracted from a BIM model. Group by "
         "element type with totals; include units.",
     "digital_twin_sync":
@@ -261,7 +261,14 @@ GENERATIVE_INTENTS = frozenset({
     # BIM full pipeline
     "bim_analysis",
     "bim_clash_detection",
-    "bim_extractor",
+    # The container action is `bim_extract` — the orchestrator briefly emitted
+    # the non-existent name `bim_extractor`, which routed but could never
+    # deliver (2026-07-24 seam sweep). tests/test_capability_seams.py pins this.
+    "bim_extract",
+    # Digital-twin payload prep is a real implementation that previously only
+    # ever produced a chat hint (in no delivery gate). progress_tracker is
+    # deliberately NOT here — tests/test_routing_matrix.py pins it fast-path.
+    "digital_twin_sync",
     # Drawing quantity take-off — real tool dispatch, not RAG-only prose.
     # Without this, "extract quantities from the floor plan" stays on the
     # fast chat path and the model has no way to read the DXF/vector PDF,

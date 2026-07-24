@@ -108,7 +108,7 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     # BIM / IFC
     ("bim_analysis",          ["bim", "ifc", "revit", "3d model", "building model", "navisworks"]),
     ("bim_clash_detection",   ["clash", "clash detection", "interference", "conflict", "mep conflict"]),
-    ("bim_extractor",         ["extract bim", "ifc quantities", "bim quantities", "model quantities"]),
+    ("bim_extract",           ["extract bim", "ifc quantities", "bim quantities", "model quantities"]),
     ("digital_twin_sync",     ["digital twin", "asset data", "sync model", "as-built bim"]),
     # QA/QC
     ("qa_qc_inspection",      ["qa", "qc", "quality", "inspection", "test report", "ncr", "non-conformance", "punch list"]),

@@ -930,15 +930,18 @@ class ConstructionDocumentsMixin:
         project_name = p.get("project_name", "Project")
     
         if not equipment_list:
-            equipment_list = [
-                {"tag": "HVAC-01", "description": "AHU-1 Air Handling Unit", "system_type": "HVAC", "manufacturer": "TBC", "model": "TBC", "location": "Roof Level", "warranty_years": 2},
-                {"tag": "HVAC-02", "description": "Chiller Unit CHL-1", "system_type": "HVAC", "manufacturer": "TBC", "model": "TBC", "location": "Plant Room", "warranty_years": 2},
-                {"tag": "ELEC-01", "description": "Main LV Switchboard", "system_type": "Electrical", "manufacturer": "TBC", "model": "TBC", "location": "Ground Floor", "warranty_years": 1},
-                {"tag": "ELEC-02", "description": "Emergency Generator", "system_type": "Electrical", "manufacturer": "TBC", "model": "TBC", "location": "Basement", "warranty_years": 2},
-                {"tag": "PLMB-01", "description": "Booster Pump Set", "system_type": "Plumbing", "manufacturer": "TBC", "model": "TBC", "location": "Pump Room", "warranty_years": 1},
-                {"tag": "FIRE-01", "description": "Fire Alarm Panel", "system_type": "Fire Protection", "manufacturer": "TBC", "model": "TBC", "location": "Reception", "warranty_years": 1},
-                {"tag": "LIFT-01", "description": "Passenger Lift 1", "system_type": "Vertical Transport", "manufacturer": "TBC", "model": "TBC", "location": "Core", "warranty_years": 2},
-            ]
+            # Never fabricate an equipment schedule: a generic TBC list looks
+            # like a finished deliverable while every line is invented. Refuse
+            # honestly and tell the caller what real inputs unblock it.
+            return {
+                "status": "error",
+                "action": "om_manual_generator",
+                "error": (
+                    "No equipment data supplied — provide 'equipment_list' "
+                    "(tag/description/system_type per item), or run bim_extract "
+                    "on the project model to derive one"
+                ),
+            }
     
         sections = []
         sections.append({
