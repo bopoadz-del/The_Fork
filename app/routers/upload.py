@@ -81,9 +81,11 @@ async def upload_v1(
         file.file.seek(0)
         file_crypto.write_document(filepath, file.file.read())
 
-        base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+        # NB: uploaded files live under DATA_DIR, not on any static route —
+        # the old ``/static/{filename}`` URL 404'd. Documents are reached
+        # through the project documents API once indexed (see project_id
+        # branch below), so we do not fabricate a browser URL here.
         response = {
-            "url": f"{base_url}/static/{filename}",
             "filename": original_name,
             "stored_as": filename,
             "file_path": filepath,
