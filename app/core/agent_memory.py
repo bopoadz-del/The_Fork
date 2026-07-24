@@ -241,7 +241,12 @@ def clear_conversation(conversation_id: str) -> Dict[str, int]:
 # ── messages ─────────────────────────────────────────────────────────────────
 
 def append_message(conversation_id: str, role: str, content: str) -> Dict[str, Any]:
-    """Insert a message and bump the conversation's updated_at."""
+    """Insert a message and bump the conversation's updated_at.
+
+    The FIRST user message also stamps the conversation's title (when still
+    NULL) so session lists read like the design's chat history ("pipe
+    specs...") instead of raw conversation ids. Never overwritten after.
+    """
     _ensure_db()
     mid = str(uuid.uuid4())
     now = _now()
@@ -261,6 +266,16 @@ def append_message(conversation_id: str, role: str, content: str) -> Dict[str, A
                 .where(Conversation.id == conversation_id)
                 .values(updated_at=now)
             )
+            if role == "user" and content:
+                title = " ".join(content.split())[:80]
+                session.execute(
+                    update(Conversation)
+                    .where(
+                        Conversation.id == conversation_id,
+                        Conversation.title.is_(None),
+                    )
+                    .values(title=title)
+                )
             session.commit()
     with SessionLocal() as session:
         message = session.get(Message, mid)
