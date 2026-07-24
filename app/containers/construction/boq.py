@@ -11,6 +11,67 @@ from .helpers import _parse_money_str, _safe_float, _safe_iso_date
 
 logger = logging.getLogger(__name__)
 
+# A money/quantity token: digits with optional thousands/decimal separators.
+_FIG_NUM = r"([0-9][0-9,.]*[0-9]|[0-9])"
+# Bounded label→number gap (currency code, "of", "total", spaces) — keeps a
+# label from grabbing a figure that belongs to a later clause.
+_FIG_GAP = r"[^0-9%]{0,30}?"
+_FIG_PCT = r"([0-9]+(?:\.[0-9]+)?)\s*(?:%|percent)"
+
+
+def _payment_figures_from_message(text: str) -> Dict[str, float]:
+    """Deterministically parse IPC figures out of a chat message.
+
+    The predefined dispatch path sends the raw chat envelope as ``input_data``
+    with empty ``params`` — the router does not extract numbers — so a request
+    like "gross valuation SAR 10,000,000, retention 10%" arrives with its
+    figures only in ``message``. Labels are matched conservatively: a figure is
+    used only when its label is explicit, and nothing is guessed. Callers must
+    let explicit params/data override anything returned here.
+    """
+    out: Dict[str, float] = {}
+    if not text:
+        return out
+    t = str(text).lower()
+
+    def _amount(pattern: str) -> Optional[float]:
+        m = re.search(pattern, t)
+        if not m:
+            return None
+        # A % right after the number means it is a rate, not an amount.
+        if t[m.end(1):].lstrip().startswith(("%", "percent")):
+            return None
+        return _parse_money_str(m.group(1))
+
+    def _percent(pattern: str) -> Optional[float]:
+        m = re.search(pattern, t)
+        return float(m.group(1)) if m else None
+
+    v = _amount(rf"gross\s+(?:valuation|value|work\s+done(?:\s+to\s+date)?){_FIG_GAP}{_FIG_NUM}")
+    if v:
+        out["gross_valuation"] = v
+    v = _amount(rf"contract\s+(?:value|sum|price)(?:\s+of)?{_FIG_GAP}{_FIG_NUM}")
+    if v:
+        out["contract_value"] = v
+    v = (_percent(rf"{_FIG_PCT}\s*(?:of\s+)?(?:work\s+done|complete|completed|progress)")
+         or _percent(rf"work\s+done{_FIG_GAP}{_FIG_PCT}"))
+    if v:
+        out["work_done_percent"] = v
+    v = _percent(rf"retention{_FIG_GAP}{_FIG_PCT}")
+    if v:
+        out["retention_percent"] = v
+    v = _percent(rf"advance(?:\s+payment)?\s+recover\w*{_FIG_GAP}{_FIG_PCT}")
+    if v is not None:
+        out["advance_recovery_percent"] = v
+    else:
+        v = _amount(rf"advance(?:\s+payment)?(?:\s+recover\w*)?{_FIG_GAP}{_FIG_NUM}")
+        if v:
+            out["advance_payment"] = v
+    v = _amount(rf"previous\s+certif\w*(?:\s+total)?{_FIG_GAP}{_FIG_NUM}")
+    if v:
+        out["previous_certified"] = v
+    return out
+
 
 class ConstructionBoqMixin:
     async def _process_bill_of_materials(self, input_data: Any, params: Dict) -> Dict:
@@ -304,18 +365,31 @@ class ConstructionBoqMixin:
         """Generate Interim Payment Certificate (IPC) for contractor billing."""
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
+        # Figures parsed from the chat message fill ONLY the gaps left by
+        # explicit params/data (predefined dispatch sends the envelope with
+        # empty params, so the numbers often live in `message` alone).
+        fig = _payment_figures_from_message(
+            data.get("message") or (input_data if isinstance(input_data, str) else "")
+        )
 
-        contract_value = float(p.get("contract_value") or data.get("contract_value", 0))
-        work_done_pct = float(p.get("work_done_percent") or data.get("work_done_percent", 0)) / 100.0
-        previous_certified = float(p.get("previous_certified") or data.get("previous_certified", 0))
-        retention_pct = float(p.get("retention_percent", p.get("retention_rate", 10))) / 100.0
-        advance_payment = float(p.get("advance_payment") or data.get("advance_paid", 0) or data.get("advance_payment", 0))
-        advance_recovery_pct = float(p.get("advance_recovery_percent", 20)) / 100.0
+        contract_value = float(p.get("contract_value") or data.get("contract_value", 0)
+                               or fig.get("contract_value", 0))
+        work_done_pct = float(p.get("work_done_percent") or data.get("work_done_percent", 0)
+                              or fig.get("work_done_percent", 0)) / 100.0
+        previous_certified = float(p.get("previous_certified") or data.get("previous_certified", 0)
+                                   or fig.get("previous_certified", 0))
+        retention_pct = float(p.get("retention_percent",
+                                    p.get("retention_rate", fig.get("retention_percent", 10)))) / 100.0
+        advance_payment = float(p.get("advance_payment") or data.get("advance_paid", 0)
+                                or data.get("advance_payment", 0) or fig.get("advance_payment", 0))
+        advance_recovery_pct = float(p.get("advance_recovery_percent",
+                                           fig.get("advance_recovery_percent", 20))) / 100.0
         payment_period = p.get("payment_period", "Current Period")
         contractor = p.get("contractor_name", p.get("contractor", data.get("contractor_name", "Contractor")))
 
         # Accept gross_valuation directly if contract_value not provided
-        direct_gross = float(p.get("gross_valuation") or data.get("gross_valuation", 0))
+        direct_gross = float(p.get("gross_valuation") or data.get("gross_valuation", 0)
+                             or fig.get("gross_valuation", 0))
         if contract_value <= 0:
             if direct_gross > 0:
                 gross_valuation = round(direct_gross, 2)

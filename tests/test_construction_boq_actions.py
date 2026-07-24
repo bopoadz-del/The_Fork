@@ -193,6 +193,67 @@ class TestPaymentCertificate:
         assert result["payment"]["net_due_this_period"] == 237_500.0
 
     @pytest.mark.asyncio
+    async def test_payment_certificate_figures_from_message(self, container):
+        """Predefined dispatch sends the chat envelope as input_data with empty
+        params (2026-07-24 live probe): the figures exist only in `message`.
+        The action must parse them instead of erroring."""
+        result = await container.payment_certificate(
+            {
+                "action": "payment_certificate",
+                "project_id": "p1",
+                "document_ids": [],
+                "message": (
+                    "Issue a payment certificate: gross valuation SAR 10,000,000, "
+                    "retention 10%, advance recovery SAR 500,000, "
+                    "previous certificates SAR 6,000,000."
+                ),
+            },
+            {},
+        )
+        assert result["status"] == "success"
+        assert result["valuation"]["gross_valuation"] == 10_000_000.0
+        assert result["deductions"]["retention_held"] == 1_000_000.0
+        assert result["deductions"]["advance_recovery"] == 500_000.0
+        assert result["deductions"]["previous_payments"] == 6_000_000.0
+        assert result["payment"]["net_due_this_period"] == 2_500_000.0
+
+    @pytest.mark.asyncio
+    async def test_payment_certificate_contract_value_from_message(self, container):
+        result = await container.payment_certificate(
+            {
+                "message": (
+                    "issue an interim payment certificate for a contract value of "
+                    "SAR 2,000,000 with 25% work done and retention 5 percent"
+                ),
+            },
+            {},
+        )
+        assert result["status"] == "success"
+        assert result["valuation"]["contract_value"] == 2_000_000.0
+        assert result["valuation"]["gross_valuation"] == 500_000.0
+        assert result["deductions"]["retention_held"] == 25_000.0
+
+    @pytest.mark.asyncio
+    async def test_payment_certificate_message_without_figures_still_errors(self, container):
+        result = await container.payment_certificate(
+            {"message": "issue a payment certificate"},
+            {},
+        )
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_payment_certificate_explicit_params_beat_message(self, container):
+        """Explicit params/data figures always win over message parsing."""
+        result = await container.payment_certificate(
+            {
+                "gross_valuation": 250_000,
+                "message": "gross valuation SAR 999,999",
+            },
+            {"retention_percent": 5},
+        )
+        assert result["valuation"]["gross_valuation"] == 250_000.0
+
+    @pytest.mark.asyncio
     async def test_payment_certificate_remaining_balance_no_double_retention(self, container):
         """Regression: remaining_contract_balance must not subtract retention twice."""
         result = await container.payment_certificate(
