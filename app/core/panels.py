@@ -1,9 +1,8 @@
 """Panel contract — the shape every UI renderer relies on.
 
-The dashboard's `renderPanels` (in `app/static/index.html`) and the React
-dashboard each consume objects shaped like `Panel`. Backend code that emits
-panels must construct them through these models so a shape regression fails
-fast at the source instead of silently rendering garbage in the UI.
+The React dashboard consumes objects shaped like `Panel`. Backend code that
+emits panels must construct them through these models so a shape regression
+fails fast at the source instead of silently rendering garbage in the UI.
 
 History of why this matters:
 - `panel.line_items` vs `panel.data.procurement_list` — silent UI breakage.
