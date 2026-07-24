@@ -3,6 +3,32 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-07-24 — SUPERSEDES all prior provider rulings: Kimi primary + Groq fallback
+
+**Decision (operator, 2026-07-24):** production chat LLM is **Moonshot
+Kimi `kimi-k2.6` (native Moonshot API, `LLM_PROVIDER=kimi`) primary**,
+with **Groq as the free-tier fallback** (`LLM_FALLBACK_PROVIDER=groq`).
+Ollama Cloud stays as the emergency tier. This **overrides** the
+2026-07-08 v2 freeze (OpenAI `gpt-4o-mini` primary) below, the earlier
+Groq-Scout-primary freeze, and the "provider work permanently out of
+scope / written-instruction-only" clause — this dated operator
+instruction is that written instruction.
+
+**Live env (verified 2026-07-25 sweep):** `LLM_PROVIDER=kimi`,
+`KIMI_MODEL=kimi-k2.6`, `LLM_FALLBACK_PROVIDER=groq`,
+`GROQ_MODEL=llama-3.3-70b-versatile`. `OPENAI_API_KEY/MODEL` remain set
+but unused (stale, safe to unset).
+
+**Known constraint (⛔ billing gate, PLATFORM_HEALTH_REPORT F1a):** the
+Groq free/on-demand account 413s any fallback payload >~12k tokens for
+EVERY available model (scout is not on the account). The fallback is
+reliable only for small-payload turns until Groq is upgraded to Dev
+tier. Primary (Kimi) is unaffected and carries production load.
+
+Every provider section below (OpenAI-primary v2 freeze, Groq-Scout
+freeze, Ollama-primary, interim-Kimi) is now historical context, not
+current config.
+
 ## 2026-07-13 — Phase-2 param resolution: deterministic doc→slot, not LLM
 
 **Decision:** resolve an action's FILE param from the project's uploaded
