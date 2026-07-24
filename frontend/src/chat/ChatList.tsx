@@ -15,7 +15,7 @@ interface Props {
   documentCount: number
   onSuggestion: (text: string) => void
   suggestionsDisabled: boolean
-  onDownloadMessage?: (assistantIndex: number) => void
+  onDownloadMessage?: (assistantIndex: number, format: 'docx' | 'xlsx') => void
   onExport?: (descriptor: ExportDescriptor) => void
 }
 
@@ -71,12 +71,12 @@ export default function ChatList({
   return (
     <div className="chat-list" role="log" aria-live="polite" aria-label="Conversation">
       {messages.map((msg) => {
-        let downloadHandler: (() => void) | undefined
+        let downloadHandler: ((format: 'docx' | 'xlsx') => void) | undefined
         if (msg.role === 'assistant' && !msg.streaming && !msg.error && msg.content) {
           const idx = assistantSeen
           assistantSeen += 1
           if (onDownloadMessage) {
-            downloadHandler = () => onDownloadMessage(idx)
+            downloadHandler = (format) => onDownloadMessage(idx, format)
           }
         } else if (msg.role === 'assistant') {
           assistantSeen += 1

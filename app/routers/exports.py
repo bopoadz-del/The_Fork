@@ -868,8 +868,10 @@ async def export_conversation_message(
 ):
     """Export one assistant message from a conversation as a downloadable file.
 
-    Currently only ``format=docx`` is implemented; ``pdf`` and ``xlsx`` return
-    501 so the frontend can hide / disable those format buttons cleanly.
+    ``docx`` renders the full message; ``xlsx`` turns markdown pipe-tables
+    into worksheets (Message sheet for prose). ``pdf`` is 501 by decision
+    (2026-07-24, operator): docx + xlsx cover the deliverables and a real PDF
+    renderer would add a heavy dependency.
     """
     proj = _check_owner(project_id, auth["user_id"])
     project_name = proj.get("name") or "Project"
@@ -895,11 +897,19 @@ async def export_conversation_message(
         )
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = "docx"
-    elif fmt in {"pdf", "xlsx"}:
+    elif fmt == "xlsx":
+        path = _render_message_xlsx(
+            project_name,
+            chosen.get("content") or "",
+            conversation_id,
+        )
+        media = _XLSX_MEDIA
+        ext = "xlsx"
+    elif fmt == "pdf":
         raise HTTPException(
             501,
-            f"format='{fmt}' is not yet implemented; only 'docx' is available "
-            "in this iteration of the Document Export Layer.",
+            "format='pdf' is not offered — export as 'docx' or 'xlsx' "
+            "(operator decision 2026-07-24).",
         )
     else:
         raise HTTPException(400, f"Unsupported format '{format}'")

@@ -22,7 +22,7 @@ import type { ChatMessage, ExportDescriptor } from './types'
 
 interface Props {
   message: ChatMessage
-  onDownload?: () => void
+  onDownload?: (format: 'docx' | 'xlsx') => void
   onExport?: (descriptor: ExportDescriptor) => void
 }
 
@@ -74,16 +74,28 @@ function ChatBubble({ message, onDownload, onExport }: Props) {
         {message.role === 'assistant' && !message.streaming && message.content && (onDownload || exports.length > 0) && (
           <div className="chat-bubble__actions">
             {onDownload && (
-              <button
-                type="button"
-                className="chat-bubble__download"
-                onClick={onDownload}
-                title="Download this message as a Word document"
-                aria-label="Download as Word document"
-              >
-                <Download size={13} />
-                <span>Download</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="chat-bubble__download"
+                  onClick={() => onDownload('docx')}
+                  title="Download this message as a Word document"
+                  aria-label="Download as Word document"
+                >
+                  <Download size={13} />
+                  <span>Word</span>
+                </button>
+                <button
+                  type="button"
+                  className="chat-bubble__download"
+                  onClick={() => onDownload('xlsx')}
+                  title="Download this message as an Excel workbook (tables become worksheets)"
+                  aria-label="Download as Excel workbook"
+                >
+                  <Download size={13} />
+                  <span>Excel</span>
+                </button>
+              </>
             )}
             {exports.map((exp, i) => (
               <button
