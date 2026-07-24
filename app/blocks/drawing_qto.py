@@ -352,6 +352,7 @@ class DrawingQTOBlock(UniversalBlock):
             "input_units": doc.units,
             "to_metres_factor": to_metres_factor,
             "bulge_segments_count": bulge_segments_count,
+            "geometry_engine": area_diag.get("geometry_engine", "shapely"),
             # Surface silent-failure counters so a corrupt or partially-
             # readable DXF doesn't ship as a confidently-low quantity total.
             "bulge_fallbacks": len_diag.get("bulge_fallbacks", 0),
@@ -1662,6 +1663,10 @@ class DrawingQTOBlock(UniversalBlock):
             "entities_skipped": entities_skipped,
             "hatches_skipped": hatches_skipped,
             "entities_skipped_reasons": entities_skipped_reasons,
+            # Without shapely the polygon area math switches to a simpler
+            # algorithm — quantities are less accurate for complex/holed
+            # shapes. Surface it instead of degrading silently.
+            "geometry_engine": "shapely" if use_shapely else "fallback",
         }
         return (
             sorted(results, key=lambda x: x["area_m2"], reverse=True),

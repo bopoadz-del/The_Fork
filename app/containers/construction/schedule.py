@@ -456,10 +456,21 @@ class ConstructionScheduleMixin:
         manpower = self._extract_manpower_from_voice(transcriptions)
         equipment = self._extract_equipment_from_photos(photo_analysis)
         narrative = self._generate_daily_narrative(date, activities, issues, weather, manpower)
-    
+
+        # Name every section that is empty because its input was never
+        # supplied (no voice notes / no photos): the report is still useful
+        # partial output, but it must not read as a complete DSR.
+        sections_incomplete = []
+        if not voice_notes:
+            sections_incomplete += ["manpower", "work_completed", "issues_encountered",
+                                    "materials_delivered"]
+        if not photos:
+            sections_incomplete += ["equipment", "quality_observations"]
+
         return {
             "status": "success",
             "action": "daily_report_generated",
+            "sections_incomplete": sections_incomplete,
             "report_metadata": {
                 "date": date,
                 "project": project_name,
