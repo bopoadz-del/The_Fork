@@ -66,6 +66,7 @@ def _owned_or_404(
     user_id: str,
     *,
     read_only: bool = False,
+    role: str = "user",
     doc_limit: Optional[int] = None,
     doc_offset: int = 0,
 ):
@@ -77,6 +78,12 @@ def _owned_or_404(
     open shared platform projects without owning them. Mutating
     handlers must use the default (owner-only).
 
+    2026-07-24 — read-only access also honors ``role="admin"``: the list
+    endpoint shows admins EVERY project, so the detail page must open them
+    too (the operator hit "Project not found" clicking an eval-fixture
+    project owned by the seeding account). Mutating handlers are
+    unaffected — they never pass ``role``.
+
     ``doc_limit``/``doc_offset`` paginate the returned documents (default None
     = all, for mutating callers that need the full set).
     """
@@ -84,6 +91,10 @@ def _owned_or_404(
         project_id, user_id=user_id, include_admin_approved=read_only,
         doc_limit=doc_limit, doc_offset=doc_offset,
     )
+    if proj is None and read_only and (role or "").lower() == "admin":
+        proj = store.get_project(
+            project_id, doc_limit=doc_limit, doc_offset=doc_offset,
+        )
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
     return proj
@@ -284,7 +295,8 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
     without making N extra round-trips.
     """
     proj = _owned_or_404(
-        project_id, auth["user_id"], read_only=True, doc_limit=_DOC_FIRST_PAGE,
+        project_id, auth["user_id"], read_only=True,
+        role=auth.get("role") or "user", doc_limit=_DOC_FIRST_PAGE,
     )
     # `documents` is now the first page only; `document_count` is the true total
     # (a cheap COUNT). Gate enrichment on the TOTAL, not the page length.
