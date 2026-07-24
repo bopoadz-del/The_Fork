@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import BrandMark from '../components/BrandMark'
 import './pages.css'
 import './auth.css'
 
@@ -58,9 +59,11 @@ export default function Login() {
   return (
     <div className="page-center">
       <div className="auth-card">
-        {/* Logo mark */}
+        {/* Logo mark — shovel from the Quarry standalone design */}
         <div className="auth-card__logo">
-          <span className="auth-card__mark">TF</span>
+          <span className="auth-card__mark">
+            <BrandMark size={26} />
+          </span>
         </div>
 
         <h1 className="auth-card__title">

@@ -245,3 +245,15 @@
 .chat-bubble__error-icon {
   flex: 0 0 auto;
 }
+
+/* Mobile (spec 2026-07-24-mobile-ui-design): wider bubbles, finger-sized
+ * action buttons. Tables already scroll inside their own wrapper. */
+@media (max-width: 768px) {
+  .chat-bubble__body {
+    max-width: 92%;
+  }
+  .chat-bubble__download {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+}
