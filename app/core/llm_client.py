@@ -21,7 +21,7 @@ async def complete(
     temperature: float = 0.0,
     max_tokens: int = 800,
     model: Optional[str] = None,
-    timeout: float = 120.0,
+    timeout: Optional[float] = None,
 ) -> str:
     """Return the assistant message text for a tool-less completion.
 
@@ -31,9 +31,11 @@ async def complete(
     survives a Groq rate-limit instead of silently losing smart routing for the
     turn. Auth/validation errors (other 4xx) are not retried.
     """
-    from app.agents.runtime import _llm_config, _llm_fallback_config
+    from app.agents.runtime import _llm_config, _llm_fallback_config, _llm_http_timeout
     cfg = _llm_config()
     fallback_cfg = _llm_fallback_config(cfg)
+    if timeout is None:
+        timeout = _llm_http_timeout()
 
     attempts = [(cfg, os.getenv(cfg["env_key"]) if cfg.get("env_key") else "", model or cfg["default_model"])]
     if fallback_cfg:
@@ -46,10 +48,16 @@ async def complete(
     last_exc: Optional[Exception] = None
     for idx, (a_cfg, a_key, a_model) in enumerate(attempts):
         is_last = idx == len(attempts) - 1
+        # Honor a provider's fixed temperature (Kimi k2.6 and other reasoning
+        # models REJECT any temperature but 1 with HTTP 400 — the same rule
+        # Agent._call_llm applies via fixed_temperature). Without this, the
+        # predefined-synthesis path 400'd on Kimi and silently fell back to
+        # the deterministic render.
+        eff_temperature = a_cfg.get("fixed_temperature", temperature)
         payload: Dict[str, Any] = {
             "model": a_model,
             "messages": messages,
-            "temperature": temperature,
+            "temperature": eff_temperature,
             "max_tokens": max_tokens,
             "stream": False,
         }
@@ -86,7 +94,7 @@ async def complete_json(
     *,
     max_tokens: int = 500,
     model: Optional[str] = None,
-    timeout: float = 120.0,
+    timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Completion that must return a JSON object. Tolerant parse: strips code
     fences and pulls the first {...} block. Returns {} on unparseable output."""
