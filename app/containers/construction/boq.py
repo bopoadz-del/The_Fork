@@ -19,6 +19,36 @@ _FIG_GAP = r"[^0-9%]{0,30}?"
 _FIG_PCT = r"([0-9]+(?:\.[0-9]+)?)\s*(?:%|percent)"
 
 
+_CCY = r"(?:sar|aed|usd|qar|omr|bhd|kwd|\$)"
+_MONEY_SUFFIX = {"m": 1e6, "mn": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9}
+
+
+def _cashflow_figures_from_message(text: str) -> Dict[str, float]:
+    """Parse contract value + duration out of a cash-flow request.
+
+    Same contract as _payment_figures_from_message: conservative, fills only
+    gaps, callers let explicit params win. A currency-prefixed amount
+    ("SAR 60M", "USD 24,000,000") counts as the contract value only when the
+    message contains exactly ONE such amount — two amounts would be a guess.
+    "18-month" / "18 months" supplies duration_months.
+    """
+    out: Dict[str, float] = {}
+    if not text:
+        return out
+    t = str(text).lower()
+    amounts = re.findall(
+        rf"{_CCY}\s*([0-9][0-9,.]*)\s*(million|billion|mn|bn|m|b)?\b", t
+    )
+    if len(amounts) == 1:
+        base = _parse_money_str(amounts[0][0])
+        if base:
+            out["contract_value"] = base * _MONEY_SUFFIX.get(amounts[0][1], 1)
+    d = re.search(r"\b([0-9]{1,3})\s*[- ]\s*month", t)
+    if d:
+        out["duration_months"] = float(d.group(1))
+    return out
+
+
 def _payment_figures_from_message(text: str) -> Dict[str, float]:
     """Deterministically parse IPC figures out of a chat message.
 
@@ -1516,7 +1546,14 @@ class ConstructionBoqMixin:
         p = params or {}
         schedule_file = data.get("schedule_file") or p.get("schedule_file")
         boq = data.get("boq") or p.get("boq", [])
-        contract_value = data.get("contract_value") or p.get("contract_value", 0)
+        # Predefined dispatch sends the chat envelope with empty params — the
+        # figures ("SAR 60M, 18-month project") then live only in `message`.
+        # Parsed values fill gaps ONLY; explicit params/data always win.
+        fig = _cashflow_figures_from_message(
+            data.get("message") or (input_data if isinstance(input_data, str) else "")
+        )
+        contract_value = (data.get("contract_value") or p.get("contract_value", 0)
+                          or fig.get("contract_value", 0))
         payment_terms = p.get("payment_terms", {"advance_payment": 0.10, "retention": 0.10, "payment_delay_days": 30, "mobilization_duration": 2})
         project_start = p.get("project_start_date", datetime.now(timezone.utc).isoformat())
 
@@ -1530,7 +1567,10 @@ class ConstructionBoqMixin:
                 return schedule_data
             activities = schedule_data.get("activities", [])
 
-        project_duration_months = max(6, int(len(activities) / 20)) if activities else int(p.get("duration_months", 18))
+        project_duration_months = (
+            max(6, int(len(activities) / 20)) if activities
+            else int(p.get("duration_months") or fig.get("duration_months") or 18)
+        )
         monthly_forecast = []
         cumulative_percent = 0.0
 
