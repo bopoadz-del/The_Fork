@@ -57,9 +57,10 @@ jobs:
           FORK_EMAIL: ${{ secrets.FORK_EMAIL }}
           FORK_PASSWORD: ${{ secrets.FORK_PASSWORD }}
           FORK_TOKEN: ${{ secrets.FORK_TOKEN }}
+          FORK_API_KEY: ${{ secrets.FORK_API_KEY }}
         run: |
-          if [ -z "$FORK_TOKEN" ] && { [ -z "$FORK_EMAIL" ] || [ -z "$FORK_PASSWORD" ]; }; then
-            echo "::error::Missing credentials. Add FORK_EMAIL + FORK_PASSWORD (or FORK_TOKEN) as repository secrets: Settings → Secrets and variables → Actions."
+          if [ -z "$FORK_TOKEN" ] && [ -z "$FORK_API_KEY" ] && { [ -z "$FORK_EMAIL" ] || [ -z "$FORK_PASSWORD" ]; }; then
+            echo "::error::Missing credentials. Add FORK_API_KEY (or FORK_TOKEN, or FORK_EMAIL + FORK_PASSWORD) as repository secrets: Settings → Secrets and variables → Actions."
             exit 1
           fi
           echo "credentials present"
@@ -69,6 +70,7 @@ jobs:
           FORK_EMAIL: ${{ secrets.FORK_EMAIL }}
           FORK_PASSWORD: ${{ secrets.FORK_PASSWORD }}
           FORK_TOKEN: ${{ secrets.FORK_TOKEN }}
+          FORK_API_KEY: ${{ secrets.FORK_API_KEY }}
           FORK_BASE_URL: ${{ secrets.FORK_BASE_URL }}
         run: python scripts/seed_fixtures.py --synthetic
 
@@ -77,6 +79,7 @@ jobs:
           FORK_EMAIL: ${{ secrets.FORK_EMAIL }}
           FORK_PASSWORD: ${{ secrets.FORK_PASSWORD }}
           FORK_TOKEN: ${{ secrets.FORK_TOKEN }}
+          FORK_API_KEY: ${{ secrets.FORK_API_KEY }}
           FORK_BASE_URL: ${{ secrets.FORK_BASE_URL }}
         run: |
           SKIP_ARGS=""
