@@ -80,14 +80,19 @@ services:
         sync: false
 
       # ── LLM providers (set in dashboard) ───────────────────────────────
-      # PRIMARY (pilot): Kimi K2 on Moonshot's native API. Set LLM_PROVIDER=kimi,
-      # KIMI_API_KEY, and KIMI_MODEL (default kimi-k2.6 — a reasoning model, so
-      # the runtime uses tool_choice=auto: forcing a specific tool 400s on a
-      # thinking model). ROLLBACK: flip LLM_PROVIDER=groq with
-      # GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct for an instant
-      # revert to the previous Scout config. LLM_FALLBACK_PROVIDER=ollama stays
-      # as the emergency fallback for either primary.
+      # The cloud ladder is exactly two providers (DECISIONS.md 2026-07-24):
+      #   PRIMARY  = Kimi K2 on Moonshot's native API (LLM_PROVIDER=kimi,
+      #              KIMI_MODEL=kimi-k2.6 — a reasoning model, so the runtime
+      #              uses tool_choice=auto; forcing a specific tool 400s it).
+      #   FALLBACK = Groq free tier (LLM_FALLBACK_PROVIDER=groq). Note the
+      #              free account 413s payloads >~12k tokens across all its
+      #              models — it catches normal-size turns, not large grounded
+      #              ones (PLATFORM_HEALTH_REPORT F1a: Dev-tier upgrade lifts it).
+      # No OpenAI, no DeepSeek — both removed 2026-07-25. Ollama is the
+      # ON-PREM provider only (see deploy/onprem); it is not a cloud fallback.
       - key: LLM_PROVIDER
+        sync: false
+      - key: LLM_FALLBACK_PROVIDER
         sync: false
       - key: KIMI_API_KEY
         sync: false
@@ -96,8 +101,6 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
-        sync: false
-      - key: DEEPSEEK_API_KEY
         sync: false
 
       # ── Google Drive integration (set in dashboard) ────────────────────
