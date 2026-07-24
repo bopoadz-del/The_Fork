@@ -2098,12 +2098,15 @@ _DSML_PARAM_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# Llama 3.x native tool-call markup: `<function=name{"k":"v",...}>` — Groq's
-# strict tool-use validator rejects this shape with HTTP 400 `tool_use_failed`
-# and emits the raw markup in `failed_generation`. We recover it into proper
-# OpenAI-style tool_calls so the agent loop can dispatch and continue.
+# Llama 3.x native tool-call markup — Groq's strict tool-use validator rejects
+# these shapes with HTTP 400 `tool_use_failed` and emits the raw markup in
+# `failed_generation`. We recover it into proper OpenAI-style tool_calls so the
+# agent loop can dispatch and continue. Observed variants (all live on Groq):
+#   <function=name{json}>              inline close
+#   <function=name{json}</function>    closing tag, no `>` (2026-07-24 probe)
+#   <function=name>{json}</function>   canonical Llama 3 tag pair
 _LLAMA_FUNC_RE = re.compile(
-    r"<\s*function\s*=\s*([A-Za-z_][\w]*)\s*(\{.*?\})\s*>",
+    r"<\s*function\s*=\s*([A-Za-z_][\w]*)\s*>?\s*(\{.*?\})\s*(?:>|</\s*function\s*>)",
     re.DOTALL,
 )
 
