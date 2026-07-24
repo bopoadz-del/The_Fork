@@ -289,10 +289,17 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
                 _predefined_workflows,
                 _stream_from_predefined,
             )
+            from app.core.predefined_reasoning import lookup_question_hijack
             _pd_action = routing.get("action")
             _use_predefined = bool(
                 _pd_action and _predefined_enabled()
                 and _pd_action in _predefined_workflows()
+                # Low-confidence keyword routes must not intercept lookup
+                # questions — they belong to the RAG-grounded agent path
+                # (see lookup_question_hijack docstring for the live repro).
+                and not lookup_question_hijack(
+                    message, float(routing.get("confidence") or 0.0)
+                )
             )
         except Exception:  # noqa: BLE001 — never block the normal agent path
             _pd_action, _use_predefined = None, False
