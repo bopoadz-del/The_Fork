@@ -254,6 +254,47 @@ class TestPaymentCertificate:
         assert result["valuation"]["gross_valuation"] == 250_000.0
 
     @pytest.mark.asyncio
+    async def test_cash_flow_figures_from_message_with_m_suffix(self, container):
+        """2026-07-24 battery FAIL repro: 'SAR 60M, 18-month project' errored
+        with 'contract_value required' — figures lived only in the message."""
+        result = await container.cash_flow_forecast(
+            {"message": "build a cash flow forecast with an S-curve for a SAR 60M, 18-month project"},
+            {},
+        )
+        assert result["status"] == "success"
+        assert result["project_parameters"]["contract_value"] == 60_000_000.0
+        assert len(result["s_curve_data"]) == 18
+
+    @pytest.mark.asyncio
+    async def test_cash_flow_plain_amount_from_message(self, container):
+        result = await container.cash_flow_forecast(
+            {"message": "cash flow please, contract value SAR 24,000,000 over a 12-month duration"},
+            {},
+        )
+        assert result["status"] == "success"
+        assert result["project_parameters"]["contract_value"] == 24_000_000.0
+        assert len(result["s_curve_data"]) == 12
+
+    @pytest.mark.asyncio
+    async def test_cash_flow_still_refuses_without_figures(self, container):
+        result = await container.cash_flow_forecast(
+            {"message": "what does the cumulative spend curve look like month by month?"},
+            {},
+        )
+        assert result["status"] == "error"
+        assert "contract_value" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_cash_flow_explicit_params_beat_message(self, container):
+        result = await container.cash_flow_forecast(
+            {"contract_value": 10_000_000, "message": "for a SAR 99M project"},
+            {"duration_months": 6},
+        )
+        assert result["status"] == "success"
+        assert result["project_parameters"]["contract_value"] == 10_000_000
+        assert len(result["s_curve_data"]) == 6
+
+    @pytest.mark.asyncio
     async def test_payment_certificate_remaining_balance_no_double_retention(self, container):
         """Regression: remaining_contract_balance must not subtract retention twice."""
         result = await container.payment_certificate(
