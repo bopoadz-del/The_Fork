@@ -1,5 +1,6 @@
 import { useAuth } from '../auth/AuthContext'
 import ThemeToggle from '../theme/ThemeToggle'
+import BrandMark from './BrandMark'
 import './AppHeader.css'
 
 interface AppHeaderProps {
@@ -14,7 +15,9 @@ export default function AppHeader({ breadcrumb }: AppHeaderProps) {
     <header className="app-header">
       <div className="app-header__inner">
         <div className="app-header__brand">
-          <span className="brand-mark">TF</span>
+          <span className="brand-mark" aria-hidden="true">
+            <BrandMark />
+          </span>
           <span className="brand-name">The Shovel</span>
         </div>
 

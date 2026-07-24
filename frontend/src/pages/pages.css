@@ -43,13 +43,11 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
+  /* Gold logo tile per the Quarry standalone design — fixed colors in both
+   * themes so the mark stays recognizable. */
+  background: #f4e7cc;
+  color: #bc8a22;
   border-radius: var(--radius-sm);
-  letter-spacing: 0.02em;
 }
 
 .brand-name {
@@ -138,13 +136,10 @@
   justify-content: center;
   width: 44px;
   height: 44px;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-family: var(--font-mono);
-  font-size: 15px;
-  font-weight: 500;
+  /* Gold logo tile per the Quarry standalone design (same as .brand-mark). */
+  background: #f4e7cc;
+  color: #bc8a22;
   border-radius: var(--radius-md);
-  letter-spacing: 0.02em;
 }
 
 .auth-card__title {
