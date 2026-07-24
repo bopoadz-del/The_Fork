@@ -185,7 +185,7 @@ queries:
 
   - id: pilot_boq_total
     feature: boq_process
-    project: 96bd7cd1
+    project: "FIXTURE — BOQ"
     # Mirrors feature_matrix must-cover boq_process (DG2 BOQ project, 4
     # workbooks / 179 chunks). The memory value "demolition BOQ total
     # SAR 62,236,109" could NOT be verified anywhere in the repo, and a
@@ -243,7 +243,7 @@ queries:
 
   - id: pilot_milestones
     feature: parse_primavera_schedule
-    project: 7ce7b9d0
+    project: "FIXTURE — Programme+Drawings"
     # Mirrors feature_matrix must-cover parse_primavera_schedule prompt 1.
     # Fixture: project_programme.xer (doc 9f8f228a) uploaded 2026-07-06 to
     # 7ce7b9d0 (per the feature-matrix manifest `needs`). The programme's
@@ -302,7 +302,7 @@ queries:
 
   - id: pilot_qto_floor_area
     feature: drawing_qto
-    project: 7ce7b9d0
+    project: "FIXTURE — Programme+Drawings"
     # Mirrors feature_matrix must-cover drawing_qto prompt 2. Fixture:
     # ground_floor_plan.dxf (doc ed81d829) uploaded 2026-07-06 to 7ce7b9d0
     # (per the feature-matrix manifest `needs`). The drawing's measured area
