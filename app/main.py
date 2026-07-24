@@ -263,7 +263,7 @@ app.add_middleware(
 from app.core import rate_limit as _rate_limit
 from app.core import jwt_auth as _jwt_auth
 
-_RATE_LIMIT_EXEMPT_PREFIXES = ("/static", "/dashboard", "/assets")
+_RATE_LIMIT_EXEMPT_PREFIXES = ("/dashboard", "/assets")
 _RATE_LIMIT_EXEMPT_EXACT = {
     # PR #98: /v1/metrics removed — it returns per-block execution counts +
     # latencies + error counts, which is operational data we should not
@@ -448,11 +448,10 @@ if env in {"dev", "development", "local", "test", "testing"}:
 from app.routers import admin as admin_router  # noqa: E402
 app.include_router(admin_router.router)
 
-# Mount static files. The frontend bundle (frontend/dist) is a build artifact
-# that is absent in CI and fresh checkouts; StaticFiles raises RuntimeError at
-# import time if its directory is missing, so mount each frontend path only
-# when it exists. app/static is committed, so it stays unconditional.
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+# Mount the frontend bundle (frontend/dist). It is a build artifact absent in
+# CI and fresh checkouts; StaticFiles raises RuntimeError at import time if its
+# directory is missing, so mount each frontend path only when it exists. The
+# legacy app/static dashboard was retired — see app/routers/static.py.
 if os.path.isdir("frontend/dist"):
     app.mount("/dashboard", StaticFiles(directory="frontend/dist", html=True), name="dashboard")
 if os.path.isdir("frontend/dist/assets"):

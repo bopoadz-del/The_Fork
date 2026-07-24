@@ -1,37 +1,53 @@
 import os
 
 from fastapi import APIRouter, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from app.blocks import BLOCK_REGISTRY
 
 router = APIRouter()
 
 _REACT_INDEX = "frontend/dist/index.html"
-_LEGACY_INDEX = "app/static/index.html"
+
+# When the React bundle is absent (a fresh checkout or CI job that skipped
+# `npm run build`), we serve this honest placeholder instead of silently
+# falling back to a stale UI. The legacy vanilla-JS dashboard that used to
+# live at app/static/index.html was retired — a missing build must fail
+# VISIBLY, not quietly ship a different, ancient interface to users.
+_BUILD_MISSING_HTML = (
+    "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+    "<title>The Fork</title></head><body>"
+    "<h1>Frontend build not present</h1>"
+    "<p>The React bundle (<code>frontend/dist</code>) has not been built. "
+    "Run <code>npm --prefix frontend ci &amp;&amp; npm --prefix frontend run build</code>, "
+    "or use the production Docker image which builds it automatically.</p>"
+    "</body></html>"
+)
 
 # Path prefixes the SPA fallback must NOT shadow. Anything under these is
 # either an API endpoint, a mounted StaticFiles directory, or a framework
 # route (docs, openapi). Listed without leading slash because we match
 # against full_path which FastAPI strips the leading slash from.
 _RESERVED_PREFIXES: tuple[str, ...] = (
-    "v1/", "api", "static/", "dashboard/", "assets/",
+    "v1/", "api", "dashboard/", "assets/",
     "health", "docs", "redoc", "openapi.json", "mcp",
 )
 
 
-def _index_path() -> str:
-    return _REACT_INDEX if os.path.isfile(_REACT_INDEX) else _LEGACY_INDEX
-
-
-def _serve_spa() -> FileResponse:
-    return FileResponse(
-        _index_path(),
+def _serve_spa() -> Response:
+    if os.path.isfile(_REACT_INDEX):
+        return FileResponse(
+            _REACT_INDEX,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+        )
+    # Honest 200 placeholder (valid HTML) — never the old dashboard.
+    return HTMLResponse(
+        _BUILD_MISSING_HTML,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 
 
-@router.get("/", response_class=FileResponse)
+@router.get("/")
 async def root():
     return _serve_spa()
 
