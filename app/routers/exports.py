@@ -19,7 +19,7 @@ import logging
 import os
 import tempfile
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from datetime import datetime, timezone
 
@@ -775,6 +775,83 @@ def _render_message_docx(
     ) as f:
         path = f.name
     doc.save(path)
+    return path
+
+
+def _parse_markdown_tables(text: str) -> Tuple[List[List[List[str]]], List[str]]:
+    """Split a message into markdown pipe-tables and remaining prose lines.
+
+    Returns ``(tables, prose)`` where each table is a list of rows (header
+    first, separator rows dropped) and prose is the non-table, non-empty
+    lines in original order. Conservative: a line counts as a table row only
+    when it starts and ends with ``|``.
+    """
+    tables: List[List[List[str]]] = []
+    prose: List[str] = []
+    current: List[List[str]] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("|") and line.endswith("|") and line.count("|") >= 2:
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if all(set(c) <= {"-", ":", " "} and "-" in c for c in cells):
+                continue  # header/body separator row
+            current.append(cells)
+            continue
+        if current:
+            tables.append(current)
+            current = []
+        if line:
+            prose.append(line)
+    if current:
+        tables.append(current)
+    return tables, prose
+
+
+def _render_message_xlsx(
+    project_name: str,
+    assistant_text: str,
+    conversation_id: str,
+) -> str:
+    """Render an assistant message to a temp XLSX and return its path.
+
+    Markdown pipe-tables (the shape cost/BOQ answers arrive in) become real
+    worksheets with a bold header row; prose goes on a Message sheet. A
+    message with no tables still exports — Message sheet only.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    tables, prose = _parse_markdown_tables(assistant_text)
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    if prose or not tables:
+        ws = wb.create_sheet("Message")
+        ws.cell(row=1, column=1, value=f"{project_name} - Conversation Excerpt").font = Font(bold=True)
+        ws.cell(
+            row=2, column=1,
+            value=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        ).font = Font(italic=True)
+        r = 4
+        for line in prose or [(assistant_text or "").strip()]:
+            ws.cell(row=r, column=1, value=line)
+            r += 1
+        ws.column_dimensions["A"].width = 100
+
+    for i, table in enumerate(tables, start=1):
+        ws = wb.create_sheet(f"Table {i}")
+        for r, row in enumerate(table, start=1):
+            for c, cell in enumerate(row, start=1):
+                out = ws.cell(row=r, column=c, value=cell)
+                if r == 1:
+                    out.font = Font(bold=True)
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".xlsx", delete=False, prefix=f"export-{conversation_id[:8]}-"
+    ) as f:
+        path = f.name
+    wb.save(path)
     return path
 
 
