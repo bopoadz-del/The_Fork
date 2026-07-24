@@ -1254,6 +1254,7 @@ export default function ProjectWorkspace() {
     <WorkspaceShell
       header={<AppHeader breadcrumb={breadcrumb} />}
       rightExpanded={rightExpanded}
+      onRightOpen={() => setRightExpanded(true)}
       left={
         <LeftPanel
           activeProjectId={id}

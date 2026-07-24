@@ -74,3 +74,23 @@
   border-color: var(--text-muted);
   background: var(--surface-2);
 }
+
+/* Mobile (spec 2026-07-24-mobile-ui-design): the header row never wraps —
+ * breadcrumb text truncates, brand wordmark drops on narrow phones. */
+@media (max-width: 768px) {
+  .app-header__inner {
+    min-width: 0;
+  }
+  .app-header__breadcrumb,
+  .app-header__inner > * {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+@media (max-width: 480px) {
+  .brand-name {
+    display: none;
+  }
+}

@@ -258,3 +258,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Mobile (spec 2026-07-24-mobile-ui-design): 16px input defeats the iOS
+ * focus zoom; safe-area padding keeps the composer above the home bar. */
+@media (max-width: 768px) {
+  .chat-composer {
+    padding: 0 var(--space-3) var(--space-3);
+    padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+  }
+  .chat-composer__textarea {
+    font-size: 16px;
+  }
+}
