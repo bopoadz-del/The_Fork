@@ -187,9 +187,64 @@ def _export_descriptor(context: Dict[str, Any]) -> Dict[str, Any] | None:
             "endpoint": endpoint, "payload": payload}
 
 
+def build_histogram_plan(context: Dict[str, Any]) -> ExecutionPlan:
+    """Manpower histogram from a brief: build a norms-based WBS, then
+    time-phase its crews into periods. Used when the request carries no
+    resource-loaded .xer — the deliver text labels the result as a planning
+    estimate, never as site resource returns (the container action's
+    no-fabrication contract stays intact for the schedule-file path)."""
+    p = context.get("params") or {}
+    msg = context.get("message", "") or ""
+    unit = "month" if re.search(r"\bmonth", msg, re.IGNORECASE) else "week"
+    steps = [
+        PlanStep(type="build_wbs", args={
+            "brief": msg,
+            "target_count": p.get("target_count", 150),
+            "project_type": p.get("project_type"),
+            "start_date": p.get("start_date"),
+        }, description="build a norms-based WBS from the brief"),
+        PlanStep(type="resource_histogram", args={"period_unit": unit},
+                 description="time-phase the WBS crews into periods"),
+    ]
+    return ExecutionPlan(understanding="produce a manpower histogram", steps=steps)
+
+
+def deliver_histogram(session: ProjectSession, deliverable: bool) -> str:
+    """Deterministic DELIVER for the histogram plan — numbers straight from
+    the session, provenance stated up front."""
+    h = session.data.get("manpower") or {}
+    periods = h.get("periods") or []
+    if not periods:
+        return "I could not build the manpower histogram for this request."
+    parts = [
+        "Manpower histogram — norms-derived from a generated WBS for this "
+        "brief (no resource-loaded P6 schedule was provided; these are "
+        "planning estimates, not site resource returns).",
+    ]
+    for per in periods[:24]:
+        parts.append(f"- {per.get('label')}: {int(per.get('total') or 0)} workers")
+    if h.get("peak_total"):
+        parts.append(
+            f"Peak manpower {int(h['peak_total'])} in {h.get('peak_period')}; "
+            f"about {int(h.get('total_manhours') or 0):,} man-hours overall."
+        )
+    if deliverable:
+        parts.append(
+            "The cost-loaded workbook (CPM, S-curve, manpower histogram, "
+            "milestones) is ready to download.")
+    return "\n".join(parts)
+
+
 # action (from smart_orchestrator) -> plan builder
 WORKFLOW_REGISTRY = {
     "generate_wbs": build_schedule_plan,
+    "resource_histogram": build_histogram_plan,
+}
+
+# action -> DELIVER renderer for registry plans (default: the schedule text)
+DELIVER_REGISTRY = {
+    "generate_wbs": deliver_schedule,
+    "resource_histogram": deliver_histogram,
 }
 
 
@@ -490,7 +545,8 @@ async def run_workflow(action: str, context: Dict[str, Any],
                    else is_deliverable_request(context.get("message", "")))
     plan = builder(context)
     run = await PlanExecutor().run(plan, session)
-    answer = deliver_schedule(session, deliverable)
+    deliver = DELIVER_REGISTRY.get(action, deliver_schedule)
+    answer = deliver(session, deliverable)
     export = _export_descriptor(context) if deliverable else None
     return {
         "handled": True,

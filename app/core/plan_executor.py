@@ -115,7 +115,31 @@ class PlanExecutor:
         return value
 
     async def _step_resource_histogram(self, step, session):
-        cpm_input = _require_cpm_input(session)
+        try:
+            cpm_input = _require_cpm_input(session)
+        except Exception:
+            # Session activities came from generate_wbs (histogram-from-brief
+            # plan), whose shape predates the CPM schema. Bridge them the same
+            # way cost_load does, then express crews as a single General
+            # resource so the synthetic-distribution path time-phases them.
+            from pydantic import ValidationError  # noqa: F401 — clarity
+            from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+            acts = (session.data.get("wbs") or {}).get("activities") \
+                or session.data.get("activities") or []
+            if not acts:
+                raise PlanExecutionError(
+                    "No activities in the session — run build_wbs first.")
+            bridged = bridge_wbs_to_cost_loaded(
+                acts, crew_per_trade=step.args.get("crew_per_trade", 4))
+            cpm_input = CPMInput.model_validate({"activities": [
+                {
+                    "id": b["id"], "name": b["name"], "duration": b["duration"],
+                    "wbs_code": b.get("wbs", ""),
+                    "predecessors": [{"predecessor_id": p} for p in b["predecessors"]],
+                    "resources": [{"trade": "General", "count": b["manpower"]}],
+                }
+                for b in bridged if b.get("id")
+            ]})
         out = compute_cpm(cpm_input)
         hist = resource_histogram(
             out.results, cpm_input.activities,
