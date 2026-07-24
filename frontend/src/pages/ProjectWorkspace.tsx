@@ -1278,10 +1278,10 @@ export default function ProjectWorkspace() {
             documentCount={documents.length}
             onSuggestion={(text) => void handleSend(text)}
             suggestionsDisabled={streaming || composerIsBlocked}
-            onDownloadMessage={(assistantIndex) => {
+            onDownloadMessage={(assistantIndex, format) => {
               if (!id || !conversationId) return
               const token = getToken() || ''
-              const url = `${API_BASE}/v1/projects/${id}/conversations/${conversationId}/export?format=docx&message_index=${assistantIndex}`
+              const url = `${API_BASE}/v1/projects/${id}/conversations/${conversationId}/export?format=${format}&message_index=${assistantIndex}`
               void fetch(url, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}` },
@@ -1298,7 +1298,7 @@ export default function ProjectWorkspace() {
                   a.href = objUrl
                   const cd = res.headers.get('Content-Disposition') || ''
                   const m = /filename="?([^";]+)"?/.exec(cd)
-                  a.download = m?.[1] || `the-fork-${conversationId.slice(0, 8)}.docx`
+                  a.download = m?.[1] || `the-fork-${conversationId.slice(0, 8)}.${format}`
                   document.body.appendChild(a)
                   a.click()
                   a.remove()
