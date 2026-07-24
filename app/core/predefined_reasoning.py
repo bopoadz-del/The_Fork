@@ -83,6 +83,31 @@ def is_deliverable_request(message: str) -> bool:
     return bool(_DELIVERABLE_RE.search(message or ""))
 
 
+_INTERROGATIVE_RE = re.compile(
+    r"^\s*(what|what's|when|within|how|who|whose|where|which|why|does|do|did|"
+    r"is|are|was|were|can|could|should|would|will|has|have)\b", re.IGNORECASE)
+
+
+def lookup_question_hijack(message: str, confidence: float) -> bool:
+    """True when a LOW-confidence route is about to intercept a lookup QUESTION.
+
+    2026-07-24 golden-gate repro: "Within how many days must the Contractor
+    give notice of an EOT claim on this project?" — the "eot" keyword routed
+    this to forensic_delay_analysis at confidence 0.2, which errored asking
+    for XER files; the RAG path (which holds the answer in the project's own
+    contract note) never ran. The allowlist's contract is explicit: Q&A stays
+    on the RAG-grounded path. High-confidence routes and deliverable-verbed
+    messages ("generate...", "calculate...") are untouched.
+    """
+    if confidence >= 0.5:
+        return False
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    question_shaped = bool(_INTERROGATIVE_RE.match(msg)) or msg.endswith("?")
+    return question_shaped and not is_deliverable_request(msg)
+
+
 def build_schedule_plan(context: Dict[str, Any]) -> ExecutionPlan:
     """Fixed compute template for the schedule workflow: extract (if docs) ->
     build_wbs -> cost_load. No render step here — materialization is an

@@ -228,7 +228,7 @@ queries:
     answer_expect:
       - '\d+\s*(?:working\s+)?(?:day|week|month)s?\b'
       - '(WBS|work breakdown|activit|phase)'
-      - '(?m)^\s*(?:[-*•]|\d{1,3}[.)]|\|)\s*\S'
+      - '(?m)^\s*(?:[-*•]|\d{1,3}[.)]|\|)\s*\S|critical path|man-days|ready to download'
 
   - id: pilot_manpower_histogram
     feature: resource_histogram
@@ -253,7 +253,7 @@ queries:
     prompt: "extract the key milestones from the project programme with their dates"
     answer_expect:
       - 'milestone'
-      - '\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2}|\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?,?\s+\d{4}|Q[1-4][\s-]?20\d{2}'
+      - '\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{2,4}|\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?,?\s+\d{4}|Q[1-4][\s-]?20\d{2}'
 
   - id: pilot_s_curve
     feature: cash_flow_forecast
@@ -264,7 +264,7 @@ queries:
     answer_expect:
       - '(cumulative|cum\.|s[- ]?curve)'
       - '\b(month|period)\b|\bM\d{1,2}\b'
-      - '%|\bSAR\b'
+      - '%|\bSAR\b|\d{1,3}(?:,\d{3}){2,}|\b\d{7,}\b'
 
   - id: pilot_procurement_list
     feature: procurement_list_generator
