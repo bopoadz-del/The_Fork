@@ -1739,6 +1739,24 @@ GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 KIMI_API_URL = "https://api.moonshot.ai/v1/chat/completions"
 KIMI_DEFAULT_MODEL = "kimi-k2.6"
 
+
+def _llm_http_timeout() -> float:
+    """Per-call HTTP timeout for an LLM request (seconds).
+
+    Kimi k2.6 is a REASONING model: on a large grounded turn (~12k-token
+    context) its first token can land well past 120s. The old hardcoded
+    120s httpx timeout gave up on Kimi prematurely and fell back to Groq —
+    whose free tier then 413'd the same large payload, so the turn produced
+    NOTHING (the "Kimi hiccup"). Give the primary room to finish, capped
+    below the CHAT_STREAM deadline so the stream still ends cleanly.
+    Default 200s (stream deadline default is 240s). Override with
+    LLM_HTTP_TIMEOUT_SECONDS.
+    """
+    try:
+        return float(os.getenv("LLM_HTTP_TIMEOUT_SECONDS", "200"))
+    except ValueError:
+        return 200.0
+
 # OpenAI native API — standard chat-completions endpoint. Tool-calling and
 # streaming are first-class; we keep the same payload shape as Groq/DeepSeek.
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
@@ -3877,7 +3895,7 @@ class Agent:
                         tools=tools if (tools and with_tools) else None,
                         stream=False,
                     )
-                    async with httpx.AsyncClient(timeout=120.0) as client:
+                    async with httpx.AsyncClient(timeout=_llm_http_timeout()) as client:
                         r = await client.post(
                             a_cfg["url"],
                             json=native_payload,
@@ -3910,7 +3928,7 @@ class Agent:
                         pass
                     return {"status": "success", "choice": {"message": msg}, "raw": data}
 
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=_llm_http_timeout()) as client:
                     r = await client.post(
                         a_cfg["url"],
                         json=payload,
@@ -3921,7 +3939,7 @@ class Agent:
                         ),
                     )
             except httpx.TimeoutException:
-                last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call timed out (120s)."}
+                last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call timed out ({int(_llm_http_timeout())}s)."}
                 if not is_last:
                     _LOG.warning("llm: %s timed out — falling back to %s", a_cfg["provider"], attempts[attempt_idx + 1][0]["provider"])
                     continue
@@ -4097,7 +4115,7 @@ class Agent:
         )
         usage: Optional[Dict[str, Any]] = None
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=120.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(_llm_http_timeout(), read=_llm_http_timeout())) as client:
                 if native_ollama:
                     payload = _native_ollama_payload(
                         model=model,
