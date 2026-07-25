@@ -211,6 +211,40 @@ def admin_list_archived_projects(auth: dict = Depends(require_api_key)):
     return {"archived": out, "count": len(out)}
 
 
+@router.post("/v1/admin/projects/{project_id}/restore")
+def admin_restore_archived_project(project_id: str,
+                                   hide_from_sidebar: bool = False,
+                                   auth: dict = Depends(require_api_key)):
+    """Restore an ARCHIVED project to active — the missing undo for Delete.
+
+    2026-07-26: the sidebar cleanup archived the REAL corpus projects
+    (dg2_infra_pack_1, drive_archive) along with the duplicate shells, and
+    archive hides a project from retrieval — corpus-project chat silently
+    degraded with no way back from the UI or API. Restore flips status to
+    'active'; pass hide_from_sidebar=true to keep the row out of the sidebar
+    (the correct end state for corpus/GK rows: retrievable, not listed).
+    """
+    _require_admin(auth)
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    with SessionLocal() as s:
+        p = s.get(Project, project_id)
+        if not p:
+            raise HTTPException(404, f"Project '{project_id}' not found")
+        if p.status != "archived":
+            raise HTTPException(409, f"'{project_id}' is not archived (status={p.status})")
+        p.status = "active"
+        if hide_from_sidebar:
+            p.hidden_from_sidebar = True
+        s.commit()
+        from app.core import audit
+        audit.record("project.restored", project_id=project_id,
+                     user_id=auth.get("user_id"),
+                     hidden_from_sidebar=hide_from_sidebar)
+        return {"status": "restored", "project_id": project_id,
+                "hidden_from_sidebar": bool(hide_from_sidebar)}
+
+
 @router.post("/v1/admin/projects/{project_id}/purge")
 def admin_purge_archived_project(project_id: str,
                                  auth: dict = Depends(require_api_key)):
