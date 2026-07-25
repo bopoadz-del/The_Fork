@@ -217,7 +217,10 @@ function DriveSection() {
   async function handleConnect() {
     setConnecting(true)
     try {
-      const resp = await apiGet<{ auth_url: string }>('/v1/drive/connect')
+      // return_to keeps the user on the admin page across the OAuth round-trip.
+      const resp = await apiGet<{ auth_url: string }>(
+        `/v1/drive/connect?return_to=${encodeURIComponent(window.location.pathname)}`,
+      )
       window.location.href = resp.auth_url
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : 'Connect failed.')

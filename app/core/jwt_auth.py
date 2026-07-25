@@ -86,3 +86,12 @@ def create_token(user_id: str, expires_in: int | None = None) -> str:
 def decode_token(token: str) -> dict:
     """Decode + verify a token. Raises jwt.InvalidTokenError on any failure."""
     return jwt.decode(token, _get_secret(), algorithms=[_ALGORITHM])
+
+
+def signing_secret() -> str:
+    """The app's signing secret, for other HMAC uses (e.g. OAuth state).
+
+    Same resolution order as JWTs: SECRET_KEY env var, else the persisted
+    DATA_DIR/.secret_key file — so values signed with it survive restarts
+    and are shared by every worker on the same host/disk."""
+    return _get_secret()
