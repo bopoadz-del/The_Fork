@@ -2,16 +2,19 @@
 
 All routes require Authorization: Bearer like other /v1/* routes, EXCEPT
 /v1/drive/callback — Google calls that directly and cannot send our header,
-so it is protected by the single-use OAuth `state` value instead.
+so it is protected by the signed OAuth `state` value instead.
 """
 import asyncio
 import base64
+import hashlib
+import hmac
+import json
 import logging
 import os
 import secrets
 import time
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
@@ -20,7 +23,7 @@ from pydantic import BaseModel
 
 from app.dependencies import require_user
 from app.core.deployment_profile import forbid_onprem
-from app.core import audit, doc_index, drive_auth, file_crypto, projects as store
+from app.core import audit, doc_index, drive_auth, file_crypto, jwt_auth, projects as store
 from app.routers import projects as projects_router
 from app.routers.projects import ALLOWED_DOC_EXTENSIONS
 
@@ -31,25 +34,74 @@ _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 _DRIVE_API = "https://www.googleapis.com/drive/v3"
 
-# Single-use OAuth state values issued by /connect, mapping state ->
-# (user_id, issued_at). The user_id ties the consent flow to the caller so
-# the callback stores the token for the right user. NOTE: process-local — a
-# multi-worker deployment would need a shared store (e.g. Redis).
-_pending_states: Dict[str, tuple] = {}
-_STATE_TTL = 600  # seconds — pending OAuth states expire after 10 minutes.
+_STATE_TTL = 600  # seconds — OAuth states expire after 10 minutes.
+
+# Replay guard for already-consumed states. Best-effort and process-local by
+# design: the state itself is stateless (HMAC-signed, survives restarts and
+# multiple workers — the fix for users getting dumped on an error page when a
+# deploy landed mid-consent). If a restart empties this set, a replayed state
+# still can't mint a token because Google auth codes are single-use.
+_consumed_states: Dict[str, float] = {}
 
 # In-memory registry for async Drive-folder imports keyed by job_id.
 # Process-local; a restart loses pending jobs (acceptable for this path).
 _DRIVE_FOLDER_JOBS: Dict[str, Dict[str, Any]] = {}
 
 
-def _prune_states() -> None:
-    """Drop pending OAuth states older than _STATE_TTL."""
-    cutoff = time.time() - _STATE_TTL
-    for state in [
-        s for s, (_, issued) in _pending_states.items() if issued < cutoff
-    ]:
-        del _pending_states[state]
+def _sign_state(raw: str) -> str:
+    return hmac.new(jwt_auth.signing_secret().encode("utf-8"),
+                    raw.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+
+
+def _make_state(user_id: str, return_to: str = "") -> str:
+    """Self-contained signed state: base64(payload).sig — no server storage.
+
+    Carries the user this consent flow belongs to, an expiry, and the SPA
+    path to send the user back to, all authenticated by the app secret."""
+    payload = {
+        "p": "drive_oauth",
+        "u": user_id,
+        "t": int(time.time()),
+        "n": secrets.token_urlsafe(8),
+        "r": return_to,
+    }
+    raw = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).rstrip(b"=").decode("ascii")
+    return f"{raw}.{_sign_state(raw)}"
+
+
+def _verify_state(state: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Return (payload, "") if valid, else (None, reason-slug)."""
+    if not state or "." not in state:
+        return None, "invalid_state"
+    raw, sig = state.rsplit(".", 1)
+    if not hmac.compare_digest(_sign_state(raw), sig):
+        return None, "invalid_state"
+    try:
+        pad = "=" * (-len(raw) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(raw + pad))
+    except (ValueError, TypeError):
+        return None, "invalid_state"
+    if payload.get("p") != "drive_oauth":
+        return None, "invalid_state"
+    if time.time() - float(payload.get("t", 0)) > _STATE_TTL:
+        return None, "expired_state"
+    now = time.time()
+    for s, seen in list(_consumed_states.items()):
+        if now - seen > _STATE_TTL:
+            del _consumed_states[s]
+    if state in _consumed_states:
+        return None, "invalid_state"
+    _consumed_states[state] = now
+    return payload, ""
+
+
+def _safe_return_to(value: str) -> str:
+    """Only same-app absolute paths — no scheme, no host, no protocol-relative."""
+    if value and value.startswith("/") and not value.startswith("//"):
+        return value
+    return "/"
 
 
 def _redirect_uri() -> str:
@@ -96,7 +148,8 @@ async def _fetch_email(access_token: str) -> str:
 
 
 @router.get("/v1/drive/connect", dependencies=[Depends(forbid_onprem("Google Drive"))])
-async def drive_connect(auth: dict = Depends(require_user)):
+async def drive_connect(return_to: str = Query("", description="SPA path to land back on"),
+                        auth: dict = Depends(require_user)):
     # Returns the Google consent URL as JSON — NOT a redirect. A browser cannot
     # attach the Bearer header to a top-level navigation, so the frontend
     # fetches this (header attaches fine on a same-origin fetch), reads
@@ -105,9 +158,7 @@ async def drive_connect(auth: dict = Depends(require_user)):
     if not _configured():
         raise HTTPException(503, "Google Drive not configured — set "
                                  "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.")
-    _prune_states()
-    state = secrets.token_urlsafe(24)
-    _pending_states[state] = (auth["user_id"], time.time())
+    state = _make_state(auth["user_id"], _safe_return_to(return_to))
     from urllib.parse import urlencode
     url = _AUTH_URL + "?" + urlencode({
         "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
@@ -121,32 +172,56 @@ async def drive_connect(auth: dict = Depends(require_user)):
     return {"auth_url": url}
 
 
+def _back_to_app(return_to: str, outcome: str, reason: str = "") -> RedirectResponse:
+    """302 back INTO the SPA — the callback must never strand the user on a
+    bare JSON error page outside the app (that is what read as 'the OAuth
+    round-trip boots me out'). The app session (localStorage JWT) is untouched
+    by this whole flow, so landing back on an app path keeps them logged in."""
+    from urllib.parse import urlencode
+    q = {"drive": outcome}
+    if reason:
+        q["reason"] = reason
+    path = _safe_return_to(return_to)
+    return RedirectResponse(
+        f"{_frontend_url()}{path}?{urlencode(q)}", status_code=302)
+
+
 @router.get("/v1/drive/callback")
 async def drive_callback(code: str = Query(""), state: str = Query(""),
                          error: str = Query("")):
-    # No Bearer auth here — Google calls this. The single-use state is the
-    # gate, and it carries the user_id this consent flow belongs to.
-    _prune_states()
-    pending = _pending_states.pop(state, None)
-    if pending is None:
-        raise HTTPException(400, "Invalid or expired OAuth state.")
-    user_id, _issued = pending
+    # No Bearer auth here — Google calls this. The signed state is the gate,
+    # and it carries the user_id this consent flow belongs to. Every failure
+    # path redirects back into the app with a reason slug — never a raw 4xx.
+    payload, reason = _verify_state(state)
+    if payload is None:
+        return _back_to_app("/", "error", reason)
+    user_id = str(payload.get("u", ""))
+    return_to = str(payload.get("r", "") or "/")
     # User clicked "Deny" (or consent otherwise failed): Google sends `error`
-    # and no `code`. The state was still consumed above; return gracefully.
+    # and no `code`.
     if error:
-        return RedirectResponse(f"{_frontend_url()}/?drive=error", status_code=302)
+        return _back_to_app(return_to, "error", "denied")
     if not code:
-        raise HTTPException(400, "Missing authorization code.")
-    data = await _exchange_code(code)
-    access_token = data["access_token"]
-    email = await _fetch_email(access_token)
-    drive_auth.save_token(user_id, {
-        "access_token": access_token,
-        "refresh_token": data.get("refresh_token", ""),
-        "expiry": time.time() + int(data.get("expires_in", 3600)),
-        "email": email,
-    })
-    return RedirectResponse(f"{_frontend_url()}/?drive=connected", status_code=302)
+        return _back_to_app(return_to, "error", "missing_code")
+    try:
+        data = await _exchange_code(code)
+        access_token = data["access_token"]
+        email = await _fetch_email(access_token)
+        drive_auth.save_token(user_id, {
+            "access_token": access_token,
+            "refresh_token": data.get("refresh_token", ""),
+            "expiry": time.time() + int(data.get("expires_in", 3600)),
+            "email": email,
+        })
+    except drive_auth.DriveAuthError:
+        logging.getLogger(__name__).warning(
+            "Drive OAuth code exchange failed for user %s", user_id)
+        return _back_to_app(return_to, "error", "exchange_failed")
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Drive OAuth callback failed for user %s", user_id)
+        return _back_to_app(return_to, "error", "exchange_failed")
+    return _back_to_app(return_to, "connected")
 
 
 @router.get("/v1/drive/status")
