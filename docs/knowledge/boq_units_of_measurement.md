@@ -18,7 +18,7 @@ Unit abbreviations: `m3` cubic metre (volume) · `m2` square metre (area) ·
 
 ## Part 1 — CESMM4 work classes (civil / infrastructure BOQs)
 
-The DG2 / Diriyah infra bills are CESMM4 (items carry refs like `D999.x`).
+KSA civil-infrastructure bills of this class are CESMM4 (items carry refs like `D999.x`).
 
 | Class | Work | Primary unit(s) |
 |---|---|---|
