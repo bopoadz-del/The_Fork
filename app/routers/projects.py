@@ -84,6 +84,14 @@ def _owned_or_404(
     project owned by the seeding account). Mutating handlers are
     unaffected — they never pass ``role``.
 
+    2026-07-25 — document upload uses the SAME extended access rule
+    (``read_only=True`` + caller role). The pilot works on shared projects:
+    anyone who can OPEN a project must be able to add documents to it —
+    the old owner-only check made the upload button 404 with "Project not
+    found" on every project the caller didn't personally create, which
+    testers reported as "upload is broken". Destructive mutations
+    (delete/clear/archive) stay owner-only.
+
     ``doc_limit``/``doc_offset`` paginate the returned documents (default None
     = all, for mutating callers that need the full set).
     """
@@ -748,7 +756,12 @@ async def add_document(
     analysis. Attaching a file is not the same as asking for analysis; run a
     block explicitly (via /v1/execute) when you actually want results.
     """
-    proj = _owned_or_404(project_id, auth["user_id"])
+    # Anyone who can OPEN the project can add documents to it (shared pilot
+    # projects + admin access) — see _owned_or_404's 2026-07-25 note.
+    proj = _owned_or_404(
+        project_id, auth["user_id"], read_only=True,
+        role=auth.get("role", "user"), doc_limit=0,
+    )
 
     original_name = (file.filename or "unknown").strip()
     if not original_name or original_name in (".", ".."):
