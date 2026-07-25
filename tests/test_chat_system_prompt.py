@@ -52,7 +52,7 @@ def _install_cloud_stub(monkeypatch, captured: dict):
         }
 
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("KIMI_API_KEY", "fake-key")
 
 
 # ── 1. Literal system_prompt ──────────────────────────────────────────────
