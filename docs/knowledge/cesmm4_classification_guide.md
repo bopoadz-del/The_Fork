@@ -28,9 +28,9 @@ Treating a CESMM4 code as a line item leads to fabricated rates. The correct men
 
 Never use the CESMM4 code alone as a cost lookup key.
 
-## Diriyah Gate Phase II BOQ — D999.x Family
+## Reference Infrastructure BOQ — D999.x Family
 
-The D999.x series in the Diriyah Gate Phase II BOQ covers stormwater, drainage, and pipeline protection works. All rates are in SAR (Saudi Riyal). Most items are measured per linear metre, but not all — read the unit column.
+The D999.x series in the reference KSA infrastructure BOQ covers stormwater, drainage, and pipeline protection works. All rates are in SAR (Saudi Riyal). Most items are measured per linear metre, but not all — read the unit column.
 
 ### Verified Described Items
 
@@ -46,7 +46,7 @@ Other D999.x classification codes (for example D999.14) do not carry their own u
 
 ## Currency
 
-The Diriyah Gate Phase II BOQ is priced in SAR (Saudi Riyal). It does not provide rates in USD, AED, or ECU. Any USD or AED conversion is a function of the exchange rate at valuation time and is not part of the source BOQ data.
+The reference KSA infrastructure BOQ is priced in SAR (Saudi Riyal). It does not provide rates in USD, AED, or ECU. Any USD or AED conversion is a function of the exchange rate at valuation time and is not part of the source BOQ data.
 
 ## Unit Conventions
 
@@ -56,5 +56,5 @@ Most D999.x items are measured per **linear metre** (m). Always read the unit co
 
 - **"Each CESMM4 code has its own rate"** — wrong. Rates attach to described items.
 - **"D999.x is always measured per linear metre"** — wrong. Most are, but some (allowance items, chamber types) are per Nr.
-- **"BOQ rates are in AED"** — wrong. Diriyah BOQ rates are in SAR.
+- **"BOQ rates are in AED"** — wrong. The reference BOQ rates are in SAR.
 - **"Rate per kilogram or per tonne can be derived"** — wrong unless the BOQ row specifies a mass unit. D999.x items are measured by length.
