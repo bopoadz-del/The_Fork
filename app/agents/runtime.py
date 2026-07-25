@@ -456,15 +456,53 @@ def _sanitize_final_text(text: str) -> str:
     return cleaned
 
 
+_KIMI_LEAK_RE = re.compile(r"functions\.([A-Za-z0-9_.\-]+):(\d+)")
+
+
+def _recover_kimi_leaked_tool_calls(text: str) -> list[dict]:
+    """Recover Kimi K2's native tool-call format leaked into ``content``.
+
+    Live 2026-07-26 finding: on lookup questions Kimi sometimes emits its
+    tool-call special-token section as PROSE — the stream showed
+    ``...Let me search...functions.search_project_documents:0{"query":...``
+    (special tokens mangled to garbage bytes). The pure-JSON recovery below
+    never fires because the content starts with prose, so the leak streamed
+    to the user as a 'final answer' and the search never ran. Each
+    ``functions.<name>:<idx>`` marker followed by a JSON object becomes a
+    real tool call; truncated JSON is skipped (the sanitizer handles it).
+    """
+    out: list[dict] = []
+    for m in _KIMI_LEAK_RE.finditer(text):
+        name = m.group(1).split(".")[-1]
+        brace = text.find("{", m.end())
+        if brace == -1:
+            continue
+        try:
+            args, _ = json.JSONDecoder().raw_decode(text[brace:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(args, dict):
+            out.append({
+                "id": f"recovered_kimi_{len(out) + 1}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            })
+    return out
+
+
 def _recover_tool_calls_from_content(text: str) -> list[dict]:
     """Recover OpenAI-style tool_calls from raw argument JSON/envelopes leaked
     into ``content`` by models (e.g. Groq Llama-4-Scout) that fail to emit the
     structured ``tool_calls`` field. Reuses the same detectors as
     ``_looks_like_internal_tool_json`` so we only recover shapes we already
-    recognise as internal tool args.
+    recognise as internal tool args. Also recovers Kimi K2's leaked
+    ``functions.<name>:<idx>{...}`` markup (see above).
     """
     if not text:
         return []
+    kimi = _recover_kimi_leaked_tool_calls(text)
+    if kimi:
+        return kimi
     stripped = text.strip()
     if not stripped.startswith(("{", "[")):
         return []
