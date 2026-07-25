@@ -115,7 +115,7 @@ class FormulaExecutorV2Block(UniversalBlock):
     default_config = {
         "max_retries": 2,        # extra attempts after the first
         "timeout_seconds": 10,
-        "model": "deepseek-chat",
+        "model": None,  # None -> active provider default_model
     }
 
     ui_schema = {
@@ -150,10 +150,14 @@ class FormulaExecutorV2Block(UniversalBlock):
         api_key = os.getenv(cfg["env_key"])
         if not api_key:
             raise RuntimeError(f"{cfg['env_key']} not configured")
-        model = self.config.get("model", cfg["default_model"])
-        if cfg["provider"] != "deepseek" and isinstance(model, str) and model.startswith("deepseek-"):
-            model = cfg["default_model"]
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        # The active provider's default model unless a real one is pinned.
+        model = self.config.get("model") or cfg["default_model"]
+        # Honor a reasoning provider's fixed temperature (Kimi k2.6 rejects any
+        # temperature but 1 with HTTP 400). Codegen wants determinism, but a
+        # 400 gets us nothing — the provider constraint wins.
+        from app.agents.runtime import _llm_http_timeout
+        temperature = cfg.get("fixed_temperature", 0.0)
+        async with httpx.AsyncClient(timeout=_llm_http_timeout()) as client:
             resp = await client.post(
                 cfg["url"],
                 headers={"Authorization": f"Bearer {api_key}",
@@ -161,7 +165,7 @@ class FormulaExecutorV2Block(UniversalBlock):
                 json={
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.0,   # deterministic code generation
+                    "temperature": temperature,
                 },
             )
             if resp.status_code != 200:

@@ -19,7 +19,7 @@ class LLMEnhancerBlock(UniversalBlock):
     skip_input_validation_actions = ["health_check"]
 
     default_config = {
-        "default_provider": "deepseek",
+        "default_provider": "kimi",
         "max_tokens": 2048,
         "temperature": 0.3
     }
@@ -117,13 +117,13 @@ class LLMEnhancerBlock(UniversalBlock):
 
         try:
             result = await chat.execute(prompt, {
-                "model": params.get("model", self.config.get("default_provider", "deepseek-chat")),
+                "model": params.get("model", self.config.get("default_provider", "kimi-k2.6")),
                 "max_tokens": params.get("max_tokens", self.config.get("max_tokens", 2048)),
                 "temperature": params.get("temperature", self.config.get("temperature", 0.3)),
                 "stream": False
             })
             raw_text = result.get("result", {}).get("text", "")
-            model_used = params.get("model", self.config.get("default_provider", "deepseek-chat"))
+            model_used = params.get("model", self.config.get("default_provider", "kimi-k2.6"))
             # The extract prompt says "Return ONLY valid JSON". Try to parse it
             # so callers get a real dict/list, not a JSON-shaped string. Fall
             # back to raw text with a warning on parse failure.

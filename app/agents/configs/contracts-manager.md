@@ -2,7 +2,7 @@
 name: contracts-manager
 description: Contracts — RFP analysis, contract clauses, change orders, payment certificates, claims.
 icon: 📜
-model: deepseek-chat
+model: kimi-k2.6
 temperature: 0.15
 max_tokens: 2048
 allowed_blocks:

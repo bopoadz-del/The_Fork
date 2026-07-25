@@ -111,14 +111,14 @@ def test_inner_generator_exception_becomes_error_event(monkeypatch):
 
 
 def test_missing_provider_key_yields_error(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
     a = _agent()
     events = _collect(a.chat_stream(user_message="hello"))
     types = [e["type"] for e in events]
     assert "error" in types
     err = next(e for e in events if e["type"] == "error")
-    assert "DEEPSEEK_API_KEY" in err["message"]
+    assert "KIMI_API_KEY" in err["message"]
 
 
 # ── Wrapper invariant: terminal_emitted is always satisfied ───────────────

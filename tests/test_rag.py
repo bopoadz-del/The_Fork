@@ -428,7 +428,7 @@ def _chat_capture_fixture(monkeypatch, captured: dict):
         captured["message"] = message
         return {"status": "success", "response": "ok"}
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+    monkeypatch.setenv("KIMI_API_KEY", "fake-key")
 
 
 @pytest.mark.asyncio

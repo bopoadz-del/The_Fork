@@ -3,7 +3,7 @@ name: construction-pm
 can_delegate_when_enabled: true  # W7: delegates only when FORK_AGENT_DELEGATION=on
 description: Project manager — schedule, procurement, risks, costs, status reports across the whole job.
 icon: 🏗️
-model: deepseek-chat
+model: kimi-k2.6
 temperature: 0.2
 max_tokens: 2048
 allowed_blocks:

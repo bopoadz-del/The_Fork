@@ -2,7 +2,7 @@
 name: learning
 description: Watches user corrections, tunes recommendation coefficients, promotes formulas through the credibility tiers. The self-improving loop.
 icon: 🎓
-model: deepseek-chat
+model: kimi-k2.6
 temperature: 0.2
 max_tokens: 1024
 allowed_blocks:

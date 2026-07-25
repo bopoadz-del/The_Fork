@@ -2,7 +2,7 @@
 name: safety-officer
 description: HSE — safety audits, risk register, compliance checks, incident analysis.
 icon: 🦺
-model: deepseek-chat
+model: kimi-k2.6
 temperature: 0.2
 max_tokens: 2048
 allowed_blocks:
