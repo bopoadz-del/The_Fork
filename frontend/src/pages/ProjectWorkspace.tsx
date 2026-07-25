@@ -493,10 +493,36 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
     return () => { cancelled = true }
   }, [])
 
+  // Surface the OAuth round-trip outcome (?drive=connected / ?drive=error)
+  // the callback redirect appends, then strip it from the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const outcome = params.get('drive')
+    if (!outcome) return
+    if (outcome === 'error') {
+      const reasons: Record<string, string> = {
+        denied: 'Google consent was declined. Try connecting again.',
+        expired_state: 'The connection attempt expired. Try connecting again.',
+        invalid_state: 'The connection attempt could not be verified. Try connecting again.',
+        missing_code: 'Google returned no authorization code. Try connecting again.',
+        exchange_failed: 'Google rejected the connection. Try again or check the Drive configuration.',
+      }
+      setStatusError(reasons[params.get('reason') ?? ''] ?? 'Google Drive connection failed. Try again.')
+    }
+    params.delete('drive')
+    params.delete('reason')
+    const rest = params.toString()
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''))
+  }, [])
+
   async function handleConnect() {
     setConnecting(true)
     try {
-      const resp = await apiGet<{ auth_url: string }>('/v1/drive/connect')
+      // return_to: the OAuth callback 302s the browser back to THIS page
+      // (not the app root), so the user never loses their place.
+      const resp = await apiGet<{ auth_url: string }>(
+        `/v1/drive/connect?return_to=${encodeURIComponent(window.location.pathname)}`,
+      )
       window.location.href = resp.auth_url
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : 'Failed to start Drive connection.')

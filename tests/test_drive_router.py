@@ -37,10 +37,25 @@ def test_connect_requires_auth(client):
     assert client.get("/v1/drive/connect").status_code == 401
 
 
-def test_callback_rejects_bad_state(client):
+def test_callback_bad_state_redirects_into_app(client):
+    # A forged/garbage state must NOT strand the user on a bare 400 JSON page
+    # (that read as "the OAuth round-trip boots me out of the app") — it
+    # redirects back into the SPA with a reason slug, session untouched.
     r = client.get("/v1/drive/callback?code=x&state=never-issued",
                     follow_redirects=False)
-    assert r.status_code == 400
+    assert r.status_code == 302
+    assert r.headers["location"] == "http://localhost:5173/?drive=error&reason=invalid_state"
+
+
+def test_callback_tampered_state_redirects_into_app(client):
+    r = client.get("/v1/drive/connect", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+    raw, _sig = state.rsplit(".", 1)
+    r = client.get(f"/v1/drive/callback?code=x&state={raw}.{'0' * 32}",
+                    follow_redirects=False)
+    assert r.status_code == 302
+    assert "drive=error" in r.headers["location"]
+    assert "reason=invalid_state" in r.headers["location"]
 
 
 def test_callback_exchanges_code_and_stores_token(client, monkeypatch):
@@ -79,20 +94,117 @@ def test_callback_consent_denied(client):
     r = client.get(f"/v1/drive/callback?error=access_denied&state={state}",
                     follow_redirects=False)
     assert r.status_code in (302, 307)
-    assert r.headers["location"] == "http://localhost:5173/?drive=error"
+    assert r.headers["location"] == "http://localhost:5173/?drive=error&reason=denied"
     assert drive_auth.load_token("system") is None
 
 
-def test_callback_rejects_expired_state(client):
-    # A state older than _STATE_TTL is pruned on the next callback and so
-    # fails the membership check → 400.
+def test_callback_expired_state_redirects_into_app(client, monkeypatch):
+    # A state older than _STATE_TTL fails verification → redirect with
+    # reason=expired_state, never a 400.
     import app.routers.drive as drive_mod
-    stale = "stale-state-value"
-    drive_mod._pending_states[stale] = ("system", time.time() - drive_mod._STATE_TTL - 1)
+    real_time = time.time
+    monkeypatch.setattr(drive_mod.time, "time",
+                        lambda: real_time() - drive_mod._STATE_TTL - 5)
+    r = client.get("/v1/drive/connect", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+    monkeypatch.setattr(drive_mod.time, "time", real_time)
 
-    r = client.get(f"/v1/drive/callback?code=x&state={stale}",
+    r = client.get(f"/v1/drive/callback?code=x&state={state}",
                     follow_redirects=False)
-    assert r.status_code == 400
+    assert r.status_code == 302
+    assert "reason=expired_state" in r.headers["location"]
+
+
+def test_state_survives_process_restart(client, monkeypatch):
+    # THE bug: the old process-local dict lost every pending state on a
+    # deploy/restart mid-consent, so Google's redirect hit "Invalid or
+    # expired OAuth state" and dumped the user outside the app. The signed
+    # state must verify with zero server-side memory of it.
+    import app.routers.drive as drive_mod
+    r = client.get("/v1/drive/connect", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+
+    drive_mod._consumed_states.clear()  # simulate a fresh process
+
+    async def fake_exchange(code):
+        return {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600}
+
+    async def fake_email(access_token):
+        return "me@example.com"
+
+    monkeypatch.setattr(drive_mod, "_exchange_code", fake_exchange)
+    monkeypatch.setattr(drive_mod, "_fetch_email", fake_email)
+    r = client.get(f"/v1/drive/callback?code=auth-code&state={state}",
+                    follow_redirects=False)
+    assert r.status_code == 302
+    assert "drive=connected" in r.headers["location"]
+    assert drive_auth.load_token("system")["access_token"] == "AT"
+
+
+def test_state_single_use_within_process(client, monkeypatch):
+    import app.routers.drive as drive_mod
+    r = client.get("/v1/drive/connect", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+
+    async def fake_exchange(code):
+        return {"access_token": "AT", "expires_in": 3600}
+
+    async def fake_email(access_token):
+        return "me@example.com"
+
+    monkeypatch.setattr(drive_mod, "_exchange_code", fake_exchange)
+    monkeypatch.setattr(drive_mod, "_fetch_email", fake_email)
+    first = client.get(f"/v1/drive/callback?code=c&state={state}",
+                       follow_redirects=False)
+    assert "drive=connected" in first.headers["location"]
+    replay = client.get(f"/v1/drive/callback?code=c&state={state}",
+                        follow_redirects=False)
+    assert "reason=invalid_state" in replay.headers["location"]
+
+
+def test_callback_exchange_failure_redirects_into_app(client, monkeypatch):
+    import app.routers.drive as drive_mod
+    r = client.get("/v1/drive/connect", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+
+    async def boom(code):
+        raise drive_auth.DriveAuthError("Code exchange failed (HTTP 400)")
+
+    monkeypatch.setattr(drive_mod, "_exchange_code", boom)
+    r = client.get(f"/v1/drive/callback?code=bad&state={state}",
+                    follow_redirects=False)
+    assert r.status_code == 302
+    assert "reason=exchange_failed" in r.headers["location"]
+    assert drive_auth.load_token("system") is None
+
+
+def test_connect_return_to_lands_back_on_same_page(client, monkeypatch):
+    import app.routers.drive as drive_mod
+    r = client.get("/v1/drive/connect?return_to=/projects/p1", headers=H)
+    state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+
+    async def fake_exchange(code):
+        return {"access_token": "AT", "expires_in": 3600}
+
+    async def fake_email(access_token):
+        return "me@example.com"
+
+    monkeypatch.setattr(drive_mod, "_exchange_code", fake_exchange)
+    monkeypatch.setattr(drive_mod, "_fetch_email", fake_email)
+    r = client.get(f"/v1/drive/callback?code=c&state={state}",
+                    follow_redirects=False)
+    assert r.headers["location"] == "http://localhost:5173/projects/p1?drive=connected"
+
+
+def test_connect_return_to_rejects_external_urls(client):
+    # A hostile return_to must not become an open redirect off-origin.
+    for evil in ("https://evil.example", "//evil.example", "javascript:x"):
+        r = client.get(f"/v1/drive/connect?return_to={evil}", headers=H)
+        state = r.json()["auth_url"].split("state=")[1].split("&")[0]
+        cb = client.get(f"/v1/drive/callback?error=access_denied&state={state}",
+                        follow_redirects=False)
+        loc = cb.headers["location"]
+        assert loc.startswith("http://localhost:5173/?"), loc
 
 
 def test_status_not_connected(client):
