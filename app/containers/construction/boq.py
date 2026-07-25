@@ -49,6 +49,43 @@ def _cashflow_figures_from_message(text: str) -> Dict[str, float]:
     return out
 
 
+def _carbon_quantities_from_message(text: str) -> Dict[str, float]:
+    """Parse material quantities out of a carbon-footprint request.
+
+    Predefined dispatch sends empty params, so "calculate the embodied
+    carbon for 12,000 m3 of C40 concrete and 900t of rebar" reached the
+    tool with no quantities and returned ZERO. Conservative, unit-aware:
+    concrete/blinding in m3 -> concrete_m3; rebar/steel by mass (t->kg)
+    -> rebar_kg / steel_kg; timber m3; glass/block m2. Returns only what
+    it can label; callers let explicit params win.
+    """
+    out: Dict[str, float] = {}
+    if not text:
+        return out
+    t = str(text).lower()
+
+    def _num(m) -> float:
+        return _parse_money_str(m.group(1)) or 0.0
+
+    m = re.search(r"([0-9][0-9,.]*)\s*m\s*(?:3|³|\^3|cubic)\b.{0,30}?concret", t) \
+        or re.search(r"concret.{0,30}?([0-9][0-9,.]*)\s*m\s*(?:3|³|\^3|cubic)", t)
+    if m:
+        out["concrete_m3"] = _num(m)
+    # rebar / reinforcement by mass; tonnes -> kg
+    m = re.search(r"([0-9][0-9,.]*)\s*(t|tonne|tonnes|ton|kg)\b.{0,30}?(?:rebar|reinforc)", t) \
+        or re.search(r"(?:rebar|reinforc).{0,30}?([0-9][0-9,.]*)\s*(t|tonne|tonnes|ton|kg)", t)
+    if m:
+        v = _parse_money_str(m.group(1)) or 0.0
+        out["rebar_kg"] = v if m.group(2) == "kg" else v * 1000
+    # structural steel by mass
+    m = re.search(r"([0-9][0-9,.]*)\s*(t|tonne|tonnes|ton|kg)\b.{0,30}?(?:structural\s+)?steel", t) \
+        or re.search(r"(?:structural\s+)?steel.{0,30}?([0-9][0-9,.]*)\s*(t|tonne|tonnes|ton|kg)", t)
+    if m:
+        v = _parse_money_str(m.group(1)) or 0.0
+        out["steel_kg"] = v if m.group(2) == "kg" else v * 1000
+    return out
+
+
 def _payment_figures_from_message(text: str) -> Dict[str, float]:
     """Deterministically parse IPC figures out of a chat message.
 
@@ -684,7 +721,14 @@ class ConstructionBoqMixin:
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
         quantities = p.get("quantities", data.get("quantities", {}))
-    
+        # Predefined dispatch sends empty params — pull material quantities
+        # from the chat message so "12,000 m3 concrete and 900t rebar" isn't
+        # computed as zero carbon. Explicit quantities always win.
+        if not quantities:
+            quantities = _carbon_quantities_from_message(
+                data.get("message") or (input_data if isinstance(input_data, str) else "")
+            )
+
         carbon_factors = {
             "concrete_m3": 250.0,
             "steel_kg": 2.3,

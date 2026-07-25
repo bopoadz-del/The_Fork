@@ -29,7 +29,8 @@ def _stub_llm_key(monkeypatch):
     collection time) and make them run against the real API with a fake key.
     """
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("KIMI_API_KEY", "test-key-not-real")
 
 
 def _pa_agent():

@@ -3,7 +3,7 @@ name: smart-orchestrator
 description: Routes free-form user chat to the right block (the 39-action keyword router). The traffic cop.
 can_delegate: true
 icon: 🚦
-model: deepseek-chat
+model: kimi-k2.6
 temperature: 0.1
 max_tokens: 1024
 allowed_blocks:

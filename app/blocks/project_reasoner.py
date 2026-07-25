@@ -116,7 +116,7 @@ class ProjectReasonerBlock(UniversalBlock):
     tags = ["domain", "construction", "reasoning", "agent", "llm"]
     requires = []
 
-    default_config = {"model": "deepseek-chat"}
+    default_config = {"model": None}  # None -> active provider default_model
 
     ui_schema = {
         "input": {
@@ -148,17 +148,20 @@ class ProjectReasonerBlock(UniversalBlock):
         api_key = os.getenv(cfg["env_key"])
         if not api_key:
             raise RuntimeError(f"{cfg['env_key']} not configured")
-        model = self.config.get("model", cfg["default_model"])
-        if cfg["provider"] != "deepseek" and isinstance(model, str) and model.startswith("deepseek-"):
-            model = cfg["default_model"]
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        # The active provider's default model unless a real one is pinned.
+        model = self.config.get("model") or cfg["default_model"]
+        # Honor a reasoning provider's fixed temperature (Kimi k2.6 rejects any
+        # temperature but 1 with HTTP 400).
+        from app.agents.runtime import _llm_http_timeout
+        temperature = cfg.get("fixed_temperature", 0.2)
+        async with httpx.AsyncClient(timeout=_llm_http_timeout()) as client:
             resp = await client.post(
                 cfg["url"],
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
                 json={"model": model,
                       "messages": [{"role": "user", "content": prompt}],
-                      "temperature": 0.2},
+                      "temperature": temperature},
             )
             if resp.status_code != 200:
                 raise RuntimeError(

@@ -1,8 +1,8 @@
-"""Chat Block — DeepSeek primary + local-inference fallback.
+"""Chat Block — active cloud provider (Kimi/Groq via _llm_config) + local-inference fallback.
 
 The chat must never go completely dark on the user. Order of attempts:
 
-1. **DeepSeek API** when ``DEEPSEEK_API_KEY`` is set and the endpoint is reachable.
+1. **Active cloud provider** (Kimi primary / Groq fallback, via _llm_config).
 2. **Local LLM** (kept *inside* the platform — no third-party cloud) via:
    - Ollama HTTP at ``OLLAMA_URL`` (default ``http://localhost:11434``) when a
      local model is installed. The default local model is
@@ -34,18 +34,18 @@ DEFAULT_LOCAL_MODEL = "qwen2.5:3b-instruct"
 
 
 class ChatBlock(TypedBlock):
-    """AI chat completions — DeepSeek with local-inference fallback."""
+    """AI chat completions — active cloud provider with local-inference fallback."""
 
     auto_validate = False
     name = "chat"
     version = "3.0.0"
-    description = "AI chat completions — DeepSeek primary, local LLM fallback"
+    description = "AI chat completions — active cloud provider, local LLM fallback"
     layer = 2
     tags = ["ai", "core", "llm", "chat", "typed"]
     requires = []
 
     default_config = {
-        "default_provider": "deepseek",
+        "default_provider": "kimi",
         "max_tokens": 2048,
         "temperature": 0.7,
     }
@@ -110,7 +110,7 @@ class ChatBlock(TypedBlock):
         max_tokens = params.get("max_tokens", self.config.get("max_tokens", 2048))
         temperature = params.get("temperature", self.config.get("temperature", 0.7))
         stream = params.get("stream", False)
-        model = params.get("model", "deepseek-chat")
+        model = params.get("model")  # None -> cfg["default_model"] (active provider)
 
         # System prompt is container/caller-owned — ChatBlock does not inject
         # domain defaults. ConstructionContainer.chat() sets construction_evm.md.
@@ -216,13 +216,10 @@ class ChatBlock(TypedBlock):
         primary_error = None
 
         if cloud_ready:
-            # Agent configs (and this block's default) pin "deepseek-chat".
-            # When the active provider is NOT DeepSeek, remap that
-            # placeholder onto the provider's default model. An explicit
-            # provider-specific model id is left alone.
-            effective_model = model
-            if cfg["provider"] != "deepseek" and effective_model.startswith("deepseek-"):
-                effective_model = cfg["default_model"]
+            # Use the caller's model when one is pinned, else the active
+            # provider's default (from _llm_config — Kimi primary / Groq
+            # fallback / Ollama on-prem).
+            effective_model = model or cfg["default_model"]
             # Only forward system_prompt when one was resolved — older
             # tests stub _call_cloud with a fixed signature that ends at
             # ``cfg=None`` and can't absorb unknown kwargs.

@@ -78,7 +78,7 @@ async def test_ollama_primary_path_calls_cloud_without_api_key(monkeypatch):
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
 
     block = ChatBlock()
-    result = await block.process("hi", {"stream": False, "model": "deepseek-chat"})
+    result = await block.process("hi", {"stream": False})
 
     assert result["status"] == "success"
     assert result["text"] == "hello from ollama"
@@ -116,7 +116,7 @@ async def test_ollama_cloud_forwards_api_key_when_set(monkeypatch):
     monkeypatch.setattr(ChatBlock, "_call_cloud", fake_call)
 
     block = ChatBlock()
-    result = await block.process("hi", {"stream": False, "model": "deepseek-chat"})
+    result = await block.process("hi", {"stream": False})
 
     assert result["status"] == "success"
     assert len(calls) == 1
@@ -124,7 +124,7 @@ async def test_ollama_cloud_forwards_api_key_when_set(monkeypatch):
         "Ollama Cloud key must be forwarded so ollama.com auth succeeds"
     )
     assert calls[0]["url"] == "https://ollama.com/v1/chat/completions"
-    # deepseek-chat placeholder remaps onto the active provider's model.
+    # Unpinned model uses the active provider default (OLLAMA_MODEL here).
     assert calls[0]["model"] == "gpt-oss:120b-cloud"
 
 
