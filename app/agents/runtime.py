@@ -1221,12 +1221,29 @@ def _cg_grounded_numbers(rag_context: str, messages: List[Dict[str, Any]]) -> se
         if not block.strip():
             continue
         _add_numbers(block, all_numbers=bool(_CG_RATE_SEMANTIC_RE.search(block)))
-    # Tool results this turn (authoritative computed numbers).
+    # Tool results this turn (authoritative computed numbers) AND the user's
+    # own message. A figure the USER supplied ("variance: planned SAR 4.2M vs
+    # actual SAR 5.1M") is definitionally traceable — the gate must not refuse
+    # to echo the user's own numbers back (the sympy/variance mis-fire). Only
+    # numbers actually present in the user's text ground; a fabricated rate the
+    # user never mentioned still fails the gate.
     for msg in messages or []:
-        if isinstance(msg, dict) and msg.get("role") == "tool":
-            content = msg.get("content")
-            if isinstance(content, str):
-                _add_numbers(content, all_numbers=True)
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = msg.get("content")
+        if role in ("tool", "user") and isinstance(content, str):
+            _add_numbers(content, all_numbers=True)
+    # Simple arithmetic derivations of grounded figures also ground: a
+    # variance/overrun answer legitimately computes the SUM or DIFFERENCE of
+    # two grounded totals (SAR 5.1M - SAR 4.2M = SAR 0.9M). Bounded to pairwise
+    # combinations of the (small) grounded set; the 0.5% tolerance in
+    # _cg_is_grounded keeps this from grounding an unrelated fabricated rate.
+    base = list(grounded)
+    for i in range(len(base)):
+        for j in range(i, len(base)):
+            grounded.add(round(base[i] + base[j], 4))
+            grounded.add(round(abs(base[i] - base[j]), 4))
     return grounded
 
 
@@ -1722,8 +1739,6 @@ def _build_exports_from_audit(
     return exports
 
 
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
 # Groq provides an OpenAI-compatible chat-completions endpoint, so the only
 # things that differ from DeepSeek are the base URL, the env-var name, and the
@@ -1759,8 +1774,6 @@ def _llm_http_timeout() -> float:
 
 # OpenAI native API — standard chat-completions endpoint. Tool-calling and
 # streaming are first-class; we keep the same payload shape as Groq/DeepSeek.
-OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
-OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
 
 # Ollama exposes an OpenAI-compatible endpoint at /v1/chat/completions
 # (v0.1.31+). Self-hosted on the operator's PC or a VPS. No auth, no token
@@ -1774,15 +1787,16 @@ def _llm_config() -> Dict[str, Any]:
     """Pick the active LLM provider's URL + env-key + default model.
 
     Precedence:
-      1. Explicit ``LLM_PROVIDER`` env var (``deepseek`` | ``groq`` |
-         ``ollama`` | ``openai``) wins.
-      2. Otherwise: if ``GROQ_API_KEY`` is set, use Groq (free tier).
-      3. Otherwise: if ``OPENAI_API_KEY`` is set, use OpenAI.
-      4. Otherwise: DeepSeek (the historical default).
+      1. Explicit ``LLM_PROVIDER`` env var (``kimi`` | ``groq`` | ``ollama``)
+         wins.
+      2. Otherwise: Kimi when a KIMI_API_KEY is set, else Groq when a
+         GROQ_API_KEY is set, else Kimi (the documented primary).
+    OpenAI and DeepSeek were removed 2026-07-25 — the cloud ladder is Kimi
+    primary + Groq fallback; Ollama is the on-prem provider.
 
     Per-provider override envs let the operator pin a specific model
     without code changes:
-      - ``GROQ_MODEL`` / ``DEEPSEEK_MODEL`` / ``OLLAMA_MODEL``
+      - ``GROQ_MODEL`` / ``KIMI_MODEL`` / ``OLLAMA_MODEL``
       - ``OLLAMA_URL`` overrides the localhost default — set this to your
         Cloudflare Tunnel / Tailscale / VPS URL so the Render deploy can
         reach your self-hosted Ollama.
@@ -1795,14 +1809,14 @@ def _llm_config() -> Dict[str, Any]:
         so the downstream auth path adds the header just like Groq
         or DeepSeek.
     """
+    # The ladder is Kimi (primary) + Groq (the one cloud fallback) + Ollama
+    # (on-prem only). OpenAI and DeepSeek were removed 2026-07-25. An unset or
+    # unrecognized LLM_PROVIDER resolves to Kimi (the documented primary), with
+    # Groq as the auto-pick only when a Kimi key is absent but a Groq key exists.
     provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
     if not provider:
-        if os.getenv("GROQ_API_KEY"):
-            provider = "groq"
-        elif os.getenv("OPENAI_API_KEY"):
-            provider = "openai"
-        else:
-            provider = "deepseek"
+        provider = "kimi" if os.getenv("KIMI_API_KEY") else (
+            "groq" if os.getenv("GROQ_API_KEY") else "kimi")
     if provider == "ollama":
         url = os.getenv("OLLAMA_URL", OLLAMA_DEFAULT_URL).rstrip("/")
         # Native Ollama protocol (/api/chat) is explicit — leave it alone.
@@ -1840,36 +1854,51 @@ def _llm_config() -> Dict[str, Any]:
             # global constant would just become the next provider's 400.
             "fixed_temperature": 1,
         }
-    if provider == "openai":
-        return {
-            "provider": "openai",
-            "url": OPENAI_API_URL,
-            "env_key": "OPENAI_API_KEY",
-            "default_model": os.getenv("OPENAI_MODEL", OPENAI_DEFAULT_MODEL),
-        }
+    # Default / fallthrough = Kimi (primary). OpenAI and DeepSeek are gone.
     return {
-        "provider": "deepseek",
-        "url": DEEPSEEK_API_URL,
-        "env_key": "DEEPSEEK_API_KEY",
-        "default_model": os.getenv("DEEPSEEK_MODEL", DEEPSEEK_DEFAULT_MODEL),
+        "provider": "kimi",
+        "url": KIMI_API_URL,
+        "env_key": "KIMI_API_KEY",
+        "default_model": os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL),
+        "fixed_temperature": 1,
     }
 
 
 def _llm_fallback_config(primary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Config for the fallback LLM provider, or ``None`` when none is usable.
+    """Config for the fallback LLM call, or ``None`` when none is usable.
 
-    Controlled by ``LLM_FALLBACK_PROVIDER`` (``ollama`` | ``groq`` |
-    ``deepseek``). Returns ``None`` when it is unset, names the primary
-    provider, or its API-key env is required but missing. This lets a
-    Groq-primary deploy degrade to gpt-oss/Ollama on a retryable failure
-    (413 request-too-large, 429 rate-limit, 5xx, network) instead of failing
-    the whole turn — the resilience the operator asked about ("keep gpt-oss as
-    a fallback to Groq").
+    Two fallback shapes, checked in order:
+
+    1. SAME-PROVIDER MODEL fallback (``KIMI_FALLBACK_MODEL``): when the Kimi
+       primary (kimi-k2.6, a slow reasoning model that forces temperature=1)
+       times out or errors on a large grounded turn, retry the SAME Moonshot
+       key/endpoint with a fast, temperature-flexible, big-context model
+       (moonshot-v1-128k). This is the RECOMMENDED fallback — it survives the
+       payloads Groq's free tier 413s on (verified: 19.5k tokens OK), needs no
+       new key, and has no fixed-temperature constraint. Set
+       KIMI_FALLBACK_MODEL=moonshot-v1-128k.
+
+    2. CROSS-PROVIDER fallback (``LLM_FALLBACK_PROVIDER`` = ``groq`` |
+       ``ollama``): degrade to another provider on a retryable failure
+       (413/429/5xx/network). Returns ``None`` when unset, names the primary
+       provider, or its API-key env is missing.
 
     Reuses ``_llm_config`` for URL/suffix normalisation by pinning the provider
-    through the env for the duration of one synchronous call (no ``await``
-    between set and restore, so no cross-coroutine interleave).
+    through the env for the duration of one synchronous call.
     """
+    # 1. Same-provider (Kimi) model fallback — no fixed_temperature so the fast
+    #    moonshot-v1 model accepts the caller's temperature.
+    if primary.get("provider") == "kimi":
+        fb_model = (os.getenv("KIMI_FALLBACK_MODEL") or "").strip()
+        if fb_model and fb_model != primary.get("default_model"):
+            return {
+                "provider": "kimi",
+                "url": KIMI_API_URL,
+                "env_key": "KIMI_API_KEY",
+                "default_model": fb_model,
+            }
+
+    # 2. Cross-provider fallback.
     name = (os.getenv("LLM_FALLBACK_PROVIDER") or "").strip().lower()
     if not name or name == primary.get("provider"):
         return None
@@ -2246,7 +2275,7 @@ class Agent:
     description: str
     system_prompt: str
     allowed_blocks: List[str] = field(default_factory=list)
-    model: str = DEEPSEEK_DEFAULT_MODEL
+    model: str = KIMI_DEFAULT_MODEL
     temperature: float = 0.3
     max_tokens: int = 2048
     icon: str = ""
@@ -3788,12 +3817,11 @@ class Agent:
                 except Exception:  # noqa: BLE001
                     # A broken usage tracker must never block a real call.
                     pass
-        # Agent configs default to "deepseek-chat"; when the runtime is routed
-        # to a different provider we remap that placeholder to the provider's
-        # default model. An agent that explicitly pinned a provider-specific
-        # model (e.g. "llama-3.3-70b-versatile") is left alone.
+        # An agent that pinned a provider-specific model is left alone; an
+        # unpinned/legacy-placeholder agent uses the active provider's default
+        # (Kimi primary / Groq fallback / Ollama on-prem, from _llm_config).
         model = self.model
-        if cfg["provider"] != "deepseek" and model.startswith("deepseek-"):
+        if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
             model = cfg["default_model"]
         # Whitelist-sanitise every outbound message (drops `reasoning` and any
         # other non-standard field that would make a strict provider — Groq —
@@ -4104,7 +4132,7 @@ class Agent:
                 if over:
                     raise _SynthStreamError("daily cap reached")
         model = self.model
-        if cfg["provider"] != "deepseek" and model.startswith("deepseek-"):
+        if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
             model = cfg["default_model"]
         messages = _sanitize_messages_for_provider(messages)
         temperature = _provider_temperature(cfg, self.temperature)
@@ -4913,7 +4941,7 @@ def _parse_agent_file(path: Path) -> Agent:
         description=config.get("description", ""),
         system_prompt=body,
         allowed_blocks=list(config.get("allowed_blocks") or []),
-        model=config.get("model") or DEEPSEEK_DEFAULT_MODEL,
+        model=config.get("model") or KIMI_DEFAULT_MODEL,
         temperature=float(config.get("temperature", 0.3)),
         max_tokens=int(config.get("max_tokens", 2048)),
         icon=config.get("icon", ""),

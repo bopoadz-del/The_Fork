@@ -35,6 +35,44 @@ class TestLlmHttpTimeout:
         assert _llm_http_timeout() == 200.0
 
 
+class TestMoonshotModelFallback:
+    """Kimi k2.6 (slow reasoning, temp=1) falls back to a fast, temp-flexible,
+    big-context Moonshot model on the SAME key — not to Groq, whose free tier
+    413s on the large grounded payloads that trigger the fallback."""
+
+    def test_kimi_fallback_model_is_same_provider_no_fixed_temp(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "kimi")
+        monkeypatch.setenv("KIMI_API_KEY", "x")
+        monkeypatch.setenv("KIMI_FALLBACK_MODEL", "moonshot-v1-128k")
+        from app.agents.runtime import _llm_config, _llm_fallback_config
+        p = _llm_config()
+        f = _llm_fallback_config(p)
+        assert f is not None
+        assert f["provider"] == "kimi"
+        assert f["default_model"] == "moonshot-v1-128k"
+        assert f["env_key"] == "KIMI_API_KEY"          # same key
+        assert "fixed_temperature" not in f            # accepts caller temperature
+
+    def test_kimi_model_fallback_beats_cross_provider(self, monkeypatch):
+        # With both set, the same-provider Moonshot model wins (Groq is bypassed).
+        monkeypatch.setenv("LLM_PROVIDER", "kimi")
+        monkeypatch.setenv("KIMI_API_KEY", "x")
+        monkeypatch.setenv("KIMI_FALLBACK_MODEL", "moonshot-v1-128k")
+        monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "groq")
+        monkeypatch.setenv("GROQ_API_KEY", "g")
+        from app.agents.runtime import _llm_config, _llm_fallback_config
+        f = _llm_fallback_config(_llm_config())
+        assert f["provider"] == "kimi" and f["default_model"] == "moonshot-v1-128k"
+
+    def test_no_fallback_model_unset(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "kimi")
+        monkeypatch.setenv("KIMI_API_KEY", "x")
+        monkeypatch.delenv("KIMI_FALLBACK_MODEL", raising=False)
+        monkeypatch.delenv("LLM_FALLBACK_PROVIDER", raising=False)
+        from app.agents.runtime import _llm_config, _llm_fallback_config
+        assert _llm_fallback_config(_llm_config()) is None
+
+
 class TestKimiFixedTemperature:
     @pytest.mark.asyncio
     async def test_complete_honors_provider_fixed_temperature(self, monkeypatch):
