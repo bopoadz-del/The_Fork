@@ -359,10 +359,13 @@ async def list_project_documents(
     The workspace gets page 1 with the project detail and loads further pages
     here on demand, so a large corpus never serializes every row at once.
     """
-    # Access check (read-only: platform projects are visible to all). doc_limit=0
-    # makes the check itself cheap — it doesn't load the document rows.
+    # Access check (read-only: platform projects are visible to all; admins
+    # paginate any project they can open — the detail endpoint already honors
+    # role, so pagination must too or the workspace breaks after page 1).
+    # doc_limit=0 makes the check itself cheap — no document rows loaded.
     proj = _owned_or_404(
-        project_id, auth["user_id"], read_only=True, doc_limit=0,
+        project_id, auth["user_id"], read_only=True,
+        role=auth.get("role", "user"), doc_limit=0,
     )
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
