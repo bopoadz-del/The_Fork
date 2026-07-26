@@ -143,12 +143,14 @@ async def test_generate_code_step_requires_a_task():
 from app.prompts.reasoner_system import build_reasoner_prompt
 
 
+@pytest.mark.asyncio
 async def test_reasoner_prompt_lists_the_phases():
     p = build_reasoner_prompt(await InMemorySessionStore().get_or_create("s"), "hi")
     for phase in ("UNDERSTAND", "PLAN", "EXECUTE", "DELIVER"):
         assert phase in p
 
 
+@pytest.mark.asyncio
 async def test_reasoner_prompt_advertises_step_types():
     p = build_reasoner_prompt(await InMemorySessionStore().get_or_create("s"), "hi")
     for t in ("compute_cpm", "resource_histogram", "gantt", "compress",
@@ -156,11 +158,13 @@ async def test_reasoner_prompt_advertises_step_types():
         assert t in p
 
 
+@pytest.mark.asyncio
 async def test_reasoner_prompt_reflects_empty_session():
     p = build_reasoner_prompt(await InMemorySessionStore().get_or_create("s"), "hi")
     assert "no activities" in p.lower() or "not loaded" in p.lower()
 
 
+@pytest.mark.asyncio
 async def test_reasoner_prompt_reflects_loaded_state():
     s = await _session_with_activities()
     s.data["cpm_results"] = {"project_duration": 10}
