@@ -52,6 +52,6 @@ async def health_v1():
 async def full_health():
     """Complete system health with predictions."""
     if not MONITORING_AVAILABLE:
-        return health_v1()
+        return await health_v1()
     block = get_monitoring_block()
     return await block.execute({"action": "health_report"})

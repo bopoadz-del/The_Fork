@@ -19,7 +19,8 @@ def _reset_redis(monkeypatch):
 def client(monkeypatch):
     monkeypatch.delenv("REDIS_URL", raising=False)
     from app.main import app
-    return TestClient(app, headers={"Authorization": "Bearer cb_dev_key"})
+    with TestClient(app, headers={"Authorization": "Bearer cb_dev_key"}) as client:
+        yield client
 
 
 def test_health_sync_legacy(client: TestClient):
@@ -40,3 +41,15 @@ def test_health_v1_async_includes_redis(client: TestClient):
     assert "block_metrics" in data
     assert "redis" in data
     assert data["redis"] == {"connected": False, "latency_ms": None}
+
+
+def test_v1_system_health_fallback_when_monitoring_unavailable(client: TestClient, monkeypatch):
+    """Regression test: full_health() must await health_v1() when monitoring is off."""
+    monkeypatch.setattr("app.routers.health.MONITORING_AVAILABLE", False)
+    response = client.get("/v1/system/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert "observability" in data
+    assert "block_metrics" in data
+    assert "redis" in data
