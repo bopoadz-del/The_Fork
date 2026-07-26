@@ -85,13 +85,18 @@ def test_redis_unavailable_falls_back_to_in_memory(monkeypatch):
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
     monkeypatch.setattr("app.core.rate_limit.get_sync_redis_client", lambda: None)
 
+    # init_rate_limiter() must label the backend as in-memory when the
+    # factory cannot return a client.
+    assert rate_limit.init_rate_limiter() == "in-memory"
+    assert not rate_limit._use_redis
+
     # Redis is unreachable, so the per-request path falls back to in-memory.
     assert rate_limit.check_and_record("fallback-caller")
     assert rate_limit.check_and_record("fallback-caller")
     assert rate_limit.check_and_record("fallback-caller") is False
 
 
-def test_redis_script_exception_falls_back_to_in_memory(monkeypatch):
+def test_redis_script_exception_fails_open(monkeypatch):
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
 
@@ -100,7 +105,11 @@ def test_redis_script_exception_falls_back_to_in_memory(monkeypatch):
     mock_script.side_effect = Exception("Redis unavailable")
     monkeypatch.setattr("app.core.rate_limit.get_sync_redis_client", lambda: mock_client)
 
-    rate_limit.init_rate_limiter()
-    assert rate_limit.check_and_record("exc-caller")
-    assert rate_limit.check_and_record("exc-caller")
-    assert rate_limit.check_and_record("exc-caller") is False
+    assert rate_limit.init_rate_limiter() == "redis"
+    assert rate_limit._use_redis
+
+    # Redis script failures must fail-open so a cache outage cannot throttle
+    # legitimate traffic.
+    assert rate_limit.check_and_record("exc-caller") is True
+    assert rate_limit.check_and_record("exc-caller") is True
+    assert rate_limit.check_and_record("exc-caller") is True

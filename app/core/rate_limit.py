@@ -94,8 +94,9 @@ class RedisRateLimiter:
         return True
 
     def ping(self) -> None:
-        if self._ensure_client():
-            self._client.ping()
+        if not self._ensure_client():
+            raise ConnectionError("Redis unavailable")
+        self._client.ping()
 
     def check_and_record(self, identity: str) -> bool:
         limit = _limit()
@@ -111,7 +112,8 @@ class RedisRateLimiter:
             )
             return bool(allowed)
         except Exception:
-            return _in_memory_check_and_record(identity)
+            # Fail-open: a Redis outage should not block API traffic.
+            return True
 
 
 def init_rate_limiter() -> str:
