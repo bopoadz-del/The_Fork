@@ -204,3 +204,56 @@ def test_identifier_search_escapes_like_wildcards(isolated_store):
     assert len(results) == 1
     # Both identifiers match.
     assert results[0].score == 1.0
+
+
+def test_semantic_chunk_with_identifier_outranks_identifier_only_soup(
+    isolated_store, monkeypatch
+):
+    """2026-07-26 live find (corpus project): identifier_search returns an
+    ARBITRARY top-k of the many chunks containing a code, so the semantically
+    best chunk that ALSO carries the identifier can miss that set — and then
+    flat-bonused label-soup (drawing station tables) displaced it. The fused
+    ranking must award the identifier bonus to semantic candidates whose TEXT
+    contains the code, so cosine+bonus always beats bonus-alone."""
+    from app.core.rag import retriever as ret
+
+    store, e = isolated_store
+    spec = (
+        "Pump station schedule: WWPS-99 submersible pumps, 2 duty + 1 standby, "
+        "total flow rate 366 l/s, total head 35.5 m."
+    )
+    soup = [
+        "0+234.64 0+250.00 WWPS-99 DATUM 635.00 MHA-10 647.250 INVERT LEVEL",
+        "SUBMISSION OF WWPS-99 STR. GA PLANS 26-May-25 17-Jun-25 APPROVALS",
+    ]
+    store.upsert_chunks("proj_id2", "doc_spec", [spec], e.encode([spec]))
+    store.upsert_chunks("proj_id2", "doc_soup", soup, e.encode(soup))
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "doc.pdf")
+
+    # Simulate the arbitrary-k miss: identifier_search only surfaces the soup.
+    real_id_search = store.identifier_search
+
+    def missing_the_spec(project_id, identifiers, k=20):
+        hits = real_id_search(project_id, identifiers, k=k)
+        return [c for c in hits if "total flow rate" not in c.text]
+
+    monkeypatch.setattr(store, "identifier_search", missing_the_spec)
+
+    # Deterministic semantics (the fake embedder's hash cosine is arbitrary):
+    # the spec chunk is the semantic winner, the soup is near-noise — the
+    # real-corpus shape (0.75 spec vs ~0 drawing tables).
+    real_search = store.search
+
+    def scored_search(project_id, query_vec, k=20, query_text=None):
+        out = real_search(project_id, query_vec, k=k, query_text=query_text)
+        for c in out:
+            c.score = 0.75 if "total flow rate" in c.text else 0.05
+        return out
+
+    monkeypatch.setattr(store, "search", scored_search)
+
+    chunks, _ = ret.retrieve_with_filter(
+        "What is the total flow rate of WWPS-99?", "proj_id2", k=3
+    )
+    assert chunks, "expected results"
+    assert "total flow rate 366" in chunks[0].text, [c.text[:60] for c in chunks]
