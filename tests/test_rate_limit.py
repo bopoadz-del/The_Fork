@@ -1,10 +1,13 @@
 """Per-caller rate limiting — covers every request, including JWT sessions."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.core import rate_limit
+from app.core import redis_client
+from app.main import app
 
 
 def test_check_and_record_allows_then_blocks(monkeypatch):
@@ -48,3 +51,56 @@ def test_middleware_returns_429_over_the_limit(monkeypatch):
     # the 4th and 5th are rejected with 429.
     assert codes[0] != 429
     assert codes[3] == 429 and codes[4] == 429, codes
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_state(monkeypatch):
+    """Isolate rate-limiter state and clear REDIS_URL so the suite never
+    accidentally talks to a real Redis instance."""
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    rate_limit.reset_for_tests()
+    redis_client.reset_for_tests()
+    yield
+
+
+def test_init_rate_limiter_uses_redis_when_factory_returns_client(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "5")
+
+    mock_client = MagicMock()
+    mock_script = mock_client.register_script.return_value
+    mock_script.return_value = 1
+    monkeypatch.setattr("app.core.rate_limit.get_sync_redis_client", lambda: mock_client)
+
+    assert rate_limit.init_rate_limiter() == "redis"
+    assert rate_limit.check_and_record("redis-caller") is True
+    mock_script.assert_called_once()
+    assert mock_script.call_args.kwargs["keys"] == ["ratelimit:redis-caller"]
+    assert mock_script.call_args.kwargs["args"][1] == 60.0
+    assert mock_script.call_args.kwargs["args"][2] == 5
+
+
+def test_redis_unavailable_falls_back_to_in_memory(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setattr("app.core.rate_limit.get_sync_redis_client", lambda: None)
+
+    # Redis is unreachable, so the per-request path falls back to in-memory.
+    assert rate_limit.check_and_record("fallback-caller")
+    assert rate_limit.check_and_record("fallback-caller")
+    assert rate_limit.check_and_record("fallback-caller") is False
+
+
+def test_redis_script_exception_falls_back_to_in_memory(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+
+    mock_client = MagicMock()
+    mock_script = mock_client.register_script.return_value
+    mock_script.side_effect = Exception("Redis unavailable")
+    monkeypatch.setattr("app.core.rate_limit.get_sync_redis_client", lambda: mock_client)
+
+    rate_limit.init_rate_limiter()
+    assert rate_limit.check_and_record("exc-caller")
+    assert rate_limit.check_and_record("exc-caller")
+    assert rate_limit.check_and_record("exc-caller") is False
