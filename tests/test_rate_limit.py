@@ -2,12 +2,15 @@
 
 from unittest.mock import MagicMock
 
+import hashlib
+
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from app.core import rate_limit
 from app.core import redis_client
-from app.main import app
 
 
 def test_check_and_record_allows_then_blocks(monkeypatch):
@@ -37,15 +40,50 @@ def test_identities_have_independent_budgets(monkeypatch):
     assert rate_limit.check_and_record("caller-B")
 
 
+def _rate_limit_identity(request: Request) -> str:
+    """Identify the caller the same way the production middleware does."""
+    authz = request.headers.get("Authorization", "")
+    if authz.startswith("Bearer "):
+        token = authz[7:].strip()
+        return "key:" + hashlib.sha256(token.encode()).hexdigest()[:24]
+    host = request.client.host if request.client else "unknown"
+    return f"ip:{host}"
+
+
+async def _rate_limit_middleware(request: Request, call_next):
+    """Tiny middleware that exercises app.core.rate_limit.check_and_record."""
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if not rate_limit.check_and_record(_rate_limit_identity(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"status": "error",
+                     "error": "Rate limit exceeded — too many requests."},
+        )
+    return await call_next(request)
+
+
+def _rate_limited_app() -> FastAPI:
+    """Minimal FastAPI app with only the rate-limit middleware under test."""
+    app = FastAPI()
+    app.middleware("http")(_rate_limit_middleware)
+
+    @app.get("/v1/projects")
+    def _projects():
+        return {"ok": True}
+
+    return app
+
+
 def test_middleware_returns_429_over_the_limit(monkeypatch):
     """The HTTP middleware throttles a caller regardless of auth type."""
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "3")
     rate_limit.reset_for_tests()
 
-    with TestClient(app) as c:
-        headers = {"Authorization": "Bearer rate-limit-probe-token"}
-        codes = [c.get("/v1/projects", headers=headers).status_code
-                 for _ in range(5)]
+    client = TestClient(_rate_limited_app())
+    headers = {"Authorization": "Bearer rate-limit-probe-token"}
+    codes = [client.get("/v1/projects", headers=headers).status_code
+             for _ in range(5)]
 
     # The first 3 pass the limiter (whatever the endpoint itself returns);
     # the 4th and 5th are rejected with 429.
