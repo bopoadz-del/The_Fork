@@ -19,6 +19,8 @@ import socket
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Optional
 
+from app.core.redis_client import get_redis_client
+
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except ImportError:  # pragma: no cover — zoneinfo is stdlib from 3.9
@@ -30,11 +32,6 @@ logger = logging.getLogger(__name__)
 
 _task: Optional[asyncio.Task] = None
 
-# Module-scope cache for the Redis client. Lazy-built on first acquire so the
-# scheduler module stays importable when redis-py isn't installed or REDIS_URL
-# isn't set (dev mode). Tests reset via ``reset_for_tests``.
-_redis_client: Optional[Any] = None
-
 
 def _leader_key(target_date_iso: str) -> str:
     """Single source of truth for the lock key so acquire and release cannot
@@ -42,14 +39,16 @@ def _leader_key(target_date_iso: str) -> str:
     return f"thefork:hydration:leader:{target_date_iso}"
 
 
-def _acquire_leader_lock(target_date_iso: str) -> Optional[Any]:
+async def _acquire_leader_lock(target_date_iso: str) -> Optional[Any]:
     """Try to claim the cross-process leader lock for today's hydration pass.
 
-    Returns the redis client on success (caller is the leader and must release
-    in its ``finally``), ``None`` otherwise. ``None`` is overloaded across two
-    cases that the caller MUST disambiguate by re-reading ``REDIS_URL``:
+    Returns the shared async redis client on success (caller is the leader and
+    must release in its ``finally``), ``None`` otherwise. ``None`` is overloaded
+    across several cases that the caller disambiguates by re-reading ``REDIS_URL``:
 
     - ``REDIS_URL`` unset: dev mode, run unconditionally (no coordination needed).
+    - ``REDIS_URL`` set but Redis is unreachable: logged, treated as a non-leader
+      fallback so the scheduler does not hard-fail when Redis is degraded.
     - ``REDIS_URL`` set but ``set(nx=True)`` returned False: another worker
       already holds the lease, skip this pass entirely.
 
@@ -59,39 +58,34 @@ def _acquire_leader_lock(target_date_iso: str) -> Optional[Any]:
     one hour could delete a successor's lock. The TTL is the real safety net
     here; we accept that edge because hydration passes are minutes, not hours.
     """
-    global _redis_client
-
     redis_url = os.getenv("REDIS_URL", "").strip()
     if not redis_url:
-        logger.info("hydration: no REDIS_URL; skipping leader lock (single-worker assumed)")
+        logger.info("hydration: no REDIS_URL; skipping leader lock")
         return None
 
-    if _redis_client is None:
-        try:
-            import redis  # lazy: optional dep, only needed when REDIS_URL is set
-            _redis_client = redis.from_url(redis_url, decode_responses=True)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("hydration: redis client init failed (%s); running without lock", exc)
-            return None
+    client = await get_redis_client()
+    if client is None:
+        logger.warning("hydration: Redis configured but unreachable; running without lock")
+        return None
 
     worker_id = f"{os.getpid()}:{socket.gethostname()}"
     key = _leader_key(target_date_iso)
     try:
-        acquired = _redis_client.set(key, worker_id, nx=True, ex=3600)
+        acquired = await client.set(key, worker_id, nx=True, ex=3600)
     except Exception as exc:  # noqa: BLE001
         logger.warning("hydration: redis SET NX failed (%s); running without lock", exc)
         return None
 
     if not acquired:
-        # Caller distinguishes "skip" from "dev" by checking REDIS_URL again.
         return None
-    return _redis_client
+    return client
 
 
 def reset_for_tests() -> None:
-    """Drop the cached redis client so tests don't bleed state across cases."""
-    global _redis_client
-    _redis_client = None
+    """Drop the shared redis client so tests don't bleed state across cases."""
+    from app.core import redis_client
+
+    redis_client.reset_for_tests()
 
 
 def _enabled() -> bool:
@@ -204,14 +198,11 @@ async def _run_one_pass() -> None:
     """
     target_date_iso = datetime.now(timezone.utc).date().isoformat()
     redis_url_present = bool(os.getenv("REDIS_URL", "").strip())
-    client = _acquire_leader_lock(target_date_iso)
+    client = await _acquire_leader_lock(target_date_iso)
 
     if redis_url_present and client is None:
         # REDIS_URL is configured but another worker holds the lease.
-        logger.info(
-            "hydration: another worker holds leader lock for %s, skipping",
-            target_date_iso,
-        )
+        logger.info("hydration: another worker holds leader lock for %s, skipping", target_date_iso)
         return
 
     try:
@@ -223,7 +214,7 @@ async def _run_one_pass() -> None:
         # successor's lock — call out in the PR body if that ever changes.
         if client is not None:
             try:
-                client.delete(_leader_key(target_date_iso))
+                await client.delete(_leader_key(target_date_iso))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("hydration: leader lock release failed: %s", exc)
 

@@ -7,20 +7,20 @@ coordination they all run ``_run_one_pass`` concurrently, producing torn JSON
 writes to ``/tmp/cerebrum_learning_engine.json``, duplicate ``hydration_runs``
 rows, and racy ``set_fact`` / ``set_agent_fact`` writes.
 
-These tests verify the three scenarios that matter:
+These tests verify the scenarios that matter:
 
 1. Lock free: the inner work runs and the lock is released.
 2. Lock held by another worker: ``_run_one_pass`` returns immediately and
    does NOT touch the inner work. Critically, the non-owner must also NOT
    call ``delete`` on the owner's key.
-3. ``REDIS_URL`` unset (dev mode): the pass runs unconditionally, no redis
-   call is made — preserves single-worker dev behaviour.
+3. ``REDIS_URL`` unset (dev mode): the pass runs unconditionally, no shared
+   Redis client is requested.
+4. Redis configured but unreachable: ``_acquire_leader_lock`` returns ``None``
+   and logs a warning; the scheduler does not crash.
 
-We stub at ``redis.from_url`` rather than monkeypatching
-``_acquire_leader_lock`` directly. Patching the helper would only exercise
-the caller's ``if``; stubbing the redis layer runs the real
-``set(key, value, nx=True, ex=3600)`` codepath, which is what
-"a second concurrent worker would NOT enter" actually requires.
+We stub ``app.core.hydration_scheduler.get_redis_client`` so the real shared
+client codepath is exercised (``await client.set(...)`` / ``await client.delete(...)``)
+without needing a running Redis.
 """
 
 from __future__ import annotations
@@ -28,15 +28,15 @@ from __future__ import annotations
 import pytest
 
 
-# ── Fake redis client ──────────────────────────────────────────────────────
+# ── Fake async redis client ────────────────────────────────────────────────
 
 
-class _FakeRedis:
-    """Minimal SET/DELETE backend that honours ``nx=True`` semantics.
+class _FakeAsyncRedis:
+    """Minimal async SET/DELETE backend that honours ``nx=True`` semantics.
 
-    Backed by a shared store dict so two ``_FakeRedis`` instances built from
-    the same store simulate two workers talking to the same Redis. That is
-    what makes "worker B sees worker A's lock" a real test, not a tautology.
+    Backed by a shared store dict so two ``_FakeAsyncRedis`` instances built
+    from the same store simulate two workers talking to the same Redis. That
+    is what makes "worker B sees worker A's lock" a real test, not a tautology.
     """
 
     def __init__(self, store: dict):
@@ -44,25 +44,28 @@ class _FakeRedis:
         self.delete_calls: list[str] = []
         self.set_calls: list[tuple[str, str, bool, int]] = []
 
-    def set(self, key, value, nx=False, ex=None):
+    async def set(self, key, value, nx=False, ex=None):
         self.set_calls.append((key, value, nx, ex or 0))
         if nx and key in self._store:
             return None  # redis-py returns None when NX fails; falsy
         self._store[key] = value
         return True
 
-    def delete(self, key):
+    async def delete(self, key):
         self.delete_calls.append(key)
         return 1 if self._store.pop(key, None) is not None else 0
 
 
+# ── Fixtures ───────────────────────────────────────────────────────────────
+
+
 @pytest.fixture
-def reset_hydration_module():
-    """Drop the module's cached redis client between tests."""
-    from app.core import hydration_scheduler
-    hydration_scheduler.reset_for_tests()
+def reset_redis_client():
+    """Drop the shared redis client between tests so state doesn't bleed."""
+    from app.core import redis_client
+    redis_client.reset_for_tests()
     yield
-    hydration_scheduler.reset_for_tests()
+    redis_client.reset_for_tests()
 
 
 @pytest.fixture
@@ -72,47 +75,37 @@ def fake_redis_store():
     return {}
 
 
-def _install_fake_redis(monkeypatch, store: dict) -> dict:
-    """Make the scheduler's lazy ``import redis`` resolve to a stub module
-    whose ``from_url`` hands out ``_FakeRedis`` clients sharing ``store``.
+def _install_fake_get_redis_client(monkeypatch, store: dict) -> dict:
+    """Replace ``get_redis_client`` in the scheduler module with a factory
+    that hands out ``_FakeAsyncRedis`` instances sharing ``store``.
 
-    We inject into ``sys.modules`` (not ``monkeypatch.setattr`` on a real
-    redis module) because the dev venv may not have redis-py installed —
-    redis is declared in requirements.txt but only needed in production
-    where REDIS_URL is set. Returns a registry of every client built so
-    tests can introspect set/delete calls per worker.
+    Returns a registry of every client built so tests can introspect set/delete
+    calls per worker.
     """
-    import sys
-    import types
+    from app.core import hydration_scheduler
 
-    built: dict[str, _FakeRedis] = {}
+    built: dict[str, _FakeAsyncRedis] = {}
 
-    def _factory(url, decode_responses=False):
-        client = _FakeRedis(store)
+    async def _factory():
+        client = _FakeAsyncRedis(store)
         built[f"client-{len(built)}"] = client
         return client
 
-    stub = types.ModuleType("redis")
-    stub.from_url = _factory  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "redis", stub)
+    monkeypatch.setattr(hydration_scheduler, "get_redis_client", _factory)
     return built
 
 
-def _install_redis_trap(monkeypatch) -> dict:
-    """Inject a redis stub whose ``from_url`` raises if invoked — used to
-    prove the dev-mode codepath never touches redis."""
-    import sys
-    import types
+def _install_get_redis_client_trap(monkeypatch) -> dict:
+    """Replace ``get_redis_client`` with a trap that fails if called."""
+    from app.core import hydration_scheduler
 
     calls = {"count": 0}
 
-    def _trap(*args, **kwargs):
+    async def _trap():
         calls["count"] += 1
-        raise AssertionError("redis.from_url must not be invoked when REDIS_URL is unset")
+        raise AssertionError("get_redis_client must not be invoked when REDIS_URL is unset")
 
-    stub = types.ModuleType("redis")
-    stub.from_url = _trap  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "redis", stub)
+    monkeypatch.setattr(hydration_scheduler, "get_redis_client", _trap)
     return calls
 
 
@@ -120,13 +113,13 @@ def _install_redis_trap(monkeypatch) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_lock_free_runs_inner_work(monkeypatch, fake_redis_store, reset_hydration_module):
+async def test_lock_free_runs_inner_work(monkeypatch, fake_redis_store, reset_redis_client):
     """Happy path: REDIS_URL set, no other worker holds the key. The inner
     work runs and the lock is released in the finally."""
     from app.core import hydration_scheduler
 
     monkeypatch.setenv("REDIS_URL", "redis://fake")
-    clients = _install_fake_redis(monkeypatch, fake_redis_store)
+    clients = _install_fake_get_redis_client(monkeypatch, fake_redis_store)
 
     ran = {"called": False}
 
@@ -148,7 +141,7 @@ async def test_lock_free_runs_inner_work(monkeypatch, fake_redis_store, reset_hy
 
 
 @pytest.mark.asyncio
-async def test_lock_held_skips_inner_work(monkeypatch, fake_redis_store, reset_hydration_module):
+async def test_lock_held_skips_inner_work(monkeypatch, fake_redis_store, reset_redis_client):
     """The critical concurrency invariant: worker B must NOT run the inner
     work while worker A holds the lock, and worker B must NOT delete A's key
     on its way out."""
@@ -156,7 +149,7 @@ async def test_lock_held_skips_inner_work(monkeypatch, fake_redis_store, reset_h
     from app.core import hydration_scheduler
 
     monkeypatch.setenv("REDIS_URL", "redis://fake")
-    clients = _install_fake_redis(monkeypatch, fake_redis_store)
+    clients = _install_fake_get_redis_client(monkeypatch, fake_redis_store)
 
     # Pre-seed: pretend worker A acquired the lease for today already.
     today_iso = datetime.now(timezone.utc).date().isoformat()
@@ -184,16 +177,17 @@ async def test_lock_held_skips_inner_work(monkeypatch, fake_redis_store, reset_h
 
 
 @pytest.mark.asyncio
-async def test_no_redis_url_runs_unconditionally(monkeypatch, reset_hydration_module):
+async def test_no_redis_url_runs_unconditionally(monkeypatch, reset_redis_client):
     """Dev mode: REDIS_URL unset → no coordination, the pass always runs.
 
-    Also asserts that ``redis.from_url`` is never even called — we should not
-    require redis-py to do dev work."""
+    Also asserts that ``get_redis_client`` is never even called — we should not
+    need a Redis client to do dev work.
+    """
     from app.core import hydration_scheduler
 
     monkeypatch.delenv("REDIS_URL", raising=False)
 
-    redis_factory_calls = _install_redis_trap(monkeypatch)
+    redis_client_calls = _install_get_redis_client_trap(monkeypatch)
 
     ran = {"called": False}
 
@@ -205,4 +199,28 @@ async def test_no_redis_url_runs_unconditionally(monkeypatch, reset_hydration_mo
     await hydration_scheduler._run_one_pass()
 
     assert ran["called"] is True, "dev mode (no REDIS_URL) must run the pass unconditionally"
-    assert redis_factory_calls["count"] == 0
+    assert redis_client_calls["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_redis_unreachable_returns_none(monkeypatch, reset_redis_client, caplog):
+    """Redis URL is set but the shared client is unavailable: the lock helper
+    logs a warning and returns ``None`` so the scheduler can fall back rather
+    than crashing."""
+    import logging
+    from datetime import datetime, timezone
+    from app.core import hydration_scheduler
+
+    monkeypatch.setenv("REDIS_URL", "redis://fake")
+
+    async def _unavailable():
+        return None
+
+    monkeypatch.setattr(hydration_scheduler, "get_redis_client", _unavailable)
+
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    with caplog.at_level(logging.WARNING):
+        client = await hydration_scheduler._acquire_leader_lock(today_iso)
+
+    assert client is None
+    assert any("Redis configured but unreachable" in rec.message for rec in caplog.records)
