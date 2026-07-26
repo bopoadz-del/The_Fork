@@ -36,7 +36,7 @@ def _run(gen):
 def test_pinned_agent_bypasses_router(monkeypatch):
     monkeypatch.setattr("app.agents.get_agent", lambda name: _FakeAgent())
     monkeypatch.setattr("app.core.projects.get_project",
-                        lambda pid, user_id=None: {"id": pid, "name": "P"})
+                        lambda pid, user_id=None, **kw: {"id": pid, "name": "P"})
 
     evs = _run(chat_mod._stream_from_pinned_agent(
         agent_name="quantity-surveyor", prompt="take off the concrete",
@@ -66,7 +66,7 @@ def test_pinned_drops_unowned_project(monkeypatch):
     monkeypatch.setattr("app.agents.get_agent", lambda name: _FakeAgent())
     # Ownership check returns None -> project must be dropped (tenant gate).
     monkeypatch.setattr("app.core.projects.get_project",
-                        lambda pid, user_id=None: None)
+                        lambda pid, user_id=None, **kw: None)
 
     evs = _run(chat_mod._stream_from_pinned_agent(
         agent_name="quantity-surveyor", prompt="x",

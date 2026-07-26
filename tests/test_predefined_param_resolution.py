@@ -81,7 +81,7 @@ class TestStreamWiring:
     async def test_resolved_schedule_file_reaches_run_workflow(self, monkeypatch):
         import app.core.projects as projects
         monkeypatch.setattr(projects, "get_project",
-                            lambda pid, user_id=None: {"id": pid, "name": "P"})
+                            lambda pid, user_id=None, **kw: {"id": pid, "name": "P"})
         monkeypatch.setattr(projects, "list_documents",
                             lambda pid, **k: [{"original_name": "b.xer", "file_path": "/data/b.xer"}])
 
@@ -119,7 +119,7 @@ class TestStreamWiring:
 
         async def run(loc, caller_params):
             monkeypatch.setattr(projects, "get_project",
-                                lambda pid, user_id=None: {"id": pid, "name": "P", "location": loc})
+                                lambda pid, user_id=None, **kw: {"id": pid, "name": "P", "location": loc})
             captured.clear()
             async for _ in chat._stream_from_predefined(
                 action="daily_site_report", user_message="daily site report",
@@ -137,7 +137,7 @@ class TestStreamWiring:
         import app.core.projects as projects
         import app.core.predefined_reasoning as pr
         monkeypatch.setattr(projects, "get_project",
-                            lambda pid, user_id=None: {"id": pid, "name": "P", "location": "Riyadh"})
+                            lambda pid, user_id=None, **kw: {"id": pid, "name": "P", "location": "Riyadh"})
         monkeypatch.setattr(projects, "list_documents", lambda pid, **k: [])
         captured = {}
 
@@ -156,7 +156,7 @@ class TestStreamWiring:
     async def test_two_xer_streams_ask_which_without_running_action(self, monkeypatch):
         import app.core.projects as projects
         monkeypatch.setattr(projects, "get_project",
-                            lambda pid, user_id=None: {"id": pid, "name": "P"})
+                            lambda pid, user_id=None, **kw: {"id": pid, "name": "P"})
         monkeypatch.setattr(projects, "list_documents", lambda pid, **k: [
             {"original_name": "A.xer", "file_path": "/data/a.xer"},
             {"original_name": "B.xer", "file_path": "/data/b.xer"}])

@@ -17,7 +17,7 @@ H = {"Authorization": "Bearer cb_dev_key"}
 
 def _events_from_generator(action, message, project_id, monkeypatch, doc_ids=None):
     monkeypatch.setattr("app.core.projects.get_project",
-                        lambda pid, user_id=None: {"id": pid, "name": "DC"})
+                        lambda pid, user_id=None, **kw: {"id": pid, "name": "DC"})
 
     async def run():
         evs = []
