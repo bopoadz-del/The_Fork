@@ -222,7 +222,11 @@ class DocumentReasoner:
             category = req["category"]
             target_code = self._wbs_code_for_category(category)
             if target_code:
-                mapping[target_code].append({
+                # setdefault: a config whose wbs_dictionary lacks the target
+                # code must degrade to an extra mapping bucket, not a
+                # KeyError that kills the whole reasoning pass (found by the
+                # W4 planted-RFP probe with a minimal config).
+                mapping.setdefault(target_code, []).append({
                     "type": "requirement",
                     "text": req["text"][:200],
                     "category": category,
@@ -247,7 +251,7 @@ class DocumentReasoner:
             elif unit in ["ft"]:
                 target_code = "5.0"  # Building Construction
             if target_code:
-                mapping[target_code].append({
+                mapping.setdefault(target_code, []).append({
                     "type": "constraint",
                     "raw": con.get("raw", ""),
                     "unit": unit,
