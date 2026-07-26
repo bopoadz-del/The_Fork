@@ -147,6 +147,8 @@ async def lifespan(app: FastAPI):
               + _json.dumps(disk_survival_canary(os.getenv("DATA_DIR", "/app/data"))),
               flush=True)
     await init_blocks()
+    from app.core import redis_client as _redis_client
+    await _redis_client.get_redis_client()
     from app.core.projects import init_db
     init_db()
     from app.core.users import init_db as init_users_db
@@ -211,6 +213,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await hydration_scheduler.stop()
+        await _redis_client.close_redis_client()
 
 
 app = FastAPI(
