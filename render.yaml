@@ -120,5 +120,3 @@ services:
         sync: false
       - key: BOOTSTRAP_USER_PASSWORD
         sync: false
-      - key: TINKER_API_KEY
-        sync: false

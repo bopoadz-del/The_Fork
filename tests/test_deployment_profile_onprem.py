@@ -8,7 +8,7 @@ Two invariants per gate:
     dev/demo on main).
 
 Plus the boot assertion: on-prem refuses to start on a config that would leak
-(cloud LLM provider, offline flags unset, Sentry on, Tinker on).
+(cloud LLM provider, offline flags unset, Sentry on).
 
 No network, no LLM, no hardware needed — gates short-circuit before any call.
 """
@@ -43,7 +43,7 @@ def test_onprem_unavailable_shape():
 
 def _clean_env(monkeypatch):
     for k in ("LLM_PROVIDER", "LLM_FALLBACK_PROVIDER", "OLLAMA_API_KEY",
-              "SENTRY_DSN", "GROUNDED_ADAPTER_TINKER_PATH"):
+              "SENTRY_DSN"):
         monkeypatch.delenv(k, raising=False)
 
 
@@ -76,7 +76,7 @@ def test_assert_raises_on_missing_offline_flags(monkeypatch):
     assert any("TRANSFORMERS_OFFLINE" in p for p in problems)
 
 
-def test_assert_raises_on_sentry_and_tinker_and_cloud_tunnel(monkeypatch):
+def test_assert_raises_on_sentry_and_cloud_tunnel(monkeypatch):
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "onprem")
     _clean_env(monkeypatch)
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
@@ -84,11 +84,9 @@ def test_assert_raises_on_sentry_and_tinker_and_cloud_tunnel(monkeypatch):
     monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
     monkeypatch.setenv("SENTRY_DSN", "https://x@y.ingest.sentry.io/1")
     monkeypatch.setenv("OLLAMA_API_KEY", "cloudkey")
-    monkeypatch.setenv("GROUNDED_ADAPTER_TINKER_PATH", "/some/path")
     problems = dp.check_onprem_ready()
     assert any("SENTRY_DSN" in p for p in problems)
     assert any("OLLAMA_API_KEY" in p for p in problems)
-    assert any("Tinker" in p for p in problems)
 
 
 def test_assert_passes_on_valid_onprem_config(monkeypatch):

@@ -5,4 +5,3 @@ accelerate>=0.30.0
 peft>=0.11.0
 datasets>=2.18.0
 safetensors>=0.4.0
-tinker>=0.1.0

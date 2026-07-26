@@ -51,8 +51,6 @@ def _base_model_name() -> str:
        registry is missing or the alias is unknown (don't break existing
        deploys on an import error)
 
-    PR 3a-Tinker added the registry so model deprecation swaps don't
-    require code changes on this loader.
     """
     override = os.getenv("LOCAL_BASE_MODEL")
     if override:
@@ -60,7 +58,7 @@ def _base_model_name() -> str:
     alias = os.getenv("LOCAL_MODEL_ALIAS") or "construction_v1"
     try:
         from app.core.learning.model_registry import resolve_base_model
-        return resolve_base_model(alias, trainer="local")
+        return resolve_base_model(alias)
     except Exception:
         return _DEFAULT_BASE_MODEL
 

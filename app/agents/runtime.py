@@ -3278,19 +3278,13 @@ class Agent:
         # True token streaming for the FINAL synthesis call only. Gated to:
         #   * SYNTHESIS_STREAMING=1  (instant prod kill-switch; default off)
         #   * provider == groq       (the only verified streaming path)
-        #   * grounded adapter INACTIVE (a with_tools=False call otherwise routes
-        #     to the local tinker adapter / rewrite-pass in _call_llm; streaming
-        #     would bypass both, so leave those deploys on the non-streaming path)
         # When enabled, the force_synthesis iteration streams provider deltas as
         # token events instead of computing the whole answer then re-chunking it
         # (which made first_token ~= total). Any pre-first-token failure falls
         # back to the untouched non-streaming path below.
-        from app.core.llm import tinker_adapter as _tinker_adapter
         _synth_stream_enabled = (
             os.getenv("SYNTHESIS_STREAMING") == "1"
             and cfg["provider"] == "groq"
-            and not _tinker_adapter.is_available()
-            and not _tinker_adapter.is_rewrite_pass_enabled()
             # rag_debug needs the whole final text to run its with/without-RAG
             # A/B in the non-streaming branch; don't stream those turns.
             and not rag_debug
@@ -3647,167 +3641,6 @@ class Agent:
         msgs.append({"role": "user", "content": user_message})
         return msgs
 
-    async def _rewrite_with_adapter(
-        self, messages: List[Dict[str, Any]], original_text: str
-    ) -> Optional[str]:
-        """Broad rewrite-pass: re-ground a cloud-provider prose response
-        through the Tinker LoRA adapter. Returns the rewritten string on
-        success, ``None`` on any failure (timeout, adapter error, no RAG
-        context, empty result) so the caller serves the original text
-        unchanged.
-
-        Gated by ``GROUNDED_ADAPTER_REWRITE_PASS`` + ``is_available()``.
-        Hard 5s timeout regardless of ``GROUNDED_ADAPTER_TIMEOUT``: the
-        rewrite is an extra leg on the chat turn and must not double its
-        latency budget. Timeouts are appended to the rag_audit JSONL with
-        ``event="rewrite_pass_timeout"`` so prod cost/latency drift is
-        visible without reading Render logs.
-        """
-        from app.core.llm import tinker_adapter
-
-        if not tinker_adapter.is_rewrite_pass_enabled():
-            return None
-        if not tinker_adapter.is_available():
-            return None
-        if not (original_text or "").strip():
-            return None
-        # RAG injection is now project-driven (see rag_inject: project_id guard).
-        # On any other agent the reverse-scan below would pick up the
-        # agent-identity prompt or project context and "ground" the
-        # answer in that — wrong by construction. Skip rewrite entirely.
-        if self.name != "project-assistant":
-            return None
-
-        # Find the RAG injection by its header — set by
-        # format_chunks_as_system_message. Position is unreliable: the
-        # agent prompt, project context, memory facts, and the user
-        # turn all sit around it. Header match is the durable signal.
-        rag_system = ""
-        for m in messages:
-            if m.get("role") != "system":
-                continue
-            content = (m.get("content") or "").strip()
-            if content.startswith("Relevant project context (top"):
-                rag_system = content
-                break
-        # Threshold fired (top_score < RAG_CONFIDENCE_THRESHOLD) or no
-        # injection happened this turn — nothing to ground in. Serve the
-        # original cloud response unchanged.
-        if not rag_system:
-            return None
-
-        rewrite_prompt = (
-            "Rewrite the following answer to be strictly grounded in the "
-            "context above. Preserve facts that match the context; correct "
-            "or remove facts that contradict it. Do not add information not "
-            "present in the context. Reply with only the rewritten answer.\n\n"
-            f"Answer to rewrite:\n{original_text.strip()}"
-        )
-
-        import time as _time
-        started = _time.monotonic()
-        try:
-            result = await tinker_adapter.call(
-                rewrite_prompt, rag_system, self.max_tokens, self.temperature,
-                timeout_override=5.0,
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOG.warning("rewrite-pass adapter raised: %s; serving original", exc)
-            return None
-        elapsed = _time.monotonic() - started
-
-        if result.get("status") != "success":
-            err = (result.get("error") or "")
-            if "timed out" in err.lower():
-                try:
-                    from app.core.rag import audit as _audit
-                    _audit.write({
-                        "event": "rewrite_pass_timeout",
-                        "agent_name": self.name,
-                        "elapsed_seconds": round(elapsed, 3),
-                        "error": err,
-                        "original_preview": (original_text or "")[:200],
-                    })
-                except Exception:  # noqa: BLE001
-                    pass
-            _LOG.warning(
-                "rewrite-pass adapter non-success (%.2fs): %s; serving original",
-                elapsed, err,
-            )
-            return None
-
-        rewritten = (result.get("response") or "").strip()
-        if not rewritten:
-            return None
-        _LOG.info("rewrite-pass adapter success in %.2fs", elapsed)
-        return rewritten
-
-    async def _call_grounded_adapter(
-        self, messages: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
-        """Invoke the Tinker-hosted grounded LoRA on a tool-less turn.
-
-        Returns ``None`` on any failure so the caller falls through to the
-        normal cloud-provider path. On success, returns the same
-        ``{"status": "success", "choice": ..., "raw": ...}`` envelope
-        ``_call_llm`` produces, with an OpenAI-shape ``choice`` synthesized
-        from the adapter's text reply so the runtime loop's downstream
-        parsing (final_text vs tool_calls) is unchanged.
-
-        Conventions:
-        - The last user message is the question.
-        - The last system message (RAG injection runs last in our build
-          order) is passed as the adapter's ``system_prompt`` so its
-          training format (``Context:\\n<chunks>\\n\\nQuestion: <q>``) is
-          honoured. The agent-identity system prompt is intentionally
-          dropped here — the adapter wasn't trained on it.
-        """
-        from app.core.llm import tinker_adapter
-
-        user_message = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                user_message = (m.get("content") or "").strip()
-                break
-        if not user_message:
-            return None
-
-        rag_system = ""
-        for m in reversed(messages):
-            if m.get("role") == "system" and (m.get("content") or "").strip():
-                rag_system = m["content"].strip()
-                break
-
-        try:
-            result = await tinker_adapter.call(
-                user_message, rag_system, self.max_tokens, self.temperature
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOG.warning("grounded adapter raised: %s; falling back", exc)
-            return None
-
-        if result.get("status") != "success":
-            _LOG.warning(
-                "grounded adapter returned non-success: %s; falling back",
-                result.get("error"),
-            )
-            return None
-
-        text = result.get("response") or ""
-        choice = {
-            "index": 0,
-            "message": {"role": "assistant", "content": text, "tool_calls": []},
-            "finish_reason": "stop",
-        }
-        return {
-            "status": "success",
-            "choice": choice,
-            "raw": {
-                "provider": result.get("provider", "tinker_grounded_adapter"),
-                "model": result.get("model"),
-            },
-        }
-
     async def _call_llm(
         self,
         messages: List[Dict[str, Any]],
@@ -3818,17 +3651,6 @@ class Agent:
         exclude_tools: Optional[set] = None,
     ) -> Dict[str, Any]:
         cfg = _llm_config()
-        # Grounded LoRA adapter (narrow path): serve forced-final / tool-less
-        # turns directly so the RAG-grounded weights see production traffic.
-        # Tool-using turns stay on the cloud provider — the adapter doesn't
-        # emit tool_calls. Gated by GROUNDED_ADAPTER_ENABLED + a configured
-        # sampler-weights path; any failure falls through to the normal call.
-        if not with_tools:
-            from app.core.llm import tinker_adapter
-            if tinker_adapter.is_available():
-                adapter_result = await self._call_grounded_adapter(messages)
-                if adapter_result is not None:
-                    return adapter_result
         # Soft daily cap: refuse the call when today's spend already meets
         # USAGE_DAILY_CAP_USD for this user. Only enforced for authenticated
         # callers — internal calls without a user_id are not capped (they
@@ -4085,11 +3907,6 @@ class Agent:
                     )
                 except Exception:  # noqa: BLE001
                     pass
-                # Rewrite-pass (broad grounded-adapter path). When the cloud
-                # provider returned a tool-free prose answer AND
-                # GROUNDED_ADAPTER_REWRITE_PASS is on, re-ground the answer
-                # through the Tinker LoRA. Any failure (timeout, error, no
-                # RAG context) serves the original answer unchanged.
                 msg = choice.get("message") or {}
                 if msg and not (msg.get("tool_calls") or []):
                     # Observe-only tripwire: the model answered a turn whose
@@ -4109,12 +3926,6 @@ class Agent:
                             self.name, a_cfg.get("provider"),
                             data.get("model") or a_model, len(msg.get("content") or ""),
                         )
-                    original_text = msg.get("content") or ""
-                    if original_text.strip():
-                        rewritten = await self._rewrite_with_adapter(messages, original_text)
-                        if rewritten:
-                            msg["content"] = rewritten
-                            choice["message"] = msg
                 return {"status": "success", "choice": choice, "raw": data}
             except Exception as e:  # noqa: BLE001 — response parse / rewrite
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} response error: {e}"}
