@@ -115,7 +115,7 @@ async def _stream_from_heavy_reasoning(
     if project_id:
         try:
             from app.core import projects as projects_store
-            if projects_store.get_project(project_id, user_id=user_id) is None:
+            if projects_store.get_project_accessible(project_id, user_id) is None:
                 logger.warning(
                     "heavy-reasoning: user=%s does not own project=%s; "
                     "dropping project_id (matches fast-path tenant guard)",
@@ -376,7 +376,7 @@ async def _stream_from_pinned_agent(
     pin_pid = project_id
     if project_id and project_id != projects_store.MASTER_CORPUS_PROJECT_ID:
         try:
-            if projects_store.get_project(project_id, user_id=user_id) is None:
+            if projects_store.get_project_accessible(project_id, user_id) is None:
                 pin_pid = None
         except Exception:  # noqa: BLE001
             pin_pid = None
@@ -429,7 +429,7 @@ async def _stream_from_predefined(
     if project_id:
         try:
             from app.core import projects as projects_store
-            proj = projects_store.get_project(project_id, user_id=user_id)
+            proj = projects_store.get_project_accessible(project_id, user_id)
             if proj is None:
                 safe_project_id = None
             else:
@@ -534,7 +534,7 @@ def _with_project_memory(
         return prompt
     try:
         from app.core import projects as projects_store
-        if projects_store.get_project(project_id, user_id=user_id) is None:
+        if projects_store.get_project_accessible(project_id, user_id) is None:
             return prompt  # not the caller's project — do not inject its memory
         from app.core.project_memory import build_memory_context
         ctx = build_memory_context(project_id, prompt)
@@ -568,7 +568,7 @@ async def _with_doc_search(
         return prompt
     try:
         from app.core import projects as projects_store
-        if projects_store.get_project(project_id, user_id=user_id) is None:
+        if projects_store.get_project_accessible(project_id, user_id) is None:
             return prompt  # tenant isolation: don't search another user's docs
         from app.core.doc_index import search_project_documents
         snippets = await search_project_documents(project_id, prompt, top_k=top_k)
@@ -770,7 +770,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
     owned_pid = None
     if project_id and project_id != projects_store.MASTER_CORPUS_PROJECT_ID:
         try:
-            if projects_store.get_project(project_id, user_id=user_id) is not None:
+            if projects_store.get_project_accessible(project_id, user_id) is not None:
                 owned_pid = project_id
         except Exception:  # noqa: BLE001
             owned_pid = None
@@ -833,7 +833,7 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
         safe_pid = project_id
         if project_id and project_id != projects_store.MASTER_CORPUS_PROJECT_ID:
             try:
-                if projects_store.get_project(project_id, user_id=user_id) is None:
+                if projects_store.get_project_accessible(project_id, user_id) is None:
                     safe_pid = None
             except Exception:  # noqa: BLE001
                 safe_pid = None

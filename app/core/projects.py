@@ -527,6 +527,37 @@ def project_owner(project_id: str) -> Optional[str]:
     return project.user_id if project else None
 
 
+def get_project_accessible(project_id: str, user_id: Optional[str] = None):
+    """Open-access resolution for READ/chat surfaces (2026-07-26).
+
+    The chat tenant gates used owner-only get_project(pid, user_id=...),
+    which silently DROPPED the project for admins and for admin-approved
+    shared platform projects -- the caller could OPEN the project in the UI
+    (#267 read rule) and upload to it (#277) but chat lost all RAG context
+    on it (zero injected sources, no-op search tool). Third instance of the
+    same asymmetry class; this helper is the single rule for all of them:
+    owner -> admin-approved shared -> admin role (unscoped). Returns the
+    project dict or None; archived projects stay invisible on every path.
+    """
+    if not user_id:
+        # user_id=None means UNSCOPED in get_project — an anonymous caller
+        # must never resolve a project through this helper (fail closed).
+        return None
+    proj = get_project(project_id, user_id=user_id,
+                       include_admin_approved=True, doc_limit=0)
+    if proj is not None:
+        return proj
+    if user_id:
+        try:
+            from app.core import users as users_store
+            u = users_store.get_user_by_id(user_id)
+            if u and (u.get("role") or "").lower() == "admin":
+                return get_project(project_id, doc_limit=0)
+        except Exception:  # noqa: BLE001 -- fail closed on lookup errors
+            return None
+    return None
+
+
 def archive_project(project_id: str) -> bool:
     """Soft-delete: hide the project from listings, detail, ownership gates and
     retrieval WITHOUT removing the row. `chunks.project_id` is ON DELETE
