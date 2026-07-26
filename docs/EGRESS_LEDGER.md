@@ -31,7 +31,6 @@ Central config: `app/agents/runtime.py:1606–1684` (base-URL constants + `_llm_
 |----|-------------|-----|-----------|---------|---------------------|
 | E-L1 | `api.groq.com`, `api.openai.com`, `api.deepseek.com`, `api.moonshot.ai` | `LLM_PROVIDER`, `*_API_KEY`, `*_MODEL` | runtime.py:3719/3752/3947/3977; llm_client.py:61; chat.py:355/413; formula_executor_v2.py:157; project_reasoner.py:155 | Request | **Force `LLM_PROVIDER=ollama` + `LLM_FALLBACK_PROVIDER=ollama`.** Cloud provider constants stay in code but are unreachable under the profile; the profile refuses to start if a cloud provider is selected. |
 | E-L2 | Ollama — `http://localhost:11434` (default) **or** `OLLAMA_URL` cloud (`ollama.com`/tunnel) + `OLLAMA_API_KEY` | `OLLAMA_URL`, `OLLAMA_API_KEY`, `OLLAMA_MODEL` | runtime.py:1670, chat.py:522/523 | Request | **Keep — this is the on-prem path.** Pin `OLLAMA_URL=http://localhost:11434` (or the in-compose ollama service), and assert `OLLAMA_API_KEY` is empty so no cloud tunnel is used. |
-| E-L3 | Tinker cloud (Thinking Machines SDK) | `TINKER_API_KEY`, `GROUNDED_ADAPTER_TINKER_PATH` | tinker_adapter.py:100 (via chat.py `_call_local`) | Request (only if enabled) | **Disable** — leave `GROUNDED_ADAPTER_TINKER_PATH` unset; grounded-adapter path is off by default. |
 
 ## 2. Model / weight downloads (HuggingFace / ultralytics)
 
@@ -100,7 +99,7 @@ CLI/eval scripts default `FORK_BASE_URL=https://the-fork.onrender.com` (the clou
 ## Disposition summary → STEP 2 profile
 
 Under `DEPLOYMENT_PROFILE=onprem` the app must, from a single env-selected switch:
-- **LLM** (E-L1/L3): force Ollama; refuse to boot on a cloud provider; Tinker off.
+- **LLM** (E-L1/L2): force Ollama; refuse to boot on a cloud provider.
 - **Embeddings/models** (E-M1/M2/M3/M6): bundled local weights + `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `YOLO_OFFLINE=1`; E-M4 already bundled; E-M5 off.
 - **Sentry** (E-S1): off → local structured logging.
 - **Weather** (E-W1): honest-unavailable.

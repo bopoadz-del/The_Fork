@@ -30,7 +30,6 @@ raises `RuntimeError` on — any of:
 - `OLLAMA_API_KEY` set (that means Ollama **Cloud** — egress).
 - `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` not truthy.
 - `SENTRY_DSN` set (telemetry egress).
-- `GROUNDED_ADAPTER_TINKER_PATH` set (Tinker cloud egress).
 
 **Offline model flags are asserted, never set from Python** — `transformers`
 reads them at import time, so a late `os.environ[...] = "1"` is a silent no-op.
@@ -41,7 +40,7 @@ Dockerfile ENV, compose). The assertion guarantees they are present.
 
 | Ledger | Feature | Enforcement | Behaviour under onprem |
 |--------|---------|-------------|------------------------|
-| E-L1/L3 | Cloud LLM providers, Tinker | boot assertion | refuse to boot |
+| E-L1/L3 | Cloud LLM providers | boot assertion | refuse to boot |
 | E-S1 | Sentry | boot assertion (DSN must be unset) | no telemetry |
 | E-M1/M2/M3/M6 | HF/YOLO model downloads | boot assertion (offline flags) + STEP 4 bundling | offline load only |
 | E-W1 | Weather (Open-Meteo) | `construction._fetch_weather` gate | honest "weather offline" |
@@ -89,6 +88,6 @@ collateral damage; each is handled elsewhere:
 
 `tests/test_deployment_profile_onprem.py` (18): profile switch, boot assertion
 (pass on valid onprem, raise on cloud provider / missing offline flags / Sentry
-/ Tinker / cloud tunnel), every block gate returns unavailable under onprem, and
+/ cloud tunnel), every block gate returns unavailable under onprem, and
 **merge-safety** — under the default cloud profile every gate is inert (no
 `onprem_unavailable`), so this ships to the cloud dev/demo unchanged.

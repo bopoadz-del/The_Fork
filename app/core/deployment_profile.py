@@ -6,7 +6,7 @@
     dev/demo deployment. Every gate below is a strict no-op.
   * ``onprem`` — zero-egress. Every would-egress feature (cloud LLM
     providers, Google Drive / OneDrive / R2, web fetch / search / translate,
-    outbound webhooks, weather, MCP consumer, Tinker) is honest-unavailable,
+    outbound webhooks, weather, MCP consumer) is honest-unavailable,
     and the app refuses to boot on a misconfiguration that would leak
     (a cloud LLM provider selected, offline model flags unset, Sentry on).
 
@@ -124,12 +124,6 @@ def check_onprem_ready() -> List[str]:
 
     if (os.getenv("SENTRY_DSN") or "").strip():
         problems.append("SENTRY_DSN is set; on-prem must not send telemetry")
-
-    if (os.getenv("GROUNDED_ADAPTER_TINKER_PATH") or "").strip():
-        problems.append(
-            "GROUNDED_ADAPTER_TINKER_PATH is set; the Tinker grounded-adapter "
-            "path egresses to Thinking Machines' cloud — must be unset on-prem"
-        )
 
     return problems
 

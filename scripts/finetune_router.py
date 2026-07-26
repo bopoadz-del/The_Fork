@@ -111,23 +111,11 @@ def main() -> int:
 
 def _main_impl(argv) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    # ── Trainer dispatch (PR 3a-Tinker) ───────────────────────────────
-    # `local` runs the transformers.Trainer loop below on whatever GPU
-    # the host has. `tinker` delegates to scripts/tinker_trainer.py which
-    # routes through the Tinker managed-GPU service. Both consume the
-    # same JSONL input and write to the same adapter output dir.
-    parser.add_argument(
-        "--trainer",
-        choices=("local", "tinker"),
-        default="local",
-        help="Which trainer to use (local=transformers.Trainer, tinker=managed)",
-    )
     parser.add_argument(
         "--alias",
         default="construction_v1",
         help=(
             "Logical model alias (see app/core/learning/model_registry.py). "
-            "Resolves to a concrete base model per the chosen trainer. "
             "Overridden by --base-model when set."
         ),
     )
@@ -136,8 +124,7 @@ def _main_impl(argv) -> int:
         default=None,
         help=(
             "Concrete base model ID. When omitted, --alias is resolved via "
-            "the model registry for the chosen --trainer. When set, takes "
-            "precedence over --alias."
+            "the model registry. When set, takes precedence over --alias."
         ),
     )
     parser.add_argument(
@@ -178,27 +165,11 @@ def _main_impl(argv) -> int:
         resolved_base = args.base_model
     else:
         try:
-            resolved_base = resolve_base_model(args.alias, trainer=args.trainer)
+            resolved_base = resolve_base_model(args.alias)
         except ValueError as exc:
             logger.error("%s", exc)
             return 1
     args.base_model = resolved_base
-
-    # ── Tinker dispatch — delegate to the managed trainer ─────────────
-    if args.trainer == "tinker":
-        logger.info("dispatching to tinker_trainer (managed GPU)")
-        from scripts.tinker_trainer import main as _tinker_main
-        forwarded = [
-            "--alias", args.alias,
-            "--train-data", args.train_data,
-            "--output-dir", args.output_dir,
-            "--epochs", str(args.epochs),
-            "--lora-r", str(args.lora_r),
-            "--batch-size", str(args.batch_size),
-            "--val-split", str(args.val_split),
-            "--seed", str(args.seed),
-        ]
-        return _tinker_main(forwarded)
 
     if not os.path.exists(args.train_data):
         logger.error(

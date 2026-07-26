@@ -36,8 +36,8 @@ running stack makes no external calls — verified in STEP 5's air-gap acceptanc
 ## The on-prem guarantees (enforced, not just documented)
 
 - **Boot refuses to start if the profile would leak** — cloud LLM provider
-  selected, offline flags unset, Sentry on, cloud-Ollama tunnel key, or Tinker
-  on (`app/core/deployment_profile.check_onprem_ready`).
+  selected, offline flags unset, Sentry on, or cloud-Ollama tunnel key
+  (`app/core/deployment_profile.check_onprem_ready`).
 - **Offline model flags are baked into the image** (`Dockerfile.onprem` ENV) and
   the image build **self-tests the offline embedder load** — a bad bake fails
   the build, not the customer.

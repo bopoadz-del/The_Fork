@@ -54,7 +54,7 @@ Other egress (Sentry, Open-Meteo, Drive/OneDrive/R2, web/search/translate/webhoo
 
 Full write-up: `docs/onprem-profile.md`. One env switch; cloud path byte-for-byte
 unchanged (merge-safe). Fail-loud boot assertion (refuses to start on a cloud LLM
-provider, unset offline flags, Sentry on, cloud-Ollama tunnel, or Tinker) +
+provider, unset offline flags, Sentry on, or cloud-Ollama tunnel) +
 per-disposition honest-unavailable gates (translate/web/search/onedrive/drive/
 webhook/mcp/weather). Offline flags asserted, never set from Python. Tests:
 `tests/test_deployment_profile_onprem.py` (20).

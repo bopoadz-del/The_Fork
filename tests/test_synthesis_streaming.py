@@ -1,12 +1,12 @@
 """True token streaming for the forced synthesis call (SYNTHESIS_STREAMING=1).
 
 After a deliverable tool returns, force_synthesis makes the next call tool-free.
-When streaming is enabled (Groq + flag on + grounded adapter inactive), that
-synthesis call streams provider deltas as token events instead of computing the
-whole answer then re-chunking it. These tests cover: the happy path (deltas
-stream, line-buffered + sanitised), pre-first-token fallback to the non-streaming
-path, citation sanitisation on streamed lines, the empty-final forced retry, the
-default-off inertness, and the _stream_synthesis SSE parser + sanitiser chokepoint.
+When streaming is enabled (Groq + flag on), that synthesis call streams provider
+deltas as token events instead of computing the whole answer then re-chunking it.
+These tests cover: the happy path (deltas stream, line-buffered + sanitised),
+pre-first-token fallback to the non-streaming path, citation sanitisation on
+streamed lines, the empty-final forced retry, the default-off inertness, and the
+_stream_synthesis SSE parser + sanitiser chokepoint.
 """
 from __future__ import annotations
 
@@ -31,13 +31,10 @@ _GROQ_CFG = {
 @pytest.fixture
 def groq_streaming(monkeypatch):
     """Enable the streaming path deterministically: groq provider, flag on,
-    grounded adapter inactive, an api key present."""
+    an api key present."""
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(_GROQ_CFG))
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
-    # adapter off by default, but be explicit so a stray host env can't flip it
-    monkeypatch.delenv("GROUNDED_ADAPTER_ENABLED", raising=False)
-    monkeypatch.delenv("GROUNDED_ADAPTER_REWRITE_PASS", raising=False)
 
 
 def _pa_agent():

@@ -49,9 +49,7 @@ python convert_hf_to_gguf.py /path/to/merged_model --outfile construction_v1.ggu
 # Move construction_v1.gguf to the Orin; serve via llama-server or directly via the Python binding
 ```
 
-The PR 3a adapter format works with **both** paths because it's standard HF safetensors. No re-training needed.
-
-**Tinker-trained adapters too.** PR 3a-Tinker's `scripts/tinker_trainer.py` downloads the trained checkpoint as a `.tar.gz` and extracts it into the same `data/learning/adapters/construction_v1/` directory in HF safetensors format. Whichever trainer produced the adapter, the Orin-port quantization commands above operate identically — the format is what survives the port, not the training pipeline.
+The PR 3a adapter format works with both paths because it's standard HF safetensors. No re-training needed.
 
 ### 2. Compile YOLO weights to TensorRT for the Orin's NVDLA
 
