@@ -57,8 +57,8 @@ def test_format_catalogue_defaults_to_runtime_catalogue():
     assert "pdf" in prompt
 
 
-def test_reasoner_prompt_includes_dynamic_catalogue():
-    session = InMemorySessionStore().get_or_create("catalogue-test")
+async def test_reasoner_prompt_includes_dynamic_catalogue():
+    session = await InMemorySessionStore().get_or_create("catalogue-test")
     prompt = build_reasoner_prompt(session, "what tools do I have?")
     assert "AVAILABLE BLOCKS" in prompt
     assert "pdf" in prompt

@@ -51,7 +51,7 @@ def test_ask_creates_session_and_returns_answer(client):
     assert body["session_id"] == "p1"
 
 
-def test_ask_persists_session_across_calls(client):
+async def test_ask_persists_session_across_calls(client):
     payload = {"session_id": "p2", "request": "go",
                "activities": [{"id": "A", "duration": 3, "predecessors": []}]}
     client.post("/v1/project/ask", json=payload, headers=_HEADERS)
@@ -60,7 +60,7 @@ def test_ask_persists_session_across_calls(client):
                         json={"session_id": "p2", "request": "again"},
                         headers=_HEADERS)
     assert resp.status_code == 200
-    stored = project_router._store.get("p2")
+    stored = await project_router._store.get("p2")
     assert stored is not None
     assert stored.data["activities"][0]["id"] == "A"
 

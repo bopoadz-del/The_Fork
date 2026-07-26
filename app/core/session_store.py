@@ -10,6 +10,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple
 
+from app.core.redis_client import get_redis_client
 from app.schemas.project_session import ProjectSession
 
 DEFAULT_TTL_SECONDS = 14400  # 4 hours; override with the SESSION_TTL_SECONDS env var
@@ -19,20 +20,20 @@ class SessionStore(ABC):
     """Persist and retrieve ProjectSession objects, with TTL expiry."""
 
     @abstractmethod
-    def get(self, session_id: str) -> Optional[ProjectSession]: ...
+    async def get(self, session_id: str) -> Optional[ProjectSession]: ...
 
     @abstractmethod
-    def save(self, session: ProjectSession) -> None: ...
+    async def save(self, session: ProjectSession) -> None: ...
 
     @abstractmethod
-    def delete(self, session_id: str) -> bool: ...
+    async def delete(self, session_id: str) -> bool: ...
 
-    def get_or_create(self, session_id: str) -> ProjectSession:
-        existing = self.get(session_id)
+    async def get_or_create(self, session_id: str) -> ProjectSession:
+        existing = await self.get(session_id)
         if existing is not None:
             return existing
         session = ProjectSession.new(session_id)
-        self.save(session)
+        await self.save(session)
         return session
 
 
@@ -43,7 +44,7 @@ class InMemorySessionStore(SessionStore):
         self._ttl = ttl_seconds or int(os.getenv("SESSION_TTL_SECONDS", str(DEFAULT_TTL_SECONDS)))
         self._data: Dict[str, Tuple[ProjectSession, float]] = {}
 
-    def get(self, session_id: str) -> Optional[ProjectSession]:
+    async def get(self, session_id: str) -> Optional[ProjectSession]:
         entry = self._data.get(session_id)
         if entry is None:
             return None
@@ -53,11 +54,11 @@ class InMemorySessionStore(SessionStore):
             return None
         return copy.deepcopy(session)
 
-    def save(self, session: ProjectSession) -> None:
+    async def save(self, session: ProjectSession) -> None:
         session.touch()
         self._data[session.id] = (session, time.time() + self._ttl)
 
-    def delete(self, session_id: str) -> bool:
+    async def delete(self, session_id: str) -> bool:
         return self._data.pop(session_id, None) is not None
 
 
@@ -70,28 +71,42 @@ class RedisSessionStore(SessionStore):
 
     _PREFIX = "session:"
 
-    def __init__(self, redis_url: str, ttl_seconds: int = 0):
-        import redis  # imported lazily so the dependency is optional
+    def __init__(self, ttl_seconds: int = 0):
         self._ttl = ttl_seconds or int(os.getenv("SESSION_TTL_SECONDS", str(DEFAULT_TTL_SECONDS)))
-        self._client = redis.from_url(redis_url, decode_responses=True)
 
     def _key(self, session_id: str) -> str:
         return f"{self._PREFIX}{session_id}"
 
-    def get(self, session_id: str) -> Optional[ProjectSession]:
-        raw = self._client.get(self._key(session_id))
-        if raw is None:
+    async def get(self, session_id: str) -> Optional[ProjectSession]:
+        client = await get_redis_client()
+        if client is None:
             return None
-        return ProjectSession.model_validate_json(raw)
+        try:
+            raw = await client.get(self._key(session_id))
+            if raw is None:
+                return None
+            return ProjectSession.model_validate_json(raw)
+        except Exception:
+            return None
 
-    def save(self, session: ProjectSession) -> None:
-        session.touch()
-        self._client.set(
-            self._key(session.id), session.model_dump_json(), ex=self._ttl
-        )
+    async def save(self, session: ProjectSession) -> None:
+        client = await get_redis_client()
+        if client is None:
+            return
+        try:
+            session.touch()
+            await client.set(self._key(session.id), session.model_dump_json(), ex=self._ttl)
+        except Exception:
+            pass
 
-    def delete(self, session_id: str) -> bool:
-        return self._client.delete(self._key(session_id)) > 0
+    async def delete(self, session_id: str) -> bool:
+        client = await get_redis_client()
+        if client is None:
+            return False
+        try:
+            return bool(await client.delete(self._key(session_id)))
+        except Exception:
+            return False
 
 
 def get_session_store() -> SessionStore:
@@ -100,9 +115,9 @@ def get_session_store() -> SessionStore:
     redis_url = os.getenv("REDIS_URL")
     if redis_url:
         try:
-            store = RedisSessionStore(redis_url)
-            store._client.ping()
-            return store
+            import redis as _redis
+            _redis.from_url(redis_url).ping()
+            return RedisSessionStore()
         except Exception as exc:
             import warnings
             warnings.warn(

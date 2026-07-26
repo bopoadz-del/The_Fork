@@ -65,10 +65,10 @@ async def project_ask(
     # Session ownership: create on first use tagged with caller's user_id;
     # reject access if the session exists but was created by a different user.
     caller_id = auth["user_id"]
-    session = _store.get(body.session_id)
+    session = await _store.get(body.session_id)
     if session is None:
         session = ProjectSession.new(body.session_id, user_id=caller_id)
-        _store.save(session)
+        await _store.save(session)
     elif session.user_id != caller_id:
         raise HTTPException(404, "Session not found")
     if body.activities is not None:
@@ -123,7 +123,7 @@ async def project_ask(
                                      "session": session,
                                      "project_id": retrieval_project_id})
 
-    _store.save(session)   # persist the turn — history, computed state, cache
+    await _store.save(session)   # persist the turn — history, computed state, cache
 
     return {
         "session_id": body.session_id,
