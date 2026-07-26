@@ -592,6 +592,42 @@ def retrieve_with_filter(
             # Identifier-only hit: keep its text but start from zero semantic.
             fused[chunk_id] = (id_chunk, 0.0, id_score * IDENTIFIER_BONUS_MAX)
 
+    # 2026-07-26 precision fix: identifier_search returns an ARBITRARY top-k
+    # of the (possibly hundreds of) chunks containing the code, so on a large
+    # corpus the semantically-best chunk that ALSO carries the identifier can
+    # miss the id_candidates set entirely — and then flat-bonused label-soup
+    # (drawing station tables, schedule rows) displaces it. Award the same
+    # bonus to every SEMANTIC candidate whose text contains the identifiers:
+    # cosine + bonus then always outranks identifier-only hits (bonus alone),
+    # which is the ordering the boost was designed to produce. (Live find:
+    # 'WWPS-01 total flow rate' on the corpus project buried the 0.75-cosine
+    # spec table under zero-semantic drawing chunks.)
+    if identifiers:
+        # Token-wise matching, mirroring identifier_search: "VO Ref: 99" and
+        # "VO 99" both match, punctuation between tokens is ignored.
+        ident_token_sets = []
+        for ident in identifiers:
+            toks = [t for t in re.split(r"[^a-z0-9]+", ident.lower()) if t]
+            if toks:
+                ident_token_sets.append(toks)
+        for chunk_id, entry in list(fused.items()):
+            sem_chunk, sem_score, id_bonus = entry
+            # Skip entries that already carry the search-assigned bonus
+            # (identifier-only hits live there with sem_score 0.0). Real
+            # semantic candidates keep eligibility even at negative cosine.
+            if id_bonus > 0.0 or not ident_token_sets:
+                continue
+            text_lower = (sem_chunk.text or "").lower()
+            matched = sum(
+                1 for toks in ident_token_sets
+                if all(t in text_lower for t in toks)
+            )
+            if matched:
+                local_score = matched / len(ident_token_sets)
+                fused[chunk_id] = (
+                    sem_chunk, sem_score, local_score * IDENTIFIER_BONUS_MAX,
+                )
+
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
     # ``gk_lex_added`` records the bonus per chunk so the H1 margin gate below
