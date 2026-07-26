@@ -51,6 +51,7 @@ def test_ask_creates_session_and_returns_answer(client):
     assert body["session_id"] == "p1"
 
 
+@pytest.mark.asyncio
 async def test_ask_persists_session_across_calls(client):
     payload = {"session_id": "p2", "request": "go",
                "activities": [{"id": "A", "duration": 3, "predecessors": []}]}

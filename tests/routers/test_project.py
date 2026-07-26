@@ -68,6 +68,7 @@ def test_ask_creates_session_and_returns_answer(client):
     assert body["session_id"] == "p1"
 
 
+@pytest.mark.asyncio
 async def test_ask_persists_session_across_calls(client):
     payload = {
         "session_id": "p2",
@@ -113,6 +114,7 @@ def test_ask_accepts_activity_list_at_the_cap(client):
     assert resp.status_code == 200
 
 
+@pytest.mark.asyncio
 async def test_ask_rejects_session_owned_by_another_user(client, monkeypatch):
     await project_router._store.save(
         ProjectSession.new("owned-session", user_id="other-user")
