@@ -30,6 +30,15 @@ except ImportError:  # pragma: no cover — zoneinfo is stdlib from 3.9
 
 logger = logging.getLogger(__name__)
 
+
+class _RedisUnavailable:
+    """Sentinel value: Redis is configured but the shared client is unreachable."""
+
+    pass
+
+
+REDIS_UNAVAILABLE = _RedisUnavailable()
+
 _task: Optional[asyncio.Task] = None
 
 
@@ -42,15 +51,17 @@ def _leader_key(target_date_iso: str) -> str:
 async def _acquire_leader_lock(target_date_iso: str) -> Optional[Any]:
     """Try to claim the cross-process leader lock for today's hydration pass.
 
-    Returns the shared async redis client on success (caller is the leader and
-    must release in its ``finally``), ``None`` otherwise. ``None`` is overloaded
-    across several cases that the caller disambiguates by re-reading ``REDIS_URL``:
+    Returns one of four values so the caller can handle each case correctly:
 
-    - ``REDIS_URL`` unset: dev mode, run unconditionally (no coordination needed).
-    - ``REDIS_URL`` set but Redis is unreachable: logged, treated as a non-leader
-      fallback so the scheduler does not hard-fail when Redis is degraded.
-    - ``REDIS_URL`` set but ``set(nx=True)`` returned False: another worker
-      already holds the lease, skip this pass entirely.
+    - ``REDIS_URL`` unset: returns ``None``. Dev mode — caller runs the pass
+      unconditionally with no coordination.
+    - ``REDIS_URL`` set but the shared Redis client is unreachable: returns
+      ``REDIS_UNAVAILABLE``. Caller should log and run the pass as a fallback
+      rather than hard-failing on a Redis outage.
+    - ``REDIS_URL`` set but ``set(nx=True)`` returned False: returns ``None``.
+      Another worker already holds the lease; caller must skip this pass.
+    - Lock acquired: returns the shared async Redis client. Caller is the leader
+      and must release the lock in its ``finally``.
 
     The 3600s TTL self-heals on crash/SIGKILL — if the leader dies before the
     finally fires, the next day's pass still runs. Note: the release path is a
@@ -66,7 +77,7 @@ async def _acquire_leader_lock(target_date_iso: str) -> Optional[Any]:
     client = await get_redis_client()
     if client is None:
         logger.warning("hydration: Redis configured but unreachable; running without lock")
-        return None
+        return REDIS_UNAVAILABLE
 
     worker_id = f"{os.getpid()}:{socket.gethostname()}"
     key = _leader_key(target_date_iso)
@@ -74,7 +85,7 @@ async def _acquire_leader_lock(target_date_iso: str) -> Optional[Any]:
         acquired = await client.set(key, worker_id, nx=True, ex=3600)
     except Exception as exc:  # noqa: BLE001
         logger.warning("hydration: redis SET NX failed (%s); running without lock", exc)
-        return None
+        return REDIS_UNAVAILABLE
 
     if not acquired:
         return None
@@ -193,6 +204,9 @@ async def _run_one_pass() -> None:
     one worker (see PILOT.md). When ``REDIS_URL`` is unset (dev mode), the
     pass runs unconditionally — single-worker assumption.
 
+    If ``REDIS_URL`` is set but Redis is unreachable, the pass still runs as a
+    graceful-degradation fallback. The lock-held case is the only skip path.
+
     The non-owner skip path returns BEFORE the try/finally so a worker that
     didn't acquire the lock can never delete the owner's key.
     """
@@ -200,10 +214,14 @@ async def _run_one_pass() -> None:
     redis_url_present = bool(os.getenv("REDIS_URL", "").strip())
     client = await _acquire_leader_lock(target_date_iso)
 
-    if redis_url_present and client is None:
-        # REDIS_URL is configured but another worker holds the lease.
-        logger.info("hydration: another worker holds leader lock for %s, skipping", target_date_iso)
-        return
+    if client is None:
+        if redis_url_present:
+            # REDIS_URL is configured and another worker holds the lease.
+            logger.info("hydration: another worker holds leader lock for %s, skipping", target_date_iso)
+            return
+        # Dev mode: REDIS_URL unset, run unconditionally.
+    elif client is REDIS_UNAVAILABLE:
+        logger.warning("hydration: Redis unavailable; running pass without lock")
 
     try:
         await _do_hydration_pass()
@@ -212,7 +230,7 @@ async def _run_one_pass() -> None:
         # Plain delete (not compare-and-delete) is acceptable because passes
         # are minutes; if one ever exceeded an hour we'd risk deleting a
         # successor's lock — call out in the PR body if that ever changes.
-        if client is not None:
+        if client is not None and client is not REDIS_UNAVAILABLE:
             try:
                 await client.delete(_leader_key(target_date_iso))
             except Exception as exc:  # noqa: BLE001

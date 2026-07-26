@@ -15,8 +15,9 @@ These tests verify the scenarios that matter:
    call ``delete`` on the owner's key.
 3. ``REDIS_URL`` unset (dev mode): the pass runs unconditionally, no shared
    Redis client is requested.
-4. Redis configured but unreachable: ``_acquire_leader_lock`` returns ``None``
-   and logs a warning; the scheduler does not crash.
+4. Redis configured but unreachable: ``_acquire_leader_lock`` returns the
+   ``REDIS_UNAVAILABLE`` sentinel, and ``_run_one_pass`` still executes the
+   inner work as a graceful-degradation fallback.
 
 We stub ``app.core.hydration_scheduler.get_redis_client`` so the real shared
 client codepath is exercised (``await client.set(...)`` / ``await client.delete(...)``)
@@ -203,10 +204,10 @@ async def test_no_redis_url_runs_unconditionally(monkeypatch, reset_redis_client
 
 
 @pytest.mark.asyncio
-async def test_redis_unreachable_returns_none(monkeypatch, reset_redis_client, caplog):
+async def test_redis_unreachable_returns_sentinel(monkeypatch, reset_redis_client, caplog):
     """Redis URL is set but the shared client is unavailable: the lock helper
-    logs a warning and returns ``None`` so the scheduler can fall back rather
-    than crashing."""
+    returns the ``REDIS_UNAVAILABLE`` sentinel so the caller can distinguish it
+    from "lock already held" and run the pass as a fallback."""
     import logging
     from datetime import datetime, timezone
     from app.core import hydration_scheduler
@@ -222,5 +223,34 @@ async def test_redis_unreachable_returns_none(monkeypatch, reset_redis_client, c
     with caplog.at_level(logging.WARNING):
         client = await hydration_scheduler._acquire_leader_lock(today_iso)
 
-    assert client is None
+    assert client is hydration_scheduler.REDIS_UNAVAILABLE
     assert any("Redis configured but unreachable" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_redis_unreachable_runs_fallback(monkeypatch, reset_redis_client, caplog):
+    """Redis outage must not skip hydration: ``_run_one_pass`` executes the
+    inner work when the lock helper reports ``REDIS_UNAVAILABLE``."""
+    import logging
+    from datetime import datetime, timezone
+    from app.core import hydration_scheduler
+
+    monkeypatch.setenv("REDIS_URL", "redis://fake")
+
+    async def _unavailable():
+        return None
+
+    monkeypatch.setattr(hydration_scheduler, "get_redis_client", _unavailable)
+
+    ran = {"called": False}
+
+    async def fake_do_pass():
+        ran["called"] = True
+
+    monkeypatch.setattr(hydration_scheduler, "_do_hydration_pass", fake_do_pass)
+
+    with caplog.at_level(logging.WARNING):
+        await hydration_scheduler._run_one_pass()
+
+    assert ran["called"] is True, "Redis-unreachable worker must run the pass as a fallback"
+    assert any("Redis unavailable; running pass without lock" in rec.message for rec in caplog.records)
