@@ -9,7 +9,7 @@ from typing import Any, Callable, List, Tuple
 
 import pytest
 from fastapi import BackgroundTasks, UploadFile
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core import doc_index
 from app.core import projects as projects_store
@@ -39,6 +39,9 @@ def _isolate_db() -> None:
     projects_store._initialized = False  # noqa: SLF001
     projects_store.init_db()
     yield
+    with SessionLocal() as db:
+        db.execute(delete(IngestionJob))
+        db.commit()
     projects_store._initialized = False  # noqa: SLF001
 
 
