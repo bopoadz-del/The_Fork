@@ -19,6 +19,15 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: thefork-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
   cerebrum-blocks:
     build: .
     container_name: cerebrum-blocks
@@ -32,10 +41,14 @@ services:
       - HOST=0.0.0.0
       - DATA_DIR=/app/data
       - DATABASE_URL=postgresql+psycopg://thefork:thefork@postgres:5432/thefork
+      - REDIS_URL=redis://redis:6379/0
+      - UVICORN_WORKERS=2
       - PYTHONUNBUFFERED=1
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -44,16 +57,23 @@ services:
       retries: 3
       start_period: 40s
 
-  # Optional: Redis for caching (future feature)
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: ai-block-redis
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: unless-stopped
+  worker:
+    build: .
+    container_name: thefork-worker
+    command: ["python", "-m", "app.worker.run_worker"]
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - DATA_DIR=/app/data
+      - DATABASE_URL=postgresql+psycopg://thefork:thefork@postgres:5432/thefork
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-#   redis_data:
+  redis_data:

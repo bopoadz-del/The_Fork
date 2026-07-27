@@ -9,6 +9,32 @@
 # Applying this blueprint reconciles that service; review before `Apply`.
 
 services:
+  - type: redis
+    name: the-fork-redis
+    plan: free
+    region: oregon
+
+  - type: worker
+    name: the-fork-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: the-fork-redis
+          property: connectionString
+      - key: DATA_DIR
+        value: /app/data
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
   - type: web
     name: the-fork
     runtime: docker
@@ -120,3 +146,12 @@ services:
         sync: false
       - key: BOOTSTRAP_USER_PASSWORD
         sync: false
+
+      # ── Redis + worker infra (P5) ──────────────────────────────────────
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: the-fork-redis
+          property: connectionString
+      - key: UVICORN_WORKERS
+        value: "2"
