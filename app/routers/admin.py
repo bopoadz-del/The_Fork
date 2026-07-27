@@ -11,6 +11,7 @@ endpoints never run unauthenticated and never run for non-admin users.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 
 from app.dependencies import require_api_key
 from app.core import file_crypto
+from app.core.redis_client import get_redis_client
 
 router = APIRouter()
 
@@ -1644,6 +1646,44 @@ async def _run_drive_folder_import(
     except Exception as exc:
         log.exception("approve-from-drive: import failed project=%s folder=%s: %s",
                       project_id, folder_id, exc)
+
+
+# ── Dead-letter queue (Task 14) ───────────────────────────────────────────
+
+@router.get("/v1/admin/dead-letter")
+async def admin_dead_letter(auth: dict = Depends(require_api_key)):
+    """List failed arq jobs from Redis result keys.
+
+    Scans ``arq:result:*`` for entries with an ``"e"`` (error) field and
+    returns them as dead-letter records. If Redis is unavailable the list
+    is empty and an error flag is returned so the admin UI degrades safely.
+    """
+    _require_admin(auth)
+
+    client = await get_redis_client()
+    if client is None:
+        return {"dead_letter": [], "error": "Redis not available"}
+
+    keys = await client.keys("arq:result:*")
+    failed: List[Dict[str, Any]] = []
+    for key in keys:
+        raw = await client.get(key)
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if data.get("e"):
+            failed.append({
+                "job_id": key.split(":")[-1],
+                "function": data.get("f"),
+                "args": data.get("a"),
+                "error": data.get("e"),
+                "timestamp": data.get("t"),
+            })
+
+    return {"dead_letter": failed}
 
 
 import asyncio  # for asyncio.iscoroutinefunction used above
