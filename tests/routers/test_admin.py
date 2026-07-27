@@ -105,6 +105,17 @@ def test_dead_letter_skips_json_decode_error(client, admin_auth):
     ]
 
 
+def test_dead_letter_redis_scan_error(client, admin_auth):
+    """Transient Redis failure during scan returns graceful empty response."""
+    mock_client = AsyncMock()
+    mock_client.keys = AsyncMock(side_effect=ConnectionError("Connection reset"))
+    redis_client._async_client = mock_client
+
+    resp = client.get("/v1/admin/dead-letter")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"dead_letter": [], "error": "Redis scan failed"}
+
+
 def test_dead_letter_requires_admin(client):
     """Non-admin callers are rejected by the existing admin gate."""
     app.dependency_overrides[require_api_key] = lambda: {

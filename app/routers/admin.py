@@ -12,6 +12,7 @@ endpoints never run unauthenticated and never run for non-admin users.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,7 @@ from app.core import file_crypto
 from app.core.redis_client import get_redis_client
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _require_admin(auth: Dict[str, Any]) -> None:
@@ -1664,24 +1666,28 @@ async def admin_dead_letter(auth: dict = Depends(require_api_key)):
     if client is None:
         return {"dead_letter": [], "error": "Redis not available"}
 
-    keys = await client.keys("arq:result:*")
-    failed: List[Dict[str, Any]] = []
-    for key in keys:
-        raw = await client.get(key)
-        if not raw:
-            continue
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if data.get("e"):
-            failed.append({
-                "job_id": key.split(":")[-1],
-                "function": data.get("f"),
-                "args": data.get("a"),
-                "error": data.get("e"),
-                "timestamp": data.get("t"),
-            })
+    try:
+        keys = await client.keys("arq:result:*")
+        failed: List[Dict[str, Any]] = []
+        for key in keys:
+            raw = await client.get(key)
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if data.get("e"):
+                failed.append({
+                    "job_id": key.split(":")[-1],
+                    "function": data.get("f"),
+                    "args": data.get("a"),
+                    "error": data.get("e"),
+                    "timestamp": data.get("t"),
+                })
+    except Exception as exc:  # noqa: BLE001 — graceful degradation for Redis errors
+        logger.warning("Redis dead-letter scan failed (%s); returning empty list", exc)
+        return {"dead_letter": [], "error": "Redis scan failed"}
 
     return {"dead_letter": failed}
 
