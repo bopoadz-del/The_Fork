@@ -75,7 +75,10 @@ async def test_upload_enqueues_job_when_redis_configured(
     """When enqueue_ingest returns True, status becomes queued and a row is persisted."""
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
 
+    calls: List[Tuple[str, str, str]] = []
+
     async def fake_enqueue_ingest(pid: str, did: str, job_id: str) -> bool:
+        calls.append((pid, did, job_id))
         return True
 
     monkeypatch.setattr(upload_module, "enqueue_ingest", fake_enqueue_ingest)
@@ -102,6 +105,9 @@ async def test_upload_enqueues_job_when_redis_configured(
         ).scalar_one_or_none()
     assert job is not None
     assert job.status == "pending"
+
+    # enqueue_ingest must be called with the exact positional args.
+    assert calls == [(project_pid, uploaded_doc["id"], str(job.id))]
 
     # Queue success means no BackgroundTasks fallback.
     assert spy.tasks == []
@@ -140,6 +146,37 @@ async def test_upload_falls_back_to_background_task_when_enqueue_fails(
     assert args == (project_pid, uploaded_doc["id"])
     assert kwargs == {}
     assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_upload_falls_back_when_enqueue_returns_false(
+    monkeypatch, project_pid: str, uploaded_doc: dict
+) -> None:
+    """When REDIS_URL is set but enqueue_ingest returns False, fall back to BackgroundTasks."""
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
+
+    async def fake_enqueue_ingest(_pid: str, _did: str, _job_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(upload_module, "enqueue_ingest", fake_enqueue_ingest)
+
+    spy = BackgroundTasksSpy()
+    response = await upload_v1(
+        file=_make_file(),
+        project_id=project_pid,
+        background_tasks=spy,
+        auth={"user_id": "user1"},
+    )
+
+    assert response["indexed"] is True
+    assert response["indexing_status"] == "scheduled"
+    assert response["document_id"] == uploaded_doc["id"]
+
+    assert len(spy.tasks) == 1
+    func, args, kwargs = spy.tasks[0]
+    assert func is doc_index.maybe_eager_index
+    assert args == (project_pid, uploaded_doc["id"])
+    assert kwargs == {}
 
 
 @pytest.mark.asyncio
