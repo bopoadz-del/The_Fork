@@ -1,6 +1,5 @@
 from __future__ import annotations
 import os
-from typing import Optional
 
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -13,9 +12,9 @@ async def enqueue_ingest(project_id: str, document_id: str, job_id: str) -> bool
     redis_url = os.getenv("REDIS_URL", "").strip()
     if not redis_url:
         return False
-    if _pool is None:
-        _pool = await create_pool(RedisSettings.from_dsn(redis_url))
     try:
+        if _pool is None:
+            _pool = await create_pool(RedisSettings.from_dsn(redis_url))
         await _pool.enqueue_job("ingest_document", project_id, document_id, job_id)
         return True
     except Exception:
