@@ -22,7 +22,7 @@ from sqlalchemy import delete, func, select, text as sqla_text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.db import SessionLocal, engine, get_database_url
-from app.core.models import Document, Project, ProjectFact
+from app.core.models import Document, IngestionJob, Project, ProjectFact
 
 # ── pilot master-corpus alias ───────────────────────────────────────────────
 # Per-project Drive approval/indexing is not pilot-ready. Expose the existing
@@ -131,6 +131,7 @@ def init_db() -> None:
         Project.__table__.create(bind=engine, checkfirst=True)
         Document.__table__.create(bind=engine, checkfirst=True)
         ProjectFact.__table__.create(bind=engine, checkfirst=True)
+        IngestionJob.__table__.create(bind=engine, checkfirst=True)
         _patch_legacy_columns()
         _initialized = True
 
@@ -716,6 +717,26 @@ def add_document(
         document = session.get(Document, did)
     assert document is not None
     return _document_as_dict(document)
+
+
+def create_ingestion_job(project_id: str, document_id: str):
+    """Persist a pending ingestion job for the worker queue.
+
+    Returns the created job row so callers can pass ``job.id`` to the queue.
+    """
+    from app.core.db import SessionLocal
+    from app.core.models import IngestionJob
+
+    _ensure_db()
+    db = SessionLocal()
+    try:
+        job = IngestionJob(project_id=project_id, document_id=document_id, status="pending")
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        return job
+    finally:
+        db.close()
 
 
 def update_document_metadata(doc_id: str, metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
