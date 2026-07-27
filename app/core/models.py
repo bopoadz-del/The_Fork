@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import re
+import uuid
 from typing import Optional, Type
 
 import numpy as np
@@ -11,6 +13,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -24,6 +27,8 @@ from sqlalchemy import (
     desc,
     text as sa_text,
 )
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Legacy constant kept for old imports/tests that reference it. The actual
@@ -494,3 +499,29 @@ class AgentFact(Base):
     key: Mapped[str] = mapped_column(String, nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class IngestionJob(Base):
+    """ingestion_jobs table — tracks async document ingestion status.
+
+    Written by the upload endpoint and updated by the arq worker.
+    """
+
+    __tablename__ = "ingestion_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[str] = mapped_column(String, nullable=False)
+    document_id: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, default="pending"
+    )
+    chunks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
