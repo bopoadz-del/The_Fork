@@ -123,6 +123,7 @@ def _isolate_postgres_db():
         "documents",
         "projects",
         "users",
+        "ingestion_jobs",
     )
     with get_engine().begin() as conn:
         conn.execute(
