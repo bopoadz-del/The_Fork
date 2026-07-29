@@ -527,6 +527,20 @@ def project_owner(project_id: str) -> Optional[str]:
     return project.user_id if project else None
 
 
+def _is_platform_project(project: Dict[str, Any]) -> bool:
+    """A platform/corpus project an admin may read cross-tenant on the chat/RAG
+    DATA path: system/seed-owned, an admin-approved shared project, or the
+    master-corpus alias. A real end-user's private ``user_create`` project is
+    NOT platform — it must never be readable by another account here.
+    """
+    from app.core.users import SYSTEM_USER_ID
+    return (
+        project.get("user_id") == SYSTEM_USER_ID
+        or (project.get("origin") or "user_create") == "admin_drive_approved"
+        or bool(project.get("is_master_corpus"))
+    )
+
+
 def get_project_accessible(project_id: str, user_id: Optional[str] = None):
     """Open-access resolution for READ/chat surfaces (2026-07-26).
 
@@ -536,8 +550,21 @@ def get_project_accessible(project_id: str, user_id: Optional[str] = None):
     (#267 read rule) and upload to it (#277) but chat lost all RAG context
     on it (zero injected sources, no-op search tool). Third instance of the
     same asymmetry class; this helper is the single rule for all of them:
-    owner -> admin-approved shared -> admin role (unscoped). Returns the
-    project dict or None; archived projects stay invisible on every path.
+    owner -> admin-approved shared -> admin on PLATFORM projects only.
+    Returns the project dict or None; archived projects stay invisible on
+    every path.
+
+    SECURITY (legacy-admin tenancy fix): ``require_user`` maps EVERY legacy
+    API key to the singleton ``system`` user with ``role="admin"``, so the
+    admin fallthrough below is reachable by any legacy/master-key holder.
+    The admin cross-tenant read is therefore scoped to PLATFORM projects
+    (``_is_platform_project``) — system/seed-owned corpora and admin-approved
+    shared projects — and NEVER a real end-user's private project. Genuine
+    admin cross-tenant operations on arbitrary projects go through the
+    explicit, audited ``/v1/admin/*`` endpoints (which call ``get_project``
+    directly), not this chat data-path helper. Owner reads and the
+    admin-approved-shared grant are unchanged (handled by the scoped
+    ``get_project`` call above).
     """
     if not user_id:
         # user_id=None means UNSCOPED in get_project — an anonymous caller
@@ -547,14 +574,18 @@ def get_project_accessible(project_id: str, user_id: Optional[str] = None):
                        include_admin_approved=True, doc_limit=0)
     if proj is not None:
         return proj
-    if user_id:
-        try:
-            from app.core import users as users_store
-            u = users_store.get_user_by_id(user_id)
-            if u and (u.get("role") or "").lower() == "admin":
-                return get_project(project_id, doc_limit=0)
-        except Exception:  # noqa: BLE001 -- fail closed on lookup errors
-            return None
+    try:
+        from app.core import users as users_store
+        u = users_store.get_user_by_id(user_id)
+        if u and (u.get("role") or "").lower() == "admin":
+            # Admin fallthrough — but ONLY for platform/corpus projects, so a
+            # legacy-key SYSTEM admin (or any promoted admin) cannot read a
+            # real user's private project through the chat gate.
+            candidate = get_project(project_id, doc_limit=0)
+            if candidate is not None and _is_platform_project(candidate):
+                return candidate
+    except Exception:  # noqa: BLE001 -- fail closed on lookup errors
+        return None
     return None
 
 

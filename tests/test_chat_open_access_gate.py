@@ -81,10 +81,49 @@ def test_owner_resolves_both(world):
     assert store.get_project_accessible(world["shared"], world["owner"]["id"]) is not None
 
 
-def test_admin_resolves_other_users_private_project(world):
-    # THE live bug: chat dropped the corpus project for admins.
-    proj = store.get_project_accessible(world["private"], world["admin"]["id"])
-    assert proj is not None and proj["id"] == world["private"]
+def test_admin_does_not_resolve_other_users_private_project(world):
+    # SECURITY (legacy-admin tenancy fix): an admin — and therefore ANY
+    # legacy/master-key holder, which require_user maps to the SYSTEM admin —
+    # must NOT read another user's PRIVATE project through the chat/RAG data
+    # path. Genuine admin cross-tenant work goes through /v1/admin/* instead.
+    assert store.get_project_accessible(world["private"], world["admin"]["id"]) is None
+
+
+def test_admin_resolves_admin_approved_shared_project(world):
+    # The legitimate half of the original incident: an admin CAN chat over an
+    # admin-approved shared platform project (same as any user — handled by the
+    # scoped get_project call, not the admin fallthrough).
+    proj = store.get_project_accessible(world["shared"], world["admin"]["id"])
+    assert proj is not None and proj["id"] == world["shared"]
+
+
+def test_admin_resolves_system_owned_platform_project(client, world):
+    # The corpus-project half of the original incident: a system/seed-owned
+    # platform corpus stays admin-readable via the admin fallthrough — that is
+    # exactly what _is_platform_project preserves, without exposing private
+    # user projects.
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+    from app.core.users import SYSTEM_USER_ID
+    pid = client.post(
+        "/v1/projects", json={"name": "OAG platform corpus"}, headers=_h(world["owner"])
+    ).json()["id"]
+    with SessionLocal() as db:
+        db.get(Project, pid).user_id = SYSTEM_USER_ID  # seed/system-owned corpus
+        db.commit()
+    try:
+        proj = store.get_project_accessible(pid, world["admin"]["id"])
+        assert proj is not None and proj["id"] == pid
+    finally:
+        store.archive_project(pid)
+
+
+def test_legacy_key_system_admin_cannot_read_private_project(world):
+    # The exact blocker: a legacy API key resolves to SYSTEM_USER_ID (role
+    # admin). Through the chat data-path helper it must NOT reach a real
+    # user's private project.
+    from app.core.users import SYSTEM_USER_ID
+    assert store.get_project_accessible(world["private"], SYSTEM_USER_ID) is None
 
 
 def test_regular_user_resolves_shared_but_not_private(world):
