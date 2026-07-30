@@ -480,38 +480,56 @@ class MonitoringBlock(LegoBlock):
             score = self.reliability_scores[provider_id]
             latencies = list(self.latency_history[provider_id])
             errors = list(self.error_history[provider_id])
-            
-            # Determine status
-            if score >= 90:
-                status = "excellent"
-                color = "green"
-            elif score >= 70:
-                status = "good"
-                color = "yellow"
-            elif score >= 40:
-                status = "degraded"
-                color = "orange"
+            total_calls = len(latencies)
+
+            # Determine status. A provider with ZERO observed calls has not been
+            # PROBED — reporting it "excellent"/100% (the seeded default) is a
+            # capability claim the container hasn't earned (audit §8.6). Report
+            # "unknown" until there is real evidence.
+            if total_calls == 0:
+                status = "unknown"
+                color = "grey"
+                reported_score = None
+                recommendation = "unproven"
             else:
-                status = "critical"
-                color = "red"
-            
+                reported_score = score
+                if score >= 90:
+                    status = "excellent"
+                    color = "green"
+                elif score >= 70:
+                    status = "good"
+                    color = "yellow"
+                elif score >= 40:
+                    status = "degraded"
+                    color = "orange"
+                else:
+                    status = "critical"
+                    color = "red"
+                recommendation = (
+                    "use" if score >= 70 else "avoid" if score >= 40 else "emergency_only"
+                )
+
             leaderboard.append({
                 "rank": 0,  # Set later
                 "provider": provider_id,
                 "name": info["name"],
                 "type": info["type"],
                 "region": info["region"],
-                "reliability_score": score,
+                "reliability_score": reported_score,
                 "avg_latency_ms": round(statistics.mean(latencies), 2) if latencies else 0,
                 "error_rate_percent": round(sum(errors) / len(errors) * 100, 2) if errors else 0,
-                "total_calls": len(latencies),
+                "total_calls": total_calls,
                 "status": status,
                 "color": color,
-                "recommendation": "use" if score >= 70 else "avoid" if score >= 40 else "emergency_only"
+                "recommendation": recommendation,
             })
         
-        # Sort by reliability score (descending)
-        leaderboard.sort(key=lambda x: x["reliability_score"], reverse=True)
+        # Sort by reliability score (descending); "unknown" (None) providers
+        # sort last — an unproven provider is never ranked above an observed one.
+        leaderboard.sort(
+            key=lambda x: x["reliability_score"] if x["reliability_score"] is not None else -1.0,
+            reverse=True,
+        )
         
         # Assign ranks
         for i, entry in enumerate(leaderboard):
