@@ -1318,6 +1318,74 @@ def _cost_grounding_gate(
         return text
 
 
+def format_excerpts_as_rag_context(
+    excerpts: Optional[List[Dict[str, Any]]],
+) -> str:
+    """Render project-document excerpts into the SAME per-chunk marker form the
+    agent path's ``format_chunks_as_system_message`` emits, so the cost-grounding
+    gate classifies each excerpt for rate-semantics INDEPENDENTLY.
+
+    Per-chunk markers are load-bearing: a single flat block that mixed a rate
+    table with a drawing dimension-table chunk would read as rate-semantic as a
+    whole and wrongly ground the drawing's bare numbers (the 2026-07-14 "450
+    SAR/m³" incident). Emitting one ``[doc_id=... chunk=N ...]`` block per
+    excerpt keeps grounding on the non-agent paths identical to the agent path.
+
+    Excerpt shape matches ``search_project_documents`` /
+    ``_with_doc_search`` output (``snippet`` / ``filename`` / ``document_id`` /
+    ``score``). Returns "" when there are no usable excerpts."""
+    blocks: List[str] = []
+    for i, e in enumerate(excerpts or []):
+        if not isinstance(e, dict):
+            continue
+        text = (e.get("snippet") or "").strip()
+        if not text:
+            continue
+        did = e.get("document_id") or e.get("filename") or f"doc{i}"
+        score = e.get("score")
+        score_s = f" score={score:.3f}" if isinstance(score, (int, float)) else ""
+        blocks.append(f"[doc_id={did} chunk={i}{score_s}] {text}")
+    return "\n\n".join(blocks)
+
+
+def gate_cost_answer(
+    text: str,
+    *,
+    rag_context: str = "",
+    authoritative_texts: Optional[List[str]] = None,
+    user_message: Optional[str] = None,
+) -> str:
+    """Run the tested cost-grounding gate over an answer produced by a NON-agent
+    answer path (``/chat``, ``/v1/project/ask``) that doesn't itself build the
+    agent's ``(rag_sys_msg, messages)`` pair.
+
+    * ``rag_context`` — retrieved evidence in the per-chunk ``[doc_id=...]``
+      marker form (see ``format_excerpts_as_rag_context``); classified per chunk
+      for rate-semantics, exactly like the agent path.
+    * ``authoritative_texts`` — computed/tool results produced this turn (e.g.
+      the project reasoner's executed step outputs). Every number in them
+      grounds — the same authority the agent path grants tool-result messages.
+    * ``user_message`` — the caller's own question; figures the user supplied are
+      grounded, so the gate never refuses to echo the user's own numbers back.
+
+    Delegates to the existing ``_cost_grounding_gate`` — NO gating logic is
+    reimplemented here. Never raises: a gate must never break a working turn."""
+    try:
+        rag_sys_msg = (
+            {"role": "system", "content": rag_context} if rag_context else None
+        )
+        messages: List[Dict[str, Any]] = []
+        if user_message:
+            messages.append({"role": "user", "content": user_message})
+        for t in authoritative_texts or []:
+            if t:
+                messages.append({"role": "tool", "content": str(t)})
+        return _cost_grounding_gate(text, rag_sys_msg, messages)
+    except Exception:  # noqa: BLE001 — a gate must never break an answer
+        _LOG.exception("gate_cost_answer failed; passing answer through")
+        return text
+
+
 # ── Standards advisory (ADVISORY, never blocks) ─────────────────────────────
 # Highlights a deviation from a critical construction standard (e.g. 'APPROVED'
 # used on a design document, PRC-501) by APPENDING a note — it never rejects,
