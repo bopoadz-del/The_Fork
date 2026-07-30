@@ -8,6 +8,7 @@ import tempfile
 import time
 from typing import Any, Dict
 
+from app.core.subprocess_env import scrubbed_env
 from app.core.universal_base import UniversalBlock
 
 _TIMEOUT = 10  # seconds
@@ -77,7 +78,8 @@ def _run_python(code: str, timeout: int) -> Dict:
             capture_output=True,
             text=True,
             timeout=timeout,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            # Never hand app secrets to an executed code snippet (audit §6.1).
+            env=scrubbed_env({"PYTHONDONTWRITEBYTECODE": "1"}),
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -104,7 +106,8 @@ def _run_python(code: str, timeout: int) -> Dict:
 
 def _run_node(code: str, timeout: int) -> Dict:
     node_bin = "node"
-    if subprocess.run(["which", node_bin], capture_output=True).returncode != 0:
+    if subprocess.run(["which", node_bin], capture_output=True,
+                      env=scrubbed_env()).returncode != 0:
         return {"status": "error", "error": "Node.js not available on this server"}
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
@@ -118,6 +121,7 @@ def _run_node(code: str, timeout: int) -> Dict:
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=scrubbed_env(),  # audit §6.1
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return {

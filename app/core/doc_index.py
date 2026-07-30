@@ -40,6 +40,7 @@ import concurrent.futures
 import copy
 import json
 import logging as _logging
+from app.core.subprocess_env import scrubbed_env
 import os
 import re
 import sqlite3
@@ -461,6 +462,7 @@ def _extract_doc(file_path: str) -> str:
                     text=True,
                     errors="replace",
                     timeout=60,
+                    env=scrubbed_env(),  # audit §6.1
                 )
             text = (result.stdout or "").strip()
             if text:
