@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import Chunk, get_store
 from app.core.rag import layers
+from app.core.rag import revision as _revision
 
 import os
 import re
@@ -712,6 +713,31 @@ def retrieve_with_filter(
                 if c.project_id not in gk_id_set or _margin_score(s, c) >= bar
             ]
 
+    # Revision currency (§5.2) — ALWAYS ON, independent of RAG_LAYERED. A
+    # stale-revision drawing answer is a real construction-safety hazard, so
+    # this runs regardless of the layered flag. Both signals key off the
+    # uploader's original filename (resolved once per distinct doc below):
+    #   1. annotate every chunk with its parsed revision / drawing number;
+    #   2. firmly down-rank any chunk whose filename marks it SUPERSEDED so a
+    #      current document of comparable relevance always wins — a penalty, not
+    #      a drop, so a superseded chunk still survives as a last resort when
+    #      nothing current matches.
+    # The same-drawing "prefer highest revision" suppression is computed from
+    # these annotations and applied in the kept-selection loop below.
+    name_by_id: Dict[str, str] = {}
+    for _, chunk in scored:
+        if chunk.doc_id not in name_by_id:
+            name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
+    for i, (score, chunk) in enumerate(scored):
+        nm = name_by_id.get(chunk.doc_id, "")
+        chunk.revision = _revision.revision_token(nm)
+        chunk.drawing_number = _revision.drawing_number(nm)
+        if _revision.is_superseded(nm):
+            chunk.superseded = True
+            demoted = score - _revision.SUPERSEDED_PENALTY
+            chunk.score = round(demoted, 6)
+            scored[i] = (demoted, chunk)
+
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
     # outranks a comparably-relevant low-authority one (an L1 historical note).
@@ -733,6 +759,20 @@ def retrieve_with_filter(
     # first when scores are equal because they were inserted first.
     scored.sort(key=lambda x: -x[0])
 
+    # Revision currency (§5.2 step 2): highest COMPARABLE revision retrieved per
+    # drawing number, bucketed by revision kind ((drawing_number, kind) -> max
+    # value). Numeric and alphabetic revisions of one sheet live in separate
+    # buckets and never suppress each other — so a mixed-scheme sheet keeps both
+    # rather than risk hiding the current one (see revision.revision_rank).
+    best_rev: Dict[Tuple[str, int], int] = {}
+    for _, c in scored:
+        dn = c.drawing_number
+        rank = _revision.revision_rank(c.revision)
+        if dn and rank is not None:
+            key = (dn, rank[0])
+            if key not in best_rev or rank[1] > best_rev[key]:
+                best_rev[key] = rank[1]
+
     # Photo chunks RAG leg was removed in migration 0008 along with the
     # photo_chunks table. Chat-attached photos are now question-context
     # (see POST /v1/chat/analyze-photo), not corpus material.
@@ -741,11 +781,21 @@ def retrieve_with_filter(
     # no project chunks left the result simply comes back shorter.
     kept: List[Chunk] = []
     noise_dropped = 0
+    revision_suppressed = 0
     gk_kept = 0
     for _, c in scored:
-        name = _doc_name_for_id(c.doc_id)
+        name = name_by_id.get(c.doc_id, "")
         if _is_noise_filename(name):
             noise_dropped += 1
+            continue
+        # Prefer the highest revision of a given drawing: skip this chunk when a
+        # strictly-higher, same-kind revision of the SAME drawing number is also
+        # in the pool. Stale-revision safety, so this suppresses rather than
+        # merely nudges — but only among chunks that share a parsed drawing id.
+        dn = c.drawing_number
+        rank = _revision.revision_rank(c.revision)
+        if dn and rank is not None and best_rev.get((dn, rank[0]), rank[1]) > rank[1]:
+            revision_suppressed += 1
             continue
         if gk_cap is not None and c.project_id in gk_id_set:
             if gk_kept >= gk_cap:
@@ -766,6 +816,12 @@ def retrieve_with_filter(
             c.layer = "master_corpus"
         else:
             c.layer = "general_knowledge"
+
+    if revision_suppressed:
+        logger.debug(
+            "revision currency: suppressed %d lower-revision chunk(s) in favour "
+            "of a higher revision of the same drawing", revision_suppressed,
+        )
 
     return kept, noise_dropped
 

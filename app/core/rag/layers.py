@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import re
 
+from app.core.rag import revision as _revision
+
 # L1 shared domain, L2A company/client rules, L2B live project record,
 # L3 user/session. Names are the persisted ``chunks.layer`` values.
 LAYERS = frozenset({"shared_domain", "company_rules", "project_record", "user_session"})
@@ -67,7 +69,10 @@ _AUTHORITY_PATTERNS = (
                r"guideline|template|workflow|checklist"),
     ("operational", r"report|\blog\b|minutes|daily|weekly|\brfi\b|\bncr\b|"
                     r"inspection|submittal|schedule|programme|progress|transmittal"),
-    ("historical", r"superseded|obsolete|archive|\bold\b|previous|deprecated"),
+    # 'superseded' keyword set is owned by app.core.rag.revision (the always-on
+    # revision-currency signal) so the flag-gated layered down-weight here and
+    # the always-on penalty there can never disagree on what superseded means.
+    ("historical", _revision.SUPERSEDED_PATTERN),
     ("personal", r"\bdraft\b|\bmemo\b|\bnote\b|working|scratch|personal"),
 )
 

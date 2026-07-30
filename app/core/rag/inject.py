@@ -66,10 +66,27 @@ def format_chunks_as_system_message(
         f"(top {len(chunks)} of {total_candidates} matches; cosine in "
         f"[{min(scores):.3f}, {max(scores):.3f}])\n"
     )
-    body_parts = [
-        f"[doc_id={c.doc_id} chunk={c.chunk_index} score={(c.score or 0):.3f}] {c.text}"
-        for c in chunks
-    ]
+    # Revision currency (§5.2): when an excerpt carries a parsed revision, expose
+    # it in the marker (``rev=…``) so the model can attribute the answer to a
+    # revision ("per Rev C"). If any surviving excerpt is from a SUPERSEDED
+    # document (it only survives as a last resort — nothing current matched),
+    # tell the model to flag that rather than answer as if it were current.
+    if any(getattr(c, "superseded", False) for c in chunks):
+        header += (
+            "NOTE: some excerpts below are from a document whose filename marks "
+            "it SUPERSEDED/obsolete — no current-revision source was found. State "
+            "that the revision may be out of date and advise confirming the "
+            "current revision; do not present it as the latest.\n"
+        )
+
+    def _marker(c) -> str:
+        rev = getattr(c, "revision", "") or ""
+        rev_s = f" rev={rev}" if rev else ""
+        sup_s = " SUPERSEDED" if getattr(c, "superseded", False) else ""
+        return (f"[doc_id={c.doc_id} chunk={c.chunk_index} "
+                f"score={(c.score or 0):.3f}{rev_s}{sup_s}] {c.text}")
+
+    body_parts = [_marker(c) for c in chunks]
     return {"role": "system", "content": header + "\n" + "\n\n".join(body_parts)}
 
 

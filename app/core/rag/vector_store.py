@@ -123,6 +123,15 @@ class Chunk:
     # compare=False so neither affects Chunk equality in tests.
     knowledge_layer: Optional[str] = field(default=None, compare=False)
     authority: Optional[str] = field(default=None, compare=False)
+    # Revision currency (app.core.rag.revision, audit §5.2). Filename-derived,
+    # set by ``retrieve_with_filter`` on every search: ``revision`` is the
+    # parsed single-char revision token ("" when none), ``drawing_number`` the
+    # parsed sheet code, ``superseded`` True when the filename marks the doc
+    # obsolete. Internal ranking + answer-disclosure signals — never serialized
+    # to the wire; compare=False so none affects Chunk equality in tests.
+    revision: str = field(default="", compare=False)
+    drawing_number: str = field(default="", compare=False)
+    superseded: bool = field(default=False, compare=False)
     # ── photo_chunks fields (kind="photo") ─────────────────────────────
     # text chunks keep kind="text" and the photo fields default to None.
     kind: str = "text"
@@ -142,6 +151,10 @@ class Chunk:
         d.pop("layer", None)
         d.pop("knowledge_layer", None)
         d.pop("authority", None)
+        # Revision-currency signals are internal (ranking + disclosure), not wire
+        d.pop("revision", None)
+        d.pop("drawing_number", None)
+        d.pop("superseded", None)
         # Drop photo fields for plain text chunks to keep payloads small
         if d.get("kind") == "text":
             d.pop("sha256", None)
