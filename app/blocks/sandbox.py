@@ -6,6 +6,7 @@ conditionally so the block stays loadable on Windows (it will raise an
 honest error when actually invoked there, rather than failing at import
 time and blocking the whole registry).
 """
+from app.core.subprocess_env import scrubbed_env
 from app.core.universal_base import UniversalBlock
 from typing import Dict, Any, Callable, Optional
 import asyncio
@@ -338,7 +339,8 @@ class SandboxBlock(UniversalBlock):
                     "node", temp_path,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    limit=policy.max_memory_mb * 1024 * 1024
+                    limit=policy.max_memory_mb * 1024 * 1024,
+                    env=scrubbed_env(),  # audit §6.1 — no app secrets in the sandbox
                 )
                 try:
                     stdout, stderr = await asyncio.wait_for(
@@ -401,7 +403,10 @@ class SandboxBlock(UniversalBlock):
                 code,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                limit=policy.max_memory_mb * 1024 * 1024
+                limit=policy.max_memory_mb * 1024 * 1024,
+                # audit §6.1 — a shell command must not be able to echo
+                # $SECRET_KEY / $DATABASE_URL out of the sandbox.
+                env=scrubbed_env(),
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
