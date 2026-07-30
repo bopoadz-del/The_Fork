@@ -18,6 +18,7 @@ import os
 import math
 import re
 from typing import Any, Dict, List, Tuple
+from app.core.subprocess_env import scrubbed_env
 from app.core.universal_base import UniversalBlock
 
 _logger = logging.getLogger(__name__)
@@ -1302,6 +1303,7 @@ class DrawingQTOBlock(UniversalBlock):
                 subprocess.run(
                     [tool, src_dir, dst_dir, "ACAD2018", "DXF", "0", "1"],
                     timeout=60, check=False, capture_output=True,
+                    env=scrubbed_env(),  # audit §6.1
                 )
                 dxf_name = os.path.splitext(os.path.basename(file_path))[0] + ".dxf"
                 converted = os.path.join(dst_dir, dxf_name)
