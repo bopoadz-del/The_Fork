@@ -265,6 +265,11 @@ class ProjectReasonerBlock(UniversalBlock):
                 "execution": None,
                 "sources": sources,
                 "degraded": True,
+                # Grounding evidence for the router's cost-grounding gate. NOT
+                # returned to the client (the router pops it) — the confidential
+                # snippet text is used only to decide whether a cost figure in
+                # the answer traces to retrieved rate-semantic evidence.
+                "_grounding": {"excerpts": excerpts, "results_text": ""},
             }
 
         # ── EXECUTE ──────────────────────────────────────────────────────
@@ -307,4 +312,12 @@ class ProjectReasonerBlock(UniversalBlock):
             "plan": plan.model_dump(mode="json"),
             "execution": run.model_dump(mode="json"),
             "sources": deliver_sources,
+            # Grounding evidence for the router's cost-grounding gate (see the
+            # fallback return above). Retrieved excerpts are classified per
+            # rate-semantics; this turn's executed step results are
+            # authoritative computed figures that ground the delivered answer.
+            "_grounding": {
+                "excerpts": excerpts,
+                "results_text": _render_step_results(run),
+            },
         }

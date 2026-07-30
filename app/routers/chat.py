@@ -547,7 +547,7 @@ def _with_project_memory(
 
 async def _with_doc_search(
     prompt: str, project_id: Optional[str], user_id: Optional[str], top_k: int = 5,
-) -> str:
+) -> tuple[str, list]:
     """Prepend top-k relevant document snippets from the project's zvec index.
 
     This is the upload→index→chat connection: when the user has a project
@@ -561,19 +561,25 @@ async def _with_doc_search(
     EXCERPTS section — kept consistent so both paths reason from the same
     grounded data.
 
+    Returns ``(augmented_prompt, raw_snippets)``. The raw snippets are the
+    grounding evidence the caller feeds to the cost-grounding gate so a
+    cost/rate answer is refused unless its figures trace to a rate-semantic
+    retrieved chunk (parity with the agent path). ``raw_snippets`` is ``[]``
+    on every no-op / degrade branch.
+
     No-op when project_id missing, when caller doesn't own the project, or
     when the project has no indexed documents yet.
     """
     if not project_id or not prompt.strip():
-        return prompt
+        return prompt, []
     try:
         from app.core import projects as projects_store
         if projects_store.get_project_accessible(project_id, user_id) is None:
-            return prompt  # tenant isolation: don't search another user's docs
+            return prompt, []  # tenant isolation: don't search another user's docs
         from app.core.doc_index import search_project_documents
         snippets = await search_project_documents(project_id, prompt, top_k=top_k)
         if not snippets:
-            return prompt
+            return prompt, []
         # Cap each snippet to keep the prompt bounded. The reasoner uses 800.
         MAX_SNIPPET_CHARS = 800
         lines = []
@@ -586,15 +592,15 @@ async def _with_doc_search(
                 text = text[:MAX_SNIPPET_CHARS].rstrip() + "..."
             lines.append(f"[{i}] {filename}\n{text}")
         if not lines:
-            return prompt
+            return prompt, []
         excerpts_block = (
             "RELEVANT DOCUMENT EXCERPTS (from this project's indexed files; "
             "use as evidence when answering):\n" + "\n\n".join(lines)
         )
-        return f"{excerpts_block}\n\n---\n\n{prompt}"
+        return f"{excerpts_block}\n\n---\n\n{prompt}", snippets
     except Exception:
         # Degrade silently — chat must never break because indexing has a hiccup.
-        return prompt
+        return prompt, []
 
 
 @router.post("/chat")
@@ -608,13 +614,21 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
             block_instances["chat"] = BLOCK_REGISTRY["chat"]()
 
         block = block_instances["chat"]
-        message = _with_project_memory(
+        with_memory = _with_project_memory(
             request.message, request.project_id, auth["user_id"]
         )
+        # The prefix project memory prepended (if any) is grounding evidence too:
+        # a rate carried in project memory must be able to ground a cost answer.
+        memory_ctx = (
+            with_memory[: -len(request.message)]
+            if with_memory.endswith(request.message)
+            else ""
+        )
         # Search the project's zvec index for snippets relevant to the user's
-        # question — uploaded files become reachable here.
-        message = await _with_doc_search(
-            message, request.project_id, auth["user_id"]
+        # question — uploaded files become reachable here. The raw snippets are
+        # kept as grounding evidence for the cost-grounding gate below.
+        message, doc_snippets = await _with_doc_search(
+            with_memory, request.project_id, auth["user_id"]
         )
         message = await _with_domain_hint(message)
         result = await block.execute(message, {
@@ -627,8 +641,27 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
         # remapped onto the active provider's model inside the chat block, so
         # echoing request.model misreported Ollama responses as DeepSeek.
         inner = result.get("result", {}) if isinstance(result, dict) else {}
+        answer = inner.get("text", "")
+        # Cost-grounding gate (§3.2 coverage): refuse an ungrounded cost/rate
+        # figure on this path exactly as the agent path does. Non-cost answers
+        # pass through untouched; the helper never raises. The retrieved doc
+        # snippets are classified per-chunk for rate-semantics; project-memory
+        # facts are treated as authoritative project evidence.
+        try:
+            from app.agents.runtime import (
+                gate_cost_answer,
+                format_excerpts_as_rag_context,
+            )
+            answer = gate_cost_answer(
+                answer,
+                rag_context=format_excerpts_as_rag_context(doc_snippets),
+                authoritative_texts=[memory_ctx] if memory_ctx.strip() else None,
+                user_message=request.message,
+            )
+        except Exception:
+            logger.exception("chat: cost-grounding gate failed; passing answer through")
         return {
-            "text": inner.get("text", ""),
+            "text": answer,
             "model": inner.get("model") or request.model,
             "provider": inner.get("provider"),
         }
@@ -642,7 +675,19 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
 
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
-    """Streaming chat endpoint."""
+    """Streaming chat endpoint.
+
+    COST-GROUNDING LIMITATION (§3.2): tokens are emitted to the client as the
+    LLM produces them, so there is no complete answer to inspect before the
+    first cost figure has already left the server — the cost-grounding gate
+    (which must see the WHOLE answer to decide) cannot be applied here without
+    defeating streaming. The gate IS enforced on the non-streaming ``/chat``
+    path above; the agent path solves this by disabling token streaming for
+    cost-shaped queries (see runtime ``_is_cost_shaped_query``) rather than
+    gating mid-stream. This simple ``/chat/stream`` block has no RAG/project
+    grounding wired in, so it is not a grounded cost-answer path; a client that
+    needs grounded, gated cost answers must use ``/chat`` (non-streaming) or the
+    agent path. Documented rather than gated to preserve streaming behaviour."""
     if "chat" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Chat block not available")
 
