@@ -8,10 +8,13 @@ WBS generation, and cost analysis.
 **Live:** [the-fork.onrender.com](https://the-fork.onrender.com)
 
 The deployed instance runs on Render (FastAPI web service + Postgres
-16 with pgvector). Chat routes directly to Ollama Cloud
-(`https://ollama.com`, model `glm-5.2:cloud`). ~142k indexed
-chunks across two corpus projects
-(`training_material` + `projects_folder`).
+16 with pgvector). Chat is provider-driven via `LLM_PROVIDER`: the
+cloud ladder is Kimi K2 primary (`KIMI_MODEL=kimi-k2.6`) with a Groq
+fallback (`GROQ_MODEL=llama-3.3-70b-versatile`) — Ollama is the
+on-prem provider only, not a cloud fallback. The canonical `chunks_v2`
+store held ~10,500 indexed chunks across 53 docs at last count
+(PILOT_READINESS.md, 2026-07-12); no "142k" figure is sourced anywhere
+in the repo.
 
 ---
 
@@ -65,11 +68,11 @@ schedules, reports) and gives the operator a chat surface that:
 └─────┬─────────────────────────┬──────────────────────────────────┘
       │                         │
       │  pgvector(256)          │  direct HTTPS
-      │  + tsvector GIN         │  to ollama.com
+      │  + tsvector GIN         │  to LLM provider
       ▼                         ▼
 ┌──────────────┐         ┌──────────────────┐
-│  Postgres 16 │         │  Ollama Cloud    │
-│  + pgvector  │         │  glm-5.2:cloud   │
+│  Postgres 16 │         │  Kimi K2 primary │
+│  + pgvector  │         │  Groq fallback   │
 │  on Render   │         │                  │
 └──────────────┘         └──────────────────┘
 ```
@@ -89,8 +92,11 @@ Retrieval:
   Fusion at the store layer, then re-ranked by cosine + identifier/GK
   signals and a hard project-scope filter. `app/core/rag/retriever.py`,
   `app/core/rag/vector_store.py`.
-- Embeddings: `BAAI/bge-small-en-v1.5`, 384-dim (`RAG_EMBEDDING_MODEL`).
-  The store table width follows the embedder's actual dimension.
+- Embeddings: shipped default `minishlab/potion-base-8M` (model2vec,
+  256-dim, `app/core/rag/embeddings.py`), overridable via
+  `RAG_EMBEDDING_MODEL` — prod currently overrides to
+  `BAAI/bge-small-en-v1.5`, 384-dim. The store table width follows the
+  embedder's actual dimension.
 - RAG injection gate: only the `project-assistant` agent gets
   per-turn RAG context (`app/core/rag/inject.py`). Confidence
   threshold 0.4, daily token budget 500K, fallback prefix on miss.
