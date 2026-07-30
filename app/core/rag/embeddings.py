@@ -64,6 +64,23 @@ def get_embedding_identity(model_name: Optional[str] = None) -> dict:
     return get_embedder(model_name=model_name).identity
 
 
+def embedder_is_loaded() -> bool:
+    """True if the process-cached embedder is already warm-loaded.
+
+    A NON-loading probe for health checks — reading the cache never triggers
+    the (slow, ~1-2s cold) model load, so /health stays cheap. ``False`` means
+    the embedder will lazy-load on first real use, not that it is broken.
+    """
+    return _EMBEDDER_CACHE is not None
+
+
+def loaded_embedder_identity() -> Optional[dict]:
+    """Identity of the already-loaded embedder, or None if not yet loaded.
+    Non-loading (health-check safe)."""
+    emb = _EMBEDDER_CACHE
+    return emb.identity if emb is not None else None
+
+
 def reset_embedder_cache() -> None:
     """Drop the cached embedder. Used by tests to swap fake/real cleanly."""
     global _EMBEDDER_CACHE

@@ -271,7 +271,7 @@ _RATE_LIMIT_EXEMPT_EXACT = {
     # the exempt list because Prometheus scrapers typically don't auth and
     # the counter set there is intentionally limited to non-sensitive
     # request/response totals.
-    "/", "/health", "/v1/health", "/metrics", "/docs", "/redoc", "/openapi.json",
+    "/", "/health", "/ready", "/v1/health", "/metrics", "/docs", "/redoc", "/openapi.json",
 }
 
 
