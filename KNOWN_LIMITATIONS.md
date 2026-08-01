@@ -57,21 +57,28 @@ relevant, it can still win.
 
 ---
 
-## 3. Revision currency: retrieval does not prefer the newer drawing revision
+## 3. Revision currency: implemented (always-on), with narrow residual limits
 
-There is no revision-number comparison in retrieval. The only mechanism that
-touches supersession is a **filename-keyword classifier**: a doc whose name
-matches `superseded|obsolete|archive|\bold\b|previous|deprecated` is tagged
-authority `historical`, the lowest-but-one precedence tier
-(`app/core/rag/layers.py:70`). That tag only affects ordering through the
-layered precedence bonus — which, per §2, is **off when `RAG_LAYERED` is off**.
+Retrieval DOES prefer the newer drawing revision, always-on and independent of
+`RAG_LAYERED` (PR #292, extended 2026-07-30). Two filename-derived mechanisms in
+`app/core/rag/revision.py`, applied by the retriever:
+- **Superseded down-rank** — a doc whose name matches
+  `superseded|obsolete|archive|\bold\b|previous|deprecated` takes a firm score
+  penalty (not deletion — it survives as a flagged last resort).
+- **Highest-revision preference** — among retrieved chunks sharing a drawing
+  number, a lower revision is suppressed when a strictly-higher, same-kind one
+  is also retrieved. `Rev 10` correctly outranks `Rev 9` (multi-digit), and
+  `Rev AA` outranks `Rev Z` (base-26). The model is also told which revision the
+  evidence is from.
 
-Consequences to understand:
-- Rev C of a drawing is not preferred over Rev B unless the older file's *name*
-  happens to contain a supersession keyword.
-- Two revisions with clean names are treated as equally current.
-- With the layered flag off (the shipped default), even the keyword down-weight
-  has no effect on ranking.
+Residual limits (all fail SAFE — they keep both revisions, never suppress the
+current one):
+- Numeric and letter revisions of the same sheet are left un-ordered (a mixed
+  `Rev 2` vs `Rev B` is not guessed).
+- A digit run longer than 3, or a revision marker not preceded by a boundary
+  (e.g. inside a run-together name), yields no revision signal.
+- Multi-character alphabetic revisions beyond two letters (`Rev AAA`) are not
+  ordered.
 
 ---
 
