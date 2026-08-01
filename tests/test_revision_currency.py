@@ -47,7 +47,12 @@ def test_drawing_number(name, expected):
     ("A-101_RevC.pdf", "C"),
     ("A-101_Rev2.pdf", "2"),
     ("A-101_R2.pdf", "2"),
-    ("plan.pdf", ""),               # no revision token
+    ("A-101-Rev10.pdf", "10"),        # multi-digit (the §5.2 follow-up)
+    ("A-101-Rev9.pdf", "9"),
+    ("A-101-RevAA.pdf", "AA"),        # multi-letter
+    ("STR2100 rev 2.pdf", "2"),       # sheet-code digits are NOT the revision
+    ("STR2100.pdf", ""),              # no revision marker -> no token
+    ("plan.pdf", ""),                 # no revision token
     ("", ""),
 ])
 def test_revision_token(name, expected):
@@ -63,6 +68,30 @@ def test_revision_rank_orders_within_kind_only():
     assert rev.revision_rank("2")[0] != rev.revision_rank("B")[0]
     # unparseable -> None
     assert rev.revision_rank("") is None
+
+
+def test_multi_digit_revision_ordering_the_hazard():
+    """The bug this fixes: Rev 10 is the CURRENT sheet and must outrank Rev 9.
+    The old single-char parser read '10' as '1', ranking it below '9' and
+    letting a stale revision suppress the current one."""
+    assert rev.revision_rank("10") > rev.revision_rank("9")
+    assert rev.revision_rank("11") > rev.revision_rank("2")
+
+
+def test_multi_letter_revision_supersedes_z():
+    # Standard drawing sequence: A < ... < Z < AA < AB.
+    assert rev.revision_rank("AA") > rev.revision_rank("Z")
+    assert rev.revision_rank("AB") > rev.revision_rank("AA")
+    # cross-kind still never ordered
+    assert rev.revision_rank("10")[0] != rev.revision_rank("AA")[0]
+
+
+def test_end_to_end_rev10_beats_rev9_by_filename():
+    """Full path: two chunks of the same sheet, filenames only."""
+    r10 = rev.revision_rank(rev.revision_token("A-101-Rev10.pdf"))
+    r9 = rev.revision_rank(rev.revision_token("A-101-Rev9.pdf"))
+    assert r10 is not None and r9 is not None
+    assert r10 > r9  # current (Rev10) preferred, not suppressed
 
 
 # ── retriever integration ────────────────────────────────────────────────────

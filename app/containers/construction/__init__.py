@@ -171,9 +171,12 @@ class ConstructionContainer(
         m = re.search(r'[A-Z]{1,3}[-_]?\d{3,6}', filename, re.IGNORECASE)
         return m.group(0).upper() if m else ""
     def _extract_revision(self, filename: str) -> str:
-        import re
-        m = re.search(r'[Rr][Ee]?[Vv]?\s*([A-Z0-9])', filename)
-        return m.group(1).upper() if m else ""
+        # Single source of truth with the retrieval revision-currency parser
+        # (app.core.rag.revision) so a filename yields the SAME revision at
+        # ingest and at retrieval — including multi-character revisions
+        # ('Rev 10' -> '10', not '1').
+        from app.core.rag.revision import revision_token
+        return revision_token(filename)
     def _calculate_confidence(self, result: Dict) -> Dict:
         """Measured extraction confidence (Roadmap V2 · Epic 1).
 
