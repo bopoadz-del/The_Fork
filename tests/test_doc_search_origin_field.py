@@ -17,12 +17,18 @@ CALLER actually receives.
 """
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from app.core import doc_index
+
+# pytest.ini sets `asyncio_mode = auto`, so an `async def` test is awaited by
+# pytest-asyncio on a loop it owns. An earlier revision drove the coroutine
+# with `asyncio.get_event_loop().run_until_complete(...)`, which passed
+# locally (a loop happened to exist) and failed on a clean CI runner with
+# "RuntimeError: There is no current event loop in thread 'MainThread'".
+# Await directly — never hand-roll a loop in this suite.
 
 
 def _chunk(doc_id, text, score, layer):
@@ -47,32 +53,30 @@ def planted(monkeypatch):
     return chunks
 
 
-def _search(pid="p1", q="concrete"):
-    return asyncio.get_event_loop().run_until_complete(
-        doc_index.search_project_documents(pid, q, top_k=5)
-    )
+async def _search(pid="p1", q="concrete"):
+    return await doc_index.search_project_documents(pid, q, top_k=5)
 
 
-def test_every_returned_row_carries_origin(planted):
+async def test_every_returned_row_carries_origin(planted):
     """The load-bearing assertion — on the RETURNED rows, not internals."""
-    rows = _search()
+    rows = await _search()
 
     assert rows, "planted chunks should produce results"
     for r in rows:
         assert "origin" in r, f"row is missing 'origin': {r}"
 
 
-def test_origin_reports_the_real_layer_per_document(planted):
-    rows = {r["document_id"]: r["origin"] for r in _search()}
+async def test_origin_reports_the_real_layer_per_document(planted):
+    rows = {r["document_id"]: r["origin"] for r in await _search()}
 
     assert rows["d_own"] == "own"
     assert rows["d_gk"] == "general_knowledge"
     assert rows["d_master"] == "master_corpus"
 
 
-def test_master_corpus_fallback_is_distinguishable_from_own(planted):
+async def test_master_corpus_fallback_is_distinguishable_from_own(planted):
     """The actual user-facing question: is this my document, or not mine?"""
-    rows = _search()
+    rows = await _search()
     mine = [r["filename"] for r in rows if r["origin"] == "own"]
     not_mine = [r["filename"] for r in rows if r["origin"] != "own"]
 
@@ -80,7 +84,7 @@ def test_master_corpus_fallback_is_distinguishable_from_own(planted):
     assert sorted(not_mine) == ["d_gk.pdf", "d_master.pdf"]
 
 
-def test_origin_defaults_to_own_when_the_chunk_has_no_layer(monkeypatch):
+async def test_origin_defaults_to_own_when_the_chunk_has_no_layer(monkeypatch):
     """A chunk from a path that never set `layer` must not read as a fallback.
 
     Defaulting the other way would mark a project's own documents as
@@ -95,6 +99,6 @@ def test_origin_defaults_to_own_when_the_chunk_has_no_layer(monkeypatch):
     monkeypatch.setattr(retr, "_doc_name_for_id", lambda d: "d1.pdf")
     monkeypatch.setattr(doc_index, "_load_index", lambda pid: None)
 
-    rows = _search()
+    rows = await _search()
 
     assert rows[0]["origin"] == "own"
