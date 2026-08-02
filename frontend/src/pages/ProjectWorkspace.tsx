@@ -4,7 +4,7 @@
  * DrivePanel definitions live here. The visual shell (3-column layout, panels,
  * chat bubbles/composer/sources) come from layout/, chat/, and documents/.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AppHeader from '../components/AppHeader'
 import { type Project } from './ProjectCard'
@@ -1265,6 +1265,24 @@ export default function ProjectWorkspace() {
   )
   const latestSources = latestAssistant?.sources ?? []
   const citedDocIds = latestSources.map((s) => s.doc_id)
+
+  // Sources the answer cited that this project does not own — Master-Corpus
+  // fallback hits. Deduplicated by doc_id (one document usually contributes
+  // several chunks, and the panel lists documents, not chunks). Feeds the
+  // DocumentGraph so a project with zero own-documents still shows what the
+  // answer was actually grounded in, instead of a bare "No documents yet"
+  // beside an answer citing three files.
+  const citedExternalDocs = useMemo(() => {
+    const owned = new Set(documents.map((d) => d.id))
+    const seen = new Set<string>()
+    const out: { id: string; original_name: string }[] = []
+    for (const s of latestSources) {
+      if (!s.doc_id || owned.has(s.doc_id) || seen.has(s.doc_id)) continue
+      seen.add(s.doc_id)
+      out.push({ id: s.doc_id, original_name: s.doc_name || s.doc_id })
+    }
+    return out
+  }, [latestSources, documents])
   void mode  // mode used inside left panel via DocumentsPanel/onClear hooks below
 
   // PR #104: DocumentsPanel is back, rendered as a slot inside LeftPanel
@@ -1467,6 +1485,7 @@ export default function ProjectWorkspace() {
                 doc_type: d.doc_type,
               }))}
               citedDocIds={citedDocIds}
+              citedExternal={citedExternalDocs}
             />
           }
         />
