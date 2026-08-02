@@ -1,0 +1,313 @@
+# Client-desk readiness verdict — 2026-08-02
+
+Scope of this pass: the items `PLATFORM_HEALTH_REPORT.md` lists under
+**"NOT COVERED BY THIS SWEEP (the honest boundary)"**, plus the open
+dependency alerts. That NOT-COVERED list is what "all aspects, not RAG
+only" actually means — it is the only definition of remaining work that
+was already written down and agreed, so it is the one used here.
+
+**Verdict: NOT 100%. Code-complete on everything code can close; five
+items are owner-gated and one could not be executed on this machine.**
+Each line below is either verified with a named artifact, or explicitly
+marked unverified with the reason. Nothing is claimed that was not run.
+
+---
+
+## 1. What this pass found and fixed
+
+Two live **false-signal** bugs — both found by executing NOT-COVERED
+items, both of the same family: a check that reports success without
+measuring the thing it claims to measure.
+
+### 1a. `pilot-preflight` graded a retired table (PR #299)
+
+Live prod before the fix:
+
+```
+chunks_embedding_type : vector(256)
+embedding_dim_ok      : True
+row_counts.chunks     : 0
+```
+
+`chunks` has been empty since the 2026-07-12 v2 migration; every write
+goes to `chunks_v2` at `vector(384)`. The operator readiness gate read
+the width off a **dead table** and compared it to a hardcoded
+`vector(256)`. It answered `True` while telling us nothing about the
+store that actually serves retrieval, and would have stayed green with
+`chunks_v2` missing, empty, or the wrong width.
+
+This is the same class already fixed once in `admin.py` for the corpus
+count — where reading `chunks` showed 0 chunks for every project and
+"invited a destructive re-index click". The preflight was left behind.
+
+Now reports the active table, its real width, the legacy width, and
+compares against the **loaded embedder's** dim. Cold embedder returns
+`null`, never a green boolean from an absent measurement.
+
+Three operator-facing docs were telling operators to verify against the
+retired table and were corrected: `docs/backup-and-recovery.md` (live
+runbook), `deploy/PILOT.md` (dated history — annotated SUPERSEDED, not
+rewritten), `README.md` architecture diagram.
+
+### 1b. Drive admin routes returned 500 for an API-key caller (PR #299)
+
+```
+GET /v1/admin/drive/scan -> 500 INTERNAL_ERROR
+KeyError: 'user_id'
+```
+
+`require_api_key` accepts two principal shapes and **normalises only
+one**. The JWT branch resolves a real user and includes `user_id`; the
+API-key branch returns the `auth_manager` key record — `user`/`tier`/
+`role`, no `user_id`. `CEREBRUM_MASTER_KEY` is minted with
+`role: "admin"`, so a master-key caller passed `_require_admin` and then
+died indexing `auth["user_id"]`.
+
+Effect: the master key **could not use the admin Drive workflow at all** —
+neither `drive/scan` nor `approve-from-drive` (which also used
+`auth["user_id"]` as the owner of the project it creates).
+
+The existing tests missed it because their fixture overrides
+`require_api_key` with a dict that *has* `user_id` — a fixture more
+generous than production. The new tests use the exact dict
+`auth_manager` mints for the master key.
+
+### 1c. The class behind 1b was triaged in full — it is closed
+
+79 `auth["user_id"]` hard-index sites exist. An AST triage
+(`scratchpad/auth_triage.py`) mapped every one to its route's auth
+dependency:
+
+| Dependency | Sites | Exposed? |
+|---|---|---|
+| `require_api_key` | 4 (all Drive admin) | **was exposed — fixed in #299** |
+| `require_user` | 75 | No — safe by construction |
+| helper / closure | 5 (`agents.py`) | No — callers all use `require_user` |
+
+`require_user` is safe for a better reason than "JWT-only": it accepts
+API keys too, but **normalises** them to the singleton system user, so
+`user_id` is always present. `require_api_key` does not normalise. That
+asymmetry is the root cause and is worth closing at the dependency
+level as hardening — see §5.
+
+**Exposed sites after #299: 0.**
+
+---
+
+## 2. Verified green (with artifacts)
+
+| Aspect | Result | Evidence |
+|---|---|---|
+| **Golden set — clean full sweep** | **28/29 PASS — gate MET** (bar >=27/29). Best recorded result; the previous best was 27/29. | `golden_set_results.jsonl`, `GOLDEN_SET_REPORT.md` |
+| Authenticated route sweep | 59 GET operations, 41 OK, **1** 5xx (fixed above) | `review_pack/sweep/route_sweep_20260802.{json,txt}` |
+| Document-register golden question | **PASS live** after PR #297 deploy | `golden_set_gate.py --only pilot_document_metadata` |
+| Live vector store | `chunks_v2`, `vector(384)`, non-empty; legacy `chunks` = 0 rows as expected | `/v1/admin/debug/pilot-preflight` |
+| Live service health | 200 throughout the sweep | route sweep log |
+| Deploy currency | `dep-d9naa9m…` live at `d0ade99` (includes #297) | Render deploys API |
+
+**Route-sweep boundary, stated plainly:** 79 **mutating** operations
+(POST/PUT/PATCH/DELETE) were deliberately **not** probed. This ran
+against the live client service, and a mutating sweep on a live corpus
+is the cascade-delete class this repo has already survived once. The
+artifact records the unprobed list rather than implying full coverage.
+
+---
+
+## 3. Dependency alerts — measured, not asserted
+
+Baseline at session start: **15 alerts (7 high)**.
+
+Merged: #260 react-router 7.18.1, #271 postcss 8.5.23, #293
+brace-expansion 5.0.9. #299 carries pyasn1 0.6.3 -> 0.6.4 (three HIGHs).
+
+**Expected residual after #299 merges: exactly one HIGH, open.** Verify
+with `gh api repos/bopoadz-del/The_Fork/dependabot/alerts` filtered to
+`state=="open"` and severity `high`.
+
+| Alert | Disposition |
+|---|---|
+| react-router `>=7.12.0,<8.3.0` (HIGH, GHSA-qwww-vcr4-c8h2) | **OPEN — assessed unreachable, NOT cleared.** The advisory is an *RSC-mode* CSRF bypass. `frontend/` is a client-side Vite SPA using `BrowserRouter`; zero RSC markers, no `use server`, no react-server imports, no server actions. Clearing it needs the v8 **major** migration, which is not justified for an unreachable path on a live client app. The alerts API will keep returning it — that is expected, not an oversight. |
+| pytest `<9.0.3` (MEDIUM) | **Deferred — the upgrade experiment was INCONCLUSIVE, see §4b.** An earlier reading of this pass claimed pytest 9 caused 27 failures and that the pin was therefore load-bearing. That was **wrong** and is retracted: the identical failure set occurs under the pinned pytest 8, and it is local environment contamination, not a pytest-version effect. There is no evidence either way about pytest 9. What remains true and sufficient for deferral: pytest is installed in the production image (the Dockerfile installs `requirements.txt`) but is never invoked there, and the advisory is tmpdir handling, which requires *running* pytest. The pin's stated rationale (pytest-asyncio 0.x coupling) is documented in `requirements.in` but was NOT validated here. §5 has the structural fix that removes the exposure entirely. |
+| torch `<=2.12.1` (LOW ×3) | **Unreachable.** `torch.jit.script` has zero call sites in `app/` or `scripts/`. |
+| @babel/core (LOW) | Dev-time build tool only. |
+
+---
+
+## 4. Test-suite honesty (KNOWN_LIMITATIONS §8)
+
+The "17 skip/xfail files" were enumerated. By their skip *reasons* they
+are environment-gated rather than hidden failures: Postgres-only cascade
+rules, Node/tsc not installed, POSIX-only resource limits, missing
+optional IFC/XER fixtures, and flag-off no-op guards.
+
+**Stated precisely, because KNOWN_LIMITATIONS §8 is exactly a warning
+against overclaiming here:** they were classified by reading their skip
+conditions. The gated paths were **not executed** — no environment was
+stood up (Postgres, Node, POSIX, the missing fixtures) to confirm they
+would pass if un-gated. The full run reports **31 skipped**; that set was
+not individually enumerated against the reasons. So the honest claim is
+"no skip is masking a *known* failure", **not** "the skipped paths are
+verified working". Closing that properly needs a run in an environment
+where they actually execute.
+
+Two `xfail` markers were the real question — both said "GK crowds
+project docs out of top-5". Re-checked this pass; **both markers are
+correct and both were kept:**
+
+- `test_doc_index.py::test_search_uses_hybrid_retriever` — genuinely
+  xfails.
+- `test_doc_search_api.py::test_search_returns_ranked_results` —
+  XPASSes **in isolation**, which briefly looked like a stale marker.
+  It is not. Under full-suite order it genuinely fails:
+
+  ```
+  assert 'concrete.txt' in ['', 'construction_kb.md', '', '', '']
+  ```
+
+  — the GK note crowds the project's own upload out of the top-5,
+  exactly what the marker describes. The marker removal was tried and
+  **reverted**. Isolation runs are not sufficient evidence for removing
+  a `strict=False` xfail; full-suite order is.
+
+## 4b. The local dev suite is NOT trustworthy without a clean DATA_DIR
+
+Worth writing down, because it produced a wrong conclusion in this very
+pass before being caught.
+
+A full local run reports **28 failures** across `test_gk_lexical_fold`,
+`test_gk_ranking_knobs`, `test_rag_injection`, `test_backfill_layers` —
+under **both** pytest 8 and pytest 9. Every one is the same error:
+
+```
+RuntimeError: Embedding identity mismatch in namespace 'v2':
+expected {'model': 'fake', 'dim': 256}, found {'model': 'minishlab/potion-base-8M', 'dim': 256}
+```
+
+The local `data/` tree carries a namespace stamped by a real-embedder
+run, and the vector store's mixed-model guard (a *correct* safety
+feature) fires against tests that use the `fake` embedder.
+
+Proof it is environmental, not a code regression:
+
+```
+$ DATA_DIR=$(mktemp -d) DATABASE_URL="" pytest tests/test_gk_lexical_fold.py tests/test_gk_ranking_knobs.py
+25 passed in 10.01s
+```
+
+CI is green because it runs from a clean checkout. **CI is the source of
+truth; a local full-suite run is not, unless DATA_DIR is clean.** Anyone
+who runs the suite locally and sees ~28 red RAG tests should check this
+before believing the platform is broken — and specifically must not
+conclude anything about a dependency upgrade from it, which is the
+mistake §3's pytest row records.
+
+---
+
+## 4a. Project isolation — verified BY DESIGN, with a tenancy caveat
+
+Probed as part of the retrieval-isolation trace. A project owning **zero
+documents** (`76d7596a`, "Triage QA Empty Project") returns 5 real client
+documents for `concrete curing Portland cement` — Diriyah Gate II
+specification PDFs and MOS cast-insitu concrete method statements.
+
+Chased to ground rather than assumed:
+
+- Not the master-corpus **alias** path — `76d7596a` is not an alias, so
+  `doc_search` searches its own id.
+- Not the **general-knowledge** layer — `curated_kb` returns entirely
+  different documents for the same query (`construction_kb.md`, FIDIC
+  notes, EW-2 workbooks). The Diriyah specs are not in GK.
+- It is `retrieve_with_filter` **STEP 0b**: an explicit *"empty/thin
+  detection for the labeled Master-Corpus fallback"*. A project whose
+  best own chunk cannot clear `RAG_CONFIDENCE_THRESHOLD` deliberately
+  falls back to the Master Corpus rather than answering with nothing.
+
+**So this is intended behaviour, not a leak.** For the current
+single-client desk it is correct and useful.
+
+**The caveat that must be said out loud:** there is therefore **no hard
+per-project document isolation** in this configuration. Any project that
+is empty or thin will surface Master-Corpus content. For one client that
+is the point. For a **multi-client / multi-tenant** deployment it means
+one client's documents can appear inside another client's project, and
+that is what the dormant `RAG_LAYERED` work exists to address. Do not
+put two different clients on this instance as configured.
+
+Secondary note: the chat path discloses the fallback, but the raw
+`/v1/projects/{id}/documents/search` payload carries no corpus-origin
+field on each result — a caller of that endpoint cannot tell an own-doc
+hit from a Master-Corpus fallback hit. Worth adding.
+
+---
+
+## 5. Recommended hardening (found this pass, not shipped)
+
+Deliberately not done tonight — each changes shared behaviour on a live
+client system and deserves its own verified deploy:
+
+1. **Normalise `require_api_key`.** It should return a principal with the
+   same guaranteed keys as `require_user`. Today the asymmetry means any
+   *future* `auth["user_id"]` on an api-key route is a latent 500.
+2. **Stop shipping the test framework in the production image.** Moving
+   test deps out of `requirements.txt` removes the pytest alert from the
+   prod surface entirely and shrinks the image, without the 27-failure
+   pytest-9 migration.
+3. **torch version drift.** The Dockerfile pins `torch==2.5.1` while
+   `requirements-cv/ml/rag.txt` pin `2.12.0` — the image and the lock
+   files disagree about the ML stack. Harmless today; a trap later.
+4. **`/openapi.json` is publicly readable on prod** (200 unauthenticated).
+   It discloses the full API surface. Consider gating it for a
+   client-desk deployment.
+
+---
+
+## 6. Could NOT be verified on this machine
+
+- **On-prem fork-in-a-box boot + zero-egress probe.** `deploy/onprem/`
+  is packaged but has still never been built or booted. **Blocked, not
+  deferred:** this machine has no container runtime — `docker`, `podman`
+  and `nerdctl` are all absent, and `wsl` fails with
+  `Class not registered`. Needs an operator with Docker installed. The
+  sovereignty claims in `SOVEREIGNTY_REPORT.md` therefore remain
+  **code-read only, never executed**.
+- **Integration path traces as discrete saved evidence** (Drive OAuth
+  browse+import, induced-failure error bubble, provider-fallback-logged,
+  grounding-gate planted cases). Several require mutating a live client
+  corpus; not run this pass. Still open from the previous report.
+- **Full user-journey screenshots** to `review_pack/sweep/final/`. Not
+  produced.
+
+---
+
+## 7. Owner-gated — code cannot close these
+
+1. **Fernet `DATA_ENCRYPTION_KEY` offline backup.** Copy from Render ->
+   Environment into an offline store. **Never rotate** — rotation
+   orphans the encrypted corpus.
+2. **Rotate the Render API key** that was pasted into chat.
+3. **OpenAI env vars** still set but unused — safe to unset.
+4. **Repo secrets for `eval-battery.yml`** (`FORK_API_KEY` /
+   `FORK_BASE_URL`) if scheduled CI batteries are wanted.
+5. **`dd-2023-118 vol 3` chunk backfill** — needs the DB allowlist plus
+   the direct-DB re-encode path (heavy scanned PDFs must not go through
+   the 512Mi web box).
+
+---
+
+## 8. Bottom line
+
+The platform is **code-complete for client-desk deployment** on
+everything this pass could reach. The golden gate is **28/29 — MET, the
+best result recorded**, measured on a clean full sweep against live prod
+rather than inferred. Two real live defects were found and fixed that
+would each have produced a false "all good" reading in front of a
+client, and one of this pass's own conclusions (the pytest-9 claim) was
+caught and retracted rather than shipped.
+
+It is **not 100%**, and no honest report can say so while:
+
+- one HIGH alert stays open (assessed unreachable, not cleared),
+- the on-prem sovereignty package has never actually been booted,
+- and five items require the operator's own hands.
+
+Those are enumerated above with the exact action for each.

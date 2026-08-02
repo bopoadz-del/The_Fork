@@ -1,0 +1,863 @@
+{
+  "base": "https://the-fork.onrender.com",
+  "project_id_used": "dar_al_arkan_master",
+  "summary": {
+    "OK": 41,
+    "SKIPPED-NEEDS-PARAM": 10,
+    "ERROR-ReadTimeout": 1,
+    "422": 4,
+    "FAIL-5XX": 1,
+    "409": 1,
+    "400": 1
+  },
+  "probed": [
+    {
+      "path": "/",
+      "probed": "/",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 841
+    },
+    {
+      "path": "/api",
+      "probed": "/api",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 207
+    },
+    {
+      "path": "/blocks",
+      "probed": "/blocks",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 26165
+    },
+    {
+      "path": "/blocks/{block_name}",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/health",
+      "probed": "/health",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 290
+    },
+    {
+      "path": "/mcp/info",
+      "probed": "/mcp/info",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 697
+    },
+    {
+      "path": "/mcp/sse",
+      "probed": "/mcp/sse",
+      "method": "GET",
+      "status": null,
+      "verdict": "ERROR-ReadTimeout"
+    },
+    {
+      "path": "/metrics",
+      "probed": "/metrics",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 2558
+    },
+    {
+      "path": "/ready",
+      "probed": "/ready",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 303
+    },
+    {
+      "path": "/stats",
+      "probed": "/stats",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 651
+    },
+    {
+      "path": "/v1/admin/corpus/collections",
+      "probed": "/v1/admin/corpus/collections",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 933
+    },
+    {
+      "path": "/v1/admin/debug/doc-extract",
+      "probed": "/v1/admin/debug/doc-extract",
+      "method": "GET",
+      "status": 422,
+      "verdict": "422",
+      "len": 304
+    },
+    {
+      "path": "/v1/admin/debug/document-download",
+      "probed": "/v1/admin/debug/document-download",
+      "method": "GET",
+      "status": 422,
+      "verdict": "422",
+      "len": 304
+    },
+    {
+      "path": "/v1/admin/debug/pilot-preflight",
+      "probed": "/v1/admin/debug/pilot-preflight",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 521
+    },
+    {
+      "path": "/v1/admin/drive/scan",
+      "probed": "/v1/admin/drive/scan",
+      "method": "GET",
+      "status": 500,
+      "verdict": "FAIL-5XX",
+      "len": 102
+    },
+    {
+      "path": "/v1/admin/projects/archived",
+      "probed": "/v1/admin/projects/archived",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 2167
+    },
+    {
+      "path": "/v1/admin/training/download",
+      "probed": "/v1/admin/training/download",
+      "method": "GET",
+      "status": 422,
+      "verdict": "422",
+      "len": 217
+    },
+    {
+      "path": "/v1/admin/training/job/{job_id}",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/v1/admin/training/list",
+      "probed": "/v1/admin/training/list",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 724
+    },
+    {
+      "path": "/v1/agents",
+      "probed": "/v1/agents",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 4554
+    },
+    {
+      "path": "/v1/agents/conversations/{conversation_id}/messages",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/v1/agents/{name}",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/v1/auth/keys",
+      "probed": "/v1/auth/keys",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 149
+    },
+    {
+      "path": "/v1/auth/usage",
+      "probed": "/v1/auth/usage",
+      "method": "GET",
+      "status": 422,
+      "verdict": "422",
+      "len": 132
+    },
+    {
+      "path": "/v1/blocks",
+      "probed": "/v1/blocks",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 26165
+    },
+    {
+      "path": "/v1/blocks/{block_name}",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/v1/document-types",
+      "probed": "/v1/document-types",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 2179
+    },
+    {
+      "path": "/v1/drive/callback",
+      "probed": "/v1/drive/callback",
+      "method": "GET",
+      "status": 302,
+      "verdict": "OK",
+      "len": 0
+    },
+    {
+      "path": "/v1/drive/connect",
+      "probed": "/v1/drive/connect",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 470
+    },
+    {
+      "path": "/v1/drive/files",
+      "probed": "/v1/drive/files",
+      "method": "GET",
+      "status": 409,
+      "verdict": "409",
+      "len": 114
+    },
+    {
+      "path": "/v1/drive/status",
+      "probed": "/v1/drive/status",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 50
+    },
+    {
+      "path": "/v1/governance",
+      "probed": "/v1/governance",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 142
+    },
+    {
+      "path": "/v1/health",
+      "probed": "/v1/health",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 398
+    },
+    {
+      "path": "/v1/hydration/history",
+      "probed": "/v1/hydration/history",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 7706
+    },
+    {
+      "path": "/v1/hydration/latest",
+      "probed": "/v1/hydration/latest",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 332
+    },
+    {
+      "path": "/v1/leaderboard",
+      "probed": "/v1/leaderboard",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 1254
+    },
+    {
+      "path": "/v1/memory/stats",
+      "probed": "/v1/memory/stats",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 103
+    },
+    {
+      "path": "/v1/metrics",
+      "probed": "/v1/metrics",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 79
+    },
+    {
+      "path": "/v1/predict",
+      "probed": "/v1/predict",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 106
+    },
+    {
+      "path": "/v1/projects",
+      "probed": "/v1/projects",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 1838245
+    },
+    {
+      "path": "/v1/projects/{project_id}",
+      "probed": "/v1/projects/dar_al_arkan_master",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 66444
+    },
+    {
+      "path": "/v1/projects/{project_id}/audit",
+      "probed": "/v1/projects/dar_al_arkan_master/audit",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 23209
+    },
+    {
+      "path": "/v1/projects/{project_id}/connectors",
+      "probed": "/v1/projects/dar_al_arkan_master/connectors",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 160
+    },
+    {
+      "path": "/v1/projects/{project_id}/conversations",
+      "probed": "/v1/projects/dar_al_arkan_master/conversations",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 11335
+    },
+    {
+      "path": "/v1/projects/{project_id}/documents",
+      "probed": "/v1/projects/dar_al_arkan_master/documents",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 64290
+    },
+    {
+      "path": "/v1/projects/{project_id}/documents/search",
+      "probed": "/v1/projects/dar_al_arkan_master/documents/search",
+      "method": "GET",
+      "status": 400,
+      "verdict": "400",
+      "len": 131
+    },
+    {
+      "path": "/v1/projects/{project_id}/documents/{document_id}/preview",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/v1/projects/{project_id}/documents/{document_id}/preview/raw",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/v1/projects/{project_id}/drive/index-folder/job/{job_id}",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/v1/projects/{project_id}/memory",
+      "probed": "/v1/projects/dar_al_arkan_master/memory",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 57
+    },
+    {
+      "path": "/v1/rag/gk-status",
+      "probed": "/v1/rag/gk-status",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 5048
+    },
+    {
+      "path": "/v1/recommend",
+      "probed": "/v1/recommend",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 133
+    },
+    {
+      "path": "/v1/system/health",
+      "probed": "/v1/system/health",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 1599
+    },
+    {
+      "path": "/v1/usage",
+      "probed": "/v1/usage",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 446
+    },
+    {
+      "path": "/v1/usage/today",
+      "probed": "/v1/usage/today",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 51
+    },
+    {
+      "path": "/v1/users/me",
+      "probed": "/v1/users/me",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 82
+    },
+    {
+      "path": "/v1/workflows",
+      "probed": "/v1/workflows",
+      "method": "GET",
+      "status": 200,
+      "verdict": "OK",
+      "len": 16
+    },
+    {
+      "path": "/v1/workflows/{workflow_id}",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    },
+    {
+      "path": "/{full_path}",
+      "method": "GET",
+      "status": null,
+      "verdict": "SKIPPED-NEEDS-PARAM"
+    }
+  ],
+  "not_probed_mutating": [
+    {
+      "path": "/chain",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/chat",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/chat/stream",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/execute",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/ingest",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/ingest-via-block",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/upload",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/corpus/bulk-insert",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/corpus/delete-docs",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/corpus/reconcile",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/debug/doc-reindex",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/debug/migrate-sqlite",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/debug/project-reindex",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/debug/sentry-smoke",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/drive/download-proof",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/drive/ingest-proof",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/projects/approve-from-drive",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/projects/approve-from-drive/_bg",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/projects/{project_id}/approve",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/projects/{project_id}/purge",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/projects/{project_id}/restore",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/admin/training/generate-scenarios",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/agents/{name}/chat",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/agents/{name}/chat/stream",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/auth/check",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/auth/keys",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/auth/keys/revoke",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/auth/keys/rotate",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/auth/keys/{api_key}",
+      "method": "DELETE",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/auth/validate",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/chain",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/chat",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/chat/analyze-photo",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/chat/stream",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/document-types",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/document-types/classify",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/document-types/{name}",
+      "method": "DELETE",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/drive/disconnect",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/execute",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/feedback/route",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/governance/purge",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/hydration/run",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/memory/{action}",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/metrics/record",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/project/ask",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/from-drive",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}",
+      "method": "PATCH",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}",
+      "method": "DELETE",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/connectors/aconex",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/conversations/{conversation_id}/clear",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/conversations/{conversation_id}/export",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/documents",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/documents/{document_id}",
+      "method": "DELETE",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/documents/{document_id}/redlines",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/drive/import",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/drive/index-folder",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/export/cost-boq",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/export/cost-schedule",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/export/evm",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/export/schedule",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/export/schedule-from-brief",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/export/schedule-from-document",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/memory",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/memory/{key}",
+      "method": "DELETE",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/price-boq",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/projects/{project_id}/progress",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/rag/search",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/schedule/cpm",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/schedule/export",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/schedule/fasttrack",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/schedule/generate",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/schedule/manpower",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/upload",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/users/login",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/users/register",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/workflows",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/workflows/{workflow_id}",
+      "method": "DELETE",
+      "reason": "mutating \u2014 not probed on live prod"
+    },
+    {
+      "path": "/v1/workflows/{workflow_id}/run",
+      "method": "POST",
+      "reason": "mutating \u2014 not probed on live prod"
+    }
+  ]
+}
