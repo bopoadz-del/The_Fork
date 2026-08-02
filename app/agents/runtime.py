@@ -2835,6 +2835,7 @@ class Agent:
             conversation_id=conversation_id,
             user_id=user_id,
             agent_name=self.name,
+            history=effective_history,
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
             _apply_rag_context(messages, _rag_sys_msg)
@@ -3318,6 +3319,7 @@ class Agent:
             conversation_id=conversation_id,
             user_id=user_id,
             agent_name=self.name,
+            history=effective_history,
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
             _apply_rag_context(messages, _rag_sys_msg)
