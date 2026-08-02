@@ -15,6 +15,7 @@ from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import Chunk, get_store
 from app.core.rag import layers
 from app.core.rag import revision as _revision
+from app.core.rag import reranker as _reranker
 
 import os
 import re
@@ -779,6 +780,15 @@ def retrieve_with_filter(
     # H3: GK top-K cap — skipping (not truncating) excess GK chunks lets the
     # next-best project chunks flow into the freed slots; when the pool has
     # no project chunks left the result simply comes back shorter.
+    #
+    # Cross-encoder rerank (RAG_RERANKER, default OFF): collect a DEEPER
+    # candidate pool through the very same gates below, then let the
+    # cross-encoder pick the best k from it. Flag off -> target == k and the
+    # loop is byte-identical to before. The gates run FIRST either way, so a
+    # noise-filtered, revision-suppressed, or GK-capped chunk can never be
+    # resurrected by a good rerank score.
+    rerank_on = _reranker.enabled()
+    target = _reranker.candidate_depth(k) if rerank_on else k
     kept: List[Chunk] = []
     noise_dropped = 0
     revision_suppressed = 0
@@ -802,8 +812,14 @@ def retrieve_with_filter(
                 continue
             gk_kept += 1
         kept.append(c)
-        if len(kept) == k:
+        if len(kept) == target:
             break
+
+    # Second-stage rerank: reorder the survivors by cross-encoder relevance
+    # and cut to k. Degrades to kept[:k] (i.e. today's exact result) on any
+    # model/scoring failure — see reranker.rerank.
+    if rerank_on and len(kept) > k:
+        kept = _reranker.rerank(query, kept, k)
 
     # Tag each returned chunk with its retrieval layer so the chat runtime can
     # disclose a Master-Corpus fallback (STEP 0b). "own" is the active project;

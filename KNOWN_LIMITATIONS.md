@@ -32,10 +32,30 @@ sat at ~41% (below the 50% bar the team set), and end-to-end feature routing
 passed ~23/54.** These two numbers measure different things (retrieval recall
 vs. orchestrator feature pass) and the repo does not publish a single reconciled
 "feature-matrix %"; treat ~41% as the floor to anchor on, not a precise
-composite. An embedder upgrade is on the pre-pilot list specifically to move
-this number. The corpus and provider ladder have both changed since this sweep
-(see §note on staleness below), so these figures are the best available, not
-freshly re-run.
+composite.
+
+**2026-08-02 re-measurement and diagnosis** (full record:
+`docs/rag-reranker.md`; artifacts in `data/learning/rag_audit/`): the 41% was
+re-measured LIVE on the current BGE-384 corpus — it is current, not stale.
+Two remedies were then measured and ruled out with data:
+
+- **Re-embedding is a dead lever.** The potion-256 -> bge-small-384 migration
+  already happened (2026-07-12) and left recall@5 at ~41%. The "embedder
+  upgrade" note above is therefore SPENT — do not plan another corpus
+  re-embed to move this number.
+- **Off-the-shelf cross-encoder reranking measured NEGATIVE.** Reranking live
+  top-50 with ms-marco-MiniLM dropped doc-recall@5 from 47% to 43% (n=60).
+  The flag-gated hook ships DORMANT (`RAG_RERANKER`, default off); do not
+  enable it with the default model.
+
+What the floor actually decomposes into (never-found@50, n=60): **~15% of
+ground-truth docs no longer exist in the live corpus** (the stalled 2026-07-12
+backfill / June-corpus drift — no retrieval change can answer these; this is
+missing client data and the highest-leverage fix), a vocabulary-mismatch slice
+(chunks present, questions never reach them), and a near-duplicate
+drawing-sheet slice (hundreds of sheets share title-block text; needs
+metadata-aware retrieval, not ranking). Priority order and evidence:
+`docs/rag-reranker.md`.
 
 ---
 
