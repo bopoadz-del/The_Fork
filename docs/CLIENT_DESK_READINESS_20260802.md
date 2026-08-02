@@ -158,6 +158,43 @@ severity; recorded rather than papered over.
 
 ---
 
+## 4a. Project isolation — verified BY DESIGN, with a tenancy caveat
+
+Probed as part of the retrieval-isolation trace. A project owning **zero
+documents** (`76d7596a`, "Triage QA Empty Project") returns 5 real client
+documents for `concrete curing Portland cement` — Diriyah Gate II
+specification PDFs and MOS cast-insitu concrete method statements.
+
+Chased to ground rather than assumed:
+
+- Not the master-corpus **alias** path — `76d7596a` is not an alias, so
+  `doc_search` searches its own id.
+- Not the **general-knowledge** layer — `curated_kb` returns entirely
+  different documents for the same query (`construction_kb.md`, FIDIC
+  notes, EW-2 workbooks). The Diriyah specs are not in GK.
+- It is `retrieve_with_filter` **STEP 0b**: an explicit *"empty/thin
+  detection for the labeled Master-Corpus fallback"*. A project whose
+  best own chunk cannot clear `RAG_CONFIDENCE_THRESHOLD` deliberately
+  falls back to the Master Corpus rather than answering with nothing.
+
+**So this is intended behaviour, not a leak.** For the current
+single-client desk it is correct and useful.
+
+**The caveat that must be said out loud:** there is therefore **no hard
+per-project document isolation** in this configuration. Any project that
+is empty or thin will surface Master-Corpus content. For one client that
+is the point. For a **multi-client / multi-tenant** deployment it means
+one client's documents can appear inside another client's project, and
+that is what the dormant `RAG_LAYERED` work exists to address. Do not
+put two different clients on this instance as configured.
+
+Secondary note: the chat path discloses the fallback, but the raw
+`/v1/projects/{id}/documents/search` payload carries no corpus-origin
+field on each result — a caller of that endpoint cannot tell an own-doc
+hit from a Master-Corpus fallback hit. Worth adding.
+
+---
+
 ## 5. Recommended hardening (found this pass, not shipped)
 
 Deliberately not done tonight — each changes shared behaviour on a live
