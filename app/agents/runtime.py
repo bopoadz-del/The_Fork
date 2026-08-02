@@ -290,6 +290,63 @@ _FAILED_TURN_MESSAGE = (
 )
 
 
+_TOOL_RESULT_MAX_CHARS = 8000
+
+
+def _tool_result_content(payload: Dict[str, Any]) -> str:
+    """Serialize a tool result for the `tool` message, truncating SAFELY.
+
+    NEVER slice serialized JSON. `json.dumps` emits ASCII with \\uXXXX
+    escapes, so a raw ``[:8000]`` can cut mid-escape or mid-string and hand
+    the provider malformed JSON. Moonshot rejects that outright:
+
+        HTTP 400 {"message": "Invalid request: tokenization failed",
+                  "type": "invalid_request_error"}
+
+    Reproduced 2026-08-03 by the feature sweep on BOTH `document_metadata`
+    and `parse_primavera_schedule` — the two actions whose tool results are
+    large. The corpus makes it easy to hit: Diriyah filenames contain en
+    dashes, which serialize to `\\u2013`, and the cut landed inside one
+    ("Unterminated string starting at ... char 7999").
+
+    A failed turn used to vanish silently, so this surfaced as a question
+    with no answer — see _persist_failed_turn.
+
+    Over-long results become a VALID object carrying a truncated preview:
+    the preview is a JSON *string value*, so json.dumps escapes it properly
+    and the payload always parses.
+    """
+    text = json.dumps(payload, default=str)
+    if len(text) <= _TOOL_RESULT_MAX_CHARS:
+        return text
+
+    def _envelope(keep: int) -> str:
+        return json.dumps(
+            {
+                "truncated": True,
+                "note": (
+                    f"Tool result exceeded {_TOOL_RESULT_MAX_CHARS} characters "
+                    "and was truncated. Narrow the request (filter, or ask for "
+                    "fewer items) to see the rest."
+                ),
+                "preview": text[:keep],
+            },
+            default=str,
+        )
+
+    # Embedding the preview as a JSON string RE-escapes it — every `"` becomes
+    # `\"` and every `\` becomes `\\` — so escape-heavy content (exactly what
+    # this guards) can nearly double. A fixed budget therefore overshoots the
+    # cap; shrink until the ENVELOPE fits, measuring the real thing.
+    keep = _TOOL_RESULT_MAX_CHARS
+    out = _envelope(keep)
+    while len(out) > _TOOL_RESULT_MAX_CHARS and keep > 0:
+        overshoot = len(out) - _TOOL_RESULT_MAX_CHARS
+        keep = max(0, keep - max(overshoot, 32))
+        out = _envelope(keep)
+    return out
+
+
 def _persist_failed_turn(conversation_id: Optional[str]) -> None:
     """Record that a turn died, so reloaded history is not silently missing it.
 
@@ -3064,11 +3121,10 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": json.dumps(
+                    "content": _tool_result_content(
                         {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
-                        default=str,
-                    )[:8000],
+                    ),
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled
@@ -3696,11 +3752,10 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": json.dumps(
+                    "content": _tool_result_content(
                         {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
-                        default=str,
-                    )[:8000],
+                    ),
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled.
