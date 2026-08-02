@@ -135,10 +135,20 @@ with `gh api repos/bopoadz-del/The_Fork/dependabot/alerts` filtered to
 
 ## 4. Test-suite honesty (KNOWN_LIMITATIONS §8)
 
-The "17 skip/xfail files" were enumerated. Almost all are legitimately
-environment-gated and are *not* hidden failures: Postgres-only cascade
+The "17 skip/xfail files" were enumerated. By their skip *reasons* they
+are environment-gated rather than hidden failures: Postgres-only cascade
 rules, Node/tsc not installed, POSIX-only resource limits, missing
 optional IFC/XER fixtures, and flag-off no-op guards.
+
+**Stated precisely, because KNOWN_LIMITATIONS §8 is exactly a warning
+against overclaiming here:** they were classified by reading their skip
+conditions. The gated paths were **not executed** — no environment was
+stood up (Postgres, Node, POSIX, the missing fixtures) to confirm they
+would pass if un-gated. The full run reports **31 skipped**; that set was
+not individually enumerated against the reasons. So the honest claim is
+"no skip is masking a *known* failure", **not** "the skipped paths are
+verified working". Closing that properly needs a run in an environment
+where they actually execute.
 
 Two `xfail` markers were the real question — both said "GK crowds
 project docs out of top-5". Re-checked this pass; **both markers are
