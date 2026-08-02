@@ -173,7 +173,46 @@ def _apply_rag_context(messages: list, rag_sys_msg: dict) -> bool:
         return False
     if messages and messages[-1].get("role") == "user":
         question = messages[-1].get("content", "")
-        if _is_generative_request(question):
+        if _looks_like_self_contained_calculation(question):
+            # ARITHMETIC, not a lookup. Every input is IN the question, so the
+            # strict-grounding directive below ("answer using ONLY the
+            # reference context ... if it does not contain the answer, say you
+            # don't have it") actively forbids the right answer.
+            #
+            # Live 2026-08-03, verbatim:
+            #   "Calculate the concrete volume for a raft 25m x 18m x 1.2m
+            #    thick and the number of 6m3 truck loads"
+            #   -> "I cannot find that specific information in the provided
+            #       reference context ... they do not contain a raft measuring
+            #       25 m x 18 m x 1.2 m thick"
+            #
+            # 25 x 18 x 1.2 = 540 m3; 540 / 6 = 90 loads. The model was not
+            # failing — it was obeying. It is the DIRECTIVE that has to change.
+            #
+            # (tool_choice forcing cannot rescue this: _tool_choice_for returns
+            # "auto" for kimi because K2 rejects a specified tool outright, so
+            # the deterministic calculators can never be forced. This path is
+            # provider-independent by design.)
+            #
+            # Project-specific facts stay protected: the model may compute from
+            # the numbers the USER supplied, not invent project data.
+            directive = (
+                "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+                "The request below is a CALCULATION whose inputs are supplied "
+                "IN THE REQUEST ITSELF. Compute it using standard construction "
+                "and engineering formulas. Do NOT refuse because the "
+                "dimensions, loads or quantities are absent from the reference "
+                "context — they are not supposed to be there; they came from "
+                "the user. Treat the context as background only.\n\n"
+                "Show the formula, the substitution with the user's numbers, "
+                "and the result with correct units. Round sensibly and state "
+                "any assumption you make. You may still cite the context for "
+                "project-specific rates, specified thicknesses or standards "
+                "where it genuinely applies — but never invent "
+                "project-specific facts (names, drawing or clause references) "
+                "that are not in the context.\n\nCALCULATION REQUEST: "
+            )
+        elif _is_generative_request(question):
             directive = (
                 "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
                 "The reference context above is background you MAY draw on. This "
