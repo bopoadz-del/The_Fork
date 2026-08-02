@@ -67,7 +67,46 @@ def _is_prose_compound(token: str) -> bool:
     for seg in re.split(r"[-./]", token):
         if seg.isalpha() and len(seg) > 4:
             return True
-    return False
+    return _is_misspelled_word(token)
+
+
+# A separator-free token is only a reference code when its letters are a SHORT
+# abbreviation prefix: M145, A615, D999, PRC501, IP054. A long alphabetic run
+# with a digit buried inside it is a TYPO, not a code.
+#
+# Live incident 2026-08-02: the operator typed "You should find it in the
+# project specif8cation not drawings" — a conversational correction. The '8'
+# in the misspelling made "specif8cation" match rule 4, retrieval missed on
+# it, and the missing-reference short-circuit answered "I could not confirm
+# this reference in the indexed project sources ... provide the exact
+# filename." A typo silently converted a correction into a failed document
+# lookup.
+#
+# _is_prose_compound could not catch it: that guard splits on [-./] and checks
+# for all-alpha segments, but a separator-free token yields ONE segment which
+# isn't .isalpha() precisely BECAUSE of the stray digit.
+# The discriminator is the ALPHABETIC RUN. Reference codes are built from
+# short abbreviations (M145, A615, D999, PRC501, IP054 — runs of 1-3 letters).
+# An English word carries runs of 5+ letters, and a typo'd digit does not
+# change that: "specif8cation" still contains "specif" and "cation".
+#
+# This also catches the same typo arriving via the LABELED-reference rule,
+# which happily split "specif8cation" into label "spec" + code "if8cation" —
+# and "if8cation" satisfies any letters-then-digits shape test, so only the
+# run-length check rejects it.
+_MAX_CODE_ALPHA_RUN = 4
+
+
+def _is_misspelled_word(token: str) -> bool:
+    """True for a separator-free word with a digit typo'd into it."""
+    if re.search(r"[-./]", token):
+        return False  # separator tokens are handled by the segment rule above
+    if not any(ch.isdigit() for ch in token):
+        return False
+    return any(
+        len(run) > _MAX_CODE_ALPHA_RUN
+        for run in re.findall(r"[A-Za-z]+", token)
+    )
 
 
 # Measurement units / unit-ratios are NOT reference codes. A spec unit in the
@@ -155,7 +194,14 @@ def extract_query_identifiers(query: str) -> List[str]:
         # Without this guard those false identifiers earned the +2.0 retrieval
         # bonus and flooded the top-K with boilerplate, so grounded chat
         # answered "I cannot find" for broad questions (2026-06-30 pilot).
-        if code and any(ch.isdigit() for ch in code):
+        # ...and it must not be a typo'd English word. This rule cheerfully
+        # split "specif8cation" into label "spec" + code "if8cation", which
+        # carries a digit and so passed the check above (live 2026-08-02).
+        if (
+            code
+            and any(ch.isdigit() for ch in code)
+            and not _is_misspelled_word(code)
+        ):
             found.add(f"{label.lower()} {code.lower()}")
             found.add(code.lower())
 
