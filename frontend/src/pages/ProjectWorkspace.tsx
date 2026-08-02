@@ -4,7 +4,7 @@
  * DrivePanel definitions live here. The visual shell (3-column layout, panels,
  * chat bubbles/composer/sources) come from layout/, chat/, and documents/.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AppHeader from '../components/AppHeader'
 import { type Project } from './ProjectCard'
@@ -1272,7 +1272,16 @@ export default function ProjectWorkspace() {
   // DocumentGraph so a project with zero own-documents still shows what the
   // answer was actually grounded in, instead of a bare "No documents yet"
   // beside an answer citing three files.
-  const citedExternalDocs = useMemo(() => {
+  // NOT a hook. This sits BELOW the wsState early returns (loading /
+  // not-found / error), so a useMemo here is skipped on the loading render
+  // and called on the next one — React error #310, "Rendered more hooks than
+  // during the previous render", which crashed the whole workspace into the
+  // error boundary on load. Shipped that way in #304; caught live.
+  //
+  // The work is a single pass over at most a handful of sources, so it does
+  // not need memoising. Keeping it as a plain computation makes it immune to
+  // its position in the component.
+  const citedExternalDocs = (() => {
     const owned = new Set(documents.map((d) => d.id))
     const seen = new Set<string>()
     const out: { id: string; original_name: string }[] = []
@@ -1282,7 +1291,7 @@ export default function ProjectWorkspace() {
       out.push({ id: s.doc_id, original_name: s.doc_name || s.doc_id })
     }
     return out
-  }, [latestSources, documents])
+  })()
   void mode  // mode used inside left panel via DocumentsPanel/onClear hooks below
 
   // PR #104: DocumentsPanel is back, rendered as a slot inside LeftPanel
