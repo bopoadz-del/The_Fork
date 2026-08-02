@@ -98,6 +98,7 @@ level as hardening — see §5.
 
 | Aspect | Result | Evidence |
 |---|---|---|
+| **Golden set — clean full sweep** | **28/29 PASS — gate MET** (bar >=27/29). Best recorded result; the previous best was 27/29. | `golden_set_results.jsonl`, `GOLDEN_SET_REPORT.md` |
 | Authenticated route sweep | 59 GET operations, 41 OK, **1** 5xx (fixed above) | `review_pack/sweep/route_sweep_20260802.{json,txt}` |
 | Document-register golden question | **PASS live** after PR #297 deploy | `golden_set_gate.py --only pilot_document_metadata` |
 | Live vector store | `chunks_v2`, `vector(384)`, non-empty; legacy `chunks` = 0 rows as expected | `/v1/admin/debug/pilot-preflight` |
