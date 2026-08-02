@@ -70,9 +70,23 @@ recovery of a snapshotted upload.
      | python -m json.tool
    ```
 
-   Check `row_counts` matches expectation and `chunks_embedding_type`
-   is `vector(256)`. Sample a known document via
-   `/v1/admin/debug/doc-extract` to confirm files are readable.
+   Check `row_counts` matches expectation, and verify the LIVE vector
+   store — not the retired legacy table:
+
+   - `active_chunk_table` is the namespaced store the retriever reads
+     (`chunks_v2` unless `RAG_VECTOR_NAMESPACE` says otherwise).
+   - `row_counts[active_chunk_table]` is non-zero. The legacy `chunks`
+     table has been empty since the v2 migration, so a zero there is
+     expected and is NOT evidence of a bad restore.
+   - `embedding_dim_ok` is `true`. `false` means the restored store's
+     vector width disagrees with the configured embedder — stop and
+     resolve before serving, because mixed widths corrupt retrieval.
+     `null` means the embedder was not warm enough to compare (issue any
+     retrieval request, then re-check); treat `null` as unverified, not
+     as pass.
+
+   Sample a known document via `/v1/admin/debug/doc-extract` to confirm
+   files are readable.
 
 ## Recovery procedure — Postgres backup
 

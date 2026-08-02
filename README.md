@@ -67,7 +67,7 @@ schedules, reports) and gives the operator a chat surface that:
 │  - JWT auth + admin-gated /v1/admin/* endpoints                   │
 └─────┬─────────────────────────┬──────────────────────────────────┘
       │                         │
-      │  pgvector(256)          │  direct HTTPS
+      │  pgvector(384)          │  direct HTTPS
       │  + tsvector GIN         │  to LLM provider
       ▼                         ▼
 ┌──────────────┐         ┌──────────────────┐
