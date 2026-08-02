@@ -44,6 +44,23 @@ Now reports the active table, its real width, the legacy width, and
 compares against the **loaded embedder's** dim. Cold embedder returns
 `null`, never a green boolean from an absent measurement.
 
+**Verified live in prod after the #299 deploy:**
+
+```
+active_chunk_table          : chunks_v2
+active_chunk_embedding_type : vector(384)
+active_chunk_embedding_dim  : 384
+embedder_dim                : 384
+embedder_loaded             : True
+embedding_dim_ok            : True        <- now measured against the real store
+legacy_chunks_embedding_type: vector(256) <- kept visible, correctly labelled legacy
+row_counts.chunks           : 0           <- the retired table, as expected
+row_counts.chunks_v2        : 134121      <- the store that actually serves retrieval
+```
+
+The gate still says `True`, but for the first time it says it about the
+134,121 chunks that answer real queries rather than about an empty table.
+
 Three operator-facing docs were telling operators to verify against the
 retired table and were corrected: `docs/backup-and-recovery.md` (live
 runbook), `deploy/PILOT.md` (dated history — annotated SUPERSEDED, not
@@ -120,9 +137,27 @@ Baseline at session start: **15 alerts (7 high)**.
 Merged: #260 react-router 7.18.1, #271 postcss 8.5.23, #293
 brace-expansion 5.0.9. #299 carries pyasn1 0.6.3 -> 0.6.4 (three HIGHs).
 
-**Expected residual after #299 merges: exactly one HIGH, open.** Verify
-with `gh api repos/bopoadz-del/The_Fork/dependabot/alerts` filtered to
-`state=="open"` and severity `high`.
+**Residual after #299 merged: exactly one HIGH, open — MEASURED, not
+predicted.**
+
+```
+$ gh api repos/bopoadz-del/The_Fork/dependabot/alerts --paginate \
+    -q '[.[]|select(.state=="open" and .security_advisory.severity=="high")]|length'
+4      # t+30s after merge
+1      # t+60s after merge
+$ ... -q '.[]|select(.state=="open" and .security_advisory.severity=="high")
+         |"\(.dependency.package.name) \(.security_vulnerability.vulnerable_version_range)"'
+react-router >= 7.12.0, < 8.3.0
+```
+
+Note the lag: for the first ~60s after the merge the API still returned
+the three pyasn1 HIGHs against a `requirements.txt` that already pinned
+0.6.4. **Dependabot re-evaluates the manifest asynchronously**, so a
+count taken immediately after a merge is not the settled number — re-read
+it before drawing a conclusion.
+
+Full open set now: **1 high, 1 medium, 4 low**, every one dispositioned
+in the table below.
 
 | Alert | Disposition |
 |---|---|
