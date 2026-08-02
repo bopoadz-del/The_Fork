@@ -707,6 +707,33 @@ def admin_migrate_sqlite(
     }
 
 
+def _drive_user_id(auth: Dict[str, Any]) -> str:
+    """User id whose Google Drive connection these admin routes act on.
+
+    `require_api_key` returns TWO different principal shapes. The JWT branch
+    resolves a real user and includes `user_id`; the API-key branch returns
+    the key record from `auth_manager`, which carries `user`/`tier`/`role`
+    but NO `user_id`. `CEREBRUM_MASTER_KEY` is minted with `role: "admin"`,
+    so a master-key caller passes `_require_admin` and then reached
+    `auth["user_id"]` -> KeyError -> 500. Confirmed live 2026-08-02:
+    GET /v1/admin/drive/scan returned 500 for the operator's own admin key.
+
+    Drive tokens are stored PER USER, so a key principal genuinely has no
+    Drive connection to act on — the honest answer is the 409 this route
+    already documents for "not connected", not an unhandled 500.
+    """
+    user_id = auth.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            409,
+            "Google Drive admin actions require a signed-in admin session. "
+            "This request authenticated with an API key, which has no "
+            "Google Drive connection of its own. Sign in as an admin user "
+            "and connect Drive, then retry.",
+        )
+    return user_id
+
+
 def _parse_vector_dim(coltype: Optional[str]) -> Optional[int]:
     """Width declared by a pgvector column type, e.g. ``vector(384)`` -> 384.
 
@@ -1439,8 +1466,9 @@ async def admin_drive_scan(
     from app.core import drive_auth
     from app.blocks.google_drive import GoogleDriveBlock
 
+    drive_user_id = _drive_user_id(auth)
     try:
-        access_token = await drive_auth.get_access_token(auth["user_id"])
+        access_token = await drive_auth.get_access_token(drive_user_id)
     except drive_auth.DriveNotConnected:
         raise HTTPException(409, "Google Drive is not connected for this admin.")
     except drive_auth.DriveAuthError as e:
@@ -1601,8 +1629,9 @@ async def admin_approve_from_drive(
     from app.core import drive_auth, projects as _projects_mod
 
     # Verify Drive auth before doing any DB writes — fail fast.
+    drive_user_id = _drive_user_id(auth)
     try:
-        access_token = await drive_auth.get_access_token(auth["user_id"])
+        access_token = await drive_auth.get_access_token(drive_user_id)
     except drive_auth.DriveNotConnected:
         raise HTTPException(409, "Google Drive is not connected for this admin.")
     except drive_auth.DriveAuthError as e:
@@ -1621,7 +1650,7 @@ async def admin_approve_from_drive(
 
     project = _projects_mod.create_project(
         name=name,
-        user_id=auth["user_id"],
+        user_id=drive_user_id,
         is_approved=True,
         project_id=slug,
         origin="admin_drive_approved",
@@ -1630,7 +1659,7 @@ async def admin_approve_from_drive(
     # Queue the recursive import as a background task.
     background_tasks.add_task(
         _run_drive_folder_import,
-        project_id=slug, user_id=auth["user_id"],
+        project_id=slug, user_id=drive_user_id,
         folder_id=req.folder_id, max_files=req.max_files,
         max_depth=req.max_depth, role=req.role,
     )
