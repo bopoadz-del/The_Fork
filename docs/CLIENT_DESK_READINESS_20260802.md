@@ -126,7 +126,7 @@ with `gh api repos/bopoadz-del/The_Fork/dependabot/alerts` filtered to
 | Alert | Disposition |
 |---|---|
 | react-router `>=7.12.0,<8.3.0` (HIGH, GHSA-qwww-vcr4-c8h2) | **OPEN — assessed unreachable, NOT cleared.** The advisory is an *RSC-mode* CSRF bypass. `frontend/` is a client-side Vite SPA using `BrowserRouter`; zero RSC markers, no `use server`, no react-server imports, no server actions. Clearing it needs the v8 **major** migration, which is not justified for an unreachable path on a live client app. The alerts API will keep returning it — that is expected, not an oversight. |
-| pytest `<9.0.3` (MEDIUM) | **Accepted with measured evidence.** The `pytest<9.0` pin is load-bearing, not defensive: pytest 9 + pytest-asyncio 1.x produced **27 failures** the pinned stack does not have (`scratchpad/pytest9.log`; the same 4 files pass under pytest 8). pytest *is* installed in the production image (the Dockerfile installs `requirements.txt`) but is never invoked there, and the advisory is tmpdir handling, which requires running pytest. See §5 for the structural fix. |
+| pytest `<9.0.3` (MEDIUM) | **Deferred — the upgrade experiment was INCONCLUSIVE, see §4b.** An earlier reading of this pass claimed pytest 9 caused 27 failures and that the pin was therefore load-bearing. That was **wrong** and is retracted: the identical failure set occurs under the pinned pytest 8, and it is local environment contamination, not a pytest-version effect. There is no evidence either way about pytest 9. What remains true and sufficient for deferral: pytest is installed in the production image (the Dockerfile installs `requirements.txt`) but is never invoked there, and the advisory is tmpdir handling, which requires *running* pytest. The pin's stated rationale (pytest-asyncio 0.x coupling) is documented in `requirements.in` but was NOT validated here. §5 has the structural fix that removes the exposure entirely. |
 | torch `<=2.12.1` (LOW ×3) | **Unreachable.** `torch.jit.script` has zero call sites in `app/` or `scripts/`. |
 | @babel/core (LOW) | Dev-time build tool only. |
 
@@ -140,21 +140,55 @@ rules, Node/tsc not installed, POSIX-only resource limits, missing
 optional IFC/XER fixtures, and flag-off no-op guards.
 
 Two `xfail` markers were the real question — both said "GK crowds
-project docs out of top-5". Re-checked this pass:
+project docs out of top-5". Re-checked this pass; **both markers are
+correct and both were kept:**
 
+- `test_doc_index.py::test_search_uses_hybrid_retriever` — genuinely
+  xfails.
 - `test_doc_search_api.py::test_search_returns_ranked_results` —
-  **XPASSes now.** The GK MARGIN+FOLD ranking work fixed it. Because the
-  marker was `strict=False`, the XPASS was tolerated silently and the
-  restored coverage went unnoticed. **Marker removed**, so a GK-crowding
-  regression fails loudly again.
-- `test_doc_index.py::test_search_uses_hybrid_retriever` — **still
-  genuinely xfails.** Marker kept, reason rewritten to record that it is
-  now the *last* remaining GK-crowding case rather than a stale marker.
+  XPASSes **in isolation**, which briefly looked like a stale marker.
+  It is not. Under full-suite order it genuinely fails:
 
-Also observed: `test_backfill_layers.py::test_backfill_tags_unlayered_chunks`
-fails when run alongside the three GK/RAG files but passes in isolation —
-**cross-file test contamination**, order-dependent. Real but low
-severity; recorded rather than papered over.
+  ```
+  assert 'concrete.txt' in ['', 'construction_kb.md', '', '', '']
+  ```
+
+  — the GK note crowds the project's own upload out of the top-5,
+  exactly what the marker describes. The marker removal was tried and
+  **reverted**. Isolation runs are not sufficient evidence for removing
+  a `strict=False` xfail; full-suite order is.
+
+## 4b. The local dev suite is NOT trustworthy without a clean DATA_DIR
+
+Worth writing down, because it produced a wrong conclusion in this very
+pass before being caught.
+
+A full local run reports **28 failures** across `test_gk_lexical_fold`,
+`test_gk_ranking_knobs`, `test_rag_injection`, `test_backfill_layers` —
+under **both** pytest 8 and pytest 9. Every one is the same error:
+
+```
+RuntimeError: Embedding identity mismatch in namespace 'v2':
+expected {'model': 'fake', 'dim': 256}, found {'model': 'minishlab/potion-base-8M', 'dim': 256}
+```
+
+The local `data/` tree carries a namespace stamped by a real-embedder
+run, and the vector store's mixed-model guard (a *correct* safety
+feature) fires against tests that use the `fake` embedder.
+
+Proof it is environmental, not a code regression:
+
+```
+$ DATA_DIR=$(mktemp -d) DATABASE_URL="" pytest tests/test_gk_lexical_fold.py tests/test_gk_ranking_knobs.py
+25 passed in 10.01s
+```
+
+CI is green because it runs from a clean checkout. **CI is the source of
+truth; a local full-suite run is not, unless DATA_DIR is clean.** Anyone
+who runs the suite locally and sees ~28 red RAG tests should check this
+before believing the platform is broken — and specifically must not
+conclude anything about a dependency upgrade from it, which is the
+mistake §3's pytest row records.
 
 ---
 
