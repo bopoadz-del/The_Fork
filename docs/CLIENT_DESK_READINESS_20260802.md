@@ -268,11 +268,20 @@ one client's documents can appear inside another client's project, and
 that is what the dormant `RAG_LAYERED` work exists to address. Do not
 put two different clients on this instance as configured.
 
-Secondary note — **now fixed.** The chat path already disclosed the
-fallback, but the raw `/v1/projects/{id}/documents/search` payload carried
-no corpus-origin field, so a caller could not tell an own-document hit
-from a Master-Corpus fallback hit. Each result now carries
-`origin: "own" | "general_knowledge" | "master_corpus"`.
+Secondary note — **fixed, on the second attempt.** The chat path already
+disclosed the fallback, but the raw `/v1/projects/{id}/documents/search`
+payload carried no corpus-origin field, so a caller could not tell an
+own-document hit from a Master-Corpus fallback hit. Each result now
+carries `origin: "own" | "general_knowledge" | "master_corpus"`.
+
+> **The first attempt (#301) shipped as a silent no-op.** The field was
+> added to the intermediate dict inside `search_project_documents`, but
+> the returned rows are rebuilt from scratch further down, so it never
+> reached the wire — and CI stayed green because nothing asserted on the
+> value a caller actually receives. Caught by probing the live endpoint
+> after deploy and seeing `origin=None`. Fixed in #302, with tests that
+> assert on the returned rows and that were **verified to fail against the
+> pre-fix code** (4 failed → 4 passed) rather than assumed to.
 
 `Chunk.layer` is deliberately withheld from the **LLM** path (the chat
 runtime reads it to phrase its own disclosure). Surfacing it to a direct

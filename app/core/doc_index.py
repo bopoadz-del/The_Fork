@@ -1921,6 +1921,12 @@ async def search_project_documents(
             "filename": item["filename"],
             "snippet": snippet,
             "score": round(item["score"], 4),
+            # Which corpus this hit came from. This row is rebuilt from
+            # scratch rather than passed through, so anything added to the
+            # `best` dict above must ALSO be copied here or it never reaches
+            # the caller — that is exactly how the first attempt at this
+            # field shipped as a silent no-op.
+            "origin": item.get("origin", "own"),
         }
         if ocr_flag_by_doc.get(item["document_id"]):
             result_row["ocr_low_quality"] = True
