@@ -186,7 +186,30 @@ async def require_api_key(
 
     # JWT decode failed or no credentials — fall through to legacy key validation.
     # validate_key(None) raises HTTPException(401) preserving the no-credentials behavior.
-    return auth_manager.validate_key(credentials)
+    principal = auth_manager.validate_key(credentials)
+
+    # NORMALISE the key principal so both branches guarantee the same keys.
+    #
+    # Why: validate_key returns the raw key record — user/tier/role/valid, with
+    # NO `user_id`. The JWT branch above always has one. That asymmetry caused a
+    # live 500 on 2026-08-02: CEREBRUM_MASTER_KEY is minted with role "admin",
+    # so a master-key caller passed the admin gate on /v1/admin/drive/scan and
+    # then died on `auth["user_id"]` -> KeyError. Every other route that indexes
+    # auth["user_id"] behind require_api_key was one edit away from the same bug.
+    #
+    # `require_user` already resolves an API key to the singleton system user,
+    # so an api-key caller ALREADY acts as that user across the whole app. This
+    # grants nothing new — it only stops the two dependencies disagreeing about
+    # the shape of a principal for the same credential.
+    # DELIBERATELY does not touch `role`. `_require_admin` gates on
+    # auth.get("role") == "admin", and only CEREBRUM_MASTER_KEY is minted with
+    # that role — a plain CEREBRUM_API_KEY_* has none and must keep getting
+    # 403. Defaulting role from the system user (which IS admin) would silently
+    # promote every standard API key to admin. Identity only, never authority.
+    if not principal.get("user_id"):
+        principal["user_id"] = users_store.SYSTEM_USER_ID
+        principal["auth_method"] = "api_key"
+    return principal
 
 
 async def init_blocks():

@@ -14,6 +14,28 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
+# Strip test-only tooling from the RUNTIME image.
+#
+# requirements.txt is the single pip-compile lock and pins pytest + friends,
+# so without this the production container ships a test framework it never
+# invokes -- needless surface (it is what keeps the pytest tmpdir advisory
+# attached to the production manifest) and needless image weight.
+#
+# Safe to remove here because:
+#   * nothing under app/ imports pytest at runtime (verified 2026-08-02:
+#     zero `import pytest` / `from pytest` outside tests/),
+#   * CI does NOT rely on requirements.txt for these -- .github/workflows/
+#     test.yml installs pytest/pytest-asyncio/pytest-cov/pytest-timeout
+#     explicitly before running the suite,
+#   * this runs only in the image build, so `pip install -r requirements.txt`
+#     on a dev machine is unchanged.
+#
+# diff-cover is intentionally in the list: it is the per-PR coverage gate,
+# a CI tool with no runtime role.
+RUN pip uninstall -y \
+        pytest pytest-asyncio pytest-cov pytest-json-report diff-cover \
+    || true
+
 # Safety Observation AI v2 detector dependencies -- CPU wheels only.
 # SAFETY_WORLD_WEIGHTS env var on Render points at the committed
 # data/models/safety_world_v2.onnx -- a YOLO-Worldv2-s checkpoint with
