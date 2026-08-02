@@ -287,9 +287,12 @@ client system and deserves its own verified deploy:
 ## 8. Bottom line
 
 The platform is **code-complete for client-desk deployment** on
-everything this pass could reach, and two real live defects were found
-and fixed that would each have produced a false "all good" reading in
-front of a client.
+everything this pass could reach. The golden gate is **28/29 — MET, the
+best result recorded**, measured on a clean full sweep against live prod
+rather than inferred. Two real live defects were found and fixed that
+would each have produced a false "all good" reading in front of a
+client, and one of this pass's own conclusions (the pytest-9 claim) was
+caught and retracted rather than shipped.
 
 It is **not 100%**, and no honest report can say so while:
 
