@@ -57,6 +57,16 @@ drawing-sheet slice (hundreds of sheets share title-block text; needs
 metadata-aware retrieval, not ranking). Priority order and evidence:
 `docs/rag-reranker.md`.
 
+**2026-08-02 corpus restore:** the 9 eval-verified missing documents were
+located on Drive (3 had moved folders), re-uploaded through the app API
+(pilot-verified retrievable before batching), and confirmed live-answerable.
+ip-inf-053/054 drawing-package chunks verified present. The remaining known
+chunk gap concentrates in the `dd-2023-118 vol 3` drawings block — restoring
+it needs the owner-gated direct-DB re-encode (see PLATFORM_HEALTH_REPORT
+addendum, owner action 6). Note: restored uploads carry NEW doc ids, so the
+seed-42 recall metric still scores those 9 queries as ID-misses even though
+the content now answers — the metric understates user-facing recall.
+
 ---
 
 ## 2. Source-precedence / authority ordering ships DEFAULT-OFF, and is only a tie-break nudge
