@@ -2563,6 +2563,34 @@ class Agent:
                 },
             })
 
+        # ── synthetic tool: list_project_documents (project-scoped) ──────────
+        # The document REGISTER, deterministically from the project store.
+        # Without this, "list the documents in this project / what do we have"
+        # can only be answered by hoping a semantic search surfaces a register
+        # that does not exist as a chunk — verified failing on the golden set
+        # (pilot_document_metadata, 2026-08-02): the model honestly reported
+        # the RAG context held no document list.
+        if project_id:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "list_project_documents",
+                    "description": (
+                        "List this project's document register: each document's "
+                        "filename, type, and size. Use this when the user asks "
+                        "WHAT documents/files the project has. To search INSIDE "
+                        "document content use search_project_documents."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": ["integer", "string"], "description": "Max documents to return (default 100, newest first)."},
+                        },
+                        "required": [],
+                    },
+                },
+            })
+
         # ── synthetic tool: fetch_document (project-scoped) ──────────────────
         # Complements search_project_documents: fetches ONE specific document's
         # content by document_id or filename. This is what makes "work on the
@@ -4258,6 +4286,49 @@ class Agent:
                 "name": "search_project_documents",
                 "ok": True,
                 "result": {"results": results},
+            }
+
+        # ── synthetic tool: list_project_documents ───────────────────────────
+        if name == "list_project_documents":
+            if not project_id:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "no project in scope",
+                        "hint": "This tool requires a project-scoped chat.",
+                    },
+                }
+            try:
+                limit = int(args.get("limit") or 100)
+            except (TypeError, ValueError):
+                limit = 100
+            limit = max(1, min(limit, 200))
+            from app.core import projects as _projects_store
+            # The pilot's master-corpus project is an alias with no documents
+            # of its own — list the backing corpus, like the chat path does.
+            resolved_pid = (_projects_store._master_corpus_source(project_id)
+                            or project_id)
+            docs = _projects_store.list_documents(
+                resolved_pid, limit=limit, offset=0, newest_first=True,
+            )
+            total = _projects_store.count_documents(resolved_pid)
+            return {
+                "name": "list_project_documents",
+                "ok": True,
+                "result": {
+                    "total_documents": total,
+                    "returned": len(docs),
+                    "documents": [
+                        {
+                            "filename": d.get("original_name"),
+                            "doc_type": d.get("doc_type"),
+                            "size_bytes": d.get("size"),
+                        }
+                        for d in docs
+                    ],
+                },
             }
 
         # ── synthetic tool: fetch_document ───────────────────────────────────
