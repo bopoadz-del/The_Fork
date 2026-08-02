@@ -427,3 +427,79 @@ It is **not 100%**, and no honest report can say so while:
 - and five items require the operator's own hands.
 
 Those are enumerated above with the exact action for each.
+
+---
+
+# ADDENDUM — live Chrome + feature-sweep testing (2026-08-03)
+
+## The calculators are DORMANT in production — root cause found
+
+76 deterministic calculators are registered (`concrete_volume`,
+`guardrail_top_rail_height`, `foundation_bearing_pressure`, …). **None of
+them can be forced on the live stack**, so self-contained arithmetic is
+answered as a document lookup and refused:
+
+```
+"Calculate the concrete volume for a raft 25m x 18m x 1.2m thick and the
+ number of 6m3 truck loads"
+-> "I cannot find that specific information in the provided reference
+    context ... they do not contain a raft measuring 25 m x 18 m x 1.2 m"
+```
+
+25 × 18 × 1.2 = 540 m³; 540 ÷ 6 = 90 loads. Nothing needed retrieving.
+
+**Root cause** (`_tool_choice_for`, app/agents/runtime.py):
+
+```python
+if provider in ("groq", "kimi"):
+    # Kimi K2: forcing a specific tool 400s outright ("tool_choice
+    # 'specified' is incompatible with thinking enabled")
+    return "auto"
+```
+
+Live provider is `LLM_PROVIDER=kimi`, `KIMI_MODEL=kimi-k2.6`. `tool_choice`
+is therefore **always `"auto"`**, so the whole `_INTENT_TOOL_MAP` forcing
+mechanism — roughly 22 keyword phrases built precisely to guarantee the
+deterministic calculator runs — **never fires in production.**
+
+Proved by discrimination, not inference: `bearing pressure` is an
+*existing* map keyword and fails identically to an unmapped phrase. On
+`"auto"` the model simply prefers the RAG context and refuses.
+
+**A shape detector was added** (calc verb + ≥2 self-supplied dimensions,
+`FORCE_CALC_ON_DIMENSIONS=0` to disable, 16 tests). It is **correct but
+inert on Kimi** — it returns the right tool name into a mechanism the
+provider ignores. It will take effect if the ladder changes; it does not
+fix this today. Stated plainly so nobody reads the merge as a fix.
+
+**Fixing it properly** cannot be tool_choice — K2 rejects that. The options,
+in preference order:
+
+1. **Pre-empt the LLM.** Detect a self-contained calculation, run the
+   calculator deterministically, inject the result as authoritative
+   context. Matches this repo's existing "deterministic calculators over
+   prose maths" philosophy and is provider-independent.
+2. Route calc turns to `moonshot-v1-128k` (non-reasoning; may accept
+   `tool_choice`) for that turn only.
+3. Prompt-level instruction — weakest, and the reason forcing was
+   introduced in the first place.
+
+## Sweep results, honestly scoped
+
+49 features: 21 PASS / 23 FAIL / 3 PARTIAL / 2 BLOCKED — but **19 of the 23
+FAILs were an oracle artifact**, not product defects (see the sweep-oracle
+commit). Two more were routing-oracle misses on `commissioning_checklist`,
+which produced 13,115 chars with every structure check passing.
+
+**Exactly one real product bug in 49 features**: the tokenization-400 from
+tool-result truncation, fixed in #304.
+
+## Verified working end-to-end
+
+- **Schedule generation** — HTTP 200, valid 37KB xlsx, 5 sheets, 210 rows
+  of real CPM data with predecessors and float.
+- **Interim payment** — correct FIDIC 14.3 certificate (900,000 gross,
+  10% retention = 90,000).
+- **EOT** — correctly reported the missing baseline/as-built XER files with
+  requirements rather than inventing an entitlement.
+- **Master-Corpus fallback disclosure** on the chat path.
