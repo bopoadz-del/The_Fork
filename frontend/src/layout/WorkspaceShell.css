@@ -65,7 +65,10 @@
 }
 
 .workspace-shell__right {
-  flex: 0 0 360px;
+  /* Shrinkable, not rigid. `0 0 360px` meant the two side panels claimed a
+   * fixed 600px no matter the viewport. */
+  flex: 0 1 360px;
+  min-width: 280px;
   min-height: 0;
   background: var(--bg-panel-right);
   border-left: 1px solid var(--border);
@@ -84,8 +87,8 @@
   box-shadow: var(--shadow-lg);
 }
 
-/* Mobile toolbar + backdrop exist in the DOM on every viewport but are
- * desktop-invisible; everything mobile is scoped inside the breakpoint. */
+/* Panel toolbar + backdrop exist in the DOM on every viewport but are
+ * hidden on wide desktop; the compact rules below switch them on. */
 .workspace-shell__mobilebar {
   display: none;
 }
@@ -93,10 +96,21 @@
   display: none;
 }
 
-/* Mobile (spec 2026-07-24-mobile-ui-design): chat-first single column.
- * Left panel = off-canvas drawer over a backdrop; right panel appears
- * only in the existing data-right-expanded overlay mode. */
-@media (max-width: 768px) {
+/* ── Compact desktop (769px–1180px) ───────────────────────────────────────
+ * Measured on the live app 2026-08-02 in an 877px-wide Chrome window:
+ *
+ *   left 240 (fixed) + right 360 (fixed) = 600px of chrome
+ *   -> main (the chat, the PRIMARY surface) got 277px
+ *
+ * Answers wrapped to three words per line while the right panel sat mostly
+ * empty. The only breakpoint was 768px, so every window between ~769px and
+ * ~1180px — a normal half-screen or laptop window — rendered like this.
+ *
+ * Fix: below 1180px the LEFT panel becomes the same off-canvas drawer the
+ * mobile layout already uses (its toolbar button comes with it), and the
+ * right panel narrows. The chat keeps the space. Reuses the existing
+ * drawer mechanics rather than inventing a second pattern. */
+@media (max-width: 1180px) {
   .workspace-shell__mobilebar {
     display: flex;
     gap: 6px;
@@ -143,6 +157,24 @@
     transform: translateX(0);
   }
 
+  .workspace-shell__right {
+    flex: 0 1 320px;
+  }
+
+  /* Keep the first chat rows clear of the floating toolbar. */
+  .workspace-shell__main {
+    padding-top: 48px;
+  }
+}
+
+/* Mobile (spec 2026-07-24-mobile-ui-design): chat-first single column.
+ * Left panel = off-canvas drawer over a backdrop; right panel appears
+ * only in the existing data-right-expanded overlay mode. */
+/* The drawer, toolbar, backdrop and main padding all come from the compact
+ * block above (it covers every width up to 1180px). Only the rules that are
+ * genuinely PHONE-specific live here: at this width even a narrowed right
+ * panel leaves the chat unusable, so it becomes overlay-only. */
+@media (max-width: 768px) {
   /* Hidden by default; the data-right-expanded overlay rule above already
    * promotes it to a full-viewport panel with its own collapse button. */
   .workspace-shell__right {
@@ -151,10 +183,5 @@
   .workspace-shell[data-right-expanded="true"] .workspace-shell__right {
     display: block;
     z-index: 40;
-  }
-
-  /* Keep the first chat rows clear of the floating toolbar. */
-  .workspace-shell__main {
-    padding-top: 48px;
   }
 }

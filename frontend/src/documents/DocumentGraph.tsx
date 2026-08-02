@@ -23,29 +23,53 @@ interface Props {
   documents: DocSummary[]
   /** doc_ids of sources cited by the latest assistant answer. */
   citedDocIds?: string[]
+  /**
+   * Documents cited by the latest answer that the project does NOT own —
+   * i.e. Master-Corpus fallback hits.
+   *
+   * Without this the panel said "No documents in this project yet" in the
+   * same breath as an answer citing three documents (observed live
+   * 2026-08-02 on a project whose own document count is 0). The citations
+   * existed; this panel just had no way to show anything it didn't own.
+   */
+  citedExternal?: DocSummary[]
 }
 
 // Cap rendered nodes: the master corpus backs thousands of docs and rendering
 // one SVG-bearing <li> per doc in a single commit froze the workspace on open.
 const MAX_GRAPH_NODES = 200
 
-export default function DocumentGraph({ documents, citedDocIds = [] }: Props) {
+export default function DocumentGraph({
+  documents, citedDocIds = [], citedExternal = [],
+}: Props) {
   const cited = new Set(citedDocIds)
-  const visible = documents.slice(0, MAX_GRAPH_NODES)
+  // When the project owns nothing, fall back to showing what the answer
+  // actually cited, clearly labelled as not belonging to this project.
+  const usingExternal = documents.length === 0 && citedExternal.length > 0
+  const shown = usingExternal ? citedExternal : documents
+  const visible = shown.slice(0, MAX_GRAPH_NODES)
   return (
     <div className="doc-graph">
       <header className="doc-graph__head">
         <Network size={14} />
         <span>Document graph</span>
-        <span className="doc-graph__count">{documents.length}</span>
+        <span className="doc-graph__count">{shown.length}</span>
       </header>
 
-      {documents.length === 0 ? (
+      {usingExternal && (
+        <p className="doc-graph__empty">
+          This project has no documents of its own. Showing what the latest
+          answer cited from the Master Corpus.
+        </p>
+      )}
+
+      {shown.length === 0 ? (
         <p className="doc-graph__empty">No documents in this project yet.</p>
       ) : (
         <ul className="doc-graph__items">
           {visible.map((d) => {
-            const isCited = cited.has(d.id)
+            // Everything in the external fallback list is, by definition, cited.
+            const isCited = usingExternal || cited.has(d.id)
             return (
               <li
                 key={d.id}

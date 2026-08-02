@@ -267,6 +267,108 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
 # Controlled answer used when an exact construction reference is absent from
 # the indexed project sources.  Replaces both the generic empty-content
 # fallback and any expensive model call that would otherwise spin on a miss.
+# Persisted when a turn dies before producing an answer (provider error,
+# crash, iteration cap). WHY THIS EXISTS:
+#
+# `append_message(user)` runs BEFORE the LLM call, but the assistant message
+# is appended only on the SUCCESS paths. So a failed turn persisted the
+# question and nothing else. The UI's error bubble is local state only, so
+# after a reload the user saw their own message with no reply — permanently,
+# with no indication anything had gone wrong.
+#
+# Observed live 2026-08-02 in the operator's own conversation: "DG2 package 1"
+# sits in the thread with no assistant turn after it, and the feature sweep
+# reproduced the mechanism (kimi HTTP 400 "tokenization failed" on
+# document_metadata -> error event -> nothing persisted).
+#
+# Deliberately SHORT and unmistakably a failure notice: this text re-enters
+# the model's context on the next turn, so it must not read as content or
+# invite the model to continue from it.
+_FAILED_TURN_MESSAGE = (
+    "[This turn failed before an answer was produced. Nothing was generated. "
+    "Ask again to retry.]"
+)
+
+
+_TOOL_RESULT_MAX_CHARS = 8000
+
+
+def _tool_result_content(payload: Dict[str, Any]) -> str:
+    """Serialize a tool result for the `tool` message, truncating SAFELY.
+
+    NEVER slice serialized JSON. `json.dumps` emits ASCII with \\uXXXX
+    escapes, so a raw ``[:8000]`` can cut mid-escape or mid-string and hand
+    the provider malformed JSON. Moonshot rejects that outright:
+
+        HTTP 400 {"message": "Invalid request: tokenization failed",
+                  "type": "invalid_request_error"}
+
+    Reproduced 2026-08-03 by the feature sweep on BOTH `document_metadata`
+    and `parse_primavera_schedule` — the two actions whose tool results are
+    large. The corpus makes it easy to hit: Diriyah filenames contain en
+    dashes, which serialize to `\\u2013`, and the cut landed inside one
+    ("Unterminated string starting at ... char 7999").
+
+    A failed turn used to vanish silently, so this surfaced as a question
+    with no answer — see _persist_failed_turn.
+
+    Over-long results become a VALID object carrying a truncated preview:
+    the preview is a JSON *string value*, so json.dumps escapes it properly
+    and the payload always parses.
+    """
+    text = json.dumps(payload, default=str)
+    if len(text) <= _TOOL_RESULT_MAX_CHARS:
+        return text
+
+    def _envelope(keep: int) -> str:
+        return json.dumps(
+            {
+                "truncated": True,
+                "note": (
+                    f"Tool result exceeded {_TOOL_RESULT_MAX_CHARS} characters "
+                    "and was truncated. Narrow the request (filter, or ask for "
+                    "fewer items) to see the rest."
+                ),
+                "preview": text[:keep],
+            },
+            default=str,
+        )
+
+    # Embedding the preview as a JSON string RE-escapes it — every `"` becomes
+    # `\"` and every `\` becomes `\\` — so escape-heavy content (exactly what
+    # this guards) can nearly double. A fixed budget therefore overshoots the
+    # cap; shrink until the ENVELOPE fits, measuring the real thing.
+    keep = _TOOL_RESULT_MAX_CHARS
+    out = _envelope(keep)
+    while len(out) > _TOOL_RESULT_MAX_CHARS and keep > 0:
+        overshoot = len(out) - _TOOL_RESULT_MAX_CHARS
+        keep = max(0, keep - max(overshoot, 32))
+        out = _envelope(keep)
+    return out
+
+
+def _persist_failed_turn(conversation_id: Optional[str]) -> None:
+    """Record that a turn died, so reloaded history is not silently missing it.
+
+    Never raises: a bookkeeping failure must not mask the original error the
+    caller is already reporting to the user.
+    """
+    if not conversation_id:
+        return
+    try:
+        # Function-scope import, matching every other agent_memory use in this
+        # module — it is NOT a module-level name here. Referencing it at module
+        # scope raised NameError, which this very except block would have
+        # swallowed, leaving a helper that silently persisted nothing.
+        from app.core import agent_memory
+
+        agent_memory.append_message(
+            conversation_id, "assistant", _FAILED_TURN_MESSAGE
+        )
+    except Exception:  # noqa: BLE001 — best-effort bookkeeping
+        _LOG.warning("could not persist failed-turn marker", exc_info=True)
+
+
 _MISSING_REFERENCE_ANSWER = (
     "I could not confirm this reference in the indexed project sources"
 )
@@ -875,6 +977,54 @@ _INTENT_TOOL_MAP = (
 )
 
 
+# A question that carries its OWN numbers is arithmetic, not a document lookup.
+#
+# Live 2026-08-03, project-assistant on the master corpus:
+#   "Calculate the concrete volume for a raft 25m x 18m x 1.2m thick and the
+#    number of 6m3 truck loads"
+#   -> route None (below_routing_gate), construction_calc never invoked, and
+#      the model answered:
+#        "I cannot find that specific information in the provided reference
+#         context ... they do not contain a raft measuring 25 m x 18 m x 1.2 m"
+#
+# 25 x 18 x 1.2 = 540 m3; 540 / 6 = 90 loads. Nothing needed to be retrieved.
+# The grounding discipline overrode arithmetic and refused a question whose
+# every input was in the question. `guardrail height` failed the same way.
+#
+# Both HAVE calculators (concrete_volume, guardrail_top_rail_height — 76 are
+# registered), but _INTENT_TOOL_MAP's ~22 phrases only reach about a dozen of
+# them. Rather than chase 76 keyword spellings, detect the SHAPE that is
+# unambiguously a calculation: an explicit calc verb plus at least two
+# measurement-bearing numbers.
+#
+# Deliberately narrow. A document lookup ("what is the concrete volume in the
+# BOQ") has no calc verb AND no self-supplied dimensions, so it is unaffected
+# and keeps the cost-grounding path.
+#
+# Kill switch: FORCE_CALC_ON_DIMENSIONS=0.
+_CALC_VERB_RE = re.compile(
+    r"\b(calculate|compute|work out|how many|how much)\b", re.I
+)
+# A number attached to a unit: 25m, 1.2 m, 6m3, 900,000 kg, 45 days
+_DIMENSION_RE = re.compile(
+    r"\b\d[\d,\.]*\s*"
+    r"(mm|cm|m|km|m2|m3|sqm|cum|kg|tonne|tons?|t|kn|mpa|days?|weeks?|months?|%)\b",
+    re.I,
+)
+_MIN_DIMENSIONS_FOR_CALC = 2
+
+
+def _looks_like_self_contained_calculation(text: str) -> bool:
+    """True when the question supplies its own numbers AND asks to compute."""
+    if (os.getenv("FORCE_CALC_ON_DIMENSIONS", "1") or "1").strip().lower() in (
+        "0", "false", "no", "off",
+    ):
+        return False
+    if not text or not _CALC_VERB_RE.search(text):
+        return False
+    return len(_DIMENSION_RE.findall(text)) >= _MIN_DIMENSIONS_FOR_CALC
+
+
 def _forced_specific_tool(messages: List[Dict[str, Any]], available: set) -> Optional[str]:
     """Return a tool name to force via named tool_choice for this turn, or None.
     Gated to the user-tail (iter 0) and to tools actually available, mirroring
@@ -888,6 +1038,11 @@ def _forced_specific_tool(messages: List[Dict[str, Any]], available: set) -> Opt
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in text for p in phrases):
             return tool
+    # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
+    # the rest by SHAPE: a question that supplies its own dimensions and asks
+    # to compute is arithmetic, whatever the domain noun happens to be.
+    if "construction_calc" in available and _looks_like_self_contained_calculation(text):
+        return "construction_calc"
     return None
 
 
@@ -3019,11 +3174,10 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": json.dumps(
+                    "content": _tool_result_content(
                         {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
-                        default=str,
-                    )[:8000],
+                    ),
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled
@@ -3504,6 +3658,7 @@ class Agent:
             if resp.get("status") == "error":
                 err = resp.get("error", "LLM call failed")
                 _LOG.warning("chat_stream: iter=%d LLM error %s", iteration, err)
+                _persist_failed_turn(conversation_id)
                 yield {"type": "error", "message": err}
                 return
             served_model = (resp.get("raw") or {}).get("model") or served_model
@@ -3650,11 +3805,10 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": json.dumps(
+                    "content": _tool_result_content(
                         {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
-                        default=str,
-                    )[:8000],
+                    ),
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled.
@@ -3662,6 +3816,7 @@ class Agent:
                      MAX_TOOL_ITERATIONS)
         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
         if forced_resp.get("status") == "error":
+            _persist_failed_turn(conversation_id)
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
             return
         served_model = (forced_resp.get("raw") or {}).get("model") or served_model

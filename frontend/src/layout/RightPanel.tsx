@@ -61,7 +61,9 @@ const TABS: TabDef[] = [
 const PREVIEW_EMPTY: Record<'sheet' | 'schedule' | 'chart', string> = {
   sheet: 'No document selected. Choose a spreadsheet or BOQ to preview its rows.',
   schedule: 'No document selected. Choose a schedule to preview it.',
-  chart: 'No document selected. Choose a workbook to preview its sheets.',
+  // Was a copy-paste of the SHEET string ("preview its sheets") — this panel
+  // previews CHARTS, so the sheet wording told the user the wrong thing.
+  chart: 'No document selected. Choose a workbook to preview its charts.',
 }
 
 export default function RightPanel({
