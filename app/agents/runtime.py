@@ -267,6 +267,51 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
 # Controlled answer used when an exact construction reference is absent from
 # the indexed project sources.  Replaces both the generic empty-content
 # fallback and any expensive model call that would otherwise spin on a miss.
+# Persisted when a turn dies before producing an answer (provider error,
+# crash, iteration cap). WHY THIS EXISTS:
+#
+# `append_message(user)` runs BEFORE the LLM call, but the assistant message
+# is appended only on the SUCCESS paths. So a failed turn persisted the
+# question and nothing else. The UI's error bubble is local state only, so
+# after a reload the user saw their own message with no reply — permanently,
+# with no indication anything had gone wrong.
+#
+# Observed live 2026-08-02 in the operator's own conversation: "DG2 package 1"
+# sits in the thread with no assistant turn after it, and the feature sweep
+# reproduced the mechanism (kimi HTTP 400 "tokenization failed" on
+# document_metadata -> error event -> nothing persisted).
+#
+# Deliberately SHORT and unmistakably a failure notice: this text re-enters
+# the model's context on the next turn, so it must not read as content or
+# invite the model to continue from it.
+_FAILED_TURN_MESSAGE = (
+    "[This turn failed before an answer was produced. Nothing was generated. "
+    "Ask again to retry.]"
+)
+
+
+def _persist_failed_turn(conversation_id: Optional[str]) -> None:
+    """Record that a turn died, so reloaded history is not silently missing it.
+
+    Never raises: a bookkeeping failure must not mask the original error the
+    caller is already reporting to the user.
+    """
+    if not conversation_id:
+        return
+    try:
+        # Function-scope import, matching every other agent_memory use in this
+        # module — it is NOT a module-level name here. Referencing it at module
+        # scope raised NameError, which this very except block would have
+        # swallowed, leaving a helper that silently persisted nothing.
+        from app.core import agent_memory
+
+        agent_memory.append_message(
+            conversation_id, "assistant", _FAILED_TURN_MESSAGE
+        )
+    except Exception:  # noqa: BLE001 — best-effort bookkeeping
+        _LOG.warning("could not persist failed-turn marker", exc_info=True)
+
+
 _MISSING_REFERENCE_ANSWER = (
     "I could not confirm this reference in the indexed project sources"
 )
@@ -3504,6 +3549,7 @@ class Agent:
             if resp.get("status") == "error":
                 err = resp.get("error", "LLM call failed")
                 _LOG.warning("chat_stream: iter=%d LLM error %s", iteration, err)
+                _persist_failed_turn(conversation_id)
                 yield {"type": "error", "message": err}
                 return
             served_model = (resp.get("raw") or {}).get("model") or served_model
@@ -3662,6 +3708,7 @@ class Agent:
                      MAX_TOOL_ITERATIONS)
         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
         if forced_resp.get("status") == "error":
+            _persist_failed_turn(conversation_id)
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
             return
         served_model = (forced_resp.get("raw") or {}).get("model") or served_model
