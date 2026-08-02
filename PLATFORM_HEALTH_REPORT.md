@@ -151,6 +151,17 @@ or the multi-agent workflow harness to cover exhaustively with saved
 evidence. This report covers what was genuinely probed, with the real
 findings and the parked gates — and stops here, as the doctrine directs.
 
+> **Partly executed 2026-08-02 — see `docs/CLIENT_DESK_READINESS_20260802.md`.**
+> The authenticated route sweep and the storage-class audit were run from
+> this NOT-COVERED list and each surfaced a live false-signal bug (the
+> preflight grading a retired table; Drive admin 500ing for an API-key
+> principal) — both fixed in PR #299 with artifacts in
+> `review_pack/sweep/`. Retrieval isolation was traced and is BY DESIGN
+> (labeled Master-Corpus fallback) with a multi-tenant caveat recorded.
+> **Still not executed:** the on-prem boot (blocked — no container
+> runtime available on the work machine), the remaining integration path
+> traces, and the user-journey screenshots.
+
 ---
 
 # ADDENDUM — client-desk readiness pass (2026-08-02)
