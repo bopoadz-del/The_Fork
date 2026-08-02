@@ -268,11 +268,20 @@ one client's documents can appear inside another client's project, and
 that is what the dormant `RAG_LAYERED` work exists to address. Do not
 put two different clients on this instance as configured.
 
-Secondary note — **now fixed.** The chat path already disclosed the
-fallback, but the raw `/v1/projects/{id}/documents/search` payload carried
-no corpus-origin field, so a caller could not tell an own-document hit
-from a Master-Corpus fallback hit. Each result now carries
-`origin: "own" | "general_knowledge" | "master_corpus"`.
+Secondary note — **fixed, on the second attempt.** The chat path already
+disclosed the fallback, but the raw `/v1/projects/{id}/documents/search`
+payload carried no corpus-origin field, so a caller could not tell an
+own-document hit from a Master-Corpus fallback hit. Each result now
+carries `origin: "own" | "general_knowledge" | "master_corpus"`.
+
+> **The first attempt (#301) shipped as a silent no-op.** The field was
+> added to the intermediate dict inside `search_project_documents`, but
+> the returned rows are rebuilt from scratch further down, so it never
+> reached the wire — and CI stayed green because nothing asserted on the
+> value a caller actually receives. Caught by probing the live endpoint
+> after deploy and seeing `origin=None`. Fixed in #302, with tests that
+> assert on the returned rows and that were **verified to fail against the
+> pre-fix code** (4 failed → 4 passed) rather than assumed to.
 
 `Chunk.layer` is deliberately withheld from the **LLM** path (the chat
 runtime reads it to phrase its own disclosure). Surfacing it to a direct
@@ -362,11 +371,14 @@ Three of the original five are now closed. Updated 2026-08-02.
    offline media). A backup that lives only on the same laptop is one
    disk failure from the same loss. **Never rotate it** — rotation
    orphans every already-encrypted document.
-2. **Rotate the Render API key — OPEN, yours.** The key has now been
-   pasted into chat twice (same key, ends `…yNX0`). It is stored locally
-   at `~/.thefork-backup/render-api.env` (mode `600`) for tooling. Stating
-   it once, plainly: anything with that key has full control of the
-   Render account. Rotating it is a dashboard action.
+2. **Render API key rotation — WAIVED by the operator (2026-08-02).**
+   Same standing-waiver treatment as the DeepSeek keys in
+   `PLATFORM_HEALTH_REPORT.md` F4: noted once, not raised again. The key
+   (ends `…yNX0`) is stored at `~/.thefork-backup/render-api.env`
+   (mode `600`) and is the sanctioned tool for Render work — the operator
+   explicitly authorised its use. Prefer it over the Render MCP when
+   reading secrets, because curl-to-file keeps values out of the
+   transcript while the MCP returns them into context.
 3. **OpenAI env vars — ALREADY CLEAN (verified, not assumed).** Queried
    the live service env: `OPENAI_API_KEY` / `OPENAI_MODEL` are **not
    present**, and no code under `app/` references them. Nothing to unset.
@@ -383,11 +395,18 @@ Three of the original five are now closed. Updated 2026-08-02.
    allowlist plus the direct-DB re-encode path (heavy scanned PDFs must
    not go through the 512Mi web box, which OOMs on them).
 
-Plus one new operator action created by this pass:
+6. **Render build filter — DONE, no operator action needed.** This was
+   briefly listed as "apply the blueprint". The operator's blueprint apply
+   errored, but the setting landed anyway — confirmed live on the service
+   via `GET /v1/services/srv-d8hdc6ek1jcs739rq5sg`:
 
-6. **Apply the Render blueprint** so `render.yaml`'s new
-   `buildFilter.ignoredPaths` takes effect — until then, docs-only merges
-   keep redeploying prod (see §5a).
+   ```json
+   "buildFilter": {"ignoredPaths": ["docs/**","review_pack/**","**/*.md","LICENSE",".github/**"]}
+   ```
+
+   Docs-only commits no longer rebuild the image, so the ~40s 502 per
+   markdown merge (§5a) is closed. **Check the service, not the blueprint
+   run** — a failed blueprint apply here did not mean a failed setting.
 
 ---
 
