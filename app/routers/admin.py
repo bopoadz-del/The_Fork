@@ -12,6 +12,7 @@ endpoints never run unauthenticated and never run for non-admin users.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -706,6 +707,19 @@ def admin_migrate_sqlite(
     }
 
 
+def _parse_vector_dim(coltype: Optional[str]) -> Optional[int]:
+    """Width declared by a pgvector column type, e.g. ``vector(384)`` -> 384.
+
+    Returns None for an absent column or an unsized ``vector`` — both mean
+    "cannot assert a width", which callers must treat as unknown rather than
+    as agreement.
+    """
+    if not coltype:
+        return None
+    m = re.match(r"^\s*vector\s*\(\s*(\d+)\s*\)\s*$", coltype)
+    return int(m.group(1)) if m else None
+
+
 @router.get("/v1/admin/debug/pilot-preflight")
 def admin_pilot_preflight(auth: dict = Depends(require_api_key)):
     """Postgres schema + row-count snapshot for pilot cutover / re-index gates."""
@@ -727,35 +741,83 @@ def admin_pilot_preflight(auth: dict = Depends(require_api_key)):
 
     try:
         from app.core.db import to_psycopg_url
+        from app.core.models import rag_chunk_table_name
+        from app.core.rag.embeddings import loaded_embedder_identity
+
+        # Report the table the retriever ACTUALLY reads and writes (chunks_v2
+        # by default) — NOT the retired legacy `chunks` table. The old code
+        # read the dim off `chunks`, which has been empty since the v2
+        # migration, and compared it to a hardcoded `vector(256)`. So this
+        # gate answered True from a dead table: it would have stayed green
+        # with the live store missing, empty, or the wrong width. Same
+        # false-green class as the admin corpus count fixed earlier in this
+        # file — that one showed 0 chunks for every project and "invited a
+        # destructive re-index click".
+        namespace = os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
+        active_table = rag_chunk_table_name(namespace)
+
         engine = create_engine(to_psycopg_url(db_url))
         with engine.connect() as conn:
-            emb = conn.execute(
-                text(
-                    """
-                    SELECT format_type(a.atttypid, a.atttypmod)
-                    FROM pg_attribute a
-                    JOIN pg_class t ON a.attrelid = t.oid
-                    WHERE t.relname = 'chunks'
-                      AND a.attname = 'embedding'
-                      AND NOT a.attisdropped
-                    """
-                )
-            ).scalar()
+            def _embedding_type(table: str):
+                return conn.execute(
+                    text(
+                        """
+                        SELECT format_type(a.atttypid, a.atttypmod)
+                        FROM pg_attribute a
+                        JOIN pg_class t ON a.attrelid = t.oid
+                        WHERE t.relname = :table
+                          AND a.attname = 'embedding'
+                          AND NOT a.attisdropped
+                        """
+                    ),
+                    {"table": table},
+                ).scalar()
+
+            active_type = _embedding_type(active_table)
+            legacy_type = _embedding_type("chunks")
+
             counts = {}
-            for table in (
+            tables = [
                 "users",
                 "projects",
                 "documents",
                 "chunks",
                 "conversations",
                 "messages",
-            ):
-                counts[table] = conn.execute(
-                    text(f"SELECT COUNT(*) FROM {table}")
-                ).scalar()
+            ]
+            if active_table not in tables:
+                tables.append(active_table)
+            for table in tables:
+                # rag_chunk_table_name validates the identifier, so the
+                # interpolation below cannot carry a hostile namespace.
+                try:
+                    counts[table] = conn.execute(
+                        text(f"SELECT COUNT(*) FROM {table}")
+                    ).scalar()
+                except Exception:  # noqa: BLE001 — table may not exist yet
+                    counts[table] = None
+
+            # Dim agreement is only assertable when the embedder is already
+            # warm: `loaded_embedder_identity` never triggers the slow cold
+            # load, so a cold cache reports None ("unknown"). Unknown is
+            # reported as None, never as a green boolean — an operator gate
+            # must not read "ok" from an absent measurement.
+            identity = loaded_embedder_identity()
+            expected_dim = identity.get("dim") if identity else None
+            actual_dim = _parse_vector_dim(active_type)
+            if expected_dim is None or actual_dim is None:
+                dim_ok = None
+            else:
+                dim_ok = actual_dim == expected_dim
+
             out["postgres"] = {
-                "chunks_embedding_type": emb,
-                "embedding_dim_ok": emb == "vector(256)",
+                "active_chunk_table": active_table,
+                "active_chunk_embedding_type": active_type,
+                "active_chunk_embedding_dim": actual_dim,
+                "legacy_chunks_embedding_type": legacy_type,
+                "embedder_dim": expected_dim,
+                "embedder_loaded": identity is not None,
+                "embedding_dim_ok": dim_ok,
                 "row_counts": counts,
             }
     except Exception as exc:  # noqa: BLE001 — diagnostic only
