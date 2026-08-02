@@ -1890,6 +1890,15 @@ async def search_project_documents(
                 "filename": _doc_name_for_id(c.doc_id),
                 "chunk": c.text,
                 "score": score,
+                # Where this hit actually came from: "own" | "general_knowledge"
+                # | "master_corpus". `Chunk.layer` is withheld from the LLM path
+                # by design (the chat runtime reads it to phrase its own
+                # disclosure). This is a DIRECT API consumer, not model context
+                # — and without it a caller cannot tell an own-document hit from
+                # a STEP 0b Master-Corpus fallback hit. Verified live
+                # 2026-08-02: a project owning ZERO documents returned five
+                # Master-Corpus documents here with nothing marking them.
+                "origin": getattr(c, "layer", "own") or "own",
             }
 
     ranked = sorted(best.values(), key=lambda x: x["score"], reverse=True)[:top_k]
