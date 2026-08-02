@@ -268,31 +268,65 @@ one client's documents can appear inside another client's project, and
 that is what the dormant `RAG_LAYERED` work exists to address. Do not
 put two different clients on this instance as configured.
 
-Secondary note: the chat path discloses the fallback, but the raw
-`/v1/projects/{id}/documents/search` payload carries no corpus-origin
-field on each result — a caller of that endpoint cannot tell an own-doc
-hit from a Master-Corpus fallback hit. Worth adding.
+Secondary note — **now fixed.** The chat path already disclosed the
+fallback, but the raw `/v1/projects/{id}/documents/search` payload carried
+no corpus-origin field, so a caller could not tell an own-document hit
+from a Master-Corpus fallback hit. Each result now carries
+`origin: "own" | "general_knowledge" | "master_corpus"`.
+
+`Chunk.layer` is deliberately withheld from the **LLM** path (the chat
+runtime reads it to phrase its own disclosure). Surfacing it to a direct
+API consumer is consistent with that intent rather than against it: it is
+not model context, and the alternative is a caller silently attributing
+another project's document to this one.
 
 ---
 
-## 5. Recommended hardening (found this pass, not shipped)
+## 5. Hardening — ALL FOUR SHIPPED (follow-up PR)
 
-Deliberately not done tonight — each changes shared behaviour on a live
-client system and deserves its own verified deploy:
+These were listed as "found but not shipped". They were then implemented:
 
-1. **Normalise `require_api_key`.** It should return a principal with the
-   same guaranteed keys as `require_user`. Today the asymmetry means any
-   *future* `auth["user_id"]` on an api-key route is a latent 500.
-2. **Stop shipping the test framework in the production image.** Moving
-   test deps out of `requirements.txt` removes the pytest alert from the
-   prod surface entirely and shrinks the image, without the 27-failure
-   pytest-9 migration.
-3. **torch version drift.** The Dockerfile pins `torch==2.5.1` while
-   `requirements-cv/ml/rag.txt` pin `2.12.0` — the image and the lock
-   files disagree about the ML stack. Harmless today; a trap later.
-4. **`/openapi.json` is publicly readable on prod** (200 unauthenticated).
-   It discloses the full API surface. Consider gating it for a
-   client-desk deployment.
+1. **`require_api_key` normalised.** The api-key branch now returns
+   `user_id` (the singleton system user) and `auth_method`, matching the
+   JWT branch, so the whole latent-500 class is closed at the dependency
+   instead of route by route.
+   **Identity only, never authority** — `role` is deliberately untouched.
+   The system user *is* admin, so defaulting `role` from it would have
+   silently promoted every plain `CEREBRUM_API_KEY_*` to admin
+   (`_require_admin` gates on exactly that key). A test pins this: a plain
+   key gets a `user_id` but still gets **403** from an admin route.
+2. **Test framework stripped from the production image.** The Dockerfile
+   now uninstalls `pytest`, `pytest-asyncio`, `pytest-cov`,
+   `pytest-json-report` and `diff-cover` after the lock install. Safe:
+   nothing under `app/` imports pytest at runtime, and CI installs the
+   test stack explicitly (`test.yml`) rather than relying on
+   `requirements.txt`. This removes the pytest advisory from the
+   production surface without the pytest-9 migration.
+3. **torch drift documented — and a false claim corrected.**
+   `deploy/DEPENDENCY_RISKS.md` stated *"Production Render image installs
+   `requirements.txt` only"* and marked torch **"Production exposure: No —
+   not in `Dockerfile`"**. Both were wrong: the Dockerfile pins
+   `torch==2.5.1` directly. The risk acceptance still holds but now rests
+   on **reachability** (`torch.jit.script` has zero call sites), not on a
+   false absence. A patched `2.13.0` now exists; closing it needs a
+   coordinated torch/torchvision/ultralytics/onnxruntime bump plus ONNX
+   re-qualification, so it stays accepted with that stated cost.
+4. **API surface closed on production.** `/docs`, `/redoc` and
+   `/openapi.json` are now disabled when `ENV=production`
+   (`API_DOCS_ENABLED` overrides either way). They stayed open off-prod so
+   local dev and the on-prem profile are unchanged.
+
+### 5a. Also shipped — docs-only commits no longer redeploy prod
+
+Observed while merging PR #300: a **markdown-only** merge rebuilt the
+image and returned **502 for ~40s** on the live client service.
+`render.yaml` now carries a `buildFilter.ignoredPaths` for `docs/**`,
+`review_pack/**`, `**/*.md`, `LICENSE` and `.github/**`.
+
+> **Operator action required for this one to take effect:** `buildFilter`
+> is blueprint config. Like every other change in `render.yaml`, it is
+> reconciled only when the blueprint is **applied** in the Render
+> dashboard — a git push alone does not activate it.
 
 ---
 
@@ -314,18 +348,46 @@ client system and deserves its own verified deploy:
 
 ---
 
-## 7. Owner-gated — code cannot close these
+## 7. Owner-gated — status after the follow-up pass
 
-1. **Fernet `DATA_ENCRYPTION_KEY` offline backup.** Copy from Render ->
-   Environment into an offline store. **Never rotate** — rotation
-   orphans the encrypted corpus.
-2. **Rotate the Render API key** that was pasted into chat.
-3. **OpenAI env vars** still set but unused — safe to unset.
-4. **Repo secrets for `eval-battery.yml`** (`FORK_API_KEY` /
-   `FORK_BASE_URL`) if scheduled CI batteries are wanted.
-5. **`dd-2023-118 vol 3` chunk backfill** — needs the DB allowlist plus
-   the direct-DB re-encode path (heavy scanned PDFs must not go through
-   the 512Mi web box).
+Three of the original five are now closed. Updated 2026-08-02.
+
+1. **Fernet `DATA_ENCRYPTION_KEY` offline backup — DONE (on-machine).**
+   Captured from the Render env API straight to
+   `~/.thefork-backup/FERNET_DATA_ENCRYPTION_KEY.backup` (mode `600`).
+   44 chars, ends `…maw=` — matches the last-4 recorded in the credential
+   census, so it is the live value. The value was written directly to
+   disk and never printed.
+   **Still yours:** keep a copy **off this machine** (password manager or
+   offline media). A backup that lives only on the same laptop is one
+   disk failure from the same loss. **Never rotate it** — rotation
+   orphans every already-encrypted document.
+2. **Rotate the Render API key — OPEN, yours.** The key has now been
+   pasted into chat twice (same key, ends `…yNX0`). It is stored locally
+   at `~/.thefork-backup/render-api.env` (mode `600`) for tooling. Stating
+   it once, plainly: anything with that key has full control of the
+   Render account. Rotating it is a dashboard action.
+3. **OpenAI env vars — ALREADY CLEAN (verified, not assumed).** Queried
+   the live service env: `OPENAI_API_KEY` / `OPENAI_MODEL` are **not
+   present**, and no code under `app/` references them. Nothing to unset.
+   *(While there: the provider ladder was confirmed live as
+   `LLM_PROVIDER=kimi`, `KIMI_MODEL=kimi-k2.6`,
+   `KIMI_FALLBACK_MODEL=moonshot-v1-128k`, with `LLM_FALLBACK_PROVIDER=groq`
+   as a third-tier last resort. `GROQ_API_KEY` is still set, but the
+   auto-pick only falls to Groq when a Kimi key is **absent** — it is set,
+   so there is no provider drift.)*
+4. **Repo secrets for `eval-battery.yml` — DONE.** `FORK_API_KEY` and
+   `FORK_BASE_URL` are set on the repository, so the scheduled battery
+   workflow can run.
+5. **`dd-2023-118 vol 3` chunk backfill — OPEN, yours.** Needs the DB
+   allowlist plus the direct-DB re-encode path (heavy scanned PDFs must
+   not go through the 512Mi web box, which OOMs on them).
+
+Plus one new operator action created by this pass:
+
+6. **Apply the Render blueprint** so `render.yaml`'s new
+   `buildFilter.ignoredPaths` takes effect — until then, docs-only merges
+   keep redeploying prod (see §5a).
 
 ---
 
