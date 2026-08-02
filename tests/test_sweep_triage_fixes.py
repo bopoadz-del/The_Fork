@@ -72,3 +72,53 @@ class TestCostGateGroundsUserFigures:
         answer = "The rate for C40 concrete is SAR 465 per cubic metre."
         out = rt._cost_grounding_gate(answer, None, messages)
         assert out == rt._CG_REFUSAL
+
+
+class TestQ12PaymentPhrasing:
+    """Live 2026-08-02 verification: Q2 (guardrail height) now passes via
+    construction_calc, but Q12 STILL refused — 'Calculate the interim payment
+    for work valued at 900,000 with 10 percent retention' routed to
+    payment_certificate and the extractor missed BOTH figures: 'work valued
+    at <n>' is not a 'gross valuation' label, and '10 percent retention' puts
+    the percent BEFORE the label. Same figures-in-the-prompt family as above."""
+
+    def test_work_valued_at_and_percent_before_retention(self):
+        from app.containers.construction.boq import _payment_figures_from_message
+        fig = _payment_figures_from_message(
+            "Calculate the interim payment for work valued at 900,000 "
+            "with 10 percent retention."
+        )
+        assert fig["gross_valuation"] == 900_000.0
+        assert fig["retention_percent"] == 10.0
+
+    def test_value_of_work_done_phrasing(self):
+        from app.containers.construction.boq import _payment_figures_from_message
+        fig = _payment_figures_from_message(
+            "issue an IPC — value of work done SAR 2,500,000, retention 5%"
+        )
+        assert fig["gross_valuation"] == 2_500_000.0
+        assert fig["retention_percent"] == 5.0
+
+    def test_label_forms_still_win_and_do_not_regress(self):
+        from app.containers.construction.boq import _payment_figures_from_message
+        fig = _payment_figures_from_message(
+            "gross valuation SAR 10,000,000, retention 10%, advance recovery 20%"
+        )
+        assert fig["gross_valuation"] == 10_000_000.0
+        assert fig["retention_percent"] == 10.0
+        assert fig["advance_recovery_percent"] == 20.0
+
+    @pytest.mark.asyncio
+    async def test_q12_certificate_issues_end_to_end(self):
+        from app.containers.construction import ConstructionContainer
+        r = await ConstructionContainer().payment_certificate(
+            {"message": "Calculate the interim payment for work valued at "
+                        "900,000 with 10 percent retention."},
+            {},
+        )
+        assert r["status"] == "success"
+        assert r["valuation"]["gross_valuation"] == pytest.approx(900_000.0)
+        assert r["deductions"]["retention_held"] == pytest.approx(90_000.0)
+        # FIDIC 14.3 shape: 900,000 - 10% retention = 810,000 net (no advance,
+        # no previous certified in this prompt)
+        assert r["payment"]["net_due_this_period"] == pytest.approx(810_000.0)
