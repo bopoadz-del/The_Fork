@@ -502,6 +502,12 @@ def stream_prompt(client: httpx.Client, base: str, agent: str, headers: dict,
                               if k not in ("type", "sources", "exports")}
                 out["served_model"] = evt.get("model") or out["served_model"]
                 out["sources_count"] = len(evt.get("sources") or [])
+                # Capture the DELIVERABLE offers. These were dropped, so a
+                # feature whose whole product is a downloadable workbook
+                # recorded exports=null and was then judged purely on how
+                # chatty its summary was -- see judge_execution.
+                out["exports"] = list(evt.get("exports") or [])
+                out["exports_count"] = len(out["exports"])
                 break
             elif etype == "sources":
                 # some paths emit sources as their own event instead of on end
@@ -590,6 +596,21 @@ def judge_execution(feature: dict, res: dict) -> tuple:
         reasons.append(res["http_error"])
     for err in res.get("errors") or []:
         reasons.append(f"error event: {err}")
+    # A turn that shipped a DELIVERABLE is not judged on inline verbosity.
+    #
+    # Verified live 2026-08-03: generate_wbs answered in 233 chars --
+    #   "Schedule built: 204 activities over 688 working days (44 on the
+    #    critical path) ... workbook ready to download"
+    # -- against min_chars 1500, so it scored FAIL/NO_OUTPUT. But POSTing the
+    # offered endpoint returned HTTP 200 and a valid 37KB xlsx: 5 sheets
+    # (L2 Schedule, Cost Loading, Manpower Histogram, Milestones, Summary),
+    # 210 rows of real CPM data. The feature worked perfectly; the oracle was
+    # measuring the wrong artifact, and 19 of 23 sweep FAILs were this class.
+    #
+    # min_chars still applies to answer-only features (exports empty), where a
+    # short answer really is a husk.
+    if res.get("exports"):
+        return ("PASS" if not reasons else "FAIL"), reasons
     if len(res.get("answer") or "") < feature["min_chars"]:
         reasons.append(f"answer_chars {len(res.get('answer') or '')} "
                        f"< min_chars {feature['min_chars']}")
@@ -614,6 +635,12 @@ def execution_subtype(feature: dict, res: dict) -> "str | None":
     headline reason.
     """
     if res.get("http_error") or (res.get("errors") or []):
+        return None
+    # A turn that produced a downloadable deliverable produced OUTPUT, however
+    # terse its summary. Calling that "NO_OUTPUT" is the exact misread that
+    # tagged generate_wbs (233 chars + a working 37KB workbook) as producing
+    # essentially nothing.
+    if res.get("exports"):
         return None
     min_chars = int(feature.get("min_chars") or 0)
     if min_chars <= 0:
