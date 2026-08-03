@@ -2,6 +2,9 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,6 +36,9 @@ class XLSXParser:
                 if rows:
                     doc.headers[sheet_name] = [str(c).strip() for c in rows[0]]
         except ImportError:
-            pass
+            logger.warning(
+                "swallowed %s in parse() — continuing",
+                "ImportError", exc_info=True,
+            )
 
         return doc

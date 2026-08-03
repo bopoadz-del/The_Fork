@@ -5,6 +5,9 @@ from typing import Dict, Any
 import os
 import platform
 from app.core.subprocess_env import scrubbed_env
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class HardwareProfile(Enum):
@@ -82,7 +85,10 @@ class HALBlock:
             if result.returncode == 0:
                 return True
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _check_gpu() — continuing",
+                "Exception", exc_info=True,
+            )
         
         # Check for Metal (Mac)
         if platform.system() == "Darwin":
@@ -92,7 +98,10 @@ class HALBlock:
                 if "Metal" in result.stdout:
                     return True
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in _check_gpu() — continuing",
+                    "Exception", exc_info=True,
+                )
         
         return False
     

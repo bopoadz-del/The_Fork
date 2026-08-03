@@ -4,6 +4,9 @@ import os
 import re
 from typing import Any, Dict, List, Tuple
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SpecAnalyzerBlock(UniversalBlock):
@@ -141,7 +144,10 @@ class SpecAnalyzerBlock(UniversalBlock):
                         # OCR is best-effort — if it fails, fall through with
                         # whatever the text layer gave us (may still be empty
                         # but at least we don't crash the spec analysis).
-                        pass
+                        logger.debug(
+                            "swallowed %s in process() — continuing",
+                            "Exception", exc_info=True,
+                        )
         elif raw_text:
             text = raw_text
             page_count = 0

@@ -4,6 +4,9 @@ import json
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -92,7 +95,10 @@ class DocumentMapper:
                         "target_date": date_obj.strftime("%Y-%m-%d"),
                     })
                 except ValueError:
-                    pass
+                    logger.warning(
+                        "swallowed %s in _build_downstream() — continuing",
+                        "ValueError", exc_info=True,
+                    )
         downstream["schedule_engine"]["milestones"] = milestones
 
         # ------------------------------------------------------------------

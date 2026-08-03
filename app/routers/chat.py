@@ -516,7 +516,10 @@ async def _with_domain_hint(prompt: str) -> str:
         if hint:
             return f"[Context for your answer: {hint}]\n\n{prompt}"
     except Exception:
-        pass
+        logger.warning(
+            "swallowed %s in _with_domain_hint() — continuing",
+            "Exception", exc_info=True,
+        )
     return prompt
 
 
@@ -541,7 +544,10 @@ def _with_project_memory(
         if ctx:
             return f"{ctx}\n\n---\n\n{prompt}"
     except Exception:
-        pass
+        logger.warning(
+            "swallowed %s in _with_project_memory() — continuing",
+            "Exception", exc_info=True,
+        )
     return prompt
 
 

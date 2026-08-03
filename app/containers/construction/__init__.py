@@ -42,7 +42,10 @@ class ConstructionContainer(
                 if hash_result.get("status") == "success":
                     return f"construction:doc:{doc_type}:{hash_result.get('sha256', '')}"
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in _get_or_create_cache_key() — continuing",
+                    "Exception", exc_info=True,
+                )
         if os.path.exists(file_path):
             return f"construction:doc:{doc_type}:{os.path.getmtime(file_path)}:{os.path.getsize(file_path)}"
         import hashlib
@@ -300,9 +303,15 @@ class ConstructionContainer(
             from app.dependencies import get_block_instance
             return get_block_instance(name)
         except KeyError:
-            pass
+            logger.warning(
+                "swallowed %s in _resolve_block() — continuing",
+                "KeyError", exc_info=True,
+            )
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _resolve_block() — continuing",
+                "Exception", exc_info=True,
+            )
         # Last resort — bare class, no deps wired.
         from app.blocks import BLOCK_REGISTRY
         block_cls = BLOCK_REGISTRY.get(name)
@@ -885,7 +894,10 @@ class ConstructionContainer(
                     "progress_indicators": result.get("description", "")[:200]
                 }
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in _analyze_site_photo() — continuing",
+                    "Exception", exc_info=True,
+                )
         return {"photo": Path(photo_path).name, "activities_detected": [], "safety_compliance": "unknown", "headcount_estimate": 0, "progress_indicators": ""}
     def _extract_activities_from_voice(self, transcriptions: List[Dict]) -> List[Dict]:
         activities = []
@@ -1268,7 +1280,10 @@ class ConstructionContainer(
         try:
             return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _parse_event_date() — continuing",
+                "Exception", exc_info=True,
+            )
         try:
             return datetime.strptime(s[:10], "%Y-%m-%d").date()
         except Exception:

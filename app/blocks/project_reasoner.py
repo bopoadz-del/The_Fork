@@ -68,7 +68,10 @@ def _extract_json(text: str) -> dict:
     try:
         return json.loads(text)
     except ValueError:
-        pass
+        logger.debug(
+            "swallowed %s in _extract_json() — continuing",
+            "ValueError", exc_info=True,
+        )
     start = text.find("{")
     if start == -1:
         raise ValueError("no JSON object in LLM reply")

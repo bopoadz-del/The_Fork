@@ -845,7 +845,10 @@ class ConstructionBoqMixin:
                     datetime.strptime(contract_start[:10], "%Y-%m-%d") + timedelta(days=due_offset)
                 ).strftime("%Y-%m-%d")
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in _create_submittal_item() — continuing",
+                    "Exception", exc_info=True,
+                )
         return {
             "ref": ref_num,
             "description": name,

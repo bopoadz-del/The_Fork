@@ -98,7 +98,10 @@ class ConstructionDocumentsMixin:
                         cached_value["_cache_key"] = cache_key
                     return cached_value
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in process_document() — continuing",
+                    "Exception", exc_info=True,
+                )
 
         file_size = 0
         hasher_block = BLOCK_REGISTRY.get("file_hasher")
@@ -111,7 +114,10 @@ class ConstructionDocumentsMixin:
                 if hash_result.get("status") == "success":
                     file_size = hash_result.get("size", 0)
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in process_document() — continuing",
+                    "Exception", exc_info=True,
+                )
 
         if file_size > 10 * 1024 * 1024:
             async_block = BLOCK_REGISTRY.get("async_processor")
@@ -140,7 +146,10 @@ class ConstructionDocumentsMixin:
                         "queued": queued,
                     }
                 except Exception:
-                    pass
+                    logger.warning(
+                        "swallowed %s in process_document() — continuing",
+                        "Exception", exc_info=True,
+                    )
 
         processors = {
             "drawing": self._process_drawing,
@@ -174,7 +183,10 @@ class ConstructionDocumentsMixin:
                     result, {"action": "set", "key": cache_key, "ttl": 7200}
                 )
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in process_document() — continuing",
+                    "Exception", exc_info=True,
+                )
 
         if isinstance(result, dict):
             result["_cache_key"] = cache_key
@@ -770,7 +782,10 @@ class ConstructionDocumentsMixin:
                         "context": text[max(0, match.start()-50):match.end()+50]
                     })
             except ValueError:
-                pass
+                logger.warning(
+                    "swallowed %s in _extract_measurements_advanced() — continuing",
+                    "ValueError", exc_info=True,
+                )
 
         # Direct volume mentions: "450 m3", "concrete: 450 m³"
         volume_pattern = r'\b(\d[\d,]*(?:\.\d+)?)\s*(?:m3|m³|cubic\s+met(?:re|er)s?)\b'
@@ -786,7 +801,10 @@ class ConstructionDocumentsMixin:
                         "context": text[max(0, match.start()-50):match.end()+50]
                     })
             except ValueError:
-                pass
+                logger.warning(
+                    "swallowed %s in _extract_measurements_advanced() — continuing",
+                    "ValueError", exc_info=True,
+                )
 
         quantity_pattern = r'\b(\d+)\s*(?:no|nos|nr|ea|each)?\.?\s*([A-Z][A-Za-z\s]+)'
         for match in re.finditer(quantity_pattern, text[:2000]):
@@ -1786,7 +1804,10 @@ class ConstructionDocumentsMixin:
             from app.core.learning_capture import capture_qa_defects
             capture_qa_defects(_result, (params or {}).get("project_id") or "")
         except Exception:  # noqa: BLE001
-            pass
+            logger.warning(
+                "swallowed %s in qa_qc_inspection() — continuing",
+                "Exception", exc_info=True,
+            )
         return _result
     _DEFECT_KEYWORDS = {
         "concrete": [

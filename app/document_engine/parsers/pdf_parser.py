@@ -3,6 +3,9 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,21 +35,30 @@ class PDFParser:
                 doc = self._parse_with_pymupdf(file_path, doc)
                 parsed = True
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in parse() — continuing",
+                    "Exception", exc_info=True,
+                )
 
         if not parsed:
             try:
                 doc = self._parse_with_pdfplumber(file_path, doc)
                 parsed = True
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in parse() — continuing",
+                    "Exception", exc_info=True,
+                )
 
         if not parsed:
             try:
                 doc = self._parse_with_pypdf2(file_path, doc)
                 parsed = True
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in parse() — continuing",
+                    "Exception", exc_info=True,
+                )
 
         if not parsed:
             # Ultimate fallback — treat as text

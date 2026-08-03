@@ -23,6 +23,9 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.db import SessionLocal, engine, get_database_url
 from app.core.models import Document, Project, ProjectFact
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ── pilot master-corpus alias ───────────────────────────────────────────────
 # Per-project Drive approval/indexing is not pilot-ready. Expose the existing
@@ -910,7 +913,10 @@ def delete_document(doc_id: str) -> Optional[Dict[str, Any]]:
                         # Document row deletion must never be blocked by RAG
                         # cleanup; the chunks will become unreachable once the
                         # document row is gone anyway.
-                        pass
+                        logger.warning(
+                            "swallowed %s in delete_document() — continuing",
+                            "Exception", exc_info=True,
+                        )
                 session.commit()
     return doc
 

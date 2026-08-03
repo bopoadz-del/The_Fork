@@ -17,6 +17,9 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     import resource  # POSIX only
@@ -210,7 +213,10 @@ class SandboxBlock(UniversalBlock):
             try:
                 safe_globals[mod_name] = __import__(mod_name)
             except ImportError:
-                pass
+                logger.debug(
+                    "swallowed %s in _execute_python() — continuing",
+                    "ImportError", exc_info=True,
+                )
         
         # Capture output
         stdout_capture = io.StringIO()
@@ -264,7 +270,10 @@ class SandboxBlock(UniversalBlock):
                 try:
                     resource.setrlimit(resource.RLIMIT_AS, rlimit_to_restore)
                 except (ValueError, OSError):  # pragma: no cover — defensive
-                    pass
+                    logger.debug(
+                        "swallowed %s in _execute_python() — continuing",
+                        "(ValueError, OSError)", exc_info=True,
+                    )
         
         execution_time = time.time() - start_time
         

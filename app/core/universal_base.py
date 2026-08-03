@@ -8,6 +8,9 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, List, Optional
 import time
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class UniversalBlock(ABC):
@@ -244,7 +247,10 @@ class UniversalBlock(ABC):
             from app.infra.monitoring import record_block_execution
             record_block_execution(self.name, execution_time, status)
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in execute() — continuing",
+                "Exception", exc_info=True,
+            )
         
         return {
             "block": self.name,

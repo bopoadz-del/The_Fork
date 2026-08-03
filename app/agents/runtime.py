@@ -462,7 +462,10 @@ def _build_missing_reference_answer(
             if not project_name and project_id == _projects.MASTER_CORPUS_PROJECT_ID:
                 project_name = _projects.MASTER_CORPUS_NAME
         except Exception:
-            pass
+            _LOG.warning(
+                "swallowed %s in _build_missing_reference_answer() — continuing",
+                "Exception", exc_info=True,
+            )
 
     if project_name:
         return (
@@ -519,7 +522,10 @@ def _looks_like_internal_tool_json(text: str) -> bool:
         try:
             obj = json.loads(stripped)
         except json.JSONDecodeError:
-            pass
+            _LOG.warning(
+                "swallowed %s in _looks_like_internal_tool_json() — continuing",
+                "json.JSONDecodeError", exc_info=True,
+            )
         else:
             if isinstance(obj, dict):
                 if _is_tool_obj(obj):
@@ -2959,7 +2965,10 @@ class Agent:
                     await res
             except Exception:
                 # Event handler must never break the agent loop.
-                pass
+                _LOG.warning(
+                    "swallowed %s in _emit() — continuing",
+                    "Exception", exc_info=True,
+                )
         cfg = _llm_config()
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check entirely. The empty bearer token sent later is ignored
@@ -3968,7 +3977,10 @@ class Agent:
                         }
                 except Exception:  # noqa: BLE001
                     # A broken usage tracker must never block a real call.
-                    pass
+                    _LOG.warning(
+                        "swallowed %s in _call_llm() — continuing",
+                        "Exception", exc_info=True,
+                    )
         # An agent that pinned a provider-specific model is left alone; an
         # unpinned/legacy-placeholder agent uses the active provider's default
         # (Kimi primary / Groq fallback / Ollama on-prem, from _llm_config).
@@ -4105,7 +4117,10 @@ class Agent:
                             usage=None,
                         )
                     except Exception:  # noqa: BLE001
-                        pass
+                        _LOG.warning(
+                            "swallowed %s in _call_llm() — continuing",
+                            "Exception", exc_info=True,
+                        )
                     return {"status": "success", "choice": {"message": msg}, "raw": data}
 
                 async with httpx.AsyncClient(timeout=_llm_http_timeout()) as client:
@@ -4166,7 +4181,10 @@ class Agent:
                         # retryable and fall back rather than erroring the turn.
                         tool_use_failed_unrecovered = True
                 except (json.JSONDecodeError, KeyError, TypeError):
-                    pass
+                    _LOG.warning(
+                        "swallowed %s in _call_llm() — continuing",
+                        "(json.JSONDecodeError, KeyError, TypeError)", exc_info=True,
+                    )
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
                 if (_is_retryable(r.status_code) or tool_use_failed_unrecovered) and not is_last:
                     reason = "tool_use_failed (prose)" if tool_use_failed_unrecovered else f"HTTP {r.status_code}"
@@ -4198,7 +4216,10 @@ class Agent:
                         usage=data.get("usage"),
                     )
                 except Exception:  # noqa: BLE001
-                    pass
+                    _LOG.warning(
+                        "swallowed %s in _call_llm() — continuing",
+                        "Exception", exc_info=True,
+                    )
                 msg = choice.get("message") or {}
                 if msg and not (msg.get("tool_calls") or []):
                     # Observe-only tripwire: the model answered a turn whose
@@ -4364,7 +4385,10 @@ class Agent:
                     usage=usage,
                 )
             except Exception:  # noqa: BLE001
-                pass
+                _LOG.warning(
+                    "swallowed %s in _stream_synthesis() — continuing",
+                    "Exception", exc_info=True,
+                )
 
     async def _run_tool_call(
         self,

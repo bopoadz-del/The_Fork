@@ -69,7 +69,10 @@ def load_token(user_id: str) -> Optional[Dict[str, Any]]:
         try:
             path.unlink()
         except OSError:
-            pass
+            logger.warning(
+                "swallowed %s in load_token() — continuing",
+                "OSError", exc_info=True,
+            )
         return None
 
 

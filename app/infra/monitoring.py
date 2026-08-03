@@ -326,7 +326,10 @@ def _bump_prometheus_request_counter(method: str, status: int) -> None:
     try:
         _PROM_REQUESTS_TOTAL.labels(method=method, status=str(status)).inc()
     except Exception:
-        pass
+        logger.warning(
+            "swallowed %s in _bump_prometheus_request_counter() — continuing",
+            "Exception", exc_info=True,
+        )
 
 
 # ── Provider monitoring block (Lego layer) ────────────────────────────────

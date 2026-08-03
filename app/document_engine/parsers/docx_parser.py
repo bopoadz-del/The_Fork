@@ -2,6 +2,9 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,7 +42,10 @@ class DOCXParser:
                     try:
                         level = int(style.replace("Heading ", ""))
                     except ValueError:
-                        pass
+                        logger.warning(
+                            "swallowed %s in parse() — continuing",
+                            "ValueError", exc_info=True,
+                        )
                     doc.headings.append({"level": level, "text": text})
                 elif para.style and "List" in style:
                     doc.lists.append(text)
