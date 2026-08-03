@@ -20,6 +20,14 @@ from app.core.models import Workflow
 
 _lock = threading.Lock()
 _initialized = False
+# Tracks WHICH database the schema was created in. `_initialized` alone is a
+# global boolean, but the database is per-DATA_DIR / per-DATABASE_URL: after
+# init runs against one database, `_ensure_db` short-circuits for every other
+# one, so a later switch silently gets NO schema ("no such table: projects").
+# Sibling stores (doc_index, hydration_store, rag.budget) already track the
+# URL; these did not. Found via an order-dependent test failure, but the bug
+# is real wherever the database can change after first use.
+_initialized_for_url: str | None = None
 
 
 def _now() -> str:
@@ -46,7 +54,7 @@ def _workflow_as_dict(workflow: Workflow) -> Dict[str, Any]:
 
 
 def init_db() -> None:
-    global _initialized
+    global _initialized, _initialized_for_url
     with _lock:
         from app.core.projects import init_db as init_projects_db
 
@@ -54,10 +62,11 @@ def init_db() -> None:
         _ensure_sqlite_parent_dir()
         Workflow.__table__.create(bind=engine, checkfirst=True)
         _initialized = True
+        _initialized_for_url = get_database_url()
 
 
 def _ensure() -> None:
-    if not _initialized:
+    if not _initialized or _initialized_for_url != get_database_url():
         init_db()
 
 
