@@ -5,6 +5,7 @@ Two interchangeable backends behind one interface: InMemorySessionStore
 """
 
 import copy
+import logging
 import os
 import time
 from abc import ABC, abstractmethod
@@ -12,6 +13,8 @@ from typing import Dict, Optional, Tuple
 
 from app.core.redis_client import get_redis_client
 from app.schemas.project_session import ProjectSession
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TTL_SECONDS = 14400  # 4 hours; override with the SESSION_TTL_SECONDS env var
 
@@ -87,6 +90,14 @@ class RedisSessionStore(SessionStore):
                 return None
             return ProjectSession.model_validate_json(raw)
         except Exception:
+            # Reads fail CLOSED to "no session", which is correct — a
+            # corrupt or unreachable session must not resurrect stale
+            # state. But the caller then behaves as if the user were new,
+            # so the reason has to be recorded somewhere.
+            logger.warning(
+                "could not read session %s from Redis — treating it as absent, "
+                "the caller will start a fresh session", session_id, exc_info=True,
+            )
             return None
 
     async def save(self, session: ProjectSession) -> None:
@@ -97,7 +108,14 @@ class RedisSessionStore(SessionStore):
             session.touch()
             await client.set(self._key(session.id), session.model_dump_json(), ex=self._ttl)
         except Exception:
-            pass
+            # The worst of the three: the write is dropped, the caller is told
+            # nothing, and the user's session silently stops persisting across
+            # requests. That reads to them as the app forgetting what they said.
+            logger.warning(
+                "could not persist session %s to Redis — this turn's session "
+                "state is LOST and will not be visible to the next request",
+                session.id, exc_info=True,
+            )
 
     async def delete(self, session_id: str) -> bool:
         client = await get_redis_client()
@@ -106,6 +124,12 @@ class RedisSessionStore(SessionStore):
         try:
             return bool(await client.delete(self._key(session_id)))
         except Exception:
+            # Returning False is honest — the delete did not happen — but a
+            # session that outlives its logout is worth knowing about.
+            logger.warning(
+                "could not delete session %s from Redis — it will persist "
+                "until its TTL expires", session_id, exc_info=True,
+            )
             return False
 
 
