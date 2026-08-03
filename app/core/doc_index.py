@@ -1357,6 +1357,12 @@ def index_project(project_id: str) -> Dict[str, Any]:
         boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
         if boq_chunks:
             chunks = chunks + boq_chunks
+        # Drawing → RAG: same mirroring rule as the BOQ hook. Both indexing
+        # paths must append these or a schedule is retrievable after one kind
+        # of ingest and invisible after the other.
+        drawing_chunks = _drawing_chunks_for_document(file_path, filename, ext, project_id)
+        if drawing_chunks:
+            chunks = chunks + drawing_chunks
 
         fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
         entry: Dict[str, Any] = {
@@ -1584,6 +1590,182 @@ def _boq_chunks_for_document(
         return []
 
 
+# ── Drawing tables → RAG ─────────────────────────────────────────────────────
+#
+# Same problem the BOQ hook above solves, one document type over. A drawing
+# keeps its numbers in its SCHEDULES — bar/bending, door, window, finishes —
+# and `_extract_with_meta` only pulls the PDF's raw text layer. Schedule cells
+# come through as a flat run of words with the row/column structure gone, so
+# "how many 16mm bars are on sheet S-2101-004" could not be answered even
+# though the figure was on the page.
+#
+# `ConstructionContainer._extract_tables_advanced` already recovers the real
+# table structure. This turns each recovered table into retrievable chunks,
+# exactly as `_boq_chunks_for_document` does for priced line items.
+
+_DRAWING_NAME_RE = re.compile(
+    # `DWG` is the drawing token in the JCB/Diriyah document-code convention
+    # that names most of this corpus:
+    #   IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf   <- drawing
+    #   IP-INF-053-0000-JCB-BOQ-CA-000007-B_...pdf     <- NOT a drawing
+    #   IP-INF-053-0000-JCB-SPC-IF-000013-B_SOPR.pdf   <- NOT a drawing
+    # `\b` is WRONG here: underscore is a word character, so `\bdrawing\b`
+    # does not match `drawing_tm_200.pdf` — a real filename from the corpus.
+    # These lookarounds treat `_`, `-`, `.` and space alike as separators.
+    #
+    # Bare "sheet" is deliberately NOT a token. It is the loosest of the
+    # candidates ("Data Sheet", "Method Statement Sheet") and the whole reason
+    # this gate is filename-based is to keep table detection off PDFs that do
+    # not need it. All four real drawing filenames in the corpus carry DWG or
+    # "drawing", so "sheet" buys nothing and costs breadth.
+    r"(?<![A-Za-z0-9])(?:dwgs?|drawings?)(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_drawing(filename: str, ext: str) -> bool:
+    """Cheap gate before opening a PDF and running table detection.
+
+    Deliberately filename-only, and PDF-only, for the reason `_looks_like_boq`
+    gives for its own gate: running table detection over every page of every
+    PDF would add real cost to a bulk re-index, and re-encode runs on this
+    corpus already sit close to a capacity wall. A drawing that is not named
+    like one is missed; that is the accepted trade, and it is recorded in
+    KNOWN_INCOMPLETE.md rather than left implicit.
+    """
+    return ext == ".pdf" and bool(_DRAWING_NAME_RE.search(filename or ""))
+
+
+def _drawing_table_chunks(tables: List[Dict[str, Any]], source: str) -> List[str]:
+    """Serialise recovered drawing tables into retrievable chunks.
+
+    One chunk per table, prefixed with the sheet it came from — a project
+    holds many sheets and a bar schedule on one is not the bar schedule on
+    another, the same disambiguation `_boq_summary_chunks` does with
+    ``source_name``.
+
+    The wording carries the synonyms operators actually type ("bar mark",
+    "diameter", "quantity", "schedule"), for the same reason the BOQ line-item
+    chunks do: a bare grid of numbers loses to generic boilerplate on cosine
+    alone.
+    """
+    _KIND_WORDS = {
+        "rebar_schedule": "reinforcement bar schedule / bar bending schedule (BBS) — "
+                          "bar mark, diameter, length, shape code, quantity",
+        "door_schedule": "door schedule — door reference, type, size, fire rating, quantity",
+        "window_schedule": "window schedule — window reference, type, size, quantity",
+        "finishes_schedule": "room finishes schedule — floor, wall and ceiling finishes",
+        "revision_history": "drawing revision history — revision, date, description",
+        "legend": "drawing legend / key — symbols and their meanings",
+        "general_notes": "drawing general notes",
+        "quantities": "quantities table — item, unit, quantity",
+        "unclassified": "table",
+    }
+    out: List[str] = []
+    src = f" [{source}]" if source else ""
+    for table in tables:
+        rows = table.get("rows") or []
+        header = table.get("header") or []
+        if not rows and not header:
+            continue
+        kind = table.get("kind", "unclassified")
+        label = _KIND_WORDS.get(kind, _KIND_WORDS["unclassified"])
+        lines = []
+        if header:
+            lines.append(" | ".join(header))
+        for row in rows:
+            lines.append(" | ".join(row))
+        out.append(
+            f"DRAWING TABLE{src} — {label}. "
+            f"Sheet page {table.get('page')}, {table.get('row_count')} rows.\n"
+            + "\n".join(lines)
+        )
+    return out
+
+
+def _drawing_no_table_guard(filename: str) -> str:
+    """Emitted when a document is named as a drawing but yields no readable
+    schedule — a scanned/vector-only sheet whose text layer is empty.
+
+    Mirrors `_boq_no_total_guard`, and for the same reason: without it, chat
+    sees a drawing in the corpus, finds no schedule values, and is free to
+    produce a plausible bar diameter or door count. This says: the sheet is
+    here, its schedules are NOT readable, do not state values from it.
+    """
+    return (
+        f"SCHEDULE-VALUE GUARD for '{filename}': this document is a drawing "
+        "sheet, but NO schedule table could be read from it — it appears to be "
+        "a scanned or image-only PDF with no recoverable text layer. Do NOT "
+        "state bar marks, diameters, quantities, door or window references, or "
+        "any other schedule value from this drawing; any such figure would be "
+        "invented. To read its schedules, a vector (non-scanned) PDF of this "
+        "sheet is required."
+    )
+
+
+def _drawing_chunks_for_document(
+    file_path: str, filename: str, ext: str, project_id: str
+) -> List[str]:
+    """Return schedule + title-block chunks for a drawing, or [] otherwise.
+
+    Never raises — a parse failure yields the guard (or []) so the primary
+    text indexing is unaffected, exactly as `_boq_chunks_for_document` behaves.
+    """
+    if not file_path or not _looks_like_drawing(filename, ext):
+        return []
+    log = _logging.getLogger(__name__)
+    try:
+        import fitz  # PyMuPDF
+
+        from app.containers.construction import ConstructionContainer
+
+        container = ConstructionContainer()
+        out: List[str] = []
+        source = ""
+        any_text = False
+        with fitz.open(file_path) as doc:
+            for page_num, page in enumerate(doc):
+                if page_num == 0:
+                    # The title block is on sheet 1 and names the drawing, so
+                    # every chunk below can be attributed to it.
+                    raw = page.get_text() or ""
+                    any_text = bool(raw.strip())
+                    title_block = container._extract_title_block({"raw_text": raw})
+                    source = title_block.get("drawing_number") or ""
+                    if title_block.get("fields_found"):
+                        named = ", ".join(
+                            f"{k.replace('_', ' ')}: {v}"
+                            for k, v in title_block.items()
+                            if k != "fields_found" and v
+                        )
+                        out.append(
+                            f"DRAWING TITLE BLOCK — {filename}. "
+                            f"Sheet identity: {named}."
+                        )
+                elif not any_text and (page.get_text() or "").strip():
+                    any_text = True
+                out.extend(
+                    _drawing_table_chunks(
+                        container._extract_tables_advanced(page),
+                        source or os.path.splitext(filename or "")[0],
+                    )
+                )
+        if out:
+            return out
+        # Named like a drawing, opened fine, produced nothing readable. If
+        # there was no text layer at all it is a scan — say so, so the model
+        # cannot invent schedule values. If there WAS text but no tables, the
+        # sheet genuinely has no schedule and the raw text already covers it.
+        if not any_text:
+            return [_drawing_no_table_guard(filename)]
+        return []
+    except Exception as exc:  # noqa: BLE001 — never block indexing on a drawing parse
+        log.warning(
+            "drawing table wiring skipped for %s: %s", filename, exc, exc_info=True
+        )
+        return []
+
+
 def index_document(
     project_id: str,
     document_id: str,
@@ -1639,6 +1821,11 @@ def index_document(
         boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
         if boq_chunks:
             chunks = chunks + boq_chunks
+        # Drawing → RAG: mirrors index_project above. A drawing's schedules
+        # live in its tables, and the raw text layer loses their structure.
+        drawing_chunks = _drawing_chunks_for_document(file_path, filename, ext, project_id)
+        if drawing_chunks:
+            chunks = chunks + drawing_chunks
         if not chunks:
             # A supported file that produced zero chunks is a SILENT indexing
             # failure: the document "exists" but can never be retrieved. Three

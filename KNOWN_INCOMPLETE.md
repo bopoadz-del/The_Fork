@@ -72,21 +72,23 @@ unbuilt bridge from its detections to structured daily-report fields.
 Not hollow functions, so `audit_stubs.py` cannot see these. They are here
 because the honest scope of a feature is part of knowing what is incomplete.
 
-**Extracted drawing tables do not become retrieval chunks.** The container's
-drawing path (`_process_drawing`) now really extracts bar schedules, door and
-window schedules, annotations and the title block — F6 proves it end to end.
-But the RAG ingest path is a different pipeline: `doc_index._extract_with_meta`
-pulls the PDF's raw text layer and chunks that, so a schedule reaches
-retrieval as loose text, not as a structured table with its classification.
+**A drawing is only recognised by its FILENAME.** `_drawing_chunks_for_document`
+gates on `_looks_like_drawing`, which matches `dwg`/`dwgs`/`drawing`/`drawings`
+in the filename of a PDF. A drawing named something else — `Sheet 4 of 12.pdf`,
+`site plan final.pdf` — is missed, and its schedules reach retrieval only as
+loose text.
 
-So "the schedule survives extraction" is true and "the schedule is
-retrievable as a schedule" is not yet. The precedent for closing this already
-exists in the same file — `_boq_chunks_for_document` serialises BOQ tables
-into extra chunks and appends them to the document's chunk list. Drawing
-tables want the same treatment.
+Deliberate, and it is the same trade `_looks_like_boq` makes for the same
+reason: running table detection over every page of every PDF would add real
+cost to a bulk re-index, and re-encode runs on this corpus already sit close
+to a capacity wall. Bare `sheet` was considered as a token and rejected — it
+matches "Data Sheet" and "Method Statement Sheet", which buys breadth in
+exactly the wrong direction.
 
-This is also why the recorded "drawing values unretrievable" finding is NOT
-resolved by the extraction work. It is a separate lever.
+The regex is pinned in `tests/e2e/test_f7_drawing_schedule_retrieval.py`
+against real filenames taken from the indexed corpus, both the drawings it
+must match and the BOQ/spec/plan/contract documents it must not. Widening it
+means adding the new filename shape to that list first.
 
 **Title-block values on the line below their label are missed.** Every
 separator in `_extract_title_block` is `[ \t]*` rather than `\s*`, so a value
@@ -146,5 +148,6 @@ both directions.
 | `construction :: _extract_annotations` | Real PDF annotation layer extraction — the consultant markup trail. |
 | `construction :: _extract_title_block` | Real label-anchored title-block reader: number, title, revision, scale, date, drawn/checked/approved, sheet, derived discipline. |
 | `pdf_parser :: _blocks_to_tables` | Deleted. Replaced by `_tables_from_page`, which does real extraction — the old body returned `[]` for every PDF while a comment claimed pdfplumber handled it, and pdfplumber never ran. |
+| drawing tables not reaching retrieval | Closed. `doc_index::_drawing_chunks_for_document` serialises recovered schedules and the title block into chunks on BOTH ingest paths, patterned on `_boq_chunks_for_document`. A schedule ROW is now retrievable as a row, not as loose words. |
 | `containers/base :: get_rag_filters` | Deleted. Had exactly one reference in the repository: its own definition. |
 | `routers/admin :: _legacy_sync_generate_unused` | Deleted. Dead legacy. |
