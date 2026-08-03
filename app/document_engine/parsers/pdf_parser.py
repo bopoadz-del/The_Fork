@@ -36,8 +36,8 @@ class PDFParser:
                 parsed = True
             except Exception:
                 logger.warning(
-                    "swallowed %s in parse() — continuing",
-                    "Exception", exc_info=True,
+                    "pymupdf could not parse %s — falling back to pdfplumber",
+                    file_path, exc_info=True,
                 )
 
         if not parsed:
@@ -46,8 +46,8 @@ class PDFParser:
                 parsed = True
             except Exception:
                 logger.warning(
-                    "swallowed %s in parse() — continuing",
-                    "Exception", exc_info=True,
+                    "pdfplumber could not parse %s — falling back to PyPDF2",
+                    file_path, exc_info=True,
                 )
 
         if not parsed:
@@ -56,8 +56,9 @@ class PDFParser:
                 parsed = True
             except Exception:
                 logger.warning(
-                    "swallowed %s in parse() — continuing",
-                    "Exception", exc_info=True,
+                    "PyPDF2 could not parse %s either — falling back to raw text, "
+                    "so this document will have no page structure and no tables",
+                    file_path, exc_info=True,
                 )
 
         if not parsed:
@@ -76,11 +77,57 @@ class PDFParser:
                 text = page.get_text()
                 doc.pages.append(text)
                 doc.text += text + "\n"
-                # Table-like structures via text blocks
-                blocks = page.get_text("blocks")
-                page_tables = self._blocks_to_tables(blocks)
-                doc.tables.extend(page_tables)
+                doc.tables.extend(self._tables_from_page(page, page_num))
         return doc
+
+    def _tables_from_page(self, page, page_num: int) -> List[List[List[str]]]:
+        """Extract tables from one page in the shape `PDFDocument.tables`
+        declares: a list of tables, each a list of rows, each a list of cell
+        strings — identical to what `pdfplumber.extract_tables()` returns, so
+        both parser branches produce the same thing.
+
+        This replaces `_blocks_to_tables`, which returned `[]` unconditionally
+        with a comment saying real extraction was "handled by pdfplumber".
+        It was not: `_parse_with_pymupdf` is tried FIRST in `parse()` and
+        succeeds for essentially every PDF, so the pdfplumber branch never ran
+        and `doc.tables` was always empty — for specifications, BOQs and
+        drawing schedules alike.
+        """
+        finder = getattr(page, "find_tables", None)
+        if finder is None:
+            logger.warning(
+                "PyMuPDF on this host has no Page.find_tables() (need >= 1.23); "
+                "no tables extracted from page %s",
+                page_num + 1,
+            )
+            return []
+        try:
+            found = finder()
+        except Exception:
+            logger.warning(
+                "table detection failed on page %s — that page contributes no tables",
+                page_num + 1, exc_info=True,
+            )
+            return []
+
+        tables: List[List[List[str]]] = []
+        for table in getattr(found, "tables", None) or []:
+            try:
+                rows = [
+                    ["" if cell is None else str(cell).replace("\n", " ").strip()
+                     for cell in row]
+                    for row in (table.extract() or [])
+                ]
+            except Exception:
+                logger.warning(
+                    "could not read a detected table on page %s — skipping it",
+                    page_num + 1, exc_info=True,
+                )
+                continue
+            rows = [r for r in rows if any(c for c in r)]
+            if rows:
+                tables.append(rows)
+        return tables
 
     def _parse_with_pdfplumber(self, file_path: str, doc: PDFDocument) -> PDFDocument:
         import pdfplumber
@@ -103,10 +150,6 @@ class PDFParser:
             doc.text += text + "\n"
         return doc
 
-    def _blocks_to_tables(self, blocks):
-        """Heuristic: group aligned text blocks into pseudo-tables."""
-        # Simplified — return empty; real table extraction handled by pdfplumber
-        return []
 
     def _extract_glossary(self, text: str) -> Dict[str, str]:
         glossary = {}

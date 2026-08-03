@@ -85,9 +85,14 @@ class HALBlock:
             if result.returncode == 0:
                 return True
         except Exception:
-            logger.warning(
-                "swallowed %s in _check_gpu() — continuing",
-                "Exception", exc_info=True,
+            # `nvidia-smi` missing is the NORMAL case on any host without an
+            # NVIDIA GPU, which includes most dev machines and the Render box.
+            # DEBUG, and no traceback: at WARNING this fires on every single
+            # boot with a full stack, which teaches operators that warnings
+            # from this app are noise. The consequence is stated instead.
+            logger.debug(
+                "no nvidia-smi on this host — no CUDA GPU detected, "
+                "inference will run on CPU"
             )
         
         # Check for Metal (Mac)
@@ -98,9 +103,11 @@ class HALBlock:
                 if "Metal" in result.stdout:
                     return True
             except Exception:
-                logger.warning(
-                    "swallowed %s in _check_gpu() — continuing",
-                    "Exception", exc_info=True,
+                # Same reasoning as the CUDA probe above: a failed capability
+                # probe is not an error, it is the answer "no".
+                logger.debug(
+                    "system_profiler probe failed — no Metal GPU detected, "
+                    "inference will run on CPU", exc_info=True,
                 )
         
         return False

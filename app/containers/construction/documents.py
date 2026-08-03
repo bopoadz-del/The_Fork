@@ -1007,6 +1007,60 @@ class ConstructionDocumentsMixin:
         sections.append({"section": "G. As-Built Documentation", "content": {"drawings_list": [Path(d).name for d in as_built_drawings], "specifications_reference": spec_file if spec_file else "Refer to contract documents", "test_results": commissioning_data.get("test_results", []), "certificates": commissioning_data.get("certificates", [])}})
         sections.append({"section": "H. Warranties & Spare Parts", "content": {"warranty_register": [{"equipment": e.get("description") or e.get("name", "TBD"), "expiry": e.get("warranty_expiry"), "contact": e.get("supplier_contact")} for e in equipment_list], "recommended_spare_parts": self._generate_spare_parts_list(equipment_list), "supplier_contacts": list(set([e.get("supplier_contact") for e in equipment_list if e.get("supplier_contact")]))}})
     
+        # Sections E, F and H and the training list are filled by helpers that
+        # are registered as roadmap in KNOWN_INCOMPLETE.md: they return nothing
+        # until real manufacturer maintenance data is wired in. Say so ON THE
+        # MANUAL rather than shipping an empty section that reads as complete,
+        # and count only what was actually produced.
+        #
+        # The old count was `len(daily_tasks) + len(monthly_tasks)`, which with
+        # a hollow daily-task generator and a one-string monthly one reported
+        # "1 maintenance task generated" for a whole plant. That is a false
+        # claim on a client deliverable, not a cosmetic bug.
+        def _section(letter: str):
+            """Look sections up by their letter, not by list position — a
+            future section inserted above E would otherwise silently make
+            these gap checks describe the wrong part of the manual."""
+            for s in sections:
+                if s["section"].startswith(f"{letter}."):
+                    return s["content"]
+            return {}
+
+        preventive = _section("E")
+        _task_keys = ("daily_tasks", "weekly_tasks", "monthly_tasks",
+                      "quarterly_tasks", "annual_tasks")
+        maintenance_tasks_generated = sum(
+            len(preventive.get(k) or []) for k in _task_keys
+        )
+        data_gaps = []
+        if not any(preventive.get(k) for k in ("daily_tasks", "weekly_tasks",
+                                               "quarterly_tasks")):
+            data_gaps.append(
+                "Section E (Preventive Maintenance): daily, weekly and quarterly "
+                "task schedules are not generated — they require per-equipment "
+                "manufacturer maintenance data, which this manual does not have."
+            )
+        if not preventive.get("maintenance_matrix"):
+            data_gaps.append(
+                "Section E: the maintenance responsibility matrix is not generated."
+            )
+        if not _section("F"):
+            data_gaps.append(
+                "Section F (Troubleshooting Guide): not generated — requires "
+                "manufacturer fault codes and remedies per equipment item."
+            )
+        if not _section("H").get("recommended_spare_parts"):
+            data_gaps.append(
+                "Section H: the recommended spare-parts list is not generated — "
+                "requires supplier part numbers and consumable intervals."
+            )
+        training_materials = self._extract_training_needs(equipment_list)
+        if not training_materials:
+            data_gaps.append(
+                "Training materials: not derived — requires the operator "
+                "competency requirements for the installed systems."
+            )
+
         manual_metadata = {
             "document_number": f"OM-{project_name.replace(' ', '-')}-{datetime.now(timezone.utc).year}",
             "revision": "00 - First Issue",
@@ -1018,15 +1072,17 @@ class ConstructionDocumentsMixin:
         }
     
         return {
-            "status": "success",
+            "status": "success" if not data_gaps else "partial",
             "action": "om_manual_generated",
             "manual_metadata": manual_metadata,
             "sections": sections,
+            "data_gaps": data_gaps,
             "summary": {
                 "total_equipment": len(equipment_list),
                 "systems_covered": len(systems),
                 "warranty_items": len(equipment_list),
-                "maintenance_tasks_generated": len(sections[4]["content"]["daily_tasks"]) + len(sections[4]["content"]["monthly_tasks"]),
+                "maintenance_tasks_generated": maintenance_tasks_generated,
+                "sections_not_populated": len(data_gaps),
                 "estimated_manual_pages": manual_metadata["total_pages_estimate"]
             },
             "digital_format": {
@@ -1034,7 +1090,7 @@ class ConstructionDocumentsMixin:
                 "hyperlink_structure": "Section-based navigation with equipment tags linked to data sheets",
                 "update_procedure": "Annual review or upon equipment replacement"
             },
-            "training_materials": self._extract_training_needs(equipment_list),
+            "training_materials": training_materials,
             "appendices": [
                 "Equipment Data Sheets", "Test Reports", "Certificates", "Spare Parts Lists", "Supplier Contacts"
             ]

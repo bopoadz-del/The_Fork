@@ -42,13 +42,15 @@ def hollow(node):
 def main():
     known = load_known(); reachable = []
     for root, dirs, files in os.walk("."):
-        # DEVIATION FROM THE SPEC, both required for the count to mean anything
-        # on this checkout:
+        # DEVIATION FROM THE SPEC, required for the count to mean anything on
+        # this checkout: `.claude/worktrees` and `.worktrees` are LOCAL git
+        # worktrees -- 8 stale copies of the tree. Walking them counted every
+        # stub 9 times and reported TOTAL: 552 instead of the real figure.
         #
-        #  1. `.claude/worktrees` and `.worktrees` are LOCAL git worktrees --
-        #     8 stale copies of the tree. Walking them counted every stub 9
-        #     times and reported TOTAL: 552 instead of the real figure.
-        #  2. `scripts` audit helpers are dev tooling, not shipped paths.
+        # `scripts/` is deliberately NOT excluded. Dev tooling can hide a
+        # hollow function just as well as shipped code can, and excluding it
+        # would drop 16 real hits from the count. They are registered in
+        # KNOWN_INCOMPLETE.md with their reasons instead, so they stay visible.
         #
         # Everything else is the spec's logic, untouched.
         dirs[:] = [d for d in dirs if d not in

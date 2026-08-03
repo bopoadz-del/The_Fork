@@ -714,13 +714,135 @@ class ConstructionContainer(
     async def analyze_schedule_risk(self, input_data: Any, params: Dict) -> Dict:
         return await self.parse_primavera_schedule(input_data, params)
     def _extract_tables_advanced(self, page) -> List[Dict]:
-        """Not yet implemented; returns empty list — callers should check."""
-        # TODO: integrate a real PDF table extractor (e.g. pdfplumber / camelot).
-        return []
+        """Extract ruled/whitespace-aligned tables from a drawing sheet.
+
+        A drawing carries most of its numbers in tables — rebar and bar-bending
+        schedules, door/window schedules, legends, revision history. Until now
+        this returned ``[]`` unconditionally, so `_process_drawing_page` fed an
+        empty ``tables`` list into every drawing ingest and those quantities
+        were never seen by retrieval.
+
+        ``[]`` now means "this page has no table", which is a different and
+        true statement. The two ways it can be empty for a non-page reason —
+        a PyMuPDF too old to have ``find_tables()``, or a detector error — are
+        logged rather than passed off as an empty page.
+        """
+        finder = getattr(page, "find_tables", None)
+        if finder is None:
+            logger.warning(
+                "PyMuPDF on this host has no Page.find_tables(); drawing tables "
+                "cannot be extracted (need PyMuPDF >= 1.23). Reporting no tables "
+                "for page %s.", getattr(page, "number", "?"),
+            )
+            return []
+        try:
+            found = finder()
+        except Exception:
+            logger.warning(
+                "table detection raised on page %s — reporting no tables for it",
+                getattr(page, "number", "?"), exc_info=True,
+            )
+            return []
+
+        tables: List[Dict] = []
+        for idx, table in enumerate(getattr(found, "tables", None) or []):
+            try:
+                raw_rows = table.extract() or []
+            except Exception:
+                logger.warning(
+                    "could not extract table %s on page %s — skipping that table",
+                    idx, getattr(page, "number", "?"), exc_info=True,
+                )
+                continue
+            rows = [
+                ["" if cell is None else str(cell).replace("\n", " ").strip()
+                 for cell in row]
+                for row in raw_rows
+            ]
+            rows = [r for r in rows if any(c for c in r)]
+            if not rows:
+                continue
+            header, body = (rows[0], rows[1:]) if len(rows) > 1 else ([], rows)
+            bbox = list(getattr(table, "bbox", None) or [])
+            tables.append({
+                "table_index": idx,
+                "page": (getattr(page, "number", -1) or 0) + 1,
+                "bbox": [round(float(v), 2) for v in bbox] if bbox else None,
+                "header": header,
+                "rows": body,
+                "row_count": len(body),
+                "column_count": max((len(r) for r in rows), default=0),
+                "kind": self._classify_drawing_table(header, body),
+            })
+        return tables
+
+    def _classify_drawing_table(self, header: List[str], rows: List[List[str]]) -> str:
+        """Name the table so downstream consumers can pick the one they need.
+
+        Classifies off the header first, then the first body row, because CAD
+        exports frequently emit the caption as row 0 with no true header.
+        """
+        probe = " ".join(header or []).upper()
+        if not probe and rows:
+            probe = " ".join(rows[0]).upper()
+        checks = (
+            ("rebar_schedule", ("BAR MARK", "BAR SCHEDULE", "REBAR", "BAR BENDING", "BBS")),
+            ("door_schedule", ("DOOR SCHEDULE", "DOOR TYPE", "DOOR NO", "DOOR REF")),
+            ("window_schedule", ("WINDOW SCHEDULE", "WINDOW TYPE", "WINDOW NO")),
+            ("revision_history", ("REVISION", "REV DATE", "REV. DATE", "AMENDMENT")),
+            ("legend", ("LEGEND", "SYMBOL", "KEY PLAN")),
+            ("general_notes", ("GENERAL NOTES", "NOTES:")),
+            ("quantities", ("QUANTITY", "QTY", "UNIT", "AREA (", "VOLUME")),
+            ("finishes_schedule", ("FINISH SCHEDULE", "ROOM FINISH", "FLOOR FINISH")),
+        )
+        for kind, needles in checks:
+            if any(n in probe for n in needles):
+                return kind
+        return "unclassified"
+
     def _extract_annotations(self, page) -> List[Dict]:
-        """Not yet implemented; returns empty list — callers should check."""
-        # TODO: walk page annotations (PyMuPDF `page.annots()`) and normalise.
-        return []
+        """Extract the PDF annotation layer from a drawing sheet.
+
+        On an issued drawing these are the consultant's markups: revision
+        clouds, review comments, stamps, dimension callouts added after
+        plotting. They are the review trail, and returning ``[]``
+        unconditionally meant every ingest silently discarded it.
+        """
+        try:
+            annots = list(page.annots() or [])
+        except Exception:
+            logger.warning(
+                "could not read the annotation layer of page %s — reporting none",
+                getattr(page, "number", "?"), exc_info=True,
+            )
+            return []
+
+        out: List[Dict] = []
+        for annot in annots:
+            try:
+                atype = getattr(annot, "type", None)
+                # PyMuPDF reports (int_code, "Square"); keep the readable half.
+                kind = atype[1] if isinstance(atype, (list, tuple)) and len(atype) > 1 \
+                    else str(atype)
+                info = dict(getattr(annot, "info", None) or {})
+                rect = getattr(annot, "rect", None)
+                out.append({
+                    "type": kind,
+                    "content": (info.get("content") or "").strip() or None,
+                    "author": (info.get("title") or "").strip() or None,
+                    "subject": (info.get("subject") or "").strip() or None,
+                    "modified": info.get("modDate") or None,
+                    "page": (getattr(page, "number", -1) or 0) + 1,
+                    "rect": [round(float(v), 2) for v in
+                             (rect.x0, rect.y0, rect.x1, rect.y1)] if rect else None,
+                })
+            except Exception:
+                logger.warning(
+                    "skipping an unreadable annotation on page %s",
+                    getattr(page, "number", "?"), exc_info=True,
+                )
+                continue
+        return out
     def _extract_specs_advanced(self, text: str) -> List[Dict]:
         specs = []
         grade_pattern = r'\b(C\d{2,3}|M\d{2,3}|S\d{2,3}|Grade\s+\d+)\b'
@@ -732,7 +854,97 @@ class ConstructionContainer(
             })
         return specs
     def _extract_title_block(self, sheet_data: Dict) -> Dict:
-        return {}
+        """Read the title block of a drawing sheet from its extracted text.
+
+        The title block is the drawing's identity — number, title, revision,
+        scale, who drew and checked it. `_process_drawing_page` puts sheet 1's
+        text in ``raw_text``; this reads the labelled fields out of it.
+
+        Deliberately generic (label-anchored), unlike the char-geometry
+        extractor in ``app/blocks/drawing_qto.py``, which is tuned to one
+        client's sheet layout and needs the per-character stream this caller
+        does not have.
+
+        Returns every field as a key so callers can address them
+        unconditionally; a field that was not on the sheet is ``None``, never
+        an invented value. ``fields_found`` says how many were actually read,
+        so "nothing on this sheet" is distinguishable from "extraction did
+        not run".
+        """
+        fields = [
+            "drawing_number", "drawing_title", "revision", "scale", "date",
+            "drawn_by", "checked_by", "approved_by", "project_name",
+            "client", "sheet_number", "discipline",
+        ]
+        result: Dict[str, Any] = {f: None for f in fields}
+        result["fields_found"] = 0
+
+        text = (sheet_data or {}).get("raw_text") or ""
+        if not text.strip():
+            logger.debug("no raw text on the sheet — title block left empty")
+            return result
+
+        # Title blocks sit at the end of a CAD text stream far more often than
+        # the start, so prefer the LAST match of each label.
+        # DELIBERATE LIMITATION, and the reason every separator below is
+        # `[ \t]*` and never `\s*`: a value is only read from the SAME LINE as
+        # its label. Some CAD title blocks do put the value on the next line,
+        # and those are missed here — but allowing the gap to cross a newline
+        # makes `DRAWN BY:` (empty) capture the following `CHECKED BY` label as
+        # the drafter's name, which is a fabricated field on a client drawing.
+        # Missing a field is recoverable; inventing one is not.
+        patterns = {
+            "drawing_number": r"(?:DRAWING|DWG|SHEET)[ \t]*(?:NO\.?|NUMBER|#)[ \t]*[:\-.]?[ \t]*([A-Z0-9][A-Z0-9\-_/\.]{3,})",
+            "drawing_title": r"(?:DRAWING[ \t]*TITLE|SHEET[ \t]*TITLE|TITLE)[ \t]*[:\-.]?[ \t]*([^\r\n]{3,80})",
+            "revision": r"\bREV(?:ISION)?\.?[ \t]*(?:NO\.?)?[ \t]*[:\-.]?[ \t]*([A-Z]?\d{1,2}[A-Z]?|[A-Z])(?=[ \t]*$|\W)",
+            "scale": r"\bSCALE[ \t]*[:\-.]?[ \t]*(1[ \t]*:[ \t]*\d{1,5}|N\.?T\.?S\.?|NOT[ \t]*TO[ \t]*SCALE|AS[ \t]*SHOWN)",
+            "date": r"\bDATE[ \t]*[:\-.]?[ \t]*(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}|\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2})",
+            # `(?:[ \t]*BY)?` must be greedy and inside the label, not a
+            # separate alternative: with `(?:DRAWN|DRAWN[ \t]*BY)` the regex
+            # takes the shorter branch first and captures "BY" as the name.
+            "drawn_by": r"\b(?:DRAWN|DRAFTED|DES(?:IGNED)?)(?:[ \t]*BY)?[ \t]*[:\-.]?[ \t]*([A-Z][A-Za-z0-9 .&'\-]{1,40})",
+            "checked_by": r"\bCHECKED(?:[ \t]*BY)?[ \t]*[:\-.]?[ \t]*([A-Z][A-Za-z0-9 .&'\-]{1,40})",
+            "approved_by": r"\b(?:APPROVED|AUTHORISED|AUTHORIZED)(?:[ \t]*BY)?[ \t]*[:\-.]?[ \t]*([A-Z][A-Za-z0-9 .&'\-]{1,40})",
+            "project_name": r"\bPROJECT[ \t]*(?:NAME|TITLE)?[ \t]*[:\-.]?[ \t]*([^\r\n]{3,80})",
+            "client": r"\b(?:CLIENT|EMPLOYER|OWNER)[ \t]*[:\-.]?[ \t]*([^\r\n]{3,80})",
+            "sheet_number": r"\b(?:SHEET|SH\.?)[ \t]*[:\-.]?[ \t]*(\d{1,3}[ \t]*(?:OF|/)[ \t]*\d{1,3})",
+        }
+        for field, pattern in patterns.items():
+            matches = list(re.finditer(pattern, text, re.IGNORECASE))
+            if not matches:
+                continue
+            value = matches[-1].group(1).strip(" :-.\t")
+            # A label immediately followed by the next label read as a value.
+            if value and not re.fullmatch(r"(?i)(no|title|by|date|rev|scale)\.?", value):
+                result[field] = value
+                result["fields_found"] += 1
+
+        # Discipline is derivable, not a labelled field: take it from the
+        # drawing number prefix when the sheet uses the usual convention.
+        number = result["drawing_number"]
+        if number:
+            head = re.split(r"[\-_/]", number)[0].upper()
+            disciplines = {
+                "A": "architectural", "AR": "architectural",
+                "S": "structural", "ST": "structural",
+                "C": "civil", "CV": "civil",
+                "M": "mechanical", "ME": "mechanical",
+                "E": "electrical", "EL": "electrical",
+                "P": "plumbing", "PL": "plumbing",
+                "L": "landscape", "FP": "fire protection",
+                "INF": "infrastructure",
+            }
+            if head in disciplines:
+                result["discipline"] = disciplines[head]
+                result["fields_found"] += 1
+
+        if not result["fields_found"]:
+            logger.info(
+                "no title-block fields matched on the sheet (%d chars of text) — "
+                "the sheet may be a scan, or use an unlabelled title block",
+                len(text),
+            )
+        return result
     def _extract_scale(self, text: str) -> Optional[str]:
         scale_match = re.search(r'\b\d+\s*:\s*\d+\b', text)
         return scale_match.group(0) if scale_match else None
