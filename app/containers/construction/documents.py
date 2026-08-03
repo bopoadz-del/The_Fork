@@ -1072,7 +1072,18 @@ class ConstructionDocumentsMixin:
         }
     
         return {
-            "status": "success" if not data_gaps else "partial",
+            # Stays "success" even with gaps, matching the convention its
+            # siblings already establish and are tested on: `daily_site_report`
+            # returns success + `sections_incomplete`, `tender_bid_analysis`
+            # returns success + `analysis_gaps`. The manual WAS generated; the
+            # gaps are declared in `data_gaps` below.
+            #
+            # An earlier revision of this returned "partial" here. That was
+            # wrong twice over: 25 call sites in the app gate on
+            # `status == "success"`, so it would have turned a working
+            # deliverable into an apparent failure, and it invented a status
+            # word the rest of the container does not use.
+            "status": "success",
             "action": "om_manual_generated",
             "manual_metadata": manual_metadata,
             "sections": sections,

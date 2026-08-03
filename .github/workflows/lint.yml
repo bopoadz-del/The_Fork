@@ -74,6 +74,41 @@ jobs:
             echo "::notice::Down to $COUNT from $BASELINE — lower BASELINE in .github/workflows/lint.yml."
           fi
 
+  integrity:
+    # Two BLOCKING gates that answer the two questions a stranger cloning this
+    # repo would actually care about: is anything hollow, and is anything
+    # secret in here?
+    #
+    # Both are cheap (no deps, seconds to run) and both have already caught
+    # something real, which is why they block rather than report:
+    #
+    #  - audit_stubs found 41 hollow functions, three of them on the drawing
+    #    ingest path — every drawing came out with no tables, no markups and
+    #    no title block, and nothing said so.
+    #  - scan_secrets found a live Fork API key in a recovery runbook and a
+    #    live Render key hardcoded in a scheduled-task script.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: No unregistered hollow functions
+        # Exits 1 on any hollow function that is not implemented, not an
+        # @abstractmethod, not under tests/, and not registered in
+        # KNOWN_INCOMPLETE.md with a reason. Registration is deliberate and
+        # visible; a hidden stub is not.
+        run: python scripts/audit_stubs.py
+
+      - name: No secret material in tracked files
+        # Scans `git ls-files` — the set that actually gets pushed. An
+        # untracked .env on a developer's disk is where secrets are supposed
+        # to live and is correctly ignored.
+        run: python scripts/scan_secrets.py
+
   eslint:
     # BLOCKING, unlike ruff above. This gate exists because of a specific
     # production incident: on 2026-08-03 a `useMemo` added below an early
