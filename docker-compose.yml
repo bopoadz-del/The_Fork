@@ -26,7 +26,15 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-      - ./.env:/app/.env:ro
+    # `.env` used to be bind-mounted here as `./.env:/app/.env:ro`. It is
+    # gitignored, so on a FRESH CLONE the file does not exist and Docker
+    # creates a DIRECTORY at that path — the app then tries to read a
+    # directory as a file. `env_file` with `required: false` reads it when
+    # present and is a no-op when it is not, which is the behaviour a
+    # stranger following the README needs.
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PORT=8000
       - HOST=0.0.0.0
