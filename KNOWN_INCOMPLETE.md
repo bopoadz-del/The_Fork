@@ -67,6 +67,37 @@ unbuilt bridge from its detections to structured daily-report fields.
 
 ---
 
+## Stated limitations — implemented, but narrower than it looks
+
+Not hollow functions, so `audit_stubs.py` cannot see these. They are here
+because the honest scope of a feature is part of knowing what is incomplete.
+
+**Extracted drawing tables do not become retrieval chunks.** The container's
+drawing path (`_process_drawing`) now really extracts bar schedules, door and
+window schedules, annotations and the title block — F6 proves it end to end.
+But the RAG ingest path is a different pipeline: `doc_index._extract_with_meta`
+pulls the PDF's raw text layer and chunks that, so a schedule reaches
+retrieval as loose text, not as a structured table with its classification.
+
+So "the schedule survives extraction" is true and "the schedule is
+retrievable as a schedule" is not yet. The precedent for closing this already
+exists in the same file — `_boq_chunks_for_document` serialises BOQ tables
+into extra chunks and appends them to the document's chunk list. Drawing
+tables want the same treatment.
+
+This is also why the recorded "drawing values unretrievable" finding is NOT
+resolved by the extraction work. It is a separate lever.
+
+**Title-block values on the line below their label are missed.** Every
+separator in `_extract_title_block` is `[ \t]*` rather than `\s*`, so a value
+is only read from the same line as its label. Some CAD title blocks put the
+value on the next line and those fields come back `None`. Deliberate: letting
+the gap cross a newline makes an empty `DRAWN BY:` capture the following
+`CHECKED BY` label as the drafter's name. Missing a field is recoverable;
+inventing one on a client drawing is not.
+
+---
+
 ## Correct by design — an empty body is the right answer
 
 The audit flags these because it matches on shape. Implementing any of them
