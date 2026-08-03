@@ -91,3 +91,53 @@ jobs:
 
       - name: Print image digest
         run: echo "Image digest - ${{ steps.build-and-push.outputs.digest }}"
+
+  compose-health:
+    # `docker build` succeeding does NOT mean the stack comes up. This job
+    # exists because the ship-gate could only report `docker build` as proven
+    # and had to file `compose up` as BLOCKED — there is no container runtime
+    # on the maintainer's Windows machine, so it had never been executed
+    # anywhere, by anyone.
+    #
+    # It runs from a CLEAN CHECKOUT, which is the point: it is the fresh-clone
+    # path a stranger takes. That is how the `.env` defect was found — compose
+    # used to bind-mount `./.env`, which is gitignored, so Docker created a
+    # DIRECTORY at that path and the app tried to read a directory as a file.
+    name: compose up (fresh clone) + health
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm this is really a fresh clone
+        # If .env somehow exists here the test is not testing what it claims.
+        run: |
+          test ! -f .env || { echo "::error::.env exists in a clean checkout"; exit 1; }
+          echo "no .env present — this is the stranger's starting state"
+
+      - name: docker compose up
+        # --wait blocks until every service with a healthcheck reports healthy
+        # and fails the step if any container exits or goes unhealthy first.
+        # Both services define one, so this is the real assertion.
+        run: docker compose up -d --build --wait --wait-timeout 600
+
+      - name: Health endpoint returns 200
+        run: |
+          set -o pipefail
+          code=$(curl -s -o /tmp/health.json -w '%{http_code}' http://localhost:8000/health)
+          echo "GET /health -> $code"
+          cat /tmp/health.json
+          test "$code" = "200"
+
+      - name: Container state and logs
+        # Always, so a failure above is diagnosable without a re-run.
+        if: always()
+        run: |
+          docker compose ps
+          echo "::group::app logs"
+          docker compose logs --no-color --tail=200 cerebrum-blocks
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
