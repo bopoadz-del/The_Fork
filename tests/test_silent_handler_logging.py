@@ -16,38 +16,57 @@ Covers the error paths added when the silent handlers were triaged
 """
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 from app.core import audit as audit_mod
 from app.core import file_crypto
 
 
+# NOTE ON WHY THIS DOES NOT USE `caplog`:
+# app/infra/monitoring.py installs structured JSON logging with
+# `root.handlers = [handler]`, which REPLACES pytest's caplog handler. Any
+# test that happens to run after structured logging is initialised therefore
+# sees an empty caplog. These tests passed locally (isolated, never
+# initialised) and failed in CI (where another test had). Spying on the
+# module logger is independent of logging configuration entirely.
+def _spy_warnings(monkeypatch, module):
+    """Capture warning() calls on a module's logger. Returns the record list."""
+    calls: list[str] = []
+
+    def _capture(msg, *args, **kwargs):
+        try:
+            calls.append(msg % args if args else msg)
+        except Exception:
+            calls.append(str(msg))
+
+    monkeypatch.setattr(module.logger, "warning", _capture)
+    return calls
+
+
 # ── audit log write failure ──────────────────────────────────────────────────
 
-def test_audit_write_failure_is_logged_and_does_not_raise(monkeypatch, caplog):
+def test_audit_write_failure_is_logged_and_does_not_raise(monkeypatch):
     """A failed audit write must be loud. The trail is the product here."""
+    warnings = _spy_warnings(monkeypatch, audit_mod)
+
     def _boom(*_a, **_k):
         raise OSError("disk full")
 
     monkeypatch.setattr("builtins.open", _boom)
 
-    with caplog.at_level(logging.WARNING, logger=audit_mod.__name__):
-        entry = audit_mod.record("document.delete", document_id="d1")
+    entry = audit_mod.record("document.delete", document_id="d1")
 
     # caller still gets its entry back — bookkeeping never breaks the operation
     assert entry["event"] == "document.delete"
     assert entry["document_id"] == "d1"
 
-    assert any("AUDIT WRITE FAILED" in r.message for r in caplog.records), caplog.text
-    assert any("document.delete" in str(r.args) or "document.delete" in r.getMessage()
-               for r in caplog.records), caplog.text
+    assert any("AUDIT WRITE FAILED" in w for w in warnings), warnings
+    assert any("document.delete" in w for w in warnings), warnings
 
 
 # ── decrypted temp-file cleanup failure ──────────────────────────────────────
 
-def test_plaintext_temp_cleanup_failure_is_logged(monkeypatch, tmp_path, caplog):
+def test_plaintext_temp_cleanup_failure_is_logged(monkeypatch, tmp_path):
     """If the decrypted temp file cannot be removed, say so.
 
     Silence here means plaintext left on disk — the exact state encryption at
@@ -68,13 +87,13 @@ def test_plaintext_temp_cleanup_failure_is_logged(monkeypatch, tmp_path, caplog)
         return real_remove(path, *a, **k)
 
     monkeypatch.setattr(file_crypto.os, "remove", _fail_remove)
+    warnings = _spy_warnings(monkeypatch, file_crypto)
 
-    with caplog.at_level(logging.WARNING, logger=file_crypto.__name__):
-        with file_crypto.open_plaintext(str(src)) as p:
-            assert open(p, "rb").read() == b"confidential contents"
+    with file_crypto.open_plaintext(str(src)) as p:
+        assert open(p, "rb").read() == b"confidential contents"
 
-    assert any("decrypted temp file" in r.getMessage() for r in caplog.records), caplog.text
-    assert any("plaintext may" in r.getMessage() for r in caplog.records), caplog.text
+    assert any("decrypted temp file" in w for w in warnings), warnings
+    assert any("plaintext may" in w for w in warnings), warnings
 
 
 def test_cleanup_failure_does_not_propagate(monkeypatch, tmp_path):
