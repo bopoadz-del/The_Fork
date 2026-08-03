@@ -44,10 +44,6 @@ class DomainContainer(UniversalContainer):
                 return path.read_text(encoding="utf-8")
         return ""
 
-    def get_rag_filters(self) -> Dict[str, Any] | None:
-        """Optional metadata filters for retriever; default None (no filter)."""
-        return None
-
     def _resolve_block(self, name: str):
         from app.blocks import BLOCK_REGISTRY
 

@@ -648,12 +648,6 @@ def admin_training_job_status(job_id: str, auth: dict = Depends(require_api_key)
 
 # ── Synchronous (legacy) path — kept for tests / quick small jobs ────────
 
-def _legacy_sync_generate_unused():
-    """Stub kept to preserve the import surface for the deleted sync path —
-    intentionally never called. Real entrypoint is the async job above."""
-    return None
-
-
 @router.post("/v1/admin/debug/migrate-sqlite")
 def admin_migrate_sqlite(
     dry_run: bool = Query(True, description="Count rows only; no Postgres writes"),
