@@ -3,17 +3,42 @@
 - verdict: FAIL
 - prompt: show me the labor loading month by month for this project
 - project: dar_al_arkan_master
-- conversation_id: fmx-9a04ae9caee5
+- conversation_id: fmx-14c1a82128ee
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "resource_histogram", "confidence": 0.4, "reason": "needs_planning"}`
 - tool_calls: []
 - tool_results: []
 - routing oracle: PASS
-- execution oracle: FAIL — answer_chars 316 < min_chars 800
-- structure: {"has_period_buckets": "FAIL"}
-- first_token_s: 4.58  total_s: 4.58
-- served_model: meta-llama/llama-4-scout-17b-16e-instruct  fallback_used: False
-- answer_chars: 316  sources: 3  events: 7
+- execution oracle: FAIL — answer_chars 652 < min_chars 800
+- structure: {"has_period_buckets": "PASS"}
+- first_token_s: 3.01  total_s: 4.42
+- served_model: None  fallback_used: False
+- answer_chars: 652  sources: 0  events: 108
 
 ## Answer (verbatim)
 
-I don't have the labor loading month by month for this project. The provided reference context does not contain this specific information. It includes various details about the project, such as construction reports, payment schedules, and contract clauses, but does not provide a breakdown of labor loading by month.
+Manpower histogram — norms-derived from a generated WBS for this brief (no resource-loaded P6 schedule was provided; these are planning estimates, not site resource returns).
+- M1: 12 workers
+- M2: 8 workers
+- M3: 12 workers
+- M4: 4 workers
+- M5: 36 workers
+- M6: 32 workers
+- M7: 32 workers
+- M8: 20 workers
+- M9: 40 workers
+- M10: 32 workers
+- M11: 28 workers
+- M12: 28 workers
+- M13: 24 workers
+- M14: 16 workers
+- M15: 24 workers
+- M16: 24 workers
+- M17: 24 workers
+- M18: 16 workers
+- M19: 24 workers
+- M20: 20 workers
+- M21: 16 workers
+- M22: 36 workers
+- M23: 32 workers
+- M24: 24 workers
+Peak manpower 40 in M9; about 93,376 man-hours overall. 

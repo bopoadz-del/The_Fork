@@ -1,25 +1,34 @@
 # progress_tracker — prompt 1, run 1
 
-- verdict: FAIL
+- verdict: PASS
 - prompt: how is actual progress tracking against planned - where are we slipping?
-- project: dar_al_arkan_master
-- conversation_id: fmx-355e168fefda
-- route event: `{"requested": "project-assistant", "final": "project-assistant", "action": null, "confidence": 0.0, "reason": "below_routing_gate"}`
+- project: b6786854
+- conversation_id: fmx-9f72fc10ba24
+- route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "progress_tracker", "confidence": 1.0, "reason": "below_routing_gate"}`
 - tool_calls: []
 - tool_results: []
-- routing oracle: FAIL (ROUTE_MISS)
+- routing oracle: PASS
 - execution oracle: PASS
 - structure: {}
-- first_token_s: 6.51  total_s: 6.66
-- served_model: meta-llama/llama-4-scout-17b-16e-instruct  fallback_used: False
-- answer_chars: 994  sources: 3  events: 16
+- first_token_s: 39.53  total_s: 39.92
+- served_model: kimi-k2.6  fallback_used: False
+- answer_chars: 1436  sources: 3  events: 23
 
 ## Answer (verbatim)
 
-I couldn't find specific information on tracking actual progress against planned progress or where the project is slipping in the provided reference context. The context mentions various construction-related topics, including clauses 12 and 14 regarding measurement, valuation, and payment, as well as clause 8 regarding the program and time. However, it does not provide direct information on progress tracking or identifying slippage.
+_This project has no documents of its own for this question — answering from the Master Corpus._
 
-If you need to find this information, I suggest searching for documents related to project controls, progress reports, or schedule tracking within your project. 
+Actual progress is tracked through **Earned Value Management (EVM)**.  
+The Project Execution Plan states that *“AECOM will manage schedule performance with the EV report generated (basis cost loading), giving SPI and CPI at different levels. A variance report with reasons for the delay and mitigation”* is produced. This approach is applied to schedules at all levels, and the Program Controls and Reporting Management Plan covers the management of schedules and progress tracking.  
+*(source: the project Project Execution Plan, chunks 132, 125)*
 
-Relevant Snippet: 
-- **Measure net actual quantity** of permanent works (SC 12.3); method per ER/  Schedules. **BoQ-vs-General-Conditions clashes** are a classic dispute — a BoQ lump-sum/provisional item against the GC's re-measurement rule; the pricing model must be explicit in the BoQ or remeasurement disputes follow. 
-- Programme & time (Clause 8) — ties to the platform's schedule engine
+As for where the programme is slipping, the **Infrastructure Package -1 Risk Register** identifies a specific delayed item:  
+
+- **Risk:** Interface with Urban Planning & Municipality Affairs (UMA)  
+- **Status:** Delayed  
+- **Issue:** *“UMA will not (can't) issue permit unless all its requirements met, the long procedures takes time and might affect the construction and other milestones negatively.”*  
+- **Mitigation approach:** *“Shift the successors events ; but maintain the key milestones by adding more resources ( multi contractors)”*  
+
+*(source: Infrastructure Package -1 Risk Register-V005 - 12 May 2024, chunk 562)*
+
+The retrieved context does **not** contain the current SPI/CPI values or a comprehensive list of all delayed activities beyond this risk-register excerpt.

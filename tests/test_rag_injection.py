@@ -470,7 +470,12 @@ def test_chat_stream_injects_rag_system_message_for_project_assistant(monkeypatc
 
     captured = {}
 
-    def fake_inject(user_message, project_id, conversation_id, user_id, agent_name):
+    # **kwargs so this spy tolerates NEW optional params on rag_inject
+    # (e.g. `history`, added for the follow-up-context expansion). A spy
+    # that pins the exact signature fails on a backwards-compatible
+    # change without any behaviour actually regressing.
+    def fake_inject(user_message, project_id, conversation_id, user_id,
+                    agent_name, **kwargs):
         captured["args"] = (user_message, project_id, agent_name)
         return ({"role": "system", "content": "INJECTED_CONTEXT"}, {"injected_k": 1})
 

@@ -55,6 +55,9 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Empirical sanity ranges live in config/empirical_ranges.json, keyed
@@ -98,7 +101,10 @@ def _load_ranges() -> Dict[str, Tuple[float, float]]:
                 if isinstance(v, (list, tuple)) and len(v) == 2:
                     base[k] = (float(v[0]), float(v[1]))
         except (OSError, ValueError):
-            pass
+            logger.debug(
+                "swallowed %s in _load_ranges() — continuing",
+                "(OSError, ValueError)", exc_info=True,
+            )
         _RANGES_CACHE = base
         _RANGES_MTIME = mtime
 
@@ -122,7 +128,10 @@ def _load_ranges() -> Dict[str, Tuple[float, float]]:
                             if isinstance(v, (list, tuple)) and len(v) == 2:
                                 _RANGES_CACHE[k] = (float(v[0]), float(v[1]))
     except Exception:
-        pass
+        logger.debug(
+            "swallowed %s in _load_ranges() — continuing",
+            "Exception", exc_info=True,
+        )
 
     return _RANGES_CACHE
 

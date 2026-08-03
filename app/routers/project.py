@@ -125,10 +125,35 @@ async def project_ask(
 
     await _store.save(session)   # persist the turn — history, computed state, cache
 
+    # Cost-grounding gate (§3.2 coverage): refuse an ungrounded cost/rate figure
+    # in the reasoner's answer exactly as the agent path does. The reasoner
+    # surfaces the retrieved excerpts (classified per-chunk for rate-semantics)
+    # and this turn's executed step results (authoritative computed figures) as
+    # internal grounding evidence; it is used only for gating and never returned
+    # to the client. Non-cost answers pass through untouched; never raises.
+    answer = result.get("answer", "")
+    try:
+        from app.agents.runtime import (
+            gate_cost_answer,
+            format_excerpts_as_rag_context,
+        )
+        grounding = result.get("_grounding") or {}
+        results_text = grounding.get("results_text") or ""
+        answer = gate_cost_answer(
+            answer,
+            rag_context=format_excerpts_as_rag_context(grounding.get("excerpts")),
+            authoritative_texts=[results_text] if results_text.strip() else None,
+            user_message=body.request,
+        )
+    except Exception:
+        logger.exception(
+            "project_ask: cost-grounding gate failed; passing answer through"
+        )
+
     return {
         "session_id": body.session_id,
         "status": result.get("status"),
-        "answer": result.get("answer", ""),
+        "answer": answer,
         "understanding": result.get("understanding", ""),
         "plan": result.get("plan"),
         "execution": result.get("execution"),

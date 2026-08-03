@@ -43,3 +43,102 @@ jobs:
       - name: Ruff check (report-only during rollout)
         continue-on-error: true # see header note — promote to blocking after baseline triage
         run: ruff check app tests --output-format=github
+
+      - name: Silent-exception ratchet (S110) — BLOCKING
+        # The general ruff job reports ~6300 legacy findings, so a new silent
+        # handler would be invisible in it. This step isolates S110
+        # (`try`/`except`/`pass`) and blocks only if the count GOES UP.
+        #
+        # Why S110 specifically, from the 2026-08-03 audit: silent handlers
+        # are not style debt, they hide bugs. A NameError swallowed by its own
+        # `except` left a helper that persisted nothing; cleanup failures on
+        # DECRYPTED client documents left plaintext on disk unnoticed; a
+        # swallowed index-creation failure costs ~11s sequential scans and
+        # surfaces only as "retrieval got slow".
+        #
+        # Started as a ratchet at 77 while the backlog was worked down. The
+        # backlog is now CLEARED, so the baseline is 0 and this is a hard
+        # gate: no new silent handler can enter the tree at all.
+        # It must never be raised.
+        run: |
+          BASELINE=0
+          COUNT=$(ruff check app --select S110 --output-format=concise | grep -c "S110" || true)
+          echo "S110 silent handlers: $COUNT (baseline $BASELINE)"
+          if [ "$COUNT" -gt "$BASELINE" ]; then
+            echo "::error::$COUNT silent try/except/pass handlers — up from $BASELINE."
+            echo "::error::Log the exception or add a comment naming what is absorbed and why."
+            ruff check app --select S110 --output-format=github
+            exit 1
+          fi
+          if [ "$COUNT" -lt "$BASELINE" ]; then
+            echo "::notice::Down to $COUNT from $BASELINE — lower BASELINE in .github/workflows/lint.yml."
+          fi
+
+  integrity:
+    # Two BLOCKING gates that answer the two questions a stranger cloning this
+    # repo would actually care about: is anything hollow, and is anything
+    # secret in here?
+    #
+    # Both are cheap (no deps, seconds to run) and both have already caught
+    # something real, which is why they block rather than report:
+    #
+    #  - audit_stubs found 41 hollow functions, three of them on the drawing
+    #    ingest path — every drawing came out with no tables, no markups and
+    #    no title block, and nothing said so.
+    #  - scan_secrets found a live Fork API key in a recovery runbook and a
+    #    live Render key hardcoded in a scheduled-task script.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: No unregistered hollow functions
+        # Exits 1 on any hollow function that is not implemented, not an
+        # @abstractmethod, not under tests/, and not registered in
+        # KNOWN_INCOMPLETE.md with a reason. Registration is deliberate and
+        # visible; a hidden stub is not.
+        run: python scripts/audit_stubs.py
+
+      - name: No secret material in tracked files
+        # Scans `git ls-files` — the set that actually gets pushed. An
+        # untracked .env on a developer's disk is where secrets are supposed
+        # to live and is correctly ignored.
+        run: python scripts/scan_secrets.py
+
+  eslint:
+    # BLOCKING, unlike ruff above. This gate exists because of a specific
+    # production incident: on 2026-08-03 a `useMemo` added below an early
+    # return in ProjectWorkspace.tsx shipped through CI and crashed the whole
+    # workspace into the ErrorBoundary (React #310). `tsc -b && vite build`
+    # compiles a conditional hook happily — Rules of Hooks is a runtime
+    # contract, not a type error — and no workflow ran eslint, so nothing
+    # caught it. Verified before enabling: eslint reports
+    # `react-hooks/rules-of-hooks` on exactly that shape.
+    #
+    # It can block from day one because the frontend is at 0 errors. The
+    # remaining findings are advisory (react-compiler hints, fast-refresh DX)
+    # and are configured as warnings in eslint.config.js with the reasoning
+    # recorded there. Warnings do NOT fail the build, so the gate stays
+    # honest: it blocks correctness regressions, not style debt.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: ESLint (blocking — errors only)
+        working-directory: frontend
+        run: npm run lint

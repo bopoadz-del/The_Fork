@@ -2,52 +2,63 @@
 
 - verdict: PASS
 - prompt: walk through the full specification section for cast-in-place concrete, CSI division 03
-- project: dar_al_arkan_master
-- conversation_id: fmx-83d6899d43be
+- project: 64362c65
+- conversation_id: fmx-5e11acb91b0d
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "process_specification_full", "confidence": 0.8, "reason": "needs_planning"}`
 - tool_calls: []
 - tool_results: []
 - routing oracle: PASS
 - execution oracle: PASS
 - structure: {}
-- first_token_s: 6.19  total_s: 6.2
-- served_model: meta-llama/llama-4-scout-17b-16e-instruct  fallback_used: False
-- answer_chars: 2274  sources: 3  events: 32
+- first_token_s: 22.89  total_s: 23.17
+- served_model: kimi-k2.6  fallback_used: False
+- answer_chars: 1749  sources: 3  events: 26
 
 ## Answer (verbatim)
 
-## Step 1: Identify the Relevant Section
-The question pertains to the specification section for cast-in-place concrete, which falls under CSI division 03. According to the provided reference context, cast-in-place concrete is classified under Class F — In-situ concrete.
+Based on the project specification document retrieved, here is the full walkthrough of **SECTION 03 30 00 — CAST-IN-PLACE CONCRETE**:
 
-## Step 2: Extract Relevant Information from the Context
-From the reference context, specifically from the table under Part 1 — CESMM4 work classes (civil / infrastructure BOQs), we find that:
-- Class F corresponds to **In-situ concrete**.
-- The primary unit for In-situ concrete is **m3**.
+---
 
-## 3: Review Construction Knowledge Base for Concrete
-The construction knowledge base provides several entries related to concrete, but none specifically labeled as a full specification for cast-in-place concrete under CSI division 03. However, we can extract relevant general information about concrete:
+## PART 1 — GENERAL
 
-- **General construction-engineering priors for concrete**:
-  - Entries include rules like selecting compressive strength grade by element function.
-  - Thresholds such as roller-compacted concrete must be compacted to greater than 95% of Standard Proctor Density.
-  - Reference RCC mix and placement envelope with aggregate grading (percent passing): 38 mm = 100.
+### 1.1 SUMMARY
+**A.** Section includes cast-in-place concrete for foundations, ground slabs, walls, and pavements, including formwork, reinforcement, mix design, placement, curing, and testing.
 
-## 4: Compile the Information
-Given the information, the full specification section for cast-in-place concrete (CSI division 03) would include:
-- Classification: Class F — **In-situ concrete**.
-- Primary unit: **m3**.
-- General specifications:
-  - Compressive strength grade selection based on element function.
-  - Compaction requirements for roller-compacted concrete: > 95% of Standard Proctor Density.
-  - Reference mix design and placement envelope.
+### 1.2 SUBMITTALS
+**A.** Mix designs for each concrete class at least **21 days** before first pour.  
+**B.** Reinforcement shop drawings and bar bending schedules.  
+**C.** Curing method statements per exposed element type.
 
-## 5: Conclusion
-The detailed specification for cast-in-place concrete under CSI division 03 includes its classification, unit of measurement, and various engineering priors and rules governing its use and implementation.
+### 1.3 QUALITY ASSURANCE
+**A.** Batch plant certified to **SASO/ASTM C94**. One set of three cylinders per **50 m³** or per pour, whichever is more frequent.
 
-The final answer is: 
-- Classification: Class F — In-situ concrete
-- Primary unit: m3
-- Specifications:
-  - Select compressive strength grade by element function.
-  - Roller-compacted concrete must be compacted to greater than 95% of Standard Proctor Density.
-  - Reference RCC mix and placement envelope with aggregate grading (percent passing): 38 mm = 100.
+---
+
+## PART 2 — PRODUCTS
+
+### 2.1 CONCRETE MATERIALS
+**A.** Cement: **Type I/II Portland cement, ASTM C150**.  
+**B.** Class **C32/40**: minimum cementitious content **380 kg/m³**, w/c ratio not exceeding **0.45**, target slump **100 mm ± 25 mm**.  
+**C.** Blinding class **C12/15** may use **20%** fly ash replacement.
+
+### 2.2 REINFORCEMENT
+**A.** High-yield deformed bars grade **B500B** to **BS 4449**. Cover: **50 mm** to ground-contact faces, **40 mm** elsewhere unless noted.
+
+---
+
+## PART 3 — EXECUTION
+
+### 3.1 PLACEMENT
+**A.** Do not place concrete when ambient temperature exceeds **40 degC** unless hot-weather measures are in effect (chilled water, ice, night pours).  
+**B.** Maximum free-fall height **1.5 m**; use tremie or chutes beyond.
+
+### 3.2 CURING
+**A.** Water-cure ground slabs minimum **7 days**; membrane curing compound permitted on vertical faces.
+
+### 3.3 TOLERANCES
+**A.** Slab surface flatness **FF25** minimum; column verticality within **h/500**.
+
+---
+
+**END OF SECTION**

@@ -173,7 +173,46 @@ def _apply_rag_context(messages: list, rag_sys_msg: dict) -> bool:
         return False
     if messages and messages[-1].get("role") == "user":
         question = messages[-1].get("content", "")
-        if _is_generative_request(question):
+        if _looks_like_self_contained_calculation(question):
+            # ARITHMETIC, not a lookup. Every input is IN the question, so the
+            # strict-grounding directive below ("answer using ONLY the
+            # reference context ... if it does not contain the answer, say you
+            # don't have it") actively forbids the right answer.
+            #
+            # Live 2026-08-03, verbatim:
+            #   "Calculate the concrete volume for a raft 25m x 18m x 1.2m
+            #    thick and the number of 6m3 truck loads"
+            #   -> "I cannot find that specific information in the provided
+            #       reference context ... they do not contain a raft measuring
+            #       25 m x 18 m x 1.2 m thick"
+            #
+            # 25 x 18 x 1.2 = 540 m3; 540 / 6 = 90 loads. The model was not
+            # failing — it was obeying. It is the DIRECTIVE that has to change.
+            #
+            # (tool_choice forcing cannot rescue this: _tool_choice_for returns
+            # "auto" for kimi because K2 rejects a specified tool outright, so
+            # the deterministic calculators can never be forced. This path is
+            # provider-independent by design.)
+            #
+            # Project-specific facts stay protected: the model may compute from
+            # the numbers the USER supplied, not invent project data.
+            directive = (
+                "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+                "The request below is a CALCULATION whose inputs are supplied "
+                "IN THE REQUEST ITSELF. Compute it using standard construction "
+                "and engineering formulas. Do NOT refuse because the "
+                "dimensions, loads or quantities are absent from the reference "
+                "context — they are not supposed to be there; they came from "
+                "the user. Treat the context as background only.\n\n"
+                "Show the formula, the substitution with the user's numbers, "
+                "and the result with correct units. Round sensibly and state "
+                "any assumption you make. You may still cite the context for "
+                "project-specific rates, specified thicknesses or standards "
+                "where it genuinely applies — but never invent "
+                "project-specific facts (names, drawing or clause references) "
+                "that are not in the context.\n\nCALCULATION REQUEST: "
+            )
+        elif _is_generative_request(question):
             directive = (
                 "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
                 "The reference context above is background you MAY draw on. This "
@@ -267,6 +306,108 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
 # Controlled answer used when an exact construction reference is absent from
 # the indexed project sources.  Replaces both the generic empty-content
 # fallback and any expensive model call that would otherwise spin on a miss.
+# Persisted when a turn dies before producing an answer (provider error,
+# crash, iteration cap). WHY THIS EXISTS:
+#
+# `append_message(user)` runs BEFORE the LLM call, but the assistant message
+# is appended only on the SUCCESS paths. So a failed turn persisted the
+# question and nothing else. The UI's error bubble is local state only, so
+# after a reload the user saw their own message with no reply — permanently,
+# with no indication anything had gone wrong.
+#
+# Observed live 2026-08-02 in the operator's own conversation: "DG2 package 1"
+# sits in the thread with no assistant turn after it, and the feature sweep
+# reproduced the mechanism (kimi HTTP 400 "tokenization failed" on
+# document_metadata -> error event -> nothing persisted).
+#
+# Deliberately SHORT and unmistakably a failure notice: this text re-enters
+# the model's context on the next turn, so it must not read as content or
+# invite the model to continue from it.
+_FAILED_TURN_MESSAGE = (
+    "[This turn failed before an answer was produced. Nothing was generated. "
+    "Ask again to retry.]"
+)
+
+
+_TOOL_RESULT_MAX_CHARS = 8000
+
+
+def _tool_result_content(payload: Dict[str, Any]) -> str:
+    """Serialize a tool result for the `tool` message, truncating SAFELY.
+
+    NEVER slice serialized JSON. `json.dumps` emits ASCII with \\uXXXX
+    escapes, so a raw ``[:8000]`` can cut mid-escape or mid-string and hand
+    the provider malformed JSON. Moonshot rejects that outright:
+
+        HTTP 400 {"message": "Invalid request: tokenization failed",
+                  "type": "invalid_request_error"}
+
+    Reproduced 2026-08-03 by the feature sweep on BOTH `document_metadata`
+    and `parse_primavera_schedule` — the two actions whose tool results are
+    large. The corpus makes it easy to hit: Diriyah filenames contain en
+    dashes, which serialize to `\\u2013`, and the cut landed inside one
+    ("Unterminated string starting at ... char 7999").
+
+    A failed turn used to vanish silently, so this surfaced as a question
+    with no answer — see _persist_failed_turn.
+
+    Over-long results become a VALID object carrying a truncated preview:
+    the preview is a JSON *string value*, so json.dumps escapes it properly
+    and the payload always parses.
+    """
+    text = json.dumps(payload, default=str)
+    if len(text) <= _TOOL_RESULT_MAX_CHARS:
+        return text
+
+    def _envelope(keep: int) -> str:
+        return json.dumps(
+            {
+                "truncated": True,
+                "note": (
+                    f"Tool result exceeded {_TOOL_RESULT_MAX_CHARS} characters "
+                    "and was truncated. Narrow the request (filter, or ask for "
+                    "fewer items) to see the rest."
+                ),
+                "preview": text[:keep],
+            },
+            default=str,
+        )
+
+    # Embedding the preview as a JSON string RE-escapes it — every `"` becomes
+    # `\"` and every `\` becomes `\\` — so escape-heavy content (exactly what
+    # this guards) can nearly double. A fixed budget therefore overshoots the
+    # cap; shrink until the ENVELOPE fits, measuring the real thing.
+    keep = _TOOL_RESULT_MAX_CHARS
+    out = _envelope(keep)
+    while len(out) > _TOOL_RESULT_MAX_CHARS and keep > 0:
+        overshoot = len(out) - _TOOL_RESULT_MAX_CHARS
+        keep = max(0, keep - max(overshoot, 32))
+        out = _envelope(keep)
+    return out
+
+
+def _persist_failed_turn(conversation_id: Optional[str]) -> None:
+    """Record that a turn died, so reloaded history is not silently missing it.
+
+    Never raises: a bookkeeping failure must not mask the original error the
+    caller is already reporting to the user.
+    """
+    if not conversation_id:
+        return
+    try:
+        # Function-scope import, matching every other agent_memory use in this
+        # module — it is NOT a module-level name here. Referencing it at module
+        # scope raised NameError, which this very except block would have
+        # swallowed, leaving a helper that silently persisted nothing.
+        from app.core import agent_memory
+
+        agent_memory.append_message(
+            conversation_id, "assistant", _FAILED_TURN_MESSAGE
+        )
+    except Exception:  # noqa: BLE001 — best-effort bookkeeping
+        _LOG.warning("could not persist failed-turn marker", exc_info=True)
+
+
 _MISSING_REFERENCE_ANSWER = (
     "I could not confirm this reference in the indexed project sources"
 )
@@ -321,7 +462,10 @@ def _build_missing_reference_answer(
             if not project_name and project_id == _projects.MASTER_CORPUS_PROJECT_ID:
                 project_name = _projects.MASTER_CORPUS_NAME
         except Exception:
-            pass
+            _LOG.warning(
+                "swallowed %s in _build_missing_reference_answer() — continuing",
+                "Exception", exc_info=True,
+            )
 
     if project_name:
         return (
@@ -378,7 +522,10 @@ def _looks_like_internal_tool_json(text: str) -> bool:
         try:
             obj = json.loads(stripped)
         except json.JSONDecodeError:
-            pass
+            _LOG.warning(
+                "swallowed %s in _looks_like_internal_tool_json() — continuing",
+                "json.JSONDecodeError", exc_info=True,
+            )
         else:
             if isinstance(obj, dict):
                 if _is_tool_obj(obj):
@@ -875,6 +1022,54 @@ _INTENT_TOOL_MAP = (
 )
 
 
+# A question that carries its OWN numbers is arithmetic, not a document lookup.
+#
+# Live 2026-08-03, project-assistant on the master corpus:
+#   "Calculate the concrete volume for a raft 25m x 18m x 1.2m thick and the
+#    number of 6m3 truck loads"
+#   -> route None (below_routing_gate), construction_calc never invoked, and
+#      the model answered:
+#        "I cannot find that specific information in the provided reference
+#         context ... they do not contain a raft measuring 25 m x 18 m x 1.2 m"
+#
+# 25 x 18 x 1.2 = 540 m3; 540 / 6 = 90 loads. Nothing needed to be retrieved.
+# The grounding discipline overrode arithmetic and refused a question whose
+# every input was in the question. `guardrail height` failed the same way.
+#
+# Both HAVE calculators (concrete_volume, guardrail_top_rail_height — 76 are
+# registered), but _INTENT_TOOL_MAP's ~22 phrases only reach about a dozen of
+# them. Rather than chase 76 keyword spellings, detect the SHAPE that is
+# unambiguously a calculation: an explicit calc verb plus at least two
+# measurement-bearing numbers.
+#
+# Deliberately narrow. A document lookup ("what is the concrete volume in the
+# BOQ") has no calc verb AND no self-supplied dimensions, so it is unaffected
+# and keeps the cost-grounding path.
+#
+# Kill switch: FORCE_CALC_ON_DIMENSIONS=0.
+_CALC_VERB_RE = re.compile(
+    r"\b(calculate|compute|work out|how many|how much)\b", re.I
+)
+# A number attached to a unit: 25m, 1.2 m, 6m3, 900,000 kg, 45 days
+_DIMENSION_RE = re.compile(
+    r"\b\d[\d,\.]*\s*"
+    r"(mm|cm|m|km|m2|m3|sqm|cum|kg|tonne|tons?|t|kn|mpa|days?|weeks?|months?|%)\b",
+    re.I,
+)
+_MIN_DIMENSIONS_FOR_CALC = 2
+
+
+def _looks_like_self_contained_calculation(text: str) -> bool:
+    """True when the question supplies its own numbers AND asks to compute."""
+    if (os.getenv("FORCE_CALC_ON_DIMENSIONS", "1") or "1").strip().lower() in (
+        "0", "false", "no", "off",
+    ):
+        return False
+    if not text or not _CALC_VERB_RE.search(text):
+        return False
+    return len(_DIMENSION_RE.findall(text)) >= _MIN_DIMENSIONS_FOR_CALC
+
+
 def _forced_specific_tool(messages: List[Dict[str, Any]], available: set) -> Optional[str]:
     """Return a tool name to force via named tool_choice for this turn, or None.
     Gated to the user-tail (iter 0) and to tools actually available, mirroring
@@ -888,6 +1083,11 @@ def _forced_specific_tool(messages: List[Dict[str, Any]], available: set) -> Opt
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in text for p in phrases):
             return tool
+    # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
+    # the rest by SHAPE: a question that supplies its own dimensions and asks
+    # to compute is arithmetic, whatever the domain noun happens to be.
+    if "construction_calc" in available and _looks_like_self_contained_calculation(text):
+        return "construction_calc"
     return None
 
 
@@ -1315,6 +1515,74 @@ def _cost_grounding_gate(
         return _CG_REFUSAL
     except Exception:  # noqa: BLE001 — a gate must never break an answer
         logger.exception("cost_grounding_gate failed; passing answer through")
+        return text
+
+
+def format_excerpts_as_rag_context(
+    excerpts: Optional[List[Dict[str, Any]]],
+) -> str:
+    """Render project-document excerpts into the SAME per-chunk marker form the
+    agent path's ``format_chunks_as_system_message`` emits, so the cost-grounding
+    gate classifies each excerpt for rate-semantics INDEPENDENTLY.
+
+    Per-chunk markers are load-bearing: a single flat block that mixed a rate
+    table with a drawing dimension-table chunk would read as rate-semantic as a
+    whole and wrongly ground the drawing's bare numbers (the 2026-07-14 "450
+    SAR/m³" incident). Emitting one ``[doc_id=... chunk=N ...]`` block per
+    excerpt keeps grounding on the non-agent paths identical to the agent path.
+
+    Excerpt shape matches ``search_project_documents`` /
+    ``_with_doc_search`` output (``snippet`` / ``filename`` / ``document_id`` /
+    ``score``). Returns "" when there are no usable excerpts."""
+    blocks: List[str] = []
+    for i, e in enumerate(excerpts or []):
+        if not isinstance(e, dict):
+            continue
+        text = (e.get("snippet") or "").strip()
+        if not text:
+            continue
+        did = e.get("document_id") or e.get("filename") or f"doc{i}"
+        score = e.get("score")
+        score_s = f" score={score:.3f}" if isinstance(score, (int, float)) else ""
+        blocks.append(f"[doc_id={did} chunk={i}{score_s}] {text}")
+    return "\n\n".join(blocks)
+
+
+def gate_cost_answer(
+    text: str,
+    *,
+    rag_context: str = "",
+    authoritative_texts: Optional[List[str]] = None,
+    user_message: Optional[str] = None,
+) -> str:
+    """Run the tested cost-grounding gate over an answer produced by a NON-agent
+    answer path (``/chat``, ``/v1/project/ask``) that doesn't itself build the
+    agent's ``(rag_sys_msg, messages)`` pair.
+
+    * ``rag_context`` — retrieved evidence in the per-chunk ``[doc_id=...]``
+      marker form (see ``format_excerpts_as_rag_context``); classified per chunk
+      for rate-semantics, exactly like the agent path.
+    * ``authoritative_texts`` — computed/tool results produced this turn (e.g.
+      the project reasoner's executed step outputs). Every number in them
+      grounds — the same authority the agent path grants tool-result messages.
+    * ``user_message`` — the caller's own question; figures the user supplied are
+      grounded, so the gate never refuses to echo the user's own numbers back.
+
+    Delegates to the existing ``_cost_grounding_gate`` — NO gating logic is
+    reimplemented here. Never raises: a gate must never break a working turn."""
+    try:
+        rag_sys_msg = (
+            {"role": "system", "content": rag_context} if rag_context else None
+        )
+        messages: List[Dict[str, Any]] = []
+        if user_message:
+            messages.append({"role": "user", "content": user_message})
+        for t in authoritative_texts or []:
+            if t:
+                messages.append({"role": "tool", "content": str(t)})
+        return _cost_grounding_gate(text, rag_sys_msg, messages)
+    except Exception:  # noqa: BLE001 — a gate must never break an answer
+        _LOG.exception("gate_cost_answer failed; passing answer through")
         return text
 
 
@@ -2495,6 +2763,34 @@ class Agent:
                 },
             })
 
+        # ── synthetic tool: list_project_documents (project-scoped) ──────────
+        # The document REGISTER, deterministically from the project store.
+        # Without this, "list the documents in this project / what do we have"
+        # can only be answered by hoping a semantic search surfaces a register
+        # that does not exist as a chunk — verified failing on the golden set
+        # (pilot_document_metadata, 2026-08-02): the model honestly reported
+        # the RAG context held no document list.
+        if project_id:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "list_project_documents",
+                    "description": (
+                        "List this project's document register: each document's "
+                        "filename, type, and size. Use this when the user asks "
+                        "WHAT documents/files the project has. To search INSIDE "
+                        "document content use search_project_documents."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": ["integer", "string"], "description": "Max documents to return (default 100, newest first)."},
+                        },
+                        "required": [],
+                    },
+                },
+            })
+
         # ── synthetic tool: fetch_document (project-scoped) ──────────────────
         # Complements search_project_documents: fetches ONE specific document's
         # content by document_id or filename. This is what makes "work on the
@@ -2669,7 +2965,10 @@ class Agent:
                     await res
             except Exception:
                 # Event handler must never break the agent loop.
-                pass
+                _LOG.warning(
+                    "swallowed %s in _emit() — continuing",
+                    "Exception", exc_info=True,
+                )
         cfg = _llm_config()
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check entirely. The empty bearer token sent later is ignored
@@ -2739,6 +3038,7 @@ class Agent:
             conversation_id=conversation_id,
             user_id=user_id,
             agent_name=self.name,
+            history=effective_history,
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
             _apply_rag_context(messages, _rag_sys_msg)
@@ -2922,11 +3222,10 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": json.dumps(
+                    "content": _tool_result_content(
                         {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
-                        default=str,
-                    )[:8000],
+                    ),
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled
@@ -3222,6 +3521,7 @@ class Agent:
             conversation_id=conversation_id,
             user_id=user_id,
             agent_name=self.name,
+            history=effective_history,
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
             _apply_rag_context(messages, _rag_sys_msg)
@@ -3406,6 +3706,7 @@ class Agent:
             if resp.get("status") == "error":
                 err = resp.get("error", "LLM call failed")
                 _LOG.warning("chat_stream: iter=%d LLM error %s", iteration, err)
+                _persist_failed_turn(conversation_id)
                 yield {"type": "error", "message": err}
                 return
             served_model = (resp.get("raw") or {}).get("model") or served_model
@@ -3552,11 +3853,10 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": json.dumps(
+                    "content": _tool_result_content(
                         {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
-                        default=str,
-                    )[:8000],
+                    ),
                 })
 
         # Hit the cap without a final answer — force one more call with tools disabled.
@@ -3564,6 +3864,7 @@ class Agent:
                      MAX_TOOL_ITERATIONS)
         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
         if forced_resp.get("status") == "error":
+            _persist_failed_turn(conversation_id)
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
             return
         served_model = (forced_resp.get("raw") or {}).get("model") or served_model
@@ -3676,7 +3977,10 @@ class Agent:
                         }
                 except Exception:  # noqa: BLE001
                     # A broken usage tracker must never block a real call.
-                    pass
+                    _LOG.warning(
+                        "swallowed %s in _call_llm() — continuing",
+                        "Exception", exc_info=True,
+                    )
         # An agent that pinned a provider-specific model is left alone; an
         # unpinned/legacy-placeholder agent uses the active provider's default
         # (Kimi primary / Groq fallback / Ollama on-prem, from _llm_config).
@@ -3813,7 +4117,10 @@ class Agent:
                             usage=None,
                         )
                     except Exception:  # noqa: BLE001
-                        pass
+                        _LOG.warning(
+                            "swallowed %s in _call_llm() — continuing",
+                            "Exception", exc_info=True,
+                        )
                     return {"status": "success", "choice": {"message": msg}, "raw": data}
 
                 async with httpx.AsyncClient(timeout=_llm_http_timeout()) as client:
@@ -3874,7 +4181,10 @@ class Agent:
                         # retryable and fall back rather than erroring the turn.
                         tool_use_failed_unrecovered = True
                 except (json.JSONDecodeError, KeyError, TypeError):
-                    pass
+                    _LOG.warning(
+                        "swallowed %s in _call_llm() — continuing",
+                        "(json.JSONDecodeError, KeyError, TypeError)", exc_info=True,
+                    )
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
                 if (_is_retryable(r.status_code) or tool_use_failed_unrecovered) and not is_last:
                     reason = "tool_use_failed (prose)" if tool_use_failed_unrecovered else f"HTTP {r.status_code}"
@@ -3906,7 +4216,10 @@ class Agent:
                         usage=data.get("usage"),
                     )
                 except Exception:  # noqa: BLE001
-                    pass
+                    _LOG.warning(
+                        "swallowed %s in _call_llm() — continuing",
+                        "Exception", exc_info=True,
+                    )
                 msg = choice.get("message") or {}
                 if msg and not (msg.get("tool_calls") or []):
                     # Observe-only tripwire: the model answered a turn whose
@@ -4072,7 +4385,10 @@ class Agent:
                     usage=usage,
                 )
             except Exception:  # noqa: BLE001
-                pass
+                _LOG.warning(
+                    "swallowed %s in _stream_synthesis() — continuing",
+                    "Exception", exc_info=True,
+                )
 
     async def _run_tool_call(
         self,
@@ -4190,6 +4506,49 @@ class Agent:
                 "name": "search_project_documents",
                 "ok": True,
                 "result": {"results": results},
+            }
+
+        # ── synthetic tool: list_project_documents ───────────────────────────
+        if name == "list_project_documents":
+            if not project_id:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "no project in scope",
+                        "hint": "This tool requires a project-scoped chat.",
+                    },
+                }
+            try:
+                limit = int(args.get("limit") or 100)
+            except (TypeError, ValueError):
+                limit = 100
+            limit = max(1, min(limit, 200))
+            from app.core import projects as _projects_store
+            # The pilot's master-corpus project is an alias with no documents
+            # of its own — list the backing corpus, like the chat path does.
+            resolved_pid = (_projects_store._master_corpus_source(project_id)
+                            or project_id)
+            docs = _projects_store.list_documents(
+                resolved_pid, limit=limit, offset=0, newest_first=True,
+            )
+            total = _projects_store.count_documents(resolved_pid)
+            return {
+                "name": "list_project_documents",
+                "ok": True,
+                "result": {
+                    "total_documents": total,
+                    "returned": len(docs),
+                    "documents": [
+                        {
+                            "filename": d.get("original_name"),
+                            "doc_type": d.get("doc_type"),
+                            "size_bytes": d.get("size"),
+                        }
+                        for d in docs
+                    ],
+                },
             }
 
         # ── synthetic tool: fetch_document ───────────────────────────────────

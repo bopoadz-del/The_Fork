@@ -123,6 +123,15 @@ class Chunk:
     # compare=False so neither affects Chunk equality in tests.
     knowledge_layer: Optional[str] = field(default=None, compare=False)
     authority: Optional[str] = field(default=None, compare=False)
+    # Revision currency (app.core.rag.revision, audit §5.2). Filename-derived,
+    # set by ``retrieve_with_filter`` on every search: ``revision`` is the
+    # parsed single-char revision token ("" when none), ``drawing_number`` the
+    # parsed sheet code, ``superseded`` True when the filename marks the doc
+    # obsolete. Internal ranking + answer-disclosure signals — never serialized
+    # to the wire; compare=False so none affects Chunk equality in tests.
+    revision: str = field(default="", compare=False)
+    drawing_number: str = field(default="", compare=False)
+    superseded: bool = field(default=False, compare=False)
     # ── photo_chunks fields (kind="photo") ─────────────────────────────
     # text chunks keep kind="text" and the photo fields default to None.
     kind: str = "text"
@@ -142,6 +151,10 @@ class Chunk:
         d.pop("layer", None)
         d.pop("knowledge_layer", None)
         d.pop("authority", None)
+        # Revision-currency signals are internal (ranking + disclosure), not wire
+        d.pop("revision", None)
+        d.pop("drawing_number", None)
+        d.pop("superseded", None)
         # Drop photo fields for plain text chunks to keep payloads small
         if d.get("kind") == "text":
             d.pop("sha256", None)
@@ -203,7 +216,10 @@ def reset_store_cache() -> None:
             try:
                 s.close()
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in reset_store_cache() — continuing",
+                    "Exception", exc_info=True,
+                )
         _STORE_CACHE = {}
     with _INIT_LOCK:
         _INITIALIZED_NAMESPACES = set()
@@ -277,7 +293,16 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
             try:
                 index.create(bind=eng, checkfirst=True)
             except Exception:  # noqa: BLE001 — never block startup on an index
-                pass
+                # Not blocking startup is right; staying SILENT is not. The
+                # comment above measures the cost of a missing btree here:
+                # ~11s seq-scans on the master corpus. Swallowed, that shows
+                # up as "retrieval got slow" with nothing to point at.
+                logger.warning(
+                    "could not create index %s on %s — queries filtering by "
+                    "project_id may fall back to a sequential scan",
+                    getattr(index, "name", "?"), rag_chunk_cls.__tablename__,
+                    exc_info=True,
+                )
         # PostgreSQL BM25 leg: the ``text_search`` GENERATED column + GIN
         # index. Alembic 0003 only covers the legacy ``chunks`` table;
         # namespaced tables (chunks_v2, ...) are created HERE, so they must
@@ -1074,7 +1099,10 @@ class VectorStore:
                     meta = json_lib.loads(r.photo_metadata)
                     photo_url = meta.get("source_url") if isinstance(meta, dict) else None
                 except Exception:
-                    pass
+                    logger.warning(
+                        "swallowed %s in bm25_search_photos() — continuing",
+                        "Exception", exc_info=True,
+                    )
             out.append(
                 Chunk(
                     chunk_id=r.chunk_id,
@@ -1133,7 +1161,10 @@ def _rrf_combine(
         try:
             c.rrf_score = rrf
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _rrf_combine() — continuing",
+                "Exception", exc_info=True,
+            )
         scored.append((rrf, c))
     scored.sort(key=lambda x: -x[0])
     return [c for _, c in scored[:top_k]]

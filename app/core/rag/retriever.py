@@ -14,6 +14,8 @@ from typing import Dict, List, Optional, Set, Tuple
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import Chunk, get_store
 from app.core.rag import layers
+from app.core.rag import revision as _revision
+from app.core.rag import reranker as _reranker
 
 import os
 import re
@@ -65,7 +67,46 @@ def _is_prose_compound(token: str) -> bool:
     for seg in re.split(r"[-./]", token):
         if seg.isalpha() and len(seg) > 4:
             return True
-    return False
+    return _is_misspelled_word(token)
+
+
+# A separator-free token is only a reference code when its letters are a SHORT
+# abbreviation prefix: M145, A615, D999, PRC501, IP054. A long alphabetic run
+# with a digit buried inside it is a TYPO, not a code.
+#
+# Live incident 2026-08-02: the operator typed "You should find it in the
+# project specif8cation not drawings" — a conversational correction. The '8'
+# in the misspelling made "specif8cation" match rule 4, retrieval missed on
+# it, and the missing-reference short-circuit answered "I could not confirm
+# this reference in the indexed project sources ... provide the exact
+# filename." A typo silently converted a correction into a failed document
+# lookup.
+#
+# _is_prose_compound could not catch it: that guard splits on [-./] and checks
+# for all-alpha segments, but a separator-free token yields ONE segment which
+# isn't .isalpha() precisely BECAUSE of the stray digit.
+# The discriminator is the ALPHABETIC RUN. Reference codes are built from
+# short abbreviations (M145, A615, D999, PRC501, IP054 — runs of 1-3 letters).
+# An English word carries runs of 5+ letters, and a typo'd digit does not
+# change that: "specif8cation" still contains "specif" and "cation".
+#
+# This also catches the same typo arriving via the LABELED-reference rule,
+# which happily split "specif8cation" into label "spec" + code "if8cation" —
+# and "if8cation" satisfies any letters-then-digits shape test, so only the
+# run-length check rejects it.
+_MAX_CODE_ALPHA_RUN = 4
+
+
+def _is_misspelled_word(token: str) -> bool:
+    """True for a separator-free word with a digit typo'd into it."""
+    if re.search(r"[-./]", token):
+        return False  # separator tokens are handled by the segment rule above
+    if not any(ch.isdigit() for ch in token):
+        return False
+    return any(
+        len(run) > _MAX_CODE_ALPHA_RUN
+        for run in re.findall(r"[A-Za-z]+", token)
+    )
 
 
 # Measurement units / unit-ratios are NOT reference codes. A spec unit in the
@@ -153,7 +194,14 @@ def extract_query_identifiers(query: str) -> List[str]:
         # Without this guard those false identifiers earned the +2.0 retrieval
         # bonus and flooded the top-K with boilerplate, so grounded chat
         # answered "I cannot find" for broad questions (2026-06-30 pilot).
-        if code and any(ch.isdigit() for ch in code):
+        # ...and it must not be a typo'd English word. This rule cheerfully
+        # split "specif8cation" into label "spec" + code "if8cation", which
+        # carries a digit and so passed the check above (live 2026-08-02).
+        if (
+            code
+            and any(ch.isdigit() for ch in code)
+            and not _is_misspelled_word(code)
+        ):
             found.add(f"{label.lower()} {code.lower()}")
             found.add(code.lower())
 
@@ -712,6 +760,31 @@ def retrieve_with_filter(
                 if c.project_id not in gk_id_set or _margin_score(s, c) >= bar
             ]
 
+    # Revision currency (§5.2) — ALWAYS ON, independent of RAG_LAYERED. A
+    # stale-revision drawing answer is a real construction-safety hazard, so
+    # this runs regardless of the layered flag. Both signals key off the
+    # uploader's original filename (resolved once per distinct doc below):
+    #   1. annotate every chunk with its parsed revision / drawing number;
+    #   2. firmly down-rank any chunk whose filename marks it SUPERSEDED so a
+    #      current document of comparable relevance always wins — a penalty, not
+    #      a drop, so a superseded chunk still survives as a last resort when
+    #      nothing current matches.
+    # The same-drawing "prefer highest revision" suppression is computed from
+    # these annotations and applied in the kept-selection loop below.
+    name_by_id: Dict[str, str] = {}
+    for _, chunk in scored:
+        if chunk.doc_id not in name_by_id:
+            name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
+    for i, (score, chunk) in enumerate(scored):
+        nm = name_by_id.get(chunk.doc_id, "")
+        chunk.revision = _revision.revision_token(nm)
+        chunk.drawing_number = _revision.drawing_number(nm)
+        if _revision.is_superseded(nm):
+            chunk.superseded = True
+            demoted = score - _revision.SUPERSEDED_PENALTY
+            chunk.score = round(demoted, 6)
+            scored[i] = (demoted, chunk)
+
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
     # outranks a comparably-relevant low-authority one (an L1 historical note).
@@ -733,27 +806,66 @@ def retrieve_with_filter(
     # first when scores are equal because they were inserted first.
     scored.sort(key=lambda x: -x[0])
 
+    # Revision currency (§5.2 step 2): highest COMPARABLE revision retrieved per
+    # drawing number, bucketed by revision kind ((drawing_number, kind) -> max
+    # value). Numeric and alphabetic revisions of one sheet live in separate
+    # buckets and never suppress each other — so a mixed-scheme sheet keeps both
+    # rather than risk hiding the current one (see revision.revision_rank).
+    best_rev: Dict[Tuple[str, int], int] = {}
+    for _, c in scored:
+        dn = c.drawing_number
+        rank = _revision.revision_rank(c.revision)
+        if dn and rank is not None:
+            key = (dn, rank[0])
+            if key not in best_rev or rank[1] > best_rev[key]:
+                best_rev[key] = rank[1]
+
     # Photo chunks RAG leg was removed in migration 0008 along with the
     # photo_chunks table. Chat-attached photos are now question-context
     # (see POST /v1/chat/analyze-photo), not corpus material.
     # H3: GK top-K cap — skipping (not truncating) excess GK chunks lets the
     # next-best project chunks flow into the freed slots; when the pool has
     # no project chunks left the result simply comes back shorter.
+    #
+    # Cross-encoder rerank (RAG_RERANKER, default OFF): collect a DEEPER
+    # candidate pool through the very same gates below, then let the
+    # cross-encoder pick the best k from it. Flag off -> target == k and the
+    # loop is byte-identical to before. The gates run FIRST either way, so a
+    # noise-filtered, revision-suppressed, or GK-capped chunk can never be
+    # resurrected by a good rerank score.
+    rerank_on = _reranker.enabled()
+    target = _reranker.candidate_depth(k) if rerank_on else k
     kept: List[Chunk] = []
     noise_dropped = 0
+    revision_suppressed = 0
     gk_kept = 0
     for _, c in scored:
-        name = _doc_name_for_id(c.doc_id)
+        name = name_by_id.get(c.doc_id, "")
         if _is_noise_filename(name):
             noise_dropped += 1
+            continue
+        # Prefer the highest revision of a given drawing: skip this chunk when a
+        # strictly-higher, same-kind revision of the SAME drawing number is also
+        # in the pool. Stale-revision safety, so this suppresses rather than
+        # merely nudges — but only among chunks that share a parsed drawing id.
+        dn = c.drawing_number
+        rank = _revision.revision_rank(c.revision)
+        if dn and rank is not None and best_rev.get((dn, rank[0]), rank[1]) > rank[1]:
+            revision_suppressed += 1
             continue
         if gk_cap is not None and c.project_id in gk_id_set:
             if gk_kept >= gk_cap:
                 continue
             gk_kept += 1
         kept.append(c)
-        if len(kept) == k:
+        if len(kept) == target:
             break
+
+    # Second-stage rerank: reorder the survivors by cross-encoder relevance
+    # and cut to k. Degrades to kept[:k] (i.e. today's exact result) on any
+    # model/scoring failure — see reranker.rerank.
+    if rerank_on and len(kept) > k:
+        kept = _reranker.rerank(query, kept, k)
 
     # Tag each returned chunk with its retrieval layer so the chat runtime can
     # disclose a Master-Corpus fallback (STEP 0b). "own" is the active project;
@@ -766,6 +878,12 @@ def retrieve_with_filter(
             c.layer = "master_corpus"
         else:
             c.layer = "general_knowledge"
+
+    if revision_suppressed:
+        logger.debug(
+            "revision currency: suppressed %d lower-revision chunk(s) in favour "
+            "of a higher revision of the same drawing", revision_suppressed,
+        )
 
     return kept, noise_dropped
 

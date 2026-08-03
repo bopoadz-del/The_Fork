@@ -2,6 +2,7 @@
 
 import pytest
 import os
+import uuid
 import sys
 
 # Add app to path
@@ -96,6 +97,56 @@ def requires_extended_boot(func):
 
 def _postgres_test_mode() -> bool:
     return os.getenv("PYTEST_USE_POSTGRES", "").strip().lower() in ("1", "true", "yes")
+
+
+@pytest.fixture(autouse=True)
+def _reset_rag_caches():
+    """Drop the process-cached embedder + vector stores between EVERY test.
+
+    These caches are module-level globals, so without this they leak across
+    tests in the default SQLite mode. The failure that exposed it:
+
+        RuntimeError: Embedding identity mismatch in namespace 'v2':
+        expected {'model': 'fake', ...}, found {'model': 'minishlab/potion-base-8M', ...}
+
+    A test that loads the REAL embedder leaves it cached; a later test that
+    sets RAG_EMBEDDING_MODEL=fake then meets a store already stamped with the
+    real model's identity and the mixed-model guard (correctly) refuses.
+
+    Result was ~28 red RAG tests on a full local run that all pass in
+    isolation — order-dependent, so it looked like flakiness rather than
+    missing teardown, and it repeatedly cost time distinguishing "my change
+    broke this" from "the suite leaks". CI missed it because the postgres job
+    DID reset (below) and the virgin job happened not to hit the ordering.
+
+    Was previously nested inside the postgres-only branch of
+    `_isolate_postgres_db`, so it never ran for the default SQLite suite.
+    """
+    from app.core.rag import embeddings as _emb, vector_store as _vs
+
+    # Caches alone are NOT enough. The embedder identity is PERSISTED per
+    # namespace in the store, so a test that used the real embedder leaves
+    # `potion-base-8M` stamped on namespace 'v2' in the shared suite DB, and
+    # the next test using `fake` meets the mixed-model guard. Give every test
+    # its own namespace so no two can ever share a stamp.
+    #
+    # Applied via os.environ (not monkeypatch) so a test's OWN
+    # monkeypatch.setenv("RAG_VECTOR_NAMESPACE", ...) still wins — several
+    # tests pin a namespace deliberately and must keep doing so.
+    _prev_ns = os.environ.get("RAG_VECTOR_NAMESPACE")
+    os.environ["RAG_VECTOR_NAMESPACE"] = f"t{uuid.uuid4().hex[:12]}"
+
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+    yield
+    # Reset on the way out too: a test that warms the real embedder must not
+    # hand it to whatever runs next.
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+    if _prev_ns is None:
+        os.environ.pop("RAG_VECTOR_NAMESPACE", None)
+    else:
+        os.environ["RAG_VECTOR_NAMESPACE"] = _prev_ns
 
 
 @pytest.fixture(autouse=True)

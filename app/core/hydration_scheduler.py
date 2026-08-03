@@ -264,7 +264,10 @@ async def _maybe_retrain_router(block) -> None:
                 if payload.get("corrected"):
                     corrected_total += 1
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in _maybe_retrain_router() — continuing",
+                    "Exception", exc_info=True,
+                )
 
     last_count = (state.get("models", {}).get("router") or {}).get(
         "patterns_seen_at_train", 0
@@ -346,5 +349,8 @@ async def stop() -> None:
     try:
         await _task
     except (asyncio.CancelledError, Exception):  # noqa: BLE001
-        pass
+        logger.warning(
+            "swallowed %s in stop() — continuing",
+            "(asyncio.CancelledError, Exception)", exc_info=True,
+        )
     _task = None

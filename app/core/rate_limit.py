@@ -17,6 +17,9 @@ import threading
 import time
 from collections import deque
 from typing import Deque, Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.core.redis_client import get_sync_redis_client
 
@@ -128,7 +131,10 @@ def init_rate_limiter() -> str:
             _use_redis = True
             return "redis"
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in init_rate_limiter() — continuing",
+                "Exception", exc_info=True,
+            )
     _redis_limiter = None
     _use_redis = False
     return "in-memory"

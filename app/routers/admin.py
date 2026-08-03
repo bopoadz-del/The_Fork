@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -284,7 +285,10 @@ def admin_training_list(auth: dict = Depends(require_api_key)):
                 with open(path, "r", encoding="utf-8") as f:
                     line_count = sum(1 for _ in f)
             except Exception:
-                pass
+                log.warning(
+                    "swallowed %s in admin_training_list() — continuing",
+                    "Exception", exc_info=True,
+                )
             out.append({
                 "name": name,
                 "size_bytes": os.path.getsize(path),
@@ -651,12 +655,6 @@ def admin_training_job_status(job_id: str, auth: dict = Depends(require_api_key)
 
 # ── Synchronous (legacy) path — kept for tests / quick small jobs ────────
 
-def _legacy_sync_generate_unused():
-    """Stub kept to preserve the import surface for the deleted sync path —
-    intentionally never called. Real entrypoint is the async job above."""
-    return None
-
-
 @router.post("/v1/admin/debug/migrate-sqlite")
 def admin_migrate_sqlite(
     dry_run: bool = Query(True, description="Count rows only; no Postgres writes"),
@@ -701,13 +699,56 @@ def admin_migrate_sqlite(
                 lines.append(f"  {table}: {n}")
             log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         except OSError:
-            pass
+            log.warning(
+                "swallowed %s in admin_migrate_sqlite() — continuing",
+                "OSError", exc_info=True,
+            )
 
     return {
         "dry_run": dry_run,
         "data_dir": str(data_dir),
         "counts": counts,
     }
+
+
+def _drive_user_id(auth: Dict[str, Any]) -> str:
+    """User id whose Google Drive connection these admin routes act on.
+
+    `require_api_key` returns TWO different principal shapes. The JWT branch
+    resolves a real user and includes `user_id`; the API-key branch returns
+    the key record from `auth_manager`, which carries `user`/`tier`/`role`
+    but NO `user_id`. `CEREBRUM_MASTER_KEY` is minted with `role: "admin"`,
+    so a master-key caller passes `_require_admin` and then reached
+    `auth["user_id"]` -> KeyError -> 500. Confirmed live 2026-08-02:
+    GET /v1/admin/drive/scan returned 500 for the operator's own admin key.
+
+    Drive tokens are stored PER USER, so a key principal genuinely has no
+    Drive connection to act on — the honest answer is the 409 this route
+    already documents for "not connected", not an unhandled 500.
+    """
+    user_id = auth.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            409,
+            "Google Drive admin actions require a signed-in admin session. "
+            "This request authenticated with an API key, which has no "
+            "Google Drive connection of its own. Sign in as an admin user "
+            "and connect Drive, then retry.",
+        )
+    return user_id
+
+
+def _parse_vector_dim(coltype: Optional[str]) -> Optional[int]:
+    """Width declared by a pgvector column type, e.g. ``vector(384)`` -> 384.
+
+    Returns None for an absent column or an unsized ``vector`` — both mean
+    "cannot assert a width", which callers must treat as unknown rather than
+    as agreement.
+    """
+    if not coltype:
+        return None
+    m = re.match(r"^\s*vector\s*\(\s*(\d+)\s*\)\s*$", coltype)
+    return int(m.group(1)) if m else None
 
 
 @router.get("/v1/admin/debug/pilot-preflight")
@@ -731,35 +772,83 @@ def admin_pilot_preflight(auth: dict = Depends(require_api_key)):
 
     try:
         from app.core.db import to_psycopg_url
+        from app.core.models import rag_chunk_table_name
+        from app.core.rag.embeddings import loaded_embedder_identity
+
+        # Report the table the retriever ACTUALLY reads and writes (chunks_v2
+        # by default) — NOT the retired legacy `chunks` table. The old code
+        # read the dim off `chunks`, which has been empty since the v2
+        # migration, and compared it to a hardcoded `vector(256)`. So this
+        # gate answered True from a dead table: it would have stayed green
+        # with the live store missing, empty, or the wrong width. Same
+        # false-green class as the admin corpus count fixed earlier in this
+        # file — that one showed 0 chunks for every project and "invited a
+        # destructive re-index click".
+        namespace = os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
+        active_table = rag_chunk_table_name(namespace)
+
         engine = create_engine(to_psycopg_url(db_url))
         with engine.connect() as conn:
-            emb = conn.execute(
-                text(
-                    """
-                    SELECT format_type(a.atttypid, a.atttypmod)
-                    FROM pg_attribute a
-                    JOIN pg_class t ON a.attrelid = t.oid
-                    WHERE t.relname = 'chunks'
-                      AND a.attname = 'embedding'
-                      AND NOT a.attisdropped
-                    """
-                )
-            ).scalar()
+            def _embedding_type(table: str):
+                return conn.execute(
+                    text(
+                        """
+                        SELECT format_type(a.atttypid, a.atttypmod)
+                        FROM pg_attribute a
+                        JOIN pg_class t ON a.attrelid = t.oid
+                        WHERE t.relname = :table
+                          AND a.attname = 'embedding'
+                          AND NOT a.attisdropped
+                        """
+                    ),
+                    {"table": table},
+                ).scalar()
+
+            active_type = _embedding_type(active_table)
+            legacy_type = _embedding_type("chunks")
+
             counts = {}
-            for table in (
+            tables = [
                 "users",
                 "projects",
                 "documents",
                 "chunks",
                 "conversations",
                 "messages",
-            ):
-                counts[table] = conn.execute(
-                    text(f"SELECT COUNT(*) FROM {table}")
-                ).scalar()
+            ]
+            if active_table not in tables:
+                tables.append(active_table)
+            for table in tables:
+                # rag_chunk_table_name validates the identifier, so the
+                # interpolation below cannot carry a hostile namespace.
+                try:
+                    counts[table] = conn.execute(
+                        text(f"SELECT COUNT(*) FROM {table}")
+                    ).scalar()
+                except Exception:  # noqa: BLE001 — table may not exist yet
+                    counts[table] = None
+
+            # Dim agreement is only assertable when the embedder is already
+            # warm: `loaded_embedder_identity` never triggers the slow cold
+            # load, so a cold cache reports None ("unknown"). Unknown is
+            # reported as None, never as a green boolean — an operator gate
+            # must not read "ok" from an absent measurement.
+            identity = loaded_embedder_identity()
+            expected_dim = identity.get("dim") if identity else None
+            actual_dim = _parse_vector_dim(active_type)
+            if expected_dim is None or actual_dim is None:
+                dim_ok = None
+            else:
+                dim_ok = actual_dim == expected_dim
+
             out["postgres"] = {
-                "chunks_embedding_type": emb,
-                "embedding_dim_ok": emb == "vector(256)",
+                "active_chunk_table": active_table,
+                "active_chunk_embedding_type": active_type,
+                "active_chunk_embedding_dim": actual_dim,
+                "legacy_chunks_embedding_type": legacy_type,
+                "embedder_dim": expected_dim,
+                "embedder_loaded": identity is not None,
+                "embedding_dim_ok": dim_ok,
                 "row_counts": counts,
             }
     except Exception as exc:  # noqa: BLE001 — diagnostic only
@@ -881,7 +970,10 @@ def admin_corpus_collections(
         except Exception:  # noqa: BLE001
             # The namespaced chunk table may not exist yet in a fresh SQLite
             # dev DB — the documents side already covers approved projects.
-            pass
+            log.warning(
+                "swallowed %s in admin_corpus_collections() — continuing",
+                "Exception", exc_info=True,
+            )
 
         for pid in sorted(project_ids):
             doc_count = conn.execute(
@@ -1381,8 +1473,9 @@ async def admin_drive_scan(
     from app.core import drive_auth
     from app.blocks.google_drive import GoogleDriveBlock
 
+    drive_user_id = _drive_user_id(auth)
     try:
-        access_token = await drive_auth.get_access_token(auth["user_id"])
+        access_token = await drive_auth.get_access_token(drive_user_id)
     except drive_auth.DriveNotConnected:
         raise HTTPException(409, "Google Drive is not connected for this admin.")
     except drive_auth.DriveAuthError as e:
@@ -1543,8 +1636,9 @@ async def admin_approve_from_drive(
     from app.core import drive_auth, projects as _projects_mod
 
     # Verify Drive auth before doing any DB writes — fail fast.
+    drive_user_id = _drive_user_id(auth)
     try:
-        access_token = await drive_auth.get_access_token(auth["user_id"])
+        access_token = await drive_auth.get_access_token(drive_user_id)
     except drive_auth.DriveNotConnected:
         raise HTTPException(409, "Google Drive is not connected for this admin.")
     except drive_auth.DriveAuthError as e:
@@ -1563,7 +1657,7 @@ async def admin_approve_from_drive(
 
     project = _projects_mod.create_project(
         name=name,
-        user_id=auth["user_id"],
+        user_id=drive_user_id,
         is_approved=True,
         project_id=slug,
         origin="admin_drive_approved",
@@ -1572,7 +1666,7 @@ async def admin_approve_from_drive(
     # Queue the recursive import as a background task.
     background_tasks.add_task(
         _run_drive_folder_import,
-        project_id=slug, user_id=auth["user_id"],
+        project_id=slug, user_id=drive_user_id,
         folder_id=req.folder_id, max_files=req.max_files,
         max_depth=req.max_depth, role=req.role,
     )

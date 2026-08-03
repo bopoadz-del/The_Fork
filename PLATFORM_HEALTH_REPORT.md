@@ -150,3 +150,87 @@ These are the remaining scope. They need either a longer dedicated run
 or the multi-agent workflow harness to cover exhaustively with saved
 evidence. This report covers what was genuinely probed, with the real
 findings and the parked gates — and stops here, as the doctrine directs.
+
+> **Partly executed 2026-08-02 — see `docs/CLIENT_DESK_READINESS_20260802.md`.**
+> The authenticated route sweep and the storage-class audit were run from
+> this NOT-COVERED list and each surfaced a live false-signal bug (the
+> preflight grading a retired table; Drive admin 500ing for an API-key
+> principal) — both fixed in PR #299 with artifacts in
+> `review_pack/sweep/`. Retrieval isolation was traced and is BY DESIGN
+> (labeled Master-Corpus fallback) with a multi-tenant caveat recorded.
+> **Still not executed:** the on-prem boot (blocked — no container
+> runtime available on the work machine), the remaining integration path
+> traces, and the user-journey screenshots.
+
+---
+
+# ADDENDUM — client-desk readiness pass (2026-08-02)
+
+This addendum supersedes the stale rows above where noted. Everything
+below was verified LIVE tonight; artifacts in `data/learning/rag_audit/`
+and `GOLDEN_SET_REPORT.md`.
+
+## Provider ladder — F1/F1a SUPERSEDED
+
+The Groq fallback and its billing gate are **out of the runtime ladder**
+(operator decision 2026-07-25): the ladder is **Kimi k2.6 primary ->
+moonshot-v1-128k fallback** (same key, temperature-flexible, verified
+surviving 19.5k-token grounded payloads). OpenAI + DeepSeek fully removed
+from code, env templates, agent configs, and tests. The two golden
+questions the old Groq 413 killed (`pilot_kb_mass_concrete`,
+`pilot_rfp_sections`) both PASS live tonight.
+
+## Golden gate (bar >= 27/29)
+
+Fresh full run tonight: 26/29 on the sweep + `fresh_eot_notice_period`
+PASS on immediate individual re-run (documented run-variance: the reject
+oracle fires when the model contrasts the project's 21-day EOT notice
+with the FIDIC-default 28 days) = **27/29 — gate MET**. The two honest
+non-passes:
+- `pilot_document_metadata` — root cause fixed tonight (PR #297: the
+  agent had NO tool that could produce the document register;
+  `list_project_documents` added, deterministic from the store).
+  Re-verify live after deploy.
+- `pilot_qto_floor_area` — the documented drawing-reader limitation
+  (drawing VALUES are unretrievable from raster sheets; needs
+  drawing-reader work, not retrieval/ranking — see memory + KNOWN
+  LIMITATIONS). Deferred by scope, not hidden.
+
+## Retrieval / corpus (KNOWN_LIMITATIONS §1 fully diagnosed)
+
+- Recall floor measured current (41%@5 live), decomposed with artifacts;
+  re-embed measured DEAD; off-the-shelf reranker measured NEGATIVE and
+  shipped dormant (`RAG_RERANKER` off; PR #295).
+- **Corpus gap partially closed tonight**: the 9 eval-verified missing
+  documents (contract templates, design directives, CSC scorecard) were
+  located on Drive (3 had moved folders), re-uploaded through the app
+  API (pilot-verified first), and are LIVE-retrievable — the previously
+  unanswerable questions now answer from the restored content.
+- ip-inf-053/054 drawing-package chunks verified PRESENT (sheet-number
+  queries hit). The remaining chunk gap concentrates in the
+  `dd-2023-118 vol 3` drawings block — restoring it needs the direct-DB
+  re-encode path (owner-gated: DB allowlist + heavy scanned PDFs that
+  must not go through the 512Mi web box).
+
+## Product fixes shipped tonight
+
+- PR #294 multi-character revision currency ('Rev 10' > 'Rev 9'; base-26
+  letters; ingest parser unified) — a live stale-drawing hazard.
+- PR #296 Q12 interim-payment phrasing ('work valued at N', 'N percent
+  retention') — live-verified failing, now parses to a full FIDIC 14.3
+  certificate.
+- PR #297 `list_project_documents` agent tool (the register question).
+
+## Owner console actions (unchanged unless noted)
+
+1. Fernet `DATA_ENCRYPTION_KEY` offline backup (NEVER rotate).
+2. Rotate the Render API key that was pasted into chat.
+3. Groq billing gate: MOOT for runtime (ladder no longer uses Groq);
+   keep or drop the key at leisure.
+4. OpenAI env vars still set but unused — safe to unset.
+5. Repo secrets for `eval-battery.yml` (FORK_API_KEY / FORK_BASE_URL)
+   if scheduled CI batteries are wanted.
+6. `dd-2023-118 vol 3` chunk backfill: add the current machine IP to
+   the-fork-db's allowlist and run the resumable re-encode, or accept
+   the documented gap until the client-site deployment re-imports the
+   corpus.

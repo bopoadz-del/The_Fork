@@ -66,10 +66,27 @@ def format_chunks_as_system_message(
         f"(top {len(chunks)} of {total_candidates} matches; cosine in "
         f"[{min(scores):.3f}, {max(scores):.3f}])\n"
     )
-    body_parts = [
-        f"[doc_id={c.doc_id} chunk={c.chunk_index} score={(c.score or 0):.3f}] {c.text}"
-        for c in chunks
-    ]
+    # Revision currency (§5.2): when an excerpt carries a parsed revision, expose
+    # it in the marker (``rev=…``) so the model can attribute the answer to a
+    # revision ("per Rev C"). If any surviving excerpt is from a SUPERSEDED
+    # document (it only survives as a last resort — nothing current matched),
+    # tell the model to flag that rather than answer as if it were current.
+    if any(getattr(c, "superseded", False) for c in chunks):
+        header += (
+            "NOTE: some excerpts below are from a document whose filename marks "
+            "it SUPERSEDED/obsolete — no current-revision source was found. State "
+            "that the revision may be out of date and advise confirming the "
+            "current revision; do not present it as the latest.\n"
+        )
+
+    def _marker(c) -> str:
+        rev = getattr(c, "revision", "") or ""
+        rev_s = f" rev={rev}" if rev else ""
+        sup_s = " SUPERSEDED" if getattr(c, "superseded", False) else ""
+        return (f"[doc_id={c.doc_id} chunk={c.chunk_index} "
+                f"score={(c.score or 0):.3f}{rev_s}{sup_s}] {c.text}")
+
+    body_parts = [_marker(c) for c in chunks]
     return {"role": "system", "content": header + "\n" + "\n\n".join(body_parts)}
 
 
@@ -78,12 +95,106 @@ from app.core.rag import audit as _audit
 from app.core.rag import budget as _budget
 
 
+# ── follow-up query context (RAG_FOLLOWUP_CONTEXT, default OFF) ──────────────
+#
+# Retrieval has always run on the CURRENT user message alone. That breaks the
+# most natural thing a user does — asking a short follow-up:
+#
+#     user: "what is the backfilling specs"      -> good chunks
+#     user: "layers thickness ?"                 -> searches the whole corpus
+#                                                   on two words
+#
+# Live failure 2026-08-02: the second turn retrieved generic front-matter
+# (drawing disclaimers, ITP requirements, Variation Order paperwork) and the
+# model correctly reported it had no thickness in context — while the answer
+# ("SAND AS BACKFILL MATERIAL PLACED ... IN 150mm") sat in a drawing that a
+# keyword-rich query surfaced instantly.
+#
+# Deliberately DETERMINISTIC, not an LLM rewrite: an extra provider call on
+# every turn adds latency to a path with a chat-deadline history, adds a new
+# failure mode, and cannot be asserted byte-for-byte in tests. This just
+# prepends recent user turns when the current message is too thin to retrieve
+# on by itself.
+
+_STOPWORDS = frozenset("""
+a an the is are was were be been being of for to in on at by with from as and or
+but if then than that this these those it its it's what which who whom whose how
+why when where do does did doing done have has had having can could should would
+will shall may might must i you he she we they me him her us them my your his
+their our not no yes please tell show give me about any some more most other
+""".split())
+
+_THIN_QUERY_MAX_TERMS = 4
+_CONTEXT_TURNS = 2
+_CONTEXT_MAX_CHARS = 400
+
+
+def _content_terms(text: str) -> List[str]:
+    """Meaningful search terms in ``text`` — stopwords and punctuation removed."""
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-/\.]*", text or "")
+    return [w for w in words if len(w) > 2 and w.lower() not in _STOPWORDS]
+
+
+def followup_context_enabled() -> bool:
+    return (os.getenv("RAG_FOLLOWUP_CONTEXT", "") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def build_retrieval_query(
+    user_message: str,
+    history: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """The text retrieval should actually search for.
+
+    Returns ``user_message`` UNCHANGED unless every one of these holds:
+      * ``RAG_FOLLOWUP_CONTEXT`` is on,
+      * the message is THIN (< 4 content terms — i.e. it cannot stand alone
+        as a search query), and
+      * there is at least one earlier USER turn to borrow context from.
+
+    Only prior *user* turns are used. Assistant turns are excluded on purpose:
+    they are model output, and feeding a previous answer back into retrieval
+    is how a wrong answer entrenches itself across a conversation.
+
+    A rich message is never modified, so the common case is byte-identical to
+    the pre-flag behaviour even when the flag is ON.
+    """
+    message = user_message or ""
+    if not followup_context_enabled():
+        return message
+    if len(_content_terms(message)) >= _THIN_QUERY_MAX_TERMS:
+        return message
+    if not history:
+        return message
+
+    prior: List[str] = []
+    for turn in reversed(history):
+        if not isinstance(turn, dict) or turn.get("role") != "user":
+            continue
+        text = (turn.get("content") or "").strip()
+        if not text or text == message.strip():
+            continue
+        terms = _content_terms(text)
+        if terms:
+            prior.append(" ".join(terms))
+        if len(prior) >= _CONTEXT_TURNS:
+            break
+
+    if not prior:
+        return message
+    # oldest-first so the query reads naturally, then the live message last
+    context = " ".join(reversed(prior))[:_CONTEXT_MAX_CHARS]
+    return f"{context} {message}".strip()
+
+
 def rag_inject(
     user_message: str,
     project_id: Optional[str],
     conversation_id: Optional[str],
     user_id: Optional[str],
     agent_name: str,
+    history: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[Optional[Dict[str, str]], Dict[str, Any]]:
     """Per-turn RAG entry point.
 
@@ -118,8 +229,13 @@ def rag_inject(
     budget_state = _budget.snapshot(day=today)
     effective_k = 2 if budget_state["degraded"] else requested_k
 
+    # A short follow-up ("layers thickness ?") cannot retrieve on its own —
+    # see build_retrieval_query. Flag-gated; returns user_message untouched
+    # when RAG_FOLLOWUP_CONTEXT is off, so the default pipeline is unchanged.
+    retrieval_query = build_retrieval_query(user_message, history)
+
     chunks, noise_filtered = retrieve_with_filter(
-        user_message, project_id, k=effective_k,
+        retrieval_query, project_id, k=effective_k,
     )
     top_score = (max(c.score or 0 for c in chunks) if chunks else 0.0)
 
@@ -160,6 +276,11 @@ def rag_inject(
         "user_id": user_id,
         "agent_name": agent_name,
         "user_message_preview": (user_message or "")[:200],
+        # Only differs from the message when the follow-up expansion fired —
+        # so the audit log shows exactly what was searched for, and whether
+        # the expansion is what found (or missed) the chunks.
+        "retrieval_query_preview": (retrieval_query or "")[:200],
+        "followup_context_applied": retrieval_query != (user_message or ""),
         "requested_k": requested_k,
         "noise_filtered_count": noise_filtered,
         "top_score": top_score,

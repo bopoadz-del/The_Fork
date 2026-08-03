@@ -114,7 +114,12 @@ def _payment_figures_from_message(text: str) -> Dict[str, float]:
         m = re.search(pattern, t)
         return float(m.group(1)) if m else None
 
-    v = _amount(rf"gross\s+(?:valuation|value|work\s+done(?:\s+to\s+date)?){_FIG_GAP}{_FIG_NUM}")
+    v = (_amount(rf"gross\s+(?:valuation|value|work\s+done(?:\s+to\s+date)?){_FIG_GAP}{_FIG_NUM}")
+         # "work valued at 900,000" / "work to the value of 900,000" — the
+         # phrasing the live Q12 battery prompt uses (verified failing
+         # 2026-08-02: the certificate refused for lack of a valuation).
+         or _amount(rf"work\s+valued\s+at{_FIG_GAP}{_FIG_NUM}")
+         or _amount(rf"value\s+of\s+(?:the\s+)?work(?:\s+done)?{_FIG_GAP}{_FIG_NUM}"))
     if v:
         out["gross_valuation"] = v
     v = _amount(rf"contract\s+(?:value|sum|price)(?:\s+of)?{_FIG_GAP}{_FIG_NUM}")
@@ -124,7 +129,9 @@ def _payment_figures_from_message(text: str) -> Dict[str, float]:
          or _percent(rf"work\s+done{_FIG_GAP}{_FIG_PCT}"))
     if v:
         out["work_done_percent"] = v
-    v = _percent(rf"retention{_FIG_GAP}{_FIG_PCT}")
+    v = (_percent(rf"retention{_FIG_GAP}{_FIG_PCT}")
+         # reversed order: "10 percent retention" / "10% retention"
+         or _percent(rf"{_FIG_PCT}\s+retention"))
     if v:
         out["retention_percent"] = v
     v = _percent(rf"advance(?:\s+payment)?\s+recover\w*{_FIG_GAP}{_FIG_PCT}")
@@ -838,7 +845,10 @@ class ConstructionBoqMixin:
                     datetime.strptime(contract_start[:10], "%Y-%m-%d") + timedelta(days=due_offset)
                 ).strftime("%Y-%m-%d")
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in _create_submittal_item() — continuing",
+                    "Exception", exc_info=True,
+                )
         return {
             "ref": ref_num,
             "description": name,

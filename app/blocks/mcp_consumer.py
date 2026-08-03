@@ -11,6 +11,9 @@ by default), opens a ClientSession, calls the requested tool, and returns the re
 from typing import Any, Dict
 
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MCPConsumerBlock(UniversalBlock):
@@ -84,7 +87,10 @@ def _serialize(obj):
         try:
             return obj.model_dump()
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _serialize() — continuing",
+                "Exception", exc_info=True,
+            )
     if hasattr(obj, "__dict__"):
         return {k: _serialize(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
     return str(obj)

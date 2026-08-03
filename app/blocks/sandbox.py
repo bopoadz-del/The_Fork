@@ -6,6 +6,7 @@ conditionally so the block stays loadable on Windows (it will raise an
 honest error when actually invoked there, rather than failing at import
 time and blocking the whole registry).
 """
+from app.core.subprocess_env import scrubbed_env
 from app.core.universal_base import UniversalBlock
 from typing import Dict, Any, Callable, Optional
 import asyncio
@@ -16,6 +17,9 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     import resource  # POSIX only
@@ -209,7 +213,10 @@ class SandboxBlock(UniversalBlock):
             try:
                 safe_globals[mod_name] = __import__(mod_name)
             except ImportError:
-                pass
+                logger.debug(
+                    "swallowed %s in _execute_python() — continuing",
+                    "ImportError", exc_info=True,
+                )
         
         # Capture output
         stdout_capture = io.StringIO()
@@ -263,7 +270,10 @@ class SandboxBlock(UniversalBlock):
                 try:
                     resource.setrlimit(resource.RLIMIT_AS, rlimit_to_restore)
                 except (ValueError, OSError):  # pragma: no cover — defensive
-                    pass
+                    logger.debug(
+                        "swallowed %s in _execute_python() — continuing",
+                        "(ValueError, OSError)", exc_info=True,
+                    )
         
         execution_time = time.time() - start_time
         
@@ -338,7 +348,8 @@ class SandboxBlock(UniversalBlock):
                     "node", temp_path,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    limit=policy.max_memory_mb * 1024 * 1024
+                    limit=policy.max_memory_mb * 1024 * 1024,
+                    env=scrubbed_env(),  # audit §6.1 — no app secrets in the sandbox
                 )
                 try:
                     stdout, stderr = await asyncio.wait_for(
@@ -401,7 +412,10 @@ class SandboxBlock(UniversalBlock):
                 code,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                limit=policy.max_memory_mb * 1024 * 1024
+                limit=policy.max_memory_mb * 1024 * 1024,
+                # audit §6.1 — a shell command must not be able to echo
+                # $SECRET_KEY / $DATABASE_URL out of the sandbox.
+                env=scrubbed_env(),
             )
             try:
                 stdout, stderr = await asyncio.wait_for(

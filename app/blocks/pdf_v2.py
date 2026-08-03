@@ -8,6 +8,9 @@ from typing import Any, Dict
 
 from app.core.typed_block import TypedBlock
 from app.core.schema_registry import TextContent
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class PDFBlockV2(TypedBlock):
@@ -129,7 +132,10 @@ class PDFBlockV2(TypedBlock):
                     except Exception:
                         # OCR is best-effort — if it fails, return whatever
                         # PyMuPDF gave us (may be empty).
-                        pass
+                        logger.debug(
+                            "swallowed %s in process() — continuing",
+                            "Exception", exc_info=True,
+                        )
 
             # Return TextContent format
             return {

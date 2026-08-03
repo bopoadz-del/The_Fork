@@ -4,6 +4,16 @@ Runbook for standing up The Fork on managed Postgres after merging the
 Phases 0–4 migration branch. Assumes construction kit enabled and SQLite
 data migrated from an existing `./data` tree.
 
+> **Superseded rows (recorded 2026-08-02).** The `vector(256)` schema rows
+> below are an accurate record of the 2026-06-12 pilot and are kept as
+> history — but they no longer describe production. The 2026-07-12 v2
+> migration moved every write to the namespaced `chunks_v2` table at
+> `vector(384)` (embedder `bge-small-en-v1.5`); the legacy `chunks` table
+> is retired in place and is now empty. Do NOT use `vector(256)` as a
+> health expectation. Verify a deployment against `active_chunk_table`,
+> `row_counts[active_chunk_table]` and `embedding_dim_ok` from
+> `/v1/admin/debug/pilot-preflight` — see `docs/backup-and-recovery.md`.
+
 ## Prerequisites
 
 - Postgres 16 with **pgvector** (Render Postgres, Supabase, or `docker compose up`)
@@ -74,7 +84,7 @@ Copy `.env.example` → `.env` and set at minimum:
 | `REDIS_URL`                    | `cerebrum-redis` resumed (shared rate limits when workers > 1)                         |
 | `SENTRY_DSN`                   | **Set** — `python-fastapi` project; smoke event `d28cfe07de4b485bbcc6a5e616eb7a07`     |
 | SQLite → Postgres cutover      | **Done** 2026-06-12 — 56 documents, 141 chunks in Postgres                             |
-| `chunks.embedding`             | **Confirmed** `vector(256)` via pilot-preflight                                        |
+| `chunks.embedding`             | **Confirmed** `vector(256)` via pilot-preflight — SUPERSEDED, see note below           |
 | Doc re-index / Diriyah E2E     | **RAG gate passed** — D999.14 @ 1,060, D999.15 @ 1,288, Part 3 summary 1,852,848       |
 | Backup drill                   | **Done** — PITR restore `the-fork-db-drill-20260612` (snapshot @ 2026-06-12T15:22:13Z) |
 | 2-week pilot clock             | **Started** 2026-06-12T16:48:00Z — ends 2026-06-26                                     |
@@ -105,7 +115,7 @@ curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_MASTER_KEY" \
 
 | Gate                          | Result                                                                                                                                                 |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Schema                        | `chunks.embedding` = `vector(256)`                                                                                                                     |
+| Schema                        | `chunks.embedding` = `vector(256)` — SUPERSEDED, see note below                                                                                         |
 | Cutover dry-run (prod volume) | 3 users, 6 projects, 56 documents, 165 chunks would migrate (not 81 users — that was local `./data`)                                                   |
 | Cutover execute               | Inserted 56 documents, 141 chunks (24 orphan chunks skipped — missing `documents` rows)                                                                |
 | Re-index                      | `project-reindex` on `3f6f28b2` → 8 chunks indexed                                                                                                     |

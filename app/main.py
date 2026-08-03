@@ -11,7 +11,10 @@ for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
                 import shutil
                 shutil.rmtree(os.path.join(root, d))
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in <module>() — continuing",
+                    "Exception", exc_info=True,
+                )
 
 import logging
 from contextlib import asynccontextmanager
@@ -216,11 +219,34 @@ async def lifespan(app: FastAPI):
         await _redis_client.close_redis_client()
 
 
+# Interactive docs + the raw OpenAPI schema disclose the entire API surface
+# (142 operations, including every /v1/admin/* route) to anyone unauthenticated
+# — the 2026-08-02 route sweep confirmed /openapi.json returned 200 with no
+# credentials on prod. Harmless for a public demo, needless attack-surface
+# disclosure for a client-desk deployment.
+#
+# Default: EXPOSED off-production (local dev and the on-prem profile keep the
+# docs a developer expects), CLOSED when ENV=production. `API_DOCS_ENABLED`
+# overrides in either direction, so an operator who wants /docs on prod sets
+# it to "true" rather than patching code.
+def _api_docs_enabled() -> bool:
+    override = os.getenv("API_DOCS_ENABLED", "").strip().lower()
+    if override in ("1", "true", "yes", "on"):
+        return True
+    if override in ("0", "false", "no", "off"):
+        return False
+    return os.getenv("ENV", "").strip().lower() != "production"
+
+
+_DOCS_ON = _api_docs_enabled()
+
 app = FastAPI(
     title="Cerebrum Blocks",
     description="Build AI Like Lego - Simple Block Execution API",
     version="2.0.0",
-    docs_url="/docs",
+    docs_url="/docs" if _DOCS_ON else None,
+    redoc_url="/redoc" if _DOCS_ON else None,
+    openapi_url="/openapi.json" if _DOCS_ON else None,
     lifespan=lifespan,
 )
 
@@ -274,7 +300,7 @@ _RATE_LIMIT_EXEMPT_EXACT = {
     # the exempt list because Prometheus scrapers typically don't auth and
     # the counter set there is intentionally limited to non-sensitive
     # request/response totals.
-    "/", "/health", "/v1/health", "/metrics", "/docs", "/redoc", "/openapi.json",
+    "/", "/health", "/ready", "/v1/health", "/metrics", "/docs", "/redoc", "/openapi.json",
 }
 
 
@@ -289,7 +315,10 @@ def _rate_limit_identity(request: Request) -> str:
             if payload.get("user_id"):
                 return f"user:{payload['user_id']}"
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _rate_limit_identity() — continuing",
+                "Exception", exc_info=True,
+            )
         import hashlib
         return "key:" + hashlib.sha256(token.encode()).hexdigest()[:24]
     host = request.client.host if request.client else "unknown"

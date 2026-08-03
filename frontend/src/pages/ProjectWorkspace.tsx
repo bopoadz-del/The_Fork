@@ -1265,6 +1265,33 @@ export default function ProjectWorkspace() {
   )
   const latestSources = latestAssistant?.sources ?? []
   const citedDocIds = latestSources.map((s) => s.doc_id)
+
+  // Sources the answer cited that this project does not own — Master-Corpus
+  // fallback hits. Deduplicated by doc_id (one document usually contributes
+  // several chunks, and the panel lists documents, not chunks). Feeds the
+  // DocumentGraph so a project with zero own-documents still shows what the
+  // answer was actually grounded in, instead of a bare "No documents yet"
+  // beside an answer citing three files.
+  // NOT a hook. This sits BELOW the wsState early returns (loading /
+  // not-found / error), so a useMemo here is skipped on the loading render
+  // and called on the next one — React error #310, "Rendered more hooks than
+  // during the previous render", which crashed the whole workspace into the
+  // error boundary on load. Shipped that way in #304; caught live.
+  //
+  // The work is a single pass over at most a handful of sources, so it does
+  // not need memoising. Keeping it as a plain computation makes it immune to
+  // its position in the component.
+  const citedExternalDocs = (() => {
+    const owned = new Set(documents.map((d) => d.id))
+    const seen = new Set<string>()
+    const out: { id: string; original_name: string }[] = []
+    for (const s of latestSources) {
+      if (!s.doc_id || owned.has(s.doc_id) || seen.has(s.doc_id)) continue
+      seen.add(s.doc_id)
+      out.push({ id: s.doc_id, original_name: s.doc_name || s.doc_id })
+    }
+    return out
+  })()
   void mode  // mode used inside left panel via DocumentsPanel/onClear hooks below
 
   // PR #104: DocumentsPanel is back, rendered as a slot inside LeftPanel
@@ -1467,6 +1494,7 @@ export default function ProjectWorkspace() {
                 doc_type: d.doc_type,
               }))}
               citedDocIds={citedDocIds}
+              citedExternal={citedExternalDocs}
             />
           }
         />

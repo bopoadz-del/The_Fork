@@ -1,4 +1,4 @@
-"""Verify bim_extractor parses a known IFC sample and produces expected counts.
+﻿"""Verify bim_extractor parses a known IFC sample and produces expected counts.
 
 The fixture ``tests/fixtures/sample_office.ifc`` is a 2-storey building generated
 by ``scripts/_make_sample_ifc.py``. Re-run that script to regenerate after any
@@ -29,7 +29,7 @@ def test_extracts_elements_from_sample_ifc():
     result = _run({"file_path": FIXTURE})
     assert result["status"] == "success", result.get("error")
     assert result["ifc_schema"] == "IFC4"
-    # Counts the fixture script writes — keep them in sync.
+    # Counts the fixture script writes â€” keep them in sync.
     assert result["element_count"] >= 26  # walls(8) + slabs(2) + columns(4) + beams(2) + doors(2) + windows(2) + storeys(2) + spaces(2) + pipe + duct + light
     q = result["quantities"]
     assert q["walls"]["count"] == 8
@@ -64,7 +64,7 @@ def test_file_not_found():
 
 
 def test_nwd_returns_actionable_error(tmp_path):
-    """A .nwd upload must NOT just say 'unsupported' — the operator needs to
+    """A .nwd upload must NOT just say 'unsupported' â€” the operator needs to
     know the file is Autodesk-proprietary and how to convert it."""
     nwd = tmp_path / "model.nwd"
     nwd.write_bytes(b"\x00" * 32)
@@ -90,7 +90,7 @@ def test_rvt_returns_actionable_error(tmp_path):
 
 def test_extracts_elements_from_ifc2x3_sample():
     """IFC2x3 is common in older GCC project models. The extractor must read
-    the older schema without changes — only the model contents and category
+    the older schema without changes â€” only the model contents and category
     coverage may differ (IFC2x3 lacks IfcPipeSegment/IfcDuctSegment)."""
     assert os.path.exists(FIXTURE_2X3), (
         f"missing fixture {FIXTURE_2X3}; "
@@ -124,7 +124,7 @@ def test_clash_report_carries_operator_disclaimer():
 
 
 def test_payload_caps_surface_truncated_flag():
-    """The fixture is small so no cap fires — verify the truncated flag is
+    """The fixture is small so no cap fires â€” verify the truncated flag is
     False, truncation_caps is reported, and quantities_truncated is empty.
     The negative-case shape itself is what guards the 50k-element scenario."""
     result = _run({"file_path": FIXTURE})

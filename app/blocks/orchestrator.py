@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from app.core.universal_base import UniversalBlock
 from app.core.data_transformer import DataTransformer, transform as _transform_data
 from app.core.input_adapter import adapt_input
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Input types (case-insensitive) that are satisfied by a plain text string.
@@ -545,7 +548,10 @@ class OrchestratorBlock(UniversalBlock):
                     "ttl": 3600
                 })
             except Exception:
-                pass
+                logger.debug(
+                    "swallowed %s in _persist_step() — continuing",
+                    "Exception", exc_info=True,
+                )
         elif self._memory_fn:
             try:
                 mem = self._memory_fn()
@@ -556,4 +562,7 @@ class OrchestratorBlock(UniversalBlock):
                     "ttl": 3600
                 })
             except Exception:
-                pass
+                logger.debug(
+                    "swallowed %s in _persist_step() — continuing",
+                    "Exception", exc_info=True,
+                )

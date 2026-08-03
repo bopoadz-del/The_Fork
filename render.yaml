@@ -43,6 +43,22 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
+    # Documentation-only commits must not redeploy a live client service.
+    # Observed 2026-08-02: merging a markdown-only PR rebuilt the image and
+    # returned 502 for ~40s. Nothing in this list can change runtime
+    # behaviour, so skipping a rebuild for them costs nothing and removes a
+    # self-inflicted outage per docs commit.
+    #
+    # NOTE: buildFilter applies to Render's auto-deploy trigger. It is
+    # reconciled when this blueprint is applied — like every other change in
+    # this file, it does not take effect from a git push alone.
+    buildFilter:
+      ignoredPaths:
+        - "docs/**"
+        - "review_pack/**"
+        - "**/*.md"
+        - "LICENSE"
+        - ".github/**"
     healthCheckPath: /health
     disk:
       name: the-fork-data

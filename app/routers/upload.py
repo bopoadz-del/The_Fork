@@ -284,14 +284,25 @@ async def ingest(
         try:
             _stack.close()
         except Exception:
-            pass
+            # _stack holds decrypt-to-temp copies of CLIENT DOCUMENTS. A close
+            # failure leaves plaintext on disk, which is what encryption at
+            # rest exists to prevent -- and silence made that invisible.
+            # Cleanup must not raise here (it would mask the real ingest
+            # error being reported above), so log and continue.
+            logger.warning(
+                "could not close decrypt-to-temp stack; plaintext copies may "
+                "remain on disk", exc_info=True,
+            )
         # Cleanup temp files
         for tmp in temp_files:
             try:
                 if os.path.exists(tmp):
                     os.remove(tmp)
             except Exception:
-                pass
+                logger.warning(
+                    "could not remove temp upload file %s; it may contain "
+                    "client document data", tmp, exc_info=True,
+                )
 
 
 @router.post("/ingest-via-block")
@@ -366,10 +377,21 @@ async def ingest_via_block(
         try:
             _stack.close()
         except Exception:
-            pass
+            # _stack holds decrypt-to-temp copies of CLIENT DOCUMENTS. A close
+            # failure leaves plaintext on disk, which is what encryption at
+            # rest exists to prevent -- and silence made that invisible.
+            # Cleanup must not raise here (it would mask the real ingest
+            # error being reported above), so log and continue.
+            logger.warning(
+                "could not close decrypt-to-temp stack; plaintext copies may "
+                "remain on disk", exc_info=True,
+            )
         for tmp in temp_files:
             try:
                 if os.path.exists(tmp):
                     os.remove(tmp)
             except Exception:
-                pass
+                logger.warning(
+                    "could not remove temp upload file %s; it may contain "
+                    "client document data", tmp, exc_info=True,
+                )
