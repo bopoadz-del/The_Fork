@@ -910,7 +910,10 @@ class ConstructionScheduleMixin:
             if m:
                 clause_match = m.group(1)
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _check_eot_entitlement() — continuing",
+                "Exception", exc_info=True,
+            )
 
         # An event with `compensable=True` AND a matched trigger = clearer
         # entitlement. Empty event list = nothing to claim.

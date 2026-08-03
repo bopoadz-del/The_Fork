@@ -13,6 +13,9 @@ Two ways to use this:
 from typing import Any, Dict
 
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MCPAdapterBlock(UniversalBlock):
@@ -81,7 +84,13 @@ class MCPAdapterBlock(UniversalBlock):
                             "enum": actions,
                         }
             except Exception:
-                pass  # non-instantiable or no actions — keep the generic schema
+                # Block is non-instantiable, or exposes no actions. It still
+                # gets published with the generic schema — only the richer
+                # per-action enum is missing.
+                logger.debug(
+                    "could not enumerate actions for block %r; publishing the "
+                    "generic tool schema instead", name, exc_info=True,
+                )
 
             tools.append({
                 "name": name,

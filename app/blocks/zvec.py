@@ -26,6 +26,9 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Lazy module-level cache so the model loads once per process.
 _SEMANTIC_LOCK = threading.Lock()
@@ -53,7 +56,10 @@ def _get_semantic_model():
             _SEMANTIC_BACKEND = "model2vec"
             return _SEMANTIC_MODEL, _SEMANTIC_BACKEND
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _get_semantic_model() — continuing",
+                "Exception", exc_info=True,
+            )
         # sentence-transformers (heavy, only if explicitly installed).
         try:
             from sentence_transformers import SentenceTransformer
@@ -61,7 +67,10 @@ def _get_semantic_model():
             _SEMANTIC_BACKEND = "sentence_transformers"
             return _SEMANTIC_MODEL, _SEMANTIC_BACKEND
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _get_semantic_model() — continuing",
+                "Exception", exc_info=True,
+            )
         _SEMANTIC_BACKEND = "missing"
         return None, None
 

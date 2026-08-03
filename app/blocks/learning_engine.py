@@ -6,6 +6,9 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 def _storage_path() -> str:
     """Read LEARNING_ENGINE_STORAGE at call time so tests can swap DATA_DIR
@@ -123,7 +126,10 @@ class LearningEngineBlock(UniversalBlock):
                 with open(path, "r") as f:
                     return json.load(f)
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _load_state() — continuing",
+                "Exception", exc_info=True,
+            )
         return {"formulas": {}, "history": []}
 
     def _save_state(self):
@@ -132,7 +138,10 @@ class LearningEngineBlock(UniversalBlock):
             with open(path, "w") as f:
                 json.dump(self._state, f, indent=2)
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _save_state() — continuing",
+                "Exception", exc_info=True,
+            )
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
         params = params or {}

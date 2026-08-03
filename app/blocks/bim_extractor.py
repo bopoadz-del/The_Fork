@@ -6,6 +6,8 @@ import math
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 
+logger = logging.getLogger(__name__)
+
 _logger = logging.getLogger(__name__)
 
 
@@ -357,7 +359,10 @@ class BIMExtractorBlock(UniversalBlock):
                     m.Name if hasattr(m, "Name") else str(m) for m in mats[:5]
                 ]
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _element_to_dict() — continuing",
+                "Exception", exc_info=True,
+            )
 
         return el_dict
 
@@ -373,7 +378,10 @@ class BIMExtractorBlock(UniversalBlock):
                     "schema": model.schema,
                 }
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _extract_project_info() — continuing",
+                "Exception", exc_info=True,
+            )
         return {"schema": model.schema}
 
     def _extract_storeys(self, model) -> List[Dict]:
@@ -430,11 +438,20 @@ class BIMExtractorBlock(UniversalBlock):
         try:
             settings.set(settings.USE_WORLD_COORDS, True)
         except Exception:
-            pass  # older ifcopenshell builds don't expose the attribute
+            # Older ifcopenshell builds do not expose this attribute. Geometry
+            # is then read in LOCAL coordinates, so clash positions are
+            # relative rather than absolute — worth a trace, not a warning.
+            logger.debug(
+                "ifcopenshell build does not expose USE_WORLD_COORDS; "
+                "clash geometry stays in local coordinates", exc_info=True,
+            )
         try:
             settings.set(settings.WELD_VERTICES, True)
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _geometric_clash_report() — continuing",
+                "Exception", exc_info=True,
+            )
 
         tol_m = float(self.config.get("clash_tolerance_mm", 10.0)) / 1000.0
         pair_cap = int(self.config.get("clash_pair_cap", 200))
@@ -528,7 +545,10 @@ class BIMExtractorBlock(UniversalBlock):
         try:
             return model.by_guid(key)
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _lookup_ifc_element() — continuing",
+                "Exception", exc_info=True,
+            )
         try:
             return model.by_id(int(key)) if str(key).isdigit() else None
         except Exception:

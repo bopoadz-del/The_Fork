@@ -11,7 +11,10 @@ for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
                 import shutil
                 shutil.rmtree(os.path.join(root, d))
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in <module>() — continuing",
+                    "Exception", exc_info=True,
+                )
 
 import logging
 from contextlib import asynccontextmanager
@@ -309,7 +312,10 @@ def _rate_limit_identity(request: Request) -> str:
             if payload.get("user_id"):
                 return f"user:{payload['user_id']}"
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _rate_limit_identity() — continuing",
+                "Exception", exc_info=True,
+            )
         import hashlib
         return "key:" + hashlib.sha256(token.encode()).hexdigest()[:24]
     host = request.client.host if request.client else "unknown"

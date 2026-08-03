@@ -8,6 +8,9 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, List, Optional
 import time
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class UniversalBlock(ABC):
@@ -244,7 +247,10 @@ class UniversalBlock(ABC):
             from app.infra.monitoring import record_block_execution
             record_block_execution(self.name, execution_time, status)
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in execute() — continuing",
+                "Exception", exc_info=True,
+            )
         
         return {
             "block": self.name,
@@ -288,8 +294,16 @@ class UniversalContainer(UniversalBlock):
     # Sub-blocks this container provides
     sub_blocks: List[str] = []
     
+    @abstractmethod
     async def route(self, action: str, input_data: Any, params: Dict) -> Dict:
-        """Route to internal action - override in subclass"""
+        """Route to internal action — every container must implement this.
+
+        Declared abstract rather than left as a `raise NotImplementedError`
+        body so a container that forgets to route fails at construction time
+        instead of on a user's request. `UniversalBlock` is already an ABC, so
+        the enforcement is real; both existing subclasses (`DomainContainer`
+        and `ConstructionContainer`) define it.
+        """
         raise NotImplementedError(f"Action '{action}' not implemented")
     
     async def process(self, input_data: Any, params: Dict = None) -> Dict:

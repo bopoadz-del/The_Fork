@@ -42,7 +42,10 @@ def _create_block_instance(block_class):
         try:
             instance.set_platform(BLOCK_REGISTRY, block_instances, _create_block_instance, get_memory_block)
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _create_block_instance() — continuing",
+                "Exception", exc_info=True,
+            )
 
     return instance
 

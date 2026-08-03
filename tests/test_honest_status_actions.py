@@ -58,6 +58,56 @@ class TestOmManualNoFabrication:
         )
         assert result["status"] == "success"
 
+    @pytest.mark.asyncio
+    async def test_the_summary_does_not_overstate_what_was_generated(self, container):
+        """`maintenance_tasks_generated` used to be `len(daily) + len(monthly)`.
+
+        With a hollow daily-task generator and a one-string monthly one, a
+        whole plant came back as "1 maintenance task generated" — a false
+        claim on a client deliverable. It now counts all five task lists,
+        and the count has to agree with the section it describes.
+        """
+        result = await container.om_manual_generator(
+            {"equipment_list": [{
+                "tag": "HVAC-01", "description": "AHU-1", "system_type": "HVAC",
+                "category": "hvac_equipment", "location": "Roof",
+            }]},
+            {"project_name": "P1"},
+        )
+
+        preventive = next(
+            s["content"] for s in result["sections"] if s["section"].startswith("E.")
+        )
+        actual = sum(
+            len(preventive.get(k) or [])
+            for k in ("daily_tasks", "weekly_tasks", "monthly_tasks",
+                      "quarterly_tasks", "annual_tasks")
+        )
+        assert result["summary"]["maintenance_tasks_generated"] == actual, (
+            "the summary count disagrees with the section it summarises"
+        )
+
+    @pytest.mark.asyncio
+    async def test_unpopulated_sections_are_named_rather_than_shipped_blank(self, container):
+        """An empty Section E that says nothing reads as complete. The
+        generators behind it are registered roadmap in KNOWN_INCOMPLETE.md,
+        so the manual has to say which parts are missing and what they need.
+        """
+        result = await container.om_manual_generator(
+            {"equipment_list": [{
+                "tag": "CH-01", "description": "Chiller 1", "system_type": "Chilled Water",
+            }]},
+            {"project_name": "P1"},
+        )
+
+        gaps = result["data_gaps"]
+        assert gaps, "sections came back empty with no gap declared"
+        joined = " ".join(gaps).lower()
+        assert "section e" in joined, "the empty preventive-maintenance section is not declared"
+        assert result["summary"]["sections_not_populated"] == len(gaps)
+        # ...and it must say what would fill them, not just that they're empty.
+        assert "manufacturer" in joined or "supplier" in joined
+
 
 class TestDailySiteReportIncompleteSections:
     @pytest.mark.asyncio

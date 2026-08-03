@@ -13,6 +13,9 @@ import os
 from typing import Any, Dict, List, Optional
 
 import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def complete(
@@ -117,7 +120,10 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
         obj = _json.loads(t)
         return obj if isinstance(obj, dict) else {}
     except Exception:
-        pass
+        logger.warning(
+            "swallowed %s in _extract_json_object() — continuing",
+            "Exception", exc_info=True,
+        )
     start, depth = t.find("{"), 0
     if start == -1:
         return {}

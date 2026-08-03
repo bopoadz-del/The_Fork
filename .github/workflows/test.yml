@@ -57,7 +57,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov pytest-timeout
+          # diff-cover backs the per-PR coverage gate below. It was NEVER
+          # installed, so that step failed with `diff-cover: command not
+          # found` on every pull request from the day it was promoted to
+          # blocking — producing no report and no output, which read as a
+          # coverage failure. Pushes to main were unaffected because the
+          # step is `if: github.event_name == 'pull_request'`, so main
+          # stayed green and only PRs were red.
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout diff-cover
 
       - name: Security scan
         run: python scripts/security_scan.py
@@ -106,13 +113,23 @@ jobs:
         if: github.event_name == 'pull_request'
         continue-on-error: false
         run: |
+          # The summary must print even when the gate FAILS -- that is the
+          # only time anyone needs to read it. Previously `diff-cover`
+          # exiting non-zero killed the step before the report was shown,
+          # so a failing gate said nothing about which lines were uncovered.
+          status=0
           diff-cover coverage.xml \
             --compare-branch="origin/${{ github.base_ref }}" \
             --fail-under=50 \
             --html-report=diff-cover.html \
-            --markdown-report=diff-cover.md
+            --markdown-report=diff-cover.md || status=$?
           echo "::group::diff-cover summary"
-          cat diff-cover.md
+          cat diff-cover.md 2>/dev/null || echo "(diff-cover produced no markdown report)"
+          echo "::endgroup::"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Diff coverage below 50% on newly-changed lines -- see the summary above."
+          fi
+          exit "$status"
           echo "::endgroup::"
 
       - name: Upload diff-cover report

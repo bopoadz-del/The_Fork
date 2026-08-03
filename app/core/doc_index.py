@@ -60,6 +60,9 @@ from app.core import file_crypto
 from app.core import projects as _projects
 from app.core.db import SessionLocal, engine, get_database_url, get_engine
 from app.core.models import DocIndex, Project
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Image extensions — Stream F runs OCR on these to make scanned drawings /
 # photos searchable. They are SUPPORTED (not "unsupported_type") even when OCR
@@ -215,7 +218,10 @@ def _ocr_pdf_page(page) -> str:
             try:
                 os.unlink(tmp_path)
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in _ocr_pdf_page() — continuing",
+                    "Exception", exc_info=True,
+                )
 
 
 def _pdf_tables_enabled(file_path: str) -> bool:
@@ -313,7 +319,10 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
                     try:
                         plumber.close()
                     except Exception:
-                        pass
+                        logger.warning(
+                            "swallowed %s in _extract_pdf() — continuing",
+                            "Exception", exc_info=True,
+                        )
     except Exception:
         return "", {}
     meta: Dict[str, Any] = {}
@@ -477,7 +486,10 @@ def _extract_doc(file_path: str) -> str:
         with file_crypto.open_plaintext(file_path) as readable_path:
             return textract.process(readable_path).decode("utf-8", errors="replace").strip()
     except Exception:
-        pass
+        logger.warning(
+            "swallowed %s in _extract_doc() — continuing",
+            "Exception", exc_info=True,
+        )
 
     # Optional Windows Word COM fallback (requires Word + pywin32).
     try:
@@ -610,7 +622,10 @@ def _extract_archive(
                 try:
                     os.unlink(tmp_path)
                 except OSError:
-                    pass
+                    logger.warning(
+                        "swallowed %s in _extract_archive() — continuing",
+                        "OSError", exc_info=True,
+                    )
 
     return "\n\n".join(parts)
 
@@ -1875,7 +1890,10 @@ async def search_project_documents(
                     # abort the bootstrap for the rest of the project.
                     continue
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in search_project_documents() — continuing",
+                "Exception", exc_info=True,
+            )
         chunks = _query()
     if not chunks:
         return []

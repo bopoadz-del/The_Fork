@@ -24,6 +24,9 @@ from app.dependencies import (
     block_instances,
     _create_block_instance,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -342,7 +345,10 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
                 doc["chunk_count"] = chunk_counts.get(doc.get("id"), 0)
     except Exception:
         # Enrichment is best-effort — never break the project load on it.
-        pass
+        logger.warning(
+            "swallowed %s in get_project() — continuing",
+            "Exception", exc_info=True,
+        )
 
     return proj
 
@@ -846,7 +852,10 @@ async def add_document(
                     }
         except Exception:
             # Detection is best-effort; never fail the upload over it.
-            pass
+            logger.warning(
+                "swallowed %s in add_document() — continuing",
+                "Exception", exc_info=True,
+            )
 
     response: Dict[str, Any] = {
         "status": "stored",
@@ -980,7 +989,10 @@ async def delete_document(
             os.remove(fp)
             file_removed = True
         except OSError:
-            pass
+            logger.warning(
+                "swallowed %s in delete_document() — continuing",
+                "OSError", exc_info=True,
+            )
     store.delete_document(document_id)
     # Drop the deleted doc from the project's doc_index too — otherwise its
     # stale chunks keep surfacing in RAG retrieval (verified failure mode on
@@ -1005,7 +1017,10 @@ async def delete_document(
         _doc_index._update_index(project_id, _drop)  # noqa: SLF001
         index_pruned = True
     except Exception:  # noqa: BLE001 — never block delete on index cleanup
-        pass
+        logger.warning(
+            "swallowed %s in delete_document() — continuing",
+            "Exception", exc_info=True,
+        )
     audit.record("document.deleted", project_id=project_id,
                  document_id=document_id, file_removed=file_removed,
                  index_pruned=index_pruned, user_id=auth["user_id"])
@@ -1075,7 +1090,10 @@ async def governance_purge(auth: dict = Depends(require_user)):
                 os.remove(fp)
                 files_removed += 1
             except OSError:
-                pass
+                logger.warning(
+                    "swallowed %s in governance_purge() — continuing",
+                    "OSError", exc_info=True,
+                )
     audit.record("governance.purge",
                  documents_purged=len(purged), files_removed=files_removed, user_id=auth["user_id"])
     return {

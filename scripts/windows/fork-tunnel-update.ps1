@@ -9,13 +9,26 @@ $LogDir         = "$env:LOCALAPPDATA\fork-tunnel"
 $TunnelLogFile  = "$LogDir\cloudflared.log"
 $LastUrlFile    = "$LogDir\last-url.txt"
 $AuditLogFile   = "$LogDir\update.log"
-$RenderApiKey   = 'rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0'
 $RenderService  = 'srv-d8hdc6ek1jcs739rq5sg'
+
+# The API key comes from the environment, never from this file. It used to
+# be a literal here, which put a live Render credential in every clone of
+# the repository. Set it once for your user account:
+#
+#   [Environment]::SetEnvironmentVariable('RENDER_API_KEY', '<key>', 'User')
+#
+# The scheduled task that runs this script inherits it.
+$RenderApiKey   = $env:RENDER_API_KEY
 
 function Write-Log([string]$msg) {
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg"
     Add-Content -Path $AuditLogFile -Value $line -Encoding UTF8
     Write-Host $line
+}
+
+if (-not $RenderApiKey) {
+    Write-Log "ERROR: RENDER_API_KEY is not set -- cannot update the tunnel URL on Render. See the comment at the top of this script."
+    exit 1
 }
 
 if (-not (Test-Path $TunnelLogFile)) {

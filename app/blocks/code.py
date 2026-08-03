@@ -10,6 +10,9 @@ from typing import Any, Dict
 
 from app.core.subprocess_env import scrubbed_env
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10  # seconds
 _MAX_OUTPUT = 10_000
@@ -101,7 +104,10 @@ def _run_python(code: str, timeout: int) -> Dict:
         try:
             os.unlink(tmpfile)
         except OSError:
-            pass
+            logger.debug(
+                "swallowed %s in _run_python() — continuing",
+                "OSError", exc_info=True,
+            )
 
 
 def _run_node(code: str, timeout: int) -> Dict:
@@ -137,7 +143,10 @@ def _run_node(code: str, timeout: int) -> Dict:
         try:
             os.unlink(tmpfile)
         except OSError:
-            pass
+            logger.debug(
+                "swallowed %s in _run_node() — continuing",
+                "OSError", exc_info=True,
+            )
 
 
 class CodeBlock(UniversalBlock):

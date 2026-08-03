@@ -5,6 +5,9 @@ import os
 import json
 import hashlib
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 class BIMBlock(UniversalBlock):
     """
@@ -184,7 +187,10 @@ class BIMBlock(UniversalBlock):
                 except Exception:
                     # Indexing is best-effort — don't fail the whole index_folder
                     # call because zvec hiccupped on one entry.
-                    pass
+                    logger.debug(
+                        "swallowed %s in _index_folder() — continuing",
+                        "Exception", exc_info=True,
+                    )
 
         self.projects[project_id] = {
             "folder": folder_path,
@@ -480,7 +486,10 @@ class BIMBlock(UniversalBlock):
         try:
             settings.set(settings.USE_WORLD_COORDS, True)
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _spatial_query() — continuing",
+                "Exception", exc_info=True,
+            )
 
         qmin = (float(bbox[0]), float(bbox[1]), float(bbox[2]))
         qmax = (float(bbox[3]), float(bbox[4]), float(bbox[5]))

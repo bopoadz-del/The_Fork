@@ -11,6 +11,9 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 from app.blocks._procedure_routing import PROCEDURE_ROUTING_ADDITIONS
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Word-boundary keyword cache. Substring `kw in text` is unsafe — 2-char keys
@@ -575,7 +578,10 @@ class SmartOrchestratorBlock(UniversalBlock):
                 "source": "smart_orchestrator",
             }, {})
         except Exception:  # noqa: BLE001
-            pass
+            logger.debug(
+                "swallowed %s in _record_routing_decision() — continuing",
+                "Exception", exc_info=True,
+            )
 
     def _match_actions(self, message: str, file_type: Optional[str]) -> List[Dict]:
         scores: Dict[str, float] = {}

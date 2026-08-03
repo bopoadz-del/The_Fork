@@ -1,4 +1,4 @@
-# Drive re-import runbook
+﻿# Drive re-import runbook
 
 From "env vars just landed on Render" to "all Drive-linked projects re-imported, re-indexed, and verified".
 
@@ -13,9 +13,9 @@ From "env vars just landed on Render" to "all Drive-linked projects re-imported,
 
 ---
 
-## Step 1 — Upload the service-account key to Render
+## Step 1 â€” Upload the service-account key to Render
 
-You can do this in the Render dashboard (Environment → Add Environment Variable) or via the API. The value must be either an absolute file path inside the container **or** the JSON content on one line.
+You can do this in the Render dashboard (Environment â†’ Add Environment Variable) or via the API. The value must be either an absolute file path inside the container **or** the JSON content on one line.
 
 **Option A: inline JSON (dashboard copy-paste)**
 
@@ -38,13 +38,13 @@ curl -s -X POST \
 
 ---
 
-## Step 2 — Auto-discover the folder mapping
+## Step 2 â€” Auto-discover the folder mapping
 
 Run the discovery script locally. It uses the service account to list child folders of the parent and proposes a `GDRIVE_PROJECT_FOLDERS` value.
 
 ```bash
 cd /path/to/The_Fork
-export FORK_API_KEY="o1JrikYGj4BtJDYGipGlRGfchTwMTLTA6QsT01IXZPQ"
+export FORK_API_KEY="<FORK_API_KEY -- take it from your .env, never paste it into a doc>"
 export GDRIVE_SERVICE_ACCOUNT_JSON='$(cat /path/to/service-account.json)'
 
 .venv/Scripts/python.exe scripts/inspect_drive_projects.py --discover <PARENT_FOLDER_ID>
@@ -56,11 +56,11 @@ The script prints:
 3. A list of unmatched Drive folders.
 4. An anchor validation warning if `dg2_infra_pack_1` is not mapped to `1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j`.
 
-> **STOP — operator confirmation required:** Review the proposed mapping. If any project is `unmatched`, locate its folder manually in Drive and add the `project_id:folder_id` pair to the env value before continuing. If the anchor check fails, suspect the wrong parent folder.
+> **STOP â€” operator confirmation required:** Review the proposed mapping. If any project is `unmatched`, locate its folder manually in Drive and add the `project_id:folder_id` pair to the env value before continuing. If the anchor check fails, suspect the wrong parent folder.
 
 ---
 
-## Step 3 — Set the confirmed `GDRIVE_PROJECT_FOLDERS` on Render
+## Step 3 â€” Set the confirmed `GDRIVE_PROJECT_FOLDERS` on Render
 
 After confirming the mapping, set it on Render.
 
@@ -84,17 +84,17 @@ curl -s -X POST \
 
 ---
 
-## Step 4 — Decide what to do with existing empty/partial projects
+## Step 4 â€” Decide what to do with existing empty/partial projects
 
 Some projects still have document rows but no file blobs (e.g. `dar_al_arkan_master` / `projects_folder`, `ha_long_xanh`). The Drive hydration path skips files it has already seen, so you must clear the seen-file cache to force a full re-import.
 
-> **STOP — operator decision required:** The next step only clears the gdrive seen cache. It is safe. However, re-importing into a project that already has empty document rows will add new documents alongside the old ones, inflating `document_count`. If you want a clean re-import instead, archive the old project first (which hides it but preserves its RAG chunks) and create a new project from Drive. Do **not** hard-delete any project that has live RAG chunks.
+> **STOP â€” operator decision required:** The next step only clears the gdrive seen cache. It is safe. However, re-importing into a project that already has empty document rows will add new documents alongside the old ones, inflating `document_count`. If you want a clean re-import instead, archive the old project first (which hides it but preserves its RAG chunks) and create a new project from Drive. Do **not** hard-delete any project that has live RAG chunks.
 
 Default (safe): clear the seen cache and re-import into the existing projects.
 
 ---
 
-## Step 5 — Clear the Drive-seen cache
+## Step 5 â€” Clear the Drive-seen cache
 
 Open a Render web shell for the service and run:
 
@@ -106,12 +106,12 @@ This cache is recreated on the next hydration pass.
 
 ---
 
-## Step 6 — Trigger hydration for all Drive-linked projects
+## Step 6 â€” Trigger hydration for all Drive-linked projects
 
 Use the admin hydration endpoint. The request returns immediately; the import runs in the background.
 
 ```bash
-export FORK_API_KEY="o1JrikYGj4BtJDYGipGlRGfchTwMTLTA6QsT01IXZPQ"
+export FORK_API_KEY="<FORK_API_KEY -- take it from your .env, never paste it into a doc>"
 
 curl -s -X POST \
   -H "Authorization: Bearer $FORK_API_KEY" \
@@ -132,7 +132,7 @@ curl -s -X POST \
 
 ---
 
-## Step 7 — Poll hydration progress
+## Step 7 â€” Poll hydration progress
 
 Poll the per-project hydration history. A pass is complete when `latest` shows a recent `finished_at`.
 
@@ -149,7 +149,7 @@ Large folders (especially `projects_folder`) may take hours. The learning_engine
 
 ---
 
-## Step 8 — Verify the re-import against the damage snapshot
+## Step 8 â€” Verify the re-import against the damage snapshot
 
 Re-run the inspector. Compare `docs`, `files_present`, and `total_chunks` with the pre-re-import snapshot in `docs/recovery/re_import_manifest.md`.
 
@@ -169,7 +169,7 @@ Expected outcome for each project:
 
 ---
 
-## Step 9 — ZERO_CHUNK tripwire and re-index
+## Step 9 â€” ZERO_CHUNK tripwire and re-index
 
 If any project shows `zero_chunk_docs > 0`, re-index those documents. First try the per-project re-index endpoint:
 
@@ -183,13 +183,13 @@ for pid in projects_folder dg2_infra_pack_1 5c13510e ha_long_xanh ha_long_xanh_2
 done
 ```
 
-> **STOP — destructive decision:** `project-reindex` re-extracts and re-chunks every document. It is the right call for projects whose blobs were missing. For projects that already had partial data and working chunks, prefer per-document re-indexing via `/v1/admin/debug/doc-reindex?project_id=<id>&document_id=<id>` to avoid rebuilding healthy indexes.
+> **STOP â€” destructive decision:** `project-reindex` re-extracts and re-chunks every document. It is the right call for projects whose blobs were missing. For projects that already had partial data and working chunks, prefer per-document re-indexing via `/v1/admin/debug/doc-reindex?project_id=<id>&document_id=<id>` to avoid rebuilding healthy indexes.
 
 After re-indexing, re-run the inspector until `zero_chunk_docs` is 0.
 
 ---
 
-## Step 10 — Final health check
+## Step 10 â€” Final health check
 
 Run a quick chat turn against the master corpus and a Drive-approved project to confirm the normal chat path is healthy.
 
@@ -210,7 +210,7 @@ Both should return a `route` event, a `tool_call`/`tool_result` pair, and an ans
 ## What happens next
 
 Once this runbook is green:
-1. Run `scripts/seed_fixtures.py` with `FIXTURES_DIR` set to seed `FIXTURE — BOQ` and `FIXTURE — Programme+Drawings`.
+1. Run `scripts/seed_fixtures.py` with `FIXTURES_DIR` set to seed `FIXTURE â€” BOQ` and `FIXTURE â€” Programme+Drawings`.
 2. Resume the feature-matrix sweep (`scripts/feature_matrix_sweep.py --auto-seed`).
 3. Activate the GK lexical fold flag (Step 2) and run the acceptance battery.
 4. Continue the golden-set gate and embedder audit as planned.

@@ -17,6 +17,9 @@ import threading
 import time
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ── Storage ───────────────────────────────────────────────────────────────
@@ -522,7 +525,10 @@ class ConstructionLearningEngine:
                 with open(path, "r") as f:
                     return json.load(f)
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _load_state() — continuing",
+                "Exception", exc_info=True,
+            )
         return {}
 
     def _save_state(self) -> None:
@@ -543,7 +549,10 @@ class ConstructionLearningEngine:
                 with open(path, "w") as f:
                     json.dump(state, f, indent=2)
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _save_state() — continuing",
+                "Exception", exc_info=True,
+            )
 
     # ── Public API ──────────────────────────────────────────────────────
 

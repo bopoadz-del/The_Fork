@@ -5,6 +5,9 @@ import io
 import tempfile
 from typing import Any, Dict
 from app.core.typed_block import TypedBlock, Schema, ContentType
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _ocr_lang() -> str:
@@ -167,7 +170,10 @@ class OCRBlock(TypedBlock):
                             if c >= 0:
                                 word_confidences.append(c / 100.0)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "swallowed %s in _process_image() — continuing",
+                            "Exception", exc_info=True,
+                        )
             except Exception as e:
                 tesseract_available = False
 
@@ -347,7 +353,10 @@ class OCRBlock(TypedBlock):
                 from app.core.image_quality import deskew as _deskew
                 gray, _angle = _deskew(gray)
             except Exception:
-                pass
+                logger.debug(
+                    "swallowed %s in _preprocess_image() — continuing",
+                    "Exception", exc_info=True,
+                )
 
         # Enhance contrast
         contrast_factor = self.config.get("contrast_factor", 1.5)

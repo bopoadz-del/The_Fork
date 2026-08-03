@@ -102,7 +102,10 @@ def _tts_sync(text: str, lang: str) -> tuple[bytes, str]:
         try:
             os.unlink(tmp)
         except OSError:
-            pass
+            _LOG.debug(
+                "swallowed %s in _tts_sync() — continuing",
+                "OSError", exc_info=True,
+            )
     return data, "mp3"
 
 
@@ -278,7 +281,10 @@ class VoiceBlock(UniversalBlock):
                         try:
                             os.unlink(cleanup_tmp)
                         except OSError:
-                            pass
+                            _LOG.debug(
+                                "swallowed %s in process() — continuing",
+                                "OSError", exc_info=True,
+                            )
                     cleanup_tmp = converted_path
                     converted = True
                     _LOG.info("voice STT: converted %s (%s) -> %s via pydub",
@@ -315,7 +321,10 @@ class VoiceBlock(UniversalBlock):
                     try:
                         os.unlink(cleanup_tmp)
                     except OSError:
-                        pass
+                        _LOG.debug(
+                            "swallowed %s in process() — continuing",
+                            "OSError", exc_info=True,
+                        )
 
         # ── Languages list ────────────────────────────────────────────────────
         elif operation == "languages":

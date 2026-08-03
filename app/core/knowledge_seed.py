@@ -82,7 +82,10 @@ def seed_knowledge() -> None:
                         try:
                             store.delete_document(d["id"])
                         except Exception:  # noqa: BLE001
-                            pass
+                            logger.warning(
+                                "swallowed %s in seed_knowledge() — continuing",
+                                "Exception", exc_info=True,
+                            )
 
                 file_id = str(uuid.uuid4())[:8]
                 stored_as = f"{file_id}_{name}"

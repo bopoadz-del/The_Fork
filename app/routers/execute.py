@@ -7,6 +7,9 @@ from app.blocks import BLOCK_REGISTRY
 from app.dependencies import require_user
 from app.dependencies import block_instances, _create_block_instance
 from app.core.input_adapter import adapt_input
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -63,7 +66,10 @@ async def execute(request: ExecuteRequest, auth: dict = Depends(require_user)):
                     inner if isinstance(inner, dict) else {}
                 )
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in execute() — continuing",
+                "Exception", exc_info=True,
+            )
 
         return result
 
