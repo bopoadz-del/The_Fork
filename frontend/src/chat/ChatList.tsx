@@ -67,19 +67,33 @@ export default function ChatList({
     )
   }
 
+  // Assistant-turn index per message, computed BEFORE render rather than by
+  // mutating a counter inside .map(). The counter version worked, but mutating
+  // a variable while rendering is the pattern React's compiler lint rejects
+  // ("Cannot reassign variable after render completes") — and it silently
+  // breaks the moment this list is memoised or rendered out of order.
+  //
+  // Numbering is unchanged: EVERY assistant turn advances the index, including
+  // streaming/error/empty ones, so `onDownloadMessage(idx)` still addresses
+  // the same turn the caller expects.
+  const assistantIndexById = new Map<string, number>()
   let assistantSeen = 0
+  for (const msg of messages) {
+    if (msg.role === 'assistant') {
+      assistantIndexById.set(msg.id, assistantSeen)
+      assistantSeen += 1
+    }
+  }
+
   return (
     <div className="chat-list" role="log" aria-live="polite" aria-label="Conversation">
       {messages.map((msg) => {
         let downloadHandler: ((format: 'docx' | 'xlsx') => void) | undefined
-        if (msg.role === 'assistant' && !msg.streaming && !msg.error && msg.content) {
-          const idx = assistantSeen
-          assistantSeen += 1
-          if (onDownloadMessage) {
-            downloadHandler = (format) => onDownloadMessage(idx, format)
-          }
-        } else if (msg.role === 'assistant') {
-          assistantSeen += 1
+        const isDownloadable =
+          msg.role === 'assistant' && !msg.streaming && !msg.error && msg.content
+        if (isDownloadable && onDownloadMessage) {
+          const idx = assistantIndexById.get(msg.id) ?? 0
+          downloadHandler = (format) => onDownloadMessage(idx, format)
         }
         return <ChatBubble key={msg.id} message={msg} onDownload={downloadHandler} onExport={onExport} />
       })}
