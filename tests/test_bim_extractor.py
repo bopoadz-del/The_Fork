@@ -17,39 +17,11 @@ FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sample_office.ifc
 FIXTURE_2X3 = os.path.join(os.path.dirname(__file__), "fixtures", "sample_office_2x3.ifc")
 
 
-def _ifcopenshell_native_available() -> bool:
-    """`ifcopenshell` is a Python wrapper around a compiled library, and the
-    wheel does not ship a build for every platform â€” on Windows/py3.11 the
-    package imports but `ifcopenshell_wrapper` raises ImportError.
-
-    The four parsing tests below need the native side. Without this they
-    hard-FAIL on such a host with `assert 'error' == 'success'`, which tells
-    a stranger following the README that the platform is broken when what is
-    actually missing is a compiled dependency.
-    """
-    try:
-        import ifcopenshell  # noqa: F401
-        return True
-    except Exception:
-        return False
-
-
-# Skip locally, but FAIL in CI. If ifcopenshell ever stops importing on the
-# Linux runner, that is a real regression and must not vanish into a skip â€”
-# these tests are the only coverage of IFC parsing.
-_NEEDS_IFC = pytest.mark.skipif(
-    not _ifcopenshell_native_available() and not os.getenv("CI"),
-    reason="ifcopenshell's native wrapper is not built for this platform; "
-           "this is enforced (not skipped) in CI",
-)
-
-
 def _run(input_data, params=None):
     block = BIMExtractorBlock()
     return asyncio.run(block.process(input_data, params))
 
 
-@_NEEDS_IFC
 def test_extracts_elements_from_sample_ifc():
     assert os.path.exists(FIXTURE), (
         f"missing fixture {FIXTURE}; run `python scripts/_make_sample_ifc.py`"
@@ -116,7 +88,6 @@ def test_rvt_returns_actionable_error(tmp_path):
     assert "export" in msg and "ifc" in msg
 
 
-@_NEEDS_IFC
 def test_extracts_elements_from_ifc2x3_sample():
     """IFC2x3 is common in older GCC project models. The extractor must read
     the older schema without changes â€” only the model contents and category
@@ -138,7 +109,6 @@ def test_extracts_elements_from_ifc2x3_sample():
     assert storey_names == {"Ground Floor", "Level 1"}
 
 
-@_NEEDS_IFC
 def test_clash_report_carries_operator_disclaimer():
     """Operator-locked text. Chat must show this on every clash response so
     pilot users don't read AABB output as Navisworks-grade precision."""
@@ -153,7 +123,6 @@ def test_clash_report_carries_operator_disclaimer():
     assert "Solibri" in disclaimer
 
 
-@_NEEDS_IFC
 def test_payload_caps_surface_truncated_flag():
     """The fixture is small so no cap fires â€” verify the truncated flag is
     False, truncation_caps is reported, and quantities_truncated is empty.
