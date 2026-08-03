@@ -29,9 +29,12 @@ Public API
 """
 
 import contextlib
+import logging
 import os
 import tempfile
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -166,4 +169,13 @@ def open_plaintext(path: str):
         try:
             os.remove(tmp_path)
         except OSError:
-            pass
+            # NOT harmless enough to swallow silently: tmp_path holds the
+            # DECRYPTED document. If the unlink fails the plaintext stays on
+            # disk, which is exactly the state encryption exists to prevent —
+            # and it would do so with no signal at all. Cleanup still must not
+            # raise (that would mask whatever the caller was doing), so log
+            # loudly and continue.
+            logger.warning(
+                "could not remove decrypted temp file %s — plaintext may "
+                "remain on disk", tmp_path, exc_info=True,
+            )

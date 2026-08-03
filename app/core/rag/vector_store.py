@@ -290,7 +290,16 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
             try:
                 index.create(bind=eng, checkfirst=True)
             except Exception:  # noqa: BLE001 — never block startup on an index
-                pass
+                # Not blocking startup is right; staying SILENT is not. The
+                # comment above measures the cost of a missing btree here:
+                # ~11s seq-scans on the master corpus. Swallowed, that shows
+                # up as "retrieval got slow" with nothing to point at.
+                logger.warning(
+                    "could not create index %s on %s — queries filtering by "
+                    "project_id may fall back to a sequential scan",
+                    getattr(index, "name", "?"), rag_chunk_cls.__tablename__,
+                    exc_info=True,
+                )
         # PostgreSQL BM25 leg: the ``text_search`` GENERATED column + GIN
         # index. Alembic 0003 only covers the legacy ``chunks`` table;
         # namespaced tables (chunks_v2, ...) are created HERE, so they must

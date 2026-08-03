@@ -6,10 +6,13 @@ DATA_DIR/audit.log.
 """
 
 import json
+import logging
 import os
 import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 
@@ -36,7 +39,15 @@ def record(event: str, **details: Any) -> Dict[str, Any]:
             with open(_audit_file(), "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, default=str) + "\n")
     except Exception:
-        pass
+        # This module exists to answer "what happened to this client's data".
+        # A write failure here means the audit trail is silently incomplete —
+        # the one failure mode an audit log must never have. Writing must
+        # still never break the operation being audited (an upload must not
+        # fail because logging did), so log and continue rather than raise.
+        logger.warning(
+            "AUDIT WRITE FAILED for event %r — audit trail is incomplete",
+            event, exc_info=True,
+        )
     return entry
 
 
