@@ -204,10 +204,36 @@ correct and both were kept:**
   **reverted**. Isolation runs are not sufficient evidence for removing
   a `strict=False` xfail; full-suite order is.
 
-## 4b. The local dev suite is NOT trustworthy without a clean DATA_DIR
+## 4b. The local dev suite WAS untrustworthy — now FIXED (2026-08-03)
 
-Worth writing down, because it produced a wrong conclusion in this very
-pass before being caught.
+> **RESOLVED.** Both root causes were found and fixed; a local run no longer
+> needs a clean `DATA_DIR` to mean something. Kept here because the wrong
+> conclusion it produced is worth remembering, and because the two bugs
+> underneath were real rather than test-only.
+>
+> 1. **Leaked embedder identity.** The autouse fixture that resets the
+>    embedder / vector-store caches ran ONLY in the Postgres branch, so the
+>    default SQLite suite reset nothing. Cache resets alone were not enough
+>    either: the embedder identity is PERSISTED per namespace, so a test
+>    using the real embedder stamped `potion-base-8M` onto namespace `v2`
+>    and the next test expecting `fake` hit the mixed-model guard. Fixed by
+>    giving every test its own vector namespace (PR #310).
+>
+> 2. **Schema init followed a global flag, not the database.**
+>    `_initialized` was a module-level boolean while the database is
+>    per-`DATA_DIR`, so after init ran against one database every other one
+>    silently got no schema — `no such table: projects`. This was a REAL
+>    defect, not a test artifact: it misbehaves anywhere the database can
+>    change after first use. Fixed in `projects`, `users`, `agent_memory`
+>    and `workflows` by tracking `_initialized_for_url`, the pattern three
+>    sibling stores already used (PR #311).
+>
+> Measured: the reproducing combination went **28 failed → 0**, and the
+> broad selection **4 failed → 203 passed**. All three CI test jobs green.
+
+The original note follows, unchanged, because the mistake it records is the
+point.
+
 
 A full local run reports **28 failures** across `test_gk_lexical_fold`,
 `test_gk_ranking_knobs`, `test_rag_injection`, `test_backfill_layers` —
