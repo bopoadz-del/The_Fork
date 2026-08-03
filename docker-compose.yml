@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -71,7 +69,15 @@ services:
     command: ["python", "-m", "app.worker.run_worker"]
     volumes:
       - ./data:/app/data
-      - ./.env:/app/.env:ro
+    # Same fix as cerebrum-blocks above, and the compose-health CI job caught
+    # this one on a FRESH CLONE: `./.env` is gitignored, so bind-mounting it
+    # makes Docker create a DIRECTORY at that path. Every later
+    # `docker compose` command then dies with "failed to read .env: is a
+    # directory" — after the stack had already come up healthy, which is the
+    # kind of failure that is very hard to attribute by hand.
+    env_file:
+      - path: .env
+        required: false
     environment:
       - DATA_DIR=/app/data
       - DATABASE_URL=postgresql+psycopg://thefork:thefork@postgres:5432/thefork
