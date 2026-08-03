@@ -43,3 +43,37 @@ jobs:
       - name: Ruff check (report-only during rollout)
         continue-on-error: true # see header note — promote to blocking after baseline triage
         run: ruff check app tests --output-format=github
+
+  eslint:
+    # BLOCKING, unlike ruff above. This gate exists because of a specific
+    # production incident: on 2026-08-03 a `useMemo` added below an early
+    # return in ProjectWorkspace.tsx shipped through CI and crashed the whole
+    # workspace into the ErrorBoundary (React #310). `tsc -b && vite build`
+    # compiles a conditional hook happily — Rules of Hooks is a runtime
+    # contract, not a type error — and no workflow ran eslint, so nothing
+    # caught it. Verified before enabling: eslint reports
+    # `react-hooks/rules-of-hooks` on exactly that shape.
+    #
+    # It can block from day one because the frontend is at 0 errors. The
+    # remaining findings are advisory (react-compiler hints, fast-refresh DX)
+    # and are configured as warnings in eslint.config.js with the reasoning
+    # recorded there. Warnings do NOT fail the build, so the gate stays
+    # honest: it blocks correctness regressions, not style debt.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: ESLint (blocking — errors only)
+        working-directory: frontend
+        run: npm run lint
