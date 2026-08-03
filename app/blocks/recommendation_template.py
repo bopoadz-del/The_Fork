@@ -5,6 +5,9 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ── Built-in rule + template database ─────────────────────────────────────────
@@ -204,7 +207,10 @@ class RecommendationTemplateBlock(UniversalBlock):
                     custom = json.load(f)
                 self._rules.update(custom)
             except Exception:
-                pass
+                logger.debug(
+                    "swallowed %s in _load_custom_rules() — continuing",
+                    "Exception", exc_info=True,
+                )
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
         params = params or {}
@@ -288,7 +294,10 @@ class RecommendationTemplateBlock(UniversalBlock):
             if op == "contains":
                 return str(val).lower() in str(item_val).lower()
         except (TypeError, ValueError, IndexError):
-            pass
+            logger.debug(
+                "swallowed %s in _matches() — continuing",
+                "(TypeError, ValueError, IndexError)", exc_info=True,
+            )
         return False
 
     def _render(self, rule_key: str, rule: Dict, item: Dict, params: Dict) -> Optional[Dict]:

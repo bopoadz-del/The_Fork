@@ -68,9 +68,25 @@ def _get_secret() -> str:
                 try:
                     os.chmod(path, 0o600)
                 except OSError:
-                    pass  # no-op on platforms that don't support POSIX permissions
+                    # No-op on platforms without POSIX permissions (Windows),
+                    # so this is EXPECTED there and must not be a warning — it
+                    # would fire on every boot. It still gets recorded, because
+                    # on a POSIX host it means the signing secret is sitting on
+                    # disk more readable than intended.
+                    logger.debug(
+                        "could not chmod 0600 the JWT secret at %s "
+                        "(expected on non-POSIX platforms)", path, exc_info=True,
+                    )
             except OSError:
-                pass  # fall back to in-memory secret for this process
+                # The secret could not be PERSISTED. This process falls back to
+                # an in-memory secret, which means every token it issues becomes
+                # invalid on restart, and a second worker will not accept them.
+                # Genuinely worth a warning.
+                logger.warning(
+                    "could not persist the JWT secret to %s — falling back to "
+                    "an in-memory secret; tokens will not survive a restart or "
+                    "be valid across workers", path, exc_info=True,
+                )
         return _cached_secret
 
 

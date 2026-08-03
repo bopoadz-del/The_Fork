@@ -2,32 +2,28 @@
 
 - verdict: FAIL
 - prompt: pull out the material specs for the road works
-- project: dar_al_arkan_master
-- conversation_id: fmx-f1904e7e409b
-- route event: `{"requested": "project-assistant", "final": "project-assistant", "action": null, "confidence": 0.0, "reason": "below_routing_gate"}`
+- project: 64362c65
+- conversation_id: fmx-465303edbc91
+- route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "spec_analyze", "confidence": 0.6, "reason": "below_routing_gate"}`
 - tool_calls: []
 - tool_results: []
-- routing oracle: FAIL (ROUTE_MISS)
-- execution oracle: PASS
+- routing oracle: PASS
+- execution oracle: FAIL — answer_chars 698 < min_chars 800
 - structure: {"mentions_standard_or_grade": "FAIL"}
-- first_token_s: 6.23  total_s: 6.23
-- served_model: meta-llama/llama-4-scout-17b-16e-instruct  fallback_used: False
-- answer_chars: 933  sources: 3  events: 15
+- first_token_s: 75.03  total_s: 75.27
+- served_model: kimi-k2.6  fallback_used: False
+- answer_chars: 698  sources: 2  events: 16
 
 ## Answer (verbatim)
 
-The reference context does not contain specific material specs for road works. However, it does provide some general information related to earthworks and road construction.
+The reference context does **not contain material specifications** (mix designs, binder grades, aggregate requirements, etc.) for the road works.  
 
-Under `construction.roads`, the following entries are listed:
+It does include the Bill of Quantities line-item descriptions for the road section, which are:
 
-- `roads.heavy_lift_feasibility` : Required lifted capacity per crane for a multi-crane (tandem) beam erection = beam weight 
+- **4.01** — Granular sub-base course, 200 mm  
+- **4.02** — Asphalt binder course, 60 mm  
+- **4.03** — Asphalt wearing course, 40 mm  
 
-- `R` : **Roads & pavings** — sub-base/roadbase m3 or m2, surfacing/asphalt m2, kerbs/edgings m | **m2, m, m3, nr** 
+*(source: synthetic_boq.xlsx, chunk 0)*  
 
-Additionally, under `earthworks`, there are some formulas and reference designs:
-
-- `earthworks.compacted_material` : Compacted (in-place) quantity = Loose quantity / Swelling factor, i.e. Compacted = E_loose 
-
-- `earthworks.swelling_factor` : Swelling factor = (Proctor density A x Compaction factor C) / Loose density B.
-
-- `earthworks.production_rates` : Indicative production rates and specifications. Dozers: D8K 130-200 m3/hr, D9H 160-230 m3/hr
+The only specification document provided in the context is **SECTION 03 30 00 — CAST-IN-PLACE CONCRETE** *(source: synthetic_spec_section_03_concrete.txt)*, which covers concrete for foundations, slabs, walls, and pavements—not the asphalt or granular road-base materials.

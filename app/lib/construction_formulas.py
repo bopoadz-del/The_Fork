@@ -839,6 +839,9 @@ def concrete_maturity_strength(
 
 import dataclasses as _dc
 import inspect as _inspect
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Public functions in this module that are DISPATCH infrastructure, not
@@ -871,7 +874,10 @@ def _build_calculator_registry() -> "Dict[str, Any]":
             if callable(_f):
                 reg[_n] = _f
     except Exception:  # noqa: BLE001 — never break the formula registry on import
-        pass
+        logger.warning(
+            "swallowed %s in _build_calculator_registry() — continuing",
+            "Exception", exc_info=True,
+        )
     # Post-live-chat additions (guardrail height, interim payment) live in a
     # separate module so they can also feed the discipline-hats binding
     # resolver. Merge them here too so the LIVE construction_calc tool can
@@ -885,7 +891,10 @@ def _build_calculator_registry() -> "Dict[str, Any]":
             if callable(_f):
                 reg[_n] = _f
     except Exception:  # noqa: BLE001 — never break the formula registry on import
-        pass
+        logger.warning(
+            "swallowed %s in _build_calculator_registry() — continuing",
+            "Exception", exc_info=True,
+        )
     # Additive discipline modules (the drop-catalog gap-fill library). Each
     # module exposes ADDITIONAL_CALCULATORS; listed here so a new discipline is a
     # one-line addition and never touches the existing calculators. Every merged
@@ -898,7 +907,10 @@ def _build_calculator_registry() -> "Dict[str, Any]":
                 if callable(_f):
                     reg[_n] = _f
         except Exception:  # noqa: BLE001 — a broken/absent module never breaks the registry
-            pass
+            logger.warning(
+                "swallowed %s in _build_calculator_registry() — continuing",
+                "Exception", exc_info=True,
+            )
     return reg
 
 

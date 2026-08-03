@@ -10,6 +10,9 @@ import os
 from typing import Any, Dict, Optional
 
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _root() -> str:
@@ -20,7 +23,10 @@ def _root() -> str:
     try:
         os.makedirs(root, exist_ok=True)
     except OSError:
-        pass
+        logger.debug(
+            "swallowed %s in _root() — continuing",
+            "OSError", exc_info=True,
+        )
     return root
 
 

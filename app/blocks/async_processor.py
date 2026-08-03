@@ -5,6 +5,9 @@ import uuid
 import time
 from typing import Any, Dict, List, Callable, Optional
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncProcessorBlock(UniversalBlock):
@@ -174,7 +177,10 @@ class AsyncProcessorBlock(UniversalBlock):
                 if task_result.ready():
                     job["result"] = task_result.result if task_result.successful() else {"error": str(task_result.result)}
             except Exception:
-                pass
+                logger.debug(
+                    "swallowed %s in status() — continuing",
+                    "Exception", exc_info=True,
+                )
 
         return {"status": "success", "job": job}
 

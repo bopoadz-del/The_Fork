@@ -3,6 +3,9 @@
 import re
 from datetime import datetime
 from typing import Any, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -84,7 +87,10 @@ def _safe_iso_date(value: Any) -> Optional[datetime]:
     try:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
-        pass
+        logger.warning(
+            "swallowed %s in _safe_iso_date() — continuing",
+            "ValueError", exc_info=True,
+        )
     # Common alternates
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y-%m-%d %H:%M:%S"):
         try:

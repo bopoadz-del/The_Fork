@@ -1,4 +1,4 @@
-# Track 1 - RAG Pipeline Production Implementation Plan
+﻿# Track 1 - RAG Pipeline Production Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1631,7 +1631,7 @@ Watch the deploy until status flips to `live`. Hit https://the-fork.onrender.com
 - [ ] **Step 3: Set Phase 2 env vars on Render (use the API)**
 
 ```bash
-TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0
+TOK=$RENDER_API_KEY
 SRV=srv-d8hdc6ek1jcs739rq5sg
 for KV in "RAG_K=5" "MAX_RAG_TOKENS=1500" "RAG_CONFIDENCE_THRESHOLD=0.4"; do
   K="${KV%%=*}"; V="${KV##*=}"
@@ -1686,7 +1686,7 @@ def test_q4_tool_call_discipline_under_rag(monkeypatch):
     from app.agents.runtime import _user_intent_requires_tool
 
     # The matcher must still fire on "generate a 50-activity construction
-    # schedule" even when prefixed by RAG context — context is a SYSTEM
+    # schedule" even when prefixed by RAG context â€” context is a SYSTEM
     # role, the matcher walks the messages' tail for the user role.
     messages = [
         {"role": "system", "content": "Relevant project context: ..."},
@@ -1714,7 +1714,7 @@ git commit -m "test(rag): explicit Q4 tool-call discipline regression under RAG 
 - [ ] **Step 1: Set the budget env var**
 
 ```bash
-TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0
+TOK=$RENDER_API_KEY
 SRV=srv-d8hdc6ek1jcs739rq5sg
 curl -sS -X PUT -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   "https://api.render.com/v1/services/$SRV/env-vars/RAG_DAILY_TOKEN_BUDGET" \

@@ -216,7 +216,10 @@ def reset_store_cache() -> None:
             try:
                 s.close()
             except Exception:
-                pass
+                logger.warning(
+                    "swallowed %s in reset_store_cache() — continuing",
+                    "Exception", exc_info=True,
+                )
         _STORE_CACHE = {}
     with _INIT_LOCK:
         _INITIALIZED_NAMESPACES = set()
@@ -1096,7 +1099,10 @@ class VectorStore:
                     meta = json_lib.loads(r.photo_metadata)
                     photo_url = meta.get("source_url") if isinstance(meta, dict) else None
                 except Exception:
-                    pass
+                    logger.warning(
+                        "swallowed %s in bm25_search_photos() — continuing",
+                        "Exception", exc_info=True,
+                    )
             out.append(
                 Chunk(
                     chunk_id=r.chunk_id,
@@ -1155,7 +1161,10 @@ def _rrf_combine(
         try:
             c.rrf_score = rrf
         except Exception:
-            pass
+            logger.warning(
+                "swallowed %s in _rrf_combine() — continuing",
+                "Exception", exc_info=True,
+            )
         scored.append((rrf, c))
     scored.sort(key=lambda x: -x[0])
     return [c for _, c in scored[:top_k]]

@@ -215,4 +215,7 @@ async def analyze_chat_photo(
         try:
             os.unlink(tmp_path)
         except OSError:
-            pass
+            logger.warning(
+                "swallowed %s in analyze_chat_photo() — continuing",
+                "OSError", exc_info=True,
+            )

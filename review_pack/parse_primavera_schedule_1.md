@@ -1,59 +1,47 @@
 # parse_primavera_schedule — prompt 1, run 1
 
-- verdict: PARTIAL
+- verdict: PASS
 - prompt: extract the key milestones from the project programme with their dates
-- project: ff905e29
-- conversation_id: fmx-2486a8a88840
-- route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "parse_primavera_schedule", "confidence": 0.2, "reason": "needs_planning"}`
+- project: b6786854
+- conversation_id: fmx-35f42cb4b7e5
+- route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "parse_primavera_schedule", "confidence": 0.8, "reason": "needs_planning"}`
 - tool_calls: []
 - tool_results: []
 - routing oracle: PASS
 - execution oracle: PASS
-- structure: {"milestones_have_dates": "FAIL"}
-- first_token_s: 2.5  total_s: 2.5
-- served_model: meta-llama/llama-4-scout-17b-16e-instruct  fallback_used: False
-- answer_chars: 2020  sources: 3  events: 29
+- structure: {"milestones_have_dates": "PASS"}
+- first_token_s: 150.12  total_s: 150.51
+- served_model: kimi-k2.6  fallback_used: False
+- answer_chars: 1711  sources: 3  events: 34
 
 ## Answer (verbatim)
 
-## Key Milestones from the Project Programme
+_This project has no documents of its own for this question — answering from the Master Corpus._
 
+Based on the reference context, here are the key milestones and dates extracted from the project programme:
 
-| Event | Deadline | Owner |
-|---|---|---|
-| Deliver Performance Security | ≤ 28 days after Contract Agreement | Contractor |
-| Initial Programme | ≤ 28 days after Commencement | Contractor |
-| Engineer review — initial Programme | 21 days | Engineer |
-| Engineer review — revised Programme | 14 days | Engineer |
-| Notice of Claim | ≤ 28 days from awareness | Claiming party |
-| Fully detailed claim | ≤ 84 days from event | Claiming party |
-| Issue IPC | ≤ 28 days of Statement | Engineer |
-| Pay certified amount | ≤ 56 days of IPC | Employer |
-| Issue Taking-Over Certificate | ≤ 28 days of application (else deemed) | Engineer |
-| Performance Certificate | ≤ 28 days after last DNP expiry | Engineer |
-| Return Performance Security | ≤ 28 days after Performance Certificate | Employer |
-| DAAB decision | ≤ 84 days from referral | DAAB |
+**Project-Level Milestones**
+- **Project Commencement:** 10 January 2024  
+  *(Source: letter IP-INF-054-0000-JCB-LTR-MN-000003)*
 
+- **Project Completion:**  
+  - Start: **10-Jan-24**  
+  - Finish: **11-May-26**  
+  - Duration: **852** calendar days  
 
-## Programme & Time (Clause 8)
+**Contractual / Completion Milestones**
+The DG-II Infrastructure I scope is divided into ten components defined as contractual milestones under **Contract Data clause 1.1.50**, with time for completion for each stipulated under **Contract Data Clause 1.1.75**. The following district milestone is explicitly shown:
 
+- **1e – Northern East:**  
+  - Start: **10-Nov-24**  
+  - Finish: **11-May-26**  
+  - Duration: **547** calendar days  
 
-| Item | Rule |
-|---|---|
-| Initial detailed Programme | Submit **within 28 days** of Commencement (SC 8.3) |
-| Engineer review of initial Programme | **21 days** → silence = deemed No-objection (SC 1.1.66) |
-| Engineer review of a revised Programme | **14 days** → silence = deemed accepted |
-| EOT grounds (SC 8.4) | Variation/qty change; delay giving Cost entitlement; exceptionally adverse climate; Unforeseeable shortages (epidemic/govt); any Employer-attributable delay |
-| EOT notice | **28 days** from awareness (SC 20.1) or risk **time-bar** |
-| Delay Damages | Pre-agreed rate; **capped** in Contract Data → hitting the cap can trigger termination (SC 15.2) |
+**Control Milestones (Right of Access)**
+- Dates for full access to the **ten districts** are included in the Programme under Control Milestones.
+- The start dates for each milestone (Right of Access to each part of the site) were provided by the Engineer dated **8 February 2024**.
 
+**Key Milestones Register**
+- The list of Key Milestones was provided by the Engineer through email dated **17 February 2024** and is included under each milestone/district of the contract. The specific names and dates for the remaining nine districts in that list are **not contained in the retrieved context**.
 
-## Claims Procedure (Clause 20)
-
-
-| Step | Deadline |
-|---|---|
-| **Notice of Claim** | **28 days** from awareness — miss it and the claim is **time-barred** |
-| Fully detailed claim | **84 days** from the event (interim detailed claims every 28 days if the event is continuing) |
-| Engineer initial response | 14 days |
-| Engineer agreement/determination | proceed under SC 3.7; determine within **84 days** of the claim |
+**Note:** The context references a full table of the ten districts under Control Milestones, but only the entry for **1e – Northern East** and the overall **Project Completion** line appear in the provided excerpts.

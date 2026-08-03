@@ -23,6 +23,9 @@ from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.universal_base import UniversalBlock
+import logging
+
+logger = logging.getLogger(__name__)
 
 _MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15 MB — generous for local processing
 
@@ -106,7 +109,10 @@ def _tesseract_ocr(file_path: str) -> Tuple[str, float]:
             if confs:
                 confidence = sum(confs) / len(confs) / 100.0
         except Exception:
-            pass
+            logger.debug(
+                "swallowed %s in _tesseract_ocr() — continuing",
+                "Exception", exc_info=True,
+            )
 
     return text, confidence
 
@@ -425,7 +431,10 @@ class ImageBlock(UniversalBlock):
                 try:
                     os.unlink(tmp_path)
                 except OSError:
-                    pass
+                    logger.debug(
+                        "swallowed %s in process() — continuing",
+                        "OSError", exc_info=True,
+                    )
 
     async def _resolve_source(self, input_data: Any):
         """Return (file_path, tmp_path_or_None) or an error dict on failure."""

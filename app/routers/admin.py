@@ -281,7 +281,10 @@ def admin_training_list(auth: dict = Depends(require_api_key)):
                 with open(path, "r", encoding="utf-8") as f:
                     line_count = sum(1 for _ in f)
             except Exception:
-                pass
+                log.warning(
+                    "swallowed %s in admin_training_list() — continuing",
+                    "Exception", exc_info=True,
+                )
             out.append({
                 "name": name,
                 "size_bytes": os.path.getsize(path),
@@ -648,12 +651,6 @@ def admin_training_job_status(job_id: str, auth: dict = Depends(require_api_key)
 
 # ── Synchronous (legacy) path — kept for tests / quick small jobs ────────
 
-def _legacy_sync_generate_unused():
-    """Stub kept to preserve the import surface for the deleted sync path —
-    intentionally never called. Real entrypoint is the async job above."""
-    return None
-
-
 @router.post("/v1/admin/debug/migrate-sqlite")
 def admin_migrate_sqlite(
     dry_run: bool = Query(True, description="Count rows only; no Postgres writes"),
@@ -698,7 +695,10 @@ def admin_migrate_sqlite(
                 lines.append(f"  {table}: {n}")
             log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         except OSError:
-            pass
+            log.warning(
+                "swallowed %s in admin_migrate_sqlite() — continuing",
+                "OSError", exc_info=True,
+            )
 
     return {
         "dry_run": dry_run,
@@ -966,7 +966,10 @@ def admin_corpus_collections(
         except Exception:  # noqa: BLE001
             # The namespaced chunk table may not exist yet in a fresh SQLite
             # dev DB — the documents side already covers approved projects.
-            pass
+            log.warning(
+                "swallowed %s in admin_corpus_collections() — continuing",
+                "Exception", exc_info=True,
+            )
 
         for pid in sorted(project_ids):
             doc_count = conn.execute(

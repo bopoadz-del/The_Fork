@@ -1,21 +1,31 @@
 # rfi_management — prompt 1, run 1
 
-- verdict: FAIL
+- verdict: PASS
 - prompt: how many RFIs are open and which ones are overdue?
-- project: dar_al_arkan_master
-- conversation_id: fmx-7aaaac1b0ddc
-- route event: `{"requested": "project-assistant", "final": "project-assistant", "action": null, "confidence": 0.0, "reason": "below_routing_gate"}`
+- project: 64362c65
+- conversation_id: fmx-476e05621dc3
+- route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "rfi_management", "confidence": 0.6, "reason": "below_routing_gate"}`
 - tool_calls: []
 - tool_results: []
-- routing oracle: FAIL (ROUTE_MISS)
+- routing oracle: PASS
 - execution oracle: PASS
 - structure: {}
-- first_token_s: 8.64  total_s: 8.64
-- served_model: glm-5.2:cloud  fallback_used: False
-- answer_chars: 579  sources: 3  events: 11
+- first_token_s: 17.88  total_s: 18.02
+- served_model: kimi-k2.6  fallback_used: False
+- answer_chars: 620  sources: 1  events: 12
 
 ## Answer (verbatim)
 
-I don't have that information. The retrieved project context does not contain any RFI register, RFI log, or tracking data that would show how many RFIs are open or which ones are overdue. The available chunks cover FIDIC contract clauses, construction technical rules, and an RFP for structural design services — none of which include RFI status tracking.
+Based on the RFI register provided in the context:
 
-To answer this, I would need an RFI register or log document uploaded and indexed in the project. If you have one (e.g., an RFI tracker spreadsheet or report), upload it and I'll extract the open and overdue items for you.
+There are **4 open RFIs** in total.
+
+The **2 overdue RFIs** are:
+- **RFI-004** – Manhole cover load class in landscaped areas (Response due: 2026-06-22) – *Open — overdue*
+- **RFI-005** – Joint spacing for 2.4m ground slab pours (Response due: 2026-07-05) – *Open — overdue*
+
+The remaining open (but not yet overdue) RFIs are:
+- **RFI-003** – Confirm asphalt binder grade for service road (Response due: 2026-06-09) – *Open*
+- **RFI-006** – Substation duct bank routing vs tree pits (Response due: 2026-07-13) – *Open*
+
+*(Source: synthetic_rfi_register.xlsx, chunk 0)*
