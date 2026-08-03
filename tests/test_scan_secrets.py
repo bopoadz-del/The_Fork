@@ -13,6 +13,13 @@ quotes are optional, and it is pinned here so neither can regress.
 
 These tests exercise the rules directly rather than the repo walk, so they
 stay true regardless of what the tree contains.
+
+The `# pragma: allowlist secret` markers below are not a workaround — they
+are the scanner's own escape hatch, used on the only lines in the repository
+where secret-shaped strings are the point. The moment this file was committed
+it became tracked, and the scanner correctly flagged its own fixtures. That
+is the mechanism working. Marking each line keeps them visible and greppable
+rather than carving out a path exclusion that would silently widen later.
 """
 from __future__ import annotations
 
@@ -43,17 +50,17 @@ def _hits(line: str, *, test_path: bool = False):
 MUST_CATCH = [
     # The exact shape that slipped past the first version: bare, unquoted,
     # and assigned to a name no secret-name pattern matches.
-    ("TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0", "provider-credential"),
-    ("$RenderApiKey   = 'rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0'", "provider-credential"),
-    ('export FORK_API_KEY="o1JrikYGj4BtJDYGipGlRGfchTwMTLTA6QsT01IXZPQ"',
+    ("TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0", "provider-credential"),  # pragma: allowlist secret
+    ("$RenderApiKey   = 'rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0'", "provider-credential"),  # pragma: allowlist secret
+    ('export FORK_API_KEY="o1JrikYGj4BtJDYGipGlRGfchTwMTLTA6QsT01IXZPQ"',  # pragma: allowlist secret
      "assigned-long-literal"),
-    ("aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "aws-access-key-id"),
-    ("-----BEGIN RSA PRIVATE KEY-----", "private-key-block"),
-    ("-----BEGIN PRIVATE KEY-----", "private-key-block"),
-    ("OPENAI_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz012345", "provider-credential"),
-    ("GROQ=gsk_abcdefghijklmnopqrstuvwxyz0123", "provider-credential"),
-    ("hf_token: hf_abcdefghijklmnopqrstuvwxyz01234567", "provider-credential"),
-    ("token = ghp_abcdefghijklmnopqrstuvwxyz0123456789", "provider-credential"),
+    ("aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "aws-access-key-id"),  # pragma: allowlist secret
+    ("-----BEGIN RSA PRIVATE KEY-----", "private-key-block"),  # pragma: allowlist secret
+    ("-----BEGIN PRIVATE KEY-----", "private-key-block"),  # pragma: allowlist secret
+    ("OPENAI_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz012345", "provider-credential"),  # pragma: allowlist secret
+    ("GROQ=gsk_abcdefghijklmnopqrstuvwxyz0123", "provider-credential"),  # pragma: allowlist secret
+    ("hf_token: hf_abcdefghijklmnopqrstuvwxyz01234567", "provider-credential"),  # pragma: allowlist secret
+    ("token = ghp_abcdefghijklmnopqrstuvwxyz0123456789", "provider-credential"),  # pragma: allowlist secret
 ]
 
 
@@ -66,8 +73,8 @@ def test_the_shapes_that_were_committed_are_caught(line, expected_rule):
 def test_an_unquoted_assignment_is_not_a_blind_spot():
     """Dotenv and shell lines are bare, and those are the ones pasted into
     runbooks. The first version required quotes and missed them."""
-    assert _hits("SECRET_KEY=0123456789abcdef0123456789abcdef")
-    assert _hits('SECRET_KEY="0123456789abcdef0123456789abcdef"')
+    assert _hits("SECRET_KEY=0123456789abcdef0123456789abcdef")  # pragma: allowlist secret
+    assert _hits('SECRET_KEY="0123456789abcdef0123456789abcdef"')  # pragma: allowlist secret
 
 
 # ── things that must NOT fire, or nobody will run it ──────────────────────
@@ -115,7 +122,7 @@ def test_a_fernet_key_built_from_a_literal_is_caught():
 # ── the allowlist has to work, or people will delete the check ────────────
 
 def test_an_allowlisted_line_is_ignored_by_the_walk(tmp_path, monkeypatch):
-    marked = f"TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0  # {scan_secrets.ALLOW_MARKER}"
+    marked = f"TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0  # {scan_secrets.ALLOW_MARKER}"  # pragma: allowlist secret
     (tmp_path / "runbook.md").write_text(marked, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(scan_secrets, "tracked_files", lambda: ["runbook.md"])
@@ -125,7 +132,7 @@ def test_an_allowlisted_line_is_ignored_by_the_walk(tmp_path, monkeypatch):
 
 def test_the_walk_reports_an_unmarked_secret(tmp_path, monkeypatch):
     (tmp_path / "runbook.md").write_text(
-        "TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0", encoding="utf-8"
+        "TOK=rnd_QqJ5qS97qrfF0IwAVrJhmKpJyNX0", encoding="utf-8"  # pragma: allowlist secret
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(scan_secrets, "tracked_files", lambda: ["runbook.md"])
