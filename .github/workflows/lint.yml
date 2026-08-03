@@ -44,6 +44,35 @@ jobs:
         continue-on-error: true # see header note — promote to blocking after baseline triage
         run: ruff check app tests --output-format=github
 
+      - name: Silent-exception ratchet (S110) — BLOCKING
+        # The general ruff job reports ~6300 legacy findings, so a new silent
+        # handler would be invisible in it. This step isolates S110
+        # (`try`/`except`/`pass`) and blocks only if the count GOES UP.
+        #
+        # Why S110 specifically, from the 2026-08-03 audit: silent handlers
+        # are not style debt, they hide bugs. A NameError swallowed by its own
+        # `except` left a helper that persisted nothing; cleanup failures on
+        # DECRYPTED client documents left plaintext on disk unnoticed; a
+        # swallowed index-creation failure costs ~11s sequential scans and
+        # surfaces only as "retrieval got slow".
+        #
+        # A ratchet works today where a zero-threshold gate cannot: it stops
+        # the bleeding immediately while the existing 77 are worked down.
+        # Lower BASELINE as they are fixed. It must never be raised.
+        run: |
+          BASELINE=77
+          COUNT=$(ruff check app --select S110 --output-format=concise | grep -c "S110" || true)
+          echo "S110 silent handlers: $COUNT (baseline $BASELINE)"
+          if [ "$COUNT" -gt "$BASELINE" ]; then
+            echo "::error::$COUNT silent try/except/pass handlers — up from $BASELINE."
+            echo "::error::Log the exception or add a comment naming what is absorbed and why."
+            ruff check app --select S110 --output-format=github
+            exit 1
+          fi
+          if [ "$COUNT" -lt "$BASELINE" ]; then
+            echo "::notice::Down to $COUNT from $BASELINE — lower BASELINE in .github/workflows/lint.yml."
+          fi
+
   eslint:
     # BLOCKING, unlike ruff above. This gate exists because of a specific
     # production incident: on 2026-08-03 a `useMemo` added below an early
