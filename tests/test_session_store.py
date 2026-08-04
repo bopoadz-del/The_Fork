@@ -23,52 +23,58 @@ def test_message_and_artifact_models():
     assert a.type == "excel"
 
 
-def test_get_or_create_is_idempotent():
+@pytest.mark.asyncio
+async def test_get_or_create_is_idempotent():
     store = InMemorySessionStore()
-    a = store.get_or_create("s1")
-    b = store.get_or_create("s1")
+    a = await store.get_or_create("s1")
+    b = await store.get_or_create("s1")
     assert a.id == b.id == "s1"
-    assert store.get("s1") is not None
+    assert await store.get("s1") is not None
 
 
-def test_get_missing_returns_none():
-    assert InMemorySessionStore().get("nope") is None
+@pytest.mark.asyncio
+async def test_get_missing_returns_none():
+    assert await InMemorySessionStore().get("nope") is None
 
 
-def test_save_persists_mutations():
+@pytest.mark.asyncio
+async def test_save_persists_mutations():
     store = InMemorySessionStore()
-    s = store.get_or_create("s1")
+    s = await store.get_or_create("s1")
     s.data["activities"] = [{"id": "A"}]
     s.add_message("user", "create a schedule")
-    store.save(s)
-    reloaded = store.get("s1")
+    await store.save(s)
+    reloaded = await store.get("s1")
     assert reloaded.data["activities"] == [{"id": "A"}]
     assert reloaded.history[0].content == "create a schedule"
 
 
-def test_delete_removes_session():
+@pytest.mark.asyncio
+async def test_delete_removes_session():
     store = InMemorySessionStore()
-    store.get_or_create("s1")
-    assert store.delete("s1") is True
-    assert store.get("s1") is None
-    assert store.delete("s1") is False
+    await store.get_or_create("s1")
+    assert await store.delete("s1") is True
+    assert await store.get("s1") is None
+    assert await store.delete("s1") is False
 
 
-def test_session_expires_after_ttl():
+@pytest.mark.asyncio
+async def test_session_expires_after_ttl():
     store = InMemorySessionStore(ttl_seconds=1)
-    store.get_or_create("s1")
-    assert store.get("s1") is not None
+    await store.get_or_create("s1")
+    assert await store.get("s1") is not None
     _time.sleep(1.1)
-    assert store.get("s1") is None          # expired and evicted
+    assert await store.get("s1") is None          # expired and evicted
 
 
-def test_save_refreshes_ttl():
+@pytest.mark.asyncio
+async def test_save_refreshes_ttl():
     store = InMemorySessionStore(ttl_seconds=2)
-    s = store.get_or_create("s1")
+    s = await store.get_or_create("s1")
     _time.sleep(1.2)
-    store.save(s)                            # resets the 2s window
+    await store.save(s)                            # resets the 2s window
     _time.sleep(1.2)
-    assert store.get("s1") is not None       # still alive — refreshed
+    assert await store.get("s1") is not None       # still alive — refreshed
 
 
 def test_factory_returns_in_memory_when_no_redis(monkeypatch):
@@ -78,12 +84,15 @@ def test_factory_returns_in_memory_when_no_redis(monkeypatch):
 
 
 @pytest.mark.skipif(not _os.getenv("REDIS_URL"), reason="no REDIS_URL configured")
-def test_redis_backend_roundtrip():
+@pytest.mark.asyncio
+async def test_redis_backend_roundtrip():
     from app.core.session_store import RedisSessionStore
-    store = RedisSessionStore(_os.getenv("REDIS_URL"), ttl_seconds=60)
-    store.delete("redis_test_sess")
-    s = store.get_or_create("redis_test_sess")
+    store = RedisSessionStore(ttl_seconds=60)
+    await store.delete("redis_test_sess")
+    s = await store.get_or_create("redis_test_sess")
     s.data["x"] = 1
-    store.save(s)
-    assert store.get("redis_test_sess").data["x"] == 1
-    store.delete("redis_test_sess")
+    await store.save(s)
+    loaded = await store.get("redis_test_sess")
+    assert loaded is not None
+    assert loaded.data["x"] == 1
+    await store.delete("redis_test_sess")

@@ -212,7 +212,7 @@ from app.core.session_store import InMemorySessionStore
 @pytest.mark.asyncio
 async def test_v2_caches_successful_code_on_the_session():
     store = InMemorySessionStore()
-    session = store.get_or_create("s1")
+    session = await store.get_or_create("s1")
     block = _MockLLMBlock(["result = length_m * 2"])
     await block.process({
         "task": "double the length", "variables": {"length_m": 5},
@@ -226,7 +226,7 @@ async def test_v2_caches_successful_code_on_the_session():
 @pytest.mark.asyncio
 async def test_v2_reuses_cached_code_without_calling_the_llm():
     store = InMemorySessionStore()
-    session = store.get_or_create("s1")
+    session = await store.get_or_create("s1")
     block = _MockLLMBlock(["result = length_m * 2"])
     first = await block.process({
         "task": "double the length", "variables": {"length_m": 5},
@@ -254,7 +254,7 @@ async def test_v2_cache_survives_a_full_store_round_trip():
     store = InMemorySessionStore()
 
     # Turn 1: cache miss — process() writes code_cache, then the caller saves.
-    session = store.get_or_create("round-trip")
+    session = await store.get_or_create("round-trip")
     block1 = _MockLLMBlock(["result = length_m * 3"])
     first = await block1.process({
         "task": "triple the length", "variables": {"length_m": 4},
@@ -263,11 +263,11 @@ async def test_v2_cache_survives_a_full_store_round_trip():
     assert first["status"] == "success"
     assert first.get("cache_hit") is False
     assert block1.llm_calls == 1
-    store.save(session)                      # caller persists the turn
+    await store.save(session)                      # caller persists the turn
 
     # Turn 2: a fresh session object is loaded from the store; the cached
     # code must be there, so process() hits the cache and skips the LLM.
-    reloaded = store.get("round-trip")
+    reloaded = await store.get("round-trip")
     assert reloaded is not None
     block2 = _MockLLMBlock([])               # no scripted code: LLM use -> error
     second = await block2.process({

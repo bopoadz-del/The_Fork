@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -18,6 +16,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: thefork-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
 
   cerebrum-blocks:
     build: .
@@ -40,10 +47,14 @@ services:
       - HOST=0.0.0.0
       - DATA_DIR=/app/data
       - DATABASE_URL=postgresql+psycopg://thefork:thefork@postgres:5432/thefork
+      - REDIS_URL=redis://redis:6379/0
+      - UVICORN_WORKERS=2
       - PYTHONUNBUFFERED=1
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -52,16 +63,31 @@ services:
       retries: 3
       start_period: 40s
 
-  # Optional: Redis for caching (future feature)
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: ai-block-redis
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: unless-stopped
+  worker:
+    build: .
+    container_name: thefork-worker
+    command: ["python", "-m", "app.worker.run_worker"]
+    volumes:
+      - ./data:/app/data
+    # Same fix as cerebrum-blocks above, and the compose-health CI job caught
+    # this one on a FRESH CLONE: `./.env` is gitignored, so bind-mounting it
+    # makes Docker create a DIRECTORY at that path. Every later
+    # `docker compose` command then dies with "failed to read .env: is a
+    # directory" — after the stack had already come up healthy, which is the
+    # kind of failure that is very hard to attribute by hand.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATA_DIR=/app/data
+      - DATABASE_URL=postgresql+psycopg://thefork:thefork@postgres:5432/thefork
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-#   redis_data:
+  redis_data:

@@ -74,10 +74,10 @@ def stats():
 
 
 @router.get("/v1/health")
-def health_v1():
+async def health_v1():
     """Health check (v1 API) with observability enrichment."""
     payload = health()
-    payload.update(get_observability_health_payload())
+    payload.update(await get_observability_health_payload())
     return payload
 
 
@@ -85,6 +85,6 @@ def health_v1():
 async def full_health():
     """Complete system health with predictions."""
     if not MONITORING_AVAILABLE:
-        return health_v1()
+        return await health_v1()
     block = get_monitoring_block()
     return await block.execute({"action": "health_report"})
