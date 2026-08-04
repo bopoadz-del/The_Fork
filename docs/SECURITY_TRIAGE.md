@@ -76,3 +76,18 @@ absolute guarantee.
 The `fast_search: bool` field surfaced at `app/routers/rag.py:40,87` reports whether sqlite-vec is in use. After the PRs #19-#23 retrospective, the read path was numpy-only and the write path was populating `vec_chunks` for nothing — pure overhead. `_try_load_vec` now returns `False` unconditionally, so `fast_search` always reports `False`.
 
 The field stays in the API response schema (removing it would be a breaking change for the frontend). When `search()` is wired to vec0 with a per-project post-filter (planned at >10k chunks per project), restore `_try_load_vec`'s probe and re-add the write mirrors in lock-step with the read.
+
+### `PYSEC-2026-2132` — `click==8.1.8` (pip-audit ignore-list)
+
+- **Rule**: known vulnerability in click < 8.3.3
+- **Why ignored**: unfixable while `gtts` is a dependency — gtts 2.5.4 (its
+  latest release) declares `click<8.2,>=7.1`, so pinning the fixed click makes
+  the lockfile `ResolutionImpossible` under pip's resolver (which is also what
+  pip-audit runs). Exposure adjudicated as nil: click in this tree only backs
+  the CLI entry points of `arq`, `gtts`, and `ddgs`; no server code path
+  feeds click untrusted input.
+- **Where recorded**: `--ignore-vuln PYSEC-2026-2132` in
+  `.github/workflows/dependency-audit.yml` (`IGNORE_ARGS`).
+- **What would change the dismissal**: a gtts release relaxing the click cap
+  (then bump both and delete the ignore), dropping gtts, or any code path that
+  invokes click parsing on request-derived input.

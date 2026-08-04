@@ -16,7 +16,7 @@ aiofiles>=23.2.0
 python-dotenv>=1.0.0
 
 # HTTP Client
-aiohttp>=3.9.0
+aiohttp>=3.14.3
 httpx>=0.25.0
 requests>=2.25.0
 
@@ -55,7 +55,7 @@ model2vec>=0.4.0
 RestrictedPython>=7.0
 
 # Encryption & JWT
-cryptography>=42.0.0
+cryptography>=50.0.0
 PyJWT>=2.8.0
 
 # Multi-worker shared state & observability
@@ -94,10 +94,10 @@ pydub>=0.25.0
 google-auth>=2.23.0
 
 # Testing
-# Upper bounds keep pytest-asyncio on the 0.x branch and pytest on 8.x,
-# which is the combination the suite currently passes against.
-pytest>=7.4.0,<9.0
-pytest-asyncio>=0.21.0,<1.0
+# Floors raised to pytest 9 / pytest-asyncio 1.x for PYSEC-2026-1845 —
+# the suite passes against this combination (verified 2026-08-04, PRR fix PR).
+pytest>=9.0.3
+pytest-asyncio>=1.0
 pytest-cov>=4.1.0
 pytest-json-report>=1.5.0
 diff-cover>=8.0.0
