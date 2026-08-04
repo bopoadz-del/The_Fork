@@ -129,6 +129,23 @@ jobs:
           cat /tmp/health.json
           test "$code" = "200"
 
+      - name: No service bind-mounts the gitignored .env
+        # Names the failure instead of letting it surface as a generic
+        # "failed to read .env: is a directory" from whatever compose command
+        # runs next — which is what happened when the Redis merge reintroduced
+        # the bind-mount on the `worker` service. The stack had already come
+        # up HEALTHY by then, so the error pointed nowhere near the cause.
+        if: always()
+        run: |
+          if [ -d .env ]; then
+            echo "::error::A compose service bind-mounts ./.env, which is gitignored."
+            echo "::error::On a fresh clone Docker creates a DIRECTORY there and the app"
+            echo "::error::reads a directory as a file. Use env_file with required: false."
+            grep -n '\.env' docker-compose.yml || true
+            exit 1
+          fi
+          echo "no .env directory was created — no service bind-mounts it"
+
       - name: Container state and logs
         # Always, so a failure above is diagnosable without a re-run.
         if: always()

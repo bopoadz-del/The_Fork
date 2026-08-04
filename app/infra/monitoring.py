@@ -246,7 +246,8 @@ def record_block_execution(block_name: str, duration_ms: int, status: str) -> No
         logger.debug("block_metrics.record failed for %s", block_name, exc_info=True)
 
 
-def get_observability_health_payload() -> Dict[str, Any]:
+async def get_observability_health_payload() -> Dict[str, Any]:
+    from app.core.redis_client import redis_health
     snap = block_metrics.snapshot()
     return {
         "observability": {
@@ -255,6 +256,7 @@ def get_observability_health_payload() -> Dict[str, Any]:
             "request_tracing": True,
         },
         "block_metrics": snap["blocks"],
+        "redis": await redis_health(),
     }
 
 

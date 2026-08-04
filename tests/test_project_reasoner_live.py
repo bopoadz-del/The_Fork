@@ -20,7 +20,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.asyncio
 async def test_live_reasoner_answers_critical_path_question():
-    session = InMemorySessionStore().get_or_create("live1")
+    session = await InMemorySessionStore().get_or_create("live1")
     session.data["activities"] = [
         {"id": "A", "duration": 3, "predecessors": []},
         {"id": "B", "duration": 5, "predecessors": [{"predecessor_id": "A"}]},
@@ -37,7 +37,7 @@ async def test_live_reasoner_answers_critical_path_question():
 
 @pytest.mark.asyncio
 async def test_live_reasoner_follow_up_uses_prior_state():
-    session = InMemorySessionStore().get_or_create("live2")
+    session = await InMemorySessionStore().get_or_create("live2")
     session.data["activities"] = [
         {"id": "A", "duration": 3, "predecessors": []},
         {"id": "B", "duration": 5, "predecessors": [{"predecessor_id": "A"}]},

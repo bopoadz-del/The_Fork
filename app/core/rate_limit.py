@@ -21,6 +21,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from app.core.redis_client import get_sync_redis_client
+
 _WINDOW_SECONDS = 60.0
 _lock = threading.Lock()
 _buckets: Dict[str, Deque[float]] = {}
@@ -80,19 +82,31 @@ class RedisRateLimiter:
 
     _PREFIX = "ratelimit:"
 
-    def __init__(self, redis_url: str):
-        import redis  # lazy import — optional when REDIS_URL is unset
+    def __init__(self):
+        self._client = None
+        self._script = None
 
-        self._client = redis.from_url(redis_url, decode_responses=True)
+    def _ensure_client(self) -> bool:
+        if self._client is not None:
+            return True
+        client = get_sync_redis_client()
+        if client is None:
+            return False
+        self._client = client
         self._script = self._client.register_script(_SLIDING_WINDOW_LUA)
+        return True
 
     def ping(self) -> None:
+        if not self._ensure_client():
+            raise ConnectionError("Redis unavailable")
         self._client.ping()
 
     def check_and_record(self, identity: str) -> bool:
         limit = _limit()
         if limit <= 0:
             return True
+        if not self._ensure_client():
+            return _in_memory_check_and_record(identity)
         key = f"{self._PREFIX}{identity}"
         try:
             allowed = self._script(
@@ -101,7 +115,7 @@ class RedisRateLimiter:
             )
             return bool(allowed)
         except Exception:
-            # Redis hiccup — fail open so a cache outage doesn't brick the API.
+            # Fail-open: a Redis outage should not block API traffic.
             return True
 
 
@@ -111,7 +125,7 @@ def init_rate_limiter() -> str:
     redis_url = os.getenv("REDIS_URL", "").strip()
     if redis_url:
         try:
-            limiter = RedisRateLimiter(redis_url)
+            limiter = RedisRateLimiter()
             limiter.ping()
             _redis_limiter = limiter
             _use_redis = True

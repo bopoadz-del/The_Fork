@@ -30,6 +30,8 @@ anyio==4.13.0
     #   sse-starlette
     #   starlette
     #   watchfiles
+arq==0.28.0
+    # via -r requirements.in
 attrs==26.1.0
     # via
     #   aiohttp
@@ -61,6 +63,7 @@ charset-normalizer==3.4.7
     #   requests
 click==8.1.8
     # via
+    #   arq
     #   ddgs
     #   gtts
     #   uvicorn
@@ -118,6 +121,8 @@ h2==4.3.0
     # via httpx
 hf-xet==1.5.1
     # via huggingface-hub
+hiredis==3.4.0
+    # via redis
 hpack==4.1.0
     # via h2
 httpcore==1.0.9
@@ -279,6 +284,7 @@ pyjwt[crypto]==2.13.0
     # via
     #   -r requirements.in
     #   mcp
+    #   redis
 pymupdf==1.27.2.3
     # via -r requirements.in
 pyparsing==3.3.2
@@ -328,8 +334,10 @@ pyyaml==6.0.3
     #   uvicorn
 rarfile==4.2
     # via -r requirements.in
-redis==8.0.0
-    # via -r requirements.in
+redis[hiredis]==5.3.1
+    # via
+    #   -r requirements.in
+    #   arq
 referencing==0.37.0
     # via
     #   jsonschema
@@ -436,7 +444,7 @@ uvicorn[standard]==0.49.0
     # via
     #   -r requirements.in
     #   mcp
-uvloop==0.22.1
+uvloop==0.22.1; platform_system != "Windows"
     # via uvicorn
 watchfiles==1.2.0
     # via uvicorn

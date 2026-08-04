@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from app.dependencies import require_api_key, block_instances, _create_block_instance
 from app.blocks import BLOCK_REGISTRY
 from app.core import file_crypto
+from app.core.projects import create_ingestion_job
+from app.worker.ingest_queue import enqueue_ingest
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -116,12 +118,17 @@ async def upload_v1(
                     response["document_id"] = doc.get("id") if isinstance(doc, dict) else None
                     response["indexed"] = True
                     response["indexing_status"] = "scheduled"
-                    if background_tasks is not None and response["document_id"]:
-                        background_tasks.add_task(
-                            doc_index.maybe_eager_index,
-                            project_id,
-                            response["document_id"],
-                        )
+                    if response["document_id"]:
+                        job = create_ingestion_job(project_id, response["document_id"])
+                        ok = await enqueue_ingest(project_id, response["document_id"], str(job.id))
+                        if ok:
+                            response["indexing_status"] = "queued"
+                        elif background_tasks is not None:
+                            background_tasks.add_task(
+                                doc_index.maybe_eager_index,
+                                project_id,
+                                response["document_id"],
+                            )
                 else:
                     response["indexed"] = False
                     response["indexing_status"] = "skipped_project_not_found"

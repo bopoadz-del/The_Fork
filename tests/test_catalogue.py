@@ -10,6 +10,8 @@ from app.core.catalogue import (
 from app.prompts.reasoner_system import build_reasoner_prompt
 from app.core.session_store import InMemorySessionStore
 
+import pytest
+
 
 def test_list_blocks_delegates_to_registry():
     names = list_blocks()
@@ -57,8 +59,9 @@ def test_format_catalogue_defaults_to_runtime_catalogue():
     assert "pdf" in prompt
 
 
-def test_reasoner_prompt_includes_dynamic_catalogue():
-    session = InMemorySessionStore().get_or_create("catalogue-test")
+@pytest.mark.asyncio
+async def test_reasoner_prompt_includes_dynamic_catalogue():
+    session = await InMemorySessionStore().get_or_create("catalogue-test")
     prompt = build_reasoner_prompt(session, "what tools do I have?")
     assert "AVAILABLE BLOCKS" in prompt
     assert "pdf" in prompt

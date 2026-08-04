@@ -50,15 +50,15 @@ _ACTIVITIES = [
 ]
 
 
-def _session_with_activities():
-    s = InMemorySessionStore().get_or_create("s1")
+async def _session_with_activities():
+    s = await InMemorySessionStore().get_or_create("s1")
     s.data["activities"] = _ACTIVITIES
     return s
 
 
 @pytest.mark.asyncio
 async def test_executor_runs_compute_cpm_step():
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan = ExecutionPlan(steps=[PlanStep(type="compute_cpm")])
     result = await PlanExecutor().run(plan, session)
     assert result.status == "success"
@@ -67,7 +67,7 @@ async def test_executor_runs_compute_cpm_step():
 
 @pytest.mark.asyncio
 async def test_executor_runs_compress_step():
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan = ExecutionPlan(steps=[
         PlanStep(type="compute_cpm"),
         PlanStep(type="compress", args={"reductions": {"B": 3}}),
@@ -80,7 +80,7 @@ async def test_executor_runs_compress_step():
 
 @pytest.mark.asyncio
 async def test_executor_runs_gantt_and_histogram_steps():
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan = ExecutionPlan(steps=[
         PlanStep(type="compute_cpm"),
         PlanStep(type="gantt"),
@@ -94,7 +94,7 @@ async def test_executor_runs_gantt_and_histogram_steps():
 
 @pytest.mark.asyncio
 async def test_executor_reports_unknown_step_type():
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan = ExecutionPlan(steps=[PlanStep(type="teleport")])
     result = await PlanExecutor().run(plan, session)
     assert result.status == "error"
@@ -103,7 +103,7 @@ async def test_executor_reports_unknown_step_type():
 
 @pytest.mark.asyncio
 async def test_executor_compute_cpm_without_activities_errors():
-    session = InMemorySessionStore().get_or_create("s1")  # no activities
+    session = await InMemorySessionStore().get_or_create("s1")  # no activities
     plan = ExecutionPlan(steps=[PlanStep(type="compute_cpm")])
     result = await PlanExecutor().run(plan, session)
     assert result.status == "error"
@@ -120,7 +120,7 @@ class _MockCodeGen(FormulaExecutorV2Block):
 
 @pytest.mark.asyncio
 async def test_executor_runs_generate_code_step():
-    session = InMemorySessionStore().get_or_create("s1")
+    session = await InMemorySessionStore().get_or_create("s1")
     plan = ExecutionPlan(steps=[PlanStep(
         type="generate_code",
         args={"task": "add a and b", "variables": {"a": 4, "b": 6}},
@@ -134,7 +134,7 @@ async def test_executor_runs_generate_code_step():
 
 @pytest.mark.asyncio
 async def test_generate_code_step_requires_a_task():
-    session = InMemorySessionStore().get_or_create("s1")
+    session = await InMemorySessionStore().get_or_create("s1")
     plan = ExecutionPlan(steps=[PlanStep(type="generate_code", args={})])
     result = await PlanExecutor(code_block=_MockCodeGen([])).run(plan, session)
     assert result.status == "error"
@@ -143,26 +143,30 @@ async def test_generate_code_step_requires_a_task():
 from app.prompts.reasoner_system import build_reasoner_prompt
 
 
-def test_reasoner_prompt_lists_the_phases():
-    p = build_reasoner_prompt(InMemorySessionStore().get_or_create("s"), "hi")
+@pytest.mark.asyncio
+async def test_reasoner_prompt_lists_the_phases():
+    p = build_reasoner_prompt(await InMemorySessionStore().get_or_create("s"), "hi")
     for phase in ("UNDERSTAND", "PLAN", "EXECUTE", "DELIVER"):
         assert phase in p
 
 
-def test_reasoner_prompt_advertises_step_types():
-    p = build_reasoner_prompt(InMemorySessionStore().get_or_create("s"), "hi")
+@pytest.mark.asyncio
+async def test_reasoner_prompt_advertises_step_types():
+    p = build_reasoner_prompt(await InMemorySessionStore().get_or_create("s"), "hi")
     for t in ("compute_cpm", "resource_histogram", "gantt", "compress",
               "generate_code"):
         assert t in p
 
 
-def test_reasoner_prompt_reflects_empty_session():
-    p = build_reasoner_prompt(InMemorySessionStore().get_or_create("s"), "hi")
+@pytest.mark.asyncio
+async def test_reasoner_prompt_reflects_empty_session():
+    p = build_reasoner_prompt(await InMemorySessionStore().get_or_create("s"), "hi")
     assert "no activities" in p.lower() or "not loaded" in p.lower()
 
 
-def test_reasoner_prompt_reflects_loaded_state():
-    s = _session_with_activities()
+@pytest.mark.asyncio
+async def test_reasoner_prompt_reflects_loaded_state():
+    s = await _session_with_activities()
     s.data["cpm_results"] = {"project_duration": 10}
     p = build_reasoner_prompt(s, "now compress B")
     # the prompt must tell the LLM CPM is already done, so it skips re-running
@@ -193,7 +197,7 @@ class _MockReasoner(ProjectReasonerBlock):
 
 @pytest.mark.asyncio
 async def test_reasoner_runs_full_loop():
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan_json = json.dumps({
         "understanding": "user wants the critical path",
         "steps": [{"type": "compute_cpm"}],
@@ -210,7 +214,7 @@ async def test_reasoner_runs_full_loop():
 
 @pytest.mark.asyncio
 async def test_reasoner_records_turn_in_history():
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan_json = json.dumps({"understanding": "x",
                             "steps": [{"type": "compute_cpm"}]})
     block = _MockReasoner(plan_json, "done")
@@ -232,7 +236,7 @@ async def test_reasoner_degrades_gracefully_without_context():
     """Planner returns unparsable JSON and the project has no indexed context:
     no hard error, a controlled user-facing message, sources=[], no leaked
     planner internals, and no wasted DELIVER call."""
-    session = _session_with_activities()
+    session = await _session_with_activities()
     block = _MockReasoner("not json at all", "unused")
     out = await block.process({"request": "go", "session": session})
 
@@ -260,7 +264,7 @@ async def test_reasoner_falls_back_to_rag_answer_with_sources(monkeypatch):
     monkeypatch.setattr(
         "app.core.doc_index.search_project_documents", fake_search
     )
-    session = _session_with_activities()
+    session = await _session_with_activities()
     block = _MockReasoner("prose, no json here",
                           "The concrete grade is C40 (see Spec-A).")
     out = await block.process(
@@ -291,7 +295,7 @@ async def test_fallback_sources_do_not_leak_raw_filesystem_paths(monkeypatch):
     monkeypatch.setattr(
         "app.core.doc_index.search_project_documents", fake_search
     )
-    session = _session_with_activities()
+    session = await _session_with_activities()
     block = _MockReasoner("no json", "Per Contract.docx, …")
     out = await block.process(
         {"request": "summary?", "session": session, "project_id": "p1"}
@@ -325,7 +329,7 @@ class _DeliverFailReasoner(ProjectReasonerBlock):
 @pytest.mark.asyncio
 async def test_deliver_failure_does_not_leak_internal_error():
     """A failed answer-writing call must not surface the raw exception text."""
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan = json.dumps({"understanding": "cp", "steps": [{"type": "compute_cpm"}]})
     block = _DeliverFailReasoner(
         plan, exc=RuntimeError("groq 500 boom token=secret-xyz")
@@ -348,7 +352,7 @@ async def test_deliver_failure_preserves_sources(monkeypatch):
     monkeypatch.setattr(
         "app.core.doc_index.search_project_documents", fake_search
     )
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan = json.dumps({"understanding": "cp", "steps": [{"type": "compute_cpm"}]})
     block = _DeliverFailReasoner(plan, exc=RuntimeError("deliver down"))
     out = await block.process(
@@ -362,7 +366,7 @@ async def test_deliver_failure_preserves_sources(monkeypatch):
 @pytest.mark.asyncio
 async def test_deliver_empty_answer_falls_back_controlled():
     """An empty DELIVER answer is treated as a failure, not surfaced blank."""
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan = json.dumps({"understanding": "cp", "steps": [{"type": "compute_cpm"}]})
     block = _DeliverFailReasoner(plan, deliver_text="   ")
     out = await block.process({"request": "cp?", "session": session})
@@ -374,7 +378,7 @@ async def test_deliver_empty_answer_falls_back_controlled():
 async def test_reasoner_valid_plan_is_unaffected_by_fallback():
     """The graceful-degradation path must not change the happy path: a valid
     plan still executes and returns status success with no fallback sources."""
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan_json = json.dumps({"understanding": "critical path",
                             "steps": [{"type": "compute_cpm"}]})
     block = _MockReasoner(plan_json, "Critical path is A-B-C.")
@@ -387,7 +391,7 @@ async def test_reasoner_valid_plan_is_unaffected_by_fallback():
 
 @pytest.mark.asyncio
 async def test_reasoner_reports_step_failure():
-    session = InMemorySessionStore().get_or_create("s1")   # no activities
+    session = await InMemorySessionStore().get_or_create("s1")   # no activities
     plan_json = json.dumps({"understanding": "x",
                             "steps": [{"type": "compute_cpm"}]})
     block = _MockReasoner(plan_json, "unused")
@@ -417,7 +421,7 @@ class _CapturingReasoner(_MockReasoner):
 async def test_deliver_prompt_contains_this_turn_step_output():
     # The DELIVER prompt must be built from this turn's StepResult.output,
     # not from a blunt slice of the whole session blob.
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan_json = json.dumps({"understanding": "critical path",
                             "steps": [{"type": "compute_cpm"}]})
     block = _CapturingReasoner(plan_json, "answer")
@@ -436,7 +440,7 @@ async def test_deliver_prompt_contains_this_turn_step_output():
 async def test_from_session_skips_non_allowlisted_key():
     # generate_code's `from_session` is LLM-controlled — a key outside the
     # allowlist must be silently skipped, not injected into the sandbox.
-    session = InMemorySessionStore().get_or_create("s1")
+    session = await InMemorySessionStore().get_or_create("s1")
     session.data["cpm_results"] = {"project_duration": 10}   # allowlisted
     session.data["secret"] = "leak-me"                       # NOT allowlisted
 
@@ -475,7 +479,7 @@ def test_extract_json_parses_clean_json_directly():
 @pytest.mark.asyncio
 async def test_reasoner_handles_none_request():
     # request=None must yield the error dict, not an AttributeError.
-    session = _session_with_activities()
+    session = await _session_with_activities()
     block = _MockReasoner("unused", "unused")
     out = await block.process({"request": None, "session": session})
     assert out["status"] == "error"
@@ -484,7 +488,7 @@ async def test_reasoner_handles_none_request():
 
 @pytest.mark.asyncio
 async def test_step_result_carries_output():
-    session = _session_with_activities()
+    session = await _session_with_activities()
     plan = ExecutionPlan(steps=[PlanStep(type="compute_cpm")])
     result = await PlanExecutor().run(plan, session)
     assert result.step_results[0].output is not None

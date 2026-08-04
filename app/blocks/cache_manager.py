@@ -1,10 +1,14 @@
 """Cache Manager Block - Redis wrapper with in-memory fallback."""
 
 import json
-import os
+import logging
 import time
 from typing import Any, Dict, Optional
+from app.core.redis_client import get_redis_client
 from app.core.universal_base import UniversalBlock
+
+
+logger = logging.getLogger(__name__)
 
 
 class CacheManagerBlock(UniversalBlock):
@@ -20,7 +24,6 @@ class CacheManagerBlock(UniversalBlock):
     default_config = {
         "default_ttl": 3600,
         "max_local_entries": 10000,
-        "redis_url": os.environ.get("REDIS_URL")  # falls back to in-memory if unset
     }
 
     ui_schema = {
@@ -46,18 +49,9 @@ class CacheManagerBlock(UniversalBlock):
     def __init__(self, hal_block=None, config=None):
         super().__init__(hal_block, config)
         self._local_cache: Dict[str, Dict] = {}
-        self._redis = None
-        self._init_redis()
 
-    def _init_redis(self):
-        redis_url = self.config.get("redis_url") or self.default_config.get("redis_url")
-        if redis_url:
-            try:
-                import redis
-                self._redis = redis.from_url(redis_url, decode_responses=True)
-                self._redis.ping()
-            except Exception:
-                self._redis = None
+    async def _redis(self):
+        return await get_redis_client()
 
     async def process(self, input_data: Any, params: Dict = None) -> Dict:
         """Route to appropriate cache action."""
@@ -83,14 +77,15 @@ class CacheManagerBlock(UniversalBlock):
         if not key:
             return {"status": "error", "error": "No key provided"}
 
-        if self._redis:
+        redis = await self._redis()
+        if redis:
             try:
-                raw = self._redis.get(key)
+                raw = await redis.get(key)
                 if raw is None:
                     return {"status": "success", "found": False, "key": key}
                 return {"status": "success", "found": True, "key": key, "value": json.loads(raw)}
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
+            except Exception as exc:
+                logger.warning("Redis cache operation failed, falling back to local dict: %s", exc)
 
         entry = self._local_cache.get(key)
         if entry is None or entry.get("expires", float("inf")) < time.time():
@@ -106,12 +101,13 @@ class CacheManagerBlock(UniversalBlock):
         value = params.get("value") or (input_data.get("value") if isinstance(input_data, dict) else None)
         ttl = params.get("ttl", self.config.get("default_ttl", 3600))
 
-        if self._redis:
+        redis = await self._redis()
+        if redis:
             try:
-                self._redis.setex(key, ttl, json.dumps(value))
+                await redis.setex(key, ttl, json.dumps(value))
                 return {"status": "success", "action": "set", "key": key, "ttl": ttl}
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
+            except Exception as exc:
+                logger.warning("Redis cache operation failed, falling back to local dict: %s", exc)
 
         # Enforce local limit
         if len(self._local_cache) >= self.config.get("max_local_entries", 10000):
@@ -126,12 +122,13 @@ class CacheManagerBlock(UniversalBlock):
         if not key:
             return {"status": "error", "error": "No key provided"}
 
-        if self._redis:
+        redis = await self._redis()
+        if redis:
             try:
-                deleted = self._redis.delete(key)
+                deleted = await redis.delete(key)
                 return {"status": "success", "deleted": bool(deleted), "key": key}
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
+            except Exception as exc:
+                logger.warning("Redis cache operation failed, falling back to local dict: %s", exc)
 
         existed = key in self._local_cache
         self._local_cache.pop(key, None)
@@ -143,11 +140,12 @@ class CacheManagerBlock(UniversalBlock):
         if not key:
             return {"status": "error", "error": "No key provided"}
 
-        if self._redis:
+        redis = await self._redis()
+        if redis:
             try:
-                return {"status": "success", "exists": bool(self._redis.exists(key)), "key": key}
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
+                return {"status": "success", "exists": bool(await redis.exists(key)), "key": key}
+            except Exception as exc:
+                logger.warning("Redis cache operation failed, falling back to local dict: %s", exc)
 
         entry = self._local_cache.get(key)
         exists = entry is not None and entry.get("expires", float("inf")) >= time.time()
@@ -155,12 +153,13 @@ class CacheManagerBlock(UniversalBlock):
 
     async def flush(self, input_data: Any = None, params: Dict = None) -> Dict:
         """Clear all cached entries."""
-        if self._redis:
+        redis = await self._redis()
+        if redis:
             try:
-                self._redis.flushdb()
+                await redis.flushdb()
                 return {"status": "success", "action": "flush"}
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
+            except Exception as exc:
+                logger.warning("Redis cache operation failed, falling back to local dict: %s", exc)
 
         count = len(self._local_cache)
         self._local_cache.clear()
@@ -168,17 +167,18 @@ class CacheManagerBlock(UniversalBlock):
 
     async def stats(self, input_data: Any = None, params: Dict = None) -> Dict:
         """Return cache statistics."""
-        if self._redis:
+        redis = await self._redis()
+        if redis:
             try:
-                info = self._redis.info()
+                info = await redis.info()
                 return {
                     "status": "success",
                     "backend": "redis",
-                    "keys": self._redis.dbsize(),
+                    "keys": await redis.dbsize(),
                     "used_memory_human": info.get("used_memory_human", "unknown")
                 }
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
+            except Exception as exc:
+                logger.warning("Redis cache operation failed, falling back to local dict: %s", exc)
 
         # Clean expired local entries
         now = time.time()
@@ -192,11 +192,12 @@ class CacheManagerBlock(UniversalBlock):
 
     async def health_check(self, input_data: Any = None, params: Dict = None) -> Dict:
         """Health check for cache manager."""
+        client = await self._redis()
         return {
             "status": "success",
             "block": self.name,
             "version": self.version,
-            "redis_connected": self._redis is not None
+            "redis_connected": client is not None
         }
 
     def _resolve_key(self, input_data: Any, params: Dict) -> Optional[str]:

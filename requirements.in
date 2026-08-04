@@ -60,6 +60,7 @@ PyJWT>=2.8.0
 
 # Multi-worker shared state & observability
 redis>=5.0.0
+arq>=0.26
 sentry-sdk[fastapi]>=2.0.0
 # /metrics Prometheus exposition (PR #98) — app/routers/monitoring.py
 # returns 503 without it.
