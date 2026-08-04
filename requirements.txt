@@ -69,7 +69,7 @@ click==8.1.8
     #   uvicorn
 coverage[toml]==7.14.1
     # via pytest-cov
-cryptography==48.0.1
+cryptography==50.0.0
     # via
     #   -r requirements.in
     #   google-auth
@@ -444,7 +444,7 @@ uvicorn[standard]==0.49.0
     # via
     #   -r requirements.in
     #   mcp
-uvloop==0.22.1; platform_system != "Windows"
+uvloop==0.22.1
     # via uvicorn
 watchfiles==1.2.0
     # via uvicorn

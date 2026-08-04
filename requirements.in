@@ -55,7 +55,7 @@ model2vec>=0.4.0
 RestrictedPython>=7.0
 
 # Encryption & JWT
-cryptography>=42.0.0
+cryptography>=50.0.0
 PyJWT>=2.8.0
 
 # Multi-worker shared state & observability
