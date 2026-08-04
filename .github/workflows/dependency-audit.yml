@@ -5,11 +5,21 @@ name: dependency-audit
 # plus a weekly schedule so newly-disclosed advisories surface even when the
 # tree is quiet.
 #
-# ROLLOUT: report-only for now (continue-on-error) so a single pre-existing
-# or unfixable transitive advisory does not red-wall main the day this lands.
-# The findings are visible in the job log / summary. Promote to a hard gate
-# (remove continue-on-error) once the current advisory list is triaged to zero
-# or captured in an ignore list.
+# ENFORCING since 2026-08-04. The "report-only during rollout" phase promised
+# a promotion once the advisory list hit zero — it never happened, and the
+# green "pip-audit pass" check on PRs was structurally incapable of failing
+# (`continue-on-error` + `|| true`) while two HIGH-severity runtime pins rode
+# through review (cryptography CVE-2026-69247, aiohttp CVE-2026-69244).
+# Found in the 2026-08-04 PRR; the advisory list was then fixed to zero.
+#
+# To ignore an adjudicated-unfixable advisory: add `--ignore-vuln <ID>` to
+# IGNORE_ARGS below WITH a comment saying why and what would change the call
+# (same convention as docs/SECURITY_TRIAGE.md). Never re-add `|| true`.
+#
+# Scope note: requirements-ml.txt is audited report-only in a separate step —
+# it is a large ML dependency tree (torch etc.) that is not installed in the
+# production web image; its findings are surfaced, not gating. That scope
+# choice is stated here so it reads as a decision, not an oversight.
 
 on:
   pull_request:
@@ -29,6 +39,18 @@ jobs:
   pip-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # Adjudicated ignores go here, one `--ignore-vuln <ID>` per advisory,
+      # each with a why-comment. Empty = everything gates.
+      #
+      # PYSEC-2026-2132 (click 8.1.8, fixed 8.3.3): UNFIXABLE while gtts is a
+      # dependency — gtts 2.5.4 (its latest release) hard-caps click<8.2, so
+      # pinning click 8.3.3 makes the lockfile ResolutionImpossible. Exposure
+      # adjudicated as nil: click only backs the CLI entry points of
+      # arq/gtts/ddgs; no server code path feeds it untrusted input. Durable
+      # record in docs/SECURITY_TRIAGE.md. Re-visit when gtts releases with a
+      # relaxed cap, or if gtts is dropped.
+      IGNORE_ARGS: "--ignore-vuln PYSEC-2026-2132"
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +62,15 @@ jobs:
       - name: Install pip-audit
         run: python -m pip install --upgrade pip pip-audit
 
-      - name: Audit requirements.txt
-        continue-on-error: true # report-only during rollout — see header note
+      - name: Audit requirements.txt (gating)
         run: |
-          pip-audit --requirement requirements.txt --progress-spinner off || true
+          # shellcheck disable=SC2086 — IGNORE_ARGS is deliberately word-split
+          pip-audit --requirement requirements.txt --progress-spinner off $IGNORE_ARGS
+
+      - name: Audit requirements-ml.txt (report-only — see scope note)
+        continue-on-error: true
+        run: |
+          pip-audit --requirement requirements-ml.txt --progress-spinner off || {
+            echo "::warning::requirements-ml.txt has open advisories (report-only — not installed in the production web image)"
+            exit 1
+          }
