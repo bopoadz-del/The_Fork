@@ -1,0 +1,48 @@
+name: health-watch
+
+# Minimum-viable production alerting, from the repo side.
+#
+# The 2026-08-04 PRR found that nothing pages a human when the live service
+# degrades: /health deliberately always returns 200 (it is Render's liveness
+# probe — see app/routers/health.py), so Render's own health alerting can
+# never fire on a degraded-but-up service, and Sentry only emails on ERROR
+# events. An outage was discoverable only by the client.
+#
+# This workflow polls the fail-closed readiness endpoint (/ready → 503 when
+# the database is unreachable) on a schedule. When it fails, GitHub notifies
+# the repository owner (default notification setting for failed scheduled
+# workflows on watched repos). It is deliberately dumb: no thresholds, no
+# state — two attempts a minute apart so a single blip doesn't page.
+#
+# This does NOT replace real alerting (Render notifications + a Sentry alert
+# rule are dashboard-side, operator-gated). It replaces *nothing*.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: GET /ready (fail-closed readiness)
+        run: |
+          url="https://the-fork.onrender.com/ready"
+          for attempt in 1 2; do
+            code=$(curl -sS -o /tmp/ready.json -w '%{http_code}' --max-time 30 "$url" || echo "000")
+            echo "attempt $attempt: GET $url -> $code"
+            cat /tmp/ready.json 2>/dev/null || true
+            echo
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            # One retry a minute later so a transient blip doesn't page.
+            [ "$attempt" = "1" ] && sleep 60
+          done
+          echo "::error::/ready returned $code twice — the live service is not serving. See docs/backup-and-recovery.md and the Render dashboard (srv-d8hdc6ek1jcs739rq5sg)."
+          exit 1
