@@ -1056,11 +1056,23 @@ def admin_corpus_collections(
 # ──────────────────────────────────────────────────────────────────────────
 #
 # Accepts a JSON payload of projects/documents/chunks and inserts them
-# into the production tables with ON CONFLICT DO NOTHING semantics so it
-# can be safely retried mid-batch. Designed for the one-time migration
-# of the local SQLite drive_archive corpus (~142k chunks) to Render
-# Postgres, where direct psycopg from outside the Render perimeter is
-# blocked by the pgsql ipAllowList default.
+# into the production tables. Designed for operator loads (the original
+# drive_archive migration, the dd-2023-118 Vol 3 backfill) where direct
+# psycopg from outside the Render perimeter is blocked by the pgsql
+# ipAllowList default.
+#
+# 2026-08-05 contract fix: chunk writes used to go through the static
+# ``RagChunk`` model, which maps the RETIRED legacy ``chunks`` table.
+# Production retrieval reads the namespaced table (``chunks_v2`` via
+# RAG_VECTOR_NAMESPACE) — so every chunk loaded through this endpoint
+# after the namespace split was invisible to retrieval: a silent no-op
+# for the endpoint's stated purpose. Chunks now go through
+# ``VectorStore.upsert_chunks`` on the ACTIVE namespace, which also
+# enforces the embedding-dimension and model-identity guards. Semantics
+# changed with it: chunk writes are a per-document idempotent REPLACE
+# (send whole documents; a retry re-sends the doc), no longer additive
+# ON CONFLICT DO NOTHING per chunk row. Projects/documents keep the old
+# additive semantics.
 
 class _BulkProjectRow(BaseModel):
     id: str
@@ -1095,6 +1107,9 @@ class _BulkInsertRequest(BaseModel):
     projects: List[_BulkProjectRow] = []
     documents: List[_BulkDocumentRow] = []
     chunks: List[_BulkChunkRow] = []
+    # None -> the ACTIVE namespace (RAG_VECTOR_NAMESPACE, prod "v2"). Explicit
+    # "" would target the retired legacy table — allowed only deliberately.
+    namespace: Optional[str] = None
 
 
 @router.post("/v1/admin/corpus/bulk-insert")
@@ -1104,14 +1119,16 @@ def admin_corpus_bulk_insert(
 ):
     """Idempotent bulk insert of projects + documents + chunks.
 
-    Insert order respects FK: projects -> documents -> chunks. Every
-    statement uses ON CONFLICT DO NOTHING so a partial batch can be
-    re-sent without dup-key errors. Returns inserted-count per table
-    (rows that hit the ON CONFLICT path are NOT counted).
+    Insert order respects FK: projects -> documents -> chunks. Projects and
+    documents use existing-row-skip semantics (a partial batch can be
+    re-sent without dup-key errors; skipped rows are NOT counted).
 
-    Embedding lists are converted to pgvector format via the same
-    `CAST(:embedding AS vector)` shape the existing migrate-sqlite path
-    uses (compatible with the chunks.embedding vector(256) column).
+    Chunks go through ``VectorStore.upsert_chunks`` on the request's
+    namespace (default: the ACTIVE retrieval namespace) — a per-document
+    idempotent REPLACE. Send complete documents; re-sending a document
+    re-writes exactly its own chunks. The store's embedding-dimension and
+    model-identity guards apply: a payload whose vectors don't match the
+    namespace's embedder returns 400 instead of writing unsearchable rows.
     """
     _require_admin(auth)
 
@@ -1119,7 +1136,18 @@ def admin_corpus_bulk_insert(
     import numpy as np
 
     from app.core.db import SessionLocal
-    from app.core.models import Document, Project, RagChunk
+    from app.core.models import Document, Project, rag_chunk_table_name
+    from app.core.rag.vector_store import get_store
+
+    # Resolve + validate the namespace BEFORE any row is written.
+    try:
+        namespace_table = rag_chunk_table_name(
+            req.namespace if req.namespace is not None
+            else os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    store = get_store(namespace=req.namespace) if req.namespace is not None else get_store()
 
     now_iso = datetime.now(timezone.utc).isoformat()
     counts: Dict[str, int] = {"projects": 0, "documents": 0, "chunks": 0,
@@ -1156,22 +1184,51 @@ def admin_corpus_bulk_insert(
             counts["documents"] += 1
         session.flush()
 
-        # ── chunks (embedding stored via EmbeddingVector adapter) ──────
-        for c in req.chunks:
-            counts["chunks_seen"] += 1
-            if session.get(RagChunk, c.chunk_id) is not None:
-                continue
-            session.add(RagChunk(
-                chunk_id=c.chunk_id, project_id=c.project_id,
-                doc_id=c.doc_id, chunk_index=c.chunk_index,
-                text=c.text,
-                embedding=np.asarray(c.embedding, dtype=np.float32),
-                created_at=c.created_at or now_iso,
-            ))
-            counts["chunks"] += 1
         session.commit()
 
-    return {"status": "ok", "counts": counts}
+    # ── chunks — per-document idempotent upsert into the ACTIVE namespace ──
+    # Grouped so each document is one ``upsert_chunks`` call (replace-all for
+    # that doc). Ordered by chunk_index so text order survives the transport.
+    by_doc: Dict[tuple, List[_BulkChunkRow]] = {}
+    for c in req.chunks:
+        counts["chunks_seen"] += 1
+        by_doc.setdefault((c.project_id, c.doc_id), []).append(c)
+
+    # Validate EVERY embedding's dimension before the first write, so a bad
+    # payload is rejected whole — never some docs written and others not.
+    for (project_id, doc_id), rows in by_doc.items():
+        for r in rows:
+            if len(r.embedding) != store.dim:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"embedding dim {len(r.embedding)} != store dim "
+                        f"{store.dim} (doc {doc_id}) — payload was embedded "
+                        f"with a different model than namespace "
+                        f"{namespace_table!r} uses; nothing was written"
+                    ),
+                )
+
+    verified: Dict[str, int] = {}
+    for (project_id, doc_id), rows in by_doc.items():
+        rows.sort(key=lambda r: r.chunk_index)
+        # PostgreSQL rejects NUL bytes in text — same scrub as extraction.
+        texts = [r.text.replace("\x00", "") for r in rows]
+        emb = np.asarray([r.embedding for r in rows], dtype=np.float32)
+        try:
+            written = store.upsert_chunks(project_id, doc_id, texts, emb)
+        except ValueError as exc:
+            # Residual store-side guard (model identity) — surfaced, not 500.
+            raise HTTPException(status_code=400, detail=str(exc))
+        counts["chunks"] += written
+        verified[doc_id] = store.count_by_doc(project_id).get(doc_id, 0)
+
+    return {
+        "status": "ok",
+        "counts": counts,
+        "namespace_table": namespace_table,
+        "verified_chunks_by_doc": verified,
+    }
 
 
 class _DeleteDocsRequest(BaseModel):
