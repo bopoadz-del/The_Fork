@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.db import SessionLocal, engine
-from app.core.models import Document, Project, RagChunk, User
+from app.core.models import Document, Project, User
+from app.core.rag.vector_store import get_store
 from app.dependencies import require_api_key, require_user
 
 
@@ -38,17 +39,18 @@ def _admin_override():
 
 
 def _ensure_schema(monkeypatch):
-    # Bulk-insert is the legacy migration path: it writes 256-dim vectors to
-    # the legacy ``chunks`` table. Force the test process to use that same
-    # namespace/dimension so reads and writes hit the same table.
-    monkeypatch.setenv("RAG_VECTOR_NAMESPACE", "")
+    # Bulk-insert writes through the ACTIVE namespaced store (the 2026-08-05
+    # contract fix — the old code wrote the retired legacy ``chunks`` table,
+    # which retrieval no longer reads, and these tests used to force the
+    # legacy namespace to paper over exactly that mismatch). A fake embedder
+    # keeps the store dimension small and model-free.
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
     from app.core.rag import embeddings as _emb, vector_store as _vs
     _emb.reset_embedder_cache()
     _vs.reset_store_cache()
     from app.core.projects import init_db as init_projects_db
     init_projects_db()
-    RagChunk.__table__.create(bind=engine, checkfirst=True)
+    get_store()  # creates the namespaced chunk table
     _ensure_test_admin()
 
 
@@ -69,8 +71,10 @@ def _ensure_test_admin():
 
 
 def _wipe(pid: str):
+    store = get_store()
+    for doc_id in list(store.count_by_doc(pid)):
+        store.delete_doc(pid, doc_id)
     with SessionLocal() as session:
-        session.query(RagChunk).filter(RagChunk.project_id == pid).delete()
         session.query(Document).filter(Document.project_id == pid).delete()
         session.query(Project).filter(Project.id == pid).delete()
         session.commit()
@@ -79,7 +83,7 @@ def _wipe(pid: str):
 def _bulk_payload(pid: str, docs: list[tuple[str, int]]):
     """Build a bulk-insert payload with ``docs`` as (doc_id, chunk_count)."""
     now = datetime.now(timezone.utc).isoformat()
-    vec = [0.0] * 256
+    vec = [0.0] * get_store().dim  # match the active namespace's store
     projects = [{"id": pid, "name": f"Project {pid}", "user_id": "test-admin",
                  "status": "active", "created_at": now}]
     documents = []
