@@ -30,6 +30,7 @@ FLOORS = {
     "aiohttp": ((3, 14, 3), "CVE-2026-69244 (HIGH, OOB heap read) + CVE-2026-69243 (request smuggling)"),
     "cryptography": ((50, 0, 0), "CVE-2026-69247 (HIGH, Bleichenbacher oracle in PKCS#7 decrypt)"),
     "pytest": ((9, 0, 3), "PYSEC-2026-1845"),
+    "h2": ((4, 4, 1), "GHSA h2 < 4.4.1 (2026-08-08, both requirements files)"),
 }
 
 REQUIREMENT_FILES = ["requirements.txt", "requirements-ml.txt"]
@@ -81,3 +82,37 @@ def test_floors_cover_the_packages_they_claim():
             all_pins.update(_pins(path))
     missing = [pkg for pkg in FLOORS if pkg not in all_pins]
     assert not missing, f"floor entries match no pin in any requirements file: {missing}"
+
+
+# Environment markers that were hand-added to the LOCKFILE and which
+# pip-compile does not regenerate — so every re-resolve silently drops them.
+#
+# uvloop: Dependabot PR #321 (h2 bump, 2026-08-08) rewrote the pin as a bare
+# `uvloop==0.22.1`. uvloop publishes no Windows wheels, so that breaks
+# `pip install -r requirements.txt` on the maintainer's own machine — and CI
+# never catches it, because CI is Linux and installs fine either way. The
+# marker is not in requirements.in; it exists only here, which is exactly why
+# it needs a test rather than a comment.
+REQUIRED_MARKERS = [
+    ("requirements.txt", "uvloop==", 'platform_system != "Windows"',
+     "uvloop has no Windows wheels; without the marker pip install fails on Windows"),
+]
+
+
+def test_handwritten_environment_markers_survive_a_re_resolve():
+    violations = []
+    for fname, pin_prefix, marker, why in REQUIRED_MARKERS:
+        path = REPO / fname
+        if not path.exists():
+            continue
+        lines = [
+            ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()
+            if ln.strip().startswith(pin_prefix)
+        ]
+        if not lines:
+            violations.append(f"{fname}: no pin starting {pin_prefix!r} — did the package move?")
+            continue
+        for ln in lines:
+            if marker not in ln:
+                violations.append(f"{fname}: {ln!r} lost its {marker!r} marker — {why}")
+    assert not violations, "\n".join(violations)
