@@ -37,6 +37,26 @@ def _evaluate_health() -> dict:
     }
 
 
+@router.get("/livez")
+def livez():
+    """Process liveness ONLY — deliberately touches no database.
+
+    Exists because the database moved to Neon (2026-08-09), which bills by
+    compute-time and suspends when idle. ``/health`` and ``/ready`` both run
+    a real ``SELECT 1``, and Render polls its health path continuously — so
+    pointing the platform health check at either would wake Neon on every
+    probe and hold it awake around the clock, which is precisely the cost
+    that motivated leaving Render Postgres.
+
+    This answers the only question a liveness probe should ask: is the
+    process up and serving HTTP? Dependency health is ``/health``
+    (evaluated, always 200) and ``/ready`` (fail-closed 503). Keep this
+    handler free of I/O — every dependency added here becomes a wake-up
+    on a timer.
+    """
+    return {"status": "alive", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 @router.get("/health")
 def health():
     """Liveness + evaluated component health.

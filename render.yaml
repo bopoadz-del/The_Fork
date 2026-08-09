@@ -5,35 +5,36 @@
 # dashboard and never live in this file or git. Non-secret values below are
 # safe infra config or match the application's code defaults.
 #
-# Live service: srv-d8hdc6ek1jcs739rq5sg (team bopoadz@gmail.com), oregon.
-# Applying this blueprint reconciles that service; review before `Apply`.
+# 2026-08-09 — Postgres moved OFF Render to Neon, and the background worker
+# was dropped. The stack is now exactly two Render resources:
+#
+#   * one WEB service (the-fork)  — the only compute
+#   * one REDIS instance          — cache, sessions, rate-limit window
+#
+# The database is external: DATABASE_URL is `sync: false` and holds the Neon
+# DIRECT connection string (not the `-pooler` host — psycopg3 prepares
+# statements automatically, which transaction-mode poolers can reject).
+#
+# WHY NO WORKER: the worker existed only to drain the arq ingest queue so
+# uploads processed in the background. At pilot scale, inline ingestion in
+# the web request is acceptable, and dropping it halves the compute bill.
+# Redis stays regardless — sessions and rate limiting use it too. To bring
+# the worker back, restore the `type: worker` block from git history
+# (present through 2026-08-08) and redeploy.
+#
+# NEON IS BILLED BY COMPUTE-TIME, NOT 24/7. That makes any endpoint which
+# touches the database expensive to poll: every probe wakes the compute and
+# starts a fresh billing window. `healthCheckPath` therefore points at
+# `/livez`, which is deliberately DB-FREE — see app/routers/health.py. Do
+# not repoint it at `/health` or `/ready`; both run a real `SELECT 1` and
+# Render polls the health path continuously, which would hold Neon awake
+# around the clock and defeat scale-to-zero entirely.
 
 services:
   - type: redis
     name: the-fork-redis
     plan: free
     region: oregon
-
-  - type: worker
-    name: the-fork-worker
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    plan: starter
-    region: oregon
-    branch: main
-    autoDeploy: true
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: the-fork-redis
-          property: connectionString
-      - key: DATA_DIR
-        value: /app/data
-      - key: PYTHONUNBUFFERED
-        value: "1"
 
   - type: web
     name: the-fork
@@ -59,7 +60,10 @@ services:
         - "**/*.md"
         - "LICENSE"
         - ".github/**"
-    healthCheckPath: /health
+    # DB-FREE by design — see the Neon note in the header. `/health` and
+    # `/ready` both execute a real `SELECT 1`; pointing Render's continuous
+    # health check at either would keep Neon's compute awake permanently.
+    healthCheckPath: /livez
     disk:
       name: the-fork-data
       mountPath: /app/data
