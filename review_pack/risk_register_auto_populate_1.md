@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: populate a risk register for deep excavation next to an existing hospital
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-24264838e817
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "risk_register_auto_populate", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

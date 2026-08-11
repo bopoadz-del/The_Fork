@@ -2,7 +2,7 @@
 retrieved chunk or a computed tool result, else the answer is refused.
 
 Anchored on the 2026-07-14 live incident: a cost query answered "450 SAR/m³"
-by lifting "450" out of a DG2 drawing dimension-table chunk. The gate MUST fail
+by lifting "450" out of a the client project drawing dimension-table chunk. The gate MUST fail
 that answer even though "450" is present in retrieval (it is NOT present in rate
 semantics), and MUST pass a real rate answer grounded in the rates chunk.
 """
@@ -21,7 +21,7 @@ def _sys(*chunk_texts: str) -> dict:
 
 
 # ── The preserved live incident (must FAIL the gate) ────────────────────────
-# Verbatim shape of the retrieved DG2 drawing dimension-table chunk: pure
+# Verbatim shape of the retrieved the client project drawing dimension-table chunk: pure
 # numbers + bend/pipe labels. "450" IS in this text — but not as a rate.
 _DRAWING_SOUP = (
     "700 100 100 100 100 620 450 350 300 1960 11950 5350 1250 1850 9650 4300 "

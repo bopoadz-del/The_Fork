@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: how much would the earthworks package roughly cost?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-14f56d947a12
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "estimate_costs", "confidence": 0.4, "reason": "needs_planning"}`
 - tool_calls: []

@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: draft the tender package sections for the electrical works
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-fb32a8788f6c
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "rfp_management", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []
@@ -214,8 +214,8 @@ All equipment and materials shall be covered by the manufacturer's warranty, in 
 ---
 
 *Source requirements adapted from:*
-- *DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf, chunks 503, 1422, 531*
-- *DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf, chunks 1424, 533*
+- *DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf, chunks 503, 1422, 531*
+- *DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf, chunks 1424, 533*
 
 > **Standards note (advisory — flagging, not blocking):**
 > - **PRC-501** — The word 'APPROVED' is contractually prohibited on design documents. Use 'accepted', 'for comment', or 'buy-off' instead.

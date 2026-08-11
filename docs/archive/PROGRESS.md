@@ -55,7 +55,7 @@ first. Update on every task state change.
   2 .xer → honest ask-which. no .xer → honest error. Evidence:
   `review_pack/brain/accept_phase2_LIVE_*.txt`. V1 flipped to REAL/live on the
   ledger.
-- **Finding U1:** the full 25MB DG2 baseline .xer 502s on upload (synchronous
+- **Finding U1:** the full 25MB the client project baseline .xer 502s on upload (synchronous
   buffer+encrypt exceeds the gateway timeout). Small/mid .xer fine. Logged as
   ledger row U1 + task #28 (upload-capacity, not a fabrication).
 
@@ -339,7 +339,7 @@ first. Update on every task state change.
 
 ## 2026-07-06 recovery session
 
-- Correction: `5c13510e` (DG2 Bills of Quantities) DOES exist on prod as a
+- Correction: `5c13510e` (the client project Bills of Quantities) DOES exist on prod as a
   Drive-approved project (4 docs / 179 chunks). The earlier 404 was caused by the
   chat stream ownership check missing `include_admin_approved=True` (PR D
   inconsistency). Fixed in `app/routers/agents.py` and merged as PR #154.
@@ -347,9 +347,9 @@ first. Update on every task state change.
   uploaded a document, triggered two Render deploys, document preview still 200
   with original content after both deploys. Disk is non-ephemeral.
 - Storage map confirmed: Postgres (metadata + vector chunks) persists; `/app/data`
-  persistent disk survives deploys. `dar_al_arkan_master` / `projects_folder`
+  persistent disk survives deploys. `master_corpus` / `projects_folder`
   blobs are missing because those early imports pre-date the proven disk state;
-  later Drive imports (`dg2_infra_pack_1`, `5c13510e`, `ha_long_xanh_2`) retained
+  later Drive imports (`client_infra_pack_1`, `5c13510e`, `ha_long_xanh_2`) retained
   blobs.
 - Fixture projects as code: added `scripts/seed_fixtures.py` (idempotent,
   API-only, ZERO_CHUNK check). Seeded `FIXTURE — Fresh Upload Eval` from the 12
@@ -362,7 +362,7 @@ first. Update on every task state change.
   `docs/recovery/re_import_manifest.md` with the Drive-linked damage snapshot.
 - Re-import is blocked pending: (1) `GDRIVE_SERVICE_ACCOUNT_JSON` env var on
   Render, (2) complete `GDRIVE_PROJECT_FOLDERS` mapping for every Drive-linked
-  project, including sibling packs under the DG2 parent. Folder IDs are not in
+  project, including sibling packs under the the client project parent. Folder IDs are not in
   surviving metadata.
 - Merged PR #155 (fixture seeder + recovery manifest). Deploy live; smoke not
   re-run because local `python` in `scripts/smoke.sh` resolves to the Windows
@@ -437,12 +437,12 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 
   | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
   |---|---:|---:|---:|---:|---|
-  | dar_al_arkan_master | 0 | 0 | 110375 | 0 | mismatch (api=110375, db=0) |
+  | master_corpus | 0 | 0 | 110375 | 0 | mismatch (api=110375, db=0) |
   | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
   | training_material | 246 | 10982 | 10982 | 10982 | ok |
   | unclassified | 1 | 4 | 4 | 4 | ok |
 
-- Root cause: `dar_al_arkan_master` is a pilot master-corpus alias whose
+- Root cause: `master_corpus` is a pilot master-corpus alias whose
   chunks live under `projects_folder`. The admin corpus-collections endpoint
   counted by raw `project_id`, so the alias appeared as 0 chunks — the display
   that invited a destructive re-index click.
@@ -457,7 +457,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 
   | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
   |---|---:|---:|---:|---:|---|
-  | dar_al_arkan_master | 2712 | 110375 | 110375 | 110375 | ok |
+  | master_corpus | 2712 | 110375 | 110375 | 110375 | ok |
   | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
   | training_material | 246 | 10982 | 10982 | 10982 | ok |
   | unclassified | 1 | 4 | 4 | 4 | ok |
@@ -512,7 +512,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     tool-backed, model = `gpt-4o-mini-2024-07-18`.
   - Admin Drive proof endpoints reachable on prod and return controlled
     errors when no folder is configured:
-    - `POST /v1/admin/drive/download-proof` → `200 {ok: False, error: "no Drive folder configured for project dar_al_arkan_master"}`
+    - `POST /v1/admin/drive/download-proof` → `200 {ok: False, error: "no Drive folder configured for project master_corpus"}`
     - `POST /v1/admin/drive/ingest-proof` → same.
   - **Blocker for full T4 live verification:** `GDRIVE_PROJECT_FOLDERS` is not
     set on Render, and the service account (`thefork-drive-import@project-drive-469320.iam.gserviceaccount.com`)
@@ -625,4 +625,4 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 - **T1 DONE**: 44→17 block collapse = construction kit unset. Set CEREBRUM_DOMAIN_KITS=construction on prod; /v1/health now 40 blocks, 0 failures. Old `chunks` table empty (0), chunks_v2 canonical (10,502).
 - **T2 PARKED**: SENTRY_DSN unset (Chadi secret — needs his DSN to restore). Set AGENT_TIMING_LOG=1 for T3 tracing.
 - **T3 in-flight**: root cause = RAG embedder (bge-small) not warm-loaded at startup (safety detector is, embedder isn't); seed_knowledge skips on already-seeded restart → lazy load on first query eats stream deadline → hang. Fix: explicit embedder warm-load in lifespan (main.py). Smoke 4/4.
-- **T4 data**: chunks_v2 53 docs / 10,502 chunks, avg 198 chunks/doc (min 1 max 1936), 0 dup chunk_ids. "<2 chunks/file" was wrong denominator (6,178 expected vs 53 ingested). Coverage gap: only DG2 pkg + GK + a little Ha Long Xanh in v2; full Drive archive NOT in v2 (no drive_archive table). RECONCILIATION.md pending.
+- **T4 data**: chunks_v2 53 docs / 10,502 chunks, avg 198 chunks/doc (min 1 max 1936), 0 dup chunk_ids. "<2 chunks/file" was wrong denominator (6,178 expected vs 53 ingested). Coverage gap: only the client project pkg + GK + a little Ha Long Xanh in v2; full Drive archive NOT in v2 (no drive_archive table). RECONCILIATION.md pending.

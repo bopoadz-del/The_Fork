@@ -1,5 +1,5 @@
 Grounding-gate stamp check — zero-FP sweep (2026-07-13)
-Gate applied with result={} (strict: any stamp phrase flags). Real live deliverables from prod dar_al_arkan_master.
+Gate applied with result={} (strict: any stamp phrase flags). Real live deliverables from prod master_corpus.
 
 commissioning_checklist (3023 chars, contains 'verification' in checklist content): FLAGGED=False
 payment_certificate: FLAGGED=False

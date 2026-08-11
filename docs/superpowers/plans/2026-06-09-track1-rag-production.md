@@ -22,7 +22,7 @@ Live state assumed by this plan:
   - Appendix B `0f9ffc6b` (`Anthropic - RFP Appendix B 041726.xlsx`)
   - PRC-201, PRC-301 procurement PDFs
   - Three noise files: `nambae-menu(4).pptx`, `SandsChina_Application_ChaD.docx`, `~$C-201_Time Management.docx`
-- Project `3f6f28b2` (Diriyah BOQ Test) holds DGII BOQ `c6dae280` (`DGII - Infra-1 - Demolition BOQ.pdf`).
+- Project `3f6f28b2` (the client BOQ Test) holds DGII BOQ `c6dae280` (`DGII - Infra-1 - Demolition BOQ.pdf`).
 - Render env already has `LLM_PROVIDER=ollama`, `OLLAMA_URL=<tunnel>`, `OLLAMA_MODEL=qwen3-coder:480b-cloud`. No new env vars exist yet for any of `RAG_*`.
 
 ## File map

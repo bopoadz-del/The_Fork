@@ -29,11 +29,11 @@ OLLAMA_URL = "http://127.0.0.1:11434"
 MODEL = "qwen2.5:7b-instruct"
 
 QUERIES = [
-    "What is the JCB drawing-number format used on the Diriyah Gate project?",
+    "What is the JCB drawing-number format used on the the client project project?",
     "What does the SECTIONAL ELEVATION telecom drawing show?",
     "What is the procedure for design review acceptance under PRC-501?",
     "What is the payable trench width specification for the water supply pipe?",
-    "Manhole spacing requirements for telecom ducts on the DG2 project?",
+    "Manhole spacing requirements for telecom ducts on the the client project project?",
 ]
 
 

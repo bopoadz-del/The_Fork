@@ -1,99 +1,99 @@
 {
   "generated_at": "2026-07-09T00:30:11.757110+00:00",
-  "source_manifest": "manifests/p1a_drive_manifest_dg2.json",
+  "source_manifest": "manifests/p1a_drive_manifest_client.json",
   "tiers": {
     "1": {
-      "description": "DG2 Infra Pack 1 + golden-set/fixture-backing folders",
+      "description": "the client project + golden-set/fixture-backing folders",
       "gate_dependency": "Phase 2 battery gates on this tier",
       "folders": [
         {
-          "project_id": "dg2_infra_pack_1",
-          "folder_name": "DG2 Infra Pack 1",
+          "project_id": "client_infra_pack_1",
+          "folder_name": "the client project",
           "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j",
           "subfolders": [
             {
               "subfolder": "Design",
               "file_count": 2918,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Contract Docs",
               "file_count": 1490,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Reporting (various)",
               "file_count": 590,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Misc",
               "file_count": 423,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Organizations",
               "file_count": 308,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Logistics",
               "file_count": 200,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Presentations",
               "file_count": 139,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Drone",
               "file_count": 121,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Trackers",
               "file_count": 8,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Construction, related docs",
               "file_count": 4,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Utility Diversions",
               "file_count": 2,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "Admin",
               "file_count": 1,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "(root)",
               "file_count": 1,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             },
             {
               "subfolder": "LAT",
               "file_count": 1,
               "tier": 1,
-              "note": "DG2 Infra Pack 1 — tier 1 by default"
+              "note": "the client project — tier 1 by default"
             }
           ],
           "file_count": 6206

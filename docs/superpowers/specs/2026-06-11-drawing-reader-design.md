@@ -55,13 +55,13 @@ Within the title-block zone, extract these fields via proximity-grouped text clu
 |---|---|
 | `drawing_number` | Regex match: `[A-Z]{2,}-[A-Z]{2,}-\d{3}-\d{4}-[A-Z]{3,}-[A-Z]{3,}-[A-Z]{2,}-\d{3}-\d{6,7}-[A-Z]` (the JCB-DWG pattern observed in the corpus), OR shorter project-specific pattern as fallback |
 | `drawing_title` | Longest text cluster in the title block zone that isn't matched by the other fields |
-| `discipline` | Match against known DG2 codes: TM, SW, SG, EL, LI, ST, WS, IR, TL, SE, SF, IF — extracted from the drawing-number pattern. Civil/structural/MEP/electrical/etc. — full discipline name from a lookup table |
+| `discipline` | Match against known the client project codes: TM, SW, SG, EL, LI, ST, WS, IR, TL, SE, SF, IF — extracted from the drawing-number pattern. Civil/structural/MEP/electrical/etc. — full discipline name from a lookup table |
 | `revision` | Single letter or digit near a "Rev" label |
 | `scale` | Pattern `1:\d+`, `NTS`, `N.T.S.`, `NOT TO SCALE` |
 | `date` | Date pattern (DD/MM/YY, DD-MM-YYYY, DD.MM.YYYY) near "Date" label |
 | `drafter` | Text near "Drawn", "Drafted", "By" labels |
 | `checked_by` | Text near "Checked", "Reviewed" labels |
-| `project_name` | Text near top of title block (project header), e.g. "Diriyah Gate Phase II" |
+| `project_name` | Text near top of title block (project header), e.g. "the client project" |
 | `sheet_number` | Pattern `Sheet \d+ of \d+`, `\d+/\d+`, `Sheet \d+` |
 
 If `drawing_number` is not extractable, fall back to the file basename (without extension) and log a warning to the audit row.
@@ -108,7 +108,7 @@ The collection of cross-refs across all drawings forms a **sheet connectivity gr
   "date": "2024-03-12",
   "drafter": "JCB",
   "checked_by": "ABC",
-  "project_name": "Diriyah Gate Phase II",
+  "project_name": "the client project",
   "sheet_number": "1 of 4",
   "notes": [
     "All dimensions in mm unless noted otherwise",
@@ -173,7 +173,7 @@ If the PDF is logically multiple drawings (different `drawing_number` per page),
 | Password-protected PDF | Catch pdfplumber's exception, log error, return `{errors: ["password_protected"]}` with no chunk |
 | Scanned drawings (no text layer) | pdfplumber returns no chars. Fall back to OCR via existing `ocr.py` block: render at 300 DPI, run Tesseract `image_to_data` to get per-word bboxes + text. Reuse Steps 1–5 with bbox-only (no font-size info). Audit-log the fallback. Note: font-size-based dimension classification doesn't work on OCR'd output — treat all OCR text as notes |
 | Empty PDF / corrupt | Catch the parse exception, return `{errors: [str(exc)]}` with no chunk |
-| Arabic / mixed-language content (Diriyah Gate) | pdfplumber handles Unicode text correctly. For scanned Arabic drawings, OCR fallback needs `RAG_OCR_LANG=eng+ara` — already documented as the Drive-indexer prerequisite. If `ara.traineddata` is missing locally, Arabic OCR degrades to English-only output (already flagged) |
+| Arabic / mixed-language content (the client project) | pdfplumber handles Unicode text correctly. For scanned Arabic drawings, OCR fallback needs `RAG_OCR_LANG=eng+ara` — already documented as the Drive-indexer prerequisite. If `ara.traineddata` is missing locally, Arabic OCR degrades to English-only output (already flagged) |
 
 ### Implementation requirements
 
@@ -181,7 +181,7 @@ If the PDF is logically multiple drawings (different `drawing_number` per page),
 
 2. **Uncomment + install pdfplumber** in `requirements.txt` (already listed as `# pdfplumber>=0.11.0     # PDF table extraction`). Run `pip install pdfplumber` in the venv. Add a `pip freeze` diff to the PR.
 
-3. **Tests at `tests/test_drawing_qto.py`.** Fixture: one real DG2 drawing from the pilot batch (e.g., `IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf`). Copy it to `tests/fixtures/drawing_tm_200.pdf`. Assertions:
+3. **Tests at `tests/test_drawing_qto.py`.** Fixture: one real the client project drawing from the pilot batch (e.g., `IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf`). Copy it to `tests/fixtures/drawing_tm_200.pdf`. Assertions:
    - `drawing_number` extracted (not the filename fallback)
    - `discipline` equals `"TM"`
    - `discipline_full` equals `"Traffic Management"`

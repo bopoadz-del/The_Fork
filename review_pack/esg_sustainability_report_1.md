@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: produce an ESG sustainability report outline targeting LEED Gold
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-56b2f982f98d
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "esg_sustainability_report", "confidence": 0.8, "reason": "below_routing_gate"}`
 - tool_calls: []

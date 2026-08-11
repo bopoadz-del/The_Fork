@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: run an HSE compliance audit checklist for working at height on the facade
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-b9a9a5434182
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "safety_compliance_audit", "confidence": 1.0, "reason": "below_routing_gate"}`
 - tool_calls: []

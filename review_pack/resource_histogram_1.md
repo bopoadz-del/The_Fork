@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: produce a manpower histogram for the structure works over 12 months
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-2c46916f5983
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "resource_histogram", "confidence": 0.4, "reason": "needs_planning"}`
 - tool_calls: []

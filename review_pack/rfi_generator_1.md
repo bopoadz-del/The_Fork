@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: draft an RFI asking the engineer to clarify the rebar detail at the transfer beam
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-b7123e4f8ede
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "rfi_generator", "confidence": 0.2, "reason": "needs_planning"}`
 - tool_calls: []

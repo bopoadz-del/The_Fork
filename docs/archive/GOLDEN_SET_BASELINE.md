@@ -5,7 +5,7 @@
 Knob `RAG_GK_SCORE_MARGIN=0.10` + `RAG_GK_LEXICAL_FOLD=1` deployed and confirmed
 on the live path (same path as this baseline). **All 12 fresh-upload cases
 flipped 0 -> PASS.** Zero regressions among the baseline-10 (doc_qa still grounded
-at 939 chars; wbs/manpower/s_curve/procurement/rfp/4-demo all held). calc/dg2
+at 939 chars; wbs/manpower/s_curve/procurement/rfp/4-demo all held). calc/client
 referee verified on the live run — GK not strangled. Frozen; see DECISIONS.md
 2026-07-13 and memory `the-fork-gk-lexical-inflation-fix`.
 
@@ -27,7 +27,7 @@ Neither touches retrieval.
 
 **Config:** `ORCHESTRATOR_PREDEFINED=false` (agent path), completed corpus
 (drive_archive 133,461 chunks + HNSW index + fixtures seeded), master corpus
-`dar_al_arkan_master → dg2_infra_pack_1`, GK = curated_kb + dg2_infra_pack_1 +
+`master_corpus → client_infra_pack_1`, GK = curated_kb + client_infra_pack_1 +
 drive_archive. Golden fixtures resolved **by name** (drift killed).
 
 **This number replaces the earlier 9/28** — that was measuring an unbuilt world
@@ -59,14 +59,14 @@ resolve-by-name fix only helps once a named fixture exists.
   pilot_qto_floor_area (7ce7b9d0)
 
 ### C. synthesis-quality — 3 (retrieval OK, strict-assertion miss)
-Chat retrieved and cited real DG2 docs but the answer missed one required token.
+Chat retrieved and cited real the client project docs but the answer missed one required token.
 - pilot_spec_extraction (cited spec, matched "grade" not a standards body)
 - pilot_document_metadata (answered, not in the expected list format)
 - pilot_kb_mass_concrete (cited construction_kb, got 70 C peak not 20 C diff)
 
 ## Golden passes (10)
 demo_project_brief, demo_biggest_cost_items, demo_open_risks, demo_procure_first,
-pilot_doc_qa_dg2_pep, pilot_wbs_generation, pilot_s_curve, pilot_procurement_list,
+pilot_doc_qa_client_pep, pilot_wbs_generation, pilot_s_curve, pilot_procurement_list,
 pilot_rfp_sections, pilot_manpower_histogram.
 
 ## Read

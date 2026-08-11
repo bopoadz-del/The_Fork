@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: what does the cumulative spend curve look like month by month?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-8dfdfca9d11b
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "cash_flow_forecast", "confidence": 0.8, "reason": "needs_planning"}`
 - tool_calls: []

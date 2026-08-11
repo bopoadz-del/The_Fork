@@ -27,7 +27,7 @@ import re
 import sys
 import urllib.request
 
-FACT_PROJECT = "dg2_infra_pack_1"
+FACT_PROJECT = "client_infra_pack_1"
 FACT_QUESTIONS = [
     "What is the total flow rate of wastewater pump station WWPS-01?",
     "State the design capacity in l/s of pump station WWPS-01.",

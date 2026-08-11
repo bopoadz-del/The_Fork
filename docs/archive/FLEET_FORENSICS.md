@@ -22,6 +22,6 @@
 - **Cost:** ~140k chunks to re-embed locally (~minutes on 12-thread CPU) + streamed INSERTs. Cheap. But it triples the corpus (10k → ~150k) and mixes the broad Drive archive into retrieval — which will interact with the T5 GK/precision work.
 
 ## Recommendation (Chadi's scope call — do NOT auto-start)
-1. **If the pilot is DG2-scoped:** leave drive_archive out; the 53-doc DG2 corpus is the pilot.
-2. **If the pilot needs the full Drive corpus:** re-embed the local `drive_archive` text (BGE-384) into a **dedicated project** (not merged into dg2), and settle T5 precision first (150k mixed chunks will worsen GK/ranking contamination).
+1. **If the pilot is the client project-scoped:** leave drive_archive out; the 53-doc the client project corpus is the pilot.
+2. **If the pilot needs the full Drive corpus:** re-embed the local `drive_archive` text (BGE-384) into a **dedicated project** (not merged into client), and settle T5 precision first (150k mixed chunks will worsen GK/ranking contamination).
 **Report-before-re-ingestion honored: paused here for the scope decision.**

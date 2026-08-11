@@ -14,7 +14,7 @@ def test_user_upload_classifies_user_session_regardless_of_project(monkeypatch):
     # even uploaded into a GK-designated project, a user upload is user_session
     layer, _ = L.classify("curated_kb", "my_boq.xlsx", is_user_upload=True)
     assert layer == "user_session"
-    layer2, _ = L.classify("dg2_infra_pack_1", "notes.pdf", is_user_upload=True)
+    layer2, _ = L.classify("client_infra_pack_1", "notes.pdf", is_user_upload=True)
     assert layer2 == "user_session"
 
 

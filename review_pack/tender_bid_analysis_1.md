@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: compare three contractor bids for the earthworks - how should we score them?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-2f7b5b9255d4
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "tender_bid_analysis", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

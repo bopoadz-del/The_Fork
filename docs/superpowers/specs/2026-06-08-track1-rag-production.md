@@ -317,7 +317,7 @@ completed 2026-06-08):
   - Plus two unrelated docs (nambae-menu pptx, SandsChina docx) and a
     `~$C-201` Office lockfile artifact — these will appear in the index but
     are noise for the regression queries.
-- **Diriyah BOQ Test project (`3f6f28b2`):**
+- **the client BOQ Test project (`3f6f28b2`):**
   - DGII - Infra-1 - Demolition BOQ.pdf (`c6dae280`, 9.7 MB; auto-classified
     by the upload route as doc_type=`boq`)
 
@@ -336,7 +336,7 @@ run.
 2. **Item D999.14 prices 300mm HDPE potable water pipe at SAR 1,060/m for
    depth 1 to 1.5m and D999.15 at SAR 1,288/m for depth 1.5 to 2.0m. Is the
    SAR 228/m depth increment reasonable and what scope does it cover?**
-   - Project: `diriyah-bqa-test`
+   - Project: `the client-bqa-test`
    - Target retrieval: BOQ Part 3 line items D999.14 and D999.15
    - RAG-off failure mode: generic rate commentary, no specific numbers
    - RAG-on win: anchors response on the exact rates with depth bands

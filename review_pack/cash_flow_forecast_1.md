@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: build a cash flow forecast with an S-curve for a SAR 60M, 18-month project
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-e9735548fb6e
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "cash_flow_forecast", "confidence": 0.6, "reason": "needs_planning"}`
 - tool_calls: []

@@ -1,4 +1,4 @@
-=== resource_histogram on REAL DG2 baseline, labor-only (2.5s) ===
+=== resource_histogram on REAL the client project baseline, labor-only (2.5s) ===
 status: success | source: primavera_taskrsrc
 resource_types_included: RT_Labor
 labor assignments: 22153 / total in schedule: 47615

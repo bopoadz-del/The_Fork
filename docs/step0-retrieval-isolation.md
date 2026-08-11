@@ -17,14 +17,14 @@ general-knowledge (GK) ids. So 0a at the SQL level was largely already satisfied
 The leak was elsewhere and worse than a ranking penalty. Live config:
 
 ```
-RAG_GENERAL_KNOWLEDGE_PROJECTS = curated_kb,dg2_infra_pack_1,drive_archive
+RAG_GENERAL_KNOWLEDGE_PROJECTS = curated_kb,client_infra_pack_1,drive_archive
 MASTER_CORPUS_SOURCE_PROJECT_ID = drive_archive
 ```
 
-The **entire DG2 client corpus** (`drive_archive` + `dg2_infra_pack_1`) was
+The **entire the client project client corpus** (`drive_archive` + `client_infra_pack_1`) was
 declared as "general knowledge" and **silently merged into every other project's
 retrieval**, governed only by the ranking knobs (margin/cap/lexical-fold). That
-is the `ha_long_xanh → DG2` leak: a client corpus surfacing in another project's
+is the `ha_long_xanh → the client project` leak: a client corpus surfacing in another project's
 answers through a ranking layer, exactly what the directive forbids. `curated_kb`
 (FIDIC / OSHA / units / rates) is the only legitimately-general member.
 
@@ -79,9 +79,9 @@ runtime. It is **never** sent to the LLM or the API payload (`to_dict` drops it,
 ## Config change deployed with this fix
 
 `RAG_GENERAL_KNOWLEDGE_PROJECTS` set live to `curated_kb` (dropping
-`dg2_infra_pack_1` + `drive_archive`). The code guard makes the leak
+`client_infra_pack_1` + `drive_archive`). The code guard makes the leak
 structurally impossible for the Master source regardless of config; this config
-change removes the remaining `dg2_infra_pack_1` GK entry so only the genuinely-
+change removes the remaining `client_infra_pack_1` GK entry so only the genuinely-
 general corpus stays in the always-on layer.
 
 ## Reconciliation for Chadi (one call, vetoable)

@@ -7,7 +7,7 @@ No chunks are deleted because the targets are zero-chunk docs.
 
 Usage (on Render worker):
     python scripts/rag_cleanup_unsupported.py \
-        --project-id dg2_infra_pack_1 \
+        --project-id client_infra_pack_1 \
         --targets-r2-key projects/<pid>/cleanup/rag_cleanup_targets.json
 """
 from __future__ import annotations

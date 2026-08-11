@@ -1,7 +1,7 @@
 
 [   1.33s] ROUTE       {"requested": "project-assistant", "final": "project-assistant", "action": "daily_site_report", "confidence": 0.4, "reason": "below_routing_gate"}
 
-[   1.34s] START       {"session_id": "ws-dar_al_arkan_master", "mode": "predefined", "request_id": "eb8c870d-e14"}
+[   1.34s] START       {"session_id": "ws-master_corpus", "mode": "predefined", "request_id": "eb8c870d-e14"}
 # Daily Site Report
 
 **Date:** July 13, 2026  

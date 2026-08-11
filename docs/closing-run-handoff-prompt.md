@@ -18,7 +18,7 @@ breaking the repo or lying to the reader.
    test after every change; if it is not 93/93, you broke it — revert.
 2. **Do NOT delete any project / corpus.** Deleting a project CASCADE-deletes its RAG chunks
    (`ON DELETE CASCADE`). NEVER delete: `projects_folder`, `training_material`,
-   `dar_al_arkan_master`, `dg2_infra_pack_1`, `curated_kb`, `drive_archive`, and eval project
+   `master_corpus`, `client_infra_pack_1`, `curated_kb`, `drive_archive`, and eval project
    `bc812f36`. To clean a list, HIDE/gate the sidebar row — never delete the row. To prune
    specific docs use the existing `POST /v1/admin/corpus/delete-docs` (export bundle first).
 3. **Flag-gate every behaviour change OFF by default** (mirror `ORCHESTRATOR_PREDEFINED`). Add a

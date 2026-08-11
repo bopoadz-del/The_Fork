@@ -39,7 +39,7 @@ def test_layer_tagged_when_enabled(monkeypatch):
     monkeypatch.setenv("RAG_LAYERED", "1")
     captured = {}
     _wire(monkeypatch, captured)
-    n = ret.index_chunks("dg2_infra_pack_1", "d1", ["a chunk"])
+    n = ret.index_chunks("client_infra_pack_1", "d1", ["a chunk"])
     assert n == 1
     assert captured["knowledge_layer"] == "project_record"
     assert captured["authority"] == "commercial"
@@ -49,6 +49,6 @@ def test_no_layer_when_disabled(monkeypatch):
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     captured = {}
     _wire(monkeypatch, captured)
-    ret.index_chunks("dg2_infra_pack_1", "d1", ["a chunk"])
+    ret.index_chunks("client_infra_pack_1", "d1", ["a chunk"])
     assert captured["knowledge_layer"] is None
     assert captured["authority"] is None

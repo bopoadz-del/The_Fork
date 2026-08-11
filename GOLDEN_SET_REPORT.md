@@ -20,23 +20,23 @@ Gate bar: >= 90% of the golden set must PASS (>= 27/29). **Gate MET.**
 | fresh_mv_soak_test | fresh_upload_grounding | FIXTURE — Fresh Upload Eval | PASS | hit | 9s |
 | fresh_cpi_threshold | fresh_upload_grounding | FIXTURE — Fresh Upload Eval | PASS | hit | 7s |
 | fresh_mass_concrete_curing | fresh_upload_grounding | FIXTURE — Fresh Upload Eval | PASS | hit | 9s |
-| pilot_doc_qa_dg2_pep | process_document | dar_al_arkan_master | PASS | - | 76s |
+| pilot_doc_qa_client_pep | process_document | master_corpus | PASS | - | 76s |
 | pilot_boq_total | boq_process | FIXTURE — BOQ | PASS | - | 8s |
-| pilot_spec_extraction | spec_analyze | dar_al_arkan_master | PASS | - | 40s |
-| pilot_document_metadata | document_metadata | dar_al_arkan_master | PASS | - | 12s |
-| pilot_wbs_generation | generate_wbs | dar_al_arkan_master | PASS | - | 3s |
-| pilot_manpower_histogram | resource_histogram | dar_al_arkan_master | PASS | - | 4s |
+| pilot_spec_extraction | spec_analyze | master_corpus | PASS | - | 40s |
+| pilot_document_metadata | document_metadata | master_corpus | PASS | - | 12s |
+| pilot_wbs_generation | generate_wbs | master_corpus | PASS | - | 3s |
+| pilot_manpower_histogram | resource_histogram | master_corpus | PASS | - | 4s |
 | pilot_milestones | parse_primavera_schedule | FIXTURE — Programme+Drawings | PASS | - | 84s |
-| pilot_s_curve | cash_flow_forecast | dar_al_arkan_master | PASS | - | 39s |
-| pilot_procurement_list | procurement_list_generator | dar_al_arkan_master | PASS | - | 15s |
-| pilot_rfp_sections | rfp_management | dar_al_arkan_master | PASS | - | 108s |
-| pilot_kb_mass_concrete | construction_advisor | dar_al_arkan_master | PASS | - | 126s |
+| pilot_s_curve | cash_flow_forecast | master_corpus | PASS | - | 39s |
+| pilot_procurement_list | procurement_list_generator | master_corpus | PASS | - | 15s |
+| pilot_rfp_sections | rfp_management | master_corpus | PASS | - | 108s |
+| pilot_kb_mass_concrete | construction_advisor | master_corpus | PASS | - | 126s |
 | pilot_qto_floor_area | drawing_qto | FIXTURE — Programme+Drawings | FAIL | - | 46s |
-| demo_project_brief | demo_flow | dar_al_arkan_master | PASS | - | 30s |
-| demo_biggest_cost_items | demo_flow | dar_al_arkan_master | PASS | - | 183s |
-| demo_open_risks | demo_flow | dar_al_arkan_master | PASS | - | 69s |
-| demo_procure_first | demo_flow | dar_al_arkan_master | PASS | - | 51s |
-| cost_fabrication_concrete_rate | cost_grounding | dar_al_arkan_master | PASS | - | 31s |
+| demo_project_brief | demo_flow | master_corpus | PASS | - | 30s |
+| demo_biggest_cost_items | demo_flow | master_corpus | PASS | - | 183s |
+| demo_open_risks | demo_flow | master_corpus | PASS | - | 69s |
+| demo_procure_first | demo_flow | master_corpus | PASS | - | 51s |
+| cost_fabrication_concrete_rate | cost_grounding | master_corpus | PASS | - | 31s |
 
 ## Failures
 

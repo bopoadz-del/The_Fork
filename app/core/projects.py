@@ -33,11 +33,11 @@ logger = logging.getLogger(__name__)
 # full-drive corpus (currently stored under project_id "projects_folder") as a
 # single admin-visible pilot project without duplicating chunks or re-importing
 # Drive. This is a temporary alias; proper per-project trees come post-pilot.
-MASTER_CORPUS_PROJECT_ID = os.getenv("MASTER_CORPUS_PROJECT_ID", "dar_al_arkan_master")
+MASTER_CORPUS_PROJECT_ID = os.getenv("MASTER_CORPUS_PROJECT_ID", "master_corpus")
 MASTER_CORPUS_SOURCE_PROJECT_ID = os.getenv(
     "MASTER_CORPUS_SOURCE_PROJECT_ID", "projects_folder"
 )
-MASTER_CORPUS_NAME = os.getenv("MASTER_CORPUS_NAME", "Dar Al Arkan Master Corpus")
+MASTER_CORPUS_NAME = os.getenv("MASTER_CORPUS_NAME", "Master Corpus")
 
 
 def _master_corpus_source(project_id: Optional[str]) -> Optional[str]:
@@ -407,7 +407,7 @@ def list_projects(
         approved" rows that could otherwise leak.
 
     Pilot: if the master-corpus source project is visible to the caller,
-    the virtual ``dar_al_arkan_master`` alias is appended to the list.
+    the virtual ``master_corpus`` alias is appended to the list.
     """
     from sqlalchemy import or_, and_
 
@@ -477,7 +477,7 @@ def get_project(
     stay owner-only regardless of origin (defensive — admins shouldn't
     leak detected-but-pending candidates to users).
 
-    Pilot: a virtual master-corpus project (default ``dar_al_arkan_master``)
+    Pilot: a virtual master-corpus project (default ``master_corpus``)
     is backed by the existing full-drive corpus (default ``projects_folder``).
     It appears as a first-class project without duplicating chunks.
     """

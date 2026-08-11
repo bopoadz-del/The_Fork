@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: prepare an interim payment certificate for 42% progress on a SAR 25M contract with 10% retention
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-a87589cc251e
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "payment_certificate", "confidence": 1.0, "reason": "needs_planning"}`
 - tool_calls: []

@@ -31,27 +31,27 @@ def test_gk_procedure_is_company_rules():
 
 
 def test_project_priced_boq_is_project_record_commercial():
-    assert L.classify("dg2_infra_pack_1", "priced_boq_sewer.xlsx") == (
+    assert L.classify("client_infra_pack_1", "priced_boq_sewer.xlsx") == (
         "project_record", "commercial")
 
 
 def test_project_contract_is_contractual():
-    assert L.classify("dg2_infra_pack_1", "Contract_Conditions_Part2.pdf") == (
+    assert L.classify("client_infra_pack_1", "Contract_Conditions_Part2.pdf") == (
         "project_record", "contractual")
 
 
 def test_project_drawing_is_design():
-    assert L.classify("dg2_infra_pack_1", "GA-plan-L02.dwg") == (
+    assert L.classify("client_infra_pack_1", "GA-plan-L02.dwg") == (
         "project_record", "design")
 
 
 def test_project_daily_report_is_operational():
-    assert L.classify("dg2_infra_pack_1", "daily_site_report_2026-07-01.pdf") == (
+    assert L.classify("client_infra_pack_1", "daily_site_report_2026-07-01.pdf") == (
         "project_record", "operational")
 
 
 def test_project_unknown_defaults_operational():
-    assert L.classify("dg2_infra_pack_1", "misc_file.bin") == (
+    assert L.classify("client_infra_pack_1", "misc_file.bin") == (
         "project_record", "operational")
 
 
@@ -61,6 +61,6 @@ def test_user_upload_is_user_session():
 
 
 def test_empty_docname_is_safe():
-    layer, auth = L.classify("dg2_infra_pack_1", "")
+    layer, auth = L.classify("client_infra_pack_1", "")
     assert layer == "project_record"
     assert auth in L.AUTHORITIES

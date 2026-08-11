@@ -17,7 +17,7 @@
   "skipped_unreadable": 0,
   "errors": [
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs NOT SIGNED/desktop.ini",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs NOT SIGNED/desktop.ini",
       "error": "no RAG chunks indexed"
     }
   ],
@@ -47,7 +47,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (4 of 5).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (4 of 5).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",
@@ -55,7 +55,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs NOT SIGNED/desktop.ini",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs NOT SIGNED/desktop.ini",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -65,7 +65,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs NOT SIGNED/DG2 AIC Contract - Pre-condition site survey requirements.docx",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs NOT SIGNED/the client project AIC Contract - Pre-condition site survey requirements.docx",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -76,7 +76,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs NOT SIGNED/Extracted references to archaeology works in AIC Contract, H&C and UMA.docx",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs NOT SIGNED/Extracted references to archaeology works in AIC Contract, H&C and UMA.docx",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -87,7 +87,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs NOT SIGNED/Extracted references to THE ENGINEER in DD-2023-118 AIC Contract.docx",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs NOT SIGNED/Extracted references to THE ENGINEER in DD-2023-118 AIC Contract.docx",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -98,7 +98,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf",
       "result": {
         "status": "error",
         "error": "ZERO_CHUNK",
@@ -112,7 +112,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (1 of 9) (1).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (1 of 9) (1).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -123,7 +123,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (5 of 9).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (5 of 9).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -134,7 +134,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -145,7 +145,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -156,7 +156,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -167,7 +167,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -178,7 +178,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -189,7 +189,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -200,7 +200,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -211,7 +211,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (1 of 7).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (1 of 7).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",
@@ -219,7 +219,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (2 of 7).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (2 of 7).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",
@@ -227,7 +227,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (3 of 7).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (3 of 7).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",
@@ -235,7 +235,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (4 of 7).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (4 of 7).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",
@@ -243,7 +243,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (5 of 7).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (5 of 7).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",
@@ -251,7 +251,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (6 of 7).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (6 of 7).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",
@@ -259,7 +259,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (7 of 7).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (7 of 7).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -270,7 +270,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",
@@ -278,7 +278,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 4 - Schedule (2 of 2).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 4 - Schedule (2 of 2).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -289,7 +289,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -300,7 +300,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
       "result": {
         "status": "ok",
         "project_id": "184921da",
@@ -311,7 +311,7 @@
       }
     },
     {
-      "path": "Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (3 of 5).pdf",
+      "path": "Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (3 of 5).pdf",
       "result": {
         "status": "error",
         "error": "SKIPPED_TOO_LARGE",

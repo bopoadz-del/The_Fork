@@ -48,9 +48,9 @@ class Candidate:
 # All anchors below were hand-picked from chunk inspection of:
 #   - a3eda25f  DGII - Infra-1 - Demolition BOQ.pdf  (BOQ rates)
 #   - aa8128ce  DG II Demolition Vol 3 Drawings.pdf  (drawing sheet titles)
-#   - 586e909b  DG2 Infra-1 Vol 3 Drawings (6 of 7)  (electrical drawings)
-#   - 9c116493  DG2 Infra-1 Vol 2 Specification (4 of 9)  (spec clauses)
-#   - 70557d5c  DG2 Infra-1 Vol 1 Conditions of Contract  (clauses)
+#   - 586e909b  the client project Infra-1 Vol 3 Drawings (6 of 7)  (electrical drawings)
+#   - 9c116493  the client project Infra-1 Vol 2 Specification (4 of 9)  (spec clauses)
+#   - 70557d5c  the client project Infra-1 Vol 1 Conditions of Contract  (clauses)
 CANDIDATES: List[Candidate] = [
     # ---------------- BOQ (DGII Demolition BOQ, doc a3eda25f) -----------------
     Candidate(
@@ -121,7 +121,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA08",
         category="drawing",
-        query="On the JCB DG2 Infrastructure Package 1 electrical drawings, what is the title of drawing IP-INF-053-0000-JCB-DWG-EL-600-3101501?",
+        query="On the JCB the client project Infrastructure Package 1 electrical drawings, what is the title of drawing IP-INF-053-0000-JCB-DWG-EL-600-3101501?",
         expected=["STANDARD INSTALLATION DETAILS"],
         forbidden=[],
         source_doc_id="586e909b",
@@ -130,7 +130,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA09",
         category="drawing",
-        query="In the JCB DG2 Infrastructure Package 1 Volume 3 electrical drawings (6 of 7), what does revision letter 'B' correspond to in the revision history block — 'DETAILED DESIGN ISSUE' or 'TENDER ADDENDUM'?",
+        query="In the JCB the client project Infrastructure Package 1 Volume 3 electrical drawings (6 of 7), what does revision letter 'B' correspond to in the revision history block — 'DETAILED DESIGN ISSUE' or 'TENDER ADDENDUM'?",
         expected=["TENDER ADDENDUM"],
         forbidden=[],
         source_doc_id="586e909b",
@@ -146,11 +146,11 @@ CANDIDATES: List[Candidate] = [
         source_chunk_index=98,
     ),
 
-    # ---------------- Diriyah Contract (Vol 1 Conditions, Vol 2 Spec) ---------
+    # ---------------- the client Contract (Vol 1 Conditions, Vol 2 Spec) ---------
     Candidate(
         id="DA11",
         category="contract",
-        query="Per clause 1.4.1 of the DD-2023-118 Vol 1 Conditions of Contract for DG2 Infrastructure Package 1, what law governs the Contract?",
+        query="Per clause 1.4.1 of the DD-2023-118 Vol 1 Conditions of Contract for the client project Infrastructure Package 1, what law governs the Contract?",
         expected=["Kingdom"],
         forbidden=[],
         source_doc_id="70557d5c",

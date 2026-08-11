@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.blocks.drawing_qto import DrawingQTOBlock
 
-ROOT = r"G:\My Drive\Master Folder\DG2 Infra Pack 1"
+ROOT = r"G:\My Drive\Master Folder\the client project"
 DRAWINGS = [
     ("TM", os.path.join(ROOT, r"Contract Docs\Contractor\ITT\02-Drawings\TM-Traffic Management\IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf")),
     ("SG", os.path.join(ROOT, r"Contract Docs\Contractor\ITT\02-Drawings\SG-Sewage\IP-INF-053-0000-JCB-DWG-SG-200-1001000-A.pdf")),

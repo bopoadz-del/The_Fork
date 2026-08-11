@@ -48,7 +48,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEFAULT_MESSAGE = "generate a commissioning checklist for the MV substation"
-DEFAULT_PROJECT = "dar_al_arkan_master"
+DEFAULT_PROJECT = "master_corpus"
 
 
 def _prime_env(model: str | None) -> None:

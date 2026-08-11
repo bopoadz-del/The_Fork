@@ -17,7 +17,7 @@ def test_backfill_tags_unlayered_chunks(monkeypatch):
     from scripts.backfill_layers import backfill
 
     pid = "proj_bf_stage5"
-    store.create_project("DG2", user_id="system", project_id=pid)
+    store.create_project("the client project", user_id="system", project_id=pid)
     doc = store.add_document(pid, "priced_boq_sewer.xlsx", size=1)
 
     # insert chunks WITHOUT layer (simulates a pre-migration corpus) into the

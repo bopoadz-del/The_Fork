@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: prepare a QC inspection and punch list for the level 5 blockwork
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-3849be8c6338
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "qa_qc_inspection", "confidence": 0.8, "reason": "below_routing_gate"}`
 - tool_calls: []

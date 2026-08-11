@@ -1,14 +1,14 @@
 {
   "batch_id": 4,
-  "project_id": "dg2_infra_pack_1",
+  "project_id": "client_infra_pack_1",
   "files": [
     {
       "doc_id": "64b42ea1",
-      "original_name": "DD-2022-085-DG II PMC Infra PSA- Signed Contract.pdf",
+      "original_name": "DD-2022-085-CLIENT PMC Infra PSA- Signed Contract.pdf",
       "size": 163505180,
       "drive_file_id": "1ZF-MZwghcry8thODKfuqBJW6d19KZ1Vm",
       "ext": ".pdf",
-      "local_path": "G:\\My Drive\\Master Folder\\DG2 Infra Pack 1\\Contract Docs\\PMC2\\DD-2022-085-DG II PMC Infra PSA- Signed Contract.pdf"
+      "local_path": "G:\\My Drive\\Master Folder\\the client project\\Contract Docs\\PMC2\\DD-2022-085-CLIENT PMC Infra PSA- Signed Contract.pdf"
     },
     {
       "doc_id": "ff00adc9",
@@ -16,7 +16,7 @@
       "size": 45834540,
       "drive_file_id": "1hgK0uqcRK_PCClFLqco4Ko3Y1tYRDwQ8",
       "ext": ".pdf",
-      "local_path": "G:\\My Drive\\Master Folder\\DG2 Infra Pack 1\\Trackers\\Proposed Accelerated Work Programme - AICC.pdf"
+      "local_path": "G:\\My Drive\\Master Folder\\the client project\\Trackers\\Proposed Accelerated Work Programme - AICC.pdf"
     }
   ]
 }

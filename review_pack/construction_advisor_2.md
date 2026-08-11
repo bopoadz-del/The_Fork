@@ -2,7 +2,7 @@
 
 - verdict: PARTIAL
 - prompt: check the lifting feasibility for a 40 tonne module with a 100t mobile crane
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-092f0f62114a
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "construction_advisor", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

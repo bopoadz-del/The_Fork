@@ -3,7 +3,7 @@
 2026-07-13. Static audit of every item in the "brain" — the project-assistant agent, the
 orchestrator/predefined path, and every block/action they route to, plus RAG. Method: 8-agent
 static fleet against a fixed rubric (what / how / wiring / real-vs-weak-vs-fake / tested /
-verdict), followed by an empirical pass on the critical path against DG2 oracles.
+verdict), followed by an empirical pass on the critical path against the client project oracles.
 
 Verdicts: **PILOT-READY** · **NEEDS-WORK** · **WEAK** · **BROKEN/FAKE**.
 
@@ -70,8 +70,8 @@ gated container method + grounded synthesis. Reachable, honest, testable end-to-
 | RAG injection (`inject.py`) | real confidence threshold + identifier-miss gate + token budget; best-tested file |
 | vector_store (pgvector/HNSW/BM25/RRF) | genuine ANN+BM25+RRF, HNSW guard, embedding-identity fail-loud |
 | embeddings | dim probed at runtime, L2-norm, fail-loud; fake mode unreachable in prod |
-| `boq_processor` arithmetic | real qty×rate parsing, never fabricates a total (DG2 demo BOQ = SAR 62.2M) |
-| `drawing_qto` text/title-block | real, tested against real DG2 fixture PDFs |
+| `boq_processor` arithmetic | real qty×rate parsing, never fabricates a total (the client project demo BOQ = SAR 62.2M) |
+| `drawing_qto` text/title-block | real, tested against real the client project fixture PDFs |
 | `formula_executor_v2` | real LLM codegen in a real RestrictedPython sandbox, well-tested |
 | `procurement_list_generator` | real BOQ/quantity-driven, honest rate lookup (None not fabricated) |
 | `recommendation_template` | real rule engine, honestly labeled |
@@ -161,13 +161,13 @@ no fabrication. The **read/answer path is solid**; the **generate/deliverable pa
 
 ---
 
-## Empirical pass (live DG2 verification, 2026-07-13) — CORRECTS THE STATIC KEYSTONE
+## Empirical pass (live the client project verification, 2026-07-13) — CORRECTS THE STATIC KEYSTONE
 
-Live fork_cli runs against prod-config chat on `dar_al_arkan_master`. Model live = **gpt-4o-mini**.
+Live fork_cli runs against prod-config chat on `master_corpus`. Model live = **gpt-4o-mini**.
 
 | Probe | Result | Correction to static audit |
 |---|---|---|
-| GK grounding — "which ASTM standards in the DG2 spec?" | grounded in a REAL DG2 spec doc (Vol 2 Specs Part 2, score 0.756), **not** the FIDIC GK note | GK contamination NOT dominating this query; grounding works |
+| GK grounding — "which ASTM standards in the the client project spec?" | grounded in a REAL the client project spec doc (Vol 2 Specs Part 2, score 0.756), **not** the FIDIC GK note | GK contamination NOT dominating this query; grounding works |
 | payment_certificate (no data) | `mode: predefined` → real gated method → **honest error** "needs contract_value" | **Allowlist is REACHABLE, not dead code.** No fabrication. |
 | payment_certificate (WITH "contract_value 25000000, work_done 42%") | **still** honest error — the values were NOT extracted from the message into the action params | **Real gap #1: parameter extraction missing** — gated calculators can't compute even when given data |
 | cash_flow_forecast | `mode: predefined` → **honest error** "contract value required" | reachable + honest; no freeform fabrication |

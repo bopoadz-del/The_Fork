@@ -8,7 +8,7 @@ Triage classes: 1 = routing miss, 2 = block crash / HTTP failure, 3 = structural
 
 | action | class | prompt(s) | routed action | verdict | latency | evidence | triage |
 |---|---|---|---|---|---|---|---|
-| process_document | must | what does the DG2 project execution plan cover?<br>summarise the MV culvert diversion drawing changes for me | drawing_qto, process_document | FAIL | 17s | [process_document_1.md](review_pack/process_document_1.md)<br>[process_document_2.md](review_pack/process_document_2.md) | 2 |
+| process_document | must | what does the the client project project execution plan cover?<br>summarise the MV culvert diversion drawing changes for me | drawing_qto, process_document | FAIL | 17s | [process_document_1.md](review_pack/process_document_1.md)<br>[process_document_2.md](review_pack/process_document_2.md) | 2 |
 | boq_process | must | process the bill of quantities and give me the total value<br>what's in the priced BOQ - break down the cost sheet by section | boq_process | BLOCKED | 10s | [boq_process_1.md](review_pack/boq_process_1.md)<br>[boq_process_2.md](review_pack/boq_process_2.md) | 4 |
 | estimate_costs | must | generate a cost estimate for a 2km 400mm sewer line in Riyadh<br>how much would the earthworks package roughly cost? | estimate_costs | FAIL | 15s | [estimate_costs_1.md](review_pack/estimate_costs_1.md)<br>[estimate_costs_2.md](review_pack/estimate_costs_2.md) | 2 |
 | spec_analyze | must | analyze the concrete specification requirements - what grades and stan...<br>pull out the material specs for the road works | spec_analyze | FAIL | 9s | [spec_analyze_1.md](review_pack/spec_analyze_1.md)<br>[spec_analyze_2.md](review_pack/spec_analyze_2.md) | 2 |

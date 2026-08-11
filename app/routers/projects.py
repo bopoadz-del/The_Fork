@@ -285,7 +285,7 @@ async def list_projects(auth: dict = Depends(require_user)):
             user_id=auth["user_id"], include_admin_approved=True,
         )
         # Pilot: hide incomplete approved shells from non-admins so they
-        # gravitate to the Dar Al Arkan Master Corpus.
+        # gravitate to the Master Corpus.
         rows = [
             r for r in rows
             if not (
@@ -996,7 +996,7 @@ async def delete_document(
     store.delete_document(document_id)
     # Drop the deleted doc from the project's doc_index too — otherwise its
     # stale chunks keep surfacing in RAG retrieval (verified failure mode on
-    # the Diriyah project where a deleted duplicate kept appearing as a
+    # the the client project where a deleted duplicate kept appearing as a
     # Sources-footer entry).
     index_pruned = False
     try:

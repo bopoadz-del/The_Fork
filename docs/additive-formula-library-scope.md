@@ -40,7 +40,7 @@ Each formula = a public function returning a `@dataclass` (or dict) with:
 
 Recommend **ACI 318 (concrete) + AISC 360 (steel) + ASCE 7 (loads)** — the
 US-family the Saudi Building Code (SBC 301/304/306) is derived from, so it fits
-the DG2/Gulf pilot. Eurocode (EC2/EC3/EC1) is the alternative. I'll default to
+the the client project/Gulf pilot. Eurocode (EC2/EC3/EC1) is the alternative. I'll default to
 the ACI/AISC/ASCE family unless you say Eurocode; a few formulas will expose the
 code factor as a parameter so the other family is a one-arg switch.
 

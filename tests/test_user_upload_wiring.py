@@ -39,7 +39,7 @@ def test_user_upload_routes_to_user_session(monkeypatch):
         "original_name": "site_photos_notes.pdf",
         "metadata": {"provenance": "user_upload", "uploader_id": "u_amir"},
     })
-    ret.index_chunks("dg2_infra_pack_1", "d1", ["a chunk"])
+    ret.index_chunks("client_infra_pack_1", "d1", ["a chunk"])
     assert captured["knowledge_layer"] == "user_session"
 
 
@@ -50,7 +50,7 @@ def test_project_import_stays_project_record(monkeypatch):
         "original_name": "priced_boq.xlsx",
         "metadata": None,  # seed/import: no provenance marker
     })
-    ret.index_chunks("dg2_infra_pack_1", "d1", ["a chunk"])
+    ret.index_chunks("client_infra_pack_1", "d1", ["a chunk"])
     assert captured["knowledge_layer"] == "project_record"
 
 
@@ -61,5 +61,5 @@ def test_flag_off_ignores_provenance(monkeypatch):
         "original_name": "x.pdf",
         "metadata": {"provenance": "user_upload"},
     })
-    ret.index_chunks("dg2_infra_pack_1", "d1", ["a chunk"])
+    ret.index_chunks("client_infra_pack_1", "d1", ["a chunk"])
     assert captured["knowledge_layer"] is None

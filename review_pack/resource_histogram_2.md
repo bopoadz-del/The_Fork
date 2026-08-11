@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: show me the labor loading month by month for this project
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-14c1a82128ee
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "resource_histogram", "confidence": 0.4, "reason": "needs_planning"}`
 - tool_calls: []

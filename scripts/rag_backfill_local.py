@@ -18,7 +18,7 @@ Usage:
     python scripts/rag_backfill_local.py \
         --audit rag_backfill_audit_latest.json \
         --doc-id fd95077e... \
-        --project-id dg2_infra_pack_1
+        --project-id client_infra_pack_1
 """
 from __future__ import annotations
 

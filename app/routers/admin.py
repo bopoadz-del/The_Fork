@@ -223,7 +223,7 @@ def admin_restore_archived_project(project_id: str,
     """Restore an ARCHIVED project to active — the missing undo for Delete.
 
     2026-07-26: the sidebar cleanup archived the REAL corpus projects
-    (dg2_infra_pack_1, drive_archive) along with the duplicate shells, and
+    (client_infra_pack_1, drive_archive) along with the duplicate shells, and
     archive hides a project from retrieval — corpus-project chat silently
     degraded with no way back from the UI or API. Restore flips status to
     'active'; pass hide_from_sidebar=true to keep the row out of the sidebar
@@ -1020,7 +1020,7 @@ def admin_corpus_collections(
             collections.append(entry)
 
     # Pilot master-corpus alias: the canonical project_id
-    # (dar_al_arkan_master) is a read-only view over the backing Drive-folder
+    # (master_corpus) is a read-only view over the backing Drive-folder
     # corpus (projects_folder). The admin inventory must never show the alias
     # as 0 chunks — that invited a destructive re-index click in T2. Reflect
     # the source counts under the alias so the admin page and reconciliation

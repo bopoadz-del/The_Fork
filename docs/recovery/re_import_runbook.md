@@ -54,7 +54,7 @@ The script prints:
 1. A proposed `GDRIVE_PROJECT_FOLDERS` env-var value.
 2. A human-readable match table with confidence (`exact` / `fuzzy` / `unmatched`).
 3. A list of unmatched Drive folders.
-4. An anchor validation warning if `dg2_infra_pack_1` is not mapped to `1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j`.
+4. An anchor validation warning if `client_infra_pack_1` is not mapped to `1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j`.
 
 > **STOP â€” operator confirmation required:** Review the proposed mapping. If any project is `unmatched`, locate its folder manually in Drive and add the `project_id:folder_id` pair to the env value before continuing. If the anchor check fails, suspect the wrong parent folder.
 
@@ -65,7 +65,7 @@ The script prints:
 After confirming the mapping, set it on Render.
 
 ```bash
-export GDRIVE_PROJECT_FOLDERS="projects_folder:<folder-id>,ha_long_xanh:<folder-id>,ha_long_xanh_2:<folder-id>,dg2_infra_pack_1:1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j,5c13510e:<folder-id>"
+export GDRIVE_PROJECT_FOLDERS="projects_folder:<folder-id>,ha_long_xanh:<folder-id>,ha_long_xanh_2:<folder-id>,client_infra_pack_1:1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j,5c13510e:<folder-id>"
 
 curl -s -X POST \
   -H "Authorization: Bearer $RENDER_API_KEY" \
@@ -86,7 +86,7 @@ curl -s -X POST \
 
 ## Step 4 â€” Decide what to do with existing empty/partial projects
 
-Some projects still have document rows but no file blobs (e.g. `dar_al_arkan_master` / `projects_folder`, `ha_long_xanh`). The Drive hydration path skips files it has already seen, so you must clear the seen-file cache to force a full re-import.
+Some projects still have document rows but no file blobs (e.g. `master_corpus` / `projects_folder`, `ha_long_xanh`). The Drive hydration path skips files it has already seen, so you must clear the seen-file cache to force a full re-import.
 
 > **STOP â€” operator decision required:** The next step only clears the gdrive seen cache. It is safe. However, re-importing into a project that already has empty document rows will add new documents alongside the old ones, inflating `document_count`. If you want a clean re-import instead, archive the old project first (which hides it but preserves its RAG chunks) and create a new project from Drive. Do **not** hard-delete any project that has live RAG chunks.
 
@@ -119,7 +119,7 @@ curl -s -X POST \
   -d '{
     "project_ids": [
       "projects_folder",
-      "dg2_infra_pack_1",
+      "client_infra_pack_1",
       "5c13510e",
       "ha_long_xanh",
       "ha_long_xanh_2"
@@ -128,7 +128,7 @@ curl -s -X POST \
   "https://the-fork.onrender.com/v1/hydration/run"
 ```
 
-> **Note:** `dar_al_arkan_master` is a virtual alias backed by `projects_folder`; hydrating `projects_folder` populates the master corpus.
+> **Note:** `master_corpus` is a virtual alias backed by `projects_folder`; hydrating `projects_folder` populates the master corpus.
 
 ---
 
@@ -137,7 +137,7 @@ curl -s -X POST \
 Poll the per-project hydration history. A pass is complete when `latest` shows a recent `finished_at`.
 
 ```bash
-for pid in projects_folder dg2_infra_pack_1 5c13510e ha_long_xanh ha_long_xanh_2; do
+for pid in projects_folder client_infra_pack_1 5c13510e ha_long_xanh ha_long_xanh_2; do
   echo "=== $pid ==="
   curl -s -H "Authorization: Bearer $FORK_API_KEY" \
     "https://the-fork.onrender.com/v1/hydration/latest?scope=project&project_id=$pid"
@@ -162,7 +162,7 @@ Expected outcome for each project:
 | project | expected after re-import |
 |---|---|
 | `projects_folder` | `files_present` == `docs` (> 0); chunks appear after indexing |
-| `dg2_infra_pack_1` | `files_present` == `docs`; `zero_chunk_docs` == 0 |
+| `client_infra_pack_1` | `files_present` == `docs`; `zero_chunk_docs` == 0 |
 | `5c13510e` | `files_present` == `docs`; `zero_chunk_docs` == 0 |
 | `ha_long_xanh` | `files_present` == `docs`; `zero_chunk_docs` == 0 |
 | `ha_long_xanh_2` | `files_present` == `docs`; `zero_chunk_docs` == 0 |
@@ -174,7 +174,7 @@ Expected outcome for each project:
 If any project shows `zero_chunk_docs > 0`, re-index those documents. First try the per-project re-index endpoint:
 
 ```bash
-for pid in projects_folder dg2_infra_pack_1 5c13510e ha_long_xanh ha_long_xanh_2; do
+for pid in projects_folder client_infra_pack_1 5c13510e ha_long_xanh ha_long_xanh_2; do
   echo "re-indexing $pid ..."
   curl -s -X POST \
     -H "Authorization: Bearer $FORK_API_KEY" \
@@ -195,8 +195,8 @@ Run a quick chat turn against the master corpus and a Drive-approved project to 
 
 ```bash
 .venv/Scripts/python.exe scripts/fork_cli.py chat \
-  "what does the DG2 project execution plan cover?" \
-  --project dar_al_arkan_master --events
+  "what does the the client project project execution plan cover?" \
+  --project master_corpus --events
 
 .venv/Scripts/python.exe scripts/fork_cli.py chat \
   "process the bill of quantities and give me the total value" \

@@ -486,7 +486,7 @@ def run_gate(args, golden: dict) -> int:
         project id BY NAME against the projects API — a rebuilt namespace can no
         longer drift the fixtures (hardcoded-ID drift, third occurrence). The
         master-corpus alias passes through unchanged."""
-        if not value or value == "dar_al_arkan_master":
+        if not value or value == "master_corpus":
             return value
         if value in _project_cache:
             return _project_cache[value]

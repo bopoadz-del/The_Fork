@@ -8,7 +8,7 @@ embedding). Intended to run on Render where tesseract is installed.
 Usage (inside Render worker container, from /app):
     python scripts/rag_backfill_platform_index.py \
         --manifest rag_backfill_indexable_candidates.json \
-        --project-id dg2_infra_pack_1 \
+        --project-id client_infra_pack_1 \
         --batch-index 1
 
 Required env:

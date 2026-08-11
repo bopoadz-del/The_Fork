@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build the prioritized ingestion manifest for server-side Phase 1b.
 
-Reads the existing Drive manifest (p1a_drive_manifest_dg2.json) and the
+Reads the existing Drive manifest (p1a_drive_manifest_client.json) and the
 known top-level Drive folders, then assigns each folder to a tier:
 
-  Tier 1: DG2 Infra Pack 1 + golden-set/fixture-backing folders
+  Tier 1: the client project + golden-set/fixture-backing folders
   Tier 2: Other pilot-relevant project/procedure folders
   Tier 3: Archives, scanned reference material, everything else
 
@@ -27,7 +27,7 @@ MANIFEST_DIR = REPO_ROOT / "manifests"
 # Folder IDs must be supplied when the service-account credential is fixed.
 KNOWN_FOLDERS: list[dict] = [
     # Tier 1 — pilot project + golden set/fixtures
-    {"project_id": "dg2_infra_pack_1", "folder_name": "DG2 Infra Pack 1", "tier": 1, "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j"},
+    {"project_id": "client_infra_pack_1", "folder_name": "the client project", "tier": 1, "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j"},
     {"project_id": "construction_3_001", "folder_name": "construction-3-001", "tier": 1, "folder_id": None, "note": "pilot project / fixture source"},
 
     # Tier 2 — procedures and other pilot-relevant folders
@@ -44,14 +44,14 @@ KNOWN_FOLDERS: list[dict] = [
 ]
 
 
-def _load_dg2_subfolders() -> list[dict]:
-    """Return DG2 Infra Pack 1 top-level subfolder counts from the existing manifest."""
-    path = MANIFEST_DIR / "p1a_drive_manifest_dg2.json"
+def _load_client_subfolders() -> list[dict]:
+    """Return the client project top-level subfolder counts from the existing manifest."""
+    path = MANIFEST_DIR / "p1a_drive_manifest_client.json"
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
     for folder in data.get("folders", []):
-        if folder.get("project_id") != "dg2_infra_pack_1":
+        if folder.get("project_id") != "client_infra_pack_1":
             continue
         counts: Counter[str] = Counter()
         for f in folder.get("files", []):
@@ -63,7 +63,7 @@ def _load_dg2_subfolders() -> list[dict]:
                 "subfolder": name,
                 "file_count": count,
                 "tier": 1,
-                "note": "DG2 Infra Pack 1 — tier 1 by default",
+                "note": "the client project — tier 1 by default",
             }
             for name, count in counts.most_common()
         ]
@@ -73,10 +73,10 @@ def _load_dg2_subfolders() -> list[dict]:
 def main() -> int:
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_manifest": "manifests/p1a_drive_manifest_dg2.json",
+        "source_manifest": "manifests/p1a_drive_manifest_client.json",
         "tiers": {
             "1": {
-                "description": "DG2 Infra Pack 1 + golden-set/fixture-backing folders",
+                "description": "the client project + golden-set/fixture-backing folders",
                 "gate_dependency": "Phase 2 battery gates on this tier",
                 "folders": [],
             },
@@ -95,8 +95,8 @@ def main() -> int:
 
     for entry in KNOWN_FOLDERS:
         tier = str(entry.pop("tier"))
-        if entry["project_id"] == "dg2_infra_pack_1":
-            entry["subfolders"] = _load_dg2_subfolders()
+        if entry["project_id"] == "client_infra_pack_1":
+            entry["subfolders"] = _load_client_subfolders()
             entry["file_count"] = sum(s["file_count"] for s in entry["subfolders"])
         else:
             entry["file_count"] = None  # unknown until Drive is walked

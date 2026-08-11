@@ -3,9 +3,9 @@
   "service_account": "thefork-drive-import@project-drive-469320.iam.gserviceaccount.com",
   "folders": [
     {
-      "project_id": "dg2_infra_pack_1",
+      "project_id": "client_infra_pack_1",
       "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j",
-      "folder_name": "DG2 Infra Pack 1",
+      "folder_name": "the client project",
       "walk_seconds": 607.7,
       "errors": [],
       "total_files": 6206,
@@ -751,22 +751,22 @@
           "folder_id": ""
         },
         {
-          "path": "Logistics\\LAARS\\DG2 Logistic Drawing inc Haul R LAARs Rev-04 - Ver-02 as off 05 Mar 24",
+          "path": "Logistics\\LAARS\\the client project Logistic Drawing inc Haul R LAARs Rev-04 - Ver-02 as off 05 Mar 24",
           "file_count": 1,
           "folder_id": ""
         },
         {
-          "path": "Logistics\\LAARS\\DG2 Logistic Drawing inc Haul R LAARs Rev-04 - Ver-02 as off 05 Mar 24\\Fonts",
+          "path": "Logistics\\LAARS\\the client project Logistic Drawing inc Haul R LAARs Rev-04 - Ver-02 as off 05 Mar 24\\Fonts",
           "file_count": 8,
           "folder_id": ""
         },
         {
-          "path": "Logistics\\LAARS\\DG2 Logistic Drawing inc Haul R LAARs Rev-04 - Ver-02 as off 05 Mar 24\\PlotCfgs",
+          "path": "Logistics\\LAARS\\the client project Logistic Drawing inc Haul R LAARs Rev-04 - Ver-02 as off 05 Mar 24\\PlotCfgs",
           "file_count": 3,
           "folder_id": ""
         },
         {
-          "path": "Logistics\\LAARS\\DG2 Logistic Drawing inc Haul R LAARs Rev-04 - Ver-02 as off 05 Mar 24\\Textures",
+          "path": "Logistics\\LAARS\\the client project Logistic Drawing inc Haul R LAARs Rev-04 - Ver-02 as off 05 Mar 24\\Textures",
           "file_count": 13,
           "folder_id": ""
         },
@@ -1046,7 +1046,7 @@
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\DG2 Infra Pack Phase 6 Application Files",
+          "path": "Organizations\\Authorities\\H&C\\the client project Infra Pack Phase 6 Application Files",
           "file_count": 1,
           "folder_id": ""
         },
@@ -1081,52 +1081,52 @@
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( Phase-5 )",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( Phase-5 )",
           "file_count": 1,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( Phase-6 )",
           "file_count": 3,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )\\Sheet Drawing",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( Phase-6 )\\Sheet Drawing",
           "file_count": 9,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( Phase-7 )",
           "file_count": 3,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )\\Sheet Drawing",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( Phase-7 )\\Sheet Drawing",
           "file_count": 6,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( WWPS )",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( WWPS )",
           "file_count": 1,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( WWPS )\\WWPS ,H&C",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( WWPS )\\WWPS ,H&C",
           "file_count": 2,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( WWPS )\\WWPS ,H&C\\Overall Layout",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( WWPS )\\WWPS ,H&C\\Overall Layout",
           "file_count": 1,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 ( WWPS )\\WWPS ,H&C\\Sheet Drawings",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 ( WWPS )\\WWPS ,H&C\\Sheet Drawings",
           "file_count": 1,
           "folder_id": ""
         },
         {
-          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC DG-2 Infra Pkg-1 Underpass",
+          "path": "Organizations\\Authorities\\H&C\\H&C Request\\H&C NOC the client project Infra Pkg-1 Underpass",
           "file_count": 4,
           "folder_id": ""
         },
@@ -1471,7 +1471,7 @@
           "folder_id": ""
         },
         {
-          "path": "Reporting (various)\\Project Controls\\Planning\\DG2 Package 1 Baseline Schedule Rev 1 (under review)",
+          "path": "Reporting (various)\\Project Controls\\Planning\\the client project Package 1 Baseline Schedule Rev 1 (under review)",
           "file_count": 5,
           "folder_id": ""
         },
@@ -1541,12 +1541,12 @@
           "folder_id": ""
         },
         {
-          "path": "Reporting (various)\\Surveys\\Topographic surveys\\DG2 Infra Topo Survey May 2023",
+          "path": "Reporting (various)\\Surveys\\Topographic surveys\\the client project Infra Topo Survey May 2023",
           "file_count": 4,
           "folder_id": ""
         },
         {
-          "path": "Reporting (various)\\Surveys\\Topographic surveys\\DG2 Package 1 Enabling Works",
+          "path": "Reporting (various)\\Surveys\\Topographic surveys\\the client project Package 1 Enabling Works",
           "file_count": 1,
           "folder_id": ""
         },
@@ -1584,142 +1584,142 @@
       "files": [
         {
           "id": "1IjTuPaj6bOep7nekUTfNYUjsxiN7Rgkd",
-          "name": "Annual Team Leave Roster 2024 DG2 Infra & Log.xlsx",
+          "name": "Annual Team Leave Roster 2024 the client project Infra & Log.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Admin/Annual Team Leave Roster 2024 DG2 Infra & Log.xlsx",
+          "path": "Admin/Annual Team Leave Roster 2024 the client project Infra & Log.xlsx",
           "size": 69554
         },
         {
           "id": "1ZF-MZwghcry8thODKfuqBJW6d19KZ1Vm",
-          "name": "DD-2022-085-DG II PMC Infra PSA- Signed Contract.pdf",
+          "name": "DD-2022-085-CLIENT PMC Infra PSA- Signed Contract.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/PMC2/DD-2022-085-DG II PMC Infra PSA- Signed Contract.pdf",
+          "path": "Contract Docs/PMC2/DD-2022-085-CLIENT PMC Infra PSA- Signed Contract.pdf",
           "size": 163505180
         },
         {
           "id": "1rP3vKj5zvrT-MMhA_hmN7rCZzL7ztZAr",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (7 of 7).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (7 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (7 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (7 of 7).pdf",
           "size": 670892
         },
         {
           "id": "1soXZt1L6kwfDtnJIeM_VvyyHT0Oo1ayM",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (6 of 7).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (6 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (6 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (6 of 7).pdf",
           "size": 195475234
         },
         {
           "id": "1ll-Km2t6nHLXaapFa0lbYT3lgF_dUNqG",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (5 of 7).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (5 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (5 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (5 of 7).pdf",
           "size": 146179384
         },
         {
           "id": "1dxg4FwQG9Yq3T18seKBkwYeLUdTWrv9k",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (1 of 7).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (1 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (1 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (1 of 7).pdf",
           "size": 471794567
         },
         {
           "id": "11ci7esodsXDJibqt1MN4o4TADgxW_l8V",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (4 of 7).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (4 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (4 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (4 of 7).pdf",
           "size": 239325584
         },
         {
           "id": "1lwqN_b8J55bQS-4NSAP3NOixZyBpsj9m",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (3 of 7).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (3 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (3 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (3 of 7).pdf",
           "size": 345970034
         },
         {
           "id": "1miQYFGmwg92Hp6rm6KsAK2rXHllP9id2",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (2 of 7).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (2 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 3 – Drawings (2 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 3 – Drawings (2 of 7).pdf",
           "size": 207683410
         },
         {
           "id": "1C_UzEobrr_PurvsgmzIGI5Hq1gxpdO-G",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
           "size": 10440720
         },
         {
           "id": "15thu7WfSXgSkwoT62KfdIrWiV2MG6h-G",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
           "size": 24983196
         },
         {
           "id": "1ou3b5xFUsedQLQo_bjgmbMAy9c1UXHFE",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
           "size": 13438392
         },
         {
           "id": "13vanW5xtGK5e5zAc6t-YUzTMo-JlE6vM",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
           "size": 10910384
         },
         {
           "id": "19L_IrbAZyH-6C5KGDswy9dormBEiLNI0",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (5 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (5 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (5 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (5 of 9).pdf",
           "size": 1189397
         },
         {
           "id": "1Jmif9p6Zo1QLxu5_wJeZ790RrrzfD9dT",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
           "size": 4469963
         },
         {
           "id": "10Z3HlxkkbFOZOValiSRKnPum1lNCngSv",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
           "size": 7899368
         },
         {
           "id": "1NOgTtw6EnHJHMiG1FfV1UZtkWx8sHE7U",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
           "size": 4993925
         },
         {
           "id": "15mZ16ncgtlOYTkFWiFXTDN7OMXVEjI4-",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
           "size": 232484816
         },
         {
           "id": "10HbhD83BCJkwbWzX3xx_lO_vABP7-rKq",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 6 - Contractor's Proposal.pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 6 - Contractor's Proposal.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 6 - Contractor's Proposal.pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 6 - Contractor's Proposal.pdf",
           "size": 70780021
         },
         {
           "id": "1UT2CQgVpApDLca5GiBrbqg1dY6Yo-L5g",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (1 of 9) (1).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (1 of 9) (1).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (1 of 9) (1).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (1 of 9) (1).pdf",
           "size": 11242287
         },
         {
@@ -1731,44 +1731,44 @@
         },
         {
           "id": "1qN2jcg-gh0p-J5B3qYLpocGaqui-8-2W",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (4 of 5).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (4 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (4 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (4 of 5).pdf",
           "size": 124511168
         },
         {
           "id": "1_Je5vEhZsFCo7OGSjfgRiMjfkjQVoSGy",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (5 of 5).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (5 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (5 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (5 of 5).pdf",
           "size": 1471193
         },
         {
           "id": "15FccvU4ZI4TyHY0m97liZpwe6DR8-94b",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (3 of 5).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (3 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (3 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (3 of 5).pdf",
           "size": 105310324
         },
         {
           "id": "1gTWhBPDmnL-wK4Sa6-rKS_r_QQiCt11P",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
           "size": 22756750
         },
         {
           "id": "1N_M8L60YHXWu1-O_nsHQXso9sNHsS5PJ",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
           "size": 38579250
         },
         {
           "id": "1SbwJV2u5Je5W4qnqZkLCLWp5QPmFWbO9",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 4 - Schedule (2 of 2).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 4 - Schedule (2 of 2).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 4 - Schedule (2 of 2).pdf",
+          "path": "Contract Docs/Contractor/Contract docs SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 4 - Schedule (2 of 2).pdf",
           "size": 4795008
         },
         {
@@ -11608,219 +11608,219 @@
         },
         {
           "id": "13g2S7TqSpjaG24qpoYDV-DNeSmST7QGE",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (5 of 9) (1).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (5 of 9) (1).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (5 of 9) (1).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (5 of 9) (1).pdf",
           "size": 1024841
         },
         {
           "id": "1RKAt5nVsXKpCk9xgBZsX2i6bqiyFDHWy",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (7 of 7).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 3 – Drawings (7 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (7 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 3 – Drawings (7 of 7).pdf",
           "size": 460112
         },
         {
           "id": "1rsyL-KoOGPO9qhMNg-PRIFRdzlwjx_dt",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (7 of 9)_LOD standarts.pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 - Specification (7 of 9)_LOD standarts.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 - Specification (7 of 9)_LOD standarts.pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 - Specification (7 of 9)_LOD standarts.pdf",
           "size": 136109
         },
         {
           "id": "1ZXz0zMYHfGkusLNmkTSZEpELjAb4LL9F",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (5 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 - Specification (5 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 - Specification (5 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 - Specification (5 of 9).pdf",
           "size": 1024841
         },
         {
           "id": "1jbq9LJVBgX3tcozdFo9Dz_jsdPxbGu__",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (1 of 9)_Existing Services.pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 - Specification (1 of 9)_Existing Services.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 - Specification (1 of 9)_Existing Services.pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 - Specification (1 of 9)_Existing Services.pdf",
           "size": 180906
         },
         {
           "id": "1O-3rulcKxNMVdUQDoAyu54j-Tfhj-s4c",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract Data.pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 1.0_Cond of Contract (complete)_Contract Data.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract Data.pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 1.0_Cond of Contract (complete)_Contract Data.pdf",
           "size": 437664
         },
         {
           "id": "1xVbEnj_UczqDiK8xsD-Hj40XaaaP5UoE",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract agreement.pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 1.0_Cond of Contract (complete)_Contract agreement.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract agreement.pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 1.0_Cond of Contract (complete)_Contract agreement.pdf",
           "size": 348299
         },
         {
           "id": "1u-pCjqz871aWtbvmmUT7vyZY1nx_ocZT",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (4 of 5).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (4 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (4 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (4 of 5).pdf",
           "size": 124063764
         },
         {
           "id": "1kqCiAcOFtMZhEsy5mXdqcXmdRtlhfqos",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 4 - Schedule (1 of 2) BOQ.pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 4 - Schedule (1 of 2) BOQ.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 4 - Schedule (1 of 2) BOQ.pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 4 - Schedule (1 of 2) BOQ.pdf",
           "size": 238172802
         },
         {
           "id": "1D7WcFFGCiD11ERnIbdZ3QjNAg5NyRuJ9",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (5 of 5).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (5 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (5 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (5 of 5).pdf",
           "size": 1315556
         },
         {
           "id": "1is2PS9MWMlSKqMlPxgS_JRIVZdUN95mI",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (3 of 5).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (3 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (3 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (3 of 5).pdf",
           "size": 104823425
         },
         {
           "id": "1l3nysdJC-IM1DAIYRSTds21WYcqMyI_8",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (6 of 7).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 3 – Drawings (6 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (6 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 3 – Drawings (6 of 7).pdf",
           "size": 195295819
         },
         {
           "id": "1ySqyP8cqrxImwu6hhVMNeS9u3Au9B-Tw",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (2 of 5).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (2 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents (2 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 5 - Other Documents (2 of 5).pdf",
           "size": 22346947
         },
         {
           "id": "1SgIBCMP-YhqBkY1qd2ZR5ATeGIPwjNGO",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents  (1 of 5).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 5 - Other Documents  (1 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 5 - Other Documents  (1 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 5 - Other Documents  (1 of 5).pdf",
           "size": 38450612
         },
         {
           "id": "1TTrgv1NTW7_zRb-uGGzxilIvOOqF0NLY",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 4 - Schedule (2 of 2)_Schedule 4 [Site].pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 4 - Schedule (2 of 2)_Schedule 4 [Site].pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 4 - Schedule (2 of 2)_Schedule 4 [Site].pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 4 - Schedule (2 of 2)_Schedule 4 [Site].pdf",
           "size": 3572300
         },
         {
           "id": "17sijA04QtVdJFXbPDh24H49uw8zQSnM_",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 4 - Schedule (2 of 2).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 4 - Schedule (2 of 2).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 4 - Schedule (2 of 2).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 4 - Schedule (2 of 2).pdf",
           "size": 4599726
         },
         {
           "id": "1j1yZsAhm_6f06gbOnImsTEYDusC2Zpom",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (1 of 7).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 3 – Drawings (1 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (1 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 3 – Drawings (1 of 7).pdf",
           "size": 468204783
         },
         {
           "id": "18GBdZTVkjSQgr0Qql30zoSr6BJ2TLLN4",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (5 of 7).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 3 – Drawings (5 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (5 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 3 – Drawings (5 of 7).pdf",
           "size": 146240739
         },
         {
           "id": "1Uz3JR7Kg7UZeKAP4kk3A-ctP_JViv_2o",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (4 of 7).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 3 – Drawings (4 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (4 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 3 – Drawings (4 of 7).pdf",
           "size": 239432508
         },
         {
           "id": "1IQBOQvT8eHP-nSr_m7Z3delBQhvMboAQ",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (3 of 7).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 3 – Drawings (3 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (3 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 3 – Drawings (3 of 7).pdf",
           "size": 346621692
         },
         {
           "id": "1RPIGajGgz1xNKxeAuYZk2SDA69gkYajd",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (2 of 7).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 3 – Drawings (2 of 7).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 3 – Drawings (2 of 7).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 3 – Drawings (2 of 7).pdf",
           "size": 207829243
         },
         {
           "id": "1T6ylfqy6xkDz6loJlap6KAYwn7bA-uE6",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (9 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 - Specification (9 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 - Specification (9 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 - Specification (9 of 9).pdf",
           "size": 10197349
         },
         {
           "id": "1GnedqwCNkqe8DH0krAVyE0nhoT0b5mb2",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 6 - Contractor's Proposal.pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 6 - Contractor's Proposal.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 6 - Contractor's Proposal.pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 6 - Contractor's Proposal.pdf",
           "size": 69931278
         },
         {
           "id": "15R7-U4pynBEy_GPViLsijupGc8hUA_wx",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (8 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 - Specification (8 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 - Specification (8 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 - Specification (8 of 9).pdf",
           "size": 13183930
         },
         {
           "id": "1NAE-sJz2XnAZ_ppI5ylrX5K5u9s0BmLj",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (6 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 - Specification (6 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 - Specification (6 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 - Specification (6 of 9).pdf",
           "size": 24453154
         },
         {
           "id": "1sHNzXkDGB11I9PGqEevO4cfceLktRf14",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (7 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 - Specification (7 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 - Specification (7 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 - Specification (7 of 9).pdf",
           "size": 10695829
         },
         {
           "id": "12V9JbtTq-alYo9pUJEbljaBqcIkLfApq",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 – Specification (4 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 – Specification (4 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 – Specification (4 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 – Specification (4 of 9).pdf",
           "size": 6984481
         },
         {
           "id": "1VrhmhVRPjrjKqZYodDoCAnC0accCAVSX",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 – Specification (3 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 – Specification (3 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 – Specification (3 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 – Specification (3 of 9).pdf",
           "size": 4058139
         },
         {
           "id": "1ksnmnhLW6TMGWKkORpyt3wQ665IAXEsB",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (1 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 - Specification (1 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 - Specification (1 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 - Specification (1 of 9).pdf",
           "size": 11118769
         },
         {
           "id": "126UwIW9ypwIfQxK7NMx-XNabAyGosIX-",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 2 – Specification (2 of 9).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 2 – Specification (2 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 2 – Specification (2 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 2 – Specification (2 of 9).pdf",
           "size": 4587438
         },
         {
           "id": "16vWYIHvWyCFl3UhaUp6FvlnuEcgyZ_h9",
-          "name": "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete).pdf",
+          "name": "DD-2023-118_the client project Infra P1_Vol 1.0_Cond of Contract (complete).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project Infra P1_Vol 1.0_Cond of Contract (complete).pdf",
           "size": 2853790
         },
         {
@@ -11832,79 +11832,79 @@
         },
         {
           "id": "12sZ6TRf_RZLYSlyXXHJgRB6Aef5mQWQa",
-          "name": "DG2 AIC Contract - Pre-condition site survey requirements.docx",
+          "name": "the client project AIC Contract - Pre-condition site survey requirements.docx",
           "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DG2 AIC Contract - Pre-condition site survey requirements.docx",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/the client project AIC Contract - Pre-condition site survey requirements.docx",
           "size": 1182432
         },
         {
           "id": "1SJTs5QAH-r5-qgBZuQuXme4NxfUjIGbB",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 6 - Contractor's Proposal (1).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 6 - Contractor's Proposal (1).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 6 - Contractor's Proposal (1).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 6 - Contractor's Proposal (1).pdf",
           "size": 70605896
         },
         {
           "id": "1M3-XQPorlMhxnQQcOpPTA9-EPXotR7gS",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents  (1 of 5).pdf",
           "size": 38450612
         },
         {
           "id": "1Q6mmyKn_M7RuPfk0RuFug335hvaxZ_uA",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 5 - Other Documents (2 of 5).pdf",
           "size": 22346947
         },
         {
           "id": "1Ve2Nn93Ar9EeIKj8c1rJekxY6JGUaw5_",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (4 of 9).pdf",
           "size": 6984481
         },
         {
           "id": "1zjN2gbnmyZfaEiVW8Las1hc1oYcSWC2y",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (3 of 9).pdf",
           "size": 4058139
         },
         {
           "id": "1p8XmV-hkjWEHkLfZi5kkeX82H6EtWIB7",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 – Specification (2 of 9).pdf",
           "size": 4587438
         },
         {
           "id": "1FAQzUCoU0lrvO1FqknAKNbk9TRWOIl1s",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (9 of 9).pdf",
           "size": 10197349
         },
         {
           "id": "1zY_AsoZS0JuMx-TN9G6WTA0jb1Ag8u31",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (8 of 9).pdf",
           "size": 13183930
         },
         {
           "id": "1QEYy2oXrTHeyk8zVGN5Q80_RxwPalsGm",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (6 of 9).pdf",
           "size": 24453154
         },
         {
           "id": "1sMea4B9mDQDC7vkI0zFyJF3A_alasrkm",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 1 - Conditions of Contract.pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 1 - Conditions of Contract.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 1 - Conditions of Contract.pdf",
+          "path": "Contract Docs/Contractor/Contract docs NOT SIGNED/DD-2023-118_the client project II Infrastructure Package 1_Vol 1 - Conditions of Contract.pdf",
           "size": 1797060
         },
         {
@@ -11951,16 +11951,16 @@
         },
         {
           "id": "1O_67hp2eTTMsaUTtO0HRfgKnQI4M22Sb",
-          "name": "Extracted pages from DG220-JCB-DE-TCR-000091-02_Monitoring Requirements.pdf",
+          "name": "Extracted pages from the client project20-JCB-DE-TCR-000091-02_Monitoring Requirements.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/XX___Other requirements/HSE/Extracted pages from DG220-JCB-DE-TCR-000091-02_Monitoring Requirements.pdf",
+          "path": "Contract Docs/XX___Other requirements/HSE/Extracted pages from the client project20-JCB-DE-TCR-000091-02_Monitoring Requirements.pdf",
           "size": 170439
         },
         {
           "id": "1fF0vE_1Qvo2q_18X_cZPUgrzE1yuEgJ-",
-          "name": "Extracted pages from DG220-JCB-DE-TCR-000091-02_Preconstruction Survey.pdf",
+          "name": "Extracted pages from the client project20-JCB-DE-TCR-000091-02_Preconstruction Survey.pdf",
           "mimeType": "application/pdf",
-          "path": "Contract Docs/XX___Other requirements/HSE/Extracted pages from DG220-JCB-DE-TCR-000091-02_Preconstruction Survey.pdf",
+          "path": "Contract Docs/XX___Other requirements/HSE/Extracted pages from the client project20-JCB-DE-TCR-000091-02_Preconstruction Survey.pdf",
           "size": 58397
         },
         {
@@ -12056,9 +12056,9 @@
         },
         {
           "id": "1pkn0WJi1CStfI7QAguvkIyZkscbVXTiy",
-          "name": "Initial DG2 - Infra 1 Risk Brainstorm.xlsx",
+          "name": "Initial the client project - Infra 1 Risk Brainstorm.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Reporting (various)/Risk/Initial DG2 - Infra 1 Risk Brainstorm.xlsx",
+          "path": "Reporting (various)/Risk/Initial the client project - Infra 1 Risk Brainstorm.xlsx",
           "size": 31092
         },
         {
@@ -13343,7 +13343,7 @@
           "size": 288828
         },
         {
-          "id": "17lsPIr1SwDnGGq9wPJxoQIHPdg2dyCnt",
+          "id": "17lsPIr1SwDnGGq9wPJxoQIHPclientdyCnt",
           "name": "BEX - Infra Catch Up.pdf",
           "mimeType": "application/pdf",
           "path": "Reporting (various)/Project Controls/SOR/BEX - Infra Catch Up.pdf",
@@ -13619,35 +13619,35 @@
           "id": "1M8HGBwE8PPuQKHqfGwYX2fT-CJ-pKZSj",
           "name": "Annexure 7 - S-Curves & Histograms.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Reporting (various)/Project Controls/Planning/DG2 Package 1 Baseline Schedule Rev 1 (under review)/Annexure 7 - S-Curves & Histograms.xlsx",
+          "path": "Reporting (various)/Project Controls/Planning/the client project Package 1 Baseline Schedule Rev 1 (under review)/Annexure 7 - S-Curves & Histograms.xlsx",
           "size": 88132
         },
         {
           "id": "1bPqTL3gN7b6yAQDe9ojiBh8LSAxrcTro",
           "name": "Annexure 1 - Baseline Program PDF.pdf",
           "mimeType": "application/pdf",
-          "path": "Reporting (various)/Project Controls/Planning/DG2 Package 1 Baseline Schedule Rev 1 (under review)/Annexure 1 - Baseline Program PDF.pdf",
+          "path": "Reporting (various)/Project Controls/Planning/the client project Package 1 Baseline Schedule Rev 1 (under review)/Annexure 1 - Baseline Program PDF.pdf",
           "size": 24705874
         },
         {
           "id": "1alY-AmbECn9Qo7LMGUOr0hSZfdIsfiBo",
           "name": "Annexure 8 - Longest Path.pdf",
           "mimeType": "application/pdf",
-          "path": "Reporting (various)/Project Controls/Planning/DG2 Package 1 Baseline Schedule Rev 1 (under review)/Annexure 8 - Longest Path.pdf",
+          "path": "Reporting (various)/Project Controls/Planning/the client project Package 1 Baseline Schedule Rev 1 (under review)/Annexure 8 - Longest Path.pdf",
           "size": 1509310
         },
         {
           "id": "1PSUPpsgdhIsj6grwhJfJJfbCTtlPHRvl",
           "name": "Annexure 2 - Baseline Program XER.xer",
           "mimeType": "application/octet-stream",
-          "path": "Reporting (various)/Project Controls/Planning/DG2 Package 1 Baseline Schedule Rev 1 (under review)/Annexure 2 - Baseline Program XER.xer",
+          "path": "Reporting (various)/Project Controls/Planning/the client project Package 1 Baseline Schedule Rev 1 (under review)/Annexure 2 - Baseline Program XER.xer",
           "size": 25801998
         },
         {
           "id": "1k-otUfKu_xrWgxLSn5LVz-wt0CVFFoxX",
           "name": "Annexure 3 - Critical Path of Project.pdf",
           "mimeType": "application/pdf",
-          "path": "Reporting (various)/Project Controls/Planning/DG2 Package 1 Baseline Schedule Rev 1 (under review)/Annexure 3 - Critical Path of Project.pdf",
+          "path": "Reporting (various)/Project Controls/Planning/the client project Package 1 Baseline Schedule Rev 1 (under review)/Annexure 3 - Critical Path of Project.pdf",
           "size": 6514987
         },
         {
@@ -13764,16 +13764,16 @@
         },
         {
           "id": "1h5dE9QaPf0QE89ERJxVTPqv6-9oEYdmR",
-          "name": "241110 DG2I1 WPM MoM - caw.xlsx",
+          "name": "241110 the client projectI1 WPM MoM - caw.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Reporting (various)/MoM/Progress Meeting/241110 DG2I1 WPM MoM - caw.xlsx",
+          "path": "Reporting (various)/MoM/Progress Meeting/241110 the client projectI1 WPM MoM - caw.xlsx",
           "size": 62073
         },
         {
           "id": "12Mb7bRikMYlYcoDHfXNSH5mWbygiUn63",
-          "name": "241117 DG2I1 WPM MoM - caw.pdf",
+          "name": "241117 the client projectI1 WPM MoM - caw.pdf",
           "mimeType": "application/pdf",
-          "path": "Reporting (various)/MoM/Progress Meeting/241117 DG2I1 WPM MoM - caw.pdf",
+          "path": "Reporting (various)/MoM/Progress Meeting/241117 the client projectI1 WPM MoM - caw.pdf",
           "size": 2470565
         },
         {
@@ -16074,9 +16074,9 @@
         },
         {
           "id": "1hDK-n91y1koTfw0ZTRwLTVSohJuesjy_",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
           "mimeType": "application/pdf",
-          "path": "Reporting (various)/Contractor/BOQ/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
+          "path": "Reporting (various)/Contractor/BOQ/DD-2023-118_the client project II Infrastructure Package 1_Vol 4 - Schedule (1 of 2).pdf",
           "size": 232340804
         },
         {
@@ -16102,23 +16102,23 @@
         },
         {
           "id": "1nICzQOGaoMW7_F6IPAjYyndOrsxWXMWU",
-          "name": "SOW DG2 Utility Identification Survey R1 - RN.pdf",
+          "name": "SOW the client project Utility Identification Survey R1 - RN.pdf",
           "mimeType": "application/pdf",
-          "path": "Reporting (various)/Surveys/Utility Survey/SOW DG2 Utility Identification Survey R1 - RN.pdf",
+          "path": "Reporting (various)/Surveys/Utility Survey/SOW the client project Utility Identification Survey R1 - RN.pdf",
           "size": 4623367
         },
         {
           "id": "1PmJLYNT6c63eNmYZgp6uQGAVUXdLcL10",
-          "name": "SOW DG2 Utility Identification Survey R1.docx",
+          "name": "SOW the client project Utility Identification Survey R1.docx",
           "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "path": "Reporting (various)/Surveys/Utility Survey/SOW DG2 Utility Identification Survey R1.docx",
+          "path": "Reporting (various)/Surveys/Utility Survey/SOW the client project Utility Identification Survey R1.docx",
           "size": 17577356
         },
         {
           "id": "1rGkE38M1c55MuSOr02a5YvYP70rt9IU8",
-          "name": "SOW DG2 Utility Identification Survey R1-caw.pdf",
+          "name": "SOW the client project Utility Identification Survey R1-caw.pdf",
           "mimeType": "application/pdf",
-          "path": "Reporting (various)/Surveys/Utility Survey/SOW DG2 Utility Identification Survey R1-caw.pdf",
+          "path": "Reporting (various)/Surveys/Utility Survey/SOW the client project Utility Identification Survey R1-caw.pdf",
           "size": 4626382
         },
         {
@@ -16130,37 +16130,37 @@
         },
         {
           "id": "1rYhHxkJA2roQNcoenguVEx5-bbqI09Vi",
-          "name": "DG220-KBR-PM-CMT-000100-03_CRS- Topo Survey Report.xlsx",
+          "name": "the client project20-KBR-PM-CMT-000100-03_CRS- Topo Survey Report.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Reporting (various)/Surveys/Topographic surveys/DG2 Infra Topo Survey May 2023/DG220-KBR-PM-CMT-000100-03_CRS- Topo Survey Report.xlsx",
+          "path": "Reporting (various)/Surveys/Topographic surveys/the client project Infra Topo Survey May 2023/the client project20-KBR-PM-CMT-000100-03_CRS- Topo Survey Report.xlsx",
           "size": 0
         },
         {
           "id": "1YbvW84G59plJfdegjLDe6eNrsXAA4lEg",
-          "name": "DG220-JCB-DC-GND-000132-00_Survey Document OVERALL KSU.dat",
+          "name": "the client project20-JCB-DC-GND-000132-00_Survey Document OVERALL KSU.dat",
           "mimeType": "application/octet-stream",
-          "path": "Reporting (various)/Surveys/Topographic surveys/DG2 Infra Topo Survey May 2023/DG220-JCB-DC-GND-000132-00_Survey Document OVERALL KSU.dat",
+          "path": "Reporting (various)/Surveys/Topographic surveys/the client project Infra Topo Survey May 2023/the client project20-JCB-DC-GND-000132-00_Survey Document OVERALL KSU.dat",
           "size": 0
         },
         {
           "id": "1IFu_OFwwuxx4FYAavSYdG0JjJsmubZ6u",
-          "name": "DG220-JCB-DC-GND-000132-00_Survey Document OVERALL DIRIYAH.dat",
+          "name": "the client project20-JCB-DC-GND-000132-00_Survey Document OVERALL THE CLIENT.dat",
           "mimeType": "application/octet-stream",
-          "path": "Reporting (various)/Surveys/Topographic surveys/DG2 Infra Topo Survey May 2023/DG220-JCB-DC-GND-000132-00_Survey Document OVERALL DIRIYAH.dat",
+          "path": "Reporting (various)/Surveys/Topographic surveys/the client project Infra Topo Survey May 2023/the client project20-JCB-DC-GND-000132-00_Survey Document OVERALL THE CLIENT.dat",
           "size": 0
         },
         {
           "id": "1EypcFb5fYmrTdPEHMkhYq4-mjoBlfs_C",
-          "name": "DG220-JCB-DC-GND-000132-00_Survey Document 000-DGP2-REV7.dwg",
+          "name": "the client project20-JCB-DC-GND-000132-00_Survey Document 000-DGP2-REV7.dwg",
           "mimeType": "image/vnd.dwg",
-          "path": "Reporting (various)/Surveys/Topographic surveys/DG2 Infra Topo Survey May 2023/DG220-JCB-DC-GND-000132-00_Survey Document 000-DGP2-REV7.dwg",
+          "path": "Reporting (various)/Surveys/Topographic surveys/the client project Infra Topo Survey May 2023/the client project20-JCB-DC-GND-000132-00_Survey Document 000-DGP2-REV7.dwg",
           "size": 0
         },
         {
           "id": "1zNPSCvXzoBHzgAm9o3Acm7XxNRt39PpA",
-          "name": "DG220-JCB-CV-TOP-3D-ZZZ-000-011006_native.zip",
+          "name": "the client project20-JCB-CV-TOP-3D-ZZZ-000-011006_native.zip",
           "mimeType": "application/x-zip-compressed",
-          "path": "Reporting (various)/Surveys/Topographic surveys/DG2 Package 1 Enabling Works/DG220-JCB-CV-TOP-3D-ZZZ-000-011006_native.zip",
+          "path": "Reporting (various)/Surveys/Topographic surveys/the client project Package 1 Enabling Works/the client project20-JCB-CV-TOP-3D-ZZZ-000-011006_native.zip",
           "size": 107925816
         },
         {
@@ -16179,9 +16179,9 @@
         },
         {
           "id": "16yD6DeNQ_YwvBENMH4fyjmF4R8htmvf7",
-          "name": "Enabling Works and DG2 Topo Survey.rar",
+          "name": "Enabling Works and the client project Topo Survey.rar",
           "mimeType": "application/x-rar",
-          "path": "Reporting (various)/Surveys/Topographic surveys/Enabling Works and DG2 Topo Survey.rar",
+          "path": "Reporting (various)/Surveys/Topographic surveys/Enabling Works and the client project Topo Survey.rar",
           "size": 155518258
         },
         {
@@ -16942,16 +16942,16 @@
         },
         {
           "id": "18DjR3VZdEpqhzF1xlmuVeTTHzYX4kora",
-          "name": "2024.04.03 - DG2 Infra Package 1 - Organization  Structure - caw1.pdf",
+          "name": "2024.04.03 - the client project Infra Package 1 - Organization  Structure - caw1.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/CSC/Team Structure/2024.04.03 - DG2 Infra Package 1 - Organization  Structure - caw1.pdf",
+          "path": "Organizations/CSC/Team Structure/2024.04.03 - the client project Infra Package 1 - Organization  Structure - caw1.pdf",
           "size": 701631
         },
         {
           "id": "1xUD2-LDbbdfpLQALidSnEOs1PBXNy1gV",
-          "name": "2024.04.03 - DG2 Infra Package 1 - Organization  Structure - caw.pdf",
+          "name": "2024.04.03 - the client project Infra Package 1 - Organization  Structure - caw.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/CSC/Team Structure/2024.04.03 - DG2 Infra Package 1 - Organization  Structure - caw.pdf",
+          "path": "Organizations/CSC/Team Structure/2024.04.03 - the client project Infra Package 1 - Organization  Structure - caw.pdf",
           "size": 651998
         },
         {
@@ -16970,9 +16970,9 @@
         },
         {
           "id": "1riYsEgW8StHYNXWUQOQ0lUG3BfsgvTd4",
-          "name": "DG2 Infra Package 1 - Organisation Structure.vsdx",
+          "name": "the client project Infra Package 1 - Organisation Structure.vsdx",
           "mimeType": "application/vnd.ms-visio.viewer",
-          "path": "Organizations/CSC/Team Structure/DG2 Infra Package 1 - Organisation Structure.vsdx",
+          "path": "Organizations/CSC/Team Structure/the client project Infra Package 1 - Organisation Structure.vsdx",
           "size": 2632810
         },
         {
@@ -17180,16 +17180,16 @@
         },
         {
           "id": "19f5haxFi5xsrzm6NgAv90PwPTJqpAT2F",
-          "name": "Visio_PW_DGDA_caw - DG2.vsdx",
+          "name": "Visio_PW_DGDA_caw - the client project.vsdx",
           "mimeType": "application/vnd.ms-visio.viewer",
-          "path": "Organizations/PMC/Org Structure/Visio_PW_DGDA_caw - DG2.vsdx",
+          "path": "Organizations/PMC/Org Structure/Visio_PW_DGDA_caw - the client project.vsdx",
           "size": 2262032
         },
         {
           "id": "1Hys3MZrclVykN39P4u3whs_Rg1Cbdt2s",
-          "name": "DG2 Infra Package 1 - Organisation Structure R1.vsdx",
+          "name": "the client project Infra Package 1 - Organisation Structure R1.vsdx",
           "mimeType": "application/vnd.ms-visio.viewer",
-          "path": "Organizations/PMC/Org Structure/DG2 Infra Package 1 - Organisation Structure R1.vsdx",
+          "path": "Organizations/PMC/Org Structure/the client project Infra Package 1 - Organisation Structure R1.vsdx",
           "size": 2272381
         },
         {
@@ -17250,9 +17250,9 @@
         },
         {
           "id": "13iElrY3Y4heMf3nQjFTAnK_hbeHsju4W",
-          "name": "SW-SWD-025-0000-AEC-PEP-NS-000001-02 DG2 Project Execution Plan.pdf",
+          "name": "SW-SWD-025-0000-AEC-PEP-NS-000001-02 the client project Project Execution Plan.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/PMC/Plans/SW-SWD-025-0000-AEC-PEP-NS-000001-02 DG2 Project Execution Plan.pdf",
+          "path": "Organizations/PMC/Plans/SW-SWD-025-0000-AEC-PEP-NS-000001-02 the client project Project Execution Plan.pdf",
           "size": 19299051
         },
         {
@@ -17462,7 +17462,7 @@
           "id": "1n4JSOHQVt3xT71owitI3r-Kd1-Vy6WRq",
           "name": "phase 6.7z",
           "mimeType": "application/x-7z-compressed",
-          "path": "Organizations/Authorities/H&C/DG2 Infra Pack Phase 6 Application Files/phase 6.7z",
+          "path": "Organizations/Authorities/H&C/the client project Infra Pack Phase 6 Application Files/phase 6.7z",
           "size": 16416729
         },
         {
@@ -17567,189 +17567,189 @@
           "id": "1A7jtaRgvEejflPtQxTNSgGgxjh2ll2vr",
           "name": "NOC-306-24-WHH.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-5 )/NOC-306-24-WHH.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-5 )/NOC-306-24-WHH.pdf",
           "size": 543558
         },
         {
           "id": "1mGSyGvAbUwwvkTaPV5HrW2RF4pgLPBXm",
           "name": "NOC-317-24-WH .pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/NOC-317-24-WH .pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/NOC-317-24-WH .pdf",
           "size": 469206
         },
         {
           "id": "14fA2TZ78l9cNOXIkoELPuX4lfF5MIAZX",
           "name": "Phase 6.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Phase 6.kmz",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Phase 6.kmz",
           "size": 2404
         },
         {
           "id": "14AjdWSww_7bErjdHMY0XKj3UUChH-y3W",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001052-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001052-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001052-B.pdf",
           "size": 607501
         },
         {
           "id": "1N7pIoq1qX7b9fUQnlD8zdigdzudKMojj",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001051-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001051-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001051-B.pdf",
           "size": 504685
         },
         {
           "id": "1vocOdMfD0RgheuptWgHonjgNAWWCI7ly",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001050-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001050-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001050-B.pdf",
           "size": 564399
         },
         {
           "id": "1of0kd3xTj0Bd6Me_ClkgmK1rGyNgGR68",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001049-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001049-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001049-B.pdf",
           "size": 648624
         },
         {
           "id": "1puibquIzuuuP8rgw9VvtGL4LZRxAK4lq",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001041-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001041-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001041-B.pdf",
           "size": 644538
         },
         {
           "id": "1O9LCI3nW6_E0uL2M_6G9fu74vo0vha7E",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001040-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001040-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001040-B.pdf",
           "size": 660554
         },
         {
           "id": "1YRxUoCxqwEUGGpWiHUyTpCxVtRhwaRo6",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001039-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001039-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001039-B.pdf",
           "size": 644216
         },
         {
           "id": "17oq_Dm2iIHJ5kzUcriY8pudLPvdH5q4n",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001029-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001029-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001029-B.pdf",
           "size": 721278
         },
         {
           "id": "1wn9dZKUKneTSywm-aCK8zjvjPypQjhdz",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001028-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001028-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001028-B.pdf",
           "size": 566036
         },
         {
           "id": "1iNBykXeDWsp4FlRIj2SJcBKNUixJrZGk",
           "name": "H&C NOC Infrastructure phase 6. v2.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-6 )/H&C NOC Infrastructure phase 6. v2.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-6 )/H&C NOC Infrastructure phase 6. v2.pdf",
           "size": 4226615
         },
         {
           "id": "171zgeWE0h2sRnKOl4aZSa9tCtx_vAbv9",
           "name": "H&C NOC Application Form for WWPS.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )/WWPS ,H&C/H&C NOC Application Form for WWPS.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( WWPS )/WWPS ,H&C/H&C NOC Application Form for WWPS.pdf",
           "size": 4576424
         },
         {
           "id": "1LDIKQoWL7Q67xLQWB0el1RZO6_nalNWk",
           "name": "WWPS.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )/WWPS ,H&C/WWPS.kmz",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( WWPS )/WWPS ,H&C/WWPS.kmz",
           "size": 953
         },
         {
           "id": "1SScYnLGqpWpRBjoYxLJGpYepJcfBUgZo",
           "name": "Overall Layout.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )/WWPS ,H&C/Overall Layout/Overall Layout.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( WWPS )/WWPS ,H&C/Overall Layout/Overall Layout.pdf",
           "size": 11318226
         },
         {
           "id": "1xUQHQnw6nYaVLBgXMY3VpgIJKEkZ-GDP",
           "name": "Focused Drawing.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )/WWPS ,H&C/Sheet Drawings/Focused Drawing.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( WWPS )/WWPS ,H&C/Sheet Drawings/Focused Drawing.pdf",
           "size": 768916
         },
         {
           "id": "1AuYvU_xs65zUZ2V8nIV8C2jq2Fpm9re5",
           "name": "wetransfer_wwps-h-c_2024-09-17_1241.zip",
           "mimeType": "application/x-zip-compressed",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( WWPS )/wetransfer_wwps-h-c_2024-09-17_1241.zip",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( WWPS )/wetransfer_wwps-h-c_2024-09-17_1241.zip",
           "size": 16665240
         },
         {
           "id": "1NHVe1ZXyNbL4J0aibfaxBIs6Q8C70j4v",
           "name": "phase 7 .kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/phase 7 .kmz",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/phase 7 .kmz",
           "size": 1733
         },
         {
           "id": "1lA6bxM5vIAy5wrBBki1EROBpmA5vEBte",
           "name": "NOC-320-24-WH.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/NOC-320-24-WH.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/NOC-320-24-WH.pdf",
           "size": 482493
         },
         {
           "id": "1mclixcaML25RF2yYrxRxbJtgi97rEKVK",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001030-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001030-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001030-B.pdf",
           "size": 545705
         },
         {
           "id": "1-rDFtQ4pxcuDFfoRCdn26UTdy1R-vRiO",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001029-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001029-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001029-B.pdf",
           "size": 721278
         },
         {
           "id": "1fvUI2ASflSEdN5l3BzW3HVIJ9L5jSqjM",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001022-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001022-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001022-B.pdf",
           "size": 838126
         },
         {
           "id": "1JGD9SONio5mUhU4o--unak6qTmZG4eEL",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001023-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001023-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001023-B.pdf",
           "size": 555890
         },
         {
           "id": "1hyx-2ExaNhAxGNPVucy3BFYefLHG7DFk",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001015-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001015-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001015-B.pdf",
           "size": 764076
         },
         {
           "id": "1M5xs-HgmFIBV19rLYkD3P-Cp1bEu9629",
           "name": "IP-INF-054-0000-JCB-DWG-IF-200-0001016-B.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001016-B.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/Sheet Drawing/IP-INF-054-0000-JCB-DWG-IF-200-0001016-B.pdf",
           "size": 537572
         },
         {
           "id": "1eEbO9XctfnhsS104SoFyCT-cpc5IkAQ-",
           "name": "H&C NOC Infrastructure phase 7.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg-1 ( Phase-7 )/H&C NOC Infrastructure phase 7.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg-1 ( Phase-7 )/H&C NOC Infrastructure phase 7.pdf",
           "size": 2899180
         },
         {
@@ -18197,42 +18197,42 @@
           "id": "1Eivywf8nENj2zncSdWPdAII5wR1c7oKR",
           "name": "Start Work Notification (SWN) Form to H&C .docx",
           "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg.-1 Underpass/Start Work Notification (SWN) Form to H&C .docx",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg.-1 Underpass/Start Work Notification (SWN) Form to H&C .docx",
           "size": 54182
         },
         {
           "id": "1MzpOun9TO3dp1kX7NJEZCRaUcRc1s_Dr",
           "name": "H&C Underpass.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg.-1 Underpass/H&C Underpass.kmz",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg.-1 Underpass/H&C Underpass.kmz",
           "size": 1070
         },
         {
           "id": "1mxkrQJxxGgdUusBGRvW18E-16WY_FNRk",
           "name": "NOC-371-24-WH.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg.-1 Underpass/NOC-371-24-WH.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg.-1 Underpass/NOC-371-24-WH.pdf",
           "size": 2619116
         },
         {
           "id": "14Q3G6qyUPkFdo-W16INdhencZqq7Vbu1",
           "name": "H&C NOC Infrastructure underpass.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC DG-2 Infra Pkg.-1 Underpass/H&C NOC Infrastructure underpass.pdf",
+          "path": "Organizations/Authorities/H&C/H&C Request/H&C NOC the client project Infra Pkg.-1 Underpass/H&C NOC Infrastructure underpass.pdf",
           "size": 2233152
         },
         {
           "id": "13HZG3daufatEHTWeW4EPkxKK3xgdTTGR",
-          "name": "RE_ Gaps between H&C NOCs 233_23 and 290_24 at DG2 Infra Package 1 Project.msg",
+          "name": "RE_ Gaps between H&C NOCs 233_23 and 290_24 at the client project Infra Package 1 Project.msg",
           "mimeType": "application/vnd.ms-outlook",
-          "path": "Organizations/Authorities/H&C/H&C Request/RE_ Gaps between H&C NOCs 233_23 and 290_24 at DG2 Infra Package 1 Project.msg",
+          "path": "Organizations/Authorities/H&C/H&C Request/RE_ Gaps between H&C NOCs 233_23 and 290_24 at the client project Infra Package 1 Project.msg",
           "size": 14061056
         },
         {
           "id": "17opdXg9Yr1UnXaKsYYB2XSDpuuM6szDM",
-          "name": "DG2 Infra Package 1 - Gaps between H&C NOCs 233.23 and 290.24.pptx",
+          "name": "the client project Infra Package 1 - Gaps between H&C NOCs 233.23 and 290.24.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Organizations/Authorities/H&C/H&C Request/DG2 Infra Package 1 - Gaps between H&C NOCs 233.23 and 290.24.pptx",
+          "path": "Organizations/Authorities/H&C/H&C Request/the client project Infra Package 1 - Gaps between H&C NOCs 233.23 and 290.24.pptx",
           "size": 12245549
         },
         {
@@ -18244,16 +18244,16 @@
         },
         {
           "id": "15ZNVzuFft6HqqFS-qY32pIf3pZxAMyLg",
-          "name": "DG2 Infra Package -1 AM-NOC-24001 (3).pdf",
+          "name": "the client project Infra Package -1 AM-NOC-24001 (3).pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/NOC/DG2 Infra Package -1 AM-NOC-24001 (3).pdf",
+          "path": "Organizations/Authorities/NOC/the client project Infra Package -1 AM-NOC-24001 (3).pdf",
           "size": 70687
         },
         {
           "id": "1HdH10ltv7U5BY45ewFgc-32As4hTHZks",
-          "name": "241009 letter AESG to DC 02 DG2 Infra Package 1 FLS DD approval NOC.pdf",
+          "name": "241009 letter AESG to DC 02 the client project Infra Package 1 FLS DD approval NOC.pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/NOC/241009 letter AESG to DC 02 DG2 Infra Package 1 FLS DD approval NOC.pdf",
+          "path": "Organizations/Authorities/NOC/241009 letter AESG to DC 02 the client project Infra Package 1 FLS DD approval NOC.pdf",
           "size": 348403
         },
         {
@@ -18279,9 +18279,9 @@
         },
         {
           "id": "1VQcXumUfb2_2TsgOhFnKIpOQEpi91YRF",
-          "name": "DG2 Infra Package -1 AM-NOC-24001 (3).pdf",
+          "name": "the client project Infra Package -1 AM-NOC-24001 (3).pdf",
           "mimeType": "application/pdf",
-          "path": "Organizations/Authorities/NOC/NOC Permissions/DG2 Infra Package -1 AM-NOC-24001 (3).pdf",
+          "path": "Organizations/Authorities/NOC/NOC Permissions/the client project Infra Package -1 AM-NOC-24001 (3).pdf",
           "size": 70687
         },
         {
@@ -18356,9 +18356,9 @@
         },
         {
           "id": "1SqQJCwNorMDqgCnrvQMHjXHybm-Rz4pI",
-          "name": "DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
+          "name": "DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/BIM/BIM f Model/Documents/DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
+          "path": "Design/BIM/BIM f Model/Documents/DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification (7 of 9).pdf",
           "size": 11283581
         },
         {
@@ -18384,9 +18384,9 @@
         },
         {
           "id": "1caannm5jJQJ38FE-m8NXyL98m0omzWIU",
-          "name": "DG220-JCB-DE-TCR-000122-05-DG2 TIS Report 10 May 23.pdf",
+          "name": "the client project20-JCB-DE-TCR-000122-05-the client project TIS Report 10 May 23.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/BIM/BIM f Model/DG220-JCB-DE-TCR-000122-05-DG2 TIS Report 10 May 23.pdf",
+          "path": "Design/BIM/BIM f Model/the client project20-JCB-DE-TCR-000122-05-the client project TIS Report 10 May 23.pdf",
           "size": 50953212
         },
         {
@@ -18405,9 +18405,9 @@
         },
         {
           "id": "1xb50B1bBD4cxqeRH_a981eE6O3mA1m2k",
-          "name": "DG2 Infra P1 DD Det Design Rep-Fina 000013-A 24.01.2024.pdf",
+          "name": "the client project Infra P1 DD Det Design Rep-Fina 000013-A 24.01.2024.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/DD Design Rep & Extracts/DG2 Infra P1 DD Det Design Rep-Fina 000013-A 24.01.2024.pdf",
+          "path": "Design/DD Design Rep & Extracts/the client project Infra P1 DD Det Design Rep-Fina 000013-A 24.01.2024.pdf",
           "size": 35091619
         },
         {
@@ -18419,9 +18419,9 @@
         },
         {
           "id": "1Iwb9abTmqVBle4o_OTUViE-DXANfpb4e",
-          "name": "DG2 Infra P1 DD Det Design Rep-Fina 000013-A 24.01.2024_extract VE.pdf",
+          "name": "the client project Infra P1 DD Det Design Rep-Fina 000013-A 24.01.2024_extract VE.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/DD Design Rep & Extracts/DG2 Infra P1 DD Det Design Rep-Fina 000013-A 24.01.2024_extract VE.pdf",
+          "path": "Design/DD Design Rep & Extracts/the client project Infra P1 DD Det Design Rep-Fina 000013-A 24.01.2024_extract VE.pdf",
           "size": 974191
         },
         {
@@ -18510,9 +18510,9 @@
         },
         {
           "id": "1ntGgS6kvL6qJxWLBjV39gcDaljDUu871",
-          "name": "DG-2, MV Cable Derating Calc Report - caw1.pdf",
+          "name": "the client project, MV Cable Derating Calc Report - caw1.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/CRS/SEC Workshop Pack/DG-2, MV Cable Derating Calc Report - caw1.pdf",
+          "path": "Design/CRS/SEC Workshop Pack/the client project, MV Cable Derating Calc Report - caw1.pdf",
           "size": 760814
         },
         {
@@ -27449,9 +27449,9 @@
         },
         {
           "id": "1vUSwtI_2szZ-uGhKtNN3sqisG3jztDLn",
-          "name": "diriyah-ai-demo.b64.txt",
+          "name": "the client-ai-demo.b64.txt",
           "mimeType": "text/plain",
-          "path": "Design/Masterplan Updates/DMP TO27A/diriyah-ai-demo.b64.txt",
+          "path": "Design/Masterplan Updates/DMP TO27A/the client-ai-demo.b64.txt",
           "size": 31841
         },
         {
@@ -27491,9 +27491,9 @@
         },
         {
           "id": "1HasytLeP0al9CVCDSQ86dSjqlufDD9JI",
-          "name": "DG220-JCB-DE-DAT-000005-10_Dataset_TO-27_V3.xlsx",
+          "name": "the client project20-JCB-DE-DAT-000005-10_Dataset_TO-27_V3.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Design/Masterplan Updates/DMP TO27A/Sherif files/DG220-JCB-DE-DAT-000005-10_Dataset_TO-27_V3.xlsx",
+          "path": "Design/Masterplan Updates/DMP TO27A/Sherif files/the client project20-JCB-DE-DAT-000005-10_Dataset_TO-27_V3.xlsx",
           "size": 77859911
         },
         {
@@ -27505,9 +27505,9 @@
         },
         {
           "id": "1bHSuGqS7ADRzMZ6Z4ciTlFv93AHeDOKB",
-          "name": "DG220-JCB-DE-DAT-000005-10_Dataset_TO-27A.xlsx",
+          "name": "the client project20-JCB-DE-DAT-000005-10_Dataset_TO-27A.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Design/Masterplan Updates/DMP TO27A/DG220-JCB-DE-DAT-000005-10_Dataset_TO-27A.xlsx",
+          "path": "Design/Masterplan Updates/DMP TO27A/the client project20-JCB-DE-DAT-000005-10_Dataset_TO-27A.xlsx",
           "size": 79330228
         },
         {
@@ -27603,9 +27603,9 @@
         },
         {
           "id": "1TOtz9zznIudPnMPpcvlQ3WTK52i_TBqN",
-          "name": "20230831_DG2 Geodatabase Structure.xlsx",
+          "name": "20230831_the client project Geodatabase Structure.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Design/Masterplan Updates/Geodatabase/01 Geodatabase/20230831_DG2 Geodatabase Structure.xlsx",
+          "path": "Design/Masterplan Updates/Geodatabase/01 Geodatabase/20230831_the client project Geodatabase Structure.xlsx",
           "size": 31283
         },
         {
@@ -29779,7 +29779,7 @@
           "size": 32
         },
         {
-          "id": "1jUSTSBXF4pEMqmtWkIuJdg2pfxrmmsNB",
+          "id": "1jUSTSBXF4pEMqmtWkIuJclientpfxrmmsNB",
           "name": "a0000009c.gdbtablx",
           "mimeType": "application/octet-stream",
           "path": "Design/Masterplan Updates/Geodatabase/01 Geodatabase/DG_PH2_DMP_V14_2_1.gdb/a0000009c.gdbtablx",
@@ -32922,7 +32922,7 @@
           "size": 5152
         },
         {
-          "id": "1DzbzYXyYhdg2VTEFCXMj8FGWqdzgLJFt",
+          "id": "1DzbzYXyYhclientVTEFCXMj8FGWqdzgLJFt",
           "name": "a00000011.spx",
           "mimeType": "audio/ogg",
           "path": "Design/Masterplan Updates/Geodatabase/01 Geodatabase/DG1_Masterplan.gdb/a00000011.spx",
@@ -33553,9 +33553,9 @@
         },
         {
           "id": "1MYC_G6ZLV3Iv-AbC15lIjCloZiXPG1wn",
-          "name": "DMP - Volume VI Technical Appendices (DG220-JCB-DE-TCR-000116).pdf",
+          "name": "DMP - Volume VI Technical Appendices (the client project20-JCB-DE-TCR-000116).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume VI Technical Appendices (DG220-JCB-DE-TCR-000116).pdf",
+          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume VI Technical Appendices (the client project20-JCB-DE-TCR-000116).pdf",
           "size": 827883673
         },
         {
@@ -33574,30 +33574,30 @@
         },
         {
           "id": "1RMoG5HSmkMLMdg8PT7RZZtsIJQUWj-Nt",
-          "name": "DMP - Volume III Transport and Infrastructure (DG220-JCB-DE-TCR-000113).pdf",
+          "name": "DMP - Volume III Transport and Infrastructure (the client project20-JCB-DE-TCR-000113).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume III Transport and Infrastructure (DG220-JCB-DE-TCR-000113).pdf",
+          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume III Transport and Infrastructure (the client project20-JCB-DE-TCR-000113).pdf",
           "size": 61704509
         },
         {
           "id": "10IQaIchxxjP2XMTe8Go9aL6v-NKGY5b5",
-          "name": "DMP - Volume IV - Sustainability (DG220-JCB-DE-TCR-000114).pdf",
+          "name": "DMP - Volume IV - Sustainability (the client project20-JCB-DE-TCR-000114).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume IV - Sustainability (DG220-JCB-DE-TCR-000114).pdf",
+          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume IV - Sustainability (the client project20-JCB-DE-TCR-000114).pdf",
           "size": 26923564
         },
         {
           "id": "1k6ONTK9EN0vls1zdaLeJrclWo59CurrK",
-          "name": "DMP - Volume II Public Realm (DG220-JCB-DE-TCR-000112).pdf",
+          "name": "DMP - Volume II Public Realm (the client project20-JCB-DE-TCR-000112).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume II Public Realm (DG220-JCB-DE-TCR-000112).pdf",
+          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume II Public Realm (the client project20-JCB-DE-TCR-000112).pdf",
           "size": 532671761
         },
         {
           "id": "1Nua9X_3XRgD-_yQyPbnOdMrKo4Ntlarj",
-          "name": "DMP - Volume I The Masterplan (DG220-JCB-DE-TCR-000111).pdf",
+          "name": "DMP - Volume I The Masterplan (the client project20-JCB-DE-TCR-000111).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume I The Masterplan (DG220-JCB-DE-TCR-000111).pdf",
+          "path": "Design/Masterplan Updates/DMP Volumes/DMP - Volume I The Masterplan (the client project20-JCB-DE-TCR-000111).pdf",
           "size": 370352680
         },
         {
@@ -36024,30 +36024,30 @@
         },
         {
           "id": "1OmOrlSx6R_xl9i8NRLrZZo8ot6JqcBYC",
-          "name": "NWC DG2 P1 Potable Water FF Inc PSs Rev Detail Design NOC (16Mar25).pdf",
+          "name": "NWC the client project P1 Potable Water FF Inc PSs Rev Detail Design NOC (16Mar25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/NWC DG2 P1 Potable Water FF Inc PSs Rev Detail Design NOC (16Mar25).pdf",
+          "path": "Design/NOCs/NWC the client project P1 Potable Water FF Inc PSs Rev Detail Design NOC (16Mar25).pdf",
           "size": 5458637
         },
         {
           "id": "1ThaM_71z3y7ArMY1WtHr5CpztMAEhCFx",
-          "name": "DGCL-MP-DG2_NOC-OUT-0027_Street Lighting Network_Network Design NOC.pdf",
+          "name": "DGCL-MP-the client project_NOC-OUT-0027_Street Lighting Network_Network Design NOC.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/DGCL-MP-DG2_NOC-OUT-0027_Street Lighting Network_Network Design NOC.pdf",
+          "path": "Design/NOCs/DGCL-MP-the client project_NOC-OUT-0027_Street Lighting Network_Network Design NOC.pdf",
           "size": 6793176
         },
         {
           "id": "1NccooGWmcx9nKiDBhgIHkwc77ET9jbSR",
-          "name": "DGCL-MP-DG2_NOC-OUT-0026_Roads Network_Network Design NOC.pdf",
+          "name": "DGCL-MP-the client project_NOC-OUT-0026_Roads Network_Network Design NOC.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/DGCL-MP-DG2_NOC-OUT-0026_Roads Network_Network Design NOC.pdf",
+          "path": "Design/NOCs/DGCL-MP-the client project_NOC-OUT-0026_Roads Network_Network Design NOC.pdf",
           "size": 6788007
         },
         {
           "id": "1qMpkmSGVYyJDwggoWorJkxif4kPxgyEs",
-          "name": "DGCL-MP-DG2_NOC-OUT-0024_WW Pumping Station NOC.pdf",
+          "name": "DGCL-MP-the client project_NOC-OUT-0024_WW Pumping Station NOC.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/DGCL-MP-DG2_NOC-OUT-0024_WW Pumping Station NOC.pdf",
+          "path": "Design/NOCs/DGCL-MP-the client project_NOC-OUT-0024_WW Pumping Station NOC.pdf",
           "size": 2300728
         },
         {
@@ -36080,65 +36080,65 @@
         },
         {
           "id": "1V7cUyRAXX5z1Mv_cuYZqnsTYeWuN1zen",
-          "name": "AM Rev Design NOC DG2 Infra Package 1 - Traffic Man (exp. 08Sep25).pdf",
+          "name": "AM Rev Design NOC the client project Infra Package 1 - Traffic Man (exp. 08Sep25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/AM Rev Design NOC DG2 Infra Package 1 - Traffic Man (exp. 08Sep25).pdf",
+          "path": "Design/NOCs/AM Rev Design NOC the client project Infra Package 1 - Traffic Man (exp. 08Sep25).pdf",
           "size": 2144448
         },
         {
           "id": "1tkBZ08FXLTufpQgEd4FmXmWdMauaQCb_",
-          "name": "AM Rev Design NOC DG2 Infra Package 1 - Ped Und 02 & Blvd (exp. 08ASep5)_comp.pdf",
+          "name": "AM Rev Design NOC the client project Infra Package 1 - Ped Und 02 & Blvd (exp. 08ASep5)_comp.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/AM Rev Design NOC DG2 Infra Package 1 - Ped Und 02 & Blvd (exp. 08ASep5)_comp.pdf",
+          "path": "Design/NOCs/AM Rev Design NOC the client project Infra Package 1 - Ped Und 02 & Blvd (exp. 08ASep5)_comp.pdf",
           "size": 1057950
         },
         {
           "id": "18HJadZzwlDD_CKMBDW2o5kLd_ppV3DZn",
-          "name": "UMA Rev DDC DG2 Infra Pack 1 - Street Lighting DDC 20212200078 (06Mar25).pdf",
+          "name": "UMA Rev DDC the client project - Street Lighting DDC 20212200078 (06Mar25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/UMA Rev DDC DG2 Infra Pack 1 - Street Lighting DDC 20212200078 (06Mar25).pdf",
+          "path": "Design/NOCs/UMA Rev DDC the client project - Street Lighting DDC 20212200078 (06Mar25).pdf",
           "size": 343987
         },
         {
           "id": "1BcBt-jVazw-YaMla6pL01W42jYwLY8h0",
-          "name": "UMA Rev DDC DG2 Infra Pack 1 - Wastewater Net. 2021220008 (16Apr25).pdf",
+          "name": "UMA Rev DDC the client project - Wastewater Net. 2021220008 (16Apr25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/UMA Rev DDC DG2 Infra Pack 1 - Wastewater Net. 2021220008 (16Apr25).pdf",
+          "path": "Design/NOCs/UMA Rev DDC the client project - Wastewater Net. 2021220008 (16Apr25).pdf",
           "size": 316115
         },
         {
           "id": "1P8SEXjNtqN1vNSGehDCsrNuUzypMGs9m",
-          "name": "UMA Rev DDC DG2 infra Pack 1 - Traffic Man Boulevard only 20212200097 (18May25).pdf",
+          "name": "UMA Rev DDC the client project infra Pack 1 - Traffic Man Boulevard only 20212200097 (18May25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/UMA Rev DDC DG2 infra Pack 1 - Traffic Man Boulevard only 20212200097 (18May25).pdf",
+          "path": "Design/NOCs/UMA Rev DDC the client project infra Pack 1 - Traffic Man Boulevard only 20212200097 (18May25).pdf",
           "size": 310883
         },
         {
           "id": "1ZWG59cMZAX6UUzNlWofQNd_dgMmMfVXa",
-          "name": "UMA Rev DDC DG2 Infra Pack 1 - Stormwater DDC 20212200076 (28Jan25).pdf",
+          "name": "UMA Rev DDC the client project - Stormwater DDC 20212200076 (28Jan25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/UMA Rev DDC DG2 Infra Pack 1 - Stormwater DDC 20212200076 (28Jan25).pdf",
+          "path": "Design/NOCs/UMA Rev DDC the client project - Stormwater DDC 20212200076 (28Jan25).pdf",
           "size": 323895
         },
         {
           "id": "1b3CBOnAKAwqEVOB7RMsbzeVDruWEvqAp",
-          "name": "UMA Rev DDC DG2 Infra Pack 1 - MV CVT Struct DDC 20212200087 (09Apr25).pdf",
+          "name": "UMA Rev DDC the client project - MV CVT Struct DDC 20212200087 (09Apr25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/UMA Rev DDC DG2 Infra Pack 1 - MV CVT Struct DDC 20212200087 (09Apr25).pdf",
+          "path": "Design/NOCs/UMA Rev DDC the client project - MV CVT Struct DDC 20212200087 (09Apr25).pdf",
           "size": 296896
         },
         {
           "id": "11oj1wG0yhBCFu4W0tzNDrJhI1k4nXjHk",
-          "name": "UMA Rev DDC DG2 Infra Pack 1 - Irrigation DDC 20212200079 (06Mar25).pdf",
+          "name": "UMA Rev DDC the client project - Irrigation DDC 20212200079 (06Mar25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/UMA Rev DDC DG2 Infra Pack 1 - Irrigation DDC 20212200079 (06Mar25).pdf",
+          "path": "Design/NOCs/UMA Rev DDC the client project - Irrigation DDC 20212200079 (06Mar25).pdf",
           "size": 280557
         },
         {
           "id": "1SUdOlzxEFEVw1gnQYavbdV-np8UBxvJG",
-          "name": "NWC DG2 P1 Sewer Sewage Wastewater Inc PSs Rev Detail Design NOC (16Mar25.pdf",
+          "name": "NWC the client project P1 Sewer Sewage Wastewater Inc PSs Rev Detail Design NOC (16Mar25.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/NWC DG2 P1 Sewer Sewage Wastewater Inc PSs Rev Detail Design NOC (16Mar25.pdf",
+          "path": "Design/NOCs/NWC the client project P1 Sewer Sewage Wastewater Inc PSs Rev Detail Design NOC (16Mar25.pdf",
           "size": 79014
         },
         {
@@ -36164,30 +36164,30 @@
         },
         {
           "id": "1WNeiaJieuKaMwErEUdBb4E7oUNL_vIZR",
-          "name": "AM Rev Design NOC DG2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf",
+          "name": "AM Rev Design NOC the client project Infra Package 1 - Street Lighting (exp. 17Jul25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/AM Rev Design NOC DG2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf",
+          "path": "Design/NOCs/AM Rev Design NOC the client project Infra Package 1 - Street Lighting (exp. 17Jul25).pdf",
           "size": 246424
         },
         {
           "id": "1FDeVGN_ybjWRys_oVEc9SyCunbGwY9az",
-          "name": "AM Rev Design NOC DG2 Infra Package 1 - Ped Und 02 & Blvd (exp. 08Sep25).pdf",
+          "name": "AM Rev Design NOC the client project Infra Package 1 - Ped Und 02 & Blvd (exp. 08Sep25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/AM Rev Design NOC DG2 Infra Package 1 - Ped Und 02 & Blvd (exp. 08Sep25).pdf",
+          "path": "Design/NOCs/AM Rev Design NOC the client project Infra Package 1 - Ped Und 02 & Blvd (exp. 08Sep25).pdf",
           "size": 815200
         },
         {
           "id": "1TjoqdgTEowdTxeDxgfFs61zBo9pDQWzk",
-          "name": "AM Rev Design NOC DG2 Infra Package 1 - LV Net (no Exp. date).pdf",
+          "name": "AM Rev Design NOC the client project Infra Package 1 - LV Net (no Exp. date).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/AM Rev Design NOC DG2 Infra Package 1 - LV Net (no Exp. date).pdf",
+          "path": "Design/NOCs/AM Rev Design NOC the client project Infra Package 1 - LV Net (no Exp. date).pdf",
           "size": 533355
         },
         {
           "id": "1myocTBKlzyDgYe5LUGv9kr0k_mYDS8x6",
-          "name": "AM Rev Design NOC DG2 Infra Package 1 - Irrig & Storm Net (exp. 14Jul25).pdf",
+          "name": "AM Rev Design NOC the client project Infra Package 1 - Irrig & Storm Net (exp. 14Jul25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/AM Rev Design NOC DG2 Infra Package 1 - Irrig & Storm Net (exp. 14Jul25).pdf",
+          "path": "Design/NOCs/AM Rev Design NOC the client project Infra Package 1 - Irrig & Storm Net (exp. 14Jul25).pdf",
           "size": 581370
         },
         {
@@ -36213,9 +36213,9 @@
         },
         {
           "id": "1e8_yRlyAa8ttBvnUA7HUmGHTleOM20pc",
-          "name": "AM Rev Design NOC DG2 Infra Package 1 - Irrig & Storm Net (exp. 14Apr25).pdf",
+          "name": "AM Rev Design NOC the client project Infra Package 1 - Irrig & Storm Net (exp. 14Apr25).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/AM Rev Design NOC DG2 Infra Package 1 - Irrig & Storm Net (exp. 14Apr25).pdf",
+          "path": "Design/NOCs/AM Rev Design NOC the client project Infra Package 1 - Irrig & Storm Net (exp. 14Apr25).pdf",
           "size": 585496
         },
         {
@@ -36248,9 +36248,9 @@
         },
         {
           "id": "1xLdYMRci0E6hugqVPRdLsnUHzTGFanWU",
-          "name": "DG2 Infrastructure Package 1 Master Developer NOC.pdf",
+          "name": "the client project Infrastructure Package 1 Master Developer NOC.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/Master Dev. NOC/DG2 Infrastructure Package 1 Master Developer NOC.pdf",
+          "path": "Design/NOCs/Master Dev. NOC/the client project Infrastructure Package 1 Master Developer NOC.pdf",
           "size": 342938
         },
         {
@@ -36262,9 +36262,9 @@
         },
         {
           "id": "1zTYFDZVPWWWbA2VAbw0m6psZiNFM-I5e",
-          "name": "DG2 Infrastructure Package 1 Master Developer NOC (old).pdf",
+          "name": "the client project Infrastructure Package 1 Master Developer NOC (old).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/Master Dev. NOC/DG2 Infrastructure Package 1 Master Developer NOC (old).pdf",
+          "path": "Design/NOCs/Master Dev. NOC/the client project Infrastructure Package 1 Master Developer NOC (old).pdf",
           "size": 120302
         },
         {
@@ -36276,58 +36276,58 @@
         },
         {
           "id": "1s6I_vfSyB_ICfzF8DgNI_oGqxdhnd6Y2",
-          "name": "NWC DG2 P1 Wastewater Sewarage Detail Design NOC_free translation.pdf",
+          "name": "NWC the client project P1 Wastewater Sewarage Detail Design NOC_free translation.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/NWC DG2 P1 Wastewater Sewarage Detail Design NOC_free translation.pdf",
+          "path": "Design/NOCs/old NOCs/NWC the client project P1 Wastewater Sewarage Detail Design NOC_free translation.pdf",
           "size": 887754
         },
         {
           "id": "1ykxXkDmYKaFO49EoO8niFqdzg_TzmWDd",
-          "name": "NWC DG2 P1 Potable Water Firefighting Net Detail Design NOC.pdf",
+          "name": "NWC the client project P1 Potable Water Firefighting Net Detail Design NOC.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/NWC DG2 P1 Potable Water Firefighting Net Detail Design NOC.pdf",
+          "path": "Design/NOCs/old NOCs/NWC the client project P1 Potable Water Firefighting Net Detail Design NOC.pdf",
           "size": 642605
         },
         {
           "id": "1uTEXq-Te7styzw-HObOuLTGrKOsj6r_E",
-          "name": "NWC DG2 P1 Wastewater Sewarage Detail Design NOC.pdf",
+          "name": "NWC the client project P1 Wastewater Sewarage Detail Design NOC.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/NWC DG2 P1 Wastewater Sewarage Detail Design NOC.pdf",
+          "path": "Design/NOCs/old NOCs/NWC the client project P1 Wastewater Sewarage Detail Design NOC.pdf",
           "size": 60165
         },
         {
           "id": "1A_BBCoKoCtYz6JFzHImje4U9hTTLMcmv",
-          "name": "DG2 P1 UMA DD Cert Waste Water Net (240917) 20212200054.pdf",
+          "name": "the client project P1 UMA DD Cert Waste Water Net (240917) 20212200054.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/DG2 P1 UMA DD Cert Waste Water Net (240917) 20212200054.pdf",
+          "path": "Design/NOCs/old NOCs/the client project P1 UMA DD Cert Waste Water Net (240917) 20212200054.pdf",
           "size": 249317
         },
         {
           "id": "1gK7-URP30YuK0sL83xPZlfBvtulIIO7p",
-          "name": "DG2 P1 UMA DD Cert Waste Water Net (241017) 20212200063.pdf",
+          "name": "the client project P1 UMA DD Cert Waste Water Net (241017) 20212200063.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/DG2 P1 UMA DD Cert Waste Water Net (241017) 20212200063.pdf",
+          "path": "Design/NOCs/old NOCs/the client project P1 UMA DD Cert Waste Water Net (241017) 20212200063.pdf",
           "size": 308740
         },
         {
           "id": "1fMHmsQpKgTCDBP2qgzA09eCb3rwKTMrv",
-          "name": "DG2 P1 UMA DD Cert Storm Water Net (240716) 20212200043.pdf",
+          "name": "the client project P1 UMA DD Cert Storm Water Net (240716) 20212200043.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/DG2 P1 UMA DD Cert Storm Water Net (240716) 20212200043.pdf",
+          "path": "Design/NOCs/old NOCs/the client project P1 UMA DD Cert Storm Water Net (240716) 20212200043.pdf",
           "size": 228498
         },
         {
           "id": "16GFOnsFEpVWA2FrfOQrY0zNkjYtUpeXz",
-          "name": "DG2 P1 UMA DD Cert Street Lighting Net (241906) 20212200059.pdf",
+          "name": "the client project P1 UMA DD Cert Street Lighting Net (241906) 20212200059.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/DG2 P1 UMA DD Cert Street Lighting Net (241906) 20212200059.pdf",
+          "path": "Design/NOCs/old NOCs/the client project P1 UMA DD Cert Street Lighting Net (241906) 20212200059.pdf",
           "size": 285764
         },
         {
           "id": "1WPYHq90C0usOu7cpv4Jp-nX8Vr2CFxxC",
-          "name": "DG2 P1 UMA DD Cert Irrigation Net (240901) 20212200053.pdf",
+          "name": "the client project P1 UMA DD Cert Irrigation Net (240901) 20212200053.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/DG2 P1 UMA DD Cert Irrigation Net (240901) 20212200053.pdf",
+          "path": "Design/NOCs/old NOCs/the client project P1 UMA DD Cert Irrigation Net (240901) 20212200053.pdf",
           "size": 301184
         },
         {
@@ -36339,9 +36339,9 @@
         },
         {
           "id": "1GheNPKzCQk-btS5GmxxPVoHgUlUB7vhL",
-          "name": "AMCo (Asset Man) DG2 P1 Detail Design NOC SWD, IRR, SL, LV, & Gas.pdf",
+          "name": "AMCo (Asset Man) the client project P1 Detail Design NOC SWD, IRR, SL, LV, & Gas.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/AMCo (Asset Man) DG2 P1 Detail Design NOC SWD, IRR, SL, LV, & Gas.pdf",
+          "path": "Design/NOCs/old NOCs/AMCo (Asset Man) the client project P1 Detail Design NOC SWD, IRR, SL, LV, & Gas.pdf",
           "size": 70532
         },
         {
@@ -36353,9 +36353,9 @@
         },
         {
           "id": "17029ZRp38UJQrklteRSsyAryQdUrfG_L",
-          "name": "NWC DG2 P1 Potable Water Firefighting Net Detail Design NOC_free translation.pdf",
+          "name": "NWC the client project P1 Potable Water Firefighting Net Detail Design NOC_free translation.pdf",
           "mimeType": "application/pdf",
-          "path": "Design/NOCs/old NOCs/NWC DG2 P1 Potable Water Firefighting Net Detail Design NOC_free translation.pdf",
+          "path": "Design/NOCs/old NOCs/NWC the client project P1 Potable Water Firefighting Net Detail Design NOC_free translation.pdf",
           "size": 1412248
         },
         {
@@ -36878,9 +36878,9 @@
         },
         {
           "id": "14nCPKrWsKmPbVBCzWv-8xi9vc0LmMnNs",
-          "name": "Mobily route kmz Diriyah.kml",
+          "name": "Mobily route kmz the client.kml",
           "mimeType": "application/vnd.google-earth.kml+xml",
-          "path": "Design/KMZ/Mobily route kmz Diriyah.kml",
+          "path": "Design/KMZ/Mobily route kmz the client.kml",
           "size": 13615
         },
         {
@@ -37172,16 +37172,16 @@
         },
         {
           "id": "1UN0aVXMxxRbuGCFCV3a-GXvtW4H-qU1z",
-          "name": "20250721 TG-DG2-225-002 GATE 2L.kmz",
+          "name": "20250721 TG-the client project-225-002 GATE 2L.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/20250721 TG-DG2-225-002 GATE 2L.kmz",
+          "path": "Design/KMZ/20250721 TG-the client project-225-002 GATE 2L.kmz",
           "size": 74034
         },
         {
           "id": "1Y06vu8ObHMoAk_tBLXsfkFkBNQok2YLX",
-          "name": "20250622 TG-DG2-198-004 KKR-PRINCE SATTAM LINK ROAD-BRANCH ROAD - LAYOUT.kmz",
+          "name": "20250622 TG-the client project-198-004 KKR-PRINCE SATTAM LINK ROAD-BRANCH ROAD - LAYOUT.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/20250622 TG-DG2-198-004 KKR-PRINCE SATTAM LINK ROAD-BRANCH ROAD - LAYOUT.kmz",
+          "path": "Design/KMZ/20250622 TG-the client project-198-004 KKR-PRINCE SATTAM LINK ROAD-BRANCH ROAD - LAYOUT.kmz",
           "size": 73066
         },
         {
@@ -37305,9 +37305,9 @@
         },
         {
           "id": "1r2PbwFdkXwymL9tGpeyvDlLvDEvvGQa_",
-          "name": "DG2_WW_WetWell_ValveChamber.kmz",
+          "name": "the client project_WW_WetWell_ValveChamber.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_WetWell_ValveChamber.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_WetWell_ValveChamber.kmz",
           "size": 1412
         },
         {
@@ -37333,352 +37333,352 @@
         },
         {
           "id": "1svIY41mTxptpTUN8RMcxYMbR0nFcHV4t",
-          "name": "DG2_WW_TieIn_Point.kmz",
+          "name": "the client project_WW_TieIn_Point.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_TieIn_Point.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_TieIn_Point.kmz",
           "size": 913
         },
         {
           "id": "1QUmRLKoZHZIAJzfkVCaLHXFDjdP0pH1P",
-          "name": "DG2_WW_Rising_Main.kmz",
+          "name": "the client project_WW_Rising_Main.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_Rising_Main.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_Rising_Main.kmz",
           "size": 33368
         },
         {
           "id": "1Bb1qzI4oiqHzTxeQBpHJhF9dBXgl96UK",
-          "name": "DG2_WW_PressurePipe.kmz",
+          "name": "the client project_WW_PressurePipe.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_PressurePipe.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_PressurePipe.kmz",
           "size": 33544
         },
         {
           "id": "1yKa9R1w6-x5iSdxgltlaeDrhfmInLl4G",
-          "name": "DG2_WW_Pipe.kmz",
+          "name": "the client project_WW_Pipe.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_Pipe.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_Pipe.kmz",
           "size": 111818
         },
         {
           "id": "1asOt6V_72h32rAKTI3LxDz0BL5sIupTM",
-          "name": "DG2_WW_MCC_Room_GeneratorRoom.kmz",
+          "name": "the client project_WW_MCC_Room_GeneratorRoom.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_MCC_Room_GeneratorRoom.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_MCC_Room_GeneratorRoom.kmz",
           "size": 1705
         },
         {
           "id": "16wj77aYH6c0lgB5quU-xV-3TH7ejkxXA",
-          "name": "DG2_WW_Manhole.kmz",
+          "name": "the client project_WW_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_Manhole.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_Manhole.kmz",
           "size": 37640
         },
         {
           "id": "1pyY4Hvv6JukTeFWuA0uL5cHvSX5HPn9e",
-          "name": "DG2_WW_Lifting_Station.kmz",
+          "name": "the client project_WW_Lifting_Station.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_Lifting_Station.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_Lifting_Station.kmz",
           "size": 1291
         },
         {
           "id": "1W6kEIRxqUHLNSTd4bXxug968DOoNqSgv",
-          "name": "DG2_WW_Fitting.kmz",
+          "name": "the client project_WW_Fitting.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WW_Fitting.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WW_Fitting.kmz",
           "size": 7862
         },
         {
           "id": "1fYV3ZrwHisvBU6hHJjyFHPzZtPkgD8Qm",
-          "name": "DG2_TS_Pole.kmz",
+          "name": "the client project_TS_Pole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_TS_Pole.kmz",
+          "path": "Design/KMZ/Utilities/the client project_TS_Pole.kmz",
           "size": 33740
         },
         {
           "id": "1pVETnn3GmBlJYmKc9aIQq9vT-PpSO7Kx",
-          "name": "DG2_WS_Manhole.kmz",
+          "name": "the client project_WS_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_WS_Manhole.kmz",
+          "path": "Design/KMZ/Utilities/the client project_WS_Manhole.kmz",
           "size": 4885
         },
         {
           "id": "1AKPxGNyl3-NEBgi6EZKjjLWvQTQ6K5IM",
-          "name": "DG2_TS_Cable_Network.kmz",
+          "name": "the client project_TS_Cable_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_TS_Cable_Network.kmz",
+          "path": "Design/KMZ/Utilities/the client project_TS_Cable_Network.kmz",
           "size": 102313
         },
         {
           "id": "18AQLxNcmRD2O_o44gz_B9wTSRqgBu4YB",
-          "name": "DG2_Telecom_Network.kmz",
+          "name": "the client project_Telecom_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Telecom_Network.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Telecom_Network.kmz",
           "size": 179257
         },
         {
           "id": "1mkwxu61zAN2ICUaV3cELg5OoigIV18rw",
-          "name": "DG2_SW_Pipe_Network.kmz",
+          "name": "the client project_SW_Pipe_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_SW_Pipe_Network.kmz",
+          "path": "Design/KMZ/Utilities/the client project_SW_Pipe_Network.kmz",
           "size": 536817
         },
         {
           "id": "1rCBK4FUsSpPQr-AakuCVZDb3h9ZnHVVM",
-          "name": "DG2_Telecom_Structure.kmz",
+          "name": "the client project_Telecom_Structure.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Telecom_Structure.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Telecom_Structure.kmz",
           "size": 33851
         },
         {
           "id": "1Ov8JGqfgIoiuUaY4oASQGyYZoQj8kG4N",
-          "name": "DG2_Telecom_TiePoint.kmz",
+          "name": "the client project_Telecom_TiePoint.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Telecom_TiePoint.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Telecom_TiePoint.kmz",
           "size": 1943
         },
         {
           "id": "1LUuYGqAmO1koUaF1XUyyGn84U7wUabEH",
-          "name": "DG2_SW_Inlet.kmz",
+          "name": "the client project_SW_Inlet.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_SW_Inlet.kmz",
+          "path": "Design/KMZ/Utilities/the client project_SW_Inlet.kmz",
           "size": 72218
         },
         {
           "id": "1p3OhZiG7dbkzHvBqjrFSldsAJzQ0LkAj",
-          "name": "DG2_SW_Manhole.kmz",
+          "name": "the client project_SW_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_SW_Manhole.kmz",
+          "path": "Design/KMZ/Utilities/the client project_SW_Manhole.kmz",
           "size": 67863
         },
         {
           "id": "1aAcj1AdIzDbf5-g7dV1Troo41kmx8u7w",
-          "name": "DG2_Substation.kmz",
+          "name": "the client project_Substation.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Substation.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Substation.kmz",
           "size": 2386
         },
         {
           "id": "1B2Zm4vZ4FDDbhssnIn5EpJHgcCIi6Bj3",
-          "name": "DG2_SL_Pole.kmz",
+          "name": "the client project_SL_Pole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_SL_Pole.kmz",
+          "path": "Design/KMZ/Utilities/the client project_SL_Pole.kmz",
           "size": 99206
         },
         {
           "id": "1Y_Ku-vmR8GLa_frVVSNw-HTMbJFHJD93",
-          "name": "DG2_SL_Network.kmz",
+          "name": "the client project_SL_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_SL_Network.kmz",
+          "path": "Design/KMZ/Utilities/the client project_SL_Network.kmz",
           "size": 286229
         },
         {
           "id": "1Mr3XtqTE19Jdsgv8kgw9IZagWbWT6ui_",
-          "name": "DG2_PW_Fitting.kmz",
+          "name": "the client project_PW_Fitting.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PW_Fitting.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PW_Fitting.kmz",
           "size": 230918
         },
         {
           "id": "1C-By7hnpl1q8IcdVFH_0SCEw40NinG5t",
-          "name": "DG2_PW_OPERATING_ROOM_DOMESTIC_WATER_PUMP.kmz",
+          "name": "the client project_PW_OPERATING_ROOM_DOMESTIC_WATER_PUMP.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PW_OPERATING_ROOM_DOMESTIC_WATER_PUMP.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PW_OPERATING_ROOM_DOMESTIC_WATER_PUMP.kmz",
           "size": 1576
         },
         {
           "id": "1aFNw9NdOgqxWFZ2qEUmGBabaIXW0aKhZ",
-          "name": "DG2_PW_Gate_Valve.kmz",
+          "name": "the client project_PW_Gate_Valve.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PW_Gate_Valve.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PW_Gate_Valve.kmz",
           "size": 14676
         },
         {
           "id": "1UP8ba5LR_rqhsEw448r2tQ9i7hYny0U7",
-          "name": "DG2_PW_Fire_Hydrant.kmz",
+          "name": "the client project_PW_Fire_Hydrant.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PW_Fire_Hydrant.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PW_Fire_Hydrant.kmz",
           "size": 15530
         },
         {
           "id": "1K5PkPfTzFxVsQnKjiqQhyvXRiAU5FxwO",
-          "name": "DG2_PW_Chamber.kmz",
+          "name": "the client project_PW_Chamber.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PW_Chamber.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PW_Chamber.kmz",
           "size": 5671
         },
         {
           "id": "1dl5MUFmeuJBdSVUl9mNflBa5UxoL7bCz",
-          "name": "DG2_PW02_MCC_Room.kmz",
+          "name": "the client project_PW02_MCC_Room.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PW02_MCC_Room.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PW02_MCC_Room.kmz",
           "size": 1356
         },
         {
           "id": "1duBFklV1MADVX2IK_GvEQ9bx3JK3K6hv",
-          "name": "DG2_PWPS_02_RESERVOIR_PUMP_ROOM.kmz",
+          "name": "the client project_PWPS_02_RESERVOIR_PUMP_ROOM.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PWPS_02_RESERVOIR_PUMP_ROOM.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PWPS_02_RESERVOIR_PUMP_ROOM.kmz",
           "size": 1621
         },
         {
           "id": "1Bt-dlPc8pc5p6pI7YIIfBlOMti4d6PcF",
-          "name": "DG2_IRR_Fitting.kmz",
+          "name": "the client project_IRR_Fitting.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_IRR_Fitting.kmz",
+          "path": "Design/KMZ/Utilities/the client project_IRR_Fitting.kmz",
           "size": 142341
         },
         {
           "id": "1_Kswcr7COGUiFa1s50AFpwgKdnXr3gcE",
-          "name": "DG2_IRR_PressurizedMainLine.kmz",
+          "name": "the client project_IRR_PressurizedMainLine.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_IRR_PressurizedMainLine.kmz",
+          "path": "Design/KMZ/Utilities/the client project_IRR_PressurizedMainLine.kmz",
           "size": 930319
         },
         {
           "id": "1kLxAlPOx73t-KPn0V2bT2SqIQaQnObD8",
-          "name": "DG2_IR_TieInPoint.kmz",
+          "name": "the client project_IR_TieInPoint.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_IR_TieInPoint.kmz",
+          "path": "Design/KMZ/Utilities/the client project_IR_TieInPoint.kmz",
           "size": 928
         },
         {
           "id": "1dgjyEyn86kz3FAjwSCHaGFEMJZIi2zRW",
-          "name": "DG2_PWPS_01_RESERVOIR_PUMP_ROOM.kmz",
+          "name": "the client project_PWPS_01_RESERVOIR_PUMP_ROOM.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PWPS_01_RESERVOIR_PUMP_ROOM.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PWPS_01_RESERVOIR_PUMP_ROOM.kmz",
           "size": 1781
         },
         {
           "id": "1kwNDQerqElbS5nSkJb5ipsDv37f6st6Z",
-          "name": "DG2_PW01_MCC_Room.kmz",
+          "name": "the client project_PW01_MCC_Room.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PW01_MCC_Room.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PW01_MCC_Room.kmz",
           "size": 1345
         },
         {
           "id": "1-BIZgW7P1hCiKcobbHwPWzoGm2eSTNE2",
-          "name": "DG2_MMR_Location.kmz",
+          "name": "the client project_MMR_Location.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_MMR_Location.kmz",
+          "path": "Design/KMZ/Utilities/the client project_MMR_Location.kmz",
           "size": 814
         },
         {
           "id": "1uyW4o2cfb5-kz6biFUjuMfCna4Vjx7BG",
-          "name": "DG2_IRR_Manhole.kmz",
+          "name": "the client project_IRR_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_IRR_Manhole.kmz",
+          "path": "Design/KMZ/Utilities/the client project_IRR_Manhole.kmz",
           "size": 4279
         },
         {
           "id": "1ISRS7XCnQ7r409O2Za_vZKB_JSCorZz8",
-          "name": "DG2_IRR_GateValve.kmz",
+          "name": "the client project_IRR_GateValve.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_IRR_GateValve.kmz",
+          "path": "Design/KMZ/Utilities/the client project_IRR_GateValve.kmz",
           "size": 7725
         },
         {
           "id": "1YXiku2QHMW3RDURlk8YqrIzFBYz8d5vv",
-          "name": "DG2_ICT_TiePoint.kmz",
+          "name": "the client project_ICT_TiePoint.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_ICT_TiePoint.kmz",
+          "path": "Design/KMZ/Utilities/the client project_ICT_TiePoint.kmz",
           "size": 1428
         },
         {
           "id": "1m5H8wOidazbNS_fE2vT0RuAma6R1jm1F",
-          "name": "DG2_ICT_Network.kmz",
+          "name": "the client project_ICT_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_ICT_Network.kmz",
+          "path": "Design/KMZ/Utilities/the client project_ICT_Network.kmz",
           "size": 192825
         },
         {
           "id": "1VYsk2i138QYuBF90YyJauvvAvYUdfh2Y",
-          "name": "DG2_ICT_Structure.kmz",
+          "name": "the client project_ICT_Structure.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_ICT_Structure.kmz",
+          "path": "Design/KMZ/Utilities/the client project_ICT_Structure.kmz",
           "size": 22393
         },
         {
           "id": "1gMSTOs497TfXZ-2deYAAxJa9YF2gLy0O",
-          "name": "DG2_ICT_HouseConnection.kmz",
+          "name": "the client project_ICT_HouseConnection.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_ICT_HouseConnection.kmz",
+          "path": "Design/KMZ/Utilities/the client project_ICT_HouseConnection.kmz",
           "size": 102179
         },
         {
           "id": "1SlXgAD36zmjgbt4WiET-JIlANgmUhgfG",
-          "name": "DG2_Gas_Valve.kmz",
+          "name": "the client project_Gas_Valve.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Gas_Valve.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Gas_Valve.kmz",
           "size": 4487
         },
         {
           "id": "1KsIFhdBGdsEudaxJn2tFpUzpt42NYtoi",
-          "name": "DG2_Gas_Network.kmz",
+          "name": "the client project_Gas_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Gas_Network.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Gas_Network.kmz",
           "size": 103296
         },
         {
           "id": "1mmKLf_VCDvyaSHSsAsjXSb_6LtoSS4YE",
-          "name": "DG2_Gas_Fitting.kmz",
+          "name": "the client project_Gas_Fitting.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Gas_Fitting.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Gas_Fitting.kmz",
           "size": 26392
         },
         {
           "id": "1UtoBfNYCZfoSrH5ie7BU96jdZTLdkNVw",
-          "name": "DG2_Gas_Manhole.kmz",
+          "name": "the client project_Gas_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Gas_Manhole.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Gas_Manhole.kmz",
           "size": 4951
         },
         {
           "id": "1lBYM49tC0nHiT-sc9lF891M4PrmY0BbI",
-          "name": "DG2_Gas_Chamber.kmz",
+          "name": "the client project_Gas_Chamber.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Gas_Chamber.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Gas_Chamber.kmz",
           "size": 1714
         },
         {
           "id": "1pog8dIV1FreijIQxaTKpb7uxT4_EApGb",
-          "name": "DG2_Ele_MV.kmz",
+          "name": "the client project_Ele_MV.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Ele_MV.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Ele_MV.kmz",
           "size": 412277
         },
         {
           "id": "1H-r_cDhdwKVrqD3RoPVwRUbTFAwAXxMZ",
-          "name": "DG2_Ele_LV.kmz",
+          "name": "the client project_Ele_LV.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Ele_LV.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Ele_LV.kmz",
           "size": 220121
         },
         {
           "id": "19tKDUslKJnJI99kljDzUI5X4OjuPdWn1",
-          "name": "DG2_Ele_HV.kmz",
+          "name": "the client project_Ele_HV.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Ele_HV.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Ele_HV.kmz",
           "size": 68618
         },
         {
           "id": "1uTyA4eoJ_yNx9wu3JoRRDIkY0Ye7r41l",
-          "name": "DG2_Ele_LV_PRSS.kmz",
+          "name": "the client project_Ele_LV_PRSS.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Ele_LV_PRSS.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Ele_LV_PRSS.kmz",
           "size": 2283
         },
         {
           "id": "1G85Kj1SNgDJlJQvdWMC5GpFWNu_ot6W8",
-          "name": "DG2_PW_Pipe_Network.kmz",
+          "name": "the client project_PW_Pipe_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_PW_Pipe_Network.kmz",
+          "path": "Design/KMZ/Utilities/the client project_PW_Pipe_Network.kmz",
           "size": 1118755
         },
         {
           "id": "17ms8LPp7CQaLv9_ubulhfTYWv0oSQIEf",
-          "name": "DG2_Ele_MV_Substation.kmz",
+          "name": "the client project_Ele_MV_Substation.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Utilities/DG2_Ele_MV_Substation.kmz",
+          "path": "Design/KMZ/Utilities/the client project_Ele_MV_Substation.kmz",
           "size": 1439626
         },
         {
@@ -37795,9 +37795,9 @@
         },
         {
           "id": "16pYpkghNc8qubmj_V81fDB4ZaAJ23ToE",
-          "name": "Diriyah Salam Network Relocation Google KMZ.kmz",
+          "name": "the client Salam Network Relocation Google KMZ.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Existing Utilities KMZ/Diriyah Salam Network Relocation Google KMZ.kmz",
+          "path": "Design/KMZ/Existing Utilities KMZ/the client Salam Network Relocation Google KMZ.kmz",
           "size": 10791
         },
         {
@@ -37879,9 +37879,9 @@
         },
         {
           "id": "1ad15L6yUlcnhXyujTzUDZEmhjRjLrgPR",
-          "name": "DG2 Infra P1 - Current H&C NOC coverage areas (Rev 14Nov24).pdf",
+          "name": "the client project Infra P1 - Current H&C NOC coverage areas (Rev 14Nov24).pdf",
           "mimeType": "application/pdf",
-          "path": "Design/KMZ/H&C/DG2 Infra P1 - Current H&C NOC coverage areas (Rev 14Nov24).pdf",
+          "path": "Design/KMZ/H&C/the client project Infra P1 - Current H&C NOC coverage areas (Rev 14Nov24).pdf",
           "size": 266465
         },
         {
@@ -37962,7 +37962,7 @@
           "size": 5668
         },
         {
-          "id": "1a9aZWNg-Dq1nDG2ld6IUtx4pDjBYq8JN",
+          "id": "1a9aZWNg-Dq1nthe client projectld6IUtx4pDjBYq8JN",
           "name": "VO - 333 Unshaded Parking Spaces at Park & Ride 7.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
           "path": "Design/KMZ/Joao KMZs Formatted/VO - 333 Unshaded Parking Spaces at Park & Ride 7.kmz",
@@ -38019,16 +38019,16 @@
         },
         {
           "id": "17zyjRV0TwI73otoH6gDtRmedy4YUvxwy",
-          "name": "ROW DG2 P1, P2 and P3_TO29.kmz",
+          "name": "ROW the client project P1, P2 and P3_TO29.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/ROW DG2 P1, P2 and P3_TO29.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/ROW the client project P1, P2 and P3_TO29.kmz",
           "size": 341502
         },
         {
           "id": "1vWmrF6ktAgV9VT92RY8pWOs5r9vp6Zzf",
-          "name": "ROW DG2 P1, P2 and P3_TO27A_LU2.kmz",
+          "name": "ROW the client project P1, P2 and P3_TO27A_LU2.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/ROW DG2 P1, P2 and P3_TO27A_LU2.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/ROW the client project P1, P2 and P3_TO27A_LU2.kmz",
           "size": 51914
         },
         {
@@ -38180,16 +38180,16 @@
         },
         {
           "id": "1pYIbzxThovZqYQVkUeQ4RBDZn3Wtvr09",
-          "name": "DG2 Infra P1 Status of works fronts (4 colors) as off 11.12.24.kmz",
+          "name": "the client project Infra P1 Status of works fronts (4 colors) as off 11.12.24.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/DG2 Infra P1 Status of works fronts (4 colors) as off 11.12.24.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/the client project Infra P1 Status of works fronts (4 colors) as off 11.12.24.kmz",
           "size": 943889
         },
         {
           "id": "1IGRyGmiJ8n2RwUL9Na8IAOGwbxN1DMUG",
-          "name": "DG21 Package 3 Geteway 1 Project Boundary.kmz",
+          "name": "the client project1 Package 3 Geteway 1 Project Boundary.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/DG21 Package 3 Geteway 1 Project Boundary.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/the client project1 Package 3 Geteway 1 Project Boundary.kmz",
           "size": 1087
         },
         {
@@ -38201,16 +38201,16 @@
         },
         {
           "id": "1yJNnJyKUHwkKhQ911AT-RRh7UJBM2FOj",
-          "name": "DG2 Infra P1 ROW New Master Plan.dwg",
+          "name": "the client project Infra P1 ROW New Master Plan.dwg",
           "mimeType": "image/vnd.dwg",
-          "path": "Design/KMZ/Joao KMZs Formatted/DG2 Infra P1 ROW New Master Plan.dwg",
+          "path": "Design/KMZ/Joao KMZs Formatted/the client project Infra P1 ROW New Master Plan.dwg",
           "size": 431595
         },
         {
           "id": "1RzeehqVbpClmEY4NvN92bJDrPsrao71o",
-          "name": "DG2 Infra P1 Ped Underpasses (4 nos.).kmz",
+          "name": "the client project Infra P1 Ped Underpasses (4 nos.).kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/DG2 Infra P1 Ped Underpasses (4 nos.).kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/the client project Infra P1 Ped Underpasses (4 nos.).kmz",
           "size": 1402
         },
         {
@@ -38348,352 +38348,352 @@
         },
         {
           "id": "1eGB5t2bJgTvOQtaMBAS_k1DV3jPMp8zE",
-          "name": "DG2_WW_TieIn_Point.kmz",
+          "name": "the client project_WW_TieIn_Point.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_TieIn_Point.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_TieIn_Point.kmz",
           "size": 913
         },
         {
           "id": "1_6PT-6SFOLU2HkLwCt4qM3OXyWwm_y9U",
-          "name": "DG2_WW_WetWell_ValveChamber.kmz",
+          "name": "the client project_WW_WetWell_ValveChamber.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_WetWell_ValveChamber.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_WetWell_ValveChamber.kmz",
           "size": 1412
         },
         {
           "id": "1pZloKJAoUgKdaqsdLrS43XWeF38GwuoV",
-          "name": "DG2_WW_Rising_Main.kmz",
+          "name": "the client project_WW_Rising_Main.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_Rising_Main.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_Rising_Main.kmz",
           "size": 33368
         },
         {
           "id": "1imktNznPG2h7mQdghyZ78z3FiUxuG6dm",
-          "name": "DG2_WW_PressurePipe.kmz",
+          "name": "the client project_WW_PressurePipe.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_PressurePipe.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_PressurePipe.kmz",
           "size": 33544
         },
         {
           "id": "19EXjeBJHDztanJB5_iERyd_Y1_qjct_x",
-          "name": "DG2_WW_Pipe.kmz",
+          "name": "the client project_WW_Pipe.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_Pipe.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_Pipe.kmz",
           "size": 111818
         },
         {
           "id": "1tan2Y34LdAPGTZJOzIvJTv_ifPVoU-rj",
-          "name": "DG2_WW_MCC_Room_GeneratorRoom.kmz",
+          "name": "the client project_WW_MCC_Room_GeneratorRoom.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_MCC_Room_GeneratorRoom.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_MCC_Room_GeneratorRoom.kmz",
           "size": 1705
         },
         {
           "id": "1Im2Svm1DdJ7uh-548bl8ITm-0wY4vCkS",
-          "name": "DG2_WW_Lifting_Station.kmz",
+          "name": "the client project_WW_Lifting_Station.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_Lifting_Station.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_Lifting_Station.kmz",
           "size": 1291
         },
         {
           "id": "1ZTUIGpehxfw27Y4hY9KbL_8AW3Es0gIY",
-          "name": "DG2_WW_Manhole.kmz",
+          "name": "the client project_WW_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_Manhole.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_Manhole.kmz",
           "size": 37640
         },
         {
           "id": "1Z97n8w4IRm5w_CcB8lTktMew5a6teHKe",
-          "name": "DG2_WW_Fitting.kmz",
+          "name": "the client project_WW_Fitting.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WW_Fitting.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WW_Fitting.kmz",
           "size": 7862
         },
         {
           "id": "1UpdCdJ4Pm9rPEnyhTQimgvsU6_mnZ6Xw",
-          "name": "DG2_WS_Manhole.kmz",
+          "name": "the client project_WS_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_WS_Manhole.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_WS_Manhole.kmz",
           "size": 4885
         },
         {
           "id": "18tjnzFQjCmo_IQJCA19XmZFn58SfEjVd",
-          "name": "DG2_TS_Pole.kmz",
+          "name": "the client project_TS_Pole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_TS_Pole.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_TS_Pole.kmz",
           "size": 33740
         },
         {
           "id": "1I-38ipV8UHC8oahBcWXKYgjs4AEXNzjS",
-          "name": "DG2_TS_Cable_Network.kmz",
+          "name": "the client project_TS_Cable_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_TS_Cable_Network.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_TS_Cable_Network.kmz",
           "size": 102313
         },
         {
           "id": "1auks9va3PJwXQXK4YOb1cOo5_25j4hav",
-          "name": "DG2_Telecom_TiePoint.kmz",
+          "name": "the client project_Telecom_TiePoint.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Telecom_TiePoint.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Telecom_TiePoint.kmz",
           "size": 1943
         },
         {
           "id": "1ntqfylPEjvkz9Ia4E7X6-osysg_ibd8Z",
-          "name": "DG2_Telecom_Structure.kmz",
+          "name": "the client project_Telecom_Structure.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Telecom_Structure.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Telecom_Structure.kmz",
           "size": 33851
         },
         {
           "id": "1aLe0FKfHg_jv3g-esWDKy81zd8NFvN3M",
-          "name": "DG2_Telecom_Network.kmz",
+          "name": "the client project_Telecom_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Telecom_Network.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Telecom_Network.kmz",
           "size": 179257
         },
         {
           "id": "17sMatUw8g3G9ZX1vK08whPvgUqxXbWJR",
-          "name": "DG2_SW_Pipe_Network.kmz",
+          "name": "the client project_SW_Pipe_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_SW_Pipe_Network.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_SW_Pipe_Network.kmz",
           "size": 536817
         },
         {
           "id": "1AfTji9nyWwG7eEwCq8s2kDw7pTvDUPsC",
-          "name": "DG2_SW_Manhole.kmz",
+          "name": "the client project_SW_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_SW_Manhole.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_SW_Manhole.kmz",
           "size": 67863
         },
         {
           "id": "1q7M1UUTWqAcOHtMxFvAIiTdHepVZpe2X",
-          "name": "DG2_SW_Inlet.kmz",
+          "name": "the client project_SW_Inlet.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_SW_Inlet.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_SW_Inlet.kmz",
           "size": 72218
         },
         {
           "id": "1a0NMEGQV2ONAicJpdjicXp1a6131RWs8",
-          "name": "DG2_SL_Network.kmz",
+          "name": "the client project_SL_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_SL_Network.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_SL_Network.kmz",
           "size": 286229
         },
         {
           "id": "1fwRUmP48i6_ZWax6zTkNxdo4oh3PYSUs",
-          "name": "DG2_SL_Pole.kmz",
+          "name": "the client project_SL_Pole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_SL_Pole.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_SL_Pole.kmz",
           "size": 99206
         },
         {
           "id": "19l6M9UBb2sRIh8N4InZES-Ec5I_fh2HD",
-          "name": "DG2_Substation.kmz",
+          "name": "the client project_Substation.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Substation.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Substation.kmz",
           "size": 2386
         },
         {
           "id": "1Jn45NAjmNzcWf1uru3oYELUDrWwmC14e",
-          "name": "DG2_PW_OPERATING_ROOM_DOMESTIC_WATER_PUMP.kmz",
+          "name": "the client project_PW_OPERATING_ROOM_DOMESTIC_WATER_PUMP.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PW_OPERATING_ROOM_DOMESTIC_WATER_PUMP.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PW_OPERATING_ROOM_DOMESTIC_WATER_PUMP.kmz",
           "size": 1576
         },
         {
           "id": "15IP593aiYaVOnGfA6z3oArEMlQKvd2Va",
-          "name": "DG2_PW_Gate_Valve.kmz",
+          "name": "the client project_PW_Gate_Valve.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PW_Gate_Valve.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PW_Gate_Valve.kmz",
           "size": 14676
         },
         {
           "id": "1YmICvSezz1X4clujWCeV8ubTd8agi6bk",
-          "name": "DG2_PW_Fire_Hydrant.kmz",
+          "name": "the client project_PW_Fire_Hydrant.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PW_Fire_Hydrant.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PW_Fire_Hydrant.kmz",
           "size": 15530
         },
         {
           "id": "157M4WQ6bcvFUtSc9hRNrb6csIWsL0N1b",
-          "name": "DG2_PW_Fitting.kmz",
+          "name": "the client project_PW_Fitting.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PW_Fitting.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PW_Fitting.kmz",
           "size": 230918
         },
         {
           "id": "1389Q1cT87ZVUmkuXwb5a-w9w7KQak_ib",
-          "name": "DG2_PW_Chamber.kmz",
+          "name": "the client project_PW_Chamber.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PW_Chamber.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PW_Chamber.kmz",
           "size": 5671
         },
         {
           "id": "1YmyVtWNrHJIO9mm6VE6uSqhL3VkBDtKm",
-          "name": "DG2_PWPS_02_RESERVOIR_PUMP_ROOM.kmz",
+          "name": "the client project_PWPS_02_RESERVOIR_PUMP_ROOM.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PWPS_02_RESERVOIR_PUMP_ROOM.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PWPS_02_RESERVOIR_PUMP_ROOM.kmz",
           "size": 1621
         },
         {
           "id": "1ePCbcGFcVe6eYRVWxyFYh88QTi9dNDuB",
-          "name": "DG2_PWPS_01_RESERVOIR_PUMP_ROOM.kmz",
+          "name": "the client project_PWPS_01_RESERVOIR_PUMP_ROOM.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PWPS_01_RESERVOIR_PUMP_ROOM.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PWPS_01_RESERVOIR_PUMP_ROOM.kmz",
           "size": 1781
         },
         {
           "id": "1WzqR5KykN9kG2AnPvNOtPnV4XWQUZhI_",
-          "name": "DG2_PW02_MCC_Room.kmz",
+          "name": "the client project_PW02_MCC_Room.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PW02_MCC_Room.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PW02_MCC_Room.kmz",
           "size": 1356
         },
         {
           "id": "13aI1IACnYuvATmBkyKnDz1U5w8HBP4OT",
-          "name": "DG2_PW01_MCC_Room.kmz",
+          "name": "the client project_PW01_MCC_Room.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_PW01_MCC_Room.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_PW01_MCC_Room.kmz",
           "size": 1345
         },
         {
           "id": "1qDkcq8kSJGO1vdtiWJgZS1qJIOpsuAVC",
-          "name": "DG2_MMR_Location.kmz",
+          "name": "the client project_MMR_Location.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_MMR_Location.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_MMR_Location.kmz",
           "size": 814
         },
         {
           "id": "1zlYSe9nqdorUiCLXlCmOgsxG3u2Koh7U",
-          "name": "DG2_IR_TieInPoint.kmz",
+          "name": "the client project_IR_TieInPoint.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_IR_TieInPoint.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_IR_TieInPoint.kmz",
           "size": 928
         },
         {
           "id": "1PKW8WCo9Cwbso7SqyHgu2t-VaAIITnd_",
-          "name": "DG2_IRR_PressurizedMainLine.kmz",
+          "name": "the client project_IRR_PressurizedMainLine.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_IRR_PressurizedMainLine.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_IRR_PressurizedMainLine.kmz",
           "size": 930319
         },
         {
           "id": "1nmS0M-LcdzygoakWaciibms4meHGC1wc",
-          "name": "DG2_IRR_Manhole.kmz",
+          "name": "the client project_IRR_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_IRR_Manhole.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_IRR_Manhole.kmz",
           "size": 4279
         },
         {
           "id": "1Wb1xqZdyNjFCXgqnzdBpnCa_8bnBadyK",
-          "name": "DG2_IRR_GateValve.kmz",
+          "name": "the client project_IRR_GateValve.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_IRR_GateValve.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_IRR_GateValve.kmz",
           "size": 7725
         },
         {
           "id": "1CCPdUy8AdIiGJpih9iEGa72Uy7yi11lw",
-          "name": "DG2_IRR_Fitting.kmz",
+          "name": "the client project_IRR_Fitting.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_IRR_Fitting.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_IRR_Fitting.kmz",
           "size": 142341
         },
         {
           "id": "1k88BS2rQSRk35JpLGw1fqxjeDxIZYsz7",
-          "name": "DG2_ICT_TiePoint.kmz",
+          "name": "the client project_ICT_TiePoint.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_ICT_TiePoint.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_ICT_TiePoint.kmz",
           "size": 1428
         },
         {
           "id": "1Q3-R86F7aviMk24TvccTAKu9GncGJO1G",
-          "name": "DG2_ICT_Network.kmz",
+          "name": "the client project_ICT_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_ICT_Network.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_ICT_Network.kmz",
           "size": 192825
         },
         {
           "id": "1YZXXcDPC6qWiWhccSX0BnMYDnTM5ToVK",
-          "name": "DG2_ICT_HouseConnection.kmz",
+          "name": "the client project_ICT_HouseConnection.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_ICT_HouseConnection.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_ICT_HouseConnection.kmz",
           "size": 102179
         },
         {
           "id": "11J3-wEaP8rUynFxkI1E44HQ8m2TPWU8B",
-          "name": "DG2_Gas_Network.kmz",
+          "name": "the client project_Gas_Network.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Gas_Network.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Gas_Network.kmz",
           "size": 103296
         },
         {
           "id": "1u2n-9-GF12mg5mW9A5qnRs9X_wqVDRQL",
-          "name": "DG2_ICT_Structure.kmz",
+          "name": "the client project_ICT_Structure.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_ICT_Structure.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_ICT_Structure.kmz",
           "size": 22393
         },
         {
           "id": "1wRJ6AHQSaUeqXJ_ibTfLf2NHBVBFZCkx",
-          "name": "DG2_Gas_Valve.kmz",
+          "name": "the client project_Gas_Valve.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Gas_Valve.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Gas_Valve.kmz",
           "size": 4487
         },
         {
           "id": "1RUMK9IzgkwIutDqpBPto5ZskkxVEWZ6Z",
-          "name": "DG2_Gas_Manhole.kmz",
+          "name": "the client project_Gas_Manhole.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Gas_Manhole.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Gas_Manhole.kmz",
           "size": 4951
         },
         {
           "id": "1vDTuCQbSROQqHne3aS946FsKVrShKJfw",
-          "name": "DG2_Gas_Fitting.kmz",
+          "name": "the client project_Gas_Fitting.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Gas_Fitting.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Gas_Fitting.kmz",
           "size": 26392
         },
         {
           "id": "1K3jnG5Nccx1jSnoqD7pHNMieORsB3ZlM",
-          "name": "DG2_Gas_Chamber.kmz",
+          "name": "the client project_Gas_Chamber.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Gas_Chamber.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Gas_Chamber.kmz",
           "size": 1714
         },
         {
           "id": "1FzK74ImB3GrUNQ6hzAB9RYeXIZlu-Mmi",
-          "name": "DG2_Ele_MV.kmz",
+          "name": "the client project_Ele_MV.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Ele_MV.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Ele_MV.kmz",
           "size": 412277
         },
         {
           "id": "1UCNMkK9sBPANKzzcL7a5Z_Mu2Ph2vbwR",
-          "name": "DG2_Ele_LV.kmz",
+          "name": "the client project_Ele_LV.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Ele_LV.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Ele_LV.kmz",
           "size": 220121
         },
         {
           "id": "1oHbiIfb5QGTtwdK6XYr-rm-NQDBZ-M-a",
-          "name": "DG2_Ele_LV_PRSS.kmz",
+          "name": "the client project_Ele_LV_PRSS.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Ele_LV_PRSS.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Ele_LV_PRSS.kmz",
           "size": 2283
         },
         {
           "id": "1wKRVIdKOHQD3_2N5G4pKTuhJjyHiqd8O",
-          "name": "DG2_Ele_HV.kmz",
+          "name": "the client project_Ele_HV.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/DG2_Ele_HV.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/Utilities/the client project_Ele_HV.kmz",
           "size": 68618
         },
         {
           "id": "1xEAhCEK5VHTKTq2wDppqA7-si9thRSP7",
-          "name": "WRR DG2 TO29 External Roads (by Kashif).kmz",
+          "name": "WRR the client project TO29 External Roads (by Kashif).kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/WRR DG2 TO29 External Roads (by Kashif).kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/WRR the client project TO29 External Roads (by Kashif).kmz",
           "size": 7080548
         },
         {
@@ -38733,9 +38733,9 @@
         },
         {
           "id": "1Fpe4ohUlEC0wfiMELz4qLezvnlsU-zV7",
-          "name": "ROW DG2 P1, P2 and P3_TO29 with layout.kmz",
+          "name": "ROW the client project P1, P2 and P3_TO29 with layout.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Design/KMZ/Joao KMZs Formatted/ROW DG2 P1, P2 and P3_TO29 with layout.kmz",
+          "path": "Design/KMZ/Joao KMZs Formatted/ROW the client project P1, P2 and P3_TO29 with layout.kmz",
           "size": 5265553
         },
         {
@@ -39041,23 +39041,23 @@
         },
         {
           "id": "1WyY5mPfd-QYWhyaaRw7jxoT5zpxLg9Qg",
-          "name": "20250721 TG-DG2-225-002 GATE 2L.pdf",
+          "name": "20250721 TG-the client project-225-002 GATE 2L.pdf",
           "mimeType": "application/pdf",
-          "path": "Logistics/Drawings/Gate 2L/20250721 TG-DG2-225-002 GATE 2L.pdf",
+          "path": "Logistics/Drawings/Gate 2L/20250721 TG-the client project-225-002 GATE 2L.pdf",
           "size": 783466
         },
         {
           "id": "1yTRHn6IQ2ALRSJLlCICua-lYqCDb6Zyz",
-          "name": "20250721 TG-DG2-225-002 GATE 2L.kmz",
+          "name": "20250721 TG-the client project-225-002 GATE 2L.kmz",
           "mimeType": "application/vnd.google-earth.kmz",
-          "path": "Logistics/Drawings/Gate 2L/20250721 TG-DG2-225-002 GATE 2L.kmz",
+          "path": "Logistics/Drawings/Gate 2L/20250721 TG-the client project-225-002 GATE 2L.kmz",
           "size": 74034
         },
         {
           "id": "1jGucfijnkmjdgcCDArmdJ5a2szwm0COu",
-          "name": "20250721 TG-DG2-225-002 GATE 2L.dwg",
+          "name": "20250721 TG-the client project-225-002 GATE 2L.dwg",
           "mimeType": "image/vnd.dwg",
-          "path": "Logistics/Drawings/Gate 2L/20250721 TG-DG2-225-002 GATE 2L.dwg",
+          "path": "Logistics/Drawings/Gate 2L/20250721 TG-the client project-225-002 GATE 2L.dwg",
           "size": 1244544
         },
         {
@@ -39160,16 +39160,16 @@
         },
         {
           "id": "1e1bw6hw0vbmyNY0FEHUNWK5ueMr7fju6",
-          "name": "20250622 TG-DG2-214-002 GREEN VILLAGE ROAD DIVERSION-SAFETY SIGNAGE.pdf",
+          "name": "20250622 TG-the client project-214-002 GREEN VILLAGE ROAD DIVERSION-SAFETY SIGNAGE.pdf",
           "mimeType": "application/pdf",
-          "path": "Logistics/Drawings/KKR PSR/20250622 TG-DG2-214-002 GREEN VILLAGE ROAD DIVERSION-SAFETY SIGNAGE.pdf",
+          "path": "Logistics/Drawings/KKR PSR/20250622 TG-the client project-214-002 GREEN VILLAGE ROAD DIVERSION-SAFETY SIGNAGE.pdf",
           "size": 1198804
         },
         {
           "id": "1Hs07FSPDX70wxHFYsOpYg8dP7gcV6Jbo",
-          "name": "20250622 TG-DG2-198-006 KKR-PRINCE SATTAM LINK-BRANCH ROAD-WAYFINDING.pdf",
+          "name": "20250622 TG-the client project-198-006 KKR-PRINCE SATTAM LINK-BRANCH ROAD-WAYFINDING.pdf",
           "mimeType": "application/pdf",
-          "path": "Logistics/Drawings/KKR PSR/20250622 TG-DG2-198-006 KKR-PRINCE SATTAM LINK-BRANCH ROAD-WAYFINDING.pdf",
+          "path": "Logistics/Drawings/KKR PSR/20250622 TG-the client project-198-006 KKR-PRINCE SATTAM LINK-BRANCH ROAD-WAYFINDING.pdf",
           "size": 1447177
         },
         {
@@ -39363,16 +39363,16 @@
         },
         {
           "id": "1fuyTS3m8SqP6blpgfp4AIlYQ5Ewwn6Od",
-          "name": "20250507 TG-DG2-155-005 OLLA ROAD PLAN AND TMP REV 11 PART 01.pdf",
+          "name": "20250507 TG-the client project-155-005 OLLA ROAD PLAN AND TMP REV 11 PART 01.pdf",
           "mimeType": "application/pdf",
-          "path": "Logistics/Drawings/WADI SAFAR ROUTE/20250507 TG-DG2-155-005 OLLA ROAD PLAN AND TMP REV 11 PART 01.pdf",
+          "path": "Logistics/Drawings/WADI SAFAR ROUTE/20250507 TG-the client project-155-005 OLLA ROAD PLAN AND TMP REV 11 PART 01.pdf",
           "size": 999575
         },
         {
           "id": "1UP-39uRqvgEzZq_7gOvUIxs0cmtwfHyq",
-          "name": "20250507 TG-DG2-155-002 OLLA ROAD PLAN AND TMP REV 11 PART 01.dwg",
+          "name": "20250507 TG-the client project-155-002 OLLA ROAD PLAN AND TMP REV 11 PART 01.dwg",
           "mimeType": "image/vnd.dwg",
-          "path": "Logistics/Drawings/WADI SAFAR ROUTE/20250507 TG-DG2-155-002 OLLA ROAD PLAN AND TMP REV 11 PART 01.dwg",
+          "path": "Logistics/Drawings/WADI SAFAR ROUTE/20250507 TG-the client project-155-002 OLLA ROAD PLAN AND TMP REV 11 PART 01.dwg",
           "size": 2167579
         },
         {
@@ -39512,175 +39512,175 @@
           "id": "1iibnDXm35x7ksSdn4bFRsJnQf5rDFWOF",
           "name": "acad.fmp",
           "mimeType": "application/octet-stream",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/acad.fmp",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/acad.fmp",
           "size": 294
         },
         {
           "id": "1p9_VbzCIjZfyF_E1PtIVuhImEk4jJmr2",
           "name": "laar.ctb",
           "mimeType": "application/octet-stream",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/PlotCfgs/laar.ctb",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/PlotCfgs/laar.ctb",
           "size": 4442
         },
         {
           "id": "1ypZ40p44aoIeMLAPVn11FbTi5ZzbWCJq",
           "name": "DWG To PDF.pc3",
           "mimeType": "application/octet-stream",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/PlotCfgs/DWG To PDF.pc3",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/PlotCfgs/DWG To PDF.pc3",
           "size": 3644
         },
         {
           "id": "1vAMYPuinwWO-2SufQjBq5GNxUhCKFwuZ",
           "name": "acad.ctb",
           "mimeType": "application/octet-stream",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/PlotCfgs/acad.ctb",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/PlotCfgs/acad.ctb",
           "size": 4403
         },
         {
           "id": "1oOLxDRFISW3V6Duey5jD6SQtF8SayLzh",
           "name": "ARIALN.TTF",
           "mimeType": "application/x-font-ttf",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/ARIALN.TTF",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/ARIALN.TTF",
           "size": 175956
         },
         {
           "id": "1mo_VE-Mm3_hE87sz7XPd6qabKjCIdE52",
           "name": "ariali.ttf",
           "mimeType": "application/x-font-ttf",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/ariali.ttf",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/ariali.ttf",
           "size": 717428
         },
         {
           "id": "12RfKofaJlGqGQI7YL0K2-N0kTpI5CsbM",
           "name": "swissc.ttf",
           "mimeType": "application/x-font-ttf",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/swissc.ttf",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/swissc.ttf",
           "size": 36436
         },
         {
           "id": "17zaKHde76OKkDeDiiMx8ZlNlR2EexK5X",
           "name": "txt.shx",
           "mimeType": "application/octet-stream",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/txt.shx",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/txt.shx",
           "size": 8489
         },
         {
           "id": "1yu_Kzvs12DUoqE_LGKXihxX4QSJsz5o9",
           "name": "simplex.shx",
           "mimeType": "application/octet-stream",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/simplex.shx",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/simplex.shx",
           "size": 17816
         },
         {
           "id": "19qPdt3aTQob8tieWMgRhcbU5xM4_iQCo",
           "name": "ltypeshp.shx",
           "mimeType": "application/octet-stream",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/ltypeshp.shx",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/ltypeshp.shx",
           "size": 130
         },
         {
           "id": "1ZDrn1Z44s_DSpR5WVLigsZSubLqAA04m",
           "name": "arialbd.ttf",
           "mimeType": "application/x-font-ttf",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/arialbd.ttf",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/arialbd.ttf",
           "size": 980756
         },
         {
           "id": "1GoKeXebKb5baQDgkvaqqS0ydNswjZeyK",
           "name": "arial.ttf",
           "mimeType": "application/x-font-ttf",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/arial.ttf",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Fonts/arial.ttf",
           "size": 1036584
         },
         {
           "id": "1AcYXn7RBGTDewB9I6bz8QZ2T_f371CJt",
           "name": "Sitework.Planting.Soil.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Soil.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Soil.jpg",
           "size": 51629
         },
         {
           "id": "1e1hZDR1pJGXhvZHyx345Qm8WVU0TqKLn",
           "name": "Sitework.Planting.Grass.Thick.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Grass.Thick.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Grass.Thick.jpg",
           "size": 63408
         },
         {
           "id": "1O2bQhlXdGfbe0sDpI_U5c6H4LfTq-2gE",
           "name": "Sitework.Planting.Gravel.Crushed.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Gravel.Crushed.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Gravel.Crushed.jpg",
           "size": 66123
         },
         {
           "id": "1U7d-Pi64fNdqBV7KIKIyCV4Cp1vBQG77",
           "name": "Sitework.Planting.Grass.Short.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Grass.Short.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Grass.Short.jpg",
           "size": 59405
         },
         {
           "id": "1DbvYdKgC0h1QD9AvVZXxr_a-tW0gvZsR",
           "name": "Sitework.Planting.Gravel.Mixed.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Gravel.Mixed.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Planting.Gravel.Mixed.jpg",
           "size": 56098
         },
         {
           "id": "1rW6ZCxZHqM1sNgg48tKiFBSlU5WFLR9y",
           "name": "People misc 019.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People misc 019.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People misc 019.jpg",
           "size": 61275
         },
         {
           "id": "1KGgBtU5lXiWcmRti-H0N7q6WO0hV1R1U",
           "name": "Sitework.Paving - Surfacing.Asphalt.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Paving - Surfacing.Asphalt.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Sitework.Paving - Surfacing.Asphalt.jpg",
           "size": 43772
         },
         {
           "id": "1YVcmm-qRL67wpN_yhPypbDvknyN56O_-",
           "name": "People golf 01 mask.gif",
           "mimeType": "image/gif",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People golf 01 mask.gif",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People golf 01 mask.gif",
           "size": 13091
         },
         {
           "id": "1UAZ_i2YHKQcXalLnSOYbQ5Jdu0EwfAJ3",
           "name": "People golf 01.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People golf 01.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People golf 01.jpg",
           "size": 53275
         },
         {
           "id": "1URlmSY9ipSX4RDsWD9TDj6EZTJa4cY4A",
           "name": "People misc 019 mask.gif",
           "mimeType": "image/gif",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People misc 019 mask.gif",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People misc 019 mask.gif",
           "size": 6004
         },
         {
           "id": "1tXJMEBvHefauTIUQc7dGHS0530TjB35N",
           "name": "People casual walking 042.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People casual walking 042.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People casual walking 042.jpg",
           "size": 208611
         },
         {
           "id": "1UR6KW8so8q01I77l7rbnnoCcXbbA22iM",
           "name": "Concrete.Cast-In-Place.Flat.Grey.1.jpg",
           "mimeType": "image/jpeg",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Concrete.Cast-In-Place.Flat.Grey.1.jpg",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/Concrete.Cast-In-Place.Flat.Grey.1.jpg",
           "size": 23198
         },
         {
           "id": "1ZamO0rbP6oJToie8OvpWfrHCWOfQR0If",
           "name": "People casual walking 042 mask.gif",
           "mimeType": "image/gif",
-          "path": "Logistics/LAARS/DG2 Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People casual walking 042 mask.gif",
+          "path": "Logistics/LAARS/the client project Logistic Drawing inc. Haul R. LAARs Rev-04 - Ver-02 as off 05 Mar 24/Textures/People casual walking 042 mask.gif",
           "size": 27209
         },
         {
@@ -39811,9 +39811,9 @@
         },
         {
           "id": "17z1exrgMGLd4AWi35LINAmukglhX_ekU",
-          "name": "240304 DG220-KBR LOG-LAR-001 - DGII LAARs with Roads Rev. 04 (Version 2) - 04 Mar 2024.pdf",
+          "name": "240304 the client project20-KBR LOG-LAR-001 - DGII LAARs with Roads Rev. 04 (Version 2) - 04 Mar 2024.pdf",
           "mimeType": "application/pdf",
-          "path": "Logistics/Misc/240304 DG220-KBR LOG-LAR-001 - DGII LAARs with Roads Rev. 04 (Version 2) - 04 Mar 2024.pdf",
+          "path": "Logistics/Misc/240304 the client project20-KBR LOG-LAR-001 - DGII LAARs with Roads Rev. 04 (Version 2) - 04 Mar 2024.pdf",
           "size": 17309492
         },
         {
@@ -40014,58 +40014,58 @@
         },
         {
           "id": "13eGCiKfqG-Qwtx2_eS_pW5wUbRtAt1SI",
-          "name": "DG2 Infra Package 1 - Wayfinding.pptx",
+          "name": "the client project Infra Package 1 - Wayfinding.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Logistics/Signage/DG2 Infra Package 1 - Wayfinding.pptx",
+          "path": "Logistics/Signage/the client project Infra Package 1 - Wayfinding.pptx",
           "size": 1623880
         },
         {
           "id": "1QzC31Icx8lDGCT50QsAKs_b7OVIwFHAV",
-          "name": "DG2 Infra Package 1 - Wayfinding BVD.pptx",
+          "name": "the client project Infra Package 1 - Wayfinding BVD.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Logistics/Signage/DG2 Infra Package 1 - Wayfinding BVD.pptx",
+          "path": "Logistics/Signage/the client project Infra Package 1 - Wayfinding BVD.pptx",
           "size": 1627865
         },
         {
           "id": "1HuNFY8_LqEg_lBYzv7_Ji8daDSgBtrJa",
-          "name": "DG2 Infra Package 1 - Site Wayfinding.pptx",
+          "name": "the client project Infra Package 1 - Site Wayfinding.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Logistics/Signage/DG2 Infra Package 1 - Site Wayfinding.pptx",
+          "path": "Logistics/Signage/the client project Infra Package 1 - Site Wayfinding.pptx",
           "size": 1465552
         },
         {
           "id": "1gxqpgB5Sz-mVUO_qpXgsT973kX1g453F",
-          "name": "DG2 Infra Package 1 - Site Signboard.pptx",
+          "name": "the client project Infra Package 1 - Site Signboard.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Logistics/Signage/DG2 Infra Package 1 - Site Signboard.pptx",
+          "path": "Logistics/Signage/the client project Infra Package 1 - Site Signboard.pptx",
           "size": 2018981
         },
         {
           "id": "1XVLLSNSmL2VSvS_7EUQ4CCyPloGQopiq",
-          "name": "DG2 Infra Package 1 - Site sIGNAGE.pptx",
+          "name": "the client project Infra Package 1 - Site sIGNAGE.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Logistics/Signage/DG2 Infra Package 1 - Site sIGNAGE.pptx",
+          "path": "Logistics/Signage/the client project Infra Package 1 - Site sIGNAGE.pptx",
           "size": 2024600
         },
         {
           "id": "11K6JN_bv_cWzonkZIAPYt3qqH8vAmLcS",
-          "name": "DG2 Infra Package 1 - Site Perception Initiative R1.pptx",
+          "name": "the client project Infra Package 1 - Site Perception Initiative R1.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Logistics/Signage/DG2 Infra Package 1 - Site Perception Initiative R1.pptx",
+          "path": "Logistics/Signage/the client project Infra Package 1 - Site Perception Initiative R1.pptx",
           "size": 20167303
         },
         {
           "id": "17XNIA5MWsUM1_1rKuI8Rz9jVECQPHi7-",
-          "name": "DG2 Infra Package 1 - Site Perception Initiative R1.pdf",
+          "name": "the client project Infra Package 1 - Site Perception Initiative R1.pdf",
           "mimeType": "application/pdf",
-          "path": "Logistics/Signage/DG2 Infra Package 1 - Site Perception Initiative R1.pdf",
+          "path": "Logistics/Signage/the client project Infra Package 1 - Site Perception Initiative R1.pdf",
           "size": 2650847
         },
         {
           "id": "1ptQDAvz_muUhDY_v5unDlGel1OAWwMM2",
-          "name": "DG2 Infra Package 1 - Site Initiatives.pptx",
+          "name": "the client project Infra Package 1 - Site Initiatives.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Logistics/Signage/DG2 Infra Package 1 - Site Initiatives.pptx",
+          "path": "Logistics/Signage/the client project Infra Package 1 - Site Initiatives.pptx",
           "size": 39670530
         },
         {
@@ -40252,16 +40252,16 @@
         },
         {
           "id": "1_luvIcDKj6fiTVCgkS35udvY22m3N9Zw",
-          "name": "Diriyah Gate II - Before and After.jpg",
+          "name": "the client project II - Before and After.jpg",
           "mimeType": "image/jpeg",
-          "path": "Drone/Diriyah Gate II - Before and After.jpg",
+          "path": "Drone/the client project II - Before and After.jpg",
           "size": 6925194
         },
         {
           "id": "1YyRyY3B3-o-SEAd2JHvBYh2bkFeS_GdC",
-          "name": "Diriyah Gate II - Before and After.docx",
+          "name": "the client project II - Before and After.docx",
           "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "path": "Drone/Diriyah Gate II - Before and After.docx",
+          "path": "Drone/the client project II - Before and After.docx",
           "size": 6045440
         },
         {
@@ -40280,9 +40280,9 @@
         },
         {
           "id": "1iSEjHdvxEWObb_th4XQD2XhYIMTSpGzW",
-          "name": "DG Satellite Aerial Image 240311_DG2.jpg",
+          "name": "DG Satellite Aerial Image 240311_the client project.jpg",
           "mimeType": "image/jpeg",
-          "path": "Drone/DG Satellite Aerial Image 240311_DG2.jpg",
+          "path": "Drone/DG Satellite Aerial Image 240311_the client project.jpg",
           "size": 1787610
         },
         {
@@ -40308,30 +40308,30 @@
         },
         {
           "id": "1m61NxzmT5A6SGsD-APUbzRQ2gd4hFtv5",
-          "name": "Diriyah Gate II - Before and After.pdf",
+          "name": "the client project II - Before and After.pdf",
           "mimeType": "application/pdf",
-          "path": "Drone/Diriyah Gate II - Before and After.pdf",
+          "path": "Drone/the client project II - Before and After.pdf",
           "size": 648482
         },
         {
           "id": "1abhxo9KQmjT5IvCvYmFZn2oDfUOWZkuB",
-          "name": "DG Satellite Aerial Image 240311_DG2.1.jpg",
+          "name": "DG Satellite Aerial Image 240311_the client project.1.jpg",
           "mimeType": "image/jpeg",
-          "path": "Drone/DG Satellite Aerial Image 240311_DG2.1.jpg",
+          "path": "Drone/DG Satellite Aerial Image 240311_the client project.1.jpg",
           "size": 943101
         },
         {
           "id": "1crW4IiXcOviPOoQYFAVEAiWtLNravj9F",
-          "name": "DG Satellite Aerial Image 240311_DG2.2.jpg",
+          "name": "DG Satellite Aerial Image 240311_the client project.2.jpg",
           "mimeType": "image/jpeg",
-          "path": "Drone/DG Satellite Aerial Image 240311_DG2.2.jpg",
+          "path": "Drone/DG Satellite Aerial Image 240311_the client project.2.jpg",
           "size": 859257
         },
         {
           "id": "1P8OQ4vtOPlp0XZffyhy9qAI5LA4xcKK4",
-          "name": "DG2 site context to Riyadh.JPG",
+          "name": "the client project site context to Riyadh.JPG",
           "mimeType": "image/jpeg",
-          "path": "Drone/DG2 site context to Riyadh.JPG",
+          "path": "Drone/the client project site context to Riyadh.JPG",
           "size": 84586
         },
         {
@@ -41029,9 +41029,9 @@
         },
         {
           "id": "16Q7o2AbifUV38lnE_Z7ky6-M_5YLURKp",
-          "name": "Visio_DG2_INFRA_caw.vsdx",
+          "name": "Visio_the client project_INFRA_caw.vsdx",
           "mimeType": "application/vnd.ms-visio.viewer",
-          "path": "Misc/Visio_DG2_INFRA_caw.vsdx",
+          "path": "Misc/Visio_the client project_INFRA_caw.vsdx",
           "size": 2265968
         },
         {
@@ -41575,16 +41575,16 @@
         },
         {
           "id": "1Jt-R-1i_93wZL293kuwM6HICw61tCihP",
-          "name": "DG2 Infra Package 1 - Current valid construction permits (live)_ (004) - caw1.pdf",
+          "name": "the client project Infra Package 1 - Current valid construction permits (live)_ (004) - caw1.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/DG2 Infra Package 1 - Current valid construction permits (live)_ (004) - caw1.pdf",
+          "path": "Misc/the client project Infra Package 1 - Current valid construction permits (live)_ (004) - caw1.pdf",
           "size": 1209917
         },
         {
           "id": "1BkXEKV9ik_vekwHAPNpHdewpmb10ZgfG",
-          "name": "DG2 Infra Package 1 - Current valid construction permits (live)_ (004) - caw.pdf",
+          "name": "the client project Infra Package 1 - Current valid construction permits (live)_ (004) - caw.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/DG2 Infra Package 1 - Current valid construction permits (live)_ (004) - caw.pdf",
+          "path": "Misc/the client project Infra Package 1 - Current valid construction permits (live)_ (004) - caw.pdf",
           "size": 1202089
         },
         {
@@ -42695,9 +42695,9 @@
         },
         {
           "id": "1PzJSldu72wVM_iXcKROOcWy6vEgaxyc3",
-          "name": "DG2 Infra-KKR-WRR Consolidated Fill Quantities - caw.xlsx",
+          "name": "the client project Infra-KKR-WRR Consolidated Fill Quantities - caw.xlsx",
           "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "path": "Misc/DG2 Infra-KKR-WRR Consolidated Fill Quantities - caw.xlsx",
+          "path": "Misc/the client project Infra-KKR-WRR Consolidated Fill Quantities - caw.xlsx",
           "size": 17605
         },
         {
@@ -42765,9 +42765,9 @@
         },
         {
           "id": "1ijmBsb9OGlxu7rmCKOz7qlcL0-8KHsSN",
-          "name": "DG-2, MV Cable Derating Calc Report - caw.pdf",
+          "name": "the client project, MV Cable Derating Calc Report - caw.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/DG-2, MV Cable Derating Calc Report - caw.pdf",
+          "path": "Misc/the client project, MV Cable Derating Calc Report - caw.pdf",
           "size": 676366
         },
         {
@@ -43164,16 +43164,16 @@
         },
         {
           "id": "1-crVGTusAPim8bAe_LimGL_aI9vJ77dR",
-          "name": "281124 DG2I1 Weekly Construction meeting MoM (Draft) - caw.pdf",
+          "name": "281124 the client projectI1 Weekly Construction meeting MoM (Draft) - caw.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/281124 DG2I1 Weekly Construction meeting MoM (Draft) - caw.pdf",
+          "path": "Misc/281124 the client projectI1 Weekly Construction meeting MoM (Draft) - caw.pdf",
           "size": 52336
         },
         {
           "id": "1i5FNjjgA0AldAIyGiD1nLB19ge2SNWLY",
-          "name": "250601 DG2I1 WPM MoM (Draft) - caw1.pdf",
+          "name": "250601 the client projectI1 WPM MoM (Draft) - caw1.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/250601 DG2I1 WPM MoM (Draft) - caw1.pdf",
+          "path": "Misc/250601 the client projectI1 WPM MoM (Draft) - caw1.pdf",
           "size": 76346
         },
         {
@@ -43185,9 +43185,9 @@
         },
         {
           "id": "1AOmcngdzcujatYg_JXMP_T73q17FAxKQ",
-          "name": "250601 DG2I1 WPM MoM (Draft) - caw.pdf",
+          "name": "250601 the client projectI1 WPM MoM (Draft) - caw.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/250601 DG2I1 WPM MoM (Draft) - caw.pdf",
+          "path": "Misc/250601 the client projectI1 WPM MoM (Draft) - caw.pdf",
           "size": 63007
         },
         {
@@ -43199,9 +43199,9 @@
         },
         {
           "id": "1Z3sUaXtZY4TN4gtTVubsizIdBvPcJdDx",
-          "name": "241205 DG2I1 Weekly Construction meeting MoM-caw.pdf",
+          "name": "241205 the client projectI1 Weekly Construction meeting MoM-caw.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/241205 DG2I1 Weekly Construction meeting MoM-caw.pdf",
+          "path": "Misc/241205 the client projectI1 Weekly Construction meeting MoM-caw.pdf",
           "size": 163429
         },
         {
@@ -43654,9 +43654,9 @@
         },
         {
           "id": "1zxVKEOYDOkaBLaR_dfo7JA_FuGgzihyw",
-          "name": "DG220-JCB-DC-PRS-000136-03_DMP UMA Presentation.pdf",
+          "name": "the client project20-JCB-DC-PRS-000136-03_DMP UMA Presentation.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/Templates/UMA/Mobilisation/6 Project Conceptual Design/DG220-JCB-DC-PRS-000136-03_DMP UMA Presentation.pdf",
+          "path": "Misc/Templates/UMA/Mobilisation/6 Project Conceptual Design/the client project20-JCB-DC-PRS-000136-03_DMP UMA Presentation.pdf",
           "size": 27214364
         },
         {
@@ -43955,9 +43955,9 @@
         },
         {
           "id": "1goCTcYDWs0fr_QU0E-JacpjUr1shb_Qh",
-          "name": "231211 DG2 & WRR Presentation to UMA.pdf",
+          "name": "231211 the client project & WRR Presentation to UMA.pdf",
           "mimeType": "application/pdf",
-          "path": "Misc/Templates/UMA/231211 DG2 & WRR Presentation to UMA.pdf",
+          "path": "Misc/Templates/UMA/231211 the client project & WRR Presentation to UMA.pdf",
           "size": 17205171
         },
         {
@@ -44004,9 +44004,9 @@
         },
         {
           "id": "1bmZAyOjQ5Z9VDUX-5pzNFq-J95Vp8gEw",
-          "name": "DG2 UMA Permit tracker JF (official).pdf",
+          "name": "the client project UMA Permit tracker JF (official).pdf",
           "mimeType": "application/pdf",
-          "path": "Trackers/DG2 UMA Permit tracker JF (official).pdf",
+          "path": "Trackers/the client project UMA Permit tracker JF (official).pdf",
           "size": 443217
         },
         {
@@ -44767,30 +44767,30 @@
         },
         {
           "id": "1fRK7ZvbJPbCnCBPOMXls3a39vlEhYS5y",
-          "name": "DG2 Infra Package 1 - Site Initiatives.pptx",
+          "name": "the client project Infra Package 1 - Site Initiatives.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Presentations/DG2 Infra Package 1 - Site Initiatives.pptx",
+          "path": "Presentations/the client project Infra Package 1 - Site Initiatives.pptx",
           "size": 39220938
         },
         {
           "id": "1aM1Hr4J-c9i4ZL0SBhytXvmKT77CMR9h",
-          "name": "DG2 Infra Package 1 - Logistics Support .pptx",
+          "name": "the client project Infra Package 1 - Logistics Support .pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Presentations/DG2 Infra Package 1 - Logistics Support .pptx",
+          "path": "Presentations/the client project Infra Package 1 - Logistics Support .pptx",
           "size": 15694914
         },
         {
           "id": "193t3XbjnCHmO8PXLMuIgZfWqIZ9oxTRz",
-          "name": "DG2 Infra 1 - Stockpile Man R1.pptx",
+          "name": "the client project Infra 1 - Stockpile Man R1.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Presentations/DG2 Infra 1 - Stockpile Man R1.pptx",
+          "path": "Presentations/the client project Infra 1 - Stockpile Man R1.pptx",
           "size": 17797061
         },
         {
           "id": "1sCs4uzpmYluUzCm7511vOIhN2bXfkX6m",
-          "name": "DG2 Infra - Plot handover (road implanted) as off 02.12.24.jpg",
+          "name": "the client project Infra - Plot handover (road implanted) as off 02.12.24.jpg",
           "mimeType": "image/jpeg",
-          "path": "Presentations/DG2 Infra - Plot handover (road implanted) as off 02.12.24.jpg",
+          "path": "Presentations/the client project Infra - Plot handover (road implanted) as off 02.12.24.jpg",
           "size": 24102106
         },
         {
@@ -44942,9 +44942,9 @@
         },
         {
           "id": "13CESTWDHt5wFfguNwNNC88_ygi9ENsB1",
-          "name": "NOC Tracker - DG-2-Infra Pkg-1 - caw.pptx",
+          "name": "NOC Tracker - the client project-Infra Pkg-1 - caw.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Presentations/NOC Tracker - DG-2-Infra Pkg-1 - caw.pptx",
+          "path": "Presentations/NOC Tracker - the client project-Infra Pkg-1 - caw.pptx",
           "size": 861618
         },
         {
@@ -45005,9 +45005,9 @@
         },
         {
           "id": "159xDUoiaHKJXp5_PeizBHh6Lyx7j5K-H",
-          "name": "241110 DG2 Infra Package 1 - Introduction and update.pptx",
+          "name": "241110 the client project Infra Package 1 - Introduction and update.pptx",
           "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "path": "Presentations/SPD Present/241110 DG2 Infra Package 1 - Introduction and update.pptx",
+          "path": "Presentations/SPD Present/241110 the client project Infra Package 1 - Introduction and update.pptx",
           "size": 59803412
         },
         {

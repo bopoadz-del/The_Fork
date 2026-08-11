@@ -13,9 +13,9 @@ The invariants these lock (owner directive, 2026-07-17):
       The fallback chunks are tagged ``layer="master_corpus"``; rag_inject sets
       ``fallback_used=True``; the answer gets a visible banner and each source
       is layer-labelled. A *populated, strong* project does NOT pull the Master
-      Corpus even if it would outscore (the ha_long -> DG2 leak).
+      Corpus even if it would outscore (the ha_long -> the client project leak).
 
-  regression  The live leak was a client corpus (drive_archive / dg2_infra_pack_1)
+  regression  The live leak was a client corpus (drive_archive / client_infra_pack_1)
       listed in RAG_GENERAL_KNOWLEDGE_PROJECTS, silently merged into every other
       project. The Master-Corpus source is now structurally barred from the GK
       merge even when a stale env still lists it.
@@ -133,7 +133,7 @@ def test_thin_project_supplements_from_master_corpus(monkeypatch):
 
 
 def test_strong_project_does_not_pull_master_corpus(monkeypatch):
-    """0b core / the ha_long -> DG2 fix: a populated project with a confident
+    """0b core / the ha_long -> the client project fix: a populated project with a confident
     own match does NOT surface the Master Corpus, even though the Master chunk
     (0.99) outscores the own chunk (0.80). No silent cross-corpus."""
     ret = _install(

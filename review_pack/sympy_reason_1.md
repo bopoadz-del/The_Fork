@@ -2,7 +2,7 @@
 
 - verdict: PARTIAL
 - prompt: run a variance analysis - planned SAR 4.2M vs actual SAR 5.1M, what drove the 21% overrun?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-80c3dc0d7176
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "sympy_reason", "confidence": 0.4, "reason": "needs_planning"}`
 - tool_calls: []

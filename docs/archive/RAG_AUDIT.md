@@ -11,7 +11,7 @@
 
 **RAG quality is functional for broad, high-level questions but unreliable for precise, document-specific construction queries.**
 
-The chat surface can produce fluent, source-cited summaries of well-represented topics (e.g. the DG2 Project Execution Plan, the MV Culvert Diversion drawing). However, objective measurement against the project's own training questions shows that the retriever fails to surface the exact source document in **~69 % of cases** and fails to surface the exact ground-truth chunk in **~80 % of cases** (doc recall@5 = 31 %, chunk recall@5 = 20 % on a 100-question sample).
+The chat surface can produce fluent, source-cited summaries of well-represented topics (e.g. the the client project Project Execution Plan, the MV Culvert Diversion drawing). However, objective measurement against the project's own training questions shows that the retriever fails to surface the exact source document in **~69 % of cases** and fails to surface the exact ground-truth chunk in **~80 % of cases** (doc recall@5 = 31 %, chunk recall@5 = 20 % on a 100-question sample).
 
 High semantic similarity scores (avg top score ≈ 0.69) are therefore misleading: the model returns chunks that are *topically* close but often from the wrong drawing, the wrong BOQ sheet, or a generic procedure, which leads to:
 
@@ -32,7 +32,7 @@ The training/evaluation corpus is large, mostly well-mapped to the indexed chunk
 
 | project_id | documents | chunks | notes |
 |---|---|---|---|
-| `projects_folder` | 2 713 | 110 379 | backing corpus for the `dar_al_arkan_master` master-corpus alias |
+| `projects_folder` | 2 713 | 110 379 | backing corpus for the `master_corpus` master-corpus alias |
 | `training_material` | 241 | 10 907 | cross-project general-knowledge corpus (procedures, scanned references) |
 | `ha_long_xanh` | 62 | 383 | user project; own corpus exists |
 | `fb776aa2` | 15 | 57 | small user project |
@@ -40,7 +40,7 @@ The training/evaluation corpus is large, mostly well-mapped to the indexed chunk
 | `77dd3f5d` | 8 | 23 | small user project |
 | `3f6f28b2` | 3 | 8 | small user project |
 | `8f73170f` | 2 | 6 | small user project |
-| `dg2_infra_pack_1_2` | 1 | 3 | small user project |
+| `client_infra_pack_1_2` | 1 | 3 | small user project |
 | `bb00878f` | 8 | 0 | **documents present, no indexed chunks** |
 | `df28d3c0` | 8 | 0 | **documents present, no indexed chunks** |
 | `e483b574` | 2 | 0 | **documents present, no indexed chunks** |
@@ -50,9 +50,9 @@ The training/evaluation corpus is large, mostly well-mapped to the indexed chunk
 
 ### 2.2 Content composition (local `data/rag/vectors.db` is representative)
 
-A 100 000-chunk sample of the `drive_archive` / `projects_folder` corpus shows the content is overwhelmingly the DG2 Infra Pack 1 project:
+A 100 000-chunk sample of the `drive_archive` / `projects_folder` corpus shows the content is overwhelmingly the the client project project:
 
-* **99 650 / 100 000 chunks** are under `G:\My Drive\Master Folder\DG2 Infra Pack 1\...`.
+* **99 650 / 100 000 chunks** are under `G:\My Drive\Master Folder\the client project\...`.
 * The remaining ~350 chunks are scattered personal files, CVs, certificates and unrelated spreadsheets.
 * Average chunk length ≈ 650 characters (max 994, min 101). Chunking exceeds the nominal 512-char window in places, likely because the `[source: ...]` prefix is included in the stored text.
 
@@ -60,7 +60,7 @@ This concentration is good for domain focus but creates a retrieval confounder: 
 
 ### 2.3 Master-corpus alias behaviour
 
-The public project id `dar_al_arkan_master` is an alias; the chat route resolves it to `projects_folder`. The standalone `POST /v1/rag/search` route **does not resolve the alias**, so direct RAG debugging must use `projects_folder`. This was confirmed by the retrieval recall test.
+The public project id `master_corpus` is an alias; the chat route resolves it to `projects_folder`. The standalone `POST /v1/rag/search` route **does not resolve the alias**, so direct RAG debugging must use `projects_folder`. This was confirmed by the retrieval recall test.
 
 ---
 
@@ -83,7 +83,7 @@ All files are under `data/learning/`.
 | `knowledge_scenarios.jsonl` | 201 | construction knowledge prompts | source = `construction_knowledge.py` |
 | `evm_scenarios.jsonl` | 590 | earned-value management prompts | source = `construction_evm.md` |
 | `high_density_facts.jsonl` | 48 | adversarial fact drills | source tags like `prc501_approved_forbidden` |
-| `diriyah_negatives.jsonl` | 25 | negative/correction examples | source tags like `diriyah_negatives` |
+| `the client_negatives.jsonl` | 25 | negative/correction examples | source tags like `the client_negatives` |
 | `adapters/2026*/..._eval.md` | 15+ | adapter evaluation reports | human/LLM-judged pass/fail |
 | `rag_baseline_eval.md` | 1 report | RAG-only baseline on `globalkb` | 7/10 pass |
 
@@ -159,11 +159,11 @@ Observations:
 | query | project | result | issue |
 |---|---|---|---|
 | `concrete` | `ha_long_xanh` | returned generic `training_material` chunks about prestressed/reinforced concrete | active project corpus ignored for a generic term; GK corpus dominates |
-| `rebar` | `dar_al_arkan_master` (alias) | only 1 chunk, score 0.06, garbled OCR | very poor retrieval |
-| `DG2 project execution plan` | `dar_al_arkan_master` | **0 chunks** | high-value document not retrieved |
-| `bill of quantities` | `dar_al_arkan_master` | 3 relevant contract-template chunks, scores ~0.57-0.58 | good |
-| `FIDIC clause` | `dar_al_arkan_master` | 2 near-duplicate chunks, score ~1.4e-7 | effectively no signal |
-| `lighting fixture` | `dar_al_arkan_master` | generic scanned high-rise building chunks, not the relevant DG2 drawing | wrong source |
+| `rebar` | `master_corpus` (alias) | only 1 chunk, score 0.06, garbled OCR | very poor retrieval |
+| `the client project project execution plan` | `master_corpus` | **0 chunks** | high-value document not retrieved |
+| `bill of quantities` | `master_corpus` | 3 relevant contract-template chunks, scores ~0.57-0.58 | good |
+| `FIDIC clause` | `master_corpus` | 2 near-duplicate chunks, score ~1.4e-7 | effectively no signal |
+| `lighting fixture` | `master_corpus` | generic scanned high-rise building chunks, not the relevant the client project drawing | wrong source |
 
 The master corpus of 110k+ chunks is large enough that generic queries drown specific ones, and the 256-dim `model2vec` embeddings do not preserve enough discriminative signal.
 
@@ -175,18 +175,18 @@ The master corpus of 110k+ chunks is large enough that generic queries drown spe
 
 ## 5. Chat answer quality
 
-Method: call `POST /v1/agents/project-assistant/chat` with `project_id=dar_al_arkan_master` and inspect the returned answer, source citations and `iterations`.
+Method: call `POST /v1/agents/project-assistant/chat` with `project_id=master_corpus` and inspect the returned answer, source citations and `iterations`.
 
 | query | status | verdict | notes |
 |---|---|---|---|
-| "What is the DG2 project execution plan about?" | success, well-cited | **Good** | Accurate table of PEP sections; cites the correct source PDF and chunk list |
+| "What is the the client project project execution plan about?" | success, well-cited | **Good** | Accurate table of PEP sections; cites the correct source PDF and chunk list |
 | "What modifications were made to the intersection design in the MV Culvert Diversion?" | success, cited | **Good** | Matches ground-truth answer; cites the correct drawing |
 | "What was the status of VO Ref: 31 and when was it closed?" | success, **wrong** | **Fail** | Ground truth exists in corpus (closed 2024-02-12), but chat says it cannot locate it |
 | "What type of lighting fixture is specified for the 4.5M pole...?" | success, no citation | **Mixed** | Correct generic fact (28W LED) but no source cited; cannot verify which drawing |
 | "Is APPROVED a valid status on design documents per PRC-501?" | success, **wrong** | **Fail** | Answers "Yes — APPROVED is valid", contradicting `construction_expert.txt`, `construction_knowledge.py`, and `high_density_facts.jsonl` |
 | "What are the valid statuses for a design package under PRC-501?" | success, malformed | **Fail** | Returned raw `search_project_documents` tool-call JSON instead of an answer |
 | "What is the contract rule about 'no approved on design'?" | success, long | **Mixed** | Grounded in contract templates but tangential; misses the simple critical rule |
-| "What is the required commencement date for the maintenance works under the DG2 PEP?" | success, empty | **Fail** | Answer string is empty after 12 iterations |
+| "What is the required commencement date for the maintenance works under the the client project PEP?" | success, empty | **Fail** | Answer string is empty after 12 iterations |
 
 **Overall:** 2 good answers, 3 mixed, 3 clear failures in a small sample. Failures correlate with the retrieval failures above (VO Ref 31, PRC-501, empty PEP detail).
 

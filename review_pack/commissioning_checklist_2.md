@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: what T&C steps do we need before energising the electrical rooms?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-fe5742035a76
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "commissioning_checklist", "confidence": 0.8, "reason": "below_routing_gate"}`
 - tool_calls: []

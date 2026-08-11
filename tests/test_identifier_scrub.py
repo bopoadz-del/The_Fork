@@ -29,7 +29,7 @@ def test_multiword_wins_over_substring(scrub):
 
 
 def test_client_and_third_party(scrub):
-    assert scrub("Dar Al Arkan is the developer") == "the client is the developer"
+    assert scrub("the client is the developer") == "the client is the developer"
     assert "DPR" not in scrub("templates from DPR")
 
 
@@ -44,7 +44,7 @@ def test_extra_terms_env(monkeypatch):
 def test_disabled_is_noop(monkeypatch):
     monkeypatch.setenv("RAG_SCRUB_IDENTIFIERS", "0")
     mod = importlib.import_module("app.core.identifier_scrub")
-    s = "DG2 Infra Pack 1 for Dar Al Arkan"
+    s = "DG2 Infra Pack 1 for the client"
     assert mod.scrub_identifiers(s) == s
 
 

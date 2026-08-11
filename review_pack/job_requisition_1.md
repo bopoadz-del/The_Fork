@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: start a job requisition and prequalification shortlist for the ELV package
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-d98672d12220
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "job_requisition", "confidence": 0.6, "reason": "below_routing_gate"}`
 - tool_calls: []

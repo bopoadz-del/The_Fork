@@ -40,8 +40,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 PG_ID = "dpg-d8m22mcm0tmc73b04elg-a"
-PROJECT_ID = "dg2_infra_pack_1"
-DEFAULT_JSONL = REPO / "rag_backfill_dg2_clean_all.jsonl"
+PROJECT_ID = "client_infra_pack_1"
+DEFAULT_JSONL = REPO / "rag_backfill_client_clean_all.jsonl"
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 EXPECTED_DIM = 384
 EXPECTED_DOCS = 27
@@ -451,7 +451,7 @@ class PostgresStore:
                     ),
                     {
                         "id": PROJECT_ID,
-                        "name": "DG2 Infra Pack 1",
+                        "name": "the client project",
                         "uid": uid,
                         "created": now,
                     },
@@ -463,7 +463,7 @@ class PostgresStore:
                         "drive_file_id": meta.drive_file_id,
                         "source_path": meta.source_path,
                         "ext": meta.ext,
-                        "source": "rag_backfill_dg2_clean_all",
+                        "source": "rag_backfill_client_clean_all",
                     }
                 )
                 rows.append(

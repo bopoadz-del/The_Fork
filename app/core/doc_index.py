@@ -870,7 +870,7 @@ def chunk_text(text: str, words_per_chunk: int = 500) -> List[str]:
 # ── BOQ-aware finer chunker (FOLLOW-UP #91) ────────────────────────────────
 #
 # Used for documents where word-count chunking produces too-coarse chunks
-# (the Diriyah BOQ symptom — 8 chunks at 2798 chars per chunk, so finding
+# (the the client BOQ symptom — 8 chunks at 2798 chars per chunk, so finding
 # a single rate requires the LLM to scan 700 tokens). Re-chunks at character
 # level with overlap and respects BOQ row boundaries (lines that start with
 # an item code like ``D 999.14``) so a rate stays adjacent to its item code.
@@ -1512,7 +1512,7 @@ def _boq_summary_chunks(result: Dict[str, Any]) -> List[str]:
     # carry each measured quantity as-is; totals come from the operator's
     # verified figures, not from summing scanned line items.
     # Name the source BOQ on every line-item chunk so retrieval can disambiguate
-    # WITHIN a project that holds several BOQs (e.g. DG2's three distinct
+    # WITHIN a project that holds several BOQs (e.g. the client project's three distinct
     # demolition totals must never be conflated). Phrase quantity/rate/total with
     # the synonyms operators actually type ("total quantity", "unit price",
     # "total price") plus the unit (UOM), so "unit price of X" / "total quantity
@@ -1604,7 +1604,7 @@ def _boq_chunks_for_document(
 # exactly as `_boq_chunks_for_document` does for priced line items.
 
 _DRAWING_NAME_RE = re.compile(
-    # `DWG` is the drawing token in the JCB/Diriyah document-code convention
+    # `DWG` is the drawing token in the JCB/the client document-code convention
     # that names most of this corpus:
     #   IP-INF-053-0000-JCB-DWG-TM-200-1000005-A.pdf   <- drawing
     #   IP-INF-053-0000-JCB-BOQ-CA-000007-B_...pdf     <- NOT a drawing
@@ -1783,7 +1783,7 @@ def index_document(
 
     * ``"default"`` — 500-word windows (legacy, what every doc uses today).
     * ``"finer"``   — char-level windows with overlap (FOLLOW-UP #91 fix
-      for the Diriyah BOQ symptom: coarse word-windows produced 8 chunks
+      for the the client BOQ symptom: coarse word-windows produced 8 chunks
       averaging 2800 chars each, so single line items were buried inside
       a wall of unrelated text).
     """

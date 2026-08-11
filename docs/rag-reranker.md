@@ -22,7 +22,7 @@ Proof artifacts: `data/learning/rag_audit/rerank_proof.json` and
 1. **Corpus gap — 9 queries (15% of sample).** The target document is not in
    the live registry at all (2,737 docs paged from
    `/v1/projects/drive_archive/documents`). Consistent with the 2026-07-12
-   re-encode that stalled at 95% (6,485 chunks / a coherent DG2 block never
+   re-encode that stalled at 95% (6,485 chunks / a coherent the client project block never
    re-ingested) plus eval ground truth authored against the June corpus.
    NO retrieval change can answer these. Fix = corpus reconciliation against
    the Drive originals + finishing the backfill (owner-sequenced; the PG

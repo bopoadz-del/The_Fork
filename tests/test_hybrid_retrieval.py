@@ -278,6 +278,13 @@ def test_hybrid_beats_semantic_q5_manhole_spacing(store_with_corpus, monkeypatch
     "MANHOLE" + "TYPE" pulls it up even though the natural-language
     query has no "1000m"/"intervals")."""
     store, embedder, _ = store_with_corpus
+    # NOTE (scrub audit 2026-08-12): the "DG2" token in this query is PINNED
+    # FIXTURE DATA, not a stray client reference. Under RAG_EMBEDDING_MODEL=fake
+    # the embedding is a deterministic function of the exact string, so editing
+    # the query at all re-rolls the semantic ranking and this assertion fails —
+    # verified by trying both "on the project" and "on the PRJ2 project".
+    # Changing it requires re-baselining the expected chunk, which is retrieval
+    # tuning, not a rename.
     query = "Manhole spacing requirements for telecom ducts on the DG2 project"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")

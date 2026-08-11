@@ -12,7 +12,7 @@
 
 - **Flag-gated, default OFF.** `RAG_LAYERED` env (truthy: `1/true/yes/on`). When off, every new path is a strict no-op and retrieval/ingestion behave exactly as today. This ships to `main`/cloud without changing demo behavior; the pilot/on-prem env sets `RAG_LAYERED=1`.
 - **No emojis** anywhere in repo, code, comments, commits, UI.
-- **Never hard-delete a project/chunk in code paths.** Deletes stay soft (archive). NEVER-delete ids: `projects_folder, training_material, dar_al_arkan_master, dg2_infra_pack_1, curated_kb, drive_archive, bc812f36, b5a0fed8`.
+- **Never hard-delete a project/chunk in code paths.** Deletes stay soft (archive). NEVER-delete ids: `projects_folder, training_material, master_corpus, client_infra_pack_1, curated_kb, drive_archive, bc812f36, b5a0fed8`.
 - **Dual DB.** Every schema change lands in BOTH `the_fork_schema.sql` (fresh-DB bootstrap) AND an Alembic migration (next rev = `0011`). ORM (`app/core/models.py::RagChunk`) omits FK constraints (SQLite convenience) — FK/cascade changes go in the Alembic migration + `the_fork_schema.sql` only.
 - **Layer enum values (verbatim):** `shared_domain` (L1), `company_rules` (L2A), `project_record` (L2B), `user_session` (L3). Legacy retrieval tags (`own`/`general_knowledge`/`master_corpus`) map onto these but stay accepted.
 - **Authority enum values (verbatim):** `contractual, design, commercial, operational, policy, historical, personal`. Precedence high→low in that order.
@@ -29,7 +29,7 @@
 | **2** | Layer + authority classification at ingest (`index_chunks(..., layer=, authority=)`); source→layer map. | Expanded at execution |
 | **3** | Layer-aware retrieval + authority-precedence re-rank (L2B dominates project questions; contract beats note). Reuses existing boost pipeline in `retriever.retrieve_with_filter`. | Expanded at execution |
 | **4** | User-upload layer routing: uploads → `user_session` keyed by owner, never Main; retrieval scope = Main layers + caller's L3; source disclosure labels. Workspaces own no knowledge. | Expanded at execution |
-| **5** | Migration/backfill: re-tag `curated_kb`→L1, `dg2_infra_pack_1`/`drive_archive`→L2B, existing uploads→L3; `hidden_from_sidebar` flag on system rows; flip `RAG_LAYERED=1` on pilot env. | Expanded at execution |
+| **5** | Migration/backfill: re-tag `curated_kb`→L1, `client_infra_pack_1`/`drive_archive`→L2B, existing uploads→L3; `hidden_from_sidebar` flag on system rows; flip `RAG_LAYERED=1` on pilot env. | Expanded at execution |
 
 Stages 2-5 have concrete file targets + acceptance criteria at the end of this doc; their bite-sized steps are written when each stage begins (keeps the plan honest — earlier stages settle exact signatures the later ones consume).
 
@@ -449,7 +449,7 @@ git commit -m "feat(rag): chunks.project_id CASCADE->SET NULL, decouple knowledg
 
 ### Stage 2 — classification at ingest
 - **Files:** `app/core/rag/layers.py` (add `classify(source_project_id, doc_name, doc_meta) -> tuple[layer, authority]`), `app/core/doc_index.py:1364,1667` (`_rag.index_chunks(...)` calls → pass `layer=`, `authority=`), wrapper `index_chunks` signature.
-- **Map:** source `curated_kb`/GK → `shared_domain`; `dg2_infra_pack_1`/`drive_archive`/project docs → `project_record`; user upload → `user_session`; company templates/procedures → `company_rules`. Authority from doc-type keywords (contract/agreement→`contractual`; drawing/dwg→`design`; boq/rate/cost→`commercial`; method/procedure/policy→`policy`; report/log→`operational`; note/draft→`personal`; superseded/old→`historical`).
+- **Map:** source `curated_kb`/GK → `shared_domain`; `client_infra_pack_1`/`drive_archive`/project docs → `project_record`; user upload → `user_session`; company templates/procedures → `company_rules`. Authority from doc-type keywords (contract/agreement→`contractual`; drawing/dwg→`design`; boq/rate/cost→`commercial`; method/procedure/policy→`policy`; report/log→`operational`; note/draft→`personal`; superseded/old→`historical`).
 - **Acceptance:** a re-indexed doc lands with the expected `(layer, authority)`; flag-off path passes `None,None` (unchanged).
 
 ### Stage 3 — layer-aware retrieval + authority re-rank

@@ -93,7 +93,7 @@ The construction container exposes 59 actions. The API-fallback sweep tested eve
 | scenario_id | feature_id | user journey | exact UI action/chat question | expected trigger path | expected result | pass/fail criteria | test method |
 |---|---|---|---|---|---|---|---|
 | S01 | F02 | View projects | Load `/` | `GET /v1/projects` | list of project cards | cards visible | Bridge/UI |
-| S02 | F04 | Open a project | Click "Dar Al Arkan Master Corpus" card | `GET /v1/projects/dar_al_arkan_master` | workspace loads | project workspace visible | Bridge/UI |
+| S02 | F04 | Open a project | Click "Master Corpus" card | `GET /v1/projects/master_corpus` | workspace loads | project workspace visible | Bridge/UI |
 | S03 | F05 | Chat with RAG | Type "What is this project about?" and send | `POST /v1/agents/project-assistant/chat/stream` | streamed answer | assistant bubble appears | Bridge/UI |
 | S04 | F06 | See sources | Ask question, wait for response | `sources` SSE event | Sources panel populated | source items visible | Bridge/UI |
 | S05 | F03 | Create project | Click "+ New project", name "kimi-audit-test", create | `POST /v1/projects` | new card appears | card visible in list | Bridge/UI |
@@ -115,9 +115,9 @@ The construction container exposes 59 actions. The API-fallback sweep tested eve
 | scenario_id | status | actual result | evidence | issue/blocker |
 |---|---|---|---|---|
 | S01 | PASS | Projects list loaded with master corpus and others | URL `/`, heading "Projects", 28 project cards | — |
-| S02 | PASS | Navigated to master corpus workspace | URL `/projects/dar_al_arkan_master`, workspace-main present | — |
-| S03 | PASS | Assistant answered question | bubble: "The DG2 Infra Pack 1 project is an infrastructure programme..." | — |
-| S04 | PASS | Sources panel showed cited chunks | 9 source items, e.g. "SW-SWD-025-0000-AEC-PEP-NS-000001-02 DG2 Project Execution Plan.pdf chunk #50" | — |
+| S02 | PASS | Navigated to master corpus workspace | URL `/projects/master_corpus`, workspace-main present | — |
+| S03 | PASS | Assistant answered question | bubble: "The the client project project is an infrastructure programme..." | — |
+| S04 | PASS | Sources panel showed cited chunks | 9 source items, e.g. "SW-SWD-025-0000-AEC-PEP-NS-000001-02 the client project Project Execution Plan.pdf chunk #50" | — |
 | S05 | PASS | Test project "kimi-audit-test" created and visible | project id `9531b1b1` appeared in grid | — |
 | S06 | PASS | `audit_upload.txt` uploaded and listed | doc row: "audit_upload.txt TXT 174 B just now" | first synthetic-file attempt left UI in "Uploading…"; retry succeeded quickly |
 | S07 | PASS | Answer summarized file and cited source | bubble: "The document is a brief audit test file... Source: audit_upload.txt, chunk 0." | — |

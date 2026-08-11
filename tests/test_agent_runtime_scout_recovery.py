@@ -19,7 +19,7 @@ def test_recovery_raw_search_args():
     text = json.dumps({
         "query": "MV substation commissioning checklist",
         "top_k": 5,
-        "project_id": "dar_al_arkan_master",
+        "project_id": "master_corpus",
         "corpus": "documents",
     })
     recovered = _recover_tool_calls_from_content(text)
@@ -29,7 +29,7 @@ def test_recovery_raw_search_args():
     args = json.loads(recovered[0]["function"]["arguments"])
     assert args["query"] == "MV substation commissioning checklist"
     assert args["top_k"] == 5
-    assert args["project_id"] == "dar_al_arkan_master"
+    assert args["project_id"] == "master_corpus"
 
 
 def test_recovery_tool_envelope():

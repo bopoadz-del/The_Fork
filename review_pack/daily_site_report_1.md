@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: write today's daily site report - 120 workers, slab pour zone A done, crane down 2 hours
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-04b56c92b984
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "daily_site_report", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: what statuses can a design review package come back with under PRC-501?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-997d75e4df3a
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "design_review_workflow", "confidence": 1.0, "reason": "below_routing_gate"}`
 - tool_calls: []
