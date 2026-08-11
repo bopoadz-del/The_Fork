@@ -26,42 +26,42 @@ from app.main import app
 def test_a_hanging_model_load_does_not_prevent_serving(monkeypatch):
     """The defect shape: if warm-up blocks, the app never becomes reachable.
 
-    The assertion that discriminates old from new is the ELAPSED TIME to finish
-    startup. Inline warm-up cannot complete startup until the (here: 30s) model
-    load returns, so this fails on the pre-fix code rather than merely running
-    slower. Background warm-up finishes startup in well under a second.
+    What discriminates old from new is ORDERING, not wall-clock: startup must
+    complete while the fake model load is still stuck. Inline warm-up cannot
+    return from startup until the load finishes, so `finished` would already be
+    set by the time the client is usable, and the assertion below fails. That
+    keeps the test honest without racing the app's real ~45s startup against a
+    timer, and keeps it well inside the suite's 120s per-test timeout.
     """
-    import time
-
     started = threading.Event()
     release = threading.Event()
-    # Comfortably longer than this app's real startup (~45s locally: block init,
-    # DB init, knowledge seed, agent load). Inline warm-up would add the full
-    # hang on top and blow the budget; background warm-up does not extend
-    # startup at all, so the two are cleanly separated rather than a race.
-    HANG_SECONDS = 120
+    finished = threading.Event()
+    # Only needs to outlast the assertions below; the test releases it long
+    # before this expires. The cap exists so a bug here can never hang CI.
+    HANG_SECONDS = 30
 
     def _hang():
-        started.set()
         # Simulates a slow first-time model download on a host with no cache.
+        started.set()
         release.wait(timeout=HANG_SECONDS)
+        finished.set()
 
     monkeypatch.setattr(main_module, "_warm_embedder", _hang)
     monkeypatch.setattr(main_module, "_warm_safety_detector", lambda: None)
 
     try:
-        t0 = time.monotonic()
         with TestClient(app) as client:      # runs the full lifespan
-            startup_seconds = time.monotonic() - t0
-            assert client.get("/livez").status_code == 200
-            assert started.wait(timeout=15), "warm-up never started"
+            assert started.wait(timeout=30), "warm-up never started"
+            assert not finished.is_set(), (
+                "startup did not finish until the model load did — the port "
+                "was held closed behind the warm-up."
+            )
             # Serving WHILE the model load is still stuck.
             assert client.get("/livez").status_code == 200
-            assert startup_seconds < HANG_SECONDS, (
-                f"startup took {startup_seconds:.1f}s, which is longer than the "
-                f"{HANG_SECONDS}s model load it should NOT have waited for. "
-                "Warm-up must not block the port from opening."
-            )
+            # Release INSIDE the context: lifespan shutdown joins the warm-up
+            # thread, so leaving it stuck would deadlock teardown, not the code
+            # under test.
+            release.set()
     finally:
         release.set()
 

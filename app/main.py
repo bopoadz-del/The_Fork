@@ -196,8 +196,16 @@ async def lifespan(app: FastAPI):
             warm_task.cancel()
             try:
                 await warm_task
-            except BaseException:  # shutdown must never raise, incl. CancelledError
-                pass
+            except asyncio.CancelledError:
+                # Expected and benign: we cancelled it one line above because
+                # shutdown began while a model was still loading. Not re-raised
+                # because this task's cancellation is ours, not the caller's.
+                logger.debug("model warm-up cancelled at shutdown")
+            except Exception:
+                # _warm_models logs each load's own failure; this only catches
+                # something escaping that, and must not abort the remaining
+                # shutdown steps (scheduler stop, redis close) below.
+                logger.exception("model warm-up task failed during shutdown")
         await hydration_scheduler.stop()
         await _redis_client.close_redis_client()
 
