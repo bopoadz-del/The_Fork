@@ -12,7 +12,7 @@ Record PASS / FAIL + a note per step. Any 502 or empty/error bubble is a FAIL.
 | # | Step | Expect | Result |
 |---|------|--------|--------|
 | 0 | `GET /v1/health` (or load the site) | `status: healthy`, `blocks_failed: {}` | |
-| 1 | Sign in → land on **Dar Al Arkan Master Corpus** | Project opens, chat composer ready | |
+| 1 | Sign in → land on **Master Corpus** | Project opens, chat composer ready | |
 
 ## Grounded retrieval (the core value)
 

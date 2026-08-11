@@ -24,11 +24,11 @@ class TestResolvePredefinedFileParams:
 
     def test_single_xer_resolves_schedule_file(self, monkeypatch):
         self._patch_docs(monkeypatch, [
-            {"original_name": "DG2 Baseline.xer", "file_path": "/data/dg2.xer"}])
+            {"original_name": "the client project Baseline.xer", "file_path": "/data/client.xer"}])
         params, err = chat._resolve_predefined_file_params(
             "resource_histogram", "proj", {})
         assert err is None
-        assert params["schedule_file"] == "/data/dg2.xer"
+        assert params["schedule_file"] == "/data/client.xer"
 
     def test_no_xer_leaves_slot_empty(self, monkeypatch):
         # No .xer -> slot stays unset so the ACTION returns its own honest error.

@@ -22,10 +22,10 @@
 #
 # Usage:
 #   $env:FORK_API_KEY="..."; ./scripts/smoke.ps1
-#   ./scripts/smoke.ps1 -Project dar_al_arkan_master -Runs 10
+#   ./scripts/smoke.ps1 -Project master_corpus -Runs 10
 [CmdletBinding()]
 param(
-    [string]$Project  = $(if ($env:FORK_PROJECT) { $env:FORK_PROJECT } else { "dar_al_arkan_master" }),
+    [string]$Project  = $(if ($env:FORK_PROJECT) { $env:FORK_PROJECT } else { "master_corpus" }),
     [string]$Base     = $(if ($env:FORK_BASE_URL) { $env:FORK_BASE_URL } else { "" }),
     # Default 3 = routine pre-deploy smoke (keeps LLM quota use light). Release
     # smokes use -Runs 10. Verdict thresholds scale with N (see below).

@@ -40,7 +40,7 @@ Do NOT ingest the Master Folder as one undifferentiated 7,221-file blob.
 
 | Tier | Priority | Content | Gate Dependency |
 |------|----------|---------|-----------------|
-| **Tier 1** | Must have first | `DG2 Infra Pack 1` + folders backing the golden set and fixtures | Phase 2 battery gates on this |
+| **Tier 1** | Must have first | `the client project` + folders backing the golden set and fixtures | Phase 2 battery gates on this |
 | **Tier 2** | Pilot-relevant | Other active project folders (commercial, design, QA, safety, procurement, RFP-related) | Phase 2 battery may include spot checks |
 | **Tier 3** | Background | Everything else — reference material, old revisions, archives | Drains in background; not pilot-blocking |
 
@@ -54,7 +54,7 @@ Running tally must be kept per folder:
 
 | Folder | Succeeded | Zero-chunk | Unsupported | Error | Skipped too large | Notes |
 |--------|-----------|------------|-------------|-------|-------------------|-------|
-| `Master Folder/DG2 Infra Pack 1/Contract Docs/Contractor/Contract docs SIGNED` | 4 | 1 | 0 | 1 | 0 | Font/OCR issues observed |
+| `Master Folder/the client project/Contract Docs/Contractor/Contract docs SIGNED` | 4 | 1 | 0 | 1 | 0 | Font/OCR issues observed |
 | `Master Folder/.archivetemp...` | 0 | 0 | 1 | 0 | 0 | `.gdoc` placeholder |
 | `Master Folder/Chadi_CV PM.gdoc` | 0 | 0 | 1 | 0 | 0 | `.gdoc` placeholder |
 | `Master Folder/Copy of CAD.rar` | 0 | 0 | 1 | 0 | 0 | `.rar` unsupported on Windows mount |
@@ -108,7 +108,7 @@ Unsupported formats (`.dwg`, `.plt`, `.nwd`, etc.) must be itemized in the recon
 | Asset | Path | Purpose |
 |-------|------|---------|
 | Priority manifest builder | `scripts/build_priority_manifest.py` | Generates `manifests/p1b_priority_manifest.json` from existing Drive manifest + known folder list. |
-| Priority manifest | `manifests/p1b_priority_manifest.json` | Tier-1/2/3 folder assignment; DG2 subfolder counts populated; tier 2/3 folder IDs need Chadi. |
+| Priority manifest | `manifests/p1b_priority_manifest.json` | Tier-1/2/3 folder assignment; the client project subfolder counts populated; tier 2/3 folder IDs need Chadi. |
 | Server ingestion job | `scripts/p1b_ingest_drive_server.py` | Runs on Render; walks Drive via `app.core.gdrive_service`, downloads, indexes, keeps per-folder tally. |
 
 ## Render Instance Assessment

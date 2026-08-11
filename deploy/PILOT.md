@@ -1,4 +1,4 @@
-# Pilot deployment — Diriyah BOQ (post-migration)
+# Pilot deployment — the client BOQ (post-migration)
 
 Runbook for standing up The Fork on managed Postgres after merging the
 Phases 0–4 migration branch. Assumes construction kit enabled and SQLite
@@ -85,7 +85,7 @@ Copy `.env.example` → `.env` and set at minimum:
 | `SENTRY_DSN`                   | **Set** — `python-fastapi` project; smoke event `d28cfe07de4b485bbcc6a5e616eb7a07`     |
 | SQLite → Postgres cutover      | **Done** 2026-06-12 — 56 documents, 141 chunks in Postgres                             |
 | `chunks.embedding`             | **Confirmed** `vector(256)` via pilot-preflight — SUPERSEDED, see note below           |
-| Doc re-index / Diriyah E2E     | **RAG gate passed** — D999.14 @ 1,060, D999.15 @ 1,288, Part 3 summary 1,852,848       |
+| Doc re-index / the client E2E     | **RAG gate passed** — D999.14 @ 1,060, D999.15 @ 1,288, Part 3 summary 1,852,848       |
 | Backup drill                   | **Done** — PITR restore `the-fork-db-drill-20260612` (snapshot @ 2026-06-12T15:22:13Z) |
 | 2-week pilot clock             | **Started** 2026-06-12T16:48:00Z — ends 2026-06-26                                     |
 
@@ -119,7 +119,7 @@ curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_MASTER_KEY" \
 | Cutover dry-run (prod volume) | 3 users, 6 projects, 56 documents, 165 chunks would migrate (not 81 users — that was local `./data`)                                                   |
 | Cutover execute               | Inserted 56 documents, 141 chunks (24 orphan chunks skipped — missing `documents` rows)                                                                |
 | Re-index                      | `project-reindex` on `3f6f28b2` → 8 chunks indexed                                                                                                     |
-| Diriyah BOQ RAG               | `POST /v1/rag/search` retrieves chunk `3f6f28b2:76e63ed2:23` with D999.14 @ 1,060.00 and D999.15 @ 1,288.00; chunk `:50` has Part 3 total 1,852,848.00 |
+| the client BOQ RAG               | `POST /v1/rag/search` retrieves chunk `3f6f28b2:76e63ed2:23` with D999.14 @ 1,060.00 and D999.15 @ 1,288.00; chunk `:50` has Part 3 total 1,852,848.00 |
 | Backup drill                  | PITR restore to `the-fork-db-drill-20260612` succeeded; scratch DB `available` (pre-cutover snapshot — expect documents/chunks = 0 vs live 56/141)     |
 
 
@@ -136,7 +136,7 @@ curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_MASTER_KEY" \
 - 2 weeks uptime with zero data-loss incidents
 - Forced exception visible in Sentry
 - Restore-from-backup drill performed once (document timestamp + row counts)
-- Diriyah BOQ dataset exercised end-to-end (upload → index → chat/RAG)
+- the client BOQ dataset exercised end-to-end (upload → index → chat/RAG)
 
 ## Rollback
 

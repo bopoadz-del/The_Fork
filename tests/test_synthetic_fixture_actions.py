@@ -67,6 +67,24 @@ async def test_container_boq_process_action(fixture_dir):
     )
     assert result.get("status") == "success", result
 
+    # Assert the PAYLOAD, not just the status string. Control-delete
+    # 2026-08-12: replacing the whole boq_process body with
+    # `return {"status": "success", "items": [], "total": 0}` left this test
+    # GREEN, because a status check cannot tell a parsed workbook from an empty
+    # one. The action could have stopped reading the file entirely and nothing
+    # here would have noticed.
+    payload = result.get("result") if isinstance(result.get("result"), dict) else result
+    line_items = (payload.get("line_items") or payload.get("items")
+                  or payload.get("boq_items") or [])
+    assert len(line_items) == len(_BOQ_ROWS), (
+        f"expected {len(_BOQ_ROWS)} line items off the synthetic workbook, "
+        f"got {len(line_items)} — keys present: {sorted(payload)}"
+    )
+    total = payload.get("total_cost", payload.get("total"))
+    assert total == pytest.approx(EXPECTED_BOQ_TOTAL, rel=0.01), (
+        f"expected total ~{EXPECTED_BOQ_TOTAL}, got {total}"
+    )
+
 
 # ── drawing_qto ──────────────────────────────────────────────────────────────
 

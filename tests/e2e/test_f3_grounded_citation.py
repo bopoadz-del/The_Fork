@@ -1,6 +1,6 @@
 """F3 — ingest a construction document, ask about it, get a REAL citation.
 
-The primary Dar Al Arkan capability, and the one that has to be flawless:
+The primary the client capability, and the one that has to be flawless:
 a specification goes in, a question comes in, and the answer is traceable to
 the document it came from. Not "a plausible answer" — a cited one.
 
@@ -53,7 +53,7 @@ def ingested(monkeypatch, tmp_path):
     emb = get_embedder()
     store = vs.get_store(dim=emb.dim)
 
-    project_id = "dar_al_arkan_tower"
+    project_id = "client_tower"
     store.upsert_chunks(
         project_id=project_id,
         doc_id="spec-03300-concrete.pdf",

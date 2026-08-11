@@ -1,6 +1,6 @@
 """F4 — a query in project B must never return project A's content.
 
-This is the Dar Al Arkan-critical isolation contract: two clients' documents
+This is the the client-critical isolation contract: two clients' documents
 live in one store, separated only by `project_id`.
 
 WHY THIS TESTS THE STORE AND NOT `get_rag_filters`:

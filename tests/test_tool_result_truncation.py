@@ -13,7 +13,7 @@ Cause: the `tool` message content was built as
     json.dumps(result, default=str)[:8000]
 
 `json.dumps` emits ASCII with \\uXXXX escapes, so that raw slice can land
-mid-escape or mid-string. The corpus makes it easy to hit — Diriyah
+mid-escape or mid-string. The corpus makes it easy to hit — the client
 filenames contain en dashes, which serialize to `\\u2013`:
 
     tail of cut: ' 2 \\u2013 specification (4 of 9).pdf", "'

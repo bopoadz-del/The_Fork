@@ -30,7 +30,7 @@ DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork.onrender.com")
 
 # Projects involved in the drive_archive migration + the GK identity.
 WATCHED_PROJECTS = {
-    "dar_al_arkan_master",
+    "master_corpus",
     "projects_folder",
     "training_material",
     "unclassified",

@@ -1,4 +1,4 @@
-# Diriyah BOQ extraction — research note
+# the client BOQ extraction — research note
 
 Source: Kimi research dispatch 2026-06-10 (`/tmp/kimi-fleet/20260610-011403-206/`).
 
@@ -47,7 +47,7 @@ Source: Kimi research dispatch 2026-06-10 (`/tmp/kimi-fleet/20260610-011403-206/
 - Tesseract `ara+eng` only fires on pages with <30 text-layer chars
   (current behaviour kept for non-BOQ docs)
 - Validate via the new `/v1/admin/debug/doc-extract` endpoint on
-  Diriyah doc `c6dae280`: target 80+ chunks, avg >1000 chars
+  the client doc `c6dae280`: target 80+ chunks, avg >1000 chars
 
 ## Live diagnostic (2026-06-10, against production)
 

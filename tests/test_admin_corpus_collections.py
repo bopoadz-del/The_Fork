@@ -250,7 +250,7 @@ def test_folder_breakdown_disable(client, _stub_admin):
 
 def test_master_corpus_alias_inherits_source_counts(client, _stub_admin):
     """PR #??? — the admin inventory must show the pilot master-corpus alias
-    (dar_al_arkan_master) with the same counts as its backing Drive folder
+    (master_corpus) with the same counts as its backing Drive folder
     corpus (projects_folder), never 0 chunks.
     """
     _ensure_schema()
@@ -260,7 +260,7 @@ def test_master_corpus_alias_inherits_source_counts(client, _stub_admin):
 
     with SessionLocal() as session:
         # Clean slate for the ids this test owns.
-        for pid in ("projects_folder", "dar_al_arkan_master"):
+        for pid in ("projects_folder", "master_corpus"):
             session.query(RagChunk).filter(RagChunk.project_id == pid).delete()
             session.query(Document).filter(Document.project_id == pid).delete()
             session.query(Project).filter(Project.id == pid).delete()
@@ -268,11 +268,11 @@ def test_master_corpus_alias_inherits_source_counts(client, _stub_admin):
 
         # Backing corpus: 7 docs, 21 chunks.
         session.add(Project(
-            id="projects_folder", name="Dar Al Arkan Master Corpus",
+            id="projects_folder", name="Master Corpus",
             user_id="system", created_at="2026-06-21T00:00:00Z", status="active",
         ))
         session.add(Project(
-            id="dar_al_arkan_master", name="Dar Al Arkan Master Corpus",
+            id="master_corpus", name="Master Corpus",
             user_id="system", created_at="2026-06-21T00:00:00Z", status="active",
         ))
         session.flush()
@@ -313,8 +313,8 @@ def test_master_corpus_alias_inherits_source_counts(client, _stub_admin):
     assert cols["projects_folder"]["chunks"] == 21
 
     # Alias must mirror the source counts, not report zero chunks.
-    assert "dar_al_arkan_master" in cols
-    assert cols["dar_al_arkan_master"]["documents"] == 7
-    assert cols["dar_al_arkan_master"]["chunks"] == 21
-    assert cols["dar_al_arkan_master"].get("source_project_id") == "projects_folder"
-    assert cols["dar_al_arkan_master"].get("is_master_corpus_alias") is True
+    assert "master_corpus" in cols
+    assert cols["master_corpus"]["documents"] == 7
+    assert cols["master_corpus"]["chunks"] == 21
+    assert cols["master_corpus"].get("source_project_id") == "projects_folder"
+    assert cols["master_corpus"].get("is_master_corpus_alias") is True

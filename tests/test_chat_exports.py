@@ -34,8 +34,8 @@ def _stub_doc(monkeypatch, original_name: str, doc_type: str | None = None) -> N
 
 def test_cited_xlsx_boq_yields_cost_boq_export(monkeypatch):
     audit = _audit_citing("d1", 3)
-    _stub_doc(monkeypatch, "DG2 Priced BOQ.xlsx", doc_type="boq")
-    text = "The priced bill totals SAR 1.66bn [source: DG2 Priced BOQ.xlsx, chunk 3]."
+    _stub_doc(monkeypatch, "the client project Priced BOQ.xlsx", doc_type="boq")
+    text = "The priced bill totals SAR 1.66bn [source: the client project Priced BOQ.xlsx, chunk 3]."
 
     out = _build_exports_from_audit(audit, text)
 
@@ -168,8 +168,8 @@ def test_wbs_with_cited_boq_stays_brief_driven(monkeypatch):
     """A cited BOQ is a cost source, not a spec — the schedule stays brief-driven
     (no document_engine run on a spreadsheet), and a cost-BOQ offer appears."""
     audit = _audit_citing("boq1", 1)
-    _stub_doc(monkeypatch, "DG2 Priced BOQ.xlsx", doc_type="boq")
-    out = _build_exports_from_audit(audit, "totals [source: DG2 Priced BOQ.xlsx, chunk 1]", [_wbs_call()])
+    _stub_doc(monkeypatch, "the client project Priced BOQ.xlsx", doc_type="boq")
+    out = _build_exports_from_audit(audit, "totals [source: the client project Priced BOQ.xlsx, chunk 1]", [_wbs_call()])
     sched = [e for e in out if "schedule" in e["endpoint"]]
     assert sched and sched[0]["endpoint"].endswith("/export/schedule-from-brief")
     assert "document_ids" not in sched[0]["payload"]

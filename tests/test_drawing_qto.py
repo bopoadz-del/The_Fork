@@ -221,16 +221,16 @@ async def test_drawing_title_rejects_pure_numeric():
         assert rejected, f"title {t!r} should have been rejected by numeric/scale filter"
 
 
-async def test_drawing_title_rejects_dg2_place_names():
-    """Phase 1.6: DG2 area / district names must be rejected as
+async def test_drawing_title_rejects_client_place_names():
+    """Phase 1.6: the client project area / district names must be rejected as
     drawing_title candidates."""
-    from app.blocks.drawing_qto import _DG2_PLACE_NAMES
+    from app.blocks.drawing_qto import _EXCLUDED_PLACE_NAMES
     for name in ("KHUZAMA", "AL TURAIF", "AL BUJAIRI", "AL QARYA"):
-        assert name in _DG2_PLACE_NAMES, f"{name!r} missing from DG2 blocklist"
+        assert name in _EXCLUDED_PLACE_NAMES, f"{name!r} missing from the client project blocklist"
     # Lowercase and whitespace variants should round-trip to a blocked entry
     for variant in ("khuzama", " AL  TURAIF ", "Al Bujairi"):
         normalized = re.sub(r"\s+", " ", variant.upper()).strip()
-        assert normalized in _DG2_PLACE_NAMES, (
+        assert normalized in _EXCLUDED_PLACE_NAMES, (
             f"variant {variant!r} normalised to {normalized!r} not in blocklist"
         )
 
@@ -275,7 +275,7 @@ async def test_drawing_number_no_doubled_letter_prefix():
     assert not cleaned.startswith("II"), (
         f"strip_doubled_letter_prefix kept the doubled prefix: {cleaned!r}"
     )
-    # Canonical DG2 prefix
+    # Canonical the client project prefix
     assert cleaned.startswith("IP-INF-"), (
         f"strip_doubled_letter_prefix did not preserve canonical IP-INF prefix: {cleaned!r}"
     )

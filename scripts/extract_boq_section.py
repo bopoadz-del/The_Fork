@@ -56,7 +56,7 @@ import pytesseract
 from PIL import Image
 
 # --- Column geometry -------------------------------------------------------
-# Boundaries expressed as a fraction of page pixel width. Calibrated on the DG2
+# Boundaries expressed as a fraction of page pixel width. Calibrated on the the client project
 # Infrastructure Package 1 BOQ (CESMM4 layout: Item | Description | CESMM ref |
 # Unit | Qty | Rate | Amount). The numeric columns sit in the right portion of
 # the page; the description occupies the left portion.

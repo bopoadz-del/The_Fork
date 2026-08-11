@@ -16,7 +16,7 @@
  *
  * Drag / dock / float / resize were briefly shipped in PR #105 and
  * stripped per operator brief — post-pilot complexity, not needed for
- * the Dar Al Arkan pilot. Tabs + expand stay.
+ * the the client pilot. Tabs + expand stay.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowUpRight, X } from 'lucide-react'

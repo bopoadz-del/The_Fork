@@ -37,7 +37,7 @@ def _matched(block, message: str) -> list:
 
 # (verbatim sweep phrasing, action that must appear in the match set)
 SWEEP_MISS_PHRASINGS = [
-    ("what does the DG2 project execution plan cover?", "process_document"),
+    ("what does the the client project project execution plan cover?", "process_document"),
     ("analyze the concrete specification requirements - what grades and standards apply?", "spec_analyze"),
     ("pull out the material specs for the road works", "spec_analyze"),
     ("list the documents in this project and what type each one is", "process_document"),

@@ -39,7 +39,7 @@ TL_MARKER = "TL-600-0000002"
 
 PROBES = {
     "Q2": "SECTIONAL ELEVATION drawing for telecom infrastructure",
-    "Q5": "Manhole spacing requirements for telecom ducts on the DG2 project",
+    "Q5": "Manhole spacing requirements for telecom ducts on the the client project project",
 }
 
 

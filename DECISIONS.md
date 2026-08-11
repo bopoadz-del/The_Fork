@@ -74,15 +74,15 @@ weakness.
 - Golden **10/28 -> 22/28**. All 12 fresh-upload cases flipped 0 -> PASS.
 - **Zero regressions** among the baseline-10 (doc_qa still grounded at 939 chars,
   wbs/manpower/s_curve/procurement/rfp/4 demo all held).
-- calc/dg2 referee verified ON THE LIVE RUN: GK not strangled.
-- In-process finalist cleared all 3 columns: fresh_win@1 12/12, dg2 8/8, calc 5/5.
+- calc/client referee verified ON THE LIVE RUN: GK not strangled.
+- In-process finalist cleared all 3 columns: fresh_win@1 12/12, client 8/8, calc 5/5.
 
 **Mechanism:** the 12 fresh misses were GK lexical-bonus inflation — an unbounded
 additive `_gk_lexical_bonus` lifting GK chunks to 1.1-2.0 vs own docs at
 0.80-0.91 (the EOT/FIDIC bug at 140k-chunk scale). The lexical fold only acts
 inside the margin gate, so the knobs MUST be paired.
 
-**Standing authorization (Chadi):** if this config ever regresses dg2/calc, the
+**Standing authorization (Chadi):** if this config ever regresses client/calc, the
 fix is a small PR bounding the lexical component (clamp GK total <= cosine + eps,
 or project-scope the bonus), same referee set — NOT further env-knob tuning.
 
@@ -350,7 +350,7 @@ Kimi K2.6 and Moonshot v1 are **out of the active chain** for the pilot.
 
 | action | prompt | router chose | confidence | reason |
 |---|---|---|---|---|
-| process_document | what does the DG2 project execution plan cover? | (none) | 0.0 | below_routing_gate |
+| process_document | what does the the client project project execution plan cover? | (none) | 0.0 | below_routing_gate |
 | spec_analyze | analyze the concrete specification requirements - what grades and stan | (none) | 0.0 | below_routing_gate |
 | spec_analyze | pull out the material specs for the road works | (none) | 0.0 | below_routing_gate |
 | document_metadata | list the documents in this project and what type each one is | (none) | 0.0 | below_routing_gate |
@@ -375,7 +375,7 @@ Input for the post-pilot keyword-dictionary rebuild. The router was NOT tuned du
 
 ## BOQ total discrepancy (Step 1c, 2026-07-06)
 
-**Finding:** Project `5c13510e` (DG2 Bills of Quantities) live corpus cites a
+**Finding:** Project `5c13510e` (the client project Bills of Quantities) live corpus cites a
 BOQ total of **29,207,138.5 USD** (review_pack/boq_process_1.md, verbatim
 answer). A remembered value of **SAR 62,236,109** could not be verified in the
 repo corpus or in the live retrieval context.
@@ -412,7 +412,7 @@ new BOQ workbook to a fresh fixture project and update the manifest. Until then,
 **Finding:** In the FEATURE_MATRIX_V2 sweep, prompt 2 for `cash_flow_forecast`
 ("what does the cumulative spend curve look like month by month?") returned a
 251-character answer: "I don't have that information in the provided reference
-context." The project used was `dar_al_arkan_master` (master corpus), which
+context." The project used was `master_corpus` (master corpus), which
 contains contract/payment clauses but no project-specific cost plan or budget
 curve.
 
@@ -446,7 +446,7 @@ fold, it becomes a block-level answer-source bug for the next iteration.
 
 ## Missing fixture projects on prod (Step 1, 2026-07-06) — UPDATED
 
-**Finding:** `5c13510e` (DG2 Bills of Quantities) exists as a Drive-approved
+**Finding:** `5c13510e` (the client project Bills of Quantities) exists as a Drive-approved
 project (4 docs / 179 chunks). The earlier 404 was a chat-stream ownership-check
 bug, now fixed in PR #154. `ff905e29` and `bc812f36` are still missing.
 `bc812f36` has been superseded by the canonical fixture project
@@ -478,7 +478,7 @@ metadata does not contain the Drive folder IDs. The Render env currently has no
 1. A service-account JSON key with read access to the Drive folders, set as
    `GDRIVE_SERVICE_ACCOUNT_JSON` on Render (or as a mounted file path).
 2. The complete `GDRIVE_PROJECT_FOLDERS` mapping, including sibling packs under
-   the same parent as `DG2 Infra Pack 1` (folder ID
+   the same parent as `the client project` (folder ID
    `1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j`).
 
 Once both are in place, run `scripts/inspect_drive_projects.py` to update the

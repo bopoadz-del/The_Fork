@@ -2,7 +2,7 @@
 
 LIVE 2026-08-02, operator's own thread (project Chad):
 
-    user:      "DG2 package 1"
+    user:      "the client project package 1"
     assistant: <nothing — ever>
     user:      "Backfilling specification"
 
@@ -90,7 +90,7 @@ def test_marker_is_not_scrubbed_away_by_history_cleaning():
     """_scrub_history strips hallucinated WBS/BOQ tables. The failure marker
     must survive it, or reloaded history loses the trace again."""
     turns = [
-        {"role": "user", "content": "DG2 package 1"},
+        {"role": "user", "content": "the client project package 1"},
         {"role": "assistant", "content": rt._FAILED_TURN_MESSAGE},
     ]
 

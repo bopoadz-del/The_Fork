@@ -103,7 +103,7 @@ async def project_ask(
             safe_project_id = None
 
     # Resolve the master-corpus alias to its backing source corpus for
-    # retrieval (e.g. dar_al_arkan_master -> projects_folder), matching
+    # retrieval (e.g. master_corpus -> projects_folder), matching
     # app.routers.agents and doc_search. Without this, project mode queries the
     # alias id — which has no indexed chunks — and always falls back to the
     # no-context message. Non-alias ids pass through unchanged.

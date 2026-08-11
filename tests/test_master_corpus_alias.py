@@ -1,6 +1,6 @@
 """Pilot master-corpus alias.
 
-Verifies that the virtual ``dar_al_arkan_master`` project is backed by the
+Verifies that the virtual ``master_corpus`` project is backed by the
 existing ``projects_folder`` corpus without duplicating chunks or re-importing
 Drive. This is a temporary pilot convenience while per-project Drive indexing
 is fixed post-pilot.

@@ -746,7 +746,7 @@ function ApprovedProjectsSection({
   const approved = projects
     .filter((p) => (p.origin ?? 'user_create') === 'admin_drive_approved')
     // Hide genuinely-empty approved rows (0 documents AND 0 chunks) so junk
-    // like an abandoned "DG2 Bills of Quantities" (0/0) doesn't clutter the
+    // like an abandoned "the client project Bills of Quantities" (0/0) doesn't clutter the
     // list. Only hide once the corpus counts for that project_id have loaded —
     // never hide a row whose counts we simply haven't fetched yet (that would
     // make a mid-ingest or slow-count project vanish).

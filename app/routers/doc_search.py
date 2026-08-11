@@ -40,7 +40,7 @@ async def search_documents(
         raise HTTPException(404, f"Project '{project_id}' not found")
 
     # Pilot: resolve the master-corpus alias so search queries the backing
-    # source corpus (e.g. dar_al_arkan_master -> projects_folder). Chat already
+    # source corpus (e.g. master_corpus -> projects_folder). Chat already
     # does this resolution in app.routers.agents; document search must match.
     search_project_id = store._master_corpus_source(project_id) or project_id
 

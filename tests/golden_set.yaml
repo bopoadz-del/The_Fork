@@ -172,13 +172,13 @@ queries:
   # expects only, except construction_advisor whose ground truth is in
   # app/knowledge/construction_kb.json.
 
-  - id: pilot_doc_qa_dg2_pep
+  - id: pilot_doc_qa_client_pep
     feature: process_document
-    project: dar_al_arkan_master
-    # Mirrors feature_matrix must-cover process_document prompt 1 (DG2 PEP).
+    project: master_corpus
+    # Mirrors feature_matrix must-cover process_document prompt 1 (the client project PEP).
     # PEP contents/doc name not verifiable from the repo: structural expect
     # (names the plan + at least one plan-domain topic), no retrieval_expect.
-    prompt: "what does the DG2 project execution plan cover?"
+    prompt: "what does the the client project project execution plan cover?"
     answer_expect:
       - 'execution plan'
       - '(scope|schedule|quality|risk|procurement|hse|safety|management|organi[sz]ation)'
@@ -186,7 +186,7 @@ queries:
   - id: pilot_boq_total
     feature: boq_process
     project: "FIXTURE — BOQ"
-    # Mirrors feature_matrix must-cover boq_process (DG2 BOQ project, 4
+    # Mirrors feature_matrix must-cover boq_process (the client project BOQ project, 4
     # workbooks / 179 chunks). The memory value "demolition BOQ total
     # SAR 62,236,109" could NOT be verified anywhere in the repo, and a
     # 2026-07-06 live capture (review_pack/boq_process_1.md) cited a corpus
@@ -200,7 +200,7 @@ queries:
 
   - id: pilot_spec_extraction
     feature: spec_analyze
-    project: dar_al_arkan_master
+    project: master_corpus
     # Mirrors feature_matrix must-cover spec_analyze prompt 1. Structural:
     # a concrete grade or the word grade, plus a standards body.
     prompt: "analyze the concrete specification requirements - what grades and standards apply?"
@@ -210,7 +210,7 @@ queries:
 
   - id: pilot_document_metadata
     feature: document_metadata
-    project: dar_al_arkan_master
+    project: master_corpus
     # Mirrors feature_matrix must-cover document_metadata prompt 1. Structural:
     # a list row plus document-type vocabulary or filenames.
     prompt: "list the documents in this project and what type each one is"
@@ -220,7 +220,7 @@ queries:
 
   - id: pilot_wbs_generation
     feature: generate_wbs
-    project: dar_al_arkan_master
+    project: master_corpus
     # Mirrors feature_matrix must-cover generate_wbs prompt 1 (synthetic agent
     # tool -> ConstructionContainer.generate_wbs). Structural: activities with
     # day/week/month durations, WBS vocabulary, list/table rows.
@@ -232,7 +232,7 @@ queries:
 
   - id: pilot_manpower_histogram
     feature: resource_histogram
-    project: dar_al_arkan_master
+    project: master_corpus
     # Mirrors feature_matrix must-cover resource_histogram prompt 1.
     # Structural: period buckets + labour vocabulary + numbers.
     prompt: "produce a manpower histogram for the structure works over 12 months"
@@ -257,7 +257,7 @@ queries:
 
   - id: pilot_s_curve
     feature: cash_flow_forecast
-    project: dar_al_arkan_master
+    project: master_corpus
     # Mirrors feature_matrix must-cover cash_flow_forecast prompt 1.
     # Structural: cumulative language + period buckets + a % or currency token.
     prompt: "build a cash flow forecast with an S-curve for a SAR 60M, 18-month project"
@@ -268,7 +268,7 @@ queries:
 
   - id: pilot_procurement_list
     feature: procurement_list_generator
-    project: dar_al_arkan_master
+    project: master_corpus
     # Mirrors feature_matrix must-cover procurement_list_generator prompt 1.
     # Structural: line items + procurement vocabulary.
     prompt: "generate a procurement list for the MEP package"
@@ -278,7 +278,7 @@ queries:
 
   - id: pilot_rfp_sections
     feature: rfp_management
-    project: dar_al_arkan_master
+    project: master_corpus
     # Mirrors feature_matrix must-cover rfp_management prompt 1 (hint-only
     # PRC-602). Structural: section headings + RFP/tender vocabulary.
     prompt: "prepare an RFP for the landscaping subcontract package"
@@ -288,7 +288,7 @@ queries:
 
   - id: pilot_kb_mass_concrete
     feature: construction_advisor
-    project: dar_al_arkan_master
+    project: master_corpus
     # Mirrors feature_matrix must-cover construction_advisor prompt 1.
     # Ground truth VERIFIED in app/knowledge/construction_kb.json:
     #   thermal.core_temp_limit  = 70 degC max core temperature
@@ -319,7 +319,7 @@ queries:
 
   - id: demo_project_brief
     feature: demo_flow
-    project: dar_al_arkan_master
+    project: master_corpus
     # Demo flow Q1: the opening "what is this project" brief.
     prompt: "what is this project about? give me a quick brief"
     answer_expect:
@@ -328,7 +328,7 @@ queries:
 
   - id: demo_biggest_cost_items
     feature: demo_flow
-    project: dar_al_arkan_master
+    project: master_corpus
     # Demo flow Q2: cost hot-spots. Structural: cost vocabulary + a sizeable
     # number (thousands separator or 4+ digits).
     prompt: "what are the biggest cost items on this project?"
@@ -338,7 +338,7 @@ queries:
 
   - id: demo_open_risks
     feature: demo_flow
-    project: dar_al_arkan_master
+    project: master_corpus
     # Demo flow Q3: risk summary. Structural: risk vocabulary + risk-management
     # framing (mitigation/impact/priority).
     prompt: "summarize the open risks on this project"
@@ -348,7 +348,7 @@ queries:
 
   - id: demo_procure_first
     feature: demo_flow
-    project: dar_al_arkan_master
+    project: master_corpus
     # Demo flow Q4: procurement priorities. Structural: procurement vocabulary
     # + prioritisation reasoning (lead time / critical / early).
     prompt: "what should we procure first on this project and why?"
@@ -364,7 +364,7 @@ queries:
   # pipe-bend table. Guards fix (a) identifier tightening + (b) cost gate.
   - id: cost_fabrication_concrete_rate
     feature: cost_grounding
-    project: dar_al_arkan_master
+    project: master_corpus
     prompt: "What is the unit rate for reinforced concrete (250 kg/cm2) in Saudi Arabia? Give SAR per m3 and cite your source."
     answer_expect:
       - '(22[0-9]|2[3-7][0-9]|280|indicative|supplier quote|priced BOQ|rate schedule|do(?:es)?n.?t have|no rate|cannot|could ?n.?t|unable)'

@@ -578,7 +578,7 @@ class TestResourceHistogramRealOrHonest:
 
     @pytest.mark.asyncio
     async def test_labor_filter_excludes_material_and_cost(self, container):
-        # Regression for the real DG2 baseline finding: a .xer whose TASKRSRC
+        # Regression for the real the client project baseline finding: a .xer whose TASKRSRC
         # mixes RT_Labor with an RT_Mat resource (STEEL, target_qty 999999) must
         # count man-hours from labor ONLY — never sum the material quantity.
         import os

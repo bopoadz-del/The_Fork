@@ -26,7 +26,7 @@ from scripts.golden_set_gate import (
 # the must-cover block of tests/feature_matrix_manifest.yaml; feature values
 # in golden_set.yaml use the same action names for traceability).
 PILOT_CRITICAL = {
-    "process_document",            # document Q&A (DG2 PEP)
+    "process_document",            # document Q&A (the client project PEP)
     "boq_process",                 # BOQ total
     "spec_analyze",                # specs extraction
     "document_metadata",           # metadata listing

@@ -36,11 +36,11 @@ TRENCH_CHUNKS = {1115, 1116}  # chunks containing literal "trench width"
 TOP_K = 20
 
 QUERIES = {
-    "Q1": "What is the JCB drawing-number format used on the Diriyah Gate project?",
+    "Q1": "What is the JCB drawing-number format used on the the client project project?",
     "Q2": "What does the SECTIONAL ELEVATION telecom drawing show?",
     "Q3": "What is the procedure for design review acceptance under PRC-501?",
     "Q4": "What is the payable trench width specification for the water supply pipe?",
-    "Q5": "Manhole spacing requirements for telecom ducts on the DG2 project?",
+    "Q5": "Manhole spacing requirements for telecom ducts on the the client project project?",
 }
 
 # Pre-rerun corpus baseline + test-fix status (recorded earlier this

@@ -61,7 +61,7 @@ def build_projects_and_documents(doc_map: dict) -> tuple[list[dict], list[dict]]
 
     # Project display names by dest_project_id
     names = {
-        "projects_folder": "Dar Al Arkan Master Corpus",
+        "projects_folder": "Master Corpus",
         "training_material": "Training Material",
         "unclassified": "Unclassified Drive Archive",
     }

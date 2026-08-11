@@ -171,8 +171,8 @@ SHEET_TEXT = """
 GENERAL NOTES
 1. ALL DIMENSIONS IN MILLIMETRES UNLESS NOTED OTHERWISE.
 
-PROJECT: DAR AL ARKAN RESIDENTIAL TOWER
-CLIENT: DAR AL ARKAN PROPERTIES
+PROJECT: THE CLIENT RESIDENTIAL TOWER
+CLIENT: THE CLIENT PROPERTIES
 DRAWING TITLE: TYPICAL FLOOR SLAB REINFORCEMENT
 DRAWING NO: S-2101-004
 REV: C2
@@ -198,9 +198,9 @@ def test_the_title_block_identifies_the_drawing(container):
     assert tb["drawn_by"].startswith("A"), f"drawn_by={tb['drawn_by']!r}"
     assert tb["checked_by"].startswith("M"), f"checked_by={tb['checked_by']!r}"
     assert tb["approved_by"].startswith("K"), f"approved_by={tb['approved_by']!r}"
-    assert "DAR AL ARKAN PROPERTIES" in tb["client"].upper()
+    assert "THE CLIENT PROPERTIES" in tb["client"].upper()
     assert "SLAB REINFORCEMENT" in tb["drawing_title"].upper()
-    assert "DAR AL ARKAN" in tb["project_name"].upper()
+    assert "THE CLIENT" in tb["project_name"].upper()
     assert tb["sheet_number"].replace(" ", "") == "4OF12"
 
 

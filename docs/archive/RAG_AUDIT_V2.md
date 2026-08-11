@@ -20,7 +20,7 @@ Scores in this report are RRF-fused ranks, not cosine similarities — **top-1 "
 
 ## 2. Method
 
-Identical query surface to the baseline: `POST /v1/rag/search` with `project_id=projects_folder` (the master corpus backing `dar_al_arkan_master`), `k=5`. Ground truth is the `drive_archive:<doc_id>:<chunk_index>` source recorded per training question.
+Identical query surface to the baseline: `POST /v1/rag/search` with `project_id=projects_folder` (the master corpus backing `master_corpus`), `k=5`. Ground truth is the `drive_archive:<doc_id>:<chunk_index>` source recorded per training question.
 
 Two measurements:
 
