@@ -103,3 +103,7 @@ logs/
 review_pack/**/*.log
 .onprem-lite-data/
 .onprem-accept-data/
+
+# Evaluation photographs: fetched by scripts/fetch_eval_photos.py, never committed.
+# Only tests/fixtures/photo_eval_manifest.json is tracked.
+tests/fixtures/photos/

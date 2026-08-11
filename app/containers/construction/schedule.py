@@ -467,6 +467,28 @@ class ConstructionScheduleMixin:
         if not photos:
             sections_incomplete += ["equipment", "quality_observations"]
 
+        # Photos supplied but the detector could not run (SAFETY_WORLD_WEIGHTS
+        # unset, or the model failed to load) is a THIRD state, distinct from
+        # both "no photos" and "photos analysed, nothing found". Without this,
+        # an empty equipment/quality section would read as "nothing on site"
+        # when in truth nothing looked. The reader must be able to tell those
+        # apart before acting on the report.
+        detector_unavailable = bool(photos) and all(
+            p.get("detector") == "unavailable" for p in photo_analysis
+        )
+        if detector_unavailable:
+            sections_incomplete += ["equipment", "quality_observations"]
+        photo_intelligence = {
+            "photos_analysed": len(photo_analysis),
+            "detector": "unavailable" if detector_unavailable else (
+                "safety_world_v2" if photos else "not_run"),
+            "status": (
+                "unavailable — photo observations could not be produced"
+                if detector_unavailable else
+                "ok" if photos else "no photos supplied"
+            ),
+        }
+
         return {
             "status": "success",
             "action": "daily_report_generated",
@@ -492,6 +514,7 @@ class ConstructionScheduleMixin:
             "quality_observations": self._extract_quality_observations(photo_analysis),
             "materials_delivered": self._extract_material_deliveries(transcriptions),
             "photos_attached": len(photos),
+            "photo_intelligence": photo_intelligence,
             "photo_analysis": photo_analysis,
             "transcriptions": transcriptions,
             "full_narrative": narrative,
