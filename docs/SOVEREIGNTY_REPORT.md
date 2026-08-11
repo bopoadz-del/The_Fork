@@ -28,7 +28,7 @@ Full write-up: `docs/step0-retrieval-isolation.md`.
 
 Root cause was not what the directive assumed: `store.search(project_id)` was
 **already** a hard SQL `WHERE project_id = X`. The leak was the GK merge — the
-live env declared the DG2 client corpus (`drive_archive` + `dg2_infra_pack_1`)
+live env declared the the client project client corpus (`drive_archive` + `client_infra_pack_1`)
 as "general knowledge," silently blended into every project via ranking knobs.
 
 Fix: two layers — general knowledge (`curated_kb`) always-eligible-but-disclosed;
@@ -37,7 +37,7 @@ the labeled empty/thin fallback. `Chunk.layer` threads retriever → audit
 (`fallback_used`) → answer banner + sources `layer_label`.
 
 Live verification (post-deploy):
-- `gk_project_ids = ['curated_kb']` only (drive_archive stripped by code, dg2 by config).
+- `gk_project_ids = ['curated_kb']` only (drive_archive stripped by code, client by config).
 - Strong project (curated_kb + FIDIC query): 8/8 own chunks, **zero** drive_archive.
 - Empty project: answer banner "This project has no documents of its own… answering from the Master Corpus" + every source tagged "Master Corpus (fallback)".
 - Tests: `tests/test_step0_retrieval_isolation.py` (golden + regression + disclosure); full RAG suite 138 green.

@@ -76,7 +76,7 @@ def test_extract_identifiers_ignores_common_label_words_without_a_code():
 
     # The two prod questions that broke. Neither contains a real reference.
     assert extract_query_identifiers(
-        "What does the DG2 demolition contract cover?"
+        "What does the the client project demolition contract cover?"
     ) == []
     ids = extract_query_identifiers(
         "What does the specification say about reinforcement joints "

@@ -20,7 +20,7 @@ Gate bar: >= 90% of the golden set must PASS (>= 26/28). **Gate NOT MET.**
 | fresh_mv_soak_test | fresh_upload_grounding | ce1ced1a | FAIL | MISS | 3s |
 | fresh_cpi_threshold | fresh_upload_grounding | ce1ced1a | FAIL | MISS | 4s |
 | fresh_mass_concrete_curing | fresh_upload_grounding | ce1ced1a | FAIL | MISS | 30s |
-| pilot_doc_qa_dg2_pep | process_document | master_corpus | FAIL | - | 12s |
+| pilot_doc_qa_client_pep | process_document | master_corpus | FAIL | - | 12s |
 | pilot_boq_total | boq_process | 96bd7cd1 | FAIL | - | 6s |
 | pilot_spec_extraction | spec_analyze | master_corpus | FAIL | - | 7s |
 | pilot_document_metadata | document_metadata | master_corpus | FAIL | - | 9s |
@@ -249,9 +249,9 @@ What came back (verbatim excerpt):
 Mass concrete pours must be cured for not less than 7 days using clean water or any other method which has been shown to allow continuous hydration of the cement over the curing period. *(source: SMGT-C552-part-1.pdf, chunk 28)*
 ```
 
-### pilot_doc_qa_dg2_pep (process_document)
+### pilot_doc_qa_client_pep (process_document)
 
-- prompt: what does the DG2 project execution plan cover?
+- prompt: what does the the client project project execution plan cover?
 - expected (all must match): `execution plan`; `(scope|schedule|quality|risk|procurement|hse|safety|management|organi[sz]ation)`
 - what failed:
   - answer_expect not matched: '(scope|schedule|quality|risk|procurement|hse|safety|management|organi[sz]ation)'
@@ -259,9 +259,9 @@ Mass concrete pours must be cured for not less than 7 days using clean water or 
 What came back (verbatim excerpt):
 
 ```
-I searched the project documents for the DG2 project execution plan but could not find specific information. Based on the retrieved context, the execution plan generally covers the planning, execution, and monitoring of the Works, ensuring that the networked activities are detailed enough to provide a meaningful measurement tool for progress. 
+I searched the project documents for the the client project project execution plan but could not find specific information. Based on the retrieved context, the execution plan generally covers the planning, execution, and monitoring of the Works, ensuring that the networked activities are detailed enough to provide a meaningful measurement tool for progress. 
 
-For more specific details about the DG2 project execution plan, please ensure the relevant document is uploaded and indexed.
+For more specific details about the the client project project execution plan, please ensure the relevant document is uploaded and indexed.
 ```
 
 ### pilot_boq_total (boq_process)

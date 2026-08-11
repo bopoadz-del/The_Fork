@@ -563,7 +563,7 @@ def test_boq_no_software_aggregate_but_has_terminology_chunk():
     from app.core.doc_index import _boq_summary_chunks
 
     result = {
-        "status": "success", "currency": "SAR", "source_name": "DG2 Sewer BOQ",
+        "status": "success", "currency": "SAR", "source_name": "the client project Sewer BOQ",
         "line_items": [
             {"description": "Waste water (foul/sewer) gravity pipe 200mm",
              "quantity": 7790, "unit": "m", "unit_cost": 10, "total_cost": 77900},

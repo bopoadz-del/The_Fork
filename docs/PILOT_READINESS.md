@@ -21,7 +21,7 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 | **Grounded RAG answers** | Live UI answers cite real docs+chunks. Payments → DD-2022-175 Vol 4; commissioning → Aecom electrical comments. |
 | **Corpus** | `chunks_v2` = **53 docs / 10,502 chunks**, avg 198 chunks/doc, 0 duplicate chunk_ids. |
 | **DB integrity** | `DATABASE_URL` set + fail-loud guard (#190). Old `chunks` table empty; `chunks_v2` canonical. |
-| **Master corpus** | `MASTER_CORPUS_SOURCE_PROJECT_ID=dg2_infra_pack_1` → "Master Corpus" retrieves real corpus. |
+| **Master corpus** | `MASTER_CORPUS_SOURCE_PROJECT_ID=client_infra_pack_1` → "Master Corpus" retrieves real corpus. |
 | **Auth** | 401s enforced; both domains serving; logged-in session working. |
 | **Fabrication kill** | F1/F2/F3 (#206) + F4 (#207 + #216) all live-verified. **Zero FAKE remaining.** |
 | **Grounding gate** | Increment 1 stamps (#215) + increment 2 money/rate (#219). Zero-FP on 147 real figures. `COST_GROUNDING_GATE` default-on. |
@@ -47,7 +47,7 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 | # | Item | Evidence / why parked | To unblock |
 |---|------|----------------------|------------|
 | T3 | **20-turn cold-start verification** | Backend healthy via timing logs. Browser automation unreliable for SSE. | Run `fork_cli --events` for 20 turns incl. 3 cold starts. |
-| T4 | **Corpus coverage** | Only 53 docs in v2. Full Drive archive NOT in v2. | Decide pilot scope (DG2-only?) or re-ingest tier-2/3. |
+| T4 | **Corpus coverage** | Only 53 docs in v2. Full Drive archive NOT in v2. | Decide pilot scope (the client project-only?) or re-ingest tier-2/3. |
 | T4b | **RFP under-extraction** | 2 chunks each → weak RFP reasoning. | Re-extract RFP class; exclude/limit `.kmz`. |
 | T5 | **Retrieval precision** | GK note 980e19f6 dominates top. cfg7 knobs BREAK v2 — keep OFF. | Re-sweep knobs on v2; GK demotion must be re-derived. |
 | T6 | **Feature matrix / golden set / 100-q recall** | Not executed post-router-vocab (#153). Golden 22/28 on embedder-migrated corpus. | Run `scripts/feature_matrix_sweep.py` + golden set + recall eval. |
@@ -73,7 +73,7 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 | `RAG_GK_SCORE_MARGIN` | `0.10` | GK score margin gate |
 | `GROUNDING_GATE` | default-on | Post-synthesis cost/rate grounding |
 | `CEREBRUM_DOMAIN_KITS` | `construction` | Construction kit loaded |
-| `MASTER_CORPUS_SOURCE_PROJECT_ID` | `dg2_infra_pack_1` | Master corpus alias |
+| `MASTER_CORPUS_SOURCE_PROJECT_ID` | `client_infra_pack_1` | Master corpus alias |
 | `LLM_PROVIDER` | `openai` | Primary: gpt-4o-mini |
 | `LLM_FALLBACK_PROVIDER` | `ollama` | Fallback: glm-5.2:cloud |
 | `FORK_HATS_ENABLED` | default-off | Discipline-agent layer (NEW) |
@@ -87,7 +87,7 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 1. **`FORK_HATS_ENABLED`** — Activate discipline-agent routing? OFF = zero impact.
 2. **`SOURCE_MANIFEST` jurisdiction** — KSA vs UAE vs both? Which authority standards?
 3. **SENTRY_DSN** — Provide to restore observability.
-4. **Pilot corpus scope** — DG2-only or full Drive archive re-ingest?
+4. **Pilot corpus scope** — the client project-only or full Drive archive re-ingest?
 5. **Pilot go/no-go** — This page + ledger are the inputs.
 6. **Dormant agents** — Wire 10 agents or ledger-PARK them?
 7. **Provider freeze** — OpenAI primary, Ollama fallback. Confirm.

@@ -23,6 +23,6 @@ The reference context provided does not contain the information needed to raise 
 - An NCR template, form reference, or procedural requirement for this project
 - Disposition criteria (e.g., repair, reject, accept with concession) for structural-verticality non-conformances
 
-What the context does contain are general specification clauses stating that **“lines and levels exceed allowable tolerances”** must be addressed, and that site surveys must be closed **“with an error of closure equal to or less than the standard established by authorities having jurisdiction”** *(source: DD-2023-118_DG2 Infra P1_Vol 2 - Specification, chunk 1204)*. These are broad surveying requirements and do not provide the column-specific data or corrective-action guidance required for your request.
+What the context does contain are general specification clauses stating that **“lines and levels exceed allowable tolerances”** must be addressed, and that site surveys must be closed **“with an error of closure equal to or less than the standard established by authorities having jurisdiction”** *(source: DD-2023-118_the client project Infra P1_Vol 2 - Specification, chunk 1204)*. These are broad surveying requirements and do not provide the column-specific data or corrective-action guidance required for your request.
 
 To proceed, the relevant drawing or inspection record showing the as-built verticality deviation, the specification section governing column tolerances, and the project’s NCR procedure would need to be retrieved.

@@ -77,7 +77,7 @@ def test_skip_valid_existing():
     assert stats.written == 0
     assert FakeEmbedder().encode_calls == 0  # new instance unused — check via returned
     assert stats.stopped_reason == "nothing_to_do"
-    assert store.count_chunks("dg2_infra_pack_1") == 4
+    assert store.count_chunks("client_infra_pack_1") == 4
 
 
 def test_generate_missing_only():
@@ -92,7 +92,7 @@ def test_generate_missing_only():
     stats = run_ingest(store, flat, docs, runner, batch_size=2, resume=True)
     assert stats.valid_skipped == 2
     assert stats.written == 2
-    assert store.count_chunks("dg2_infra_pack_1") == 4
+    assert store.count_chunks("client_infra_pack_1") == 4
     assert set(runner.encoded_texts) == {flat[2].text, flat[3].text}
 
 
@@ -104,13 +104,13 @@ def test_resume_after_partial():
     stats1 = run_ingest(store, flat, docs, emb, batch_size=2, max_batches=1, resume=True)
     assert stats1.written == 2
     assert stats1.stopped_reason == "max_batches"
-    assert store.count_chunks("dg2_infra_pack_1") == 2
+    assert store.count_chunks("client_infra_pack_1") == 2
 
     emb2 = FakeEmbedder()
     stats2 = run_ingest(store, flat, docs, emb2, batch_size=2, resume=True)
     assert stats2.valid_skipped == 2
     assert stats2.written == 4
-    assert store.count_chunks("dg2_infra_pack_1") == 6
+    assert store.count_chunks("client_infra_pack_1") == 6
     assert len(store.chunks) == 6  # no dups
 
 
@@ -119,12 +119,12 @@ def test_no_duplicate_chunks_on_rerun():
     store = MemoryStore()
     emb = FakeEmbedder()
     run_ingest(store, flat, docs, emb, batch_size=3, resume=True)
-    n1 = store.count_chunks("dg2_infra_pack_1")
+    n1 = store.count_chunks("client_infra_pack_1")
     emb2 = FakeEmbedder()
     stats = run_ingest(store, flat, docs, emb2, batch_size=3, resume=True)
     assert stats.written == 0
     assert stats.valid_skipped == 5
-    assert store.count_chunks("dg2_infra_pack_1") == n1 == 5
+    assert store.count_chunks("client_infra_pack_1") == n1 == 5
     assert len(store.chunks) == 5
 
 
@@ -134,7 +134,7 @@ def test_failed_batch_writes_nothing():
     emb = FakeEmbedder()
     with pytest.raises(RuntimeError, match="simulated commit failure"):
         run_ingest(store, flat, docs, emb, batch_size=2, resume=True)
-    assert store.count_chunks("dg2_infra_pack_1") == 0
+    assert store.count_chunks("client_infra_pack_1") == 0
     assert store.writes_attempted == 1
 
 
@@ -144,7 +144,7 @@ def test_failed_commit_rolls_back_batch_only_prior_survive():
     emb = FakeEmbedder()
     # first batch succeeds
     run_ingest(store, flat, docs, emb, batch_size=2, max_batches=1, resume=True)
-    assert store.count_chunks("dg2_infra_pack_1") == 2
+    assert store.count_chunks("client_infra_pack_1") == 2
     prior_ids = set(store.chunks.keys())
 
     # next run: fail on first new commit
@@ -153,7 +153,7 @@ def test_failed_commit_rolls_back_batch_only_prior_survive():
     with pytest.raises(RuntimeError, match="simulated commit failure"):
         run_ingest(store, flat, docs, emb2, batch_size=2, resume=True)
 
-    assert store.count_chunks("dg2_infra_pack_1") == 2
+    assert store.count_chunks("client_infra_pack_1") == 2
     assert set(store.chunks.keys()) == prior_ids
 
 
@@ -176,13 +176,13 @@ def test_sigint_stop_is_resumable():
     # first batch still completes (stop checked between batches)
     assert stats.written == 2
     assert stats.stopped_reason == "SIGINT"
-    assert store.count_chunks("dg2_infra_pack_1") == 2
+    assert store.count_chunks("client_infra_pack_1") == 2
 
     # resume completes the rest
     stats2 = run_ingest(store, flat, docs, FakeEmbedder(), batch_size=2, resume=True)
     assert stats2.valid_skipped == 2
     assert stats2.written == 6
-    assert store.count_chunks("dg2_infra_pack_1") == 8
+    assert store.count_chunks("client_infra_pack_1") == 8
 
 
 def test_sigterm_reason_recorded():
@@ -257,7 +257,7 @@ def test_verify_only_no_writes():
     )
     assert stats.stopped_reason == "verify_only"
     assert stats.written == 0
-    assert store.count_chunks("dg2_infra_pack_1") == 0
+    assert store.count_chunks("client_infra_pack_1") == 0
     assert store.writes_attempted == 0
     assert store.documents == {}
 
@@ -271,7 +271,7 @@ def test_max_batches_2_stops():
     assert stats.batches == 2
     assert stats.written == 4
     assert stats.stopped_reason == "max_batches"
-    assert store.count_chunks("dg2_infra_pack_1") == 4
+    assert store.count_chunks("client_infra_pack_1") == 4
 
 
 def test_completed_corpus_zero_dup_writes(tmp_path: Path):
@@ -281,7 +281,7 @@ def test_completed_corpus_zero_dup_writes(tmp_path: Path):
     run_ingest(
         store, flat, docs, FakeEmbedder(), batch_size=3, resume=True, checkpoint_path=ck
     )
-    assert store.count_chunks("dg2_infra_pack_1") == 6
+    assert store.count_chunks("client_infra_pack_1") == 6
     assert ck.exists()
 
     before = dict(store.chunks)
@@ -347,14 +347,14 @@ def test_preview_no_writes():
         store, flat, docs, FakeEmbedder(), batch_size=2, preview=True, upsert_docs=False
     )
     assert stats.stopped_reason == "preview"
-    assert store.count_chunks("dg2_infra_pack_1") == 0
+    assert store.count_chunks("client_infra_pack_1") == 0
 
 
 def test_destructive_wipe_clears(tmp_path: Path):
     docs, flat = _docs_and_chunks(3)
     store = MemoryStore()
     run_ingest(store, flat, docs, FakeEmbedder(), batch_size=3, resume=True)
-    assert store.count_chunks("dg2_infra_pack_1") == 3
+    assert store.count_chunks("client_infra_pack_1") == 3
     stats = run_ingest(
         store,
         flat,
@@ -366,4 +366,4 @@ def test_destructive_wipe_clears(tmp_path: Path):
     )
     # wipe then rewrite
     assert stats.written == 3
-    assert store.count_chunks("dg2_infra_pack_1") == 3
+    assert store.count_chunks("client_infra_pack_1") == 3

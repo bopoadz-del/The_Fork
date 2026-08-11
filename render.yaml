@@ -88,9 +88,9 @@ services:
         value: Master Corpus
       # GK = the always-on, DISCLOSED general-knowledge layer only: genuinely
       # cross-project reference (FIDIC / OSHA / units / rates) in `curated_kb`.
-      # STEP 0 (2026-07-17): client corpora (drive_archive / dg2_infra_pack_1)
-      # were removed from this list — they were silently merging DG2 into every
-      # other project (the ha_long -> DG2 leak). The client/Master corpus now
+      # STEP 0 (2026-07-17): client corpora (drive_archive / client_infra_pack_1)
+      # were removed from this list — they were silently merging the client project into every
+      # other project (the ha_long -> the client project leak). The client/Master corpus now
       # surfaces ONLY as the labeled empty/thin fallback via
       # MASTER_CORPUS_SOURCE_PROJECT_ID; the retriever also structurally strips
       # that id from this list even if a stale env re-adds it. See

@@ -116,8 +116,8 @@ The construction container exposes 59 actions. The API-fallback sweep tested eve
 |---|---|---|---|---|
 | S01 | PASS | Projects list loaded with master corpus and others | URL `/`, heading "Projects", 28 project cards | — |
 | S02 | PASS | Navigated to master corpus workspace | URL `/projects/master_corpus`, workspace-main present | — |
-| S03 | PASS | Assistant answered question | bubble: "The DG2 Infra Pack 1 project is an infrastructure programme..." | — |
-| S04 | PASS | Sources panel showed cited chunks | 9 source items, e.g. "SW-SWD-025-0000-AEC-PEP-NS-000001-02 DG2 Project Execution Plan.pdf chunk #50" | — |
+| S03 | PASS | Assistant answered question | bubble: "The the client project project is an infrastructure programme..." | — |
+| S04 | PASS | Sources panel showed cited chunks | 9 source items, e.g. "SW-SWD-025-0000-AEC-PEP-NS-000001-02 the client project Project Execution Plan.pdf chunk #50" | — |
 | S05 | PASS | Test project "kimi-audit-test" created and visible | project id `9531b1b1` appeared in grid | — |
 | S06 | PASS | `audit_upload.txt` uploaded and listed | doc row: "audit_upload.txt TXT 174 B just now" | first synthetic-file attempt left UI in "Uploading…"; retry succeeded quickly |
 | S07 | PASS | Answer summarized file and cited source | bubble: "The document is a brief audit test file... Source: audit_upload.txt, chunk 0." | — |

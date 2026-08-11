@@ -1,6 +1,6 @@
 """Create a minimal valid IFC sample file for bim_extractor smoke tests.
 
-Builds a 2-storey "DG2 Sample Building" with 8 walls, 2 slabs, 4 columns,
+Builds a 2-storey "the client project Sample Building" with 8 walls, 2 slabs, 4 columns,
 2 beams, 2 doors, 2 windows, 2 spaces, plus a pipe / duct / light fixture
 so every category in IFC_CATEGORY_MAP has at least one element.
 
@@ -32,7 +32,7 @@ def _bootstrap_owner(m) -> None:
     )
     org = ifcopenshell.api.run(
         "owner.add_organisation", m,
-        identification="dg2", name="DG2 Sample",
+        identification="client", name="the client project Sample",
     )
     ifcopenshell.api.run(
         "owner.add_person_and_organisation", m,
@@ -42,15 +42,15 @@ def _bootstrap_owner(m) -> None:
         "owner.add_application", m,
         application_developer=org,
         version="1.0",
-        application_full_name="DG2 Sample Generator",
-        application_identifier="dg2-sample",
+        application_full_name="the client project Sample Generator",
+        application_identifier="client-sample",
     )
 
 
 def build(out_path: str, version: str = "IFC4") -> None:
     m = ifcopenshell.api.run("project.create_file", version=version)
     _bootstrap_owner(m)
-    project = ifcopenshell.api.run("root.create_entity", m, ifc_class="IfcProject", name="DG2 Sample Building")
+    project = ifcopenshell.api.run("root.create_entity", m, ifc_class="IfcProject", name="the client project Sample Building")
     ifcopenshell.api.run("unit.assign_unit", m)
     ctx = ifcopenshell.api.run("context.add_context", m, context_type="Model")
     ifcopenshell.api.run(

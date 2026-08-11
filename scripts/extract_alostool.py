@@ -1,5 +1,5 @@
 """
-Geometry-aware extraction of the Al-Ostool DG2 Demolition BOQ (scanned, no text layer).
+Geometry-aware extraction of the Al-Ostool the client project Demolition BOQ (scanned, no text layer).
 
 Strategy (why the prior run failed):
   The priced BOQ is an image scan. The prior attempt OCR'd it and (a) confused the
@@ -22,7 +22,7 @@ from PIL import Image
 import pytesseract
 import pandas as pd
 
-PDF = ('G:/My Drive/Master Folder/Demo Contract/DD-2022-175 Al Ostool DG2 Dem. Works MC/'
+PDF = ('G:/My Drive/Master Folder/Demo Contract/DD-2022-175 Al Ostool the client project Dem. Works MC/'
        'DD-2022-175 - DG II Demolition and Site Clearance Works Package 1 Volume 4 Schedules - BOQ.pdf')
 OUT = ('C:/Users/shimm/AppData/Local/Temp/claude/C--Users-shimm/'
        '436703f7-0a30-48b6-a650-29d75aac4fa5/scratchpad')
@@ -292,7 +292,7 @@ def write_outputs(items, carries, diag):
                                f"{d['carry']:,.2f} | {gap:,.2f} |{flag}")
 
     md = []
-    md.append('# Al-Ostool DG2 Demolition BOQ - Extraction & QA Reconciliation\n')
+    md.append('# Al-Ostool the client project Demolition BOQ - Extraction & QA Reconciliation\n')
     md.append(f'**RECONCILIATION VERDICT: {verdict}**\n')
     md.append('Source: `DD-2022-175 ... Volume 4 Schedules - BOQ.pdf` (scanned, no text layer). '
               'Extraction is geometry-aware: pages rendered at 300 dpi, per-token bounding boxes '

@@ -172,13 +172,13 @@ queries:
   # expects only, except construction_advisor whose ground truth is in
   # app/knowledge/construction_kb.json.
 
-  - id: pilot_doc_qa_dg2_pep
+  - id: pilot_doc_qa_client_pep
     feature: process_document
     project: master_corpus
-    # Mirrors feature_matrix must-cover process_document prompt 1 (DG2 PEP).
+    # Mirrors feature_matrix must-cover process_document prompt 1 (the client project PEP).
     # PEP contents/doc name not verifiable from the repo: structural expect
     # (names the plan + at least one plan-domain topic), no retrieval_expect.
-    prompt: "what does the DG2 project execution plan cover?"
+    prompt: "what does the the client project project execution plan cover?"
     answer_expect:
       - 'execution plan'
       - '(scope|schedule|quality|risk|procurement|hse|safety|management|organi[sz]ation)'
@@ -186,7 +186,7 @@ queries:
   - id: pilot_boq_total
     feature: boq_process
     project: "FIXTURE — BOQ"
-    # Mirrors feature_matrix must-cover boq_process (DG2 BOQ project, 4
+    # Mirrors feature_matrix must-cover boq_process (the client project BOQ project, 4
     # workbooks / 179 chunks). The memory value "demolition BOQ total
     # SAR 62,236,109" could NOT be verified anywhere in the repo, and a
     # 2026-07-06 live capture (review_pack/boq_process_1.md) cited a corpus

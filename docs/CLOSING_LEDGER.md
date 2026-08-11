@@ -27,7 +27,7 @@
 
 | Sub-step | Status | Evidence / Why | To Unblock |
 |----------|--------|----------------|------------|
-| 5a: SOP ingestion (200-600 series) | **NOT STARTED** | Drive access configured but `GDRIVE_SERVICE_ACCOUNT_JSON` not set on Render; `GDRIVE_PROJECT_FOLDERS` mapping incomplete. | Chadi to provide: (1) service-account JSON key with read access, set as `GDRIVE_SERVICE_ACCOUNT_JSON` on Render; (2) complete `GDRIVE_PROJECT_FOLDERS` mapping including sibling packs under DG2 parent. |
+| 5a: SOP ingestion (200-600 series) | **NOT STARTED** | Drive access configured but `GDRIVE_SERVICE_ACCOUNT_JSON` not set on Render; `GDRIVE_PROJECT_FOLDERS` mapping incomplete. | Chadi to provide: (1) service-account JSON key with read access, set as `GDRIVE_SERVICE_ACCOUNT_JSON` on Render; (2) complete `GDRIVE_PROJECT_FOLDERS` mapping including sibling packs under the client project parent. |
 | 5b: SOURCE_MANIFEST | **HELD (gate)** | Template prepared (jurisdiction-specific: KSA MOMRA/NWC/SEC/MOT vs UAE RTA/DEWA/DM). **NOT ingested** — sourcing/jurisdiction choice is Chadi's, not mine. | Chadi to confirm: (1) primary jurisdiction (KSA vs UAE vs both); (2) which authority standards to prioritize; (3) approval to ingest public datasets. |
 | 5c: Post-ingestion referee | **PARKED** | Depends on 5a + 5b completing first. | Unblock 5a and 5b. |
 
@@ -70,7 +70,7 @@
 1. **`FORK_HATS_ENABLED`** — Enable the discipline-agent layer? Default OFF = zero impact. Enabling activates hat routing in runtime.
 2. **`SOURCE_MANIFEST` jurisdiction** — KSA vs UAE vs both? Which authority standards to ingest?
 3. **SENTRY_DSN** — Provide to restore observability (T2).
-4. **Pilot corpus scope** — DG2-package-only or ingest full Drive archive into v2?
+4. **Pilot corpus scope** — the client project-package-only or ingest full Drive archive into v2?
 5. **Pilot go/no-go** — This ledger + PILOT_READINESS.md are the inputs.
 6. **Dormant agents** — Wire 10 dormant agents (add `can_delegate`) or ledger-PARK them?
 7. **Embedder migration** — BGE-384 migrated; confirm cutover complete.
@@ -87,7 +87,7 @@
 | `RAG_GK_SCORE_MARGIN` | `0.10` | GK score margin gate |
 | `GROUNDING_GATE` | default-on | Post-synthesis cost/rate grounding |
 | `CEREBRUM_DOMAIN_KITS` | `construction` | Construction kit loaded (40 blocks) |
-| `MASTER_CORPUS_SOURCE_PROJECT_ID` | `dg2_infra_pack_1` | Master corpus alias |
+| `MASTER_CORPUS_SOURCE_PROJECT_ID` | `client_infra_pack_1` | Master corpus alias |
 | `FORK_HATS_ENABLED` | default-off | Discipline-agent layer (NEW this session) |
 | `DRAWING_TABLE_CHUNK_TAGGING` | default-off | Drawing table chunk classifier (NEW this session) |
 | `STANDARDS_SCANNER_BROADENED` | default-off | Broadened standards scanner (NEW this session) |

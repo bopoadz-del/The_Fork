@@ -325,9 +325,9 @@ def _general_knowledge_project_ids() -> List[str]:
     ids = [p.strip() for p in raw.split(",") if p.strip()]
     # STEP 0 structural isolation: the master-corpus / client fallback corpus
     # is NEVER part of the always-on GK merge, even when a stale env still lists
-    # it (prod once had drive_archive + dg2_infra_pack_1 in this var, silently
-    # merging the whole DG2 client corpus into every OTHER project's results —
-    # the ha_long -> DG2 leak). It may only surface as the disclosed empty/thin
+    # it (prod once had drive_archive + client_infra_pack_1 in this var, silently
+    # merging the whole the client project client corpus into every OTHER project's results —
+    # the ha_long -> the client project leak). It may only surface as the disclosed empty/thin
     # fallback below. This makes the client corpus structurally unreachable from
     # another project's populated query regardless of score.
     fb = _master_corpus_fallback_id()

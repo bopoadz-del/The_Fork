@@ -278,7 +278,7 @@ def test_hybrid_beats_semantic_q5_manhole_spacing(store_with_corpus, monkeypatch
     "MANHOLE" + "TYPE" pulls it up even though the natural-language
     query has no "1000m"/"intervals")."""
     store, embedder, _ = store_with_corpus
-    query = "Manhole spacing requirements for telecom ducts on the DG2 project"
+    query = "Manhole spacing requirements for telecom ducts on the the client project project"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
     hyb = _run_search(store, embedder, query, k=5, query_text=query)
@@ -290,7 +290,7 @@ def test_hybrid_beats_semantic_q4_trench_width(store_with_corpus, monkeypatch):
     """Q4: trench width — BM25 catches 'Payable trench width' on exact
     tokens, semantic disperses across noise."""
     store, embedder, _ = store_with_corpus
-    query = "What is the payable trench width on the DG2 project"
+    query = "What is the payable trench width on the the client project project"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
     hyb = _run_search(store, embedder, query, k=5, query_text=query)

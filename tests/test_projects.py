@@ -35,8 +35,8 @@ def _attach(client, pid, filename, role=None):
 # ── 0.1 Project entity ──────────────────────────────────────────────────────
 
 def test_create_and_get_project(client):
-    proj = _new_project(client, "Diriyah Phase 1")
-    assert proj["name"] == "Diriyah Phase 1"
+    proj = _new_project(client, "the client Phase 1")
+    assert proj["name"] == "the client Phase 1"
     assert proj["client"] == "ACME"
     assert proj["status"] == "active"
 
@@ -130,7 +130,7 @@ def test_approve_project_makes_it_admin_visible(client):
     so it appears in the sidebar (which filters origin='admin_drive_approved').
     Mirrors the visibility a Drive-approved project gets, without re-importing."""
     from app.core import projects as store
-    proj = _new_project(client, "DG2 Bills of Quantities")
+    proj = _new_project(client, "the client project Bills of Quantities")
     pid = proj["id"]
     assert store.approve_project(pid) is True
     from app.core.db import SessionLocal

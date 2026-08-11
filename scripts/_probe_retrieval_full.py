@@ -25,11 +25,11 @@ TARGET_DOC = "5947dbc9"  # TL-600-0000002-D.pdf
 TARGET_CHUNK = 0
 
 QUERIES_ALL = {
-    "Q1": "What is the JCB drawing-number format used on the Diriyah Gate project?",
+    "Q1": "What is the JCB drawing-number format used on the the client project project?",
     "Q2": "What does the SECTIONAL ELEVATION telecom drawing show?",
     "Q3": "What is the procedure for design review acceptance under PRC-501?",
     "Q4": "What is the payable trench width specification for the water supply pipe?",
-    "Q5": "Manhole spacing requirements for telecom ducts on the DG2 project?",
+    "Q5": "Manhole spacing requirements for telecom ducts on the the client project project?",
 }
 
 embedder = get_embedder()

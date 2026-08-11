@@ -13,7 +13,7 @@ Usage:
     python scripts/rag_backfill_batch_local.py \
         --candidates rag_backfill_indexable_candidates.json \
         --batch-index 1 \
-        --project-id dg2_infra_pack_1
+        --project-id client_infra_pack_1
 """
 from __future__ import annotations
 

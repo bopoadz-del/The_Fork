@@ -47,10 +47,10 @@ def test_build_project_context_facts_only():
     """A project with facts but no documents should still return a non-empty context."""
     proj = store.create_project("Facts Only Project")
     pid = proj["id"]
-    store.set_fact(pid, "employer", "Diriyah Gate Authority")
+    store.set_fact(pid, "employer", "the client project Authority")
 
     ctx = build_project_context(pid)
-    assert "Diriyah Gate Authority" in ctx
+    assert "the client project Authority" in ctx
     # No document section
     assert "Project documents" not in ctx
 

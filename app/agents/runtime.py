@@ -315,7 +315,7 @@ def _project_has_non_rag_context(project_id: str, user_message: str) -> bool:
 # after a reload the user saw their own message with no reply — permanently,
 # with no indication anything had gone wrong.
 #
-# Observed live 2026-08-02 in the operator's own conversation: "DG2 package 1"
+# Observed live 2026-08-02 in the operator's own conversation: "the client project package 1"
 # sits in the thread with no assistant turn after it, and the feature sweep
 # reproduced the mechanism (kimi HTTP 400 "tokenization failed" on
 # document_metadata -> error event -> nothing persisted).
@@ -344,7 +344,7 @@ def _tool_result_content(payload: Dict[str, Any]) -> str:
 
     Reproduced 2026-08-03 by the feature sweep on BOTH `document_metadata`
     and `parse_primavera_schedule` — the two actions whose tool results are
-    large. The corpus makes it easy to hit: Diriyah filenames contain en
+    large. The corpus makes it easy to hit: the client filenames contain en
     dashes, which serialize to `\\u2013`, and the cut landed inside one
     ("Unterminated string starting at ... char 7999").
 
@@ -1287,7 +1287,7 @@ def _sanitize_citation_labels(text: str) -> str:
 # chunk (currency/price context) or a computed tool result — otherwise the
 # answer is refused. The unit of grounding is figure + rate-semantics, NOT the
 # bare number: on 2026-07-14 a live cost query answered "450 SAR/m³" by lifting
-# "450" out of a DG2 drawing dimension-table chunk. A naive "the number appears
+# "450" out of a the client project drawing dimension-table chunk. A naive "the number appears
 # somewhere in retrieval" gate would PASS that fabrication because 450 is in the
 # soup; this gate does not, because that chunk is not rate-semantic and 450 does
 # not sit next to a currency/rate-unit. Flag-controlled (COST_GROUNDING_GATE,

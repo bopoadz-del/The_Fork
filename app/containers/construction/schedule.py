@@ -688,7 +688,7 @@ class ConstructionScheduleMixin:
         # A LABOR histogram counts man-hours from RT_Labor resources ONLY. A
         # TASKRSRC target_qty for RT_Mat/RT_Equip is a material/cost/equipment
         # quantity in its own unit — summing it as "man-hours" fabricates the
-        # total (a real DG2 baseline mixes a cost resource whose qty dwarfs all
+        # total (a real the client project baseline mixes a cost resource whose qty dwarfs all
         # labor by ~1000x). Relabel each labor row's trade to the human resource
         # short_name. When the schedule carries no RSRC dictionary at all, no
         # type is knowable, so every assignment is treated as labor (best effort).

@@ -24,7 +24,7 @@
 [   2.04s] ROUTE       {"requested": "project-assistant", "final": "project-assistant", "action": null, "confidence": 0.0, "reason": "below_routing_gate"}
 [   2.04s] START       {"agent": "project-assistant"}
 The minimum clearance for a crane operating near a 220 kV overhead power line is 6.1 meters (20 feet).
-[   7.44s] END         {"iterations": 1, "model": "gpt-4o-mini-2024-07-18", "sources": [{"doc_id": "c9b547ec", "doc_name": "osha_1926_crane_power_line_clearance.md", "page_or_section": "chunk #1", "chunk_index": 1, "chunk_id": "curated_kb:c9b547ec:1", "project_id": "dg2_infra_pack_1", "score": 2.085957, "confidence": "High"}, {"doc_id": "c1b98aa9", "doc_name": "DD-2022-175 - DG II Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 2.pdf", "page_or_section": "chunk #508", "chunk_index": 508, "chunk_id": "dg2_infra_pack_1:c1b98aa9:508", "project_id": "dg2_infra_pack_1", "score": 0.735477, "confidence": ...
+[   7.44s] END         {"iterations": 1, "model": "gpt-4o-mini-2024-07-18", "sources": [{"doc_id": "c9b547ec", "doc_name": "osha_1926_crane_power_line_clearance.md", "page_or_section": "chunk #1", "chunk_index": 1, "chunk_id": "curated_kb:c9b547ec:1", "project_id": "client_infra_pack_1", "score": 2.085957, "confidence": "High"}, {"doc_id": "c1b98aa9", "doc_name": "DD-2022-175 - DG II Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 2.pdf", "page_or_section": "chunk #508", "chunk_index": 508, "chunk_id": "client_infra_pack_1:c1b98aa9:508", "project_id": "client_infra_pack_1", "score": 0.735477, "confidence": ...
 turn summary: total=7.44s  first_token=7.22s  events=5  answer_chars=102
 ```
 
@@ -244,7 +244,7 @@ turn summary: total=2.11s  first_token=2.11s  events=5  answer_chars=147
 
 **Question:** What is the name of the project and who is the client and contractor?
 
-**Expected:** Answer prose must NOT contain DG2 / Diriyah / the client / DPR
+**Expected:** Answer prose must NOT contain the client project / the client / the client / DPR
 
 **Raw transcript:**
 ```
@@ -253,10 +253,10 @@ turn summary: total=2.11s  first_token=2.11s  events=5  answer_chars=147
 [   3.23s] TOOL_CALL   construction_calc  args={}
 [   3.23s] TOOL_RESULT construction_calc (0.00s)  status=?  ~207B
 I don't have the specific name of the project, client, or contractor from the provided context. The retrieved information does not contain those details.
-[   4.39s] END         ... "sources": [{"doc_id": "64b42ea1", "doc_name": "DD-2022-085-DG II PMC Infra PSA- Signed Contract.pdf", ... "confidence": "High"}]
+[   4.39s] END         ... "sources": [{"doc_id": "64b42ea1", "doc_name": "DD-2022-085-CLIENT PMC Infra PSA- Signed Contract.pdf", ... "confidence": "High"}]
 ```
 
-**Verdict:** PASS -- Answer prose is clean: no DG2, Diriyah, the client, or DPR in the response. It honestly said it doesn't have the details. Sources footer shows "DD-2022-085-DG II PMC Infra PSA" in the filename -- this is the KNOWN, ACCEPTED gap (document filenames are not scrubbed). Not scored as a fail per test protocol.
+**Verdict:** PASS -- Answer prose is clean: no the client project, the client, the client, or DPR in the response. It honestly said it doesn't have the details. Sources footer shows "DD-2022-085-CLIENT PMC Infra PSA" in the filename -- this is the KNOWN, ACCEPTED gap (document filenames are not scrubbed). Not scored as a fail per test protocol.
 
 ---
 

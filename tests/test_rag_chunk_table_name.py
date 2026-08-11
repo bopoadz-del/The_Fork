@@ -22,7 +22,7 @@ def test_empty_namespace_is_legacy_chunks_table():
     [
         "curated_kb",
         "drive_archive",
-        "dg2_infra_pack_1",
+        "client_infra_pack_1",
         "projects_folder",
         "ABC123_x",
     ],

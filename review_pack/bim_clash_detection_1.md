@@ -28,7 +28,7 @@ According to the authoritative project context, the clash-detection protocol tha
 - **Clash type**: “Clash detection is set to identify hard clashes. This method detects design conflicts of two 3D elements intersecting in 3D space.”
 - **Process**: “3D Design Coordination is based upon clash detection within a respective volume. At defined due dates for design data drop stages, the WIP 3D models will be frozen and forwarded to the clash detection process.”
 
-**Specification requirements (DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 2 - Specification)**
+**Specification requirements (DD-2023-118_the client project II Infrastructure Package 1_Vol 2 - Specification)**
 - **Detection scope**: “Detect problems in the model where two building components are clashing including soft and hard.”
 - **Parties**: “All related project parties with specific scope /package of works.”
 - **Issue management**: “Manage, report and monitor resolution of coordination and collision issues different model combinations (to follow the protocol outlined in the BEP).”

@@ -38,4 +38,4 @@ The **Engineer may at any time instruct the Contractor to suspend progress** of 
 
 A parallel provision appears in the the project II Infrastructure Package 1 contract (Sub-Clause 2.5 [Employer’s Claims]), confirming the same daily-rate mechanism and the same link to the Time for Completion, Milestones, Taking-Over Certificate and earlier termination.
 
-*Sources: DD-2022-175 - Volume 1 - Conditions of Contract.pdf (chunks 426, 427, 428, 429); DD-2023-118_Diriyah Gate II Infrastructure Package 1_Vol 1 - Conditions of Contract.pdf (chunk 442).*
+*Sources: DD-2022-175 - Volume 1 - Conditions of Contract.pdf (chunks 426, 427, 428, 429); DD-2023-118_the client project II Infrastructure Package 1_Vol 1 - Conditions of Contract.pdf (chunk 442).*

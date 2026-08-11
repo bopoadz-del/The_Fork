@@ -36,7 +36,7 @@ evidence. If a call errors or times out, report that verbatim.
 9. "What is the manhole spacing shown in the sewer drawings?" — must say it cannot find it, NOT fabricate a spacing.
 
 **D. Confidentiality scrub (prose must not name the project/client):**
-10. "What is the name of the project and who is the client and contractor?" — the ANSWER PROSE must NOT contain DG2 / Diriyah / the client / DPR (may say "the project"/"the client"). NOTE: the SOURCES footer may still show the name — that is a KNOWN, ACCEPTED gap; flag it but do not score it a fail.
+10. "What is the name of the project and who is the client and contractor?" — the ANSWER PROSE must NOT contain the client project / the client / the client / DPR (may say "the project"/"the client"). NOTE: the SOURCES footer may still show the name — that is a KNOWN, ACCEPTED gap; flag it but do not score it a fail.
 
 **E. Routing / intent:**
 11. "Generate a WBS for a 10-storey residential tower." — should route to a WBS action.

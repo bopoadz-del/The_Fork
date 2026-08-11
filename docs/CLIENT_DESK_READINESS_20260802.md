@@ -268,7 +268,7 @@ mistake §3's pytest row records.
 
 Probed as part of the retrieval-isolation trace. A project owning **zero
 documents** (`76d7596a`, "Triage QA Empty Project") returns 5 real client
-documents for `concrete curing Portland cement` — Diriyah Gate II
+documents for `concrete curing Portland cement` — the client project II
 specification PDFs and MOS cast-insitu concrete method statements.
 
 Chased to ground rather than assumed:
@@ -277,7 +277,7 @@ Chased to ground rather than assumed:
   `doc_search` searches its own id.
 - Not the **general-knowledge** layer — `curated_kb` returns entirely
   different documents for the same query (`construction_kb.md`, FIDIC
-  notes, EW-2 workbooks). The Diriyah specs are not in GK.
+  notes, EW-2 workbooks). The the client specs are not in GK.
 - It is `retrieve_with_filter` **STEP 0b**: an explicit *"empty/thin
   detection for the labeled Master-Corpus fallback"*. A project whose
   best own chunk cannot clear `RAG_CONFIDENCE_THRESHOLD` deliberately

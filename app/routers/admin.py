@@ -223,7 +223,7 @@ def admin_restore_archived_project(project_id: str,
     """Restore an ARCHIVED project to active — the missing undo for Delete.
 
     2026-07-26: the sidebar cleanup archived the REAL corpus projects
-    (dg2_infra_pack_1, drive_archive) along with the duplicate shells, and
+    (client_infra_pack_1, drive_archive) along with the duplicate shells, and
     archive hides a project from retrieval — corpus-project chat silently
     degraded with no way back from the UI or API. Restore flips status to
     'active'; pass hide_from_sidebar=true to keep the row out of the sidebar

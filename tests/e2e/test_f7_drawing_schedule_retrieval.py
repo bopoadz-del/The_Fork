@@ -182,7 +182,7 @@ def indexed_drawing(monkeypatch, tmp_path):
     # projects.user_id is a real FK — the system user has to exist first.
     users_store.init_db()
     project = projects_store.create_project(
-        name="DG2 Infra", user_id=users_store.SYSTEM_USER_ID
+        name="the client project Infra", user_id=users_store.SYSTEM_USER_ID
     )
     document = projects_store.add_document(
         project_id=project["id"],

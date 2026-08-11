@@ -31,14 +31,14 @@ def test_extract_facts_pulls_durable_fields():
         "doc_type": "contract",
         "contract_value": 12000000,
         "completion_date": "2027-03-01",
-        "details": {"ld_rate": "0.1% per day", "employer": "Diriyah Gate Co"},
+        "details": {"ld_rate": "0.1% per day", "employer": "the client project Co"},
         "noise_field": "ignore me",
     }
     facts = {f["key"]: f["value"] for f in extract_facts(result)}
     assert facts["contract_value"] == "12000000"
     assert facts["completion_date"] == "2027-03-01"
     assert facts["ld_rate"] == "0.1% per day"
-    assert facts["employer"] == "Diriyah Gate Co"
+    assert facts["employer"] == "the client project Co"
     assert "noise_field" not in facts
 
 

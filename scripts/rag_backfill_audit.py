@@ -6,7 +6,7 @@ identifying missing / failed / zero-chunk / unindexed documents for a target
 project.  The audit is uploaded to R2 so it can be downloaded locally.
 
 Usage (on Render worker):
-    python scripts/rag_backfill_audit.py --project-id dg2_infra_pack_1
+    python scripts/rag_backfill_audit.py --project-id client_infra_pack_1
 
 Outputs:
     R2: projects/<project_id>/audits/rag_backfill_audit_<timestamp>.json

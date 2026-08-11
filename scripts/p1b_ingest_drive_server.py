@@ -100,7 +100,7 @@ def _ingest_file(
             "mimeType": mime,
         }
 
-    # Size guard before download. Default OFF (0) — Tier-1 DG2 contract
+    # Size guard before download. Default OFF (0) — Tier-1 the client project contract
     # volumes (signed PSA, drawing packs) exceed 500 MB and were still
     # SKIPPED_TOO_LARGE after the 100→500 bump. Set P1B_MAX_FILE_SIZE_MB
     # to a positive number to re-enable a cap.

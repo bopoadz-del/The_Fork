@@ -1,7 +1,7 @@
 # process_document — prompt 1, run 1
 
 - verdict: PASS
-- prompt: what does the DG2 project execution plan cover?
+- prompt: what does the the client project project execution plan cover?
 - project: master_corpus
 - conversation_id: fmx-e818be43c944
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "process_document", "confidence": 1.0, "reason": "below_routing_gate"}`

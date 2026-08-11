@@ -25,7 +25,7 @@ _logger = logging.getLogger(__name__)
 
 
 # --- Discipline lookup ------------------------------------------------------
-# DG2 (Diriyah Gate Phase II) drawing-number discipline codes. Module-level
+# the client project (the client project) drawing-number discipline codes. Module-level
 # so tests can import + monkeypatch if a new project adds codes.
 DISCIPLINE_FULL: Dict[str, str] = {
     "TM": "Traffic Management",
@@ -42,7 +42,7 @@ DISCIPLINE_FULL: Dict[str, str] = {
     "IF": "Infrastructure",
 }
 
-# JCB-DWG drawing-number pattern observed across the DG2 corpus.
+# JCB-DWG drawing-number pattern observed across the the client project corpus.
 # Two token orders both appear in the wild:
 #   IP-INF-053-0000-JCB-DWG-TM-200-1000005-A   (TM/SG/EL/TL sheets)
 #   IP-INF-053-JCB-0000-DWG-WS-600-0000001-C   (WS sheets — tokens 4-5 swapped)
@@ -84,7 +84,7 @@ def _strip_doubled_letter_prefix(dn: str) -> str:
 
     Strategy: peel one leading char at a time as long as the remainder
     still matches the same full-or-short JCB pattern. The minimum first
-    token in the DG2 corpus is the 2-letter ``IP`` prefix, so this stops
+    token in the the client project corpus is the 2-letter ``IP`` prefix, so this stops
     once the first token shrinks to that length. Single-pass over the
     string; cheap and pattern-aware.
     """
@@ -187,11 +187,11 @@ def _note_near_duplicate(
     return False
 
 
-# Diriyah Gate area / district names that show up at large font sizes
+# the client project area / district names that show up at large font sizes
 # inside the main drawing region of regional / key-plan sheets and win the
 # "largest cluster" title selection. They are sheet content, not
 # drawing-title text. Match as whole-token uppercase.
-_DG2_PLACE_NAMES = frozenset({
+_EXCLUDED_PLACE_NAMES = frozenset({
     "KHUZAMA", "AL TURAIF", "AL BUJAIRI", "AL QARYA", "AL QARYA AL KHADRA",
     "AL KHADRA", "AL SHOHDA", "AL DARIYAH", "DIRIYAH",
     "MECCA", "MADINAH", "RIYADH",
@@ -985,10 +985,10 @@ class DrawingQTOBlock(UniversalBlock):
         if shm:
             result["sheet_number"] = shm.group(1).strip()
 
-        # Project name: look for known DG2 project header keywords
+        # Project name: look for known the client project project header keywords
         for L in lines:
             t = L["text"]
-            if (re.search(r"DIRIYAH\s+GATE", t, re.IGNORECASE) or
+            if (re.search(r"THE CLIENT\s+GATE", t, re.IGNORECASE) or
                 re.search(r"KING\s+KHALID", t, re.IGNORECASE) or
                 re.search(r"INFRASTRUCTURE\s+DESIGN", t, re.IGNORECASE)):
                 # Prefer the largest-font line
@@ -998,7 +998,7 @@ class DrawingQTOBlock(UniversalBlock):
                     result["_project_size"] = L["size"]
         result.pop("_project_size", None)
 
-        # Drafter: known DG2 drafter is "Jacobs"
+        # Drafter: known the client project drafter is "Jacobs"
         for L in lines:
             if re.search(r"\bJACOBS\b", L["text"], re.IGNORECASE):
                 result["drafter"] = "Jacobs"
@@ -1044,11 +1044,11 @@ class DrawingQTOBlock(UniversalBlock):
             # numeric check above due to embedded spaces.
             if re.fullmatch(r"1\s*:\s*\d+", t):
                 continue
-            # Phase 1.6: reject DG2 area / district names that win at
+            # Phase 1.6: reject the client project area / district names that win at
             # large font on regional key-plan sheets but are not
             # drawing-title text (KHUZAMA, AL TURAIF, etc.).
             tu_compact = re.sub(r"\s+", " ", tu).strip()
-            if tu_compact in _DG2_PLACE_NAMES:
+            if tu_compact in _EXCLUDED_PLACE_NAMES:
                 continue
             # Phase 1.7: reject candidates with trailing lowercase
             # artifacts (e.g. ``KEY PLANg`` — a subscript glyph that bled
@@ -1058,7 +1058,7 @@ class DrawingQTOBlock(UniversalBlock):
             if _has_trailing_lowercase_artifact(t):
                 continue
             if any(k in tu for k in (
-                "DIRIYAH GATE", "KING KHALID", "INFRASTRUCTURE DESIGN",
+                "THE CLIENT GATE", "KING KHALID", "INFRASTRUCTURE DESIGN",
                 "KINGDOM OF SAUDI", "JACOBS", "WWW.", "P.O. BOX",
                 "PRINCE SATTAM", "AL SHOHDA", "DATUM", "GEODETIC",
                 "PROJECT SYSTEM", "ZONE:", "NOTES",

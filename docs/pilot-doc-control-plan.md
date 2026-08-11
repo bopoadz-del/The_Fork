@@ -42,17 +42,17 @@ Real-contractor document control:
 
 ## Locked decisions
 
-- Prepare, don't build, now. | No gating now. | Global template, later. | DG2 /
+- Prepare, don't build, now. | No gating now. | Global template, later. | the client project /
   broad corpus for testing now.
 - **NEVER hard-delete a project** — schema is `ON DELETE CASCADE` on chunks;
   hard delete destroys the RAG. UI removal = soft-archive only.
 
 ## Separate bug track (surfaced from the 2026-07-16 admin/agent review)
 
-1. Empty-project leakage: `ha_long_xanh` (0 docs) answered from DG2 content —
+1. Empty-project leakage: `ha_long_xanh` (0 docs) answered from the client project content —
    an empty project must say "no documents", not borrow another corpus.
 2. Intent bug: "what tools do you have" RAG-retrieved literal power tools instead
    of listing the agent's software tools.
-3. Duplicate / mislabeled projects: `master_corpus` and `dg2_infra_pack_1`
+3. Duplicate / mislabeled projects: `master_corpus` and `client_infra_pack_1`
    both 39/9,861 (same corpus, two names); `drive_archive` mislabeled
-   "DG2 Infra Pack 1".
+   "the client project".

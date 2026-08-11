@@ -115,7 +115,7 @@ export default function Projects() {
               <div className="pilot-banner" role="note">
                 <strong>Pilot tip:</strong> Ask questions inside{' '}
                 <em>Master Corpus</em> and filter by package in
-                your prompt, e.g. “Answer only from DG2 Infra Pack 1 documents.”
+                your prompt, e.g. “Answer only from the client project documents.”
                 Individual project shells are still being indexed.
               </div>
             )}

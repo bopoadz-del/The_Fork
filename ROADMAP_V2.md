@@ -49,7 +49,7 @@ artifacts panel all need a `Project` to hang off of.
   `GET /v1/projects/{id}`, `POST /v1/projects/{id}/documents`.
 - Every uploaded file gets a `project_id` (replaces the flat UUID namespace in
   `upload.py:57`). Documents with no project go to a per-session "scratch" project.
-- Wire the real list into `index.html:95` (kill the hardcoded Diriyah/Qiddiya/KAUST).
+- Wire the real list into `index.html:95` (kill the hardcoded the client/Qiddiya/KAUST).
 
 **Acceptance**
 - Creating a project, attaching 3 documents, and reloading shows the same 3

@@ -20,7 +20,7 @@ Gate bar: >= 90% of the golden set must PASS (>= 27/29). **Gate MET.**
 | fresh_mv_soak_test | fresh_upload_grounding | FIXTURE — Fresh Upload Eval | PASS | hit | 9s |
 | fresh_cpi_threshold | fresh_upload_grounding | FIXTURE — Fresh Upload Eval | PASS | hit | 7s |
 | fresh_mass_concrete_curing | fresh_upload_grounding | FIXTURE — Fresh Upload Eval | PASS | hit | 9s |
-| pilot_doc_qa_dg2_pep | process_document | master_corpus | PASS | - | 76s |
+| pilot_doc_qa_client_pep | process_document | master_corpus | PASS | - | 76s |
 | pilot_boq_total | boq_process | FIXTURE — BOQ | PASS | - | 8s |
 | pilot_spec_extraction | spec_analyze | master_corpus | PASS | - | 40s |
 | pilot_document_metadata | document_metadata | master_corpus | PASS | - | 12s |
