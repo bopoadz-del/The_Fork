@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: set up a quality audit programme for the piling subcontractor
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-d9e431752a0f
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "qa_audit", "confidence": 0.8, "reason": "below_routing_gate"}`
 - tool_calls: []

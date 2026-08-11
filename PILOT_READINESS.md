@@ -13,7 +13,7 @@ The **foundation is now sound and the construction platform is actually loaded**
 | **Grounded RAG answers** | Live UI answers cite real docs+chunks (e.g. payments → DD-2022-175 Vol 4 Schedules; commissioning → Aecom electrical comments, drawing refs, DD-2023-118 Vol 2). |
 | **Corpus** | `chunks_v2` = **53 docs / 10,502 chunks**, avg **198 chunks/doc**, **0 duplicate chunk_ids**, canonical store confirmed. Large contracts fully chunked (up to 1,936). |
 | **DB integrity** | `DATABASE_URL` set + **fail-loud guard shipped** (#190) so the "empty SQLite" strand can't recur. Old `chunks` table empty; `chunks_v2` canonical. |
-| **Master corpus** | `MASTER_CORPUS_SOURCE_PROJECT_ID=dg2_infra_pack_1` → "Dar Al Arkan Master Corpus" now retrieves the real corpus (was empty). |
+| **Master corpus** | `MASTER_CORPUS_SOURCE_PROJECT_ID=dg2_infra_pack_1` → "Master Corpus" now retrieves the real corpus (was empty). |
 | **Auth** | 401s enforced; both domains serving; logged-in session working. |
 
 ## Shipped this run

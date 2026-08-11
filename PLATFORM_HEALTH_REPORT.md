@@ -48,7 +48,7 @@ SET on the live Render env. Values never printed beyond last-4.
 
 **Three-way reconciliation (render.yaml vs live dashboard vs .env.example):**
 - `MASTER_CORPUS_PROJECT_ID` — in render.yaml, **absent from live env**;
-  code default `dar_al_arkan_master` covers it, but it's a dashboard-gap
+  code default `master_corpus` covers it, but it's a dashboard-gap
   (pin risk). Recommend setting it explicitly.
 - `RAG_GENERAL_KNOWLEDGE_PROJECTS` — live `curated_kb` = render.yaml =
   GK fallback-only design ruling. **Reconciled.**

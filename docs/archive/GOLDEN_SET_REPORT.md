@@ -20,22 +20,22 @@ Gate bar: >= 90% of the golden set must PASS (>= 26/28). **Gate NOT MET.**
 | fresh_mv_soak_test | fresh_upload_grounding | ce1ced1a | FAIL | MISS | 3s |
 | fresh_cpi_threshold | fresh_upload_grounding | ce1ced1a | FAIL | MISS | 4s |
 | fresh_mass_concrete_curing | fresh_upload_grounding | ce1ced1a | FAIL | MISS | 30s |
-| pilot_doc_qa_dg2_pep | process_document | dar_al_arkan_master | FAIL | - | 12s |
+| pilot_doc_qa_dg2_pep | process_document | master_corpus | FAIL | - | 12s |
 | pilot_boq_total | boq_process | 96bd7cd1 | FAIL | - | 6s |
-| pilot_spec_extraction | spec_analyze | dar_al_arkan_master | FAIL | - | 7s |
-| pilot_document_metadata | document_metadata | dar_al_arkan_master | FAIL | - | 9s |
-| pilot_wbs_generation | generate_wbs | dar_al_arkan_master | PASS | - | 11s |
-| pilot_manpower_histogram | resource_histogram | dar_al_arkan_master | FAIL | - | 14s |
+| pilot_spec_extraction | spec_analyze | master_corpus | FAIL | - | 7s |
+| pilot_document_metadata | document_metadata | master_corpus | FAIL | - | 9s |
+| pilot_wbs_generation | generate_wbs | master_corpus | PASS | - | 11s |
+| pilot_manpower_histogram | resource_histogram | master_corpus | FAIL | - | 14s |
 | pilot_milestones | parse_primavera_schedule | 7ce7b9d0 | PASS | - | 11s |
-| pilot_s_curve | cash_flow_forecast | dar_al_arkan_master | PASS | - | 16s |
-| pilot_procurement_list | procurement_list_generator | dar_al_arkan_master | PASS | - | 10s |
-| pilot_rfp_sections | rfp_management | dar_al_arkan_master | PASS | - | 13s |
-| pilot_kb_mass_concrete | construction_advisor | dar_al_arkan_master | PASS | - | 6s |
+| pilot_s_curve | cash_flow_forecast | master_corpus | PASS | - | 16s |
+| pilot_procurement_list | procurement_list_generator | master_corpus | PASS | - | 10s |
+| pilot_rfp_sections | rfp_management | master_corpus | PASS | - | 13s |
+| pilot_kb_mass_concrete | construction_advisor | master_corpus | PASS | - | 6s |
 | pilot_qto_floor_area | drawing_qto | 7ce7b9d0 | PASS | - | 5s |
-| demo_project_brief | demo_flow | dar_al_arkan_master | PASS | - | 10s |
-| demo_biggest_cost_items | demo_flow | dar_al_arkan_master | FAIL | - | 6s |
-| demo_open_risks | demo_flow | dar_al_arkan_master | FAIL | - | 11s |
-| demo_procure_first | demo_flow | dar_al_arkan_master | PASS | - | 5s |
+| demo_project_brief | demo_flow | master_corpus | PASS | - | 10s |
+| demo_biggest_cost_items | demo_flow | master_corpus | FAIL | - | 6s |
+| demo_open_risks | demo_flow | master_corpus | FAIL | - | 11s |
+| demo_procure_first | demo_flow | master_corpus | PASS | - | 5s |
 
 ## Failures
 

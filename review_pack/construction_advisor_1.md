@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: for a 2.5m thick mass concrete raft, what thermal control limits apply and how long to equilibrium?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-80d02ea01c00
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "construction_advisor", "confidence": 0.8, "reason": "below_routing_gate"}`
 - tool_calls: []

@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: build the warranty and planned maintenance schedule for the MEP systems
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-fa4d25802270
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "warranty_maintenance_schedule", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

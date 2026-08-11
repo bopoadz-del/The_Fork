@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: review the contract - what do the FIDIC clauses say about delay damages?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-901ad49d38bb
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "process_contract", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

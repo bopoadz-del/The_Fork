@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: draft a design directive instructing the consultant to revise the parking layout
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-24789a580125
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "design_directive", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

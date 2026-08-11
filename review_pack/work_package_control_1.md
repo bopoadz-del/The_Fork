@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: give me the work package register status - which packages are overdue?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-db245abce29f
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "work_package_control", "confidence": 1.0, "reason": "below_routing_gate"}`
 - tool_calls: []

@@ -32,7 +32,7 @@ The training/evaluation corpus is large, mostly well-mapped to the indexed chunk
 
 | project_id | documents | chunks | notes |
 |---|---|---|---|
-| `projects_folder` | 2 713 | 110 379 | backing corpus for the `dar_al_arkan_master` master-corpus alias |
+| `projects_folder` | 2 713 | 110 379 | backing corpus for the `master_corpus` master-corpus alias |
 | `training_material` | 241 | 10 907 | cross-project general-knowledge corpus (procedures, scanned references) |
 | `ha_long_xanh` | 62 | 383 | user project; own corpus exists |
 | `fb776aa2` | 15 | 57 | small user project |
@@ -60,7 +60,7 @@ This concentration is good for domain focus but creates a retrieval confounder: 
 
 ### 2.3 Master-corpus alias behaviour
 
-The public project id `dar_al_arkan_master` is an alias; the chat route resolves it to `projects_folder`. The standalone `POST /v1/rag/search` route **does not resolve the alias**, so direct RAG debugging must use `projects_folder`. This was confirmed by the retrieval recall test.
+The public project id `master_corpus` is an alias; the chat route resolves it to `projects_folder`. The standalone `POST /v1/rag/search` route **does not resolve the alias**, so direct RAG debugging must use `projects_folder`. This was confirmed by the retrieval recall test.
 
 ---
 
@@ -159,11 +159,11 @@ Observations:
 | query | project | result | issue |
 |---|---|---|---|
 | `concrete` | `ha_long_xanh` | returned generic `training_material` chunks about prestressed/reinforced concrete | active project corpus ignored for a generic term; GK corpus dominates |
-| `rebar` | `dar_al_arkan_master` (alias) | only 1 chunk, score 0.06, garbled OCR | very poor retrieval |
-| `DG2 project execution plan` | `dar_al_arkan_master` | **0 chunks** | high-value document not retrieved |
-| `bill of quantities` | `dar_al_arkan_master` | 3 relevant contract-template chunks, scores ~0.57-0.58 | good |
-| `FIDIC clause` | `dar_al_arkan_master` | 2 near-duplicate chunks, score ~1.4e-7 | effectively no signal |
-| `lighting fixture` | `dar_al_arkan_master` | generic scanned high-rise building chunks, not the relevant DG2 drawing | wrong source |
+| `rebar` | `master_corpus` (alias) | only 1 chunk, score 0.06, garbled OCR | very poor retrieval |
+| `DG2 project execution plan` | `master_corpus` | **0 chunks** | high-value document not retrieved |
+| `bill of quantities` | `master_corpus` | 3 relevant contract-template chunks, scores ~0.57-0.58 | good |
+| `FIDIC clause` | `master_corpus` | 2 near-duplicate chunks, score ~1.4e-7 | effectively no signal |
+| `lighting fixture` | `master_corpus` | generic scanned high-rise building chunks, not the relevant DG2 drawing | wrong source |
 
 The master corpus of 110k+ chunks is large enough that generic queries drown specific ones, and the 256-dim `model2vec` embeddings do not preserve enough discriminative signal.
 
@@ -175,7 +175,7 @@ The master corpus of 110k+ chunks is large enough that generic queries drown spe
 
 ## 5. Chat answer quality
 
-Method: call `POST /v1/agents/project-assistant/chat` with `project_id=dar_al_arkan_master` and inspect the returned answer, source citations and `iterations`.
+Method: call `POST /v1/agents/project-assistant/chat` with `project_id=master_corpus` and inspect the returned answer, source citations and `iterations`.
 
 | query | status | verdict | notes |
 |---|---|---|---|

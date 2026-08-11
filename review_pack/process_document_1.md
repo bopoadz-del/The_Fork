@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: what does the DG2 project execution plan cover?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-e818be43c944
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "process_document", "confidence": 1.0, "reason": "below_routing_gate"}`
 - tool_calls: []

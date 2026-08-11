@@ -285,7 +285,7 @@ async def list_projects(auth: dict = Depends(require_user)):
             user_id=auth["user_id"], include_admin_approved=True,
         )
         # Pilot: hide incomplete approved shells from non-admins so they
-        # gravitate to the Dar Al Arkan Master Corpus.
+        # gravitate to the Master Corpus.
         rows = [
             r for r in rows
             if not (

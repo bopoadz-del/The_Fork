@@ -347,7 +347,7 @@ first. Update on every task state change.
   uploaded a document, triggered two Render deploys, document preview still 200
   with original content after both deploys. Disk is non-ephemeral.
 - Storage map confirmed: Postgres (metadata + vector chunks) persists; `/app/data`
-  persistent disk survives deploys. `dar_al_arkan_master` / `projects_folder`
+  persistent disk survives deploys. `master_corpus` / `projects_folder`
   blobs are missing because those early imports pre-date the proven disk state;
   later Drive imports (`dg2_infra_pack_1`, `5c13510e`, `ha_long_xanh_2`) retained
   blobs.
@@ -437,12 +437,12 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 
   | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
   |---|---:|---:|---:|---:|---|
-  | dar_al_arkan_master | 0 | 0 | 110375 | 0 | mismatch (api=110375, db=0) |
+  | master_corpus | 0 | 0 | 110375 | 0 | mismatch (api=110375, db=0) |
   | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
   | training_material | 246 | 10982 | 10982 | 10982 | ok |
   | unclassified | 1 | 4 | 4 | 4 | ok |
 
-- Root cause: `dar_al_arkan_master` is a pilot master-corpus alias whose
+- Root cause: `master_corpus` is a pilot master-corpus alias whose
   chunks live under `projects_folder`. The admin corpus-collections endpoint
   counted by raw `project_id`, so the alias appeared as 0 chunks — the display
   that invited a destructive re-index click.
@@ -457,7 +457,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
 
   | project_id | docs (DB) | chunks (DB) | API chunk_count | admin chunks | flag |
   |---|---:|---:|---:|---:|---|
-  | dar_al_arkan_master | 2712 | 110375 | 110375 | 110375 | ok |
+  | master_corpus | 2712 | 110375 | 110375 | 110375 | ok |
   | projects_folder | 2712 | 110375 | 110375 | 110375 | ok |
   | training_material | 246 | 10982 | 10982 | 10982 | ok |
   | unclassified | 1 | 4 | 4 | 4 | ok |
@@ -512,7 +512,7 @@ Current prod env: `LLM_PROVIDER=kimi` (test state). Awaiting Chadi's decision on
     tool-backed, model = `gpt-4o-mini-2024-07-18`.
   - Admin Drive proof endpoints reachable on prod and return controlled
     errors when no folder is configured:
-    - `POST /v1/admin/drive/download-proof` → `200 {ok: False, error: "no Drive folder configured for project dar_al_arkan_master"}`
+    - `POST /v1/admin/drive/download-proof` → `200 {ok: False, error: "no Drive folder configured for project master_corpus"}`
     - `POST /v1/admin/drive/ingest-proof` → same.
   - **Blocker for full T4 live verification:** `GDRIVE_PROJECT_FOLDERS` is not
     set on Render, and the service account (`thefork-drive-import@project-drive-469320.iam.gserviceaccount.com`)

@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: what goes into the letter of award and which bonds do we need before signing?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-a430c337e754
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "contract_award", "confidence": 0.6, "reason": "below_routing_gate"}`
 - tool_calls: []

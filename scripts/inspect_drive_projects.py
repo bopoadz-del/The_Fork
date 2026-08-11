@@ -32,9 +32,9 @@ DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork.onrender.com")
 # Each entry has the platform project_id and one or more folder-name aliases to
 # match against. The anchor pair dg2_infra_pack_1 is validated on discovery.
 RECOVERY_PROJECTS: List[Dict[str, Any]] = [
-    # dar_al_arkan_master is a virtual alias backed by projects_folder;
+    # master_corpus is a virtual alias backed by projects_folder;
     # the physical hydration target is projects_folder.
-    {"project_id": "dar_al_arkan_master", "names": ["Dar Al Arkan Master Corpus"], "no_map": True, "note": "alias -> projects_folder"},
+    {"project_id": "master_corpus", "names": ["Master Corpus"], "no_map": True, "note": "alias -> projects_folder"},
     {"project_id": "projects_folder", "names": ["Projects Folder"]},
     {"project_id": "ha_long_xanh", "names": ["Ha Long Xanh"]},
     {"project_id": "ha_long_xanh_2", "names": ["Ha Long Xanh"]},

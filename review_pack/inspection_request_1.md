@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: prepare an inspection request for the blinding concrete pour at zone B
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-9cc11cd4656d
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "inspection_request", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

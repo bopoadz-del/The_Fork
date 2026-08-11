@@ -154,7 +154,7 @@ def test_purge_archived_project_only_touches_archived(client):
     # active project: refused
     assert store.purge_archived_project(pid) == "not_archived"
     # protected master ids: refused even if somehow archived
-    assert store.purge_archived_project("dar_al_arkan_master") == "protected"
+    assert store.purge_archived_project("master_corpus") == "protected"
     assert store.purge_archived_project("projects_folder") == "protected"
     # archive it, THEN purge succeeds and the row is gone
     assert store.archive_project(pid) is True

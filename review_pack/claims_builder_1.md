@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: build a loss and expense claim for the 3-week utility diversion delay
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-23f9c5de3c61
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "claims_builder", "confidence": 0.8, "reason": "needs_planning"}`
 - tool_calls: []

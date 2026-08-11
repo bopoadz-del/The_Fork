@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: summarise the MV culvert diversion drawing changes for me
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-6c973ba9adbd
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "drawing_qto", "confidence": 0.2, "reason": "needs_planning"}`
 - tool_calls: []

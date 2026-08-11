@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: what are the prerequisites for practical completion and the DLP obligations?
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-bb5223dcdc86
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "handover_management", "confidence": 0.6, "reason": "below_routing_gate"}`
 - tool_calls: []

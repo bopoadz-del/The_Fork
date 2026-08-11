@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: prepare an RFP for the landscaping subcontract package
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-1d16f463b0fb
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "rfp_management", "confidence": 1.0, "reason": "below_routing_gate"}`
 - tool_calls: []

@@ -1,7 +1,7 @@
 
 [   1.12s] ROUTE       {"requested": "project-assistant", "final": "heavy-reasoning", "action": "forensic_delay_analysis", "confidence": 1.0, "reason": "needs_planning"}
 
-[   1.12s] START       {"session_id": "ws-dar_al_arkan_master", "mode": "predefined", "request_id": "0086f16e-f33"}
+[   1.12s] START       {"session_id": "ws-master_corpus", "mode": "predefined", "request_id": "0086f16e-f33"}
 The request for a delay claim with an extension of time and quantum has resulted in an error. The forensic delay analysis requires both a baseline schedule and an updated/as-built schedule. Please provide the necessary 'baseline_file' and 'updated_file' (in XER format) for the analysis to proceed. 
 
 If you have any further questions or need assistance with the required files, feel free to ask. 

@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: sync the as-built BIM against the digital twin and list the deltas
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-4a26e709b109
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "digital_twin_sync", "confidence": 0.8, "reason": "needs_planning"}`
 - tool_calls: []

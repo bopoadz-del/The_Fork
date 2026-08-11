@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: raise an NCR for out-of-tolerance column verticality on level 3 and suggest the disposition
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-b67fca398eff
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "ncr_management", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

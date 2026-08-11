@@ -1,6 +1,6 @@
 {
   "base": "https://the-fork.onrender.com",
-  "project_id_used": "dar_al_arkan_master",
+  "project_id_used": "master_corpus",
   "summary": {
     "OK": 41,
     "SKIPPED-NEEDS-PARAM": 10,
@@ -322,7 +322,7 @@
     },
     {
       "path": "/v1/projects/{project_id}",
-      "probed": "/v1/projects/dar_al_arkan_master",
+      "probed": "/v1/projects/master_corpus",
       "method": "GET",
       "status": 200,
       "verdict": "OK",
@@ -330,7 +330,7 @@
     },
     {
       "path": "/v1/projects/{project_id}/audit",
-      "probed": "/v1/projects/dar_al_arkan_master/audit",
+      "probed": "/v1/projects/master_corpus/audit",
       "method": "GET",
       "status": 200,
       "verdict": "OK",
@@ -338,7 +338,7 @@
     },
     {
       "path": "/v1/projects/{project_id}/connectors",
-      "probed": "/v1/projects/dar_al_arkan_master/connectors",
+      "probed": "/v1/projects/master_corpus/connectors",
       "method": "GET",
       "status": 200,
       "verdict": "OK",
@@ -346,7 +346,7 @@
     },
     {
       "path": "/v1/projects/{project_id}/conversations",
-      "probed": "/v1/projects/dar_al_arkan_master/conversations",
+      "probed": "/v1/projects/master_corpus/conversations",
       "method": "GET",
       "status": 200,
       "verdict": "OK",
@@ -354,7 +354,7 @@
     },
     {
       "path": "/v1/projects/{project_id}/documents",
-      "probed": "/v1/projects/dar_al_arkan_master/documents",
+      "probed": "/v1/projects/master_corpus/documents",
       "method": "GET",
       "status": 200,
       "verdict": "OK",
@@ -362,7 +362,7 @@
     },
     {
       "path": "/v1/projects/{project_id}/documents/search",
-      "probed": "/v1/projects/dar_al_arkan_master/documents/search",
+      "probed": "/v1/projects/master_corpus/documents/search",
       "method": "GET",
       "status": 400,
       "verdict": "400",
@@ -388,7 +388,7 @@
     },
     {
       "path": "/v1/projects/{project_id}/memory",
-      "probed": "/v1/projects/dar_al_arkan_master/memory",
+      "probed": "/v1/projects/master_corpus/memory",
       "method": "GET",
       "status": 200,
       "verdict": "OK",

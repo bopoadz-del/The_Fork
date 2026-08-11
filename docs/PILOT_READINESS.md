@@ -21,7 +21,7 @@ The **foundation is sound and the construction platform is loaded** — 40 block
 | **Grounded RAG answers** | Live UI answers cite real docs+chunks. Payments → DD-2022-175 Vol 4; commissioning → Aecom electrical comments. |
 | **Corpus** | `chunks_v2` = **53 docs / 10,502 chunks**, avg 198 chunks/doc, 0 duplicate chunk_ids. |
 | **DB integrity** | `DATABASE_URL` set + fail-loud guard (#190). Old `chunks` table empty; `chunks_v2` canonical. |
-| **Master corpus** | `MASTER_CORPUS_SOURCE_PROJECT_ID=dg2_infra_pack_1` → "Dar Al Arkan Master Corpus" retrieves real corpus. |
+| **Master corpus** | `MASTER_CORPUS_SOURCE_PROJECT_ID=dg2_infra_pack_1` → "Master Corpus" retrieves real corpus. |
 | **Auth** | 401s enforced; both domains serving; logged-in session working. |
 | **Fabrication kill** | F1/F2/F3 (#206) + F4 (#207 + #216) all live-verified. **Zero FAKE remaining.** |
 | **Grounding gate** | Increment 1 stamps (#215) + increment 2 money/rate (#219). Zero-FP on 147 real figures. `COST_GROUNDING_GATE` default-on. |

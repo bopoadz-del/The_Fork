@@ -53,6 +53,6 @@ Real-contractor document control:
    an empty project must say "no documents", not borrow another corpus.
 2. Intent bug: "what tools do you have" RAG-retrieved literal power tools instead
    of listing the agent's software tools.
-3. Duplicate / mislabeled projects: `dar_al_arkan_master` and `dg2_infra_pack_1`
+3. Duplicate / mislabeled projects: `master_corpus` and `dg2_infra_pack_1`
    both 39/9,861 (same corpus, two names); `drive_archive` mislabeled
    "DG2 Infra Pack 1".

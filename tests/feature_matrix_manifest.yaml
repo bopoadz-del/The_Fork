@@ -21,14 +21,14 @@
 # `class: must` = MUST-COVER feature (2 phrasings: canonical + colloquial).
 # `class: coverage` = single-prompt coverage of the remaining registry.
 # `needs` documents fixture requirements; `project` defaults to
-# dar_al_arkan_master unless the feature needs a specific corpus.
+# master_corpus unless the feature needs a specific corpus.
 #
 # NOTE: ~11 actions are hint-only classification labels (no container
 # handler): routing PASS for those = the route event names the action; no
 # structural oracle beyond a non-trivial grounded answer.
 
 defaults:
-  project: dar_al_arkan_master
+  project: master_corpus
   min_chars: 800
   agent: project-assistant
 

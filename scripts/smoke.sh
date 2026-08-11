@@ -24,13 +24,13 @@
 # Usage:
 #   FORK_API_KEY="..." ./scripts/smoke.sh                 # routine: 3 runs
 #   SMOKE_RUNS=10 FORK_API_KEY="..." ./scripts/smoke.sh   # release: 10 runs
-#   ./scripts/smoke.sh dar_al_arkan_master
+#   ./scripts/smoke.sh master_corpus
 #
 # Long release runs may exceed a shell/CI timeout. Use --background <file> to
 # detach and write results to a file; the caller polls the file for completion.
 set -u
 
-PROJECT="${1:-${FORK_PROJECT:-dar_al_arkan_master}}"
+PROJECT="${1:-${FORK_PROJECT:-master_corpus}}"
 BACKGROUND_FILE=""
 if [ "${1:-}" = "--background" ]; then
   BACKGROUND_FILE="${2:-}"
@@ -39,7 +39,7 @@ if [ "${1:-}" = "--background" ]; then
     exit 2
   fi
   shift 2
-  PROJECT="${1:-${FORK_PROJECT:-dar_al_arkan_master}}"
+  PROJECT="${1:-${FORK_PROJECT:-master_corpus}}"
 fi
 
 RUNS="${SMOKE_RUNS:-3}"                       # routine default; release uses 10

@@ -97,7 +97,7 @@ async def rag_search(
 @router.get("/v1/rag/gk-status")
 async def rag_gk_status(
     q: str = "FIDIC 2017 Golden Principles Contractor claim time-bar",
-    project_id: str = "dar_al_arkan_master",
+    project_id: str = "master_corpus",
     auth: dict = Depends(require_api_key),
 ):
     """Read-only diagnostic for general-knowledge (``training_material``) grounding.

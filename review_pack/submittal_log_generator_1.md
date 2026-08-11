@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: set up a submittal log for the finishes packages with approval status columns
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-3bf49aade33e
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "submittal_log_generator", "confidence": 1.0, "reason": "below_routing_gate"}`
 - tool_calls: []

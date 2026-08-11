@@ -12,7 +12,7 @@
 
 - **Flag-gated, default OFF.** `RAG_LAYERED` env (truthy: `1/true/yes/on`). When off, every new path is a strict no-op and retrieval/ingestion behave exactly as today. This ships to `main`/cloud without changing demo behavior; the pilot/on-prem env sets `RAG_LAYERED=1`.
 - **No emojis** anywhere in repo, code, comments, commits, UI.
-- **Never hard-delete a project/chunk in code paths.** Deletes stay soft (archive). NEVER-delete ids: `projects_folder, training_material, dar_al_arkan_master, dg2_infra_pack_1, curated_kb, drive_archive, bc812f36, b5a0fed8`.
+- **Never hard-delete a project/chunk in code paths.** Deletes stay soft (archive). NEVER-delete ids: `projects_folder, training_material, master_corpus, dg2_infra_pack_1, curated_kb, drive_archive, bc812f36, b5a0fed8`.
 - **Dual DB.** Every schema change lands in BOTH `the_fork_schema.sql` (fresh-DB bootstrap) AND an Alembic migration (next rev = `0011`). ORM (`app/core/models.py::RagChunk`) omits FK constraints (SQLite convenience) — FK/cascade changes go in the Alembic migration + `the_fork_schema.sql` only.
 - **Layer enum values (verbatim):** `shared_domain` (L1), `company_rules` (L2A), `project_record` (L2B), `user_session` (L3). Legacy retrieval tags (`own`/`general_knowledge`/`master_corpus`) map onto these but stay accepted.
 - **Authority enum values (verbatim):** `contractual, design, commercial, operational, policy, historical, personal`. Precedence high→low in that order.

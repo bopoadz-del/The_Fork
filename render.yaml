@@ -81,7 +81,7 @@ services:
       # NOTE: these are the intended live values; render.yaml env does NOT
       # auto-sync to the dashboard, so the live env must be set to match.
       - key: MASTER_CORPUS_PROJECT_ID
-        value: dar_al_arkan_master
+        value: master_corpus
       - key: MASTER_CORPUS_SOURCE_PROJECT_ID
         value: drive_archive
       - key: MASTER_CORPUS_NAME

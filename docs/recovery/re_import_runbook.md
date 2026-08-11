@@ -86,7 +86,7 @@ curl -s -X POST \
 
 ## Step 4 â€” Decide what to do with existing empty/partial projects
 
-Some projects still have document rows but no file blobs (e.g. `dar_al_arkan_master` / `projects_folder`, `ha_long_xanh`). The Drive hydration path skips files it has already seen, so you must clear the seen-file cache to force a full re-import.
+Some projects still have document rows but no file blobs (e.g. `master_corpus` / `projects_folder`, `ha_long_xanh`). The Drive hydration path skips files it has already seen, so you must clear the seen-file cache to force a full re-import.
 
 > **STOP â€” operator decision required:** The next step only clears the gdrive seen cache. It is safe. However, re-importing into a project that already has empty document rows will add new documents alongside the old ones, inflating `document_count`. If you want a clean re-import instead, archive the old project first (which hides it but preserves its RAG chunks) and create a new project from Drive. Do **not** hard-delete any project that has live RAG chunks.
 
@@ -128,7 +128,7 @@ curl -s -X POST \
   "https://the-fork.onrender.com/v1/hydration/run"
 ```
 
-> **Note:** `dar_al_arkan_master` is a virtual alias backed by `projects_folder`; hydrating `projects_folder` populates the master corpus.
+> **Note:** `master_corpus` is a virtual alias backed by `projects_folder`; hydrating `projects_folder` populates the master corpus.
 
 ---
 
@@ -196,7 +196,7 @@ Run a quick chat turn against the master corpus and a Drive-approved project to 
 ```bash
 .venv/Scripts/python.exe scripts/fork_cli.py chat \
   "what does the DG2 project execution plan cover?" \
-  --project dar_al_arkan_master --events
+  --project master_corpus --events
 
 .venv/Scripts/python.exe scripts/fork_cli.py chat \
   "process the bill of quantities and give me the total value" \

@@ -163,7 +163,7 @@ no fabrication. The **read/answer path is solid**; the **generate/deliverable pa
 
 ## Empirical pass (live DG2 verification, 2026-07-13) — CORRECTS THE STATIC KEYSTONE
 
-Live fork_cli runs against prod-config chat on `dar_al_arkan_master`. Model live = **gpt-4o-mini**.
+Live fork_cli runs against prod-config chat on `master_corpus`. Model live = **gpt-4o-mini**.
 
 | Probe | Result | Correction to static audit |
 |---|---|---|

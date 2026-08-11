@@ -2,7 +2,7 @@
 
 - verdict: PASS
 - prompt: draft the tender package sections for the electrical works
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-fb32a8788f6c
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "rfp_management", "confidence": 0.4, "reason": "below_routing_gate"}`
 - tool_calls: []

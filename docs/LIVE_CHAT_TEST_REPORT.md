@@ -4,7 +4,7 @@
 
 **Date:** 2026-07-16T14:00:00Z
 **Pilot URL:** https://the-fork.onrender.com
-**Project:** dar_al_arkan_master
+**Project:** master_corpus
 **Agent:** project-assistant
 **Tester:** fork_cli.py via SSE stream + discipline-agent test suite
 **Model:** gpt-4o-mini-2024-07-18 (primary), no fallback observed
@@ -41,7 +41,7 @@ turn summary: total=7.44s  first_token=7.22s  events=5  answer_chars=102
 **Raw transcript:**
 ```
 [   0.83s] ROUTE       {"requested": "project-assistant", "final": "project-assistant", "action": "safety_compliance_audit", "confidence": 0.4, "reason": "below_routing_gate"}
-[   1.51s] START       {"session_id": "ws-dar_al_arkan_master", "mode": "predefined", "request_id": "d49aa7a1-7f3"}
+[   1.51s] START       {"session_id": "ws-master_corpus", "mode": "predefined", "request_id": "d49aa7a1-7f3"}
 The request for the guardrail top-rail height for fall protection resulted in an error. The tool indicates that no site photos were supplied, which are necessary for a safety compliance analysis. Please provide a 'photos' list or a 'file_path' for further evaluation.
 [   3.27s] END         {"complete": true, "mode": "predefined", "workflow": "safety_compliance_audit", "plan_steps": ["safety_compliance_audit"], ...
 turn summary: total=3.27s  first_token=2.67s  events=45  answer_chars=268
@@ -244,7 +244,7 @@ turn summary: total=2.11s  first_token=2.11s  events=5  answer_chars=147
 
 **Question:** What is the name of the project and who is the client and contractor?
 
-**Expected:** Answer prose must NOT contain DG2 / Diriyah / Dar Al Arkan / DPR
+**Expected:** Answer prose must NOT contain DG2 / Diriyah / the client / DPR
 
 **Raw transcript:**
 ```
@@ -256,7 +256,7 @@ I don't have the specific name of the project, client, or contractor from the pr
 [   4.39s] END         ... "sources": [{"doc_id": "64b42ea1", "doc_name": "DD-2022-085-DG II PMC Infra PSA- Signed Contract.pdf", ... "confidence": "High"}]
 ```
 
-**Verdict:** PASS -- Answer prose is clean: no DG2, Diriyah, Dar Al Arkan, or DPR in the response. It honestly said it doesn't have the details. Sources footer shows "DD-2022-085-DG II PMC Infra PSA" in the filename -- this is the KNOWN, ACCEPTED gap (document filenames are not scrubbed). Not scored as a fail per test protocol.
+**Verdict:** PASS -- Answer prose is clean: no DG2, Diriyah, the client, or DPR in the response. It honestly said it doesn't have the details. Sources footer shows "DD-2022-085-DG II PMC Infra PSA" in the filename -- this is the KNOWN, ACCEPTED gap (document filenames are not scrubbed). Not scored as a fail per test protocol.
 
 ---
 
@@ -269,7 +269,7 @@ I don't have the specific name of the project, client, or contractor from the pr
 **Raw transcript:**
 ```
 [   0.87s] ROUTE       {"requested": "project-assistant", "final": "heavy-reasoning", "action": "generate_wbs", "confidence": 0.2, "reason": "needs_planning"}
-[   1.99s] START       {"session_id": "ws-dar_al_arkan_master", "mode": "predefined", "request_id": "4e140f12-046"}
+[   1.99s] START       {"session_id": "ws-master_corpus", "mode": "predefined", "request_id": "4e140f12-046"}
 Schedule built: 204 activities over 688 working days (44 on the critical path). Total effort is about 11,832 man-days. The cost-loaded workbook (CPM, cumulative man-days S-curve, manpower histogram, milestones) is ready to download.
 [   2.00s] END         {"complete": true, "mode": "predefined", "workflow": "generate_wbs", "plan_steps": ["build_wbs", "cost_load"] ...
 turn summary: total=2.00s  first_token=1.99s  events=36  answer_chars=233

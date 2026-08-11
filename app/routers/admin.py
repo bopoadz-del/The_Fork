@@ -1020,7 +1020,7 @@ def admin_corpus_collections(
             collections.append(entry)
 
     # Pilot master-corpus alias: the canonical project_id
-    # (dar_al_arkan_master) is a read-only view over the backing Drive-folder
+    # (master_corpus) is a read-only view over the backing Drive-folder
     # corpus (projects_folder). The admin inventory must never show the alias
     # as 0 chunks — that invited a destructive re-index click in T2. Reflect
     # the source counts under the alias so the admin page and reconciliation

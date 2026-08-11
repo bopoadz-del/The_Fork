@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: generate a level 2 construction schedule for a 30-storey residential tower, 30 months
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-3bfb9aae4cd3
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "generate_wbs", "confidence": 0.4, "reason": "needs_planning"}`
 - tool_calls: []

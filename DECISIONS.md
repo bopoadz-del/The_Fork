@@ -412,7 +412,7 @@ new BOQ workbook to a fresh fixture project and update the manifest. Until then,
 **Finding:** In the FEATURE_MATRIX_V2 sweep, prompt 2 for `cash_flow_forecast`
 ("what does the cumulative spend curve look like month by month?") returned a
 251-character answer: "I don't have that information in the provided reference
-context." The project used was `dar_al_arkan_master` (master corpus), which
+context." The project used was `master_corpus` (master corpus), which
 contains contract/payment clauses but no project-specific cost plan or budget
 curve.
 

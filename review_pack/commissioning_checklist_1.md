@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: generate a commissioning checklist for the MV substation
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-0f5759aed986
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "commissioning_checklist", "confidence": 0.6, "reason": "below_routing_gate"}`
 - tool_calls: []

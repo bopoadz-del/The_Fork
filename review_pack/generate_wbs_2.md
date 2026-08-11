@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: draft me a WBS for an infrastructure package - roads, sewer and street lighting
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-a79b1d4064fa
 - route event: `{"requested": "project-assistant", "final": "heavy-reasoning", "action": "generate_wbs", "confidence": 0.2, "reason": "needs_planning"}`
 - tool_calls: []

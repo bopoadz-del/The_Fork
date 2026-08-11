@@ -6,8 +6,8 @@ Generated: 2026-07-06T17:25 UTC
 
 | project_id | name | origin | docs | files_present | zero_chunk_docs | total_chunks | folder_id | status |
 |---|---|---|---|---|---|---|---|---|
-| dar_al_arkan_master | Dar Al Arkan Master Corpus | admin_drive_approved | 2713 | 0 | N/A | N/A | TBD | **lost blobs** — re-import source |
-| projects_folder | Projects Folder | user_create | 2713 | 0 | N/A | N/A | TBD | backing corpus for `dar_al_arkan_master`; same blob loss |
+| master_corpus | Master Corpus | admin_drive_approved | 2713 | 0 | N/A | N/A | TBD | **lost blobs** — re-import source |
+| projects_folder | Projects Folder | user_create | 2713 | 0 | N/A | N/A | TBD | backing corpus for `master_corpus`; same blob loss |
 | ha_long_xanh | Ha Long Xanh | admin_drive_approved | 62 | 2 | 61 | 1 | TBD | mostly missing blobs |
 | ha_long_xanh_2 | Ha Long Xanh | admin_drive_approved | 81 | 81 | 61 | 69 | TBD | blobs present but mostly un-indexed |
 | dg2_infra_pack_1 | DG2 Infra Pack 1 | admin_drive_approved | 4 | 4 | 2 | 160 | `1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j` | partial index |
@@ -18,7 +18,7 @@ Generated: 2026-07-06T17:25 UTC
 
 - Postgres metadata (project rows, document rows) **survived**.
 - `/app/data` persistent disk **survives deploys** (double-deploy survival test passed 2026-07-06).
-- File blobs for the earliest imports (`dar_al_arkan_master` / `projects_folder`, `ha_long_xanh`) are gone; later imports (`dg2_infra_pack_1`, `5c13510e`, `ha_long_xanh_2`) retained blobs.
+- File blobs for the earliest imports (`master_corpus` / `projects_folder`, `ha_long_xanh`) are gone; later imports (`dg2_infra_pack_1`, `5c13510e`, `ha_long_xanh_2`) retained blobs.
 - Drive folder IDs are **not stored in the database** (no `folder_id` column, no project fact, no surviving audit log on disk). They must come from operator records.
 
 ## Required to proceed with re-import
@@ -27,7 +27,7 @@ Generated: 2026-07-06T17:25 UTC
 2. Complete `GDRIVE_PROJECT_FOLDERS` mapping, e.g.:
 
    ```text
-   dar_al_arkan_master:<folder-id>,projects_folder:<folder-id>,ha_long_xanh:<folder-id>,ha_long_xanh_2:<folder-id>,dg2_infra_pack_1:1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j,5c13510e:<folder-id>
+   master_corpus:<folder-id>,projects_folder:<folder-id>,ha_long_xanh:<folder-id>,ha_long_xanh_2:<folder-id>,dg2_infra_pack_1:1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j,5c13510e:<folder-id>
    ```
 
 3. Sibling packs under the same parent as `DG2 Infra Pack 1` (Chadi to enumerate).
@@ -42,5 +42,5 @@ Generated: 2026-07-06T17:25 UTC
 
 ## Verification targets after re-import
 
-- `dar_al_arkan_master`: files_present == 2713, total_chunks > 0.
+- `master_corpus`: files_present == 2713, total_chunks > 0.
 - Each Drive-linked project: zero_chunk_docs == 0.

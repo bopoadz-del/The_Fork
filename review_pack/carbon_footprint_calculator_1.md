@@ -2,7 +2,7 @@
 
 - verdict: FAIL
 - prompt: calculate the embodied carbon for 12,000 m3 of C40 concrete and 900t of rebar
-- project: dar_al_arkan_master
+- project: master_corpus
 - conversation_id: fmx-b86e5c935455
 - route event: `{"requested": "project-assistant", "final": "project-assistant", "action": "carbon_footprint_calculator", "confidence": 0.6, "reason": "below_routing_gate"}`
 - tool_calls: []
