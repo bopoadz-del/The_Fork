@@ -25,7 +25,7 @@ class BIMBlock(UniversalBlock):
     # them, and we delegate IFC parsing to `bim_extractor` (which actually
     # works today). Storage-backed actions (`index_folder`, `compare_versions`)
     # surface a clear error instead of crashing on a missing dep.
-    requires = ["pdf", "ocr", "bim_extractor", "document_engine", "zvec"]
+    requires = ["pdf", "ocr", "bim_extractor", "document_engine"]
     layer = 6  # Domain layer
     tags = ["construction", "bim", "cad", "domain"]
     default_config = {
@@ -63,13 +63,6 @@ class BIMBlock(UniversalBlock):
 
     @property
     def storage_block(self): return self.get_dep("storage")
-
-    @property
-    def vector_block(self):
-        # Old name was `vector`, the platform's real indexer is `zvec`
-        # (with a `vector_search` alias). Resolve either so legacy callers
-        # of `self.vector_block` still get something usable.
-        return self.get_dep("zvec") or self.get_dep("vector_search") or self.get_dep("vector")
 
     @property
     def pdf_block(self): return self.get_dep("pdf")
@@ -129,15 +122,18 @@ class BIMBlock(UniversalBlock):
         }
     
     async def _index_folder(self, data: Dict) -> Dict:
-        """Walk `folder_path` on disk, parse every supported BIM file's headers,
-        and (when zvec is wired) embed a one-line summary per file so the
-        chat's RAG can search across them.
+        """Walk `folder_path` on disk and parse every supported BIM file's headers.
 
-        Rewired: previously listed via `self.storage_block.execute(list)` and
-        embedded via `self.vector_block.execute(add)`. Neither block exists
-        in the platform — `storage` was never built, and the vector indexer
-        is named `zvec` (or `vector_search`), not `vector`. Folder listing
-        now uses `os.scandir`; embedding goes through the `zvec` dep.
+        History, because this wiring has been wrong twice: it originally listed
+        via `self.storage_block.execute(list)` and embedded via
+        `self.vector_block.execute(add)`, and neither block existed. It was then
+        repointed at the `zvec` block — which computed an embedding and returned
+        it WITHOUT STORING ANYTHING, while this method discarded the return
+        value. So the "indexing" step indexed nothing; it only cost an embedding.
+
+        That call is now gone. Folder listing uses `os.scandir`. Files uploaded
+        through the normal path are indexed for retrieval by doc_index /
+        app.core.rag, which is the only retrieval system the platform has.
         """
         project_id = data.get("project_id")
         folder_path = data.get("folder_path")
@@ -172,25 +168,6 @@ class BIMBlock(UniversalBlock):
                 meta = {"type": file_info["type"]}
             file_info.update(meta)
             bim_files.append(file_info)
-
-            # Best-effort RAG indexing via the zvec block (when wired). zvec
-            # is async-friendly via .execute(); we pass a one-line summary
-            # plus the file metadata so chat search can surface it later.
-            zvec = self.get_dep("zvec") or self.get_dep("vector_search")
-            if zvec is not None:
-                try:
-                    summary = f"{entry.name}: {meta.get('description') or self.SUPPORTED_FORMATS[ext]}"
-                    await zvec.execute(
-                        summary,
-                        {"operation": "embed", "metadata": {**file_info, "project": project_id}},
-                    )
-                except Exception:
-                    # Indexing is best-effort — don't fail the whole index_folder
-                    # call because zvec hiccupped on one entry.
-                    logger.debug(
-                        "swallowed %s in _index_folder() — continuing",
-                        "Exception", exc_info=True,
-                    )
 
         self.projects[project_id] = {
             "folder": folder_path,
