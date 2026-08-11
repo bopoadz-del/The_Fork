@@ -39,13 +39,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 HEAVY = ("torch", "sklearn", "scipy", "pandas", "ultralytics", "cv2", "sympy")
 
 
-def _modules_after_importing_app() -> set[str]:
+@pytest.fixture(scope="module")
+def modules_after_importing_app(tmp_path_factory) -> set[str]:
     """Import app.main in a CLEAN interpreter and report top-level modules.
 
     A subprocess is essential: by the time this test runs, the pytest session
     has already imported plenty of these libraries for other tests, so checking
     this process's sys.modules would pass no matter what the app does.
+
+    Module-scoped so the (multi-second) app import runs ONCE for all the
+    parametrised cases rather than once per library.
     """
+    # A throwaway DB under tmp_path, never the repo's data/ directory: leftover
+    # files there have previously contaminated later runs of the RAG suite.
+    db_path = tmp_path_factory.mktemp("boot_imports") / "boot.db"
     code = textwrap.dedent(
         """
         import sys, json
@@ -56,7 +63,7 @@ def _modules_after_importing_app() -> set[str]:
     # Inherit the real environment (PATH, SYSTEMROOT, venv) and override only
     # the database, so this measures the app rather than a crippled interpreter.
     env = dict(os.environ)
-    env["DATABASE_URL"] = "sqlite:///./data/test_boot_imports.db"
+    env["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
     proc = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
@@ -74,9 +81,8 @@ def _modules_after_importing_app() -> set[str]:
 
 
 @pytest.mark.parametrize("library", HEAVY)
-def test_boot_does_not_import(library: str) -> None:
-    loaded = _modules_after_importing_app()
-    assert library not in loaded, (
+def test_boot_does_not_import(library: str, modules_after_importing_app: set) -> None:
+    assert library not in modules_after_importing_app, (
         f"`import app.main` pulled in {library!r} at boot. Every block in "
         "app/blocks/__init__.py is imported eagerly, so a module-scope import "
         f"of {library} is paid on every start, including deployments where the "
