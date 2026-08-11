@@ -7,7 +7,7 @@ from app.core import projects as projects_mod
 
 
 def test_get_or_create_is_idempotent_same_id():
-    name = "the client project"
+    name = "Client Infra Pack 1"
     pid = "client_infra_pack_1"
     a, created_a = projects_mod.get_or_create_project(name, project_id=pid)
     b, created_b = projects_mod.get_or_create_project(name, project_id=pid)

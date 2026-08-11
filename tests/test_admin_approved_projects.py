@@ -144,13 +144,13 @@ def test_approve_from_drive_creates_row_and_slugs_name(client, monkeypatch):
 
     resp = client.post(
         "/v1/admin/projects/approve-from-drive",
-        json={"folder_id": "drive-folder-abc", "name": "the client project"},
+        json={"folder_id": "drive-folder-abc", "name": "Client Infra Pack 1"},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["status"] == "queued"
     project = body["project"]
-    assert project["name"] == "the client project"
+    assert project["name"] == "Client Infra Pack 1"
     assert project["is_approved"] is True
     assert project["user_id"] == "system"
     assert project["id"] == "client_infra_pack_1"

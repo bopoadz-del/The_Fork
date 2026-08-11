@@ -4,7 +4,7 @@ New test shapes (2026-07-25):
 - The KB audit is a structural sweep over docs/knowledge/*.md: domain
   coverage buckets, non-empty titled notes, and — the sharp edge — NO
   project/client identifiers in the GENERAL layer (scrub policy). This
-  audit found and scrubbed live leaks ("the client project", "the client project")
+  audit found and scrubbed live leaks ("Diriyah Gate Phase II", "DG2")
   on its first run.
 - The scanner check is a PLANTED-DEVIATION probe: texts written to trip
   each broadened rule must be flagged, off-topic text must not be, and
@@ -41,7 +41,7 @@ def test_kb_has_notes_and_all_are_titled_nonempty():
 # General-layer knowledge must carry NO project/client identifiers — the
 # curated KB serves every deployment; identifiers belong to project layers.
 _IDENTIFIER_PATTERNS = re.compile(
-    r"the client|dar\s*al\s*arkan|master-corpus|\bDG\s*2\b|\bthe client project\b|\bDGII\b|"
+    r"diriyah|dar\s*al\s*arkan|dar-al-arkan|\bDG\s*2\b|\bDG2\b|\bDGII\b|"
     r"arcadis|parsons\b|landmark\s+tower|\bTGH\b",
     re.IGNORECASE,
 )
