@@ -231,10 +231,28 @@ The platform exposes:
 ```bash
 python -m pytest tests/e2e/ -q   # the six demo flows — seconds
 python -m pytest tests/ -q       # the full suite — ~35-40 minutes, 3100+ tests
+python scripts/test_matrix.py    # BOTH CI profiles — what CI green actually means
 ```
 
 Run the E2E flows first. They are fast and they fail loudly if the install is
 wrong; the full suite is thorough but too slow to be a smoke test.
+
+**Before pushing, run `scripts/test_matrix.py`, not just `pytest tests/`.** CI
+runs the suite twice — once with `CEREBRUM_VIRGIN=true` (the generic block set)
+and once with `CEREBRUM_VIRGIN=false` + `CEREBRUM_DOMAIN_KITS=construction` (the
+full platform) — and some tests only run under one of them. A plain
+`pytest tests/` covers one profile, so it can report a clean pass on a change
+that CI rejects; that happened on 2026-08-11, where a green local run of 3302
+tests missed an `ImportError` that only the production-like profile executes.
+
+`test_matrix.py` reads the matrix and env straight out of
+`.github/workflows/test.yml` rather than keeping its own copy, so it cannot
+drift when the workflow changes. It exits non-zero if any profile fails.
+
+```bash
+python scripts/test_matrix.py --profile virgin   # one profile
+python scripts/test_matrix.py -k chaining        # extra args go to pytest
+```
 
 CI gates, all blocking on every PR:
 
