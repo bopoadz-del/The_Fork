@@ -4,10 +4,14 @@ import uuid
 from typing import Any, Dict, List
 
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 from app.core.universal_base import UniversalBlock
+
+# sklearn is imported lazily inside _search_collection, not here. Importing it
+# at module scope costs ~3.2s and ~200 MB of RSS at BOOT (it drags in scipy and
+# pandas), because app/blocks/__init__.py eagerly imports every block. On
+# Render's free instance (0.1 CPU) that alone pushed startup past the
+# port-scan window. Same pattern as app/core/learning/router.py:385.
 
 # Module-level in-memory store: {collection_name: {"docs": [], "ids": [], "metas": []}}
 _STORE: Dict[str, Dict] = {}
@@ -23,6 +27,9 @@ def _search_collection(collection: str, query: str, n: int) -> List[Dict]:
     docs = col.get("docs", [])
     if not docs:
         return []
+
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
 
     corpus = docs + [query]
     # Use char-level n-grams for better recall on short phrases
