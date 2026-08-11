@@ -1,5 +1,6 @@
 """Construction Container - Full AEC Industry Domain Container v3.1"""
 
+import asyncio
 import logging
 import os
 import re
@@ -1090,7 +1091,70 @@ class ConstructionContainer(
                 }
         except Exception as exc:
             return unavailable(f"weather service error: {exc}")
+    def _run_construction_detector(self, photo_path: str) -> Dict:
+        """Run the committed YOLO-Worldv2 ONNX over one photo.
+
+        Returns ``{"detections": [...], "detector": "safety_world_v2"|"unavailable"}``.
+
+        conf_threshold is 0.05, NOT the detector default of 0.25, because the
+        report's low-confidence tier starts at 0.05 — at the default the whole
+        0.05-0.25 band would be discarded inside the detector and could never
+        be surfaced as "possible X -- low confidence".
+
+        `detector: "unavailable"` when SAFETY_WORLD_WEIGHTS is unset or the
+        model cannot load. The report must say the photo path was unavailable
+        rather than print an empty section that reads as "nothing found on
+        site" — an absent detector and a clean site are not the same claim.
+        """
+        from app.blocks.safety_world_detector import default_detector
+        try:
+            detector = default_detector()
+        except Exception:
+            logger.exception("construction detector failed to load for %s", photo_path)
+            return {"detections": [], "detector": "unavailable"}
+        if detector is None:
+            return {"detections": [], "detector": "unavailable"}
+        try:
+            from app.containers.construction.photo_observations import LOW_CONF_THRESHOLD
+            return {
+                "detections": detector.detect(Path(photo_path), conf_threshold=LOW_CONF_THRESHOLD),
+                "detector": "safety_world_v2",
+            }
+        except Exception:
+            logger.exception("construction detector raised on %s", photo_path)
+            return {"detections": [], "detector": "unavailable"}
+
     async def _analyze_site_photo(self, photo_path: str) -> Dict:
+        """Per-photo analysis feeding the daily report's photo consumers.
+
+        CONTRACT (the three _extract_*_from_photos consumers read this shape):
+          photo                 filename, the evidence reference in the report
+          activities_detected   generic `image` block objects (pre-existing)
+          safety_compliance     compliant | issues_found | unknown
+          headcount_estimate    int  (pre-existing)
+          progress_indicators   str  (pre-existing)
+          detections            [{class, confidence, bbox}] from the
+                                construction detector's 33-prompt vocabulary
+          detector              safety_world_v2 | unavailable
+
+        The first five keys are unchanged — `_extract_safety_observations`
+        already reads `safety_compliance` and must keep working. `detections`
+        and `detector` are added for the quality and equipment consumers, which
+        need the class and confidence the generic block does not provide.
+        """
+        detector_result = await asyncio.to_thread(self._run_construction_detector, photo_path)
+        analysis = {
+            "photo": Path(photo_path).name,
+            "activities_detected": [],
+            # "unknown" not "compliant": with no generic-block result there is
+            # no basis for either claim. _extract_safety_observations treats
+            # anything other than "compliant" as an observation, so this must
+            # never default to a value that invents one.
+            "safety_compliance": "unknown",
+            "headcount_estimate": 0,
+            "progress_indicators": "",
+            **detector_result,
+        }
         image_block = self.get_dep("image")
         if image_block:
             try:
@@ -1098,19 +1162,19 @@ class ConstructionContainer(
                     {"file_path": photo_path},
                     {"prompt": "Identify: trade/work activity, equipment, materials, safety conditions, progress indicators, headcount estimate"}
                 )
-                return {
-                    "photo": Path(photo_path).name,
-                    "activities_detected": result.get("objects", []),
-                    "safety_compliance": "compliant" if not any("hazard" in str(o).lower() for o in result.get("objects", [])) else "issues_found",
+                objects = result.get("objects", [])
+                analysis.update({
+                    "activities_detected": objects,
+                    "safety_compliance": "compliant" if not any("hazard" in str(o).lower() for o in objects) else "issues_found",
                     "headcount_estimate": result.get("people_count", 0),
-                    "progress_indicators": result.get("description", "")[:200]
-                }
+                    "progress_indicators": result.get("description", "")[:200],
+                })
             except Exception:
                 logger.warning(
                     "swallowed %s in _analyze_site_photo() — continuing",
                     "Exception", exc_info=True,
                 )
-        return {"photo": Path(photo_path).name, "activities_detected": [], "safety_compliance": "unknown", "headcount_estimate": 0, "progress_indicators": ""}
+        return analysis
     def _extract_activities_from_voice(self, transcriptions: List[Dict]) -> List[Dict]:
         activities = []
         combined_text = " ".join([t.get("text", "") for t in transcriptions])
@@ -1157,7 +1221,16 @@ class ConstructionContainer(
     def _extract_manpower_from_voice(self, transcriptions: List[Dict]) -> Dict:
         return {"total": 0, "by_trade": {}, "absent": 0}
     def _extract_equipment_from_photos(self, photo_analysis: List[Dict]) -> List[Dict]:
-        return []
+        """Plant and temporary works seen in the photo set.
+
+        Only crane / ladder / scaffolding exist in the detector's vocabulary,
+        so that is all this can return. Excavators, telehandlers and dumpers
+        have no prompt string and are invisible at any confidence — a
+        vocabulary limit registered in KNOWN_INCOMPLETE.md, not something to
+        paper over by guessing from context.
+        """
+        from app.containers.construction.photo_observations import equipment_from_photos
+        return equipment_from_photos(photo_analysis)
     def _generate_daily_narrative(self, date: str, activities: List, issues: List, weather: Dict, manpower: Dict) -> str:
         parts = []
         parts.append(f"DAILY SITE REPORT - {date}")
@@ -1187,13 +1260,33 @@ class ConstructionContainer(
         parts.append(f"Next Day: Continue ongoing activities pending resolution of identified issues")
         return "\n".join(parts)
     def _extract_safety_observations(self, photo_analysis: List[Dict], transcriptions: List[Dict]) -> List[Dict]:
+        """Safety observations from photo analysis.
+
+        Only `issues_found` produces an observation. It previously fired on
+        anything that was not "compliant", which meant `unknown` — the value
+        used when no analysis could be performed at all — emitted "Safety
+        issues detected" for a photo nothing had looked at. That is a
+        fabricated observation on a client-facing report, and the reason the
+        default is now explicit rather than inferred from inequality.
+        """
         obs = []
         for p in photo_analysis:
-            if p.get("safety_compliance") != "compliant":
-                obs.append({"source": "photo", "observation": "Safety issues detected in photo analysis"})
+            if p.get("safety_compliance") == "issues_found":
+                obs.append({
+                    "source": "photo",
+                    "photo": p.get("photo"),
+                    "observation": "Safety issues detected in photo analysis",
+                })
         return obs
     def _extract_quality_observations(self, photo_analysis: List[Dict]) -> List[Dict]:
-        return []
+        """Workmanship observations from the 13 quality prompts.
+
+        Observations, never verdicts: "crack in concrete wall detected (0.62)"
+        records what the camera saw. Whether it is a defect, and what it means,
+        is an engineer's judgement made with the operator in the loop.
+        """
+        from app.containers.construction.photo_observations import quality_observations
+        return quality_observations(photo_analysis)
     def _extract_material_deliveries(self, transcriptions: List[Dict]) -> List[Dict]:
         return []
     def _generate_next_day_plan(self, activities: List[Dict], issues: List[Dict]) -> List[str]:

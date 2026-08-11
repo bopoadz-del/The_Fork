@@ -98,30 +98,52 @@ neighbour needed a bid corpus for the same inputs; that was wrong.
 - app/containers/construction/__init__.py :: _identify_consolidation  — procurement packages worth consolidating. Buildable now: group plan items by `material` and by `recommended_supplier`; repeats across BOQ items are the consolidation candidates.
 - app/containers/construction/__init__.py :: _suggest_bundling  — supplier bundling opportunities. Buildable now: group by `recommended_supplier` within a `required_date` window, cross-checked against `scored_suppliers` capability; `packaging_strategy` already flags bulk-eligible lines.
 
-### Site photo intelligence — detections already flow
+### Site photo intelligence — BUILT 2026-08-12
 
-Vision is NOT missing. `_analyze_site_photo` (`__init__.py:1093`) calls the
-`image` block and returns a structured dict per photo —
-`activities_detected` (the detected objects), `safety_compliance`,
-`headcount_estimate`, `progress_indicators` — and `schedule.py:448-451` builds
-`photo_analysis` from it and passes that list straight into both functions
-below. They receive real detections today and return `[]`.
+`_extract_equipment_from_photos` and `_extract_quality_observations` are
+implemented and wired; they are no longer registered here. The register's
+previous reason — "needs the vision model wired through" — was wrong twice
+over: the weights were committed at `data/models/safety_world_v2.onnx` all
+along, and the daily-report path already called all three consumers. What was
+actually missing was that the producer ran the generic `image` block instead of
+the construction detector, so the 33-prompt vocabulary never executed.
 
-The gap is the mapping from detected object labels to daily-report fields,
-which is code. What it needs: an equipment vocabulary to classify labels as
-plant (the Safety Observation model's baked class list is the obvious source),
-plus dedup across photos so one excavator seen in six frames is one entry.
-
-Per the platform's standing framing, output must read as OBSERVATIONS, not
-violations or verdicts — and per the no-assumptions rule, an item's project
-metadata comes from the project, never inferred from photo content.
-
-- app/containers/construction/__init__.py :: _extract_equipment_from_photos  — plant/equipment on site. Buildable now: classify `activities_detected` labels against an equipment vocabulary, dedup across the photo set, count instances.
-- app/containers/construction/__init__.py :: _extract_quality_observations  — workmanship observations. Buildable now: `_analyze_site_photo` already derives `safety_compliance` from the same detections; this is the equivalent pass for workmanship indicators, phrased as observations.
+Measured on 21 real photographs in `docs/PHOTO_INTELLIGENCE_EVAL.md`:
+**quality 9% at the 0.30 reporting threshold, plant 60%.** Usable as a prompt
+for a human to review specific photos; NOT a QA record. What remains is
+registered below as vocabulary and model limits, not as unbuilt code.
 
 ---
 
 ## Stated limitations — implemented, but narrower than it looks
+
+**Site-photo observations detect far less than the field names suggest.**
+Measured 2026-08-12 over 21 real construction photographs
+(`docs/PHOTO_INTELLIGENCE_EVAL.md`): **9% recall on quality/workmanship** at the
+0.30 reporting threshold, **60% on plant** over a three-class vocabulary.
+
+Three separate limits, none fixable in the bridge code:
+
+- **Vocabulary gap — plant.** The baked vocabulary has exactly three plant /
+  temporary-works prompts: crane, ladder, scaffolding. Excavators,
+  telehandlers, dumpers, piling rigs and concrete pumps have NO prompt string
+  and are undetectable at any confidence. The equipment section is not padded
+  to hide this. Fixing it means adding prompts and re-baking the ONNX.
+- **Vocabulary gap — quality precision.** `exposed aggregate in concrete
+  surface` and `water stain on wall` behave as near-catch-alls for concrete
+  texture: they fired at 0.58-0.63 on photos containing neither. False
+  positives reach the same reporting tier as true ones.
+- **Model limitation — surface defects.** Cracks, peeling paint and
+  honeycombing are largely missed, while whole objects (ladder 0.962, helmet
+  0.989) are strong. Consistent with an open-vocabulary detector grounded on
+  object nouns rather than material-condition textures; likely needs a
+  different model class, not more prompts.
+
+Consequence for use: the quality section is a prompt to look at specific
+photographs, not a QA finding. Every observation carries its source photo and
+confidence so a reader can check it, and nothing in the pipeline may call
+anything a defect, violation or non-compliance.
+
 
 Not hollow functions, so `audit_stubs.py` cannot see these. They are here
 because the honest scope of a feature is part of knowing what is incomplete.
