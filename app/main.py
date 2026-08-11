@@ -1,5 +1,6 @@
 """Cerebrum Blocks - Simple Block Execution API."""
 
+import asyncio
 import os
 import sys
 
@@ -178,45 +179,89 @@ async def lifespan(app: FastAPI):
                 type(app.state.project_store).__name__)
     loaded = load_agents()
     logger.info("Loaded %d runtime agents: %s", len(loaded), ", ".join(sorted(loaded.keys())))
-    # Warm-load the Safety Observation AI v2 detector so the first
-    # /v1/chat/analyze-photo request doesn't pay the ~3-5s ONNX cold
-    # load and silently return empty observations (the bug that hit
-    # PR #135's first deploy). When SAFETY_WORLD_WEIGHTS is unset,
-    # default_detector() returns None -- which is fine, the chat route
-    # just gracefully skips the safety_qaqc tier.
-    try:
-        from app.blocks.safety_world_detector import default_detector as _safety_world_warm
-        _det = _safety_world_warm()
-        if _det is not None:
-            logger.info("Safety Observation AI v2 detector warm-loaded: %d classes",
-                        len(_det.class_names))
-        else:
-            logger.info("Safety Observation AI v2 detector NOT loaded "
-                        "(SAFETY_WORLD_WEIGHTS unset or file missing)")
-    except Exception:
-        logger.exception("Safety Observation AI v2 warm-load failed; "
-                         "/v1/chat/analyze-photo will lazy-load on first request")
-    # Warm-load the RAG embedder (bge-small, ~8-40s cold) at startup, same
-    # rationale as the safety detector above. seed_knowledge() only loads it
-    # when it actually re-indexes; on an instance restart where the notes are
-    # already seeded (matched by sha) it skips, leaving the embedder to
-    # lazy-load on the FIRST /v1/chat/stream RAG query — which then eats the
-    # cold load inside the stream deadline and manifests as an intermittent
-    # chat hang / empty bubble. Preloading makes readiness == model-loaded.
-    try:
-        from app.core.rag.embeddings import get_embedder
-        _emb = get_embedder()
-        _emb.encode(["warmup"])
-        logger.info("RAG embedder warm-loaded: %s dim=%d", _emb.model_name, _emb.dim)
-    except Exception:
-        logger.exception("RAG embedder warm-load failed; first RAG query will lazy-load")
     from app.core import hydration_scheduler
     hydration_scheduler.start()
+
+    # Model warm-up runs AFTER the port is listening — see _warm_models.
+    warm_task = None
+    if os.getenv("WARM_MODELS_BLOCKING", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("WARM_MODELS_BLOCKING set — warming models before serving")
+        await _warm_models()
+    else:
+        warm_task = asyncio.create_task(_warm_models())
     try:
         yield
     finally:
+        if warm_task is not None:
+            warm_task.cancel()
+            try:
+                await warm_task
+            except BaseException:  # shutdown must never raise, incl. CancelledError
+                pass
         await hydration_scheduler.stop()
         await _redis_client.close_redis_client()
+
+
+def _warm_safety_detector() -> None:
+    """Load the Safety Observation AI v2 detector.
+
+    Without this the first /v1/chat/analyze-photo pays a ~3-5s ONNX cold load
+    and silently returns empty observations (the bug that hit PR #135's first
+    deploy). When SAFETY_WORLD_WEIGHTS is unset, default_detector() returns
+    None, and the chat route gracefully skips the safety_qaqc tier.
+    """
+    from app.blocks.safety_world_detector import default_detector
+    det = default_detector()
+    if det is not None:
+        logger.info("Safety Observation AI v2 detector warm-loaded: %d classes",
+                    len(det.class_names))
+    else:
+        logger.info("Safety Observation AI v2 detector NOT loaded "
+                    "(SAFETY_WORLD_WEIGHTS unset or file missing)")
+
+
+def _warm_embedder() -> None:
+    """Load the RAG embedder (bge-small, ~8-40s cold; longer on first download).
+
+    seed_knowledge() only loads it when it actually re-indexes, so on a restart
+    where the notes are already seeded it would otherwise lazy-load inside the
+    FIRST /v1/chat/stream RAG query — eating the cold load inside the stream
+    deadline, which surfaces as an intermittent chat hang / empty bubble.
+    """
+    from app.core.rag.embeddings import get_embedder
+    emb = get_embedder()
+    emb.encode(["warmup"])
+    logger.info("RAG embedder warm-loaded: %s dim=%d", emb.model_name, emb.dim)
+
+
+async def _warm_models() -> None:
+    """Warm the heavy models WITHOUT blocking startup.
+
+    These used to run inline in lifespan, before FastAPI opened the port. On a
+    host with no persistent HF cache the embedder warm-up also downloads the
+    model, so startup could exceed the platform's port-scan window. Render then
+    restarted the container while the first boot was still loading, and TWO
+    processes holding torch + bge-small at once exceeded the 512Mi instance —
+    an out-of-memory kill whose actual cause was a slow startup, not a leak.
+
+    Running them as a background task means the port opens as soon as the light
+    initialisation is done. The trade-off is explicit: for a short window after
+    boot the models may still be loading, so an early RAG query lazy-loads and
+    pays the cold cost — exactly what happened before this warm-up existed, and
+    strictly better than never becoming reachable at all.
+
+    Set WARM_MODELS_BLOCKING=true to restore the old inline behaviour (on-prem
+    deployments may prefer readiness to mean model-loaded). Each load is
+    isolated: the detector failing must not stop the embedder from loading.
+    """
+    for label, fn in (("safety detector", _warm_safety_detector),
+                      ("RAG embedder", _warm_embedder)):
+        try:
+            await asyncio.to_thread(fn)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("%s warm-load failed; it will lazy-load on first use", label)
 
 
 # Interactive docs + the raw OpenAPI schema disclose the entire API surface
