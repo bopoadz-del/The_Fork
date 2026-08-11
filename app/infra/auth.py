@@ -45,7 +45,9 @@ class AuthBlock(LegoBlock):
             Role.ADMIN: ["*"],  # All blocks including admin
             Role.PRO: ["chat", "vector", "storage", "ocr", "image", "voice", "queue"],
             Role.BASIC: ["chat", "vector", "storage"],
-            Role.READONLY: ["chat_readonly", "vector_search"]  # No mutations
+            # "vector_search" removed with the block itself — the grant named a
+            # block that no longer exists, so no capability is lost here.
+            Role.READONLY: ["chat_readonly"]  # No mutations
         }
         
         # Master key for admin operations
