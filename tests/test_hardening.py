@@ -116,8 +116,8 @@ def test_code_blocks_are_admin_only_via_execute():
         # An ordinary block is still runnable by the same non-admin user.
         ok = c.post(
             "/v1/execute", headers=user,
-            json={"block": "vector_search", "input": "x",
-                  "params": {"operation": "list_collections"}},
+            json={"block": "translate", "input": "x",
+                  "params": {"target": "en"}},
         )
         assert ok.status_code != 403, ok.text
 

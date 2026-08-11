@@ -24,7 +24,7 @@ def test_loader_isolates_a_broken_block():
         ("good", "app.blocks.translate", "TranslateBlock"),
         ("broken_module", "app.blocks.does_not_exist_xyz", "Nope"),
         ("broken_class", "app.blocks.translate", "ClassThatDoesNotExist"),
-        ("also_good", "app.blocks.vector_search", "VectorSearchBlock"),
+        ("also_good", "app.blocks.search", "SearchBlock"),
     ])
 
     # The good blocks loaded.
@@ -38,10 +38,10 @@ def test_loader_isolates_a_broken_block():
 
 def test_class_reexports_still_work():
     """`from app.blocks import XBlock` keeps working for loaded blocks."""
-    from app.blocks import ChatBlock, VectorSearchBlock
+    from app.blocks import ChatBlock, SearchBlock
 
     assert ChatBlock is BLOCK_REGISTRY["chat"]
-    assert VectorSearchBlock is BLOCK_REGISTRY["vector_search"]
+    assert SearchBlock is BLOCK_REGISTRY["search"]
     if "local_drive" in BLOCK_REGISTRY:
         from app.blocks import LocalDriveBlock
 

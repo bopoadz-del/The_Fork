@@ -121,20 +121,23 @@ class TestCommonPipelines:
         assert len(chain_builder.steps) == 3
     
     @pytest.mark.asyncio
-    async def test_vector_search_pipeline(self):
-        """Test Document -> Vector Search -> Chat pipeline."""
+    async def test_search_pipeline(self):
+        """Test Document -> Search -> Chat pipeline.
+
+        Exercises the chain BUILDER (step recording), not the blocks: nothing
+        is executed here, so any registered block name serves.
+        """
         from app.core import chain, CerebrumClient
-        
+
         client = CerebrumClient()
         chain_builder = chain(client)
-        
-        # Add documents to vector store then query
-        chain_builder.then("vector_search", {"operation": "add"})
-        chain_builder.then("vector_search", {"operation": "search", "top_k": 5})
+
+        chain_builder.then("search", {"operation": "add"})
+        chain_builder.then("search", {"operation": "search", "top_k": 5})
         chain_builder.then("chat", {"prompt": "Answer based on these documents:"})
-        
+
         assert len(chain_builder.steps) == 3
-        assert chain_builder.steps[0]["block"] == "vector_search"
+        assert chain_builder.steps[0]["block"] == "search"
     
     @pytest.mark.asyncio
     async def test_rag_pipeline(self):
@@ -145,7 +148,7 @@ class TestCommonPipelines:
         chain_builder = chain(client)
         
         # Retrieve relevant documents then generate answer
-        chain_builder.then("vector_search", {"operation": "search", "top_k": 3})
+        chain_builder.then("search", {"operation": "search", "top_k": 3})
         chain_builder.then("chat", {"prompt": "Based on the retrieved context:"})
         
         assert len(chain_builder.steps) == 2

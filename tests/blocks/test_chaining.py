@@ -83,9 +83,8 @@ async def test_standardized_response_format():
     """Test that all blocks return identical standardized response format."""
     from app.blocks import (
         PDFBlock, OCRBlock, ChatBlock, VoiceBlock, ImageBlock,
-        VectorSearchBlock, SearchBlock, TranslateBlock, CodeBlock, WebBlock,
+        SearchBlock, TranslateBlock, CodeBlock, WebBlock,
         GoogleDriveBlock, OneDriveBlock, LocalDriveBlock, AndroidDriveBlock,
-        ZvecBlock
     )
     
     required_keys = [
@@ -99,7 +98,6 @@ async def test_standardized_response_format():
         (ChatBlock(), "hello", {"provider": "mock"}),
         (VoiceBlock(), "hello", {"operation": "tts", "provider": "mock"}),
         (ImageBlock(), "test", {"operation": "generate", "provider": "mock"}),
-        (VectorSearchBlock(), "query", {"operation": "embed"}),
         (SearchBlock(), "test", {"provider": "mock"}),
         (TranslateBlock(), "hello", {"target": "es", "provider": "mock"}),
         (CodeBlock(), "print(1)", {"operation": "analyze"}),
@@ -108,7 +106,6 @@ async def test_standardized_response_format():
         (OneDriveBlock(), None, {"operation": "list"}),
         (LocalDriveBlock(), None, {"operation": "list"}),
         (AndroidDriveBlock(), None, {"operation": "get_paths"}),
-        (ZvecBlock(), "test", {"operation": "embed"}),
     ]
     
     with patch.dict("os.environ", {

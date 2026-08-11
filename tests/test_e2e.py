@@ -76,13 +76,6 @@ class TestCoreBlocks:
         assert "status" in r
 
     @pytest.mark.asyncio
-    async def test_vector_search_block(self):
-        from app.blocks.vector_search import VectorSearchBlock
-        b = VectorSearchBlock()
-        r = await b.execute({}, {"operation": "list_collections"})
-        assert "status" in r
-
-    @pytest.mark.asyncio
     async def test_local_drive_block(self):
         from app.blocks.local_drive import LocalDriveBlock
         b = LocalDriveBlock()
@@ -95,13 +88,6 @@ class TestCoreBlocks:
         from app.blocks.code import CodeBlock
         b = CodeBlock()
         r = await b.execute("print('hello')", {"language": "python"})
-        assert "status" in r
-
-    @pytest.mark.asyncio
-    async def test_zvec_block(self):
-        from app.blocks.zvec import ZvecBlock
-        b = ZvecBlock()
-        r = await b.execute([1, 2, 3], {"action": "embed"})
         assert "status" in r
 
 

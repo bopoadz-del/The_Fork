@@ -8,6 +8,8 @@ imports every block eagerly and three of them imported heavy libraries at module
 scope:
 
   * app/blocks/vector_search.py + zvec.py -> sklearn  (~3.2s, pulls scipy+pandas)
+    (both blocks have since been retired; sklearn is still used by
+    app/core/learning/router.py, which imports it lazily)
   * app/blocks/_knowledge.py              -> sympy    (~1.0s)
   * app/blocks/safety_world_detector.py   -> ultralytics (~265 MB, pulls torch+cv2)
 

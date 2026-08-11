@@ -123,24 +123,6 @@ async def test_voice_block():
         log_test("voice", "tts", False, str(e))
 
 @pytest.mark.asyncio
-async def test_vector_search_block():
-    """Test Vector Search Block"""
-    print("\n🔍 Testing Vector Search Block...")
-    start = time.time()
-    
-    try:
-        from app.blocks.vector_search import VectorSearchBlock
-        block = VectorSearchBlock()
-        
-        # Test health/status
-        result = await block.process(None, {"action": "health"})
-        
-        log_test("vector_search", "health", True, None, (time.time()-start)*1000)
-        
-    except Exception as e:
-        log_test("vector_search", "health", False, str(e))
-
-@pytest.mark.asyncio
 async def test_image_block():
     """Test Image Block"""
     print("\n🖼️ Testing Image Block...")
@@ -229,25 +211,6 @@ async def test_search_block():
                  
     except Exception as e:
         log_test("search", "search", False, str(e))
-
-@pytest.mark.asyncio
-async def test_zvec_block():
-    """Test Zvec Block"""
-    print("\n🧮 Testing Zvec Block...")
-    start = time.time()
-    
-    try:
-        from app.blocks.zvec import ZvecBlock
-        block = ZvecBlock()
-        
-        # Test zero-vector operation
-        result = await block.process([1, 2, 3], {"action": "zero_vector"})
-        
-        log_test("zvec", "zero_vector", result.get("status") == "success",
-                 result.get("error"), (time.time()-start)*1000)
-                 
-    except Exception as e:
-        log_test("zvec", "zero_vector", False, str(e))
 
 @pytest.mark.asyncio
 async def test_google_drive_block():
@@ -535,13 +498,11 @@ async def run_all_tests():
     await test_pdf_block()
     await test_ocr_block()
     await test_voice_block()
-    await test_vector_search_block()
     await test_image_block()
     await test_translate_block()
     await test_code_block()
     await test_web_block()
     await test_search_block()
-    await test_zvec_block()
     await test_google_drive_block()
     await test_onedrive_block()
     await test_local_drive_block()

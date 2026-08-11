@@ -49,10 +49,10 @@ async def upload_v1(
     When ``project_id`` is provided, ALSO:
     - Registers the file as a document in the project (so it survives across
       chat sessions and is reachable via /v1/projects/<id>/documents).
-    - Schedules zvec indexing via doc_index.maybe_eager_index in the
-      background so the chat can search the file content without the user
-      having to re-upload it. This is what the previous "uploaded but not
-      indexed" gap was — zvec is the engine, we just weren't calling it.
+    - Schedules indexing via doc_index.maybe_eager_index in the background so
+      the chat can search the file content without the user having to
+      re-upload it. This is what the previous "uploaded but not indexed" gap
+      was — the indexer was there, we just weren't calling it.
     """
     try:
         # Validate file size
@@ -95,9 +95,10 @@ async def upload_v1(
         }
 
         # If a project_id was supplied, persist + index the file so future
-        # questions can search it via doc_index (zvec-backed TF-IDF). The
-        # actual indexing runs as a FastAPI BackgroundTask so the upload
-        # request returns immediately.
+        # questions can search it via doc_index, which retrieves through
+        # app.core.rag.retriever (BM25 + vector RRF over pgvector). The actual
+        # indexing runs as a FastAPI BackgroundTask so the upload request
+        # returns immediately.
         if project_id and project_id.strip():
             try:
                 from app.core import projects as projects_store

@@ -27,16 +27,16 @@ class TestAPIEndpoints:
         # count tracks boot mode (virgin generic vs kit / extended platform)
         assert data["total"] >= listable_block_count()
         
-        # Check that vector_search is included
+        # Check that a known generic block is included
         block_names = [b["name"] for b in data["blocks"]]
-        assert "vector_search" in block_names
-    
+        assert "search" in block_names
+
     def test_get_block_info(self):
         """Test getting block info."""
-        response = client.get("/blocks/vector_search")
+        response = client.get("/blocks/search")
         assert response.status_code == 200
         data = response.json()
-        assert data["name"] == "vector_search"
+        assert data["name"] == "search"
         assert "config" in data
     
     def test_get_nonexistent_block(self):
@@ -74,33 +74,6 @@ class TestExecuteEndpoint:
         data = response.json()
         assert data["block"] == "chat"
         assert "result" in data
-    
-    def test_execute_vector_search_list_collections(self):
-        """Test executing vector_search block."""
-        response = client.post("/execute", json={
-            "block": "vector_search",
-            "input": {},
-            "params": {"operation": "list_collections"}
-        })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "vector_search"
-        assert "collections" in data["result"]
-    
-    @pytest.mark.skip(reason="vector_search no longer supports 'embed' operation — that lives in zvec block now")
-    def test_execute_vector_search_embed(self):
-        """Test vector_search embed operation."""
-        response = client.post("/execute", json={
-            "block": "vector_search",
-            "input": "test text",
-            "params": {"operation": "embed"}
-        })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "vector_search"
-        assert "embeddings" in data["result"]
     
     def test_execute_web_block(self):
         """Test executing web block."""
@@ -228,50 +201,3 @@ class TestDriveEndpoints:
         assert data["block"] == "android_drive"
         assert "paths" in data["result"]
 
-
-class TestVectorSearchEndpoints:
-    """Tests for vector search specific endpoints."""
-    
-    def test_vector_search_count(self):
-        """Test vector search count operation."""
-        response = client.post("/execute", json={
-            "block": "vector_search",
-            "input": {},
-            "params": {"operation": "count", "collection": "test"}
-        })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "vector_search"
-        assert "count" in data["result"]
-    
-    def test_vector_search_create_collection(self):
-        """Test vector search create collection."""
-        response = client.post("/execute", json={
-            "block": "vector_search",
-            "input": "test_collection",
-            "params": {"operation": "create_collection"}
-        })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "vector_search"
-    
-    @pytest.mark.skip(reason="vector_search.add response no longer includes 'document_count' — replaced by 'added' / 'collection_size'")
-    def test_vector_search_add_documents(self):
-        """Test vector search add documents."""
-        response = client.post("/execute", json={
-            "block": "vector_search",
-            "input": {
-                "documents": [
-                    {"text": "Test doc 1", "metadata": {"source": "test"}},
-                    {"text": "Test doc 2", "metadata": {"source": "test"}}
-                ]
-            },
-            "params": {"operation": "add", "collection": "test"}
-        })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["block"] == "vector_search"
-        assert data["result"]["document_count"] == 2

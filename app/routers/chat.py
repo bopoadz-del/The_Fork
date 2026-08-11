@@ -554,14 +554,15 @@ def _with_project_memory(
 async def _with_doc_search(
     prompt: str, project_id: Optional[str], user_id: Optional[str], top_k: int = 5,
 ) -> tuple[str, list]:
-    """Prepend top-k relevant document snippets from the project's zvec index.
+    """Prepend top-k relevant document snippets from the project's index.
 
     This is the upload→index→chat connection: when the user has a project
     selected, every uploaded file goes into doc_index (via the project
-    documents endpoint, which schedules zvec indexing). Here we query that
+    documents endpoint, which schedules the indexing). Here we query that
     index with the user's question and prepend the matching snippets so the
     LLM can answer FROM the actual file content — not just from memory of
-    the last upload.
+    the last upload. Retrieval runs through app.core.rag.retriever
+    (BM25 + vector RRF over pgvector).
 
     Same shape as project_reasoner.process() uses for its RELEVANT DOCUMENT
     EXCERPTS section — kept consistent so both paths reason from the same
@@ -630,9 +631,10 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
             if with_memory.endswith(request.message)
             else ""
         )
-        # Search the project's zvec index for snippets relevant to the user's
-        # question — uploaded files become reachable here. The raw snippets are
-        # kept as grounding evidence for the cost-grounding gate below.
+        # Search the project's document index for snippets relevant to the
+        # user's question — uploaded files become reachable here. The raw
+        # snippets are kept as grounding evidence for the cost-grounding gate
+        # below.
         message, doc_snippets = await _with_doc_search(
             with_memory, request.project_id, auth["user_id"]
         )
