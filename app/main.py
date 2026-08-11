@@ -162,11 +162,12 @@ async def lifespan(app: FastAPI):
     init_agent_memory_db()
     from app.core.doc_index import init_db as init_doc_index_db
     init_doc_index_db()
-    # Ingest bundled docs/knowledge/*.md into the RAG general-knowledge project
-    # (idempotent; never raises) so the units/FIDIC/CESMM references are
-    # retrievable across every project without a manual upload.
-    from app.core.knowledge_seed import seed_knowledge
-    seed_knowledge()
+    # NOTE: seed_knowledge() used to run HERE, inline. It is now part of the
+    # background warm-up — see _seed_knowledge(). Measured 2026-08-11: on a
+    # database that has not been seeded yet it takes 42s and +677 MB, because
+    # indexing docs/knowledge/*.md constructs the embedder. Inline, that alone
+    # kept the port shut long past the platform's scan window AND blew a 512Mi
+    # instance before the app ever served a request.
     from app.core.hydration_store import init_db as init_hydration_db
     init_hydration_db()
     from app.core import rate_limit as _rate_limit_startup
@@ -242,8 +243,27 @@ def _warm_embedder() -> None:
     logger.info("RAG embedder warm-loaded: %s dim=%d", emb.model_name, emb.dim)
 
 
+def _seed_knowledge() -> None:
+    """Ingest bundled docs/knowledge/*.md into the RAG general-knowledge project.
+
+    Idempotent: on a database already seeded this is a cheap no-op (~0.02s
+    measured), and it never raises. On a FRESH database it re-indexes, which
+    constructs the embedder — 42s and +677 MB measured 2026-08-11.
+
+    That is why it belongs here rather than in the lifespan. Inline, a first
+    boot against an unseeded database could not open the port in time, the
+    platform restarted the container, and the restart began the same 677 MB
+    seed again — so the failure repeated on every deploy instead of clearing
+    itself. Backgrounded, an incomplete seed costs GK retrieval quality until
+    it finishes, but can never stop the service becoming reachable.
+    """
+    from app.core.knowledge_seed import seed_knowledge
+    seed_knowledge()
+    logger.info("Knowledge seed complete (docs/knowledge/*.md)")
+
+
 async def _warm_models() -> None:
-    """Warm the heavy models WITHOUT blocking startup.
+    """Warm the heavy models — and seed the knowledge base — WITHOUT blocking startup.
 
     These used to run inline in lifespan, before FastAPI opened the port. On a
     host with no persistent HF cache the embedder warm-up also downloads the
@@ -262,8 +282,11 @@ async def _warm_models() -> None:
     deployments may prefer readiness to mean model-loaded). Each load is
     isolated: the detector failing must not stop the embedder from loading.
     """
+    # Embedder first: the knowledge seed reuses the same cached instance, so
+    # ordering it last means the seed never pays a second model load.
     for label, fn in (("safety detector", _warm_safety_detector),
-                      ("RAG embedder", _warm_embedder)):
+                      ("RAG embedder", _warm_embedder),
+                      ("knowledge seed", _seed_knowledge)):
         try:
             await asyncio.to_thread(fn)
         except asyncio.CancelledError:
