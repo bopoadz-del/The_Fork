@@ -2107,6 +2107,17 @@ class ConstructionContainer(
             "carbon_report": self.generate_carbon_report,
             "procurement": self.procurement_analysis,
             "status": self._status,
+            # Audit 2026-08-12: these three were fully implemented public
+            # actions that route() could not dispatch. The worst of them was
+            # user-facing — _recommend_next_action (line ~1762) suggests
+            # "generate_construction_report" by name after a QA/QC run, and
+            # dispatching it returned {"status": "error", "error": "Unknown
+            # action: generate_construction_report"}. The platform was
+            # recommending something it then refused to run.
+            # tests/test_construction_actions_reachable.py fences the class.
+            "generate_construction_report": self.generate_construction_report,
+            "extract_measurements": self.extract_measurements,
+            "track_progress": self.track_progress,
         }
 
         handler = handlers.get(action)
