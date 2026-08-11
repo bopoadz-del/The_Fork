@@ -32,10 +32,19 @@ deliverable, the output now names the gap explicitly — `om_manual_generator`
 returns `status: "partial"` and a `data_gaps` list saying which sections could
 not be populated and what data they need.
 
-What they all have in common: each needs a data source the platform does not
-have yet — manufacturer maintenance schedules, supplier part numbers, a
-trained vision model for site photos, or a bid-comparison corpus. They are not
-blocked on code.
+These are split by WHAT BLOCKS THEM, because the two are not the same problem:
+
+- **Data-blocked** — needs a source the platform does not have (manufacturer
+  maintenance schedules, supplier part numbers, submitted bid documents).
+  Writing code cannot close these.
+- **Buildable now** — every input already exists and flows to the function;
+  the mapping is simply unwritten. These are a scheduling decision, not a
+  dependency.
+
+The 2026-08-12 audit found the register over-blocking: five functions were
+filed as data-blocked that are not. Being wrong in this direction is expensive
+— it parks work that could ship, and it tells a client a capability is further
+away than it is. Each claim below names the evidence.
 
 ### O&M manual — needs manufacturer maintenance data
 
@@ -48,22 +57,67 @@ blocked on code.
 - app/containers/construction/__init__.py :: _extract_training_needs  — operator competency requirements per installed system.
 - app/containers/construction/__init__.py :: _map_system_dependencies  — Section B interdependencies; needs a system topology model, not an equipment list.
 
-### Site photo intelligence — needs the vision model wired through
+### Daily site report from voice — needs speech input
 
-The Safety Observation model exists (YOLO-Worldv2 ONNX); these three are the
-unbuilt bridge from its detections to structured daily-report fields.
+- app/containers/construction/__init__.py :: _extract_material_deliveries  — deliveries from voice transcriptions. Its input is `transcriptions`, not photos (`schedule.py:493`), so no amount of vision work reaches it. Blocked on voice transcription quality for site audio, not on this function.
 
-- app/containers/construction/__init__.py :: _extract_equipment_from_photos  — plant/equipment on site from photo analysis.
-- app/containers/construction/__init__.py :: _extract_quality_observations  — workmanship observations from photo analysis.
-- app/containers/construction/__init__.py :: _extract_material_deliveries  — deliveries from voice transcriptions.
+### Bid comparison — needs submitted bid documents
 
-### Tender and procurement analysis — needs a bid corpus
+Both take a single `bid: Dict` and must judge it against tender requirements.
+Neither can be derived from our own data: the input is a third party's
+submission, which the platform has never been given.
 
 - app/containers/construction/__init__.py :: _identify_qualification_gaps  — what a bid fails to qualify against the tender requirements.
 - app/containers/construction/__init__.py :: _identify_bid_clarifications  — clarifications to raise with a bidder.
-- app/containers/construction/__init__.py :: _identify_consolidation  — procurement packages worth consolidating.
-- app/containers/construction/__init__.py :: _suggest_bundling  — supplier bundling opportunities.
-- app/containers/construction/__init__.py :: _identify_procurement_risks  — single-source and long-lead risk on a procurement plan.
+
+---
+
+## Buildable now — blocked on code, not data
+
+Every input these need already exists and already reaches them. They are in
+this register because they still return empty, but they are NOT waiting on a
+data source. Nothing external has to arrive first.
+
+### Procurement analysis — the plan is our own data
+
+All three take `procurement_plan` (and `scored_suppliers`), built at
+`boq.py:1810-1833` from our BOQ and supplier records. Each plan item carries
+`material`, `quantity`, `required_date`, `recommended_supplier`,
+`supplier_score`, `order_date`, `order_lead_time`, `buffer_weeks`,
+`packaging_strategy`, `inspection_required` and `alternative_suppliers`.
+
+**The proof that this is sufficient:** `_generate_procurement_insights`
+(`boq.py:1858`) has the SAME `(plan, suppliers)` signature, sits twelve lines
+above `_identify_procurement_risks`, and is fully implemented — it already
+derives long-lead exposure (`order_lead_time > 8`), single-source dependency
+(`alternative_suppliers == []`) and weak-supplier warnings (`avg score < 75`).
+It returns them as prose strings. The register previously claimed its immediate
+neighbour needed a bid corpus for the same inputs; that was wrong.
+
+- app/containers/construction/__init__.py :: _identify_procurement_risks  — single-source and long-lead risk on a procurement plan. Buildable now: return the structured form of what _generate_procurement_insights already computes as prose, plus order_date already past, and inspection_required items with no lead-time buffer.
+- app/containers/construction/__init__.py :: _identify_consolidation  — procurement packages worth consolidating. Buildable now: group plan items by `material` and by `recommended_supplier`; repeats across BOQ items are the consolidation candidates.
+- app/containers/construction/__init__.py :: _suggest_bundling  — supplier bundling opportunities. Buildable now: group by `recommended_supplier` within a `required_date` window, cross-checked against `scored_suppliers` capability; `packaging_strategy` already flags bulk-eligible lines.
+
+### Site photo intelligence — detections already flow
+
+Vision is NOT missing. `_analyze_site_photo` (`__init__.py:1093`) calls the
+`image` block and returns a structured dict per photo —
+`activities_detected` (the detected objects), `safety_compliance`,
+`headcount_estimate`, `progress_indicators` — and `schedule.py:448-451` builds
+`photo_analysis` from it and passes that list straight into both functions
+below. They receive real detections today and return `[]`.
+
+The gap is the mapping from detected object labels to daily-report fields,
+which is code. What it needs: an equipment vocabulary to classify labels as
+plant (the Safety Observation model's baked class list is the obvious source),
+plus dedup across photos so one excavator seen in six frames is one entry.
+
+Per the platform's standing framing, output must read as OBSERVATIONS, not
+violations or verdicts — and per the no-assumptions rule, an item's project
+metadata comes from the project, never inferred from photo content.
+
+- app/containers/construction/__init__.py :: _extract_equipment_from_photos  — plant/equipment on site. Buildable now: classify `activities_detected` labels against an equipment vocabulary, dedup across the photo set, count instances.
+- app/containers/construction/__init__.py :: _extract_quality_observations  — workmanship observations. Buildable now: `_analyze_site_photo` already derives `safety_compliance` from the same detections; this is the equivalent pass for workmanship indicators, phrased as observations.
 
 ---
 
