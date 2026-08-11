@@ -29,8 +29,6 @@ _GENERIC_BLOCK_SPECS: List[Tuple[str, str, str]] = [
     ("web",              "app.blocks.web",             "WebBlock"),
     ("search",           "app.blocks.search",          "SearchBlock"),
     ("code",             "app.blocks.code",            "CodeBlock"),
-    ("vector_search",    "app.blocks.vector_search",   "VectorSearchBlock"),
-    ("zvec",             "app.blocks.zvec",            "ZvecBlock"),
     ("cache_manager",    "app.blocks.cache_manager",   "CacheManagerBlock"),
     ("file_hasher",      "app.blocks.file_hasher",     "FileHasherBlock"),
     ("orchestrator",     "app.blocks.orchestrator",    "OrchestratorBlock"),

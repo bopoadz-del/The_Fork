@@ -82,10 +82,6 @@ class DataTransformer:
         self.register("local_drive", "FileContent", self._drive_to_file)
         self.register("android_drive", "FileContent", self._drive_to_file)
         
-        # Vector blocks
-        self.register("vector_search", "VectorEmbedding", self._vector_to_embedding)
-        self.register("zvec", "VectorEmbedding", self._zvec_to_embedding)
-        
         # Voice blocks
         self.register("voice", "AudioContent", self._voice_to_audio)
         
@@ -293,32 +289,6 @@ class DataTransformer:
             "metadata": data.get("metadata", {})
         }
     
-    def _vector_to_embedding(self, data: Dict) -> Dict:
-        """Transform VectorSearch block output to VectorEmbedding."""
-        if "result" in data:
-            data = data["result"]
-        
-        return {
-            "vector": data.get("embedding", data.get("vector", [])),
-            "dimension": data.get("dimension", len(data.get("embedding", []))),
-            "text": data.get("text", ""),
-            "id": data.get("id", ""),
-            "metadata": data.get("metadata", {})
-        }
-    
-    def _zvec_to_embedding(self, data: Dict) -> Dict:
-        """Transform Zvec block output to VectorEmbedding."""
-        if "result" in data:
-            data = data["result"]
-        
-        return {
-            "vector": data.get("embedding", data.get("embeddings", [])),
-            "dimension": data.get("dimension", len(data.get("embedding", []))),
-            "text": data.get("text", ""),
-            "id": data.get("id", ""),
-            "metadata": data.get("metadata", {})
-        }
-    
     def _voice_to_audio(self, data: Dict) -> Dict:
         """Transform Voice block output to AudioContent."""
         if "result" in data:
@@ -441,8 +411,6 @@ class DataTransformer:
             return "ocr"
         if "model" in data and "provider" in data:
             return "chat"
-        if "embedding" in data or "embeddings" in data:
-            return "vector_search"
         if "results" in data and "query" in data:
             return "search"
         if "translated_text" in data:

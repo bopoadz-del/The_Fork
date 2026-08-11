@@ -28,18 +28,16 @@ async def test_imports():
     print("\n📦 Testing Block Imports...")
     
     blocks_to_test = [
-        # Core AI (15)
+        # Core AI (13)
         ("app.blocks.chat", "ChatBlock"),
         ("app.blocks.pdf", "PDFBlock"),
         ("app.blocks.ocr", "OCRBlock"),
         ("app.blocks.voice", "VoiceBlock"),
-        ("app.blocks.vector_search", "VectorSearchBlock"),
         ("app.blocks.image", "ImageBlock"),
         ("app.blocks.translate", "TranslateBlock"),
         ("app.blocks.code", "CodeBlock"),
         ("app.blocks.web", "WebBlock"),
         ("app.blocks.search", "SearchBlock"),
-        ("app.blocks.zvec", "ZvecBlock"),
         ("app.blocks.google_drive", "GoogleDriveBlock"),
         ("app.blocks.onedrive", "OneDriveBlock"),
         ("app.blocks.local_drive", "LocalDriveBlock"),
