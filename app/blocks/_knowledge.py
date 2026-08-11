@@ -32,7 +32,9 @@ import re
 import threading
 from typing import Any, Dict, List, Optional
 
-import sympy
+# sympy is imported lazily in evaluate() — it costs ~1.0s at BOOT and only
+# `formula` entries need it, so a service that never evaluates a formula should
+# not pay for it. Same pattern as app/blocks/sympy_reasoning.py:22.
 
 
 _KB_PATH = os.path.join(
@@ -184,6 +186,8 @@ def evaluate(rule_id: str, **values: Any) -> Dict[str, Any]:
         raise ValueError("use validate_transition for workflows")
     if kind != "formula":
         raise ValueError(f"evaluate() only supports type=formula (got {kind!r})")
+
+    import sympy
 
     expr_str = entry.get("expression")
     if not expr_str:

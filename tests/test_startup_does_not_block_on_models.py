@@ -92,6 +92,60 @@ def test_one_warm_failure_does_not_skip_the_other(monkeypatch):
     assert calls == ["detector", "embedder"], calls
 
 
+def test_startup_does_not_seed_the_knowledge_base_inline(monkeypatch):
+    """The knowledge seed must not run before the port opens.
+
+    This is a DIFFERENT shape from the tests above, and it exists because those
+    tests all passed while this bug was live. They only proved `_warm_models`
+    was backgrounded — the lifespan was separately calling seed_knowledge()
+    inline, which on an unseeded database takes 42s and +677 MB because
+    indexing docs/knowledge/*.md constructs the embedder. Measured 2026-08-11:
+    that alone kept the port shut past the platform's scan window and exceeded
+    a 512Mi instance, and because the restart re-ran the same seed, the deploy
+    failed identically every time instead of eventually converging.
+
+    So this asserts on the SEED specifically, not on warm-up in general.
+    """
+    seeded_during_startup = []
+
+    def _record():
+        seeded_during_startup.append("called")
+
+    monkeypatch.setattr(main_module, "_seed_knowledge", _record)
+    monkeypatch.setattr(main_module, "_warm_safety_detector", lambda: None)
+    monkeypatch.setattr(main_module, "_warm_embedder", lambda: None)
+    # Neutralise the background task so this measures the LIFESPAN only: if the
+    # seed still runs, it ran inline, not from the warm-up task.
+    monkeypatch.setattr(main_module, "_warm_models", _noop_async)
+
+    with TestClient(app) as client:
+        assert client.get("/livez").status_code == 200
+        assert seeded_during_startup == [], (
+            "seed_knowledge ran during startup, before the port opened. On an "
+            "unseeded database that is a 42s / +677 MB step, which is why the "
+            "service could not boot. It belongs in the background warm-up."
+        )
+
+
+async def _noop_async() -> None:
+    """Stand-in for _warm_models when a test needs the lifespan in isolation."""
+    return None
+
+
+def test_the_knowledge_seed_still_runs_in_the_background(monkeypatch):
+    """Deferring it must not mean dropping it — the GK corpus still gets seeded."""
+    order = []
+    monkeypatch.setenv("WARM_MODELS_BLOCKING", "true")
+    monkeypatch.setattr(main_module, "_warm_safety_detector", lambda: order.append("detector"))
+    monkeypatch.setattr(main_module, "_warm_embedder", lambda: order.append("embedder"))
+    monkeypatch.setattr(main_module, "_seed_knowledge", lambda: order.append("seed"))
+
+    with TestClient(app):
+        # Embedder before seed: the seed reuses the cached model rather than
+        # paying a second load.
+        assert order == ["detector", "embedder", "seed"], order
+
+
 def test_blocking_mode_is_still_available(monkeypatch):
     """WARM_MODELS_BLOCKING=true restores inline warm-up for on-prem, where
     readiness is expected to mean model-loaded."""

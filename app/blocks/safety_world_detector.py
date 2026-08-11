@@ -34,16 +34,42 @@ from typing import Dict, List, Optional
 # Render / non-root containers can't write ~/.config/Ultralytics.
 os.environ.setdefault("YOLO_CONFIG_DIR", "/tmp/Ultralytics")
 
-try:
-    from ultralytics import YOLO
-except ImportError:
-    YOLO = None
-
 logger = logging.getLogger(__name__)
+
+# Populated on first use by _load_yolo(), NOT at import — see below. Kept as a
+# module attribute so `patch("...safety_world_detector.YOLO", ...)` remains the
+# seam tests hook, exactly as when this was a module-level import.
+YOLO = None
+
+
+def _load_yolo():
+    """Import ultralytics on first detector construction, not at module import.
+
+    `from ultralytics import YOLO` costs ~265 MB of RSS because it pulls in
+    torch and cv2 — measured 2026-08-11, the single largest item in this app's
+    boot. app/blocks/__init__.py imports every block eagerly, so that cost was
+    paid on EVERY boot even where the feature is off: SAFETY_WORLD_WEIGHTS is
+    unset on the Render service, so default_detector() returns None and no
+    model is ever built. Deferring it here keeps the whole 265 MB out of any
+    deployment that has not configured weights.
+
+    Returns the YOLO class, or None when ultralytics is not installed — the
+    same contract the module-level `YOLO = None` fallback provided.
+    """
+    global YOLO
+    if YOLO is not None:  # already imported, or patched by a test
+        return YOLO
+    try:
+        from ultralytics import YOLO as _YOLO
+    except ImportError:
+        return None
+    YOLO = _YOLO
+    return YOLO
 
 
 class SafetyWorldDetector:
     def __init__(self, weights_path: Path) -> None:
+        YOLO = _load_yolo()
         if YOLO is None:
             raise RuntimeError("ultralytics not installed")
         self._weights_path = Path(weights_path)

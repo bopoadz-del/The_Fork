@@ -12,46 +12,74 @@ between, which made the "symbolic" naming a lie. The current version emits
 formulas alongside numbers so a user can see exactly what was computed.
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 
-# Symbolic expressions built once at import time. These are the closed-form
-# formulas the block uses; they're exposed to the caller in the output so the
-# computation is auditable.
-try:
-    import sympy as _sp
-    _SP_AVAILABLE = True
-except ImportError:  # pragma: no cover — sympy is in requirements.txt
-    _sp = None
-    _SP_AVAILABLE = False
+# Symbolic expressions are built ON FIRST USE, then cached for the process.
+#
+# They used to be built at import time, which pulled sympy into every boot
+# (~1.0s) even though app/blocks/__init__.py imports this module eagerly and
+# most requests never evaluate a formula. See
+# tests/test_boot_does_not_import_heavy_libraries.py for why boot weight
+# mattered: it cost the service its Render deploy.
+#
+# The simplified strings are NOT hardcoded here on purpose — sympy renders
+# variance_pct as "100*actual/avg - 100", not the naive form, and the caller is
+# shown the real expression so the computation stays auditable.
+_SYMBOLIC: Optional[Dict[str, Any]] = None
 
-if _SP_AVAILABLE:
-    _ACTUAL, _AVG, _STD, _QTY = _sp.symbols(
+
+def _symbolic() -> Dict[str, Any]:
+    """Build (once) and return the symbolic forms this block reasons with.
+
+    Keys: ``available`` (bool), ``exprs`` (tag -> sympy expression, empty when
+    sympy is missing), and ``strings`` (tag -> human-readable formula).
+    """
+    global _SYMBOLIC
+    if _SYMBOLIC is not None:
+        return _SYMBOLIC
+    try:
+        import sympy as _sp
+    except ImportError:  # pragma: no cover — sympy is in requirements.txt
+        _SYMBOLIC = {
+            "available": False,
+            "exprs": {},
+            "strings": {
+                "variance_pct": "(actual - avg) / avg * 100",
+                "z_score": "(actual - avg) / std_dev",
+                "cost_impact": "(actual - avg) * quantity",
+            },
+        }
+        return _SYMBOLIC
+
+    actual, avg, std_dev, quantity = _sp.symbols(
         "actual avg std_dev quantity", real=True
     )
-    # variance_pct = (actual - avg) / avg * 100   — simplified canonical form
-    _VARIANCE_PCT_EXPR = _sp.simplify((_ACTUAL - _AVG) / _AVG * 100)
-    # z_score        = (actual - avg) / std_dev
-    _Z_SCORE_EXPR = _sp.simplify((_ACTUAL - _AVG) / _STD)
-    # cost_impact    = (actual - avg) * quantity
-    _COST_IMPACT_EXPR = _sp.simplify((_ACTUAL - _AVG) * _QTY)
-    # Formula strings — exposed in output so the caller sees the math.
-    _VARIANCE_PCT_STR = str(_VARIANCE_PCT_EXPR)
-    _Z_SCORE_STR = str(_Z_SCORE_EXPR)
-    _COST_IMPACT_STR = str(_COST_IMPACT_EXPR)
-    # Tag → sympy expression. Callers pass the tag (a stable string), not the
-    # expression object, so the no-sympy fallback below doesn't reference any
-    # symbol that only exists inside this branch.
-    _EXPR_BY_NAME = {
-        "variance_pct": _VARIANCE_PCT_EXPR,
-        "z_score": _Z_SCORE_EXPR,
-        "cost_impact": _COST_IMPACT_EXPR,
+    exprs = {
+        # variance_pct = (actual - avg) / avg * 100   — simplified canonical form
+        "variance_pct": _sp.simplify((actual - avg) / avg * 100),
+        # z_score      = (actual - avg) / std_dev
+        "z_score": _sp.simplify((actual - avg) / std_dev),
+        # cost_impact  = (actual - avg) * quantity
+        "cost_impact": _sp.simplify((actual - avg) * quantity),
     }
-else:
-    _VARIANCE_PCT_STR = "(actual - avg) / avg * 100"
-    _Z_SCORE_STR = "(actual - avg) / std_dev"
-    _COST_IMPACT_STR = "(actual - avg) * quantity"
-    _EXPR_BY_NAME = {}
+    _SYMBOLIC = {
+        "available": True,
+        "exprs": exprs,
+        "strings": {tag: str(expr) for tag, expr in exprs.items()},
+        # Callers substitute by plain name; _eval_symbolic maps those to these
+        # objects. It must be THESE instances: they carry real=True, and
+        # sympy treats Symbol("actual") and Symbol("actual", real=True) as
+        # different symbols, so a bare string key would silently fail to
+        # substitute and leave the expression unevaluated.
+        "symbols": {
+            "actual": actual,
+            "avg": avg,
+            "std_dev": std_dev,
+            "quantity": quantity,
+        },
+    }
+    return _SYMBOLIC
 
 
 def _eval_symbolic(formula_name: str, subs: Dict) -> float:
@@ -60,17 +88,25 @@ def _eval_symbolic(formula_name: str, subs: Dict) -> float:
     The formula is identified by a string tag — `"variance_pct"`, `"z_score"`,
     or `"cost_impact"` — rather than a sympy expression object, so the
     no-sympy fallback never references any symbol that only exists inside the
-    `_SP_AVAILABLE` branch.
+    sympy-only branch.
 
     `subs` may be keyed by sympy Symbols (when sympy is available) OR by the
     plain string names ``"actual"``, ``"avg"``, ``"std_dev"``, ``"quantity"``.
     The pure-Python fallback uses the latter.
     """
-    if _SP_AVAILABLE:
-        expr = _EXPR_BY_NAME.get(formula_name)
+    symbolic = _symbolic()
+    if symbolic["available"]:
+        expr = symbolic["exprs"].get(formula_name)
         if expr is None:
             raise RuntimeError(f"Unknown formula: {formula_name}")
-        return float(expr.subs(subs))
+        # Accept string keys as documented above by mapping them to the real
+        # (real=True) Symbol instances; pass through anything already a Symbol.
+        names = symbolic["symbols"]
+        resolved = {
+            (names.get(key, key) if isinstance(key, str) else key): value
+            for key, value in subs.items()
+        }
+        return float(expr.subs(resolved))
 
     # Pure-Python fallback. Read values from the subs dict by string key so we
     # don't depend on the sympy Symbol objects existing.
@@ -143,7 +179,7 @@ class SymPyReasoningBlock(UniversalBlock):
         spec_data = data.get("spec_data", {})
         historical_benchmarks = data.get("historical_benchmarks", {})
 
-        if not _SP_AVAILABLE:
+        if not _symbolic()["available"]:
             return {"status": "error", "error": "sympy not installed. Run: pip install sympy"}
 
         threshold = float(
@@ -172,11 +208,7 @@ class SymPyReasoningBlock(UniversalBlock):
             # Expose the closed-form formulas the block evaluated. This makes
             # the math auditable — anyone reading the response can verify the
             # block isn't doing something different from what its name suggests.
-            "formulas": {
-                "variance_pct": _VARIANCE_PCT_STR,
-                "z_score": _Z_SCORE_STR,
-                "cost_impact": _COST_IMPACT_STR,
-            },
+            "formulas": dict(_symbolic()["strings"]),
         }
 
     def _compute_variances(
@@ -201,7 +233,7 @@ class SymPyReasoningBlock(UniversalBlock):
             if avg_cost <= 0:
                 continue
 
-            subs = {_ACTUAL: actual, _AVG: avg_cost, _STD: std_dev}
+            subs = {"actual": actual, "avg": avg_cost, "std_dev": std_dev}
             variance_pct = _eval_symbolic("variance_pct", subs)
             z_score = _eval_symbolic("z_score", subs) if std_dev > 0 else 0.0
 
@@ -290,9 +322,9 @@ class SymPyReasoningBlock(UniversalBlock):
         impacts = []
         for v in variances:
             subs = {
-                _ACTUAL: float(v.get("actual_cost", 0)),
-                _AVG: float(v.get("benchmark_avg", 0)),
-                _QTY: float(v.get("quantity", 1)),
+                "actual": float(v.get("actual_cost", 0)),
+                "avg": float(v.get("benchmark_avg", 0)),
+                "quantity": float(v.get("quantity", 1)),
             }
             impact = _eval_symbolic("cost_impact", subs)
             if abs(impact) < 0.01:

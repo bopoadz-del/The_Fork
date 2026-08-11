@@ -22,10 +22,13 @@ import threading
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 from app.core.universal_base import UniversalBlock
+
+# sklearn is imported lazily at each use site, not here — see the note in
+# app/blocks/vector_search.py. It costs ~3.2s and ~200 MB at BOOT via scipy and
+# pandas, and this module is imported eagerly by app/blocks/__init__.py whether
+# or not any zvec operation is ever called.
 import logging
 
 logger = logging.getLogger(__name__)
@@ -94,6 +97,8 @@ def _semantic_encode(texts: List[str]) -> Optional[np.ndarray]:
 
 
 def _vectorize(texts: List[str], char_level: bool = False) -> np.ndarray:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
     if char_level:
         vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 4), max_features=512)
     else:
@@ -102,6 +107,8 @@ def _vectorize(texts: List[str], char_level: bool = False) -> np.ndarray:
 
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    from sklearn.metrics.pairwise import cosine_similarity
+
     return float(cosine_similarity(a.reshape(1, -1), b.reshape(1, -1))[0][0])
 
 
@@ -219,6 +226,8 @@ class ZvecBlock(UniversalBlock):
                 texts_list = params.get("texts", [])
 
                 if texts_list and len(texts_list) >= 2:
+                    from sklearn.metrics.pairwise import cosine_similarity
+
                     vectors = _vectorize(texts_list)
                     matrix = cosine_similarity(vectors).tolist()
                     return {
