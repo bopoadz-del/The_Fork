@@ -355,8 +355,15 @@ class MonitoringBlock(LegoBlock):
     requires = ["config", "memory"]  # Uses Memory Block for metrics storage
     layer = 2  # Monitoring layer
     tags = ["monitoring", "observability", "core"]
+    # The roster must match the ladder the platform can actually call:
+    # Kimi primary, Groq fallback, Ollama on-prem (DECISIONS.md 2026-07-24).
+    # DeepSeek, OpenAI and Anthropic were removed 2026-07-25 and were still
+    # listed here until 2026-08-12, so /v1/leaderboard printed three providers
+    # the platform has no key for and cannot reach. Pinned against the
+    # providers `_llm_config` can return by
+    # tests/test_monitoring_roster_is_honest.py, so this cannot drift again.
     default_config = {
-        "track_providers": ["deepseek", "groq", "openai", "anthropic"],
+        "track_providers": ["kimi", "groq", "ollama"],
         "window_size": 100,
         "prediction_threshold": 0.3
     }
@@ -367,11 +374,9 @@ class MonitoringBlock(LegoBlock):
         
         # Provider tracking
         self.providers = {
-            "deepseek": {"name": "DeepSeek", "type": "cloud", "region": "global"},
+            "kimi": {"name": "Kimi (Moonshot)", "type": "cloud", "region": "global"},
             "groq": {"name": "Groq", "type": "cloud", "region": "us"},
-            "openai": {"name": "OpenAI", "type": "cloud", "region": "global"},
-            "anthropic": {"name": "Anthropic", "type": "cloud", "region": "us"},
-            "local_ollama": {"name": "Ollama (Local)", "type": "edge", "region": "local"}
+            "ollama": {"name": "Ollama (on-prem)", "type": "edge", "region": "local"},
         }
         
         # Metrics window (last 100 calls per provider)
@@ -541,23 +546,36 @@ class MonitoringBlock(LegoBlock):
             entry["rank"] = i + 1
         
         # Cache result
+        # `top_provider` must name an OBSERVED winner. Taking leaderboard[0]
+        # unconditionally promoted an unproven provider to "top" whenever
+        # nothing had been recorded — which is the normal state — presenting an
+        # arbitrary roster entry as a measured result.
+        observed = [e for e in leaderboard if e["total_calls"]]
         self.leaderboard_cache = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "leaderboard": leaderboard,
-            "top_provider": leaderboard[0]["provider"] if leaderboard else None,
-            "auto_route_enabled": True
+            "top_provider": observed[0]["provider"] if observed else None,
+            # Nothing routes on this. `_call_llm` picks its provider from
+            # `_llm_config` and its fallback from `_llm_fallback_config`;
+            # neither reads the leaderboard. Reporting True advertised a
+            # capability the platform does not have.
+            "auto_route_enabled": False,
         }
         self.last_leaderboard_update = time.time()
         
         return self.leaderboard_cache
     
     async def _recommend_provider(self) -> Dict:
-        """AI-powered provider recommendation based on current conditions"""
+        """Recommend a provider from OBSERVED reliability.
+
+        Not "AI-powered" -- it is a threshold sort over recorded latency and
+        error rates. The old wording promised a judgement the code does not
+        make."""
         leaderboard = (await self._get_leaderboard())["leaderboard"]
         
         if not leaderboard:
-            return {"recommendation": "local_ollama", "reason": "no_data"}
-        
+            return {"recommended": None, "reason": "no_providers_configured"}
+
         # Find best available provider
         for entry in leaderboard:
             if entry["recommendation"] == "use":
@@ -567,13 +585,42 @@ class MonitoringBlock(LegoBlock):
                     "reason": f"Best reliability at {entry['avg_latency_ms']}ms avg latency",
                     "fallback_sequence": [e["provider"] for e in leaderboard if e["recommendation"] in ["use", "avoid"]]
                 }
-        
-        # If all degraded, use local
+
+        # NOTHING OBSERVED is not the same finding as ALL DEGRADED.
+        #
+        # Until 2026-08-12 this branch returned "All cloud providers degraded -
+        # using edge fallback" with emergency_mode=True and confidence 100.0.
+        # Nothing internal calls record_call — the only writer is the
+        # POST /v1/metrics/record endpoint — so on a normal deployment every
+        # provider has zero observations, every entry is "unproven", and this
+        # branch fired on EVERY call. The endpoint reported a platform-wide
+        # provider outage, at full confidence, as its steady state.
+        #
+        # That is the confident-zero pattern: absence of data rendered as a
+        # diagnosis. Distinguish the two.
+        if all(e["total_calls"] == 0 for e in leaderboard):
+            return {
+                "recommended": None,
+                "confidence": None,
+                "reason": (
+                    "No provider calls have been recorded, so there is no "
+                    "basis for a recommendation. This is not an outage: "
+                    "nothing feeds POST /v1/metrics/record."
+                ),
+                "emergency_mode": False,
+                "observed": False,
+            }
+
+        degraded = [e["provider"] for e in leaderboard if e["total_calls"]]
         return {
-            "recommended": "local_ollama",
-            "confidence": 100.0,
-            "reason": "All cloud providers degraded - using edge fallback",
-            "emergency_mode": True
+            "recommended": None,
+            "confidence": None,
+            "reason": (
+                "Every observed provider is below the 'use' threshold: "
+                + ", ".join(degraded)
+            ),
+            "emergency_mode": True,
+            "observed": True,
         }
     
     async def _predictive_analysis(self) -> Dict:
@@ -619,11 +666,25 @@ class MonitoringBlock(LegoBlock):
         lb = await self._get_leaderboard()
         pred = await self._predictive_analysis()
         
+        # Three states, not two. "degraded" is a claim about observed
+        # providers; with nothing recorded the honest answer is "unknown".
+        # Reporting degraded on no data cries wolf on every single call, which
+        # is how a real degradation gets ignored.
+        entries = lb["leaderboard"][:2]
+        if not entries or all(e["total_calls"] == 0 for e in entries):
+            overall = "unknown"
+        elif all(e["recommendation"] == "use" for e in entries):
+            overall = "healthy"
+        else:
+            overall = "degraded"
+
         return {
-            "overall_status": "healthy" if all(e["recommendation"] == "use" for e in lb["leaderboard"][:2]) else "degraded",
+            "overall_status": overall,
             "leaderboard": lb,
             "predictions": pred,
-            "failover_readiness": "ready",
+            # Not a probe result. Nothing here tests that a failover would
+            # actually succeed, so it states what it is.
+            "failover_readiness": "not_probed",
             "recommendation": await self._recommend_provider()
         }
     
@@ -648,5 +709,5 @@ class MonitoringBlock(LegoBlock):
         h = super().health()
         h["providers_tracked"] = len(self.providers)
         h["metrics_retention"] = f"{self.metrics_window} calls per provider"
-        h["auto_route_enabled"] = True
+        h["auto_route_enabled"] = False   # nothing reads the leaderboard to route
         return h
