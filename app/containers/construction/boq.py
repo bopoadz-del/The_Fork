@@ -2056,7 +2056,14 @@ class ConstructionBoqMixin:
                     "measurements": result.get("measurements", []),
                     "specifications": result.get("specifications", []),
                     "count": len(result.get("measurements", [])),
-                    "confidence": result.get("confidence", {}).get("measurement_extraction", 0)
+                    # None, not 0. Nothing in the codebase has ever produced a
+                    # `measurement_extraction` confidence — grep it: this line
+                    # is the only occurrence — so the old `, 0)` default made
+                    # every successful extraction report zero confidence in its
+                    # own output. A reader cannot tell "the extractor is not
+                    # sure" from "nobody computes this", and the first reading
+                    # is the one a user acts on. Null says not-computed.
+                    "confidence": result.get("confidence", {}).get("measurement_extraction")
                 }
             return result
     

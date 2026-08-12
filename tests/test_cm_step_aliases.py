@@ -18,40 +18,33 @@ from app.core.cross_domain_reasoner import MultiDomainPlanBuilder
 from app.core.workflow_templates import WorkflowTemplateLibrary
 
 
-# Known ConstructionContainer route keys + specialist blocks that accept
-# default process (action may be None).
-_KNOWN_CONSTRUCTION_ACTIONS = {
-    "generate_wbs",
-    "parse_primavera_schedule",
-    "schedule_risk",
-    "forensic_delay_analysis",
-    "procurement_list_generator",
-    "progress_tracker",
-    "qa_qc_inspection",
-    "estimate_costs",
-    "sympy_reason",
-    "change_order_impact",
-    "claims_builder",
-    "carbon_footprint_calculator",
-    "commissioning_checklist",
-    "safety_compliance_audit",
-    "submittal_log_generator",
-    "procurement_optimizer",
-    "process_contract",
-    "risk_register_auto_populate",
-    "bim_clash_detection",
-    "payment_certificate",
-    "cash_flow_forecast",
-    "om_manual_generator",
-    "warranty_maintenance_schedule",
-    "bim_analysis",
-    "bim_extract",
-    "rfi_generator",
-    "as_built_deviation_report",
-    "daily_site_report",
-    "esg_sustainability_report",
-    "health_check",
-}
+def _known_construction_actions() -> set[str]:
+    """The route keys ConstructionContainer.route() actually accepts.
+
+    Derived from the handlers table, NOT hand-copied. Until 2026-08-12 this was
+    a literal set of thirty names maintained by hand, which made the test below
+    a false-green machine: deleting `"schedule_risk"` from the real handlers
+    table left `STEP_TO_TARGET["recovery_options"] -> ("construction",
+    "schedule_risk")` dangling, and this file stayed green because it was
+    checking the alias against its own copy rather than against the router.
+    Measured — that exact mutation was run, and only
+    tests/test_construction_actions_reachable.py went red.
+
+    Parsed rather than imported because the table is a local inside route().
+    Keys, not `self.<method>` names: the table aliases on purpose.
+    """
+    import re
+    from pathlib import Path
+
+    src = Path("app/containers/construction/__init__.py").read_text(encoding="utf-8")
+    start = src.index("handlers = {")
+    block = src[start:src.index("\n        }", start)]
+    keys = set(re.findall(r'"([a-z0-9_]+)":\s*self\.', block))
+    assert len(keys) > 40, f"parsed only {len(keys)} route keys — has route() changed shape?"
+    return keys
+
+
+_KNOWN_CONSTRUCTION_ACTIONS = _known_construction_actions()
 
 _KNOWN_BLOCKS = {
     "construction",
