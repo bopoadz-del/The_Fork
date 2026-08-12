@@ -98,7 +98,7 @@ user-facing: `_suggest_next_action` recommends `generate_construction_report`
 returned `"Unknown action"`. The platform recommended something it then
 refused to run.
 
-### Wiring them was the wrong fix for two of the three
+### Wiring them, as first attempted, was wrong — they could not run
 
 The first attempt routed all three. That was wrong, and the reason matters:
 **unreachable code is often unreachable because it does not work.**
@@ -108,13 +108,9 @@ The first attempt routed all three. That was wrong, and the reason matters:
       (via _compare_photo_to_bim -> self._element_similarity,
                                  -> self._find_deviations)
 
-None of those four helpers has ever been defined in this repository.
-`git log -S "def <helper>" --all` returns nothing for all four.
-`generate_construction_report` additionally reads five keys off
-`process_document` that its current contract does not return — it was written
-against an older version of that function.
-
-Measured through `route()`:
+None of those four helpers had ever been defined in this repository —
+`git log -S "def <helper>" --all` returned nothing for all four. Measured
+through `route()`:
 
 | Action | Result |
 |---|---|
@@ -123,21 +119,66 @@ Measured through `route()`:
 | `generate_construction_report` | `KeyError: 'doc_type'` |
 | `extract_measurements` | `{"status": "success", ...}` — runs |
 
-So routing them converted an honest refusal into an unhandled 500. Only
-`extract_measurements` stayed wired. The other two are parked, unrouted, and
-registered — `docs/archive/HANDOFF.md` had parked them as *"real, need
-multi-file resolution"*, which is wrong on both counts and is corrected in
-`KNOWN_INCOMPLETE.md`.
+So routing them converted an honest refusal into an unhandled 500.
 
-They were **not deleted**. Defining the four helpers is domain logic to design
-— an element similarity metric, a delay-risk heuristic, a deviation
-classifier, a document recommendation generator — not wiring to restore.
-Inventing them to make a test pass would be fabricating capability.
+**Correction to an earlier claim in this document.** It initially said
+`generate_construction_report` reads five keys `process_document` does not
+return, and was therefore written against an older contract. That was based on
+a probe using a specification `.txt`. `process_document` dispatches by document
+type, and the *drawing* branch does return all five — `doc_type`,
+`detected_disciplines`, `total_pages`, `measurements`, `tables`. The action
+worked for drawings and raised `KeyError` for every specification, report and
+contract. The unconditional break was only `_generate_doc_recommendations`.
 
 `extract_measurements` is not a twin of `extract_quantities`, which was the
 other possibility worth ruling out: it reads a drawing and produces
 measurements, while `extract_quantities` consumes a measurements *list*. They
 are consecutive pipeline stages.
+
+### Then all three were implemented and wired
+
+The actions were briefly parked and registered. That was reversed on
+instruction, and implementing them surfaced three further defects in the same
+chain that parking would have preserved:
+
+- **`_query_bim_location` read the wrong key.** It took
+  `result["elements"]`; `BIMExtractorBlock` returns `building_elements`. Every
+  model query resolved to `[]`, so every photograph was compared against an
+  empty model and matched nothing.
+- **It advertised a query the block does not implement.** It passed
+  `action: "query_location"`, and `BIMExtractorBlock.process()` does not branch
+  on `action` at all. The location filter had never run. Filtering is now done
+  in the container by text match against element fields, and is documented as
+  text matching — the extractor emits no storey or space reference per element,
+  so there is nothing to do geometric containment against.
+- **A plural defeated the matcher by one hundredth.** An element tokenises to
+  `{wall, walls}` (category is plural, `ifc_type` is not); a detected `wall`
+  tokenises to `{wall}`. Jaccard 0.5, fuzzy ratio 0.571, against the caller's
+  0.6 threshold. Every wall in every model was missed.
+
+Measured end to end after the fixes, on `sample_office.ifc` and two real site
+photographs with a stub detector: **27 model elements resolved, 9 identified,
+18 not identified, 1 unmodelled object** (an excavator, similarity 0.4)
+reported as a deviation.
+
+`_element_similarity` is deliberately generic text similarity — token overlap
+against fuzzy ratio — not a construction-weighted heuristic. Nothing in the
+repo measures how well a vision label maps to an IFC class, so a domain-tuned
+score would be a guess presented as a measurement.
+
+### The confident zero
+
+The most dangerous defect in this chain was not a crash. With no image block
+wired, `_compare_photo_to_bim` returned `detected = []`, which flowed through
+as *"0% progress, high delay risk"* with `status: "success"` — a finding that
+nothing has been built, manufactured out of a missing dependency, and
+indistinguishable on screen from a real one.
+
+Detection now records **whether it ran**, not just what it returned, and
+`track_progress` refuses on all three empty inputs — no photographs, no
+resolvable model elements, no analysable photograph — rather than returning a
+number. `_assess_delay_risk` answers `not_assessed` rather than `low` when it
+has nothing to measure, because `low` is the answer a reader acts on.
 
 ### The fence, and proof that it bites
 
@@ -219,17 +260,30 @@ API caller hand-supplies them, every supplier scores exactly **73.8**, and the
 action then presents a weighted ranking and a recommended supplier off numbers
 nobody measured. A tie is not the visible outcome — a confident ordering is.
 
-**`digital_twin_sync` can never report incomplete geometry.**
-`_generate_sync_recommendations` (`__init__.py:1745`) tests
-`quality.get("completeness_score", 100) < 80`. `completeness_score` is produced
-nowhere, so the default is the only value the expression can take and the "Add
-missing geometry to incomplete elements" recommendation is unreachable. The
-sync report always reads as geometrically clean.
+**Fixed**, not registered: unscored suppliers now carry `total_score: None`
+and a `scoring_basis` naming the gap, scored suppliers are re-normalised over
+the criteria actually supplied, and unscored ones sort last rather than being
+coerced to `0` (which would read as "assessed and terrible"). The downstream
+average in `_generate_procurement_insights` skips them rather than emitting a
+re-tender recommendation caused by missing data.
 
-Neither is fixed here. Both are behaviour changes to a scoring model rather
-than test or wiring defects, and picking replacement semantics — refuse,
-return `None`, or label the scores as assumed — is a product decision, not an
-audit one. Registering rather than guessing.
+### A false positive from this sweep, recorded deliberately
+
+The sweep also flagged `digital_twin_sync`: `_generate_sync_recommendations`
+tests `quality.get("completeness_score", 100) < 80`, and `completeness_score`
+did not appear in the produced-key set, which would have made the "add missing
+geometry" recommendation unreachable and the sync report permanently clean.
+
+**That finding was wrong.** `completeness_score` *is* produced, at
+`__init__.py:1737` — but by subscript assignment
+(`checks["completeness_score"] = ...`) rather than as a dict literal, and the
+sweep's `"key":` regex only sees literals. The recommendation is reachable and
+the action is not defective.
+
+It is written up here rather than deleted because the failure mode is
+reusable: a static producer-set built from dict literals under-reports, so
+every hit from this sweep needs a plain grep for the key name before it counts
+as a finding. The `procurement_optimizer` hit survived exactly that check.
 
 ---
 

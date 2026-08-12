@@ -1781,22 +1781,61 @@ class ConstructionBoqMixin:
         suppliers = data.get("suppliers") or p.get("suppliers", [])
         constraints = p.get("constraints", {"max_suppliers": 5, "geographic_limit": None, "quality_threshold": 80, "payment_terms_preference": "net_30"})
     
+        # Score ONLY what the caller supplied.
+        #
+        # These six used to default to 70/75/80/80/60/70. Nothing in the
+        # platform produces `price_score`, `delivery_score`, `quality_score`,
+        # `financial_score`, `esg_score` or `support_score` — grep them — so a
+        # supplier list without them (which is every list the platform can
+        # build itself) gave every supplier the identical invented scorecard
+        # and an identical total of 73.8. The action then sorted that and
+        # presented a ranking and a recommended supplier. The output looked
+        # like an assessment and was an artefact of the defaults; worse, the
+        # visible result was a confident ordering rather than the tie that
+        # would have exposed it.
+        #
+        # Unscored suppliers now carry total_score None and are listed after
+        # the scored ones, with the gap named in `scoring_basis`.
+        _SCORE_FIELDS = {
+            "price_competitiveness": ("price_score", 0.25),
+            "delivery_reliability": ("delivery_score", 0.25),
+            "quality_rating": ("quality_score", 0.20),
+            "financial_stability": ("financial_score", 0.15),
+            "sustainability": ("esg_score", 0.10),
+            "technical_support": ("support_score", 0.05),
+        }
         scored_suppliers = []
+        unscored_count = 0
         for supplier in suppliers:
             scores = {
-                "price_competitiveness": supplier.get("price_score", 70),
-                "delivery_reliability": supplier.get("delivery_score", 75),
-                "quality_rating": supplier.get("quality_score", 80),
-                "financial_stability": supplier.get("financial_score", 80),
-                "sustainability": supplier.get("esg_score", 60),
-                "technical_support": supplier.get("support_score", 70)
+                label: supplier[key]
+                for label, (key, _w) in _SCORE_FIELDS.items()
+                if isinstance(supplier.get(key), (int, float))
+                and not isinstance(supplier.get(key), bool)
             }
-            weights = {"price": 0.25, "delivery": 0.25, "quality": 0.20, "financial": 0.15, "sustainability": 0.10, "technical": 0.05}
-            total_score = sum(scores[k] * weights.get(k.split("_")[0], 0.1) for k in scores.keys())
+            supplied_weight = sum(
+                w for label, (_k, w) in _SCORE_FIELDS.items() if label in scores
+            )
+            if supplied_weight:
+                # Re-normalise over the criteria actually provided, so a
+                # supplier scored on three criteria is not penalised against
+                # one scored on six.
+                total_score = round(sum(
+                    scores[label] * _SCORE_FIELDS[label][1] for label in scores
+                ) / supplied_weight, 1)
+                basis = (
+                    f"{len(scores)} of {len(_SCORE_FIELDS)} criteria supplied "
+                    f"({', '.join(sorted(scores))})"
+                )
+            else:
+                total_score = None
+                basis = "No supplier scores were supplied — not assessed"
+                unscored_count += 1
             scored_suppliers.append({
                 "name": supplier.get("name"),
                 "scores": scores,
-                "total_score": round(total_score, 1),
+                "total_score": total_score,
+                "scoring_basis": basis,
                 "lead_time_weeks": supplier.get("lead_time", 4),
                 "payment_terms": supplier.get("payment_terms", "net_30"),
                 "certifications": supplier.get("certifications", []),
@@ -1804,8 +1843,13 @@ class ConstructionBoqMixin:
                 "capabilities": supplier.get("capabilities", []),
                 "recommended_for": []
             })
-    
-        scored_suppliers.sort(key=lambda x: x["total_score"], reverse=True)
+
+        # Unscored suppliers sort last and keep their None rather than being
+        # coerced to 0 — a 0 would read as "assessed and terrible".
+        scored_suppliers.sort(
+            key=lambda x: (x["total_score"] is not None, x["total_score"] or 0),
+            reverse=True,
+        )
     
         procurement_plan = []
         for item in boq:
@@ -1863,9 +1907,26 @@ class ConstructionBoqMixin:
         single_source = [p for p in plan if len(p.get("alternative_suppliers", [])) == 0]
         if single_source:
             insights.append(f"Risk: {len(single_source)} items have single-source dependency")
-        avg_score = sum(p["supplier_score"] for p in plan) / len(plan) if plan else 0
-        if avg_score < 75:
-            insights.append("Consider re-tendering: Average supplier score below 75")
+        # `supplier_score` is None for suppliers the caller gave no scores for
+        # (see procurement_optimizer). Averaging over those would have been a
+        # TypeError before; treating them as 0 would be worse — it would drag
+        # the average under 75 and emit a re-tender recommendation caused by
+        # missing data rather than by weak suppliers.
+        scored = [p["supplier_score"] for p in plan
+                  if isinstance(p.get("supplier_score"), (int, float))]
+        if not scored:
+            if plan:
+                insights.append(
+                    "No supplier scores were supplied, so supplier quality was not "
+                    "assessed — this plan ranks on lead time and price only."
+                )
+        else:
+            avg_score = sum(scored) / len(scored)
+            if avg_score < 75:
+                insights.append(
+                    f"Consider re-tendering: average supplier score {avg_score:.0f} "
+                    f"is below 75 (across {len(scored)} of {len(plan)} scored items)"
+                )
         return insights
     async def esg_sustainability_report(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
@@ -2056,14 +2117,21 @@ class ConstructionBoqMixin:
                     "measurements": result.get("measurements", []),
                     "specifications": result.get("specifications", []),
                     "count": len(result.get("measurements", [])),
-                    # None, not 0. Nothing in the codebase has ever produced a
-                    # `measurement_extraction` confidence — grep it: this line
-                    # is the only occurrence — so the old `, 0)` default made
-                    # every successful extraction report zero confidence in its
-                    # own output. A reader cannot tell "the extractor is not
-                    # sure" from "nobody computes this", and the first reading
-                    # is the one a user acts on. Null says not-computed.
-                    "confidence": result.get("confidence", {}).get("measurement_extraction")
+                    # Pass the measured confidence through unchanged.
+                    #
+                    # This used to read `.get("measurement_extraction", 0)`.
+                    # `measurement_extraction` is not a key `process_document`
+                    # has ever produced — that line was its only occurrence in
+                    # the codebase — so every successful extraction reported
+                    # confidence 0, which reads as "the extractor is not sure"
+                    # rather than "the wrong key was asked for". The real
+                    # contract is a dict: {"overall": 0.857, "signals": {...},
+                    # "measured": true, "caveats": [...]}. Forwarded whole
+                    # rather than reduced to `overall`, because the caveats say
+                    # WHY it is not 1.0 and dropping them would be a quieter
+                    # version of the same defect. None when the document path
+                    # genuinely computes no confidence.
+                    "confidence": result.get("confidence")
                 }
             return result
     

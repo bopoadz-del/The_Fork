@@ -134,7 +134,17 @@ def _hint_actions() -> set[str]:
 
 
 def _orchestrator_actions() -> set[str]:
-    """Action strings smart_orchestrator emits from keyword matches."""
+    """Action strings smart_orchestrator emits from keyword matches.
+
+    DELIBERATELY LOOSE, and only ever used to WIDEN the reachable set in the
+    reverse check — never to fail anything. It intersects every quoted
+    lowercase string in the module with the route keys, so an action whose
+    name happens to coincide with an ordinary quoted word in that file counts
+    as reachable when it may not be. The consequence is a possible false
+    NEGATIVE in the orphan list (an action treated as reachable that nothing
+    really emits), never a false failure. Tightening it means enumerating the
+    real emission sites; until then, do not read the orphan set as exact.
+    """
     src = Path("app/blocks/smart_orchestrator.py").read_text(encoding="utf-8")
     return set(re.findall(r'"([a-z0-9_]+)"', src)) & _routed_keys()
 
@@ -159,10 +169,12 @@ EXPECTED_EXTERNAL_ONLY = {
     "carbon_report",        # legacy short-name alias
     "safety_audit",         # legacy short-name alias
     "procurement_analysis",  # canonical name; the "procurement" alias is hinted
-    # Wired 2026-08-12 during the audit. It runs (unlike the two actions left
-    # unwired beside it), but nothing in the repo suggests it yet. If a surface
-    # starts naming it, delete this line.
+    # Wired 2026-08-12 during the audit, once each was made to run. Nothing in
+    # the repo names either yet -- track_progress needs a photo set and an IFC
+    # model, which no automated surface currently assembles. If a surface
+    # starts naming one, delete its line.
     "extract_measurements",
+    "track_progress",
 }
 
 
@@ -307,22 +319,14 @@ def _unrunnable_methods() -> set[str]:
     return tainted
 
 
-# Public actions that are known-broken and therefore deliberately NOT routed.
-# docs/archive/HANDOFF.md parked these two, but recorded the reason wrongly as
-# "real, need multi-file resolution". They are not real: between them they call
-# four helpers that have never existed in this repository. Corrected in
-# KNOWN_INCOMPLETE.md. Kept rather than deleted so the near-miss code survives
-# for whoever implements the helpers — but fenced, so nobody routes them again.
-PARKED_UNRUNNABLE = {"track_progress", "generate_construction_report"}
-
-# The exact phantom helpers behind that parking, asserted by equality so a NEW
-# one cannot be added silently, and so defining one forces this list to shrink.
-KNOWN_MISSING_HELPERS = {
-    "_assess_delay_risk",            # track_progress
-    "_element_similarity",           # _compare_photo_to_bim
-    "_find_deviations",              # _compare_photo_to_bim
-    "_generate_doc_recommendations",  # generate_construction_report
-}
+# Nothing is parked. `track_progress` and `generate_construction_report` were
+# briefly held here while their four missing helpers were unwritten; all four
+# are now implemented and both actions are routed, so both sets are empty and
+# the assertions below are plain emptiness checks again. Re-populate ONLY with
+# a matching KNOWN_INCOMPLETE.md entry — an exemption without a register entry
+# is how the wrong reason in docs/archive/HANDOFF.md survived for months.
+PARKED_UNRUNNABLE: set[str] = set()
+KNOWN_MISSING_HELPERS: set[str] = set()
 
 
 def test_no_new_method_calls_a_helper_that_does_not_exist():
@@ -363,15 +367,15 @@ def test_no_unrunnable_method_is_routed():
     )
 
 
-def test_the_parked_actions_are_actually_unrunnable():
-    """Keeps the parking honest in the other direction.
+def test_nothing_is_parked_without_being_registered():
+    """A parked action must be genuinely unrunnable, not merely inconvenient.
 
-    If someone implements the missing helpers, this goes red and forces the
-    action to be wired rather than left parked on a stale excuse — which is
-    how the wrong reason in docs/archive/HANDOFF.md survived this long.
+    With both sets empty this asserts the strong form: every public action is
+    routed and no helper is missing. If an entry is ever added back, it has to
+    be for a real break — which is what the wrong "needs multi-file
+    resolution" reason in docs/archive/HANDOFF.md was not.
     """
-    still_broken = _unrunnable_methods() & PARKED_UNRUNNABLE
-    assert still_broken == PARKED_UNRUNNABLE, (
-        f"{sorted(PARKED_UNRUNNABLE - still_broken)} can now run — wire them "
-        "into the handlers table and remove them from PARKED_UNRUNNABLE."
+    assert PARKED_UNRUNNABLE <= _unrunnable_methods(), (
+        f"{sorted(PARKED_UNRUNNABLE - _unrunnable_methods())} is parked but runs "
+        "— wire it into the handlers table and drop it from PARKED_UNRUNNABLE."
     )

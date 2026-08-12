@@ -1915,7 +1915,14 @@ class ConstructionDocumentsMixin:
     async def _compare_photo_to_bim(self, photo_path: str, bim_file: str, location: str) -> Dict:
         """Visual SLAM + BIM comparison"""
         image_block = self.get_dep("image")
-    
+
+        # Track WHETHER detection ran, not just what it returned. Without this
+        # an absent image block produced detected=[], which read downstream as
+        # "the photograph shows none of the expected elements" — a finding of
+        # no progress, manufactured out of a missing dependency. Empty-because-
+        # nothing-looked and empty-because-nothing-was-there must not collapse
+        # into the same value.
+        detection_error = None
         if image_block:
             try:
                 photo_analysis = await image_block.execute(
@@ -1923,11 +1930,11 @@ class ConstructionDocumentsMixin:
                     {"prompt": f"Identify construction elements at {location}: walls, columns, beams, slabs, openings, MEP rough-ins"}
                 )
                 detected = photo_analysis.get("result", {}).get("objects", [])
-            except Exception:
-                detected = []
+            except Exception as exc:
+                detected, detection_error = [], f"Image analysis failed: {exc}"
         else:
-            detected = []
-    
+            detected, detection_error = [], "No image analysis block is configured"
+
         expected_elements = await self._query_bim_location(bim_file, location)
     
         matched = []
@@ -1943,6 +1950,8 @@ class ConstructionDocumentsMixin:
             "location": location,
             "photo": Path(photo_path).name,
             "match_confidence": len(matched) / len(expected_elements) if expected_elements else 0,
+            "detection_ran": detection_error is None,
+            "detection_error": detection_error,
             "elements_detected": len(detected),
             "elements_expected": len(expected_elements),
             "matched": matched,
@@ -1962,15 +1971,19 @@ class ConstructionDocumentsMixin:
         without polluting the return value.
         """
         self._last_bim_query_error: Optional[str] = None
+        if not bim_file:
+            self._last_bim_query_error = "No BIM model supplied"
+            return []
         block = self._resolve_block("bim_extractor")
         if block is None:
             self._last_bim_query_error = "BIM extractor not configured for spatial queries"
             return []
         try:
-            result = await block.process(
-                {"file_path": bim_file},
-                {"action": "query_location", "location": location},
-            )
+            # No `action` param. BIMExtractorBlock.process() does not branch on
+            # one — it always performs a full extraction — so passing
+            # action="query_location" advertised a capability the block has
+            # never had, and the filtering below was silently never applied.
+            result = await block.process({"file_path": bim_file}, {})
         except Exception as exc:
             self._last_bim_query_error = f"BIM extractor query failed: {exc}"
             return []
@@ -1980,5 +1993,147 @@ class ConstructionDocumentsMixin:
                 else "BIM extractor returned malformed response"
             )
             return []
-        elements = result.get("elements")
-        return elements if isinstance(elements, list) else []
+        # `building_elements`, not `elements`. The block has never returned an
+        # `elements` key, so the old read resolved to None on every successful
+        # query and this function returned [] even for a valid IFC model —
+        # which made match_confidence 0/0 and every progress figure meaningless.
+        elements = result.get("building_elements")
+        if not isinstance(elements, list):
+            self._last_bim_query_error = (
+                "BIM extractor returned no building_elements array"
+            )
+            return []
+        return self._filter_elements_by_location(elements, location)
+
+    def _filter_elements_by_location(self, elements: List[Dict], location: str) -> List[Dict]:
+        """Narrow extracted IFC elements to a named location.
+
+        TEXT MATCHING, NOT GEOMETRY. The extractor emits each element as
+        `{id, ifc_type, category, name, description, object_type, <psets>}`
+        with no storey or space reference on the element itself, so there is
+        nothing to do containment against. This matches the location string
+        against the element's descriptive fields and its flattened property
+        values, which is what a storey named "Level 02" or a pset carrying a
+        zone tag actually gives us.
+
+        An unusable location ("", "unknown") returns everything rather than
+        nothing: the caller compares a photo against the model, and comparing
+        against the whole model is a weaker answer, while comparing against an
+        empty set would silently read as "nothing was built".
+        """
+        if not location or location.strip().lower() in {"unknown", "n/a", "none"}:
+            return elements
+        needle = location.strip().lower()
+        matched = []
+        for el in elements:
+            if not isinstance(el, dict):
+                continue
+            haystack = " ".join(
+                str(v) for k, v in el.items()
+                if k != "id" and isinstance(v, (str, int, float))
+            ).lower()
+            if needle in haystack:
+                matched.append(el)
+        # No element names the location. Fall back to the full set and say so,
+        # rather than returning [] — an empty expectation set makes every photo
+        # score a perfect match against nothing.
+        if not matched:
+            self._last_bim_query_error = (
+                f"No element referenced location {location!r}; compared against "
+                f"the full model ({len(elements)} elements) instead"
+            )
+            return elements
+        return matched
+
+    @staticmethod
+    def _element_tokens(value: Any) -> set:
+        """Comparable word tokens for a BIM element or a detected object.
+
+        Handles the two shapes that reach it: the extractor's element dict and
+        whatever the image block returns for a detection (a bare label string,
+        or a dict keyed label/name/class/object). IFC type names are
+        camel-case with an `Ifc` prefix (`IfcWallStandardCase`), so they are
+        split into words before comparison — otherwise a detected "wall" would
+        never match `IfcWallStandardCase`.
+        """
+        import re
+
+        if isinstance(value, dict):
+            parts = [str(value.get(k, "")) for k in
+                     ("label", "name", "class", "object", "category",
+                      "ifc_type", "object_type", "description")]
+        else:
+            parts = [str(value or "")]
+        tokens: set = set()
+        for part in parts:
+            if not part:
+                continue
+            part = re.sub(r"^Ifc", "", part)
+            part = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", part)
+            for tok in re.split(r"[^A-Za-z0-9]+", part.lower()):
+                if len(tok) > 2:
+                    # Naive de-pluralisation. The extractor's `category` is
+                    # plural ("walls") while `ifc_type` and vision labels are
+                    # singular ("IfcWall", "wall"), so without this an element
+                    # tokenises to {wall, walls} against a detected {wall} and
+                    # scores 0.571 — just under the caller's 0.6 threshold.
+                    # Every wall in the model was being missed by one hundredth.
+                    if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
+                        tok = tok[:-1]
+                    tokens.add(tok)
+        # Common IFC suffixes carry no discriminating meaning.
+        return tokens - {"standard", "case", "element", "type", "proxy"}
+
+    def _element_similarity(self, expected: Any, detected: Any) -> float:
+        """How strongly a detected object corresponds to a BIM element, 0..1.
+
+        Token overlap (Jaccard) against fuzzy string ratio, whichever is
+        higher. Deliberately a generic text-similarity measure rather than a
+        construction-specific heuristic: nothing in the repo measures how well
+        a vision label maps to an IFC class, and inventing a domain-weighted
+        score would be presenting a guess as a measurement. The caller's
+        threshold (0.6) decides what counts as a match.
+        """
+        from difflib import SequenceMatcher
+
+        exp_tokens = self._element_tokens(expected)
+        det_tokens = self._element_tokens(detected)
+        if not exp_tokens or not det_tokens:
+            return 0.0
+        jaccard = len(exp_tokens & det_tokens) / len(exp_tokens | det_tokens)
+        ratio = SequenceMatcher(
+            None, " ".join(sorted(exp_tokens)), " ".join(sorted(det_tokens))
+        ).ratio()
+        return round(max(jaccard, ratio), 3)
+
+    def _find_deviations(self, detected: List, expected: List[Dict]) -> List[Dict]:
+        """Detected objects that correspond to no element in the model.
+
+        The inverse of `missing`: those are modelled-but-not-seen, these are
+        seen-but-not-modelled — the direction that catches unrecorded work and
+        as-built departures. Reported as observations with the similarity that
+        was actually computed, never as a judgement about whether the
+        departure is acceptable.
+        """
+        deviations = []
+        for obj in detected or []:
+            best = 0.0
+            closest = None
+            for element in expected or []:
+                score = self._element_similarity(element, obj)
+                if score > best:
+                    best, closest = score, element
+            if best < 0.6:
+                deviations.append({
+                    "type": "unmodelled_object",
+                    "detected": (obj.get("label") or obj.get("name")
+                                 if isinstance(obj, dict) else str(obj)),
+                    "closest_model_element": (closest or {}).get("name") or
+                                             (closest or {}).get("ifc_type"),
+                    "similarity": best,
+                    "observation": (
+                        "Detected in the photograph with no corresponding model "
+                        "element. Verify against the current revision."
+                    ),
+                })
+        return deviations

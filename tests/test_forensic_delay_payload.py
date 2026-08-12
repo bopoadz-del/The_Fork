@@ -22,6 +22,7 @@ classify the events it was handed and populate the report sections.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,24 @@ pytestmark = pytest.mark.skipif(
     not XER.is_file(),
     reason=f"real Primavera baseline fixture missing at {XER}",
 )
+
+
+@pytest.mark.skipif(
+    "construction" not in os.getenv("CEREBRUM_DOMAIN_KITS", ""),
+    reason="fixture-presence guard is for the production-like CI profile",
+)
+def test_the_fixture_this_file_depends_on_is_present():
+    """Without this, a deleted fixture returns forensic_delay_analysis to zero
+    coverage SILENTLY -- the tests below become green skips, which read as
+    passing. The .xer is pending an owner decision on client content; if it is
+    purged, that must break the build rather than quietly retire the only
+    payload coverage the EOT/prolongation path has.
+    """
+    assert XER.is_file(), (
+        f"{XER} is gone, so the forensic delay payload tests are skipping and "
+        "the action has no coverage. Supply a replacement Primavera baseline "
+        "and point this file at it."
+    )
 
 
 @pytest.fixture

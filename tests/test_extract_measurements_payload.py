@@ -21,6 +21,7 @@ strings, 3 specifications.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,26 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.mark.skipif(
+    "construction" not in os.getenv("CEREBRUM_DOMAIN_KITS", ""),
+    reason="fixture-presence guard is for the production-like CI profile",
+)
+def test_the_fixture_this_file_depends_on_is_present():
+    """Without this, a deleted fixture returns the action to zero coverage
+    SILENTLY -- every test above becomes a green skip, which reads as passing.
+
+    `drawing_tm_200.pdf` is one of the binaries pending an owner decision on
+    client content. If it is purged, that decision must break this build
+    rather than quietly retire the only payload coverage extract_measurements
+    has. Register the replacement fixture here, do not just delete the file.
+    """
+    assert DRAWING.is_file(), (
+        f"{DRAWING} is gone, so the extract_measurements payload tests are "
+        "skipping and the action has no coverage. Supply a replacement drawing "
+        "fixture and point this file at it."
+    )
+
+
 @pytest.fixture(scope="module")
 def extracted():
     """Parse the PDF once -- it is a real multi-page drawing."""
@@ -40,7 +61,7 @@ def extracted():
 
     from app.containers.construction import ConstructionContainer
 
-    return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+    return asyncio.run(
         ConstructionContainer().extract_measurements({"file_path": str(DRAWING)}, {})
     )
 
@@ -77,19 +98,24 @@ def test_every_measurement_is_structurally_complete(extracted):
         assert m["unit"], m
 
 
-def test_confidence_is_never_a_placeholder_zero(extracted):
+def test_confidence_is_the_measured_one(extracted):
     """Guards the fix made alongside this file.
 
-    `measurement_extraction` is computed nowhere in the codebase, and the old
-    default reported that absence as confidence 0 -- indistinguishable, to a
-    reader, from a genuine finding of no confidence. Null means not computed.
-    If a real score ever lands here it must be a real score.
+    The old code read `confidence["measurement_extraction"]`, a key
+    `process_document` has never produced, defaulting to 0 -- so every
+    successful extraction reported zero confidence. The real contract is a
+    measured dict, and it is forwarded whole: the caveats explain why the
+    score is not 1.0, so reducing it to a bare number would be a quieter
+    version of the same defect.
     """
     confidence = extracted["confidence"]
-    assert confidence is None or 0 < confidence <= 1, (
-        f"confidence={confidence!r}: a bare 0 is the placeholder this assertion "
-        "exists to catch. Return None when nothing computes it."
+    assert isinstance(confidence, dict), (
+        f"confidence={confidence!r} -- expected the measured dict from "
+        "process_document, not a scalar and not a placeholder"
     )
+    assert confidence.get("measured") is True, confidence
+    assert 0 < confidence["overall"] <= 1, confidence
+    assert confidence.get("signals"), "a confidence with no signals is not measured"
 
 
 @pytest.mark.asyncio

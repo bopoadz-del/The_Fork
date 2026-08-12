@@ -98,47 +98,6 @@ neighbour needed a bid corpus for the same inputs; that was wrong.
 - app/containers/construction/__init__.py :: _identify_consolidation  — procurement packages worth consolidating. Buildable now: group plan items by `material` and by `recommended_supplier`; repeats across BOQ items are the consolidation candidates.
 - app/containers/construction/__init__.py :: _suggest_bundling  — supplier bundling opportunities. Buildable now: group by `recommended_supplier` within a `required_date` window, cross-checked against `scored_suppliers` capability; `packaging_strategy` already flags bulk-eligible lines.
 
-### Two construction actions call helpers that were never written
-
-`docs/archive/HANDOFF.md` and `docs/archive/PROGRESS.md` park these two as
-"real, parked-by-design — need multi-file resolution". **That reason is
-wrong.** They do not need multi-file resolution. They cannot run at all:
-between them they call four helpers that have never been defined anywhere in
-this repository's history. `git log -S "def <helper>" --all` returns nothing
-for all four.
-
-    generate_construction_report -> self._generate_doc_recommendations
-    track_progress               -> self._assess_delay_risk
-      (via _compare_photo_to_bim -> self._element_similarity,
-                                 -> self._find_deviations)
-
-`generate_construction_report` additionally reads five keys off
-`process_document` (`doc_type`, `detected_disciplines`, `total_pages`,
-`measurements`, `tables`) that its current contract does not return — it was
-written against an older version of that function.
-
-Measured 2026-08-12 by dispatching each through `route()`:
-
-    track_progress                 -> AttributeError: _assess_delay_risk
-    track_progress (with photos)   -> AttributeError: _find_deviations
-    generate_construction_report   -> KeyError: 'doc_type'
-
-They are deliberately NOT in the handlers table. Routing them replaces an
-honest `"Unknown action"` refusal with an unhandled 500, which is worse than
-the gap. `tests/test_construction_actions_reachable.py` holds both properties:
-a new phantom helper fails immediately, and no unrunnable method may ever be
-routed (that rule has no exceptions). The code is kept rather than deleted so
-the near-miss survives for whoever writes the helpers.
-
-Not "buildable now" in the sense the rest of this section means: the four
-helpers are domain logic to design, not wiring to restore — an element
-similarity metric, a delay-risk heuristic, a deviation classifier, and a
-document recommendation generator. Inventing them to make the tests pass would
-be fabricating capability.
-
-- app/containers/construction/__init__.py :: track_progress  — as-built photo vs BIM progress comparison. Needs `_assess_delay_risk`, and `_compare_photo_to_bim` needs `_element_similarity` + `_find_deviations`. Note `progress_tracker` (schedule.py) is a DIFFERENT, working capability — EVM/variance from percentages — not a replacement for this one.
-- app/containers/construction/__init__.py :: generate_construction_report  — formal report over a parsed document. Needs `_generate_doc_recommendations`, and its read of `process_document` must be re-based on that function's current keys.
-
 ### Site photo intelligence — BUILT 2026-08-12
 
 `_extract_equipment_from_photos` and `_extract_quality_observations` are
@@ -170,15 +129,6 @@ screen reveals that no supplier was actually assessed. Not changed here:
 choosing between refusing, returning null, and labelling the scores as assumed
 is a product decision. Do not read `total_score` as an assessment until a
 producer for those keys exists.
-
-**`digital_twin_sync` cannot report incomplete geometry.**
-`_generate_sync_recommendations` (`__init__.py:1745`) tests
-`quality.get("completeness_score", 100) < 80`, and `completeness_score` is
-produced nowhere, so the default is the only value the expression can take.
-The "Add missing geometry to incomplete elements" recommendation is
-unreachable and the sync report always reads as geometrically clean. (The
-action is otherwise honest — it already reports `sync_status:
-"prepared_not_pushed"` rather than claiming a live push.)
 
 **Site-photo observations detect far less than the field names suggest.**
 Measured 2026-08-12 over 21 real construction photographs
@@ -277,6 +227,34 @@ imports this file.
 ---
 
 ## Recently closed
+
+### Two construction actions un-parked — CLOSED 2026-08-12
+
+`track_progress` and `generate_construction_report` were registered here the
+same day as unrunnable, then implemented rather than left parked. All four
+missing helpers now exist (`_generate_doc_recommendations`,
+`_assess_delay_risk`, `_element_similarity`, `_find_deviations`), and three
+further defects in the same chain were fixed along the way:
+
+- `_query_bim_location` read `result["elements"]`; `BIMExtractorBlock` returns
+  `building_elements`. Every model query resolved to `[]`, so every photograph
+  was compared against an empty model.
+- It also passed `action: "query_location"`, which that block does not branch
+  on — the location filter it advertised had never existed. Filtering is now
+  done here, by text match against element fields, and documented as such: it
+  is not geometric containment.
+- Token comparison scored `wall` against a `{wall, walls}` element at 0.571,
+  under the caller's 0.6 threshold, so every wall in every model was missed by
+  one hundredth. Plurals are normalised.
+
+Both actions now refuse rather than return a confident zero: no photographs,
+no resolvable model elements, or no image block each produce an explicit
+error. The last of those was the dangerous one — an absent vision block
+previously yielded `0%` progress and `high` delay risk from a dependency that
+was simply not installed. `_assess_delay_risk` answers `not_assessed` rather
+than `low` when it has nothing to measure.
+
+Covered by `tests/test_newly_wired_actions_payload.py`.
 
 Not roadmap — implemented, listed so a reader can see the register moves in
 both directions.
