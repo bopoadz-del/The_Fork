@@ -158,6 +158,28 @@ registered below as vocabulary and model limits, not as unbuilt code.
 
 ## Stated limitations — implemented, but narrower than it looks
 
+**Supplier scores in `procurement_optimizer` are defaults, not measurements.**
+Found 2026-08-12 by the bar 1 sweep in `docs/CONSTRUCTION_CAPABILITY_AUDIT.md`.
+`boq.py:1787-1792` defaults six per-supplier scores to `70 / 75 / 80 / 80 / 60
+/ 70`. Nothing anywhere in `app/` produces `price_score`, `delivery_score`,
+`quality_score`, `financial_score`, `esg_score` or `support_score` — grep them.
+Unless an API caller supplies them by hand, every supplier scores exactly
+**73.8** and the action still presents a weighted ranking and a recommended
+supplier. The visible output is a confident ordering, not a tie, so nothing on
+screen reveals that no supplier was actually assessed. Not changed here:
+choosing between refusing, returning null, and labelling the scores as assumed
+is a product decision. Do not read `total_score` as an assessment until a
+producer for those keys exists.
+
+**`digital_twin_sync` cannot report incomplete geometry.**
+`_generate_sync_recommendations` (`__init__.py:1745`) tests
+`quality.get("completeness_score", 100) < 80`, and `completeness_score` is
+produced nowhere, so the default is the only value the expression can take.
+The "Add missing geometry to incomplete elements" recommendation is
+unreachable and the sync report always reads as geometrically clean. (The
+action is otherwise honest — it already reports `sync_status:
+"prepared_not_pushed"` rather than claiming a live push.)
+
 **Site-photo observations detect far less than the field names suggest.**
 Measured 2026-08-12 over 21 real construction photographs
 (`docs/PHOTO_INTELLIGENCE_EVAL.md`): **9% recall on quality/workmanship** at the
