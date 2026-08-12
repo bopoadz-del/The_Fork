@@ -1,5 +1,10 @@
 # Client-desk readiness verdict — 2026-08-02
 
+> **Superseded by `CLIENT_DESK_READINESS_20260813.md`** — this snapshot
+> predates the 2026-08-09 Neon/Render migration and the 2026-08-12 PRR
+> (PRs #331/#332). Kept unedited as the record of what was true on
+> 2026-08-02.
+
 Scope of this pass: the items `PLATFORM_HEALTH_REPORT.md` lists under
 **"NOT COVERED BY THIS SWEEP (the honest boundary)"**, plus the open
 dependency alerts. That NOT-COVERED list is what "all aspects, not RAG
