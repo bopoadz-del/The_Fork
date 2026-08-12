@@ -113,7 +113,7 @@ def allowed_actions_for_hat(hat_manifest) -> List[str]:
     Return the combined allowed_actions for a hat (merged with base).
     Hat actions + base actions, deduplicated.
     """
-    from catalog import get_base, resolve_hat_with_base
+    from app.agents.catalog import resolve_hat_with_base
     if hat_manifest.is_hat:
         merged = resolve_hat_with_base(hat_manifest)
         return merged.allowed_actions

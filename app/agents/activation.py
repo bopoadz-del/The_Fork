@@ -19,8 +19,13 @@ from __future__ import annotations
 import os
 from typing import Dict, List, Optional, Tuple
 
-from catalog import get_agent_catalog, get_base, list_hats, resolve_hat_with_base
-from models import AgentManifest
+from app.agents.catalog import (
+    get_agent_catalog,
+    get_base,
+    list_hats,
+    resolve_hat_with_base,
+)
+from app.agents.models import AgentManifest
 
 # -- Env-flag gating ------------------------------------------------------
 # Set FORK_HATS_ENABLED=1 to activate discipline-hat routing.
