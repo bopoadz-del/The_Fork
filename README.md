@@ -5,7 +5,7 @@ Postgres with pgvector + hybrid retrieval (BM25 + vector RRF) + an
 agent runtime that handles project Q&A, BOQ extraction, drawing QTO,
 WBS generation, and cost analysis.
 
-**Live:** [the-fork.onrender.com](https://the-fork.onrender.com)
+**Live:** [the-fork-jn3t.onrender.com](https://the-fork-jn3t.onrender.com)
 
 The deployed instance runs on Render (FastAPI web service + Postgres
 16 with pgvector). Chat is provider-driven via `LLM_PROVIDER`: the

@@ -1,6 +1,6 @@
 # PILOT READINESS — The_Fork / The Shovel — 2026-07-12
 
-Autonomous completion run against **live prod** (`the-fork.onrender.com` / `theshovel.ai`, srv-d8hdc6ek1jcs739rq5sg). Honesty rule in force: DONE = acceptance passed with evidence; otherwise PARKED with evidence. **Pilot go/no-go is Chadi's call (G4)** — this page is the input to it.
+Autonomous completion run against **live prod** (`the-fork-jn3t.onrender.com` / `theshovel.ai`, srv-d8hdc6ek1jcs739rq5sg). Honesty rule in force: DONE = acceptance passed with evidence; otherwise PARKED with evidence. **Pilot go/no-go is Chadi's call (G4)** — this page is the input to it.
 
 ## Verdict in one line
 The **foundation is now sound and the construction platform is actually loaded** — but a full feature/eval battery has not been run end-to-end, so this is **"substantially ready, verification-incomplete,"** not a green light.

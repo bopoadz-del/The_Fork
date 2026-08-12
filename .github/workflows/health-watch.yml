@@ -45,7 +45,7 @@ permissions:
   contents: read
 
 env:
-  BASE_URL: https://the-fork.onrender.com
+  BASE_URL: https://the-fork-jn3t.onrender.com
 
 jobs:
   liveness:

@@ -25,7 +25,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "the_fork.db"
 MANIFEST_PATH = Path("C:/tmp/migration_manifest.json")
-BASE = os.getenv("FORK_BASE_URL", "https://the-fork.onrender.com")
+BASE = os.getenv("FORK_BASE_URL", "https://the-fork-jn3t.onrender.com")
 API_KEY = os.getenv("FORK_API_KEY") or os.getenv("CEREBRUM_MASTER_KEY")
 CHUNK_BATCH_SIZE = int(os.getenv("CHUNK_BATCH_SIZE", "2000"))
 

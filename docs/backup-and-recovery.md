@@ -1,7 +1,7 @@
 # Backup and Recovery
 
 This document covers backup coverage and the recovery procedure for the
-production platform at `the-fork.onrender.com`. Owners: the operator
+production platform at `the-fork-jn3t.onrender.com`. Owners: the operator
 running the live deploy. Audience: anyone who needs to restore service
 after data loss.
 
@@ -66,7 +66,7 @@ recovery of a snapshotted upload.
 
    ```bash
    curl -H "Authorization: Bearer ${ADMIN_KEY}" \
-     "https://the-fork.onrender.com/v1/admin/debug/pilot-preflight" \
+     "https://the-fork-jn3t.onrender.com/v1/admin/debug/pilot-preflight" \
      | python -m json.tool
    ```
 

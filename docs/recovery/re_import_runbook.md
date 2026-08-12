@@ -125,7 +125,7 @@ curl -s -X POST \
       "ha_long_xanh_2"
     ]
   }' \
-  "https://the-fork.onrender.com/v1/hydration/run"
+  "https://the-fork-jn3t.onrender.com/v1/hydration/run"
 ```
 
 > **Note:** `master_corpus` is a virtual alias backed by `projects_folder`; hydrating `projects_folder` populates the master corpus.
@@ -140,7 +140,7 @@ Poll the per-project hydration history. A pass is complete when `latest` shows a
 for pid in projects_folder client_infra_pack_1 5c13510e ha_long_xanh ha_long_xanh_2; do
   echo "=== $pid ==="
   curl -s -H "Authorization: Bearer $FORK_API_KEY" \
-    "https://the-fork.onrender.com/v1/hydration/latest?scope=project&project_id=$pid"
+    "https://the-fork-jn3t.onrender.com/v1/hydration/latest?scope=project&project_id=$pid"
   echo
 done
 ```
@@ -178,7 +178,7 @@ for pid in projects_folder client_infra_pack_1 5c13510e ha_long_xanh ha_long_xan
   echo "re-indexing $pid ..."
   curl -s -X POST \
     -H "Authorization: Bearer $FORK_API_KEY" \
-    "https://the-fork.onrender.com/v1/admin/debug/project-reindex?project_id=$pid"
+    "https://the-fork-jn3t.onrender.com/v1/admin/debug/project-reindex?project_id=$pid"
   echo
 done
 ```
