@@ -60,7 +60,7 @@ except ImportError:  # pragma: no cover
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GOLDEN_SET = ROOT / "tests" / "golden_set.yaml"
-DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork.onrender.com")
+DEFAULT_BASE = os.getenv("FORK_BASE_URL", "https://the-fork-jn3t.onrender.com")
 RESULTS_JSONL = ROOT / "golden_set_results.jsonl"
 REPORT_MD = ROOT / "GOLDEN_SET_REPORT.md"
 

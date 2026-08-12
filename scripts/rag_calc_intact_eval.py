@@ -43,7 +43,7 @@ import time
 
 import httpx
 
-DEFAULT_BASE = "https://the-fork.onrender.com"
+DEFAULT_BASE = "https://the-fork-jn3t.onrender.com"
 
 # (label, query, text signature of the expected GK note — fallback GK marker)
 CASES = [

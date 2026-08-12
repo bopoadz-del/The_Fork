@@ -92,7 +92,7 @@ Everything else in the SPA is bundled (no CDN JS/CSS, no analytics/telemetry, no
 
 ## 9. Scripts (manual only — not the running server)
 
-CLI/eval scripts default `FORK_BASE_URL=https://the-fork.onrender.com` (the cloud dev/demo app) and hit it over httpx/urllib; some hit Ollama at `localhost:11434`, Google Drive directly, or the Render API (`api.render.com`). These never run at boot; for on-prem, point `FORK_BASE_URL` at the local instance and use the localhost-Ollama eval scripts. Not part of the deployed egress surface.
+CLI/eval scripts default `FORK_BASE_URL=https://the-fork-jn3t.onrender.com` (the cloud dev/demo app) and hit it over httpx/urllib; some hit Ollama at `localhost:11434`, Google Drive directly, or the Render API (`api.render.com`). These never run at boot; for on-prem, point `FORK_BASE_URL` at the local instance and use the localhost-Ollama eval scripts. Not part of the deployed egress surface.
 
 ---
 
