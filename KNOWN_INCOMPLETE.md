@@ -168,6 +168,51 @@ confidence so a reader can check it, and nothing in the pipeline may call
 anything a defect, violation or non-compliance.
 
 
+**The discipline-hat agent system is a second, dormant agent system.** There
+are two agent systems in this repository and only one of them runs.
+
+`app/agents/runtime.py` is the live one: `load_agents()` returns 14 agents, and
+every tool they advertise is dispatchable (fenced by
+`tests/test_agent_tool_surface.py`). Separately,
+`app/agents/manifests/fork.*.json` declares a base agent plus five discipline
+hats — planning, commercial, contracts, procurement, QA/QC — each with an
+`allowed_actions` list. That system is flag-gated behind `FORK_HATS_ENABLED`,
+which is unset everywhere, and it is **not partially wired. It is not wired at
+all**:
+
+- `allowed_actions` is read only inside `app/agents/` itself — `activation.py`,
+  `catalog.py`, `formulas.py`. `runtime.py` contains zero references to it, so
+  no live agent turn consults a hat.
+- Of the 35 plain action names the six manifests declare, **3 are dispatchable**
+  (`generate_wbs`, `construction_calc`, `cash_flow_forecast`). The other **32
+  resolve to nothing** — no block, no container route key, no synthetic tool.
+  Measured 2026-08-12 against `BLOCK_REGISTRY` + the container handlers table +
+  the names `_run_tool_call` handles.
+
+So turning the flag on today would not switch on five disciplines. It would
+give agents permission to call 32 actions that do not exist. That is why this
+is registered rather than implemented: writing those 32 actions is building a
+feature, not fixing a defect, and the audit's scope was to fix what fails a
+bar, not to rewrite.
+
+What the hats DO have is real: the formula bindings all resolve
+(`validate_manifest_bindings`, CI-guarded), and the manifests are schema-valid.
+The gap is entirely between `allowed_actions` and the dispatcher.
+
+Until 2026-08-12 the package could not even be imported — `catalog.py` and
+`activation.py` used Python-2 implicit relative imports (`from models import
+...`), so `import app.agents.catalog` raised `ModuleNotFoundError` and the hats
+were unreachable from application code regardless of the flag. Their 33 tests
+passed only because they did `sys.path.insert(0, "app/agents")` first, which
+also loaded `models` and `app.agents.models` as two distinct modules. Fixed,
+and fenced by `tests/test_no_implicit_relative_imports.py`.
+
+**What is needed to close this:** a decision on whether the hat system is the
+intended direction (it overlaps heavily with the live 14-agent system and the
+agent-picker), and if so, dispatch coverage for the 32 names. Not a code
+blocker — a product one.
+
+
 Not hollow functions, so `audit_stubs.py` cannot see these. They are here
 because the honest scope of a feature is part of knowing what is incomplete.
 

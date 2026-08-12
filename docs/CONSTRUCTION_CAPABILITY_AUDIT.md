@@ -28,6 +28,11 @@ that shape.
 | Cross-cutting — router surface | **FAIL** | **FAIL** | **FAIL** | 3 unreachable actions; 2 of them unrunnable; 1 false-green test; 1 placeholder value. |
 | Chat | pass | pass | pass | Gutting the RAG-default + prompt-injection policy turned 3 of 45 red. |
 | QTO / Formulas / orchestration | pass | pass | **FAIL** | 10 pure delegations, near-zero coverage. `formula_execute` and `orchestrate` were referenced by no test at all. |
+| Agents — imports | — | **FAIL** | — | `app.agents.catalog` / `activation` unimportable by package path; 33 tests passed via a `sys.path` hack that also concealed it. |
+| Agents — `runtime.py` core | pass | pass | pass | 7 methods gutted, all RED (`_run_tool_call` 13, `chat` 14, `chat_stream` 7…). |
+| Agents — `runtime.py` LLM + envelope | pass | pass | **FAIL** | 5 methods (702 lines) gutted → all 150 tests green. `_call_llm` is mocked 65×; `_auto_validate` had zero references. |
+| Agents — tool surface | pass | pass | pass | 14 live agents, 0 undispatchable tools. |
+| Agents — discipline hats | **FAIL** | — | — | Dormant second system; 32 of 35 declared actions dispatch to nothing. Registered, fenced. |
 
 Every capability has now been through all three bars.
 
@@ -337,6 +342,151 @@ as a finding. The `procurement_optimizer` hit survived exactly that check.
 
 ---
 
+## The agents subsystem
+
+Audited on the same three bars after the container work, on the instruction
+"fix the imports and audit the agents".
+
+### The imports: a feature unreachable from its own package
+
+`app/agents/catalog.py` did `from models import AgentManifest`, and
+`activation.py` did `from catalog import ...`. That is Python-2
+implicit-relative syntax; under Python 3 it resolves only if `app/agents` is
+itself on `sys.path`. So:
+
+```
+>>> import app.agents.catalog
+ModuleNotFoundError: No module named 'models'
+```
+
+No application code could reach the discipline hats at all. Three imports were
+corrected to full `app.agents.*` paths.
+
+The instructive part is the coverage picture. These modules had **33 passing
+tests**. They passed because the test files did `sys.path.insert(0,
+"app/agents")` first — which also meant tests and application would have loaded
+`models` and `app.agents.models` as two distinct module objects, where a
+pydantic class from one fails `isinstance` against the identical class from the
+other. The tests were not merely failing to catch the break; their setup was
+what concealed it. Six test files carried the hack and all six were cleaned.
+
+Fenced by `tests/test_no_implicit_relative_imports.py`: a static AST sweep over
+all of `app/` for siblings imported as top-level, a real package-path import of
+every `app.agents` module, and a module-identity assertion that fails if
+anything reintroduces the dual-module hazard.
+
+> **Correction recorded.** These modules were first called "dead". They were
+> not — they were unreachable from the package while being well tested through
+> a path that bypassed it. Unreachable and untested are different findings and
+> conflating them overstates the damage.
+
+### Bar 3 across `runtime.py`
+
+A systematic AST-based control-delete over the largest methods:
+
+| Method | Lines | Gutted → | Verdict |
+|---|---|---|---|
+| `_run_tool_call` | — | 13 failed | pass |
+| `chat` | — | 14 failed | pass |
+| `_chat_stream_impl` | — | 7 failed | pass |
+| `chat_stream` | — | 7 failed | pass |
+| `_build_sources_from_audit` | — | 4 failed | pass |
+| `select_agent_for_message` | — | 3 failed | pass |
+| `tool_definitions` | — | 3 failed | pass |
+| `_call_llm` | 305 | **150 passed** | **FAIL** |
+| `_stream_synthesis` | 139 | **150 passed** | **FAIL** |
+| `_build_exports_from_audit` | 103 | **150 passed** | **FAIL** |
+| `_apply_rag_context` | 86 | **150 passed** | **FAIL** |
+| `_auto_validate` | 69 | **150 passed** | **FAIL** |
+
+A better record than the container's, and one clear pattern in the failures.
+
+### Coverage that reads as its own opposite
+
+`_call_llm` is referenced by 23 test files and **65 of those references are
+mocks of it**. It is the most-mocked function in the repository and was the
+least tested: every one of those tests asserts what happens *after* it returns.
+Its own logic — provider fallback, per-attempt `tool_choice` and temperature,
+Groq `tool_use_failed` recovery, the soft daily cap — had no detection at all.
+
+This is worth stating as a general rule, because it inverts the usual reading:
+**a heavily-mocked function is a coverage risk, not a covered one.** The mock
+count measures how many tests need it out of the way, not how many check it.
+
+`_auto_validate` was the opposite extreme — **zero references anywhere** — and
+it is the middleware that runs the validation pipeline over every numeric a
+tool returns and attaches the verdict the LLM is instructed to obey ("refuse to
+report any number whose check shows overall=fail"). On a platform whose product
+is numbers, nothing could detect it silently stopping.
+
+All five now have payload tests, mocked at the transport boundary
+(`httpx.AsyncClient.post` / `.stream`) rather than at the function, so the
+logic under test actually runs. Batched control-delete of the four largest:
+**67 of 78 failed**. The 11 survivors are the negative tests, which correctly
+still pass against a `[]` / `False` stub and are each paired with a positive
+test that failed.
+
+### Both directions, again
+
+The container audit's lesson held here. Every fence in this section pins two
+sides:
+
+- A retryable status (408/413/429/5xx/timeout) must fall back **and** a
+  non-retryable one (400/401/403/404) must not. A one-sided check permits a
+  fallback that burns the second provider's quota on a bad API key.
+- The RAG calculation directive must fire **and** must not carry the
+  strict-grounding wording. That wording was observed live refusing to multiply
+  25 × 18 × 1.2 — the model was not failing, it was obeying.
+- `_build_exports_from_audit` must produce the offer when data backs it **and**
+  withhold it when not. `[]` is that function's flattering default and its own
+  honest answer for most turns, which makes `return []` an unusually good
+  disguise.
+
+### The agent tool surface
+
+The direct analogue of the container's router fence:
+`tests/test_agent_tool_surface.py` asserts that every tool an agent advertises
+in `tool_definitions()` is a name `_run_tool_call` can dispatch. Result: **14
+live agents, 0 undispatchable tools.**
+
+> **Correction recorded.** An earlier pass of this reported *all 14 agents
+> broken*. It checked advertised tools against a set of three synthetic names
+> taken from a docstring; `list_project_documents`, `fetch_document` and
+> `construction_calc` are all dispatched (`runtime.py:4512, 4555, 4712`) and the
+> docstring was simply incomplete. The fence now parses the dispatcher itself.
+> This is the fourth finding in this audit produced by checking against a
+> hand-written surface list, and the reason every fence here derives its
+> surface from code.
+
+### A second, dormant agent system
+
+There are two agent systems and only one runs. Alongside the live 14,
+`app/agents/manifests/fork.*.json` declares a base plus five discipline hats,
+gated behind `FORK_HATS_ENABLED`. `runtime.py` contains **zero** references to
+`allowed_actions`, and **32 of the 35** plain action names the manifests declare
+resolve to no block, no route key and no synthetic tool.
+
+So the flag is not an on-switch for five disciplines; flipping it grants agents
+permission to call 32 actions that do not exist. Registered in
+`KNOWN_INCOMPLETE.md` rather than implemented — writing those 32 is building a
+feature, which is outside "fix what fails a bar".
+
+`tests/test_hats_are_dormant.py` holds the conditional invariant: while the flag
+is off the gap is reported and skipped, and the moment it is on every declared
+action must be dispatchable. Deliberately not "32 actions are undispatchable",
+which would pin the defect in place and go red the moment someone fixed one.
+Verified to bite by setting the flag: 2 failed, naming each manifest and its
+missing actions.
+
+> **Corrections recorded.** Two further claims from this sweep were wrong and
+> withdrawn before being reported as fact: "3 missing calculators" (`formulas.py`
+> has a third namespace, `app.core.construction_knowledge`, carrying all three —
+> all 20 resolve), and "32 unresolved actions" attributed to the *live* system
+> (they belong to the dormant one). A sweep that checked every class against
+> `Agent` also produced a bogus "9 unresolved" and was discarded.
+
+---
+
 ## Stated limitations
 
 **`extract_measurements` extracts counts, not dimensions.** On the real drawing
@@ -376,3 +526,11 @@ rather than editing history.
   Both payload test files now assert their presence in the production-like CI
   profile, so purging one breaks the build instead of silently returning the
   capability to zero coverage as green skips.
+- The discipline-hat system needs a product decision, not code. It overlaps
+  heavily with the live 14-agent system and the agent-picker, and closing it
+  means writing 32 actions. Registered and fenced; nothing here is blocked on
+  it.
+- `_call_llm`'s fallback ladder is now covered at the transport boundary, but
+  no test exercises a real provider. The live behaviour of Groq's free-tier
+  413 above ~12k tokens is documented in `render.yaml`, not asserted — it
+  cannot be, without spending on the account it describes.
