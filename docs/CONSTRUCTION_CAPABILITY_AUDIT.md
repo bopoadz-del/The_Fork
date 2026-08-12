@@ -26,9 +26,10 @@ that shape.
 | Schedule — `resource_histogram` | pass | pass | pass | 7 RED. |
 | Schedule — `forensic_delay_analysis` | pass | pass | **FAIL** | Gutted → 16 tests still green. Net-new payload tests. |
 | Cross-cutting — router surface | **FAIL** | **FAIL** | **FAIL** | 3 unreachable actions; 2 of them unrunnable; 1 false-green test; 1 placeholder value. |
-| QTO | pass | pass | *pending* | Clean delegation to `DrawingQTOBlock`. |
-| Chat | pass | pass | *pending* | Clean delegation. |
-| Formulas / orchestration | *pending* | *pending* | *pending* | 14 actions. |
+| Chat | pass | pass | pass | Gutting the RAG-default + prompt-injection policy turned 3 of 45 red. |
+| QTO / Formulas / orchestration | pass | pass | **FAIL** | 10 pure delegations, near-zero coverage. `formula_execute` and `orchestrate` were referenced by no test at all. |
+
+Every capability has now been through all three bars.
 
 The strongest capability in the container is `parse_primavera_schedule`, and
 the reason is instructive: it is the one with a **real file** behind its tests.
@@ -241,7 +242,56 @@ Now `None`, with an assertion that a bare `0` cannot come back.
 
 ---
 
-## Bar 1 sweep — flattering defaults (found, NOT fixed)
+## The delegation cluster — QTO, formulas, orchestration
+
+Ten container actions are pure pass-throughs: resolve a block by name, refuse
+honestly if it is absent, otherwise `await block.process(input_data, params)`.
+There is no arithmetic to get wrong, so control-deleting the body says little.
+
+Coverage was close to nothing. **`formula_execute` and `orchestrate` were
+referenced by no test in the repository** except the router fence written
+during this audit; `sympy_reason` and `bim_extract` had one file each.
+
+Two things can be wrong in a delegation, and both are silent:
+
+1. **The block name drifts.** `_resolve_block("formula_executor_v3")` returns
+   None and the action answers `"block unavailable"` — which reads as a
+   profile or deployment problem, not a bug, so it survives review.
+2. **It stops delegating.** Nothing downstream notices if the action returns
+   its own shaped dict instead of the block's answer.
+
+`tests/test_container_delegations.py` covers both. All 17 block names the
+container resolves were checked against `BLOCK_REGISTRY` — **0 unknown**, a
+genuine bar 2 pass rather than an assumed one.
+
+### A check that excluded what breaks it
+
+The first version guarded the parser with `len(delegations) >= 6`. That did
+not bite, and the reason is worth recording. `_pure_delegations()` recognises
+a delegation *by its shape*, so gutting one to `return {"status": "success"}`
+stops it matching the pattern and it drops silently out of the set the tests
+iterate. The guard excluded precisely the mutation it existed to catch.
+
+Replaced with an equality assertion against the pinned set. Re-verified:
+
+| Mutation | Result |
+|---|---|
+| typo in a block name | 3 failed |
+| a delegation stops delegating | 1 failed |
+| delegation re-pointed at a different block | 2 failed |
+
+### An invariant that turned out to be false
+
+"No delegation returns success on empty input" was written, failed, and was
+**removed rather than given an exception list**. `learn` legitimately succeeds
+with no input: `learning_engine` is a query reporting current state, and zero
+formulas is the true answer, not a fabricated one. The invariant is real per
+block but not across all of them. An exception list would have converted a
+false generalisation into a permanent stale twin.
+
+---
+
+## Bar 1 sweep — flattering defaults
 
 The `confidence` defect has a detectable signature: `.get("key", <literal>)`
 where `"key"` is never *produced* anywhere. Run across the container package
@@ -311,9 +361,18 @@ rather than editing history.
 
 ## Still pending
 
-- QTO and Chat — bar 3 control-deletes.
-- Formulas / orchestration — all three bars across 14 actions.
-- Bar 1 lying-return sweep per capability (the `confidence` finding above came
-  out of this pass on one action; it has not been run across the rest).
-- Real-file validation for BOQ, QTO and drawings, matching the standard
-  `parse_primavera_schedule` already meets.
+- Bar 1 lying-return sweep across the remaining capabilities. The sweep method
+  is written up above, including its false-positive mode (keys assigned by
+  subscript are invisible to a dict-literal producer set, so every hit needs a
+  plain grep before it counts).
+- Real-file validation for BOQ and QTO, matching the standard
+  `parse_primavera_schedule` already meets. BOQ and QTO are currently proven
+  on synthetic fixtures; drawings and schedules are proven on real ones.
+- `extract_measurements` recovers counts but no dimensions from a real
+  drawing (all 34 hits are `type: "count"`, `unit: "ea"`). That is a
+  drawing-reader limitation, registered, not a wiring one.
+- Two committed binaries used as fixtures (`drawing_tm_200.pdf`,
+  `ohdd_baseline_2013.xer`) are pending an owner decision on client content.
+  Both payload test files now assert their presence in the production-like CI
+  profile, so purging one breaks the build instead of silently returning the
+  capability to zero coverage as green skips.
