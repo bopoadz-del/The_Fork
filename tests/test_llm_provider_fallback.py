@@ -66,6 +66,11 @@ class _Resp:
         self.status_code = status_code
         self._payload = payload if payload is not None else _ok_body()
         self.text = text if text is not None else json.dumps(self._payload)
+        # llm_client wraps a >=400 response in HTTPStatusError(request=r.request,
+        # response=r). Without this attribute that construction raises
+        # AttributeError, which its generic except then misreads as a network
+        # error and RETRIES -- inverting what the 401 test asserts.
+        self.request = None
 
     def json(self):
         return self._payload
@@ -696,3 +701,106 @@ async def test_the_fallback_attempt_uses_the_fallback_providers_own_key(
     assert fake.calls[1]["headers"]["Authorization"] == "Bearer groq-test-key", (
         "the fallback was called with the primary's key"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_successful_primary_never_touches_the_fallback(monkeypatch, http):
+    """Success must not leak a second request -- a fallback that fires on
+    success doubles cost and latency invisibly."""
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(_Resp(200, _ok_body("primary ok")),
+                _Resp(200, _ok_body("SHOULD NOT REACH")))
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert result["choice"]["message"]["content"] == "primary ok"
+    assert len(fake.calls) == 1, f"the fallback was called on success: {fake.urls}"
+
+
+@pytest.mark.asyncio
+async def test_prose_tool_use_failed_with_no_fallback_is_an_error(monkeypatch, http):
+    """The pair of the prose-falls-back test: with no fallback configured the
+    same 400 must surface as an error, not be swallowed."""
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test-key")
+    body = _tool_use_failed_body("## prose checklist, not a tool call")
+    fake = http(_Resp(400, body, text=json.dumps(body)))
+
+    result = await _agent()._call_llm(list(USER), "groq-test-key")
+
+    assert result["status"] == "error", result
+    assert len(fake.calls) == 1
+
+
+# ── _llm_fallback_config branch coverage ─────────────────────────────────
+# Restored from the pre-2026-08-12 version of this file, which this suite
+# replaced. Everything else it covered is covered more strictly above, but
+# these unit branches and the llm_client tests below had no replacement.
+
+def test_fallback_config_is_none_when_unset(monkeypatch):
+    from app.agents.runtime import _llm_fallback_config
+
+    assert _llm_fallback_config({"provider": "groq"}) is None
+
+
+def test_fallback_config_is_none_when_it_names_the_primary(monkeypatch):
+    """Falling back to the provider that just failed is a retry loop wearing a
+    fallback's name."""
+    from app.agents.runtime import _llm_fallback_config
+
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test-key")
+    assert _llm_fallback_config({"provider": "groq"}) is None
+
+
+def test_fallback_config_is_none_when_its_key_is_missing(monkeypatch):
+    """A fallback with no key is an attempt that can only 401 -- worse than
+    reporting the primary's real error."""
+    from app.agents.runtime import _llm_fallback_config
+
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "groq")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    assert _llm_fallback_config({"provider": "kimi"}) is None
+
+
+def test_fallback_config_resolves_ollama_with_url_normalisation(monkeypatch):
+    from app.agents.runtime import _llm_fallback_config
+
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "http://fallback.tunnel.cf")
+    cfg = _llm_fallback_config({"provider": "kimi"})
+    assert cfg is not None and cfg["provider"] == "ollama"
+    assert cfg["url"].endswith("/v1/chat/completions"), cfg["url"]
+
+
+# ── llm_client.complete(): the orchestrator intent path ─────────────────
+# A different module with its own fallback ladder. If it stopped degrading,
+# smart routing would silently vanish for the turn on every provider blip.
+
+@pytest.mark.asyncio
+async def test_orchestrator_complete_falls_back_on_a_rate_limit(monkeypatch, http):
+    from app.core import llm_client
+
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(_Resp(429, text="rate limited"), _Resp(200, _ok_body("intent json")))
+
+    out = await llm_client.complete([{"role": "user", "content": "hi"}])
+
+    assert out == "intent json"
+    assert len(fake.calls) == 2, f"the intent path did not degrade: {fake.urls}"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_complete_does_not_fall_back_on_a_bad_key(monkeypatch, http):
+    from app.core import llm_client
+
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(_Resp(401, text="invalid api key"),
+                _Resp(200, _ok_body("SHOULD NOT REACH")))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await llm_client.complete([{"role": "user", "content": "hi"}])
+    assert len(fake.calls) == 1, f"a 401 was retried on the intent path: {fake.urls}"
