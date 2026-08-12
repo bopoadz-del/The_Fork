@@ -16,12 +16,15 @@ from pathlib import Path
 
 import pytest
 
-AGENTS_DIR = Path(__file__).parent.parent / "app" / "agents"
-sys.path.insert(0, str(AGENTS_DIR))
+# Package imports, not sys.path.insert(app/agents) -- see
+# tests/test_no_implicit_relative_imports.py. The old form loaded these
+# files a second time under top-level names, so a pydantic class from
+# `models` failed isinstance against the same class from
+# `app.agents.models`.
 
-from models import AgentManifest, GroundingPolicy
+from app.agents.models import AgentManifest, GroundingPolicy
 
-MANIFEST_DIR = AGENTS_DIR / "manifests"
+MANIFEST_DIR = Path(__file__).parent.parent / "app" / "agents" / "manifests"
 
 
 def _all_manifests():
@@ -63,14 +66,14 @@ class TestGroundingEnforced:
 
     def test_base_grounding_is_documents_or_formulas(self):
         """Base manifest should use documents_or_formulas grounding."""
-        from catalog import get_base
+        from app.agents.catalog import get_base
         base = get_base()
         assert base.verification.grounding == GroundingPolicy.DOCUMENTS_OR_FORMULAS, \
             f"Base grounding is {base.verification.grounding}, expected documents_or_formulas"
 
     def test_all_hats_have_stricter_or_equal_grounding(self):
         """Hat grounding should match or exceed base strictness."""
-        from catalog import get_base, list_hats
+        from app.agents.catalog import get_base, list_hats
         base = get_base()
         base_level = base.verification.grounding
 
@@ -90,7 +93,7 @@ class TestFailurePolicy:
     @pytest.mark.parametrize("name,manifest", list(_all_manifests()), ids=lambda x: x[0] if isinstance(x, tuple) else "")
     def test_on_formula_error_asks_clarifying(self, name, manifest):
         """Formula errors should ask clarifying questions, not guess."""
-        from models import MissingContextPolicy
+        from app.agents.models import MissingContextPolicy
         assert manifest.failure_policy.on_formula_error in {
             MissingContextPolicy.ASK_CLARIFYING,
             MissingContextPolicy.REFUSE,
@@ -110,7 +113,7 @@ class TestMemorySafety:
     """Memory config must never persist sensitive data."""
 
     def test_base_never_persist_includes_secrets(self):
-        from catalog import get_base
+        from app.agents.catalog import get_base
         base = get_base()
         assert base.memory is not None, "Base should have memory config"
         assert base.memory.never_persist is not None, "Base should define never_persist"
@@ -121,19 +124,19 @@ class TestMemorySafety:
                 f"'{item}' should be in never_persist list"
 
     def test_base_never_persist_includes_cross_tenant(self):
-        from catalog import get_base
+        from app.agents.catalog import get_base
         base = get_base()
         assert "cross_tenant_data" in base.memory.never_persist, \
             "cross_tenant_data should never be persisted"
 
     def test_base_never_persist_includes_unverified(self):
-        from catalog import get_base
+        from app.agents.catalog import get_base
         base = get_base()
         assert "unverified_claims" in base.memory.never_persist, \
             "unverified_claims should never be persisted"
 
     def test_base_saves_intent_and_hats(self):
-        from catalog import get_base
+        from app.agents.catalog import get_base
         base = get_base()
         assert "user_intent" in base.memory.save_on_turn_end, \
             "user_intent should be saved"

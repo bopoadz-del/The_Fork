@@ -78,21 +78,47 @@ def _pure_delegations() -> dict[str, str]:
     return found
 
 
-def test_every_delegated_block_name_exists_in_the_registry():
+def _every_declared_block_name() -> set[str]:
+    """Block names declared anywhere, independent of the boot profile.
+
+    NOT `BLOCK_REGISTRY`, which is profile-dependent: the virgin profile loads
+    ~15 blocks and the production-like one ~48, so checking a delegation
+    against it fails in virgin for names that are perfectly correct. That is
+    exactly what happened -- this test passed locally and in production-like
+    and failed the virgin leg, which is the whole reason both profiles are run.
+
+    The invariant worth holding is that the name is a REAL block somewhere in
+    the codebase (catching typos and drift), not that this particular boot
+    happened to load it.
+    """
+    from app.blocks import _EXTENDED_PLATFORM_SPECS, _GENERIC_BLOCK_SPECS
+    from app.core.domain_kit_loader import _KIT_BLOCK_SPECS
+
+    names = {spec[0] for spec in _GENERIC_BLOCK_SPECS}
+    names |= {spec[0] for spec in _EXTENDED_PLATFORM_SPECS}
+    for kit_specs in _KIT_BLOCK_SPECS.values():
+        names |= {spec[0] for spec in kit_specs}
+    return names
+
+
+def test_every_delegated_block_name_is_a_real_block():
     """A drifted name degrades to 'block unavailable', which reads as config.
 
     That is the failure this catches: it looks like the block was not loaded
     in this profile, so it survives review and deployment.
     """
-    from app.blocks import BLOCK_REGISTRY
+    declared = _every_declared_block_name()
+    assert len(declared) > 20, (
+        f"only {len(declared)} block names declared -- the spec lists have moved"
+    )
 
     names = _delegated_block_names()
     assert names, "no block delegations found -- has _resolve_block been renamed?"
     unknown = {name: sorted(callers) for name, callers in names.items()
-               if name not in BLOCK_REGISTRY}
+               if name not in declared}
     assert not unknown, (
-        "these block names are not in BLOCK_REGISTRY, so the actions calling "
-        "them can only ever return 'block unavailable':\n"
+        "these block names are declared nowhere, so the actions calling them "
+        "can only ever return 'block unavailable':\n"
         + "\n".join(f"  {n!r} <- {', '.join(c)}" for n, c in sorted(unknown.items()))
     )
 
