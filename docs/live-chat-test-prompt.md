@@ -10,7 +10,7 @@ a failed run.
 
 ```
 set -a; source ~/.thefork-backup/fork-eval-auth.env; set +a   # loads FORK_API_KEY
-BASE=https://the-fork.onrender.com
+BASE=https://the-fork-jn3t.onrender.com
 python scripts/fork_cli.py --base "$BASE" --api-key "$FORK_API_KEY" \
   chat "<QUESTION>" --project master_corpus --agent project-assistant
 ```
