@@ -1759,7 +1759,13 @@ class ConstructionContainer(
         if "qa_qc_inspection" in completed_actions and last_result.get("status") == "success":
             defects = last_result.get("key_findings", {}).get("defects_found", 0)
             if defects > 0:
-                return {"suggested_action": "generate_construction_report", "reason": f"{defects} defects found - generate formal QA report", "confidence": 0.88}
+                # Was "generate_construction_report" until 2026-08-12. That
+                # action is unrunnable (see KNOWN_INCOMPLETE.md), so the
+                # platform was recommending something it could not execute.
+                # Retargeted to the consolidation action this function already
+                # falls back to; the defect count is kept so the user still
+                # sees why they are being nudged.
+                return {"suggested_action": "process_document", "reason": f"{defects} defects found - consolidate findings into a formal report", "confidence": 0.88}
     
         if "forensic_delay_analysis" in completed_actions:
             return {"suggested_action": "claims_builder", "reason": "Delay analysis complete - prepare formal claim submission", "confidence": 0.92}
@@ -2107,17 +2113,26 @@ class ConstructionContainer(
             "carbon_report": self.generate_carbon_report,
             "procurement": self.procurement_analysis,
             "status": self._status,
-            # Audit 2026-08-12: these three were fully implemented public
-            # actions that route() could not dispatch. The worst of them was
-            # user-facing — _recommend_next_action (line ~1762) suggests
-            # "generate_construction_report" by name after a QA/QC run, and
-            # dispatching it returned {"status": "error", "error": "Unknown
-            # action: generate_construction_report"}. The platform was
-            # recommending something it then refused to run.
-            # tests/test_construction_actions_reachable.py fences the class.
-            "generate_construction_report": self.generate_construction_report,
+            # Audit 2026-08-12. Three public actions existed that route() could
+            # not dispatch. Only ONE of them was safe to wire.
+            #
+            # `extract_measurements` is real and runs: it pulls measurements out
+            # of a drawing/document and feeds `extract_quantities` (which takes a
+            # measurements LIST, so the two are pipeline stages, not twins).
+            #
+            # `generate_construction_report` and `track_progress` are NOT wired
+            # on purpose — both are unrunnable, not merely unrouted. Between them
+            # they call four helpers (`_generate_doc_recommendations`,
+            # `_assess_delay_risk`, `_element_similarity`, `_find_deviations`)
+            # that have never been defined in this repository's history
+            # (`git log -S "def <helper>" --all` returns nothing for all four),
+            # and `generate_construction_report` additionally indexes five keys
+            # off `process_document` that its current contract does not return.
+            # Wiring them turned an honest "Unknown action" into an unhandled
+            # AttributeError/KeyError — a 500 instead of a refusal. Registered in
+            # KNOWN_INCOMPLETE.md; do not re-wire without restoring the helpers.
+            # tests/test_construction_actions_reachable.py fences the whole class.
             "extract_measurements": self.extract_measurements,
-            "track_progress": self.track_progress,
         }
 
         handler = handlers.get(action)
