@@ -117,18 +117,28 @@ registered below as vocabulary and model limits, not as unbuilt code.
 
 ## Stated limitations — implemented, but narrower than it looks
 
-**Supplier scores in `procurement_optimizer` are defaults, not measurements.**
-Found 2026-08-12 by the bar 1 sweep in `docs/CONSTRUCTION_CAPABILITY_AUDIT.md`.
-`boq.py:1787-1792` defaults six per-supplier scores to `70 / 75 / 80 / 80 / 60
-/ 70`. Nothing anywhere in `app/` produces `price_score`, `delivery_score`,
+**`procurement_optimizer` cannot rank suppliers the caller has not scored.**
+Nothing anywhere in `app/` produces `price_score`, `delivery_score`,
 `quality_score`, `financial_score`, `esg_score` or `support_score` — grep them.
-Unless an API caller supplies them by hand, every supplier scores exactly
-**73.8** and the action still presents a weighted ranking and a recommended
-supplier. The visible output is a confident ordering, not a tie, so nothing on
-screen reveals that no supplier was actually assessed. Not changed here:
-choosing between refusing, returning null, and labelling the scores as assumed
-is a product decision. Do not read `total_score` as an assessment until a
-producer for those keys exists.
+Those six must come from the API caller; the platform cannot derive them from
+its own data. So on any supplier list the platform builds itself, supplier
+ranking is **not available**, and the action now says so per supplier
+(`total_score: null`, `scoring_basis: "No supplier scores were supplied —
+not assessed"`) rather than producing an ordering.
+
+Until 2026-08-12 those six defaulted to `70 / 75 / 80 / 80 / 60 / 70`, so every
+unscored supplier scored exactly **73.8** and the action still presented a
+weighted ranking and a recommended supplier. The visible output was a confident
+ordering rather than the tie that would have exposed it. Fixed: scores are
+computed only from criteria actually supplied and re-normalised over them, so
+a supplier rated on three criteria is not penalised against one rated on six;
+unscored suppliers sort last and keep `null` rather than being coerced to `0`,
+which would read as "assessed and terrible".
+
+The limitation that remains is the data one: no supplier scoring source is
+wired, so `procurement_plan` ranks on lead time and price alone, and
+`_generate_procurement_insights` says that explicitly instead of emitting a
+re-tender recommendation caused by missing data.
 
 **Site-photo observations detect far less than the field names suggest.**
 Measured 2026-08-12 over 21 real construction photographs
