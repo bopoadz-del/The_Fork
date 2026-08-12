@@ -1759,6 +1759,12 @@ class ConstructionContainer(
         if "qa_qc_inspection" in completed_actions and last_result.get("status") == "success":
             defects = last_result.get("key_findings", {}).get("defects_found", 0)
             if defects > 0:
+                # Back to generate_construction_report now that it runs and is
+                # routed. It was briefly retargeted to process_document while
+                # the action was parked, which was a weak suggestion — parsing
+                # a document is a restart, not the next step after an
+                # inspection. This names the action that actually produces the
+                # formal report.
                 return {"suggested_action": "generate_construction_report", "reason": f"{defects} defects found - generate formal QA report", "confidence": 0.88}
     
         if "forensic_delay_analysis" in completed_actions:
@@ -1912,18 +1918,96 @@ class ConstructionContainer(
             comparison = await self._compare_photo_to_bim(photo, bim_file or "", location)
             results.append(comparison)
     
-        completed_elements = sum(1 for r in results if r["match_confidence"] > 0.7)
-        total_elements = len(results)
-    
+        # Refuse rather than report 0%. With no photographs, or no model
+        # elements to compare against, the old code divided len(results) into
+        # a zero numerator and returned progress_percentage 0 with
+        # status:"success" — indistinguishable, on screen, from a genuine
+        # finding that nothing has been built. That is the expensive direction
+        # to be wrong in on a progress claim.
+        if not photo_files:
+            return {"status": "error", "error": (
+                "No photographs supplied — progress cannot be compared against "
+                "the model. Provide `photos`.")}
+        # Refuse if no photograph was actually analysed. Otherwise a missing
+        # image block yields zero detections on every photo, which flows
+        # through as "0% built, high delay risk" — a manufactured finding, and
+        # the most damaging one this action can produce.
+        if not any(r.get("detection_ran") for r in results):
+            reasons = {r.get("detection_error") for r in results if r.get("detection_error")}
+            return {"status": "error", "error": (
+                "No photograph could be analysed, so progress cannot be assessed: "
+                + "; ".join(sorted(f for f in reasons if f))),
+                "photos_analyzed": len(photo_files)}
+
+        expected_total = sum(r.get("elements_expected", 0) for r in results)
+        if not expected_total:
+            return {"status": "error", "error": (
+                "No model elements were resolved for this location, so nothing "
+                "can be compared. " + (getattr(self, "_last_bim_query_error", None)
+                                       or "Provide a `bim_file` IFC model.")),
+                "photos_analyzed": len(photo_files)}
+
+        # Element-level, not photo-level. Counting photos whose confidence
+        # cleared 0.7 answers "how many pictures looked right", which is not a
+        # progress measure; the model elements matched across all photographs
+        # are.
+        matched_ids, missing_ids = set(), set()
+        for r in results:
+            for el in r.get("matched", []):
+                matched_ids.add(str(el.get("id") or el.get("name")))
+            for el in r.get("missing", []):
+                missing_ids.add(str(el.get("id") or el.get("name")))
+        missing_ids -= matched_ids          # seen in any photo counts as seen
+        observed = len(matched_ids) + len(missing_ids)
+
         return {
             "status": "success",
             "location": location,
             "photos_analyzed": len(photo_files),
-            "progress_percentage": (completed_elements / total_elements * 100) if total_elements else 0,
-            "elements_found": completed_elements,
-            "elements_missing": total_elements - completed_elements,
+            "progress_percentage": round(len(matched_ids) / observed * 100, 1) if observed else 0.0,
+            "elements_found": len(matched_ids),
+            "elements_missing": len(missing_ids),
+            "basis": (
+                f"{len(matched_ids)} of {observed} model elements identified across "
+                f"{len(photo_files)} photograph(s) at {location}. Visual "
+                "identification only — not a verified installation record."
+            ),
+            "deviations": [d for r in results for d in r.get("deviations", [])],
             "details": results,
             "delay_risk": self._assess_delay_risk(results)
+        }
+
+    def _assess_delay_risk(self, results: List[Dict]) -> Dict:
+        """Schedule risk implied by what the photographs did and did not show.
+
+        Returns an explicit `not_assessed` when there was nothing to compare.
+        A risk function that answers "low" when it has no data is worse than
+        one that refuses, because "low" is the answer a reader acts on.
+        """
+        expected = sum(r.get("elements_expected", 0) for r in results or [])
+        if not expected:
+            return {
+                "level": "not_assessed",
+                "reason": "No model elements were resolved, so no shortfall can be measured.",
+                "elements_expected": 0,
+            }
+        matched = sum(len(r.get("matched", [])) for r in results)
+        found_ratio = matched / expected
+        if found_ratio >= 0.9:
+            level, reason = "low", "Nearly all expected elements were identified."
+        elif found_ratio >= 0.7:
+            level, reason = "medium", "A minority of expected elements were not identified."
+        else:
+            level, reason = "high", "Most expected elements were not identified."
+        return {
+            "level": level,
+            "reason": reason + (
+                " Absence in a photograph is not proof of absence on site — "
+                "coverage, occlusion and camera angle all produce the same signal."
+            ),
+            "elements_expected": expected,
+            "elements_identified": matched,
+            "identified_ratio": round(found_ratio, 3),
         }
     # NOTE: progress_tracking (a dead legacy method that only returned an
     # honest-error redirect to progress_tracker) was deleted (W1) — it was never
@@ -1935,21 +2019,99 @@ class ConstructionContainer(
         if doc_result.get("status") != "success":
             return doc_result
     
+        # `.get`, not `[...]`. process_document dispatches by document type and
+        # each branch returns a different key set: the drawing branch supplies
+        # doc_type / detected_disciplines / total_pages / measurements / tables,
+        # but the specification, report and contract branches do not. Indexing
+        # them raised KeyError: 'doc_type' on every non-drawing document, which
+        # is why this action was never routed.
         return {
             "status": "success",
             "report_type": "construction_analysis",
             "summary": {
-                "document": doc_result["file_name"],
-                "type": doc_result["doc_type"],
-                "disciplines": doc_result["detected_disciplines"],
-                "pages": doc_result["total_pages"],
-                "measurements_found": len(doc_result["measurements"]),
-                "tables_found": len(doc_result["tables"])
+                "document": doc_result.get("file_name"),
+                "type": doc_result.get("doc_type", "unknown"),
+                "disciplines": doc_result.get("detected_disciplines", []),
+                "pages": doc_result.get("total_pages"),
+                "measurements_found": len(doc_result.get("measurements") or []),
+                "tables_found": len(doc_result.get("tables") or []),
             },
             "cost_summary": doc_result.get("cost_estimate"),
             "recommendations": self._generate_doc_recommendations(doc_result),
             "raw": doc_result if params.get("include_raw") else None
         }
+
+    def _generate_doc_recommendations(self, doc_result: Dict) -> List[str]:
+        """What to do next about THIS document, derived from what was found.
+
+        Every line is conditional on a field the parse actually produced. No
+        default advice: a document that yields nothing to say gets an explicit
+        "nothing actionable was extracted" rather than filler, because generic
+        recommendations under a construction-analysis heading read as findings.
+        """
+        recs: List[str] = []
+        doc_type = doc_result.get("doc_type", "unknown")
+
+        confidence = doc_result.get("confidence")
+        if isinstance(confidence, dict):
+            overall = confidence.get("overall")
+            if isinstance(overall, (int, float)) and overall < 0.7:
+                caveats = "; ".join(confidence.get("caveats") or []) or "low field coverage"
+                recs.append(
+                    f"Extraction confidence is {overall:.0%} ({caveats}) — verify "
+                    "this document against the source before relying on figures below."
+                )
+
+        risks = doc_result.get("auto_risks") or []
+        if risks:
+            recs.append(
+                f"{len(risks)} risk(s) were flagged from the document — review and "
+                "transfer any that are live to the risk register."
+            )
+        if doc_result.get("revision"):
+            recs.append(
+                f"Confirm revision {doc_result['revision']} is the current issue "
+                "before using this for construction."
+            )
+        elif doc_type == "drawing":
+            recs.append(
+                "No revision was found in the title block — confirm the issue "
+                "status before use."
+            )
+        if not doc_result.get("scale") and doc_type == "drawing":
+            recs.append(
+                "No drawing scale was detected — do not scale quantities off this "
+                "sheet without confirming it."
+            )
+        if doc_result.get("measurements"):
+            recs.append(
+                f"{len(doc_result['measurements'])} measurement(s) extracted — "
+                "cross-check against the BOQ before pricing."
+            )
+        if doc_result.get("grade_requirements") or doc_result.get("standards_referenced"):
+            recs.append(
+                "Specified grades/standards were found — confirm the procured "
+                "materials and submittals match them."
+            )
+        if doc_result.get("compliance_flags"):
+            recs.append(
+                f"{len(doc_result['compliance_flags'])} compliance flag(s) raised "
+                "— resolve before submittal approval."
+            )
+        if doc_result.get("cost_estimate"):
+            recs.append(
+                "A cost estimate was derived from this document — treat it as "
+                "indicative until the rates are confirmed against the contract."
+            )
+
+        if not recs:
+            recs.append(
+                f"Nothing actionable was extracted from this {doc_type}. It parsed "
+                "successfully but produced no measurements, specifications, risks "
+                "or compliance flags to act on."
+            )
+        return recs
+
     async def spec_analyze(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to SpecAnalyzerBlock: extract grades, materials, compliance."""
         block = self._resolve_block("spec_analyzer")
@@ -2107,6 +2269,24 @@ class ConstructionContainer(
             "carbon_report": self.generate_carbon_report,
             "procurement": self.procurement_analysis,
             "status": self._status,
+            # Audit 2026-08-12. Three public actions existed that route() could
+            # not dispatch. Only ONE of them was safe to wire.
+            #
+            # `extract_measurements` is real and runs: it pulls measurements out
+            # of a drawing/document and feeds `extract_quantities` (which takes a
+            # measurements LIST, so the two are pipeline stages, not twins).
+            #
+            # `generate_construction_report` and `track_progress` were unroutable
+            # because they were unrunnable: between them they called four helpers
+            # that had never been defined here, and the photo/BIM chain under
+            # track_progress also read a key (`elements`) the BIM extractor has
+            # never returned. All four helpers are now implemented and the chain
+            # is fixed, so both are wired. tests/test_construction_actions_
+            # reachable.py enforces the rule that made this safe: parking broken
+            # code is allowed, routing it is not.
+            "extract_measurements": self.extract_measurements,
+            "generate_construction_report": self.generate_construction_report,
+            "track_progress": self.track_progress,
         }
 
         handler = handlers.get(action)

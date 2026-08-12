@@ -19,7 +19,7 @@ os.makedirs(OUT, exist_ok=True)
 # (path, asset_type, currency, kind)  kind: 'items' = has Description/Unit/Unit Price/Total Price ; 'raw' = section-sheet xlsx needing header detect
 SOURCES = [
     (f"{SCR}/waste_water_boq_items.xlsx", "Infrastructure", "SAR", "items"),
-    (f"{SCR}/dgii_infra1_demolition_boq_items.xlsx", "Infrastructure", "SAR", "items"),
+    (f"{SCR}/infra1_demolition_boq_items.xlsx", "Infrastructure", "SAR", "items"),
     (f"{SCR}/alostool_demolition_boq_items.xlsx", "Infrastructure", "SAR", "items"),
     (f"{SCR}/boq_batch/kenya_dc.xlsx", "Data Center", "USD", "raw"),
     (f"{SCR}/boq_batch/gcc_farmhouse.xlsx", "Villas", "SAR", "raw"),

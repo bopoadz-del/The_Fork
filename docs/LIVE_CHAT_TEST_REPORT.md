@@ -24,7 +24,7 @@
 [   2.04s] ROUTE       {"requested": "project-assistant", "final": "project-assistant", "action": null, "confidence": 0.0, "reason": "below_routing_gate"}
 [   2.04s] START       {"agent": "project-assistant"}
 The minimum clearance for a crane operating near a 220 kV overhead power line is 6.1 meters (20 feet).
-[   7.44s] END         {"iterations": 1, "model": "gpt-4o-mini-2024-07-18", "sources": [{"doc_id": "c9b547ec", "doc_name": "osha_1926_crane_power_line_clearance.md", "page_or_section": "chunk #1", "chunk_index": 1, "chunk_id": "curated_kb:c9b547ec:1", "project_id": "client_infra_pack_1", "score": 2.085957, "confidence": "High"}, {"doc_id": "c1b98aa9", "doc_name": "DD-2022-175 - DG II Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 2.pdf", "page_or_section": "chunk #508", "chunk_index": 508, "chunk_id": "client_infra_pack_1:c1b98aa9:508", "project_id": "client_infra_pack_1", "score": 0.735477, "confidence": ...
+[   7.44s] END         {"iterations": 1, "model": "gpt-4o-mini-2024-07-18", "sources": [{"doc_id": "c9b547ec", "doc_name": "osha_1926_crane_power_line_clearance.md", "page_or_section": "chunk #1", "chunk_index": 1, "chunk_id": "curated_kb:c9b547ec:1", "project_id": "client_infra_pack_1", "score": 2.085957, "confidence": "High"}, {"doc_id": "c1b98aa9", "doc_name": "DD-2022-175 - Site Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 2.pdf", "page_or_section": "chunk #508", "chunk_index": 508, "chunk_id": "client_infra_pack_1:c1b98aa9:508", "project_id": "client_infra_pack_1", "score": 0.735477, "confidence": ...
 turn summary: total=7.44s  first_token=7.22s  events=5  answer_chars=102
 ```
 

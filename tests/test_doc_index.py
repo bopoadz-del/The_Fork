@@ -94,7 +94,7 @@ def test_extract_pdf_ocrs_image_pages_even_when_cover_has_text(tmp_path, monkeyp
     class FakeDoc:
         def __iter__(self):
             return iter([
-                FakePage("Cover: DG II Demolition Works Package 1 Volume 2 specification."),
+                FakePage("Cover: Site Demolition Works Package 1 Volume 2 specification."),
                 FakePage(""),   # image-only body page
                 FakePage(""),   # image-only body page
             ])

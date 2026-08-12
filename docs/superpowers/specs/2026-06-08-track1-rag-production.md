@@ -318,7 +318,7 @@ completed 2026-06-08):
     `~$C-201` Office lockfile artifact — these will appear in the index but
     are noise for the regression queries.
 - **the client BOQ Test project (`3f6f28b2`):**
-  - DGII - Infra-1 - Demolition BOQ.pdf (`c6dae280`, 9.7 MB; auto-classified
+  - the client project - Infra-1 - Demolition BOQ.pdf (`c6dae280`, 9.7 MB; auto-classified
     by the upload route as doc_type=`boq`)
 
 Phase 1 of the implementation plan should kick off the doc_index extraction

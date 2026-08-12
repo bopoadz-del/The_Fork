@@ -1,0 +1,419 @@
+"""`_stream_synthesis` -- the path that decides whether the user watches an
+answer appear or waits in silence.
+
+Audit bar 3, 2026-08-12, agents subsystem. Replacing the whole body with a bare
+`return` left all 150 agent tests green. One test file referenced it, and every
+reference was a mock.
+
+The reason a gutted body is invisible is that this function is DESIGNED to be
+fallible: it raises `_SynthStreamError` on any pre-first-token failure and the
+caller silently falls back to the non-streaming `_call_llm`. So a version that
+never streams anything produces a working platform that is merely slower --
+which no test notices, and which a user experiences as "it hangs for 40 seconds
+then dumps the whole answer at once".
+
+The invariant that carries real risk is the mid-stream one. The caller must
+never restart a stream it has already begun, and it distinguishes the two cases
+solely by whether tokens were emitted. If a mid-stream drop stopped raising, or
+started raising before yielding what it had, the user would see a duplicated or
+truncated answer. That is pinned explicitly below.
+
+Mocked at `httpx.AsyncClient.stream`, which is a different shape from
+`_call_llm`'s `post` -- a synchronous call returning an async context manager
+whose object exposes `status_code`, `aread()` and `aiter_lines()`.
+"""
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+
+from app.agents.runtime import Agent, _SynthStreamError
+
+_LLM_ENV = (
+    "LLM_PROVIDER", "LLM_FALLBACK_PROVIDER",
+    "KIMI_API_KEY", "KIMI_MODEL", "KIMI_FALLBACK_MODEL",
+    "GROQ_API_KEY", "GROQ_MODEL",
+    "OLLAMA_API_KEY", "OLLAMA_URL", "OLLAMA_MODEL",
+    "USAGE_DAILY_CAP_USD",
+)
+
+NATIVE_OLLAMA_URL = "http://test-ollama:11434/api/chat"
+
+
+@pytest.fixture(autouse=True)
+def clean_llm_env(monkeypatch):
+    """Same load-bearing isolation as the `_call_llm` suite: `_llm_config`
+    reads every one of these live, and the provider gate at the top of this
+    function turns a leaked LLM_PROVIDER into an immediate raise that would
+    look like the behaviour under test."""
+    for name in _LLM_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
+def _sse(*deltas, usage=None, done=True):
+    """An OpenAI-shaped SSE line sequence."""
+    lines = []
+    for d in deltas:
+        lines.append("data: " + json.dumps({"choices": [{"delta": {"content": d}}]}))
+        lines.append("")            # blank keep-alive lines are normal and skipped
+    if usage:
+        lines.append("data: " + json.dumps({"choices": [], "usage": usage}))
+    if done:
+        lines.append("data: [DONE]")
+    return lines
+
+
+def _native(*deltas, done=True):
+    """Ollama's native /api/chat line sequence -- bare JSON, no `data:`."""
+    lines = [json.dumps({"message": {"content": d}}) for d in deltas]
+    if done:
+        lines.append(json.dumps({"message": {"content": ""}, "done": True}))
+    return lines
+
+
+class _StreamResponse:
+    def __init__(self, lines, status_code=200, text="", mid_stream_error=None):
+        self.status_code = status_code
+        self.text = text
+        self._lines = list(lines)
+        self._mid_stream_error = mid_stream_error
+        self.aread_called = False
+
+    async def aread(self):
+        self.aread_called = True
+        return self.text.encode()
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+        if self._mid_stream_error is not None:
+            raise self._mid_stream_error
+
+
+class _StreamCM:
+    def __init__(self, response, recorder, args, kwargs):
+        self._response = response
+        self._recorder = recorder
+        self._args = args
+        self._kwargs = kwargs
+
+    async def __aenter__(self):
+        self._recorder.append({
+            "method": self._args[0] if self._args else None,
+            "url": self._args[1] if len(self._args) > 1 else self._kwargs.get("url"),
+            "payload": self._kwargs.get("json"),
+            "headers": self._kwargs.get("headers"),
+        })
+        if isinstance(self._response, BaseException):
+            raise self._response
+        return self._response
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+@pytest.fixture
+def stream(monkeypatch):
+    """Install a fake `client.stream`. Returns (calls, install)."""
+    calls: list[dict] = []
+
+    def _install(response):
+        def _stream(self, *args, **kwargs):
+            return _StreamCM(response, calls, args, kwargs)
+
+        monkeypatch.setattr(httpx.AsyncClient, "stream", _stream, raising=True)
+        return calls
+
+    return _install
+
+
+def _agent(model="llama-3.3-70b-versatile", temperature=0.3):
+    return Agent(
+        name="project-assistant",
+        description="test agent",
+        system_prompt="you are a test",
+        allowed_blocks=["construction"],
+        model=model,
+        temperature=temperature,
+    )
+
+
+def _groq(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test-key")
+
+
+async def _drain(agent, **kw):
+    return [chunk async for chunk in agent._stream_synthesis(
+        [{"role": "user", "content": "summarise the findings"}],
+        kw.pop("api_key", "groq-test-key"), **kw)]
+
+
+# ── the provider gate ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_kimi_the_production_primary_does_not_stream(monkeypatch, stream):
+    """Deliberate and worth stating: streaming is verified only on Groq,
+    OpenAI and native Ollama, and Kimi is the configured primary. So in the
+    live cloud configuration this path always raises and the caller always
+    uses the non-streaming fallback.
+
+    Pinned so that "streaming does nothing in production" stays a decision
+    someone made rather than a bug someone introduces.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
+    calls = stream(_StreamResponse(_sse("never")))
+
+    with pytest.raises(_SynthStreamError, match="only verified"):
+        await _drain(_agent(), api_key="kimi-test-key")
+    assert calls == [], "an unverified provider was called before the gate fired"
+
+
+# ── the happy path ───────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_content_deltas_are_yielded_in_order(monkeypatch, stream):
+    _groq(monkeypatch)
+    stream(_StreamResponse(_sse("The ", "notice ", "period is 28 days.")))
+
+    assert await _drain(_agent()) == ["The ", "notice ", "period is 28 days."]
+
+
+@pytest.mark.asyncio
+async def test_the_stream_stops_at_done(monkeypatch, stream):
+    """Anything after [DONE] is not part of the answer. Emitting it would
+    append provider bookkeeping to the user's text."""
+    _groq(monkeypatch)
+    lines = _sse("answer") + [
+        "data: " + json.dumps({"choices": [{"delta": {"content": "LEAKED"}}]})
+    ]
+    stream(_StreamResponse(lines))
+
+    assert await _drain(_agent()) == ["answer"]
+
+
+@pytest.mark.asyncio
+async def test_blank_and_unparseable_lines_do_not_break_the_stream(monkeypatch, stream):
+    """Keep-alives and partial frames are routine. Treating one as fatal would
+    truncate an answer mid-sentence for a transport artefact."""
+    _groq(monkeypatch)
+    lines = ["", "data: {not json", ": keep-alive",
+             "data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+             "data: [DONE]"]
+    stream(_StreamResponse(lines))
+
+    assert await _drain(_agent()) == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_no_tools_are_offered_and_streaming_is_requested(monkeypatch, stream):
+    """"Tool iterations stay non-streaming" is the documented contract. A tool
+    definition here would let a tool_call delta appear mid-stream, which this
+    path has no way to dispatch."""
+    _groq(monkeypatch)
+    calls = stream(_StreamResponse(_sse("x")))
+
+    await _drain(_agent())
+
+    payload = calls[0]["payload"]
+    assert "tools" not in payload and "tool_choice" not in payload, payload
+    assert payload["stream"] is True, payload
+    assert payload["stream_options"] == {"include_usage": True}, payload
+
+
+@pytest.mark.asyncio
+async def test_it_mirrors_call_llm_on_model_and_temperature(monkeypatch, stream):
+    """The docstring commits to mirroring `_call_llm`'s setup. Drift means the
+    streamed answer and the fallback answer come from different models -- the
+    user sees a different voice depending on transport."""
+    _groq(monkeypatch)
+    monkeypatch.setenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    calls = stream(_StreamResponse(_sse("x")))
+
+    await _drain(_agent(model="deepseek-chat", temperature=0.3))
+
+    assert calls[0]["payload"]["model"] == "llama-3.3-70b-versatile", (
+        "a dead provider's model name was streamed to Groq"
+    )
+    assert calls[0]["payload"]["temperature"] == 0.3
+
+
+@pytest.mark.asyncio
+async def test_non_standard_message_fields_never_reach_the_provider(monkeypatch, stream):
+    """The same `reasoning`-field 400 that hung deliverable generation. The
+    docstring calls this chokepoint critical, so it is asserted at the wire."""
+    _groq(monkeypatch)
+    calls = stream(_StreamResponse(_sse("x")))
+
+    messages = [{"role": "assistant", "content": "t", "reasoning": "chain of thought"},
+                {"role": "user", "content": "and now?"}]
+    async for _ in _agent()._stream_synthesis(messages, "groq-test-key"):
+        pass
+
+    sent = calls[0]["payload"]["messages"]
+    assert not any("reasoning" in m for m in sent), sent
+
+
+# ── the failures, and which side of the first token they fall on ─────────
+
+@pytest.mark.asyncio
+async def test_a_non_200_raises_before_any_token(monkeypatch, stream):
+    """Pre-first-token, so the caller may safely fall back to `_call_llm`."""
+    _groq(monkeypatch)
+    response = _StreamResponse([], status_code=503, text="service unavailable")
+    stream(response)
+
+    with pytest.raises(_SynthStreamError, match="503"):
+        await _drain(_agent())
+    assert response.aread_called, (
+        "the error body was never read, so the raised message cannot carry the "
+        "provider's reason"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_connect_error_raises_before_any_token(monkeypatch, stream):
+    _groq(monkeypatch)
+    stream(httpx.ConnectError("dns failure"))
+
+    with pytest.raises(_SynthStreamError, match="stream error"):
+        await _drain(_agent())
+
+
+@pytest.mark.asyncio
+async def test_a_mid_stream_drop_surfaces_after_the_tokens_already_emitted(
+        monkeypatch, stream):
+    """The invariant with real user-visible consequences.
+
+    The caller distinguishes a pre-first-token failure from a mid-stream drop
+    by whether it has emitted anything, and never restarts a stream it has
+    begun. If the tokens were swallowed and the raise happened first, the
+    caller would treat it as pre-first-token and re-run the whole turn through
+    `_call_llm` -- the user sees the answer twice.
+    """
+    _groq(monkeypatch)
+    stream(_StreamResponse(
+        _sse("The notice ", "period is ", done=False),
+        mid_stream_error=httpx.ReadError("connection reset"),
+    ))
+
+    emitted = []
+    with pytest.raises(_SynthStreamError):
+        async for chunk in _agent()._stream_synthesis(
+                [{"role": "user", "content": "q"}], "groq-test-key"):
+            emitted.append(chunk)
+
+    assert emitted == ["The notice ", "period is "], (
+        f"tokens produced before the drop were lost: {emitted}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_synth_stream_error_is_not_rewrapped(monkeypatch, stream):
+    """`except _SynthStreamError: raise` sits above the catch-all so the
+    specific message survives. Wrapping it would bury the HTTP status the
+    operator needs in a generic "stream error"."""
+    _groq(monkeypatch)
+    stream(_StreamResponse([], status_code=429, text="rate limited"))
+
+    with pytest.raises(_SynthStreamError) as exc:
+        await _drain(_agent())
+    assert "429" in str(exc.value), str(exc.value)
+    assert "stream error" not in str(exc.value), (
+        f"the specific error was rewrapped by the catch-all: {exc.value}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_user_over_the_daily_cap_falls_back_instead_of_streaming(
+        monkeypatch, stream):
+    """Raising sends the turn to `_call_llm`, which emits the structured cap
+    error the UI expects. Streaming past the cap would spend money the cap
+    exists to stop."""
+    _groq(monkeypatch)
+    monkeypatch.setenv("USAGE_DAILY_CAP_USD", "5.00")
+    from app.core import usage_tracker
+    monkeypatch.setattr(usage_tracker, "is_over_cap", lambda user_id, cap: True)
+    calls = stream(_StreamResponse(_sse("never")))
+
+    with pytest.raises(_SynthStreamError, match="cap"):
+        await _drain(_agent(), user_id="u1")
+    assert calls == [], "the provider was called despite the cap being hit"
+
+
+@pytest.mark.asyncio
+async def test_a_broken_usage_tracker_does_not_block_the_stream(monkeypatch, stream):
+    """Explicit in the code: a broken tracker must not block. The failure it
+    prevents is every turn silently losing streaming because a bookkeeping
+    table is unreachable."""
+    _groq(monkeypatch)
+    monkeypatch.setenv("USAGE_DAILY_CAP_USD", "5.00")
+    from app.core import usage_tracker
+
+    def _boom(*a, **kw):
+        raise RuntimeError("usage table unreachable")
+
+    monkeypatch.setattr(usage_tracker, "is_over_cap", _boom)
+    stream(_StreamResponse(_sse("ok")))
+
+    assert await _drain(_agent(), user_id="u1") == ["ok"]
+
+
+# ── cost tracking ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_usage_is_recorded_after_a_completed_stream(monkeypatch, stream):
+    """`stream_options.include_usage` is requested for exactly this. Without
+    the record, streamed turns are free as far as the cap is concerned -- the
+    cap above becomes unenforceable for the transport it mostly runs on."""
+    _groq(monkeypatch)
+    recorded = {}
+    from app.core import usage_tracker
+    monkeypatch.setattr(usage_tracker, "record",
+                        lambda **kw: recorded.update(kw))
+    stream(_StreamResponse(_sse("ok", usage={"total_tokens": 412})))
+
+    await _drain(_agent(), user_id="u1")
+
+    assert recorded.get("usage") == {"total_tokens": 412}, recorded
+    assert recorded.get("provider") == "groq", recorded
+    assert recorded.get("user_id") == "u1", recorded
+
+
+@pytest.mark.asyncio
+async def test_a_broken_recorder_does_not_fail_a_completed_stream(monkeypatch, stream):
+    """Best-effort by design -- the answer has already reached the user, so
+    raising here would turn a delivered turn into an error."""
+    _groq(monkeypatch)
+    from app.core import usage_tracker
+
+    def _boom(**kw):
+        raise RuntimeError("usage table unreachable")
+
+    monkeypatch.setattr(usage_tracker, "record", _boom)
+    stream(_StreamResponse(_sse("ok", usage={"total_tokens": 5})))
+
+    assert await _drain(_agent(), user_id="u1") == ["ok"]
+
+
+# ── the native Ollama protocol ───────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_native_ollama_uses_its_own_line_protocol(monkeypatch, stream):
+    """On-prem streams bare JSON with no `data:` prefix and terminates on
+    `done`, not `[DONE]`. Parsing it with the OpenAI reader yields nothing at
+    all -- the air-gapped deployment would silently never stream."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", NATIVE_OLLAMA_URL)
+    calls = stream(_StreamResponse(_native("The ", "answer.")))
+
+    chunks = await _drain(_agent(), api_key="")
+
+    assert chunks == ["The ", "answer."], chunks
+    assert calls[0]["url"] == NATIVE_OLLAMA_URL, calls[0]["url"]
+    assert "stream_options" not in calls[0]["payload"], (
+        "an OpenAI-only field was sent to the native protocol"
+    )

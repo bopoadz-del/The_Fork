@@ -146,13 +146,13 @@ def test_build_sources_empty_audit_returns_empty():
 # top-3-by-score instead of the chunks the answer actually cited (2026-06-30).
 
 def test_extract_inline_bracketed_source_single_chunk():
-    txt = "Trees must be protected (Source: [DD-2022-175 - DG II Demolition Part 3], chunk 941)."
+    txt = "Trees must be protected (Source: [DD-2022-175 - Site Demolition Part 3], chunk 941)."
     out = _extract_cited_chunk_indexes(txt)
     assert any(idx == 941 for _, idx in out), out
 
 
 def test_extract_inline_bracketed_source_chunk_range():
-    txt = "See the schedule (Source: [DD-2022-175 - DG II Demolition Part 2], chunks 1988-1990)."
+    txt = "See the schedule (Source: [DD-2022-175 - Site Demolition Part 2], chunks 1988-1990)."
     out = _extract_cited_chunk_indexes(txt)
     nums = {idx for _, idx in out}
     assert 1988 in nums, out  # at least the range start is captured
@@ -169,9 +169,9 @@ def test_build_sources_matches_inline_bracket_cite_by_chunk_index(monkeypatch):
     ])
     _stub_get_document(
         monkeypatch,
-        "DD-2022-175 - DG II Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 3.pdf",
+        "DD-2022-175 - Site Demolition and Site Clearance Works Package 1 Volume 2 Specs Part 3.pdf",
     )
-    text = "Trees must be protected (Source: [DD-2022-175 - DG II Demolition … Part 3], chunk 941)."
+    text = "Trees must be protected (Source: [DD-2022-175 - Site Demolition … Part 3], chunk 941)."
     out = _build_sources_from_audit(audit, text)
     assert len(out) == 1, out
     assert out[0]["page_or_section"] == "chunk #941"

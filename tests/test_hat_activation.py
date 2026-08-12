@@ -16,17 +16,23 @@ from pathlib import Path
 
 import pytest
 
-AGENTS_DIR = Path(__file__).parent.parent / "app" / "agents"
-sys.path.insert(0, str(AGENTS_DIR))
+# Imported through the PACKAGE path, not via sys.path.insert(app/agents).
+# The old form loaded these as top-level `catalog` / `models` / `activation`
+# while application code imports `app.agents.*` — two distinct module
+# objects for the same file, so a pydantic class from one would fail an
+# isinstance check against the other. It also required the modules to use
+# implicit relative imports (`from models import ...`), which are Python 2
+# syntax: `import app.agents.catalog` raised ModuleNotFoundError, so no
+# application code could reach the discipline hats at all.
 
-from catalog import get_base, get_hat, list_hats, resolve_hat_with_base
-from models import AgentManifest, Discipline
+from app.agents.catalog import get_base, get_hat, list_hats, resolve_hat_with_base
+from app.agents.models import AgentManifest, Discipline
 
 
 @pytest.fixture(scope="module")
 def catalog():
     """Load full catalog."""
-    from catalog import get_agent_catalog
+    from app.agents.catalog import get_agent_catalog
     return get_agent_catalog()
 
 
