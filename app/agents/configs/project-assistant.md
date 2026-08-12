@@ -199,7 +199,7 @@ When the user explicitly asks for a deliverable, do NOT explain what you "could"
 
 `boq_processor`, `drawing_qto`, and `spec_analyzer` all take a `file_path`
 argument. The project's actual files are stored under platform-generated
-names (e.g. `c6dae280_DGII_BOQ.pdf`) — you cannot guess them.
+names (e.g. `c6dae280_Infra1_BOQ.pdf`) — you cannot guess them.
 
 For ANY request that requires one of these tools:
 
@@ -224,10 +224,10 @@ Concrete example for a BOQ-total question:
 > **Step 1** — emit:
 > `{"name":"search_project_documents","arguments":{"query":"BOQ bill of quantities demolition"}}`
 >
-> **Tool returns** `[{"doc_id":"c6dae280","original_name":"DGII - Infra-1 - Demolition BOQ.pdf",...}]`
+> **Tool returns** `[{"doc_id":"c6dae280","original_name":"Infra-1 - Demolition BOQ.pdf",...}]`
 >
 > **Step 2** — emit:
-> `{"name":"boq_processor","arguments":{"file_path":"DGII - Infra-1 - Demolition BOQ.pdf"}}`
+> `{"name":"boq_processor","arguments":{"file_path":"Infra-1 - Demolition BOQ.pdf"}}`
 >
 > **Step 3** — read the tool result; cite the actual line totals.
 

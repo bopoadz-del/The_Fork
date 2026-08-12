@@ -46,17 +46,17 @@ class Candidate:
 
 
 # All anchors below were hand-picked from chunk inspection of:
-#   - a3eda25f  DGII - Infra-1 - Demolition BOQ.pdf  (BOQ rates)
-#   - aa8128ce  DG II Demolition Vol 3 Drawings.pdf  (drawing sheet titles)
+#   - a3eda25f  the client - Infra-1 - Demolition BOQ.pdf  (BOQ rates)
+#   - aa8128ce  the client Demolition Vol 3 Drawings.pdf  (drawing sheet titles)
 #   - 586e909b  the client project Infra-1 Vol 3 Drawings (6 of 7)  (electrical drawings)
 #   - 9c116493  the client project Infra-1 Vol 2 Specification (4 of 9)  (spec clauses)
 #   - 70557d5c  the client project Infra-1 Vol 1 Conditions of Contract  (clauses)
 CANDIDATES: List[Candidate] = [
-    # ---------------- BOQ (DGII Demolition BOQ, doc a3eda25f) -----------------
+    # ---------------- BOQ (the client Demolition BOQ, doc a3eda25f) -----------------
     Candidate(
         id="DA01",
         category="boq",
-        query="In the DGII Infrastructure Package 1 Demolition BOQ, what is the unit rate (SAR) for breakout and removal of existing carriageway including road surface markings, CESMM4 ref D 599.5?",
+        query="In the the client Infrastructure Package 1 Demolition BOQ, what is the unit rate (SAR) for breakout and removal of existing carriageway including road surface markings, CESMM4 ref D 599.5?",
         expected=["31.00"],
         forbidden=[],
         source_doc_id="a3eda25f",
@@ -65,7 +65,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA02",
         category="boq",
-        query="What is the unit rate for breakout and removal of existing chain link fence per CESMM4 reference D 549.2 in the DGII Demolition BOQ?",
+        query="What is the unit rate for breakout and removal of existing chain link fence per CESMM4 reference D 549.2 in the the client Demolition BOQ?",
         expected=["80.00"],
         forbidden=[],
         source_doc_id="a3eda25f",
@@ -74,7 +74,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA03",
         category="boq",
-        query="In the DGII Demolition BOQ, what is the unit rate for protection of an existing 600mm diameter waste water pipeline at average depth 5-6m (CESMM4 ref D 999.46)?",
+        query="In the the client Demolition BOQ, what is the unit rate for protection of an existing 600mm diameter waste water pipeline at average depth 5-6m (CESMM4 ref D 999.46)?",
         expected=["10,317"],
         forbidden=[],
         source_doc_id="a3eda25f",
@@ -83,7 +83,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA04",
         category="boq",
-        query="What is the unit rate for general site clearance (CESMM4 ref D110, unit ha) in the DGII Infrastructure Package 1 Demolition BOQ?",
+        query="What is the unit rate for general site clearance (CESMM4 ref D110, unit ha) in the the client Infrastructure Package 1 Demolition BOQ?",
         expected=["186,328"],
         forbidden=[],
         source_doc_id="a3eda25f",
@@ -92,7 +92,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA05",
         category="boq",
-        query="In the DGII Demolition BOQ, what is the unit rate for breakout and remove existing low voltage cables and ducts (CESMM4 ref D 999.3)?",
+        query="In the the client Demolition BOQ, what is the unit rate for breakout and remove existing low voltage cables and ducts (CESMM4 ref D 999.3)?",
         expected=["23.00"],
         forbidden=[],
         source_doc_id="a3eda25f",
@@ -101,7 +101,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA06",
         category="boq",
-        query="What is the unit rate for waste water manhole 1200mm diameter at depth 2.5-3.0m (CESMM4 ref D 999.29) in the DGII Demolition BOQ temporary diversion section?",
+        query="What is the unit rate for waste water manhole 1200mm diameter at depth 2.5-3.0m (CESMM4 ref D 999.29) in the the client Demolition BOQ temporary diversion section?",
         expected=["23,607"],
         forbidden=[],
         source_doc_id="a3eda25f",
@@ -112,7 +112,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA07",
         category="drawing",
-        query="In the JCB Volume 3 drawings for the DGII KKR detour, drawing IP-INF-053-0000-JCB-DWG-TM-200-0014151 — what is the drawing title and what is its revision?",
+        query="In the JCB Volume 3 drawings for the the client KKR detour, drawing IP-INF-053-0000-JCB-DWG-TM-200-0014151 — what is the drawing title and what is its revision?",
         expected=["KING KHALID ROAD DETOUR ROAD LAYOUT", "B"],
         forbidden=[],
         source_doc_id="aa8128ce",
@@ -139,7 +139,7 @@ CANDIDATES: List[Candidate] = [
     Candidate(
         id="DA10",
         category="drawing",
-        query="What discipline does the JCB drawing prefix 'WS-' refer to in the DGII Volume 3 Drawings schedule (e.g. drawing IP-INF-053-0000-JCB-DWG-WS-200-0005001)?",
+        query="What discipline does the JCB drawing prefix 'WS-' refer to in the the client Volume 3 Drawings schedule (e.g. drawing IP-INF-053-0000-JCB-DWG-WS-200-0005001)?",
         expected=["Water Supply"],
         forbidden=[],
         source_doc_id="aa8128ce",

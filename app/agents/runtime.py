@@ -703,7 +703,7 @@ MAX_HISTORY_TURNS = int(os.getenv("AGENT_MAX_HISTORY_TURNS", "8"))
 MAX_DELEGATION_DEPTH = 3  # how deep agent → agent delegation may recurse
 
 # Blocks whose inputs reference a user-uploaded file. When the LLM passes a
-# bare filename (e.g. "DGII - Infra-1 - Demolition BOQ.pdf") instead of the
+# bare filename (e.g. "Infra-1 - Demolition BOQ.pdf") instead of the
 # stored file_path, the block's os.path.exists() always fails. The runtime
 # resolves the bare name to the document's actual on-disk path before
 # dispatching to the block. See _resolve_block_file_input.
@@ -1137,7 +1137,7 @@ _CITATION_DOCID_RE = re.compile(
 
 # gpt-oss-120b (the pilot model) inline form — the filename is INSIDE the
 # brackets and the chunk number comes AFTER, mid-sentence:
-#   ...protected (Source: [DD-2022-175 - DG II Demolition … Part 3], chunk 941).
+#   ...protected (Source: [DD-2022-175 - Site Demolition … Part 3], chunk 941).
 #   ...schedule (Source: [DD-2022-175 … Part 2], chunks 1988-1990).
 # Distinct from _CITATION_RE ("[source: file, chunk N]" — source INSIDE the
 # bracket). Group 1 = filename (often truncated with an ellipsis); group 2 =
@@ -1865,7 +1865,7 @@ def _build_sources_from_audit(
                 # else: the cite carried a chunk number that already matched
                 # above (cited_idx != -1, cidx == cited_idx). That index
                 # uniquely identifies the injected chunk, so trust it even when
-                # the model truncated the filename (gpt-oss "DG II … Part 3").
+                # the model truncated the filename (gpt-oss "Site … Part 3").
                 key = (doc_id, cidx)
                 if key in seen:
                     continue
@@ -2616,7 +2616,7 @@ class Agent:
                         "type": "string",
                         "description": (
                             "The document's original_name (e.g. "
-                            "'DGII - Infra-1 - Demolition BOQ.pdf'). MUST come "
+                            "'Infra-1 - Demolition BOQ.pdf'). MUST come "
                             "from a prior search_project_documents call."
                         ),
                     },
@@ -4752,7 +4752,7 @@ class Agent:
             block_input = args.get("input")
             block_params = args.get("params") or {}
         # File-consuming blocks: the LLM typically supplies just the filename
-        # (e.g. 'DGII - Infra-1 - Demolition BOQ.pdf') because that is what the
+        # (e.g. 'Infra-1 - Demolition BOQ.pdf') because that is what the
         # user said. The block then calls os.path.exists on a bare filename
         # which always fails on the deployed disk, producing
         # 'File not found: <name>'. Resolve to the absolute file_path of the

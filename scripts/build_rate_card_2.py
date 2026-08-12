@@ -343,7 +343,7 @@ VIL = "Villas"
 DC = "Data Center"
 
 ingest_items(SCR + "/waste_water_boq_items.xlsx", INFRA, "SAR", "waste_water")
-ingest_items(SCR + "/dgii_infra1_demolition_boq_items.xlsx", INFRA, "SAR", "dgii_demolition")
+ingest_items(SCR + "/infra1_demolition_boq_items.xlsx", INFRA, "SAR", "demolition")
 ingest_items(SCR + "/alostool_demolition_boq_items.xlsx", INFRA, "SAR", "alostool_demolition")
 ingest_items(SCR + "/boq_batch/acacia1_items.csv", BLD, "AED", "acacia1")
 ingest_items(SCR + "/wetransfer_boq/BOQ_xlsx_items.csv", BLD, "AED", "wt_BOQ_xlsx")
