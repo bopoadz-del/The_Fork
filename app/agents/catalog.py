@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from models import AgentManifest, Discipline, ManifestKind
+from app.agents.models import AgentManifest, Discipline, ManifestKind
 
 
 _MANIFEST_DIR = Path(__file__).parent / "manifests"

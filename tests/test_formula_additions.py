@@ -21,8 +21,11 @@ from app.lib.construction_formulas_additions import (
 
 # Same pattern as test_manifest_bindings.py — add app/agents to path
 # so we can import formulas.py and verify the binding registry.
-AGENTS_DIR = Path(__file__).parent.parent / "app" / "agents"
-sys.path.insert(0, str(AGENTS_DIR))
+# Package imports, not sys.path.insert(app/agents) -- see
+# tests/test_no_implicit_relative_imports.py. The old form loaded these
+# files a second time under top-level names, so a pydantic class from
+# `models` failed isinstance against the same class from
+# `app.agents.models`.
 
 
 # -- Guardrail Height -----------------------------------------------------
@@ -170,25 +173,25 @@ class TestBindingResolver:
     """Verify formulas.py _build_registry includes additions namespace."""
 
     def test_registry_includes_guardrail(self):
-        from formulas import resolve_binding
+        from app.agents.formulas import resolve_binding
         fn = resolve_binding("guardrail_top_rail_height")
         assert fn is not None
         result = fn()
         assert result["top_rail_height_in"] == 42
 
     def test_registry_includes_interim_payment(self):
-        from formulas import resolve_binding
+        from app.agents.formulas import resolve_binding
         fn = resolve_binding("calculate_interim_payment")
         assert fn is not None
         result = fn(900000, 10)
         assert result["net_payment"] == 810000.0
 
     def test_registry_includes_full_path(self):
-        from formulas import resolve_binding
+        from app.agents.formulas import resolve_binding
         fn = resolve_binding("app.lib.construction_formulas_additions.guardrail_top_rail_height")
         assert fn is not None
 
     def test_registry_includes_bare_names(self):
-        from formulas import resolve_binding
+        from app.agents.formulas import resolve_binding
         assert resolve_binding("guardrail_top_rail_height") is not None
         assert resolve_binding("calculate_interim_payment") is not None

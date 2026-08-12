@@ -20,10 +20,13 @@ from pathlib import Path
 import pytest
 
 # Add app/agents to path
-AGENTS_DIR = Path(__file__).parent.parent / "app" / "agents"
-sys.path.insert(0, str(AGENTS_DIR))
+# Package imports, not sys.path.insert(app/agents) -- see
+# tests/test_no_implicit_relative_imports.py. The old form loaded these
+# files a second time under top-level names, so a pydantic class from
+# `models` failed isinstance against the same class from
+# `app.agents.models`.
 
-from models import (
+from app.agents.models import (
     ActivationMode,
     AgentManifest,
     Discipline,
@@ -32,7 +35,7 @@ from models import (
     TriggerType,
 )
 
-MANIFEST_DIR = AGENTS_DIR / "manifests"
+MANIFEST_DIR = Path(__file__).parent.parent / "app" / "agents" / "manifests"
 
 
 def _all_manifest_paths():

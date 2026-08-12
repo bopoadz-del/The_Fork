@@ -13,8 +13,14 @@ from pathlib import Path
 
 import pytest
 
-AGENTS_DIR = Path(__file__).parent.parent / "app" / "agents"
-sys.path.insert(0, str(AGENTS_DIR))
+# Imported through the PACKAGE path, not via sys.path.insert(app/agents).
+# The old form loaded these as top-level `catalog` / `models` / `activation`
+# while application code imports `app.agents.*` — two distinct module
+# objects for the same file, so a pydantic class from one would fail an
+# isinstance check against the other. It also required the modules to use
+# implicit relative imports (`from models import ...`), which are Python 2
+# syntax: `import app.agents.catalog` raised ModuleNotFoundError, so no
+# application code could reach the discipline hats at all.
 
 
 class TestFlagOffNoop:
@@ -26,12 +32,12 @@ class TestFlagOffNoop:
         if flag:
             pytest.skip(f"FORK_HATS_ENABLED={flag} -- skipping no-op test")
 
-        from activation import HATS_ENABLED
+        from app.agents.activation import HATS_ENABLED
         assert HATS_ENABLED is False, f"HATS_ENABLED should be False by default, got {HATS_ENABLED}"
 
     def test_adapter_returns_none_when_disabled(self):
         """select_hat_for_message must return None when disabled."""
-        from activation import HatActivationAdapter, HATS_ENABLED
+        from app.agents.activation import HatActivationAdapter, HATS_ENABLED
         if HATS_ENABLED:
             pytest.skip("HATS_ENABLED is true -- skipping no-op test")
 
@@ -41,7 +47,7 @@ class TestFlagOffNoop:
 
     def test_score_all_hats_empty_when_disabled(self):
         """score_all_hats must return empty dict when disabled."""
-        from activation import HatActivationAdapter, HATS_ENABLED
+        from app.agents.activation import HatActivationAdapter, HATS_ENABLED
         if HATS_ENABLED:
             pytest.skip("HATS_ENABLED is true -- skipping no-op test")
 
@@ -51,7 +57,7 @@ class TestFlagOffNoop:
 
     def test_get_active_hat_names_empty_when_disabled(self):
         """get_active_hat_names must return empty list when disabled."""
-        from activation import HatActivationAdapter, HATS_ENABLED
+        from app.agents.activation import HatActivationAdapter, HATS_ENABLED
         if HATS_ENABLED:
             pytest.skip("HATS_ENABLED is true -- skipping no-op test")
 
@@ -61,7 +67,7 @@ class TestFlagOffNoop:
 
     def test_module_level_select_hat_returns_none(self):
         """Module-level select_hat() returns None when disabled."""
-        from activation import select_hat, HATS_ENABLED
+        from app.agents.activation import select_hat, HATS_ENABLED
         if HATS_ENABLED:
             pytest.skip("HATS_ENABLED is true -- skipping no-op test")
 
@@ -70,7 +76,7 @@ class TestFlagOffNoop:
 
     def test_module_level_quick_score_returns_empty(self):
         """Module-level quick_score() returns empty dict when disabled."""
-        from activation import quick_score, HATS_ENABLED
+        from app.agents.activation import quick_score, HATS_ENABLED
         if HATS_ENABLED:
             pytest.skip("HATS_ENABLED is true -- skipping no-op test")
 
@@ -79,7 +85,7 @@ class TestFlagOffNoop:
 
     def test_is_enabled_returns_false(self):
         """is_enabled() must return False when flag is off."""
-        from activation import HatActivationAdapter, HATS_ENABLED
+        from app.agents.activation import HatActivationAdapter, HATS_ENABLED
         if HATS_ENABLED:
             pytest.skip("HATS_ENABLED is true -- skipping no-op test")
 
@@ -88,7 +94,7 @@ class TestFlagOffNoop:
 
     def test_catalog_loads_regardless_of_flag(self):
         """Catalog should load even when hats are disabled -- it's import-time."""
-        from catalog import get_agent_catalog, get_base, list_hats
+        from app.agents.catalog import get_agent_catalog, get_base, list_hats
 
         catalog = get_agent_catalog()
         assert len(catalog) > 0, "Catalog should load"
@@ -101,7 +107,7 @@ class TestFlagOffNoop:
 
     def test_manifests_validate_regardless_of_flag(self):
         """Manifests should validate even when hats are disabled."""
-        from catalog import get_agent_catalog
+        from app.agents.catalog import get_agent_catalog
         catalog = get_agent_catalog()
         for mid, manifest in catalog.items():
             assert manifest.id == mid

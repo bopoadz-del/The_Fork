@@ -23,7 +23,7 @@ import pytesseract
 import pandas as pd
 
 PDF = ('G:/My Drive/Master Folder/Demo Contract/REDACTED Al Ostool the client project Dem. Works MC/'
-       'REDACTED - DG II Demolition and Site Clearance Works Package 1 Volume 4 Schedules - BOQ.pdf')
+       'REDACTED - Site Demolition and Site Clearance Works Package 1 Volume 4 Schedules - BOQ.pdf')
 OUT = ('C:/Users/shimm/AppData/Local/Temp/claude/C--Users-shimm/'
        '436703f7-0a30-48b6-a650-29d75aac4fa5/scratchpad')
 DPI = 300

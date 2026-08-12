@@ -68,7 +68,12 @@ async def get_leaderboard(auth: dict = Depends(require_api_key)):
 
 @router.get("/v1/recommend")
 async def recommend_provider(auth: dict = Depends(require_api_key)):
-    """AI-powered provider recommendation"""
+    """Recommend a provider from observed reliability.
+
+    Threshold sort over recorded latency/error rates, not a model. Returns
+    `recommended: null` when no calls have been recorded -- that is a lack of
+    evidence, not an outage.
+    """
     if not MONITORING_AVAILABLE:
         raise HTTPException(status_code=503, detail="Monitoring not available")
     block = get_monitoring_block()
