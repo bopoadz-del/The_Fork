@@ -20,7 +20,16 @@
 # the web request is acceptable, and dropping it halves the compute bill.
 # Redis stays regardless — sessions and rate limiting use it too. To bring
 # the worker back, restore the `type: worker` block from git history
-# (present through 2026-08-08) and redeploy.
+# (present through 2026-08-08), set INGEST_WORKER_ENABLED=true, and redeploy.
+#
+# INGEST_WORKER_ENABLED IS WHAT MAKES THE ABOVE TRUE. Deleting the worker did
+# NOT switch ingestion to the inline path: upload_v1 only falls back to inline
+# indexing when enqueue_ingest() returns False, and that used to depend solely
+# on REDIS_URL — which is still set, because Redis serves sessions too. So from
+# 2026-08-08 every uploaded document was enqueued to a queue nobody drained and
+# stayed at chunk_count 0 (found by live-fire campaign run 1, 2026-08-14).
+# The queue is now opt-in: no INGEST_WORKER_ENABLED means index inline. Do not
+# set it unless a worker service is actually deployed and draining.
 #
 # NEON IS BILLED BY COMPUTE-TIME, NOT 24/7. That makes any endpoint which
 # touches the database expensive to poll: every probe wakes the compute and
