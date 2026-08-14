@@ -201,7 +201,190 @@ routing decision in `enqueue_ingest`. That is the difference between a surface
 symptom ("RAG is broken") and the mechanism, and it is why the fix is four
 lines rather than a retrieval rewrite.
 
-**Campaign status: OPEN.** PR #334 open with F1/F2/F4/F5. Rule 8 requires a run
+### S6 (export) exercised against production — PASS, first run
+
+Run against the repaired project `60cfc7bf`, pre-deploy:
+
+- A SECOND synthetic needle retrieved independently of the first: "The
+  hydrotest pressure recorded for asset tag QTX-7741 is **18.5 bar**",
+  correctly cited. Two distinct fabricated values now retrieved, so S4's pass
+  was not a one-off.
+- Export HTTP 200, **93,325 characters** extracted from the docx XML — not a
+  well-formed-but-empty file, which is the wrap-around green E4 exists to
+  refuse.
+- Footer stamps `theshovel.ai` with **no** `onrender.com` anywhere, confirming
+  `PUBLIC_BASE_URL` is genuinely in effect on the running process rather than
+  merely set in the dashboard.
+
+Note the trap this stage was designed around and avoided: the export renders
+from `agent_memory`, and the predefined-orchestrator path does not write there,
+so a workflow-shaped question yields a 404 that looks like a defect and is not
+one. The stage deliberately asks a lookup-shaped question first.
+
+**Local regression on the riskiest edit:** 227 passed across the streaming /
+agent / chat suites (`-k "stream or tool_surface or agent_runtime or chat"`),
+so the `runtime.py` tool-event alias broke nothing.
+
+### F6 — Google Drive OAuth dead since 2026-08-09 — RESOLVED 2026-08-14
+
+Not introduced by this campaign; found while tracing the domain migration.
+`GOOGLE_REDIRECT_URI` pointed at the deleted `the-fork.onrender.com`, and that
+was the ONLY callback registered on the OAuth client, so consent succeeded and
+then dumped the user on a 404.
+
+Falsified without authenticating: built the consent URL for three candidate
+callbacks and fetched each. `redirect_uri_mismatch` vs the Google sign-in page
+distinguishes registered from not, and grants no consent. Only the dead host
+was accepted.
+
+Operator registered both callbacks. Env now points at the onrender callback
+(theshovel.ai was still inside Google's stated 5-minutes-to-hours propagation
+window). Verified by fetching **the exact URL the server emits** from
+`/v1/drive/connect` — Google returned `<title>Sign in - Google Accounts</title>`,
+so the flow is live up to the human consent click.
+
+A callback on the slug is safe: `/v1/drive/callback` takes no auth (the signed
+`state` carries the user_id) and 302s back to `FRONTEND_URL`, so the SPA
+session is untouched. **Follow-up:** flip `GOOGLE_REDIRECT_URI` to the
+theshovel.ai callback once propagation completes.
+
+### CI flake — recorded, deliberately NOT speculatively fixed
+
+`tests/test_admin_corpus_reconcile.py::test_reconcile_reports_no_mismatches_when_clean`
+failed with sqlite "database is locked" on this PR's first run, and on PR #333
+before it. `app/core/db.py:79` already sets a 30s busy timeout, so the short
+-timeout explanation is wrong and the real mechanism (likely reader/writer
+contention under the rollback journal, which WAL would remove) is unproven.
+Rule 2 forbids fixing a surface error, so this is logged rather than patched
+with a guessed WAL pragma. If it recurs on this PR it gets a real reproduction
+first.
+
+### F7 — UptimeRobot: all three red monitors were FALSE ALARMS — FIXED
+
+Same bug class as F5, third instance today. Read-only sweep of the account
+showed 3 of 5 monitors DOWN. None was a real outage:
+
+- `theshovel.ai` DOWN since **2026-08-04**, last event `405 Method Not Allowed`.
+  UptimeRobot HTTP monitors default to **HEAD**, and FastAPI's `@router.get()`
+  registers GET only — unlike raw Starlette it does not auto-add HEAD — so every
+  path 405s. Verified directly: `HEAD /` and `HEAD /livez` return 405 while GET
+  returns 200. Repointed to `/livez` with `http_method=2`.
+- `Cerebrum-Blocks store` and `CerebrumDev backend` pointed at pre-rebuild
+  hostnames returning 404; the current hosts return 200. Repointed.
+
+Verified by outcome, not by the edit succeeding: all five now report UP with a
+logged `type=2 ... 200 OK` event at 18:08. Note v2 `editMonitor` works on this
+account even though `newMonitor` is plan-restricted.
+
+**The pattern worth keeping:** health-watch, Cloudflare DNS and UptimeRobot were
+ALL watching hostnames that no longer existed. A monitor stuck red is exactly as
+useless as one stuck green — the operator had both simultaneously.
+
+### My own test, three attempts — a lesson in measuring the right thing
+
+`test_unexpected_failure_is_still_loud` passed in isolation and failed only in
+the full CI suite, twice.
+
+1. `caplog` — observes records only via propagation to root; measures ambient
+   logging config, not the function.
+2. A handler attached to `app.main`'s logger — still subject to logger level,
+   `logging.disable()`, and 3000+ tests' leftovers. Failed identically.
+3. **Substitute the module-level `logger` name itself.** The property is "does
+   this function report the failure?", which is a question about the CALL, not
+   about delivery. Immune to every ambient variable.
+
+Hypotheses raised and *falsified before* acting on them, rather than pushed
+blind: pytest-randomly reordering (not installed), a test replacing
+`app_main.logger` (none does), `importlib.reload` of `jwt_auth` breaking patch
+identity (reload preserves the module object), and `test_rate_limit.py`
+interference (touches no logging). Rule 6 in practice: after the second
+identical failure, stop paying for CI runs and reproduce locally.
+
+The retry also carries a diagnostic: the test now records whether the patched
+`decode_token` was actually invoked, so a third failure distinguishes "warning
+not emitted" from "patch never reached the code" instead of just asserting False.
+
+### PR #334 MERGED — squash `14124d1`, 2026-08-14 18:34 UTC
+
+All 13 checks green including both test profiles and test-postgres. Local main
+synced, branch deleted, the two deliberately-untracked files preserved.
+
+### Run 2 — INVALID AS VERIFICATION (my harness bug), useful as a baseline
+
+The deploy-watcher compared the live commit against `8089edd` (7 chars) while
+Render returns `8089eddb` (8), so the mismatch read as "a new deploy landed"
+and the run fired against the OLD build. Recorded rather than quietly re-run:
+a run that verifies the wrong build is precisely the false green this campaign
+exists to refuse. Fixed by matching the TARGET commit prefix positively
+instead of negating the old one.
+
+As a pre-deploy baseline it is genuinely useful, because the failures are
+exactly predictive of what the deploy should fix:
+
+| Stage | Run 2 (pre-deploy) | expected after deploy |
+|---|---|---|
+| S3 upload indexed | FAIL chunk_count=0 | PASS |
+| S4 needle retrieved | FAIL | PASS |
+| S5 calculator executed BY NAME | **PASS** `['construction_calc']` | PASS |
+| S5b arithmetic 945 | PASS | PASS |
+| S5c tool events aliased | FAIL `all_aliased=False` | PASS |
+| S5d tool_result ok | PASS | PASS |
+| S6 export has content | PASS 93381 chars | PASS |
+| S6b footer stamps domain | PASS | PASS |
+| S1a/b/c, S2 | PASS | PASS |
+
+**F3 is now closed on the evidence:** with the tightened assertion the tool
+resolves as `construction_calc` in BOTH the call and the result. The original
+`[None]` was purely my parser reading the callback contract's key against the
+SSE contract. The calculators were never dormant on this path.
+
+### Run 3 — 2026-08-14, deploy `14124d15ab` — VERDICT: PASS, 12/12, CONVERGED
+
+Full chain, real dependencies, every enforcement rule active.
+
+| Stage | Result | Enforcement that made the green mean something |
+|---|---|---|
+| S1a login rejects unknown user | PASS | 401, no user enumeration |
+| S1b unauthenticated read refused | PASS | 401 |
+| S1c api key authenticates | PASS | 14 agents |
+| S2 project persisted | PASS | read back by a SEPARATE request |
+| **S3 upload actually indexed** | **PASS** | chunk_count read back from the index, not the upload's own 200 |
+| **S4 synthetic needle retrieved** | **PASS** | fabricated value no corpus can produce; fallback note absent |
+| S5 calculator executed | PASS | `construction_calc` named in BOTH call and result |
+| **S5c tool events aliased** | **PASS** | `all_aliased=True` — F4 fence flipped red to green |
+| S5d tool_result ok | PASS | `ok` flag asserted, not merely present |
+| S5b arithmetic 945 | PASS | 900 x documented 1.05 |
+| S6 export has content | PASS | 93,324 chars read back OUT of the docx XML |
+| S6b footer stamps domain | PASS | theshovel.ai present, onrender absent |
+
+The three stages that failed in the Run 2 baseline (S3, S4, S5c) are exactly
+the three the deploy fixed, and nothing else regressed. That predictive match
+is the strongest available evidence that the diagnosis was the mechanism and
+not a coincidence.
+
+**CAMPAIGN STATUS: CONVERGED.** Rule 8 satisfied — a run passed with all
+enforcement active against the deployed fix.
+
+### Defects found and fixed this campaign
+
+| # | Defect | Fix | Fence |
+|---|---|---|---|
+| F1 | uploads enqueued to a queue nobody drained; every app upload unindexed since 2026-08-08 | `INGEST_WORKER_ENABLED`, default inline | `test_upload_reaches_the_index.py` |
+| F2 | full traceback logged per request (API key is not a JWT) | expected `InvalidTokenError` is silent, anything else stays loud | `test_rate_limit_identity_is_quiet.py` |
+| F4 | SSE tool events carried no `name` | additive alias, both contracts documented | live S5c |
+| F5 | health-watch blind to the client hostname | separate `public-domain` job | workflow |
+| F6 | Drive OAuth dead since 2026-08-09 | callback registered + env repointed | live consent-URL probe |
+| F7 | all 3 red UptimeRobot monitors were false alarms | repointed to live URLs, HEAD -> GET | all 5 UP |
+
+### Still open, owner-gated
+
+- Open registration is ON with no per-project isolation (Master Corpus is
+  reachable by any signup). One env flip reverts it.
+- `test_admin_corpus_reconcile` sqlite lock flake — logged, unreproduced, not
+  speculatively patched.
+- Pre-existing owner items unchanged: golden-set corpus backfill, the two
+  client-content fixture binaries, discipline-hat product decision,
+  `RAG_LAYERED`. Rule 8 requires a run
 that passes with all enforcement active; the fixes are not deployed, so S3/S4
 still fail in production. S5 has been tightened (must name `construction_calc`
 in both call and result, must carry both keys, must report ok) and S6 (export,
