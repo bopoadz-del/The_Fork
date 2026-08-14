@@ -15,6 +15,11 @@ import jwt
 from jwt import InvalidTokenError  # re-exported for callers
 
 _ALGORITHM = "HS256"
+
+# Session tokens predate the ``typ`` claim and carry none. Anything with a
+# different ``typ`` is a single-purpose token and must never authenticate.
+SESSION_TYP = "session"
+EMAIL_VERIFY_TYP = "email_verify"
 _lock = threading.Lock()
 _cached_secret: str | None = None
 
@@ -99,9 +104,57 @@ def create_token(user_id: str, expires_in: int | None = None) -> str:
     return jwt.encode(payload, _get_secret(), algorithm=_ALGORITHM)
 
 
+def create_purpose_token(user_id: str, purpose: str, expires_in: int) -> str:
+    """Mint a SINGLE-PURPOSE token that can never authenticate a session.
+
+    Email verification links travel through an insecure channel: they sit in
+    mailboxes, get forwarded, and leak through referrers. A link that doubled
+    as a session token would hand out logins to anyone who saw the URL. The
+    ``typ`` claim is what keeps the two apart, and ``decode_token`` refuses
+    anything carrying one.
+    """
+    if not purpose or purpose == SESSION_TYP:
+        raise ValueError("purpose must be a non-session token type")
+    payload = {
+        "user_id": user_id,
+        "typ": purpose,
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+    }
+    return jwt.encode(payload, _get_secret(), algorithm=_ALGORITHM)
+
+
 def decode_token(token: str) -> dict:
-    """Decode + verify a token. Raises jwt.InvalidTokenError on any failure."""
-    return jwt.decode(token, _get_secret(), algorithms=[_ALGORITHM])
+    """Decode + verify a SESSION token. Raises InvalidTokenError on any failure.
+
+    Every authenticating caller in the app funnels through here
+    (``dependencies.require_user``, ``dependencies`` API-key path, and
+    ``main._rate_limit_identity``), so rejecting purpose-scoped tokens at this
+    one seam closes the door for all of them.
+
+    Session tokens predate the ``typ`` claim and carry none, so a missing
+    ``typ`` is treated as a session; anything else is refused.
+    """
+    payload = jwt.decode(token, _get_secret(), algorithms=[_ALGORITHM])
+    typ = payload.get("typ")
+    if typ is not None and typ != SESSION_TYP:
+        raise InvalidTokenError(
+            f"token of type {typ!r} cannot be used to authenticate"
+        )
+    return payload
+
+
+def decode_purpose_token(token: str, purpose: str) -> dict:
+    """Decode a single-purpose token, refusing session tokens.
+
+    The other direction of the same fence: a stolen session token must not be
+    replayable as a verification link.
+    """
+    payload = jwt.decode(token, _get_secret(), algorithms=[_ALGORITHM])
+    if payload.get("typ") != purpose:
+        raise InvalidTokenError(
+            f"expected a {purpose!r} token, got {payload.get('typ')!r}"
+        )
+    return payload
 
 
 def signing_secret() -> str:
