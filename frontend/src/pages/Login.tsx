@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { apiPost } from '../lib/api'
 import BrandMark from '../components/BrandMark'
 import './pages.css'
 import './auth.css'
@@ -54,6 +55,23 @@ export default function Login() {
     setDisplayName('')
   }
 
+  async function handleResend() {
+    setError(null)
+    setNotice(null)
+    setSubmitting(true)
+    try {
+      await apiPost('/v1/users/resend-verification', { email })
+      // The endpoint answers 202 whether or not the address exists, so this
+      // wording must not imply the account was found -- that would rebuild
+      // the account oracle the endpoint deliberately avoids.
+      setNotice(`If ${email} needs confirming, a new link is on its way.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not request a new link.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
@@ -71,7 +89,7 @@ export default function Login() {
           setNotice(
             result.verificationEmailSent
               ? `Account created. We sent a confirmation link to ${email} - follow it to finish signing in.`
-              : `Account created, but the confirmation email could not be sent. Use "Resend confirmation" or contact support.`,
+              : `Account created, but the confirmation email could not be sent. Use "Resend confirmation email" below.`,
           )
           setMode('signin')
           return
@@ -177,6 +195,19 @@ export default function Login() {
               : (mode === 'signin' ? 'Sign in' : 'Create account')}
           </button>
         </form>
+
+        {mode === 'signin' && (
+          <div className="auth-toggle">
+            <button
+              className="auth-toggle__link"
+              type="button"
+              onClick={handleResend}
+              disabled={submitting || !email}
+            >
+              Resend confirmation email
+            </button>
+          </div>
+        )}
 
         {/* Toggle */}
         <div className="auth-toggle">
