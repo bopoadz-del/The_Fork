@@ -940,6 +940,17 @@ def available_calculations() -> List[str]:
     return sorted(CALCULATORS)
 
 
+def _result_is_failure(result: Dict[str, Any]) -> bool:
+    """Did a calculator report failure by RETURNING rather than raising?
+
+    Keyed on a STRING "error" deliberately: a NUMERIC field named "error" is a
+    tolerance or deviation -- data, not a failure signal -- and must not be
+    mistaken for one. (Swept 2026-08-15 across all registered calculators: none
+    currently returns a numeric "error".)
+    """
+    return isinstance(result.get("error"), str)
+
+
 def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one whitelisted deterministic calculator by name with keyword params.
 
@@ -976,6 +987,19 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
         result = _dc.asdict(result)
     elif not isinstance(result, dict):
         result = {"value": result}
+
+    # Not every calculator signals failure by RAISING. Several (score_risk and
+    # friends in app/core/construction_knowledge.py) validate their inputs and
+    # RETURN {"error": "..."} instead. Without this, that reply was wrapped as
+    # status:"success" -- an error envelope inside a green one, which the agent
+    # tool loop reads as a working answer and narrates as a result.
+    #
+    if _result_is_failure(result):
+        return {
+            "status": "error",
+            "calculation": name,
+            "error": result["error"],
+        }
 
     return {
         "status": "success",
