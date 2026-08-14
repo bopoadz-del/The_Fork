@@ -33,7 +33,12 @@ async def test_enqueue_ingest_returns_false_when_create_pool_raises(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_enqueue_ingest_returns_true_when_enqueue_succeeds(monkeypatch):
+    # INGEST_WORKER_ENABLED is now required in addition to REDIS_URL: Redis is
+    # shared with sessions/rate-limiting, so its presence never meant a worker
+    # was draining the queue. See tests/test_upload_reaches_the_index.py for the
+    # production failure that forced the distinction.
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
+    monkeypatch.setenv("INGEST_WORKER_ENABLED", "true")
     mock_pool = AsyncMock()
     mock_pool.enqueue_job = AsyncMock(return_value=None)
     with patch(

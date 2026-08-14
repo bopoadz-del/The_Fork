@@ -3820,9 +3820,15 @@ class Agent:
                         # Stop offering the search tool for the rest of this turn —
                         # the model has searched enough; force it to answer.
                         excluded_tools.add("search_project_documents")
+                # SSE contract (distinct from the ``on_event`` callback above,
+                # which uses "name"/"args"/"id"): the browser reads "tool" and
+                # "args_preview" — see frontend ProjectWorkspace.tsx. "name" is
+                # emitted as an ALIAS so a consumer written against the callback
+                # shape reads the tool name instead of silently getting None.
                 yield {
                     "type": "tool_call",
                     "tool": fn.get("name"),
+                    "name": fn.get("name"),
                     "args_preview": (fn.get("arguments") or "")[:200],
                 }
                 tool_result = await self._run_tool_call(
@@ -3846,6 +3852,7 @@ class Agent:
                 yield {
                     "type": "tool_result",
                     "tool": tool_result["name"],
+                    "name": tool_result["name"],  # alias, see tool_call above
                     "ok": tool_result.get("ok", True),
                     "summary": _summarize_result(tool_result["result"])[:400],
                 }

@@ -24,6 +24,10 @@ REQUIRED_KEYS = [
     "DATABASE_URL",
     "DATA_DIR",
     "REDIS_URL",
+    # Ingestion routing. Not a tuning knob: set true without a live worker and
+    # every upload lands on a queue nobody drains (200 + chunk_count 0
+    # forever). An operator provisioning from .env.example must see it.
+    "INGEST_WORKER_ENABLED",
     # First-boot admin bootstrap
     "BOOTSTRAP_USER_EMAIL",
     "BOOTSTRAP_USER_PASSWORD",
