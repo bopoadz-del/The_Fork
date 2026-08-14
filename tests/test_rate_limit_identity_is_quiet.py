@@ -19,8 +19,6 @@ through the entire incident.
 
 import logging
 
-import pytest
-
 from app import main as app_main
 
 
@@ -32,31 +30,60 @@ class _Req:
         self.client = type("C", (), {"host": host})()
 
 
-def _identity(req, caplog):
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="app.main"):
-        return app_main._rate_limit_identity(req)  # noqa: SLF001
+class _Recorder(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record):
+        self.records.append(record)
 
 
-def test_api_key_caller_is_identified_without_logging(caplog):
+def _identity(req, _unused=None):
+    """Call the function with a handler attached DIRECTLY to its logger.
+
+    Deliberately not pytest's caplog: caplog observes records via propagation
+    to the root logger, so it is sensitive to whatever any earlier test in the
+    session did to logging. This test passed alone and failed inside the full
+    CI suite for exactly that reason. Attaching to ``app.main``'s own logger
+    object measures what the function actually emits, independent of ambient
+    configuration.
+    """
+    rec = _Recorder()
+    lg = app_main.logger
+    prev_level, prev_disabled = lg.level, logging.root.manager.disable
+    logging.disable(logging.NOTSET)
+    lg.setLevel(logging.WARNING)
+    lg.addHandler(rec)
+    try:
+        ident = app_main._rate_limit_identity(req)
+    finally:
+        lg.removeHandler(rec)
+        lg.setLevel(prev_level)
+        logging.disable(prev_disabled)
+    _identity.records = rec.records
+    return ident
+
+
+def test_api_key_caller_is_identified_without_logging():
     """The regression: a non-JWT bearer token must not produce a warning."""
-    ident = _identity(_Req("Bearer cb_live_not_a_jwt_at_all"), caplog)
+    ident = _identity(_Req("Bearer cb_live_not_a_jwt_at_all"))
     assert ident.startswith("key:"), ident
-    assert not caplog.records, (
-        "an API key is not a JWT — that is the normal path and must be silent; "
-        f"got {[r.getMessage() for r in caplog.records]}"
+    assert not _identity.records, (
+        "an API key is not a JWT - that is the normal path and must be silent; "
+        f"got {[r.getMessage() for r in _identity.records]}"
     )
 
 
-def test_jwt_caller_is_identified_as_user_without_logging(monkeypatch, caplog):
-    monkeypatch.setattr(app_main._jwt_auth, "decode_token",  # noqa: SLF001
+def test_jwt_caller_is_identified_as_user_without_logging(monkeypatch):
+    monkeypatch.setattr(app_main._jwt_auth, "decode_token",
                         lambda _t: {"user_id": "u-42"})
-    ident = _identity(_Req("Bearer a.b.c"), caplog)
+    ident = _identity(_Req("Bearer a.b.c"))
     assert ident == "user:u-42"
-    assert not caplog.records
+    assert not _identity.records
 
 
-def test_unexpected_failure_is_still_loud(monkeypatch, caplog):
+def test_unexpected_failure_is_still_loud(monkeypatch):
     """The other direction: quieting the normal case must not silence real bugs.
 
     A missing signing secret is not "this isn't a JWT" — it must still warn,
@@ -65,22 +92,22 @@ def test_unexpected_failure_is_still_loud(monkeypatch, caplog):
     def _boom(_t):
         raise RuntimeError("signing secret unavailable")
 
-    monkeypatch.setattr(app_main._jwt_auth, "decode_token", _boom)  # noqa: SLF001
-    ident = _identity(_Req("Bearer whatever"), caplog)
+    monkeypatch.setattr(app_main._jwt_auth, "decode_token", _boom)
+    ident = _identity(_Req("Bearer whatever"))
     assert ident.startswith("key:")
-    assert any("_rate_limit_identity" in r.getMessage() for r in caplog.records), (
+    assert any("_rate_limit_identity" in r.getMessage() for r in _identity.records), (
         "an unexpected exception must still be logged loudly"
     )
 
 
-def test_anonymous_caller_falls_back_to_ip(caplog):
-    assert _identity(_Req(None, host="203.0.113.9"), caplog) == "ip:203.0.113.9"
-    assert not caplog.records
+def test_anonymous_caller_falls_back_to_ip():
+    assert _identity(_Req(None, host="203.0.113.9")) == "ip:203.0.113.9"
+    assert not _identity.records
 
 
-def test_same_key_yields_a_stable_identity(caplog):
+def test_same_key_yields_a_stable_identity():
     """Rate limiting is meaningless if the identity churns per request."""
-    a = _identity(_Req("Bearer cb_live_same_key"), caplog)
-    b = _identity(_Req("Bearer cb_live_same_key"), caplog)
-    c = _identity(_Req("Bearer cb_live_other_key"), caplog)
+    a = _identity(_Req("Bearer cb_live_same_key"))
+    b = _identity(_Req("Bearer cb_live_same_key"))
+    c = _identity(_Req("Bearer cb_live_other_key"))
     assert a == b and a != c
