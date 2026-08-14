@@ -386,15 +386,23 @@ def _rate_limit_identity(request: Request) -> str:
     authz = request.headers.get("Authorization", "")
     if authz.startswith("Bearer "):
         token = authz[7:].strip()
+        payload = None
         try:
             payload = _jwt_auth.decode_token(token)
-            if payload.get("user_id"):
-                return f"user:{payload['user_id']}"
+        except _jwt_auth.InvalidTokenError:
+            # An API key is not a JWT. This is the NORMAL path for key-authed
+            # callers, not an exceptional one — logging a traceback here fired
+            # once per request in production and buried real warnings.
+            pass
         except Exception:
+            # Anything that is not "this simply isn't a JWT" is unexpected and
+            # stays loud (e.g. a missing signing secret).
             logger.warning(
                 "swallowed %s in _rate_limit_identity() — continuing",
                 "Exception", exc_info=True,
             )
+        if payload and payload.get("user_id"):
+            return f"user:{payload['user_id']}"
         import hashlib
         return "key:" + hashlib.sha256(token.encode()).hexdigest()[:24]
     host = request.client.host if request.client else "unknown"

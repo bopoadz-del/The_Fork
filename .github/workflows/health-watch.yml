@@ -46,6 +46,12 @@ permissions:
 
 env:
   BASE_URL: https://the-fork-jn3t.onrender.com
+  # The CLIENT-FACING hostname. Probing only the onrender slug is structurally
+  # blind to the things that actually take the product down for a client: a
+  # Cloudflare record pointing at a dead host (which is exactly what happened
+  # from 2026-08-09 to 2026-08-14), a lapsed custom-domain attachment, or an
+  # expired certificate. The slug can be perfectly healthy through all three.
+  PUBLIC_URL: https://theshovel.ai
 
 jobs:
   liveness:
@@ -68,6 +74,32 @@ jobs:
             [ "$attempt" = "1" ] && sleep 60
           done
           echo "::error::/livez returned $code twice — the service is not serving HTTP at all. Check the Render dashboard for the-fork."
+          exit 1
+
+  public-domain:
+    # Same 15-minute cadence and same DB-free endpoint as `liveness`, but over
+    # the hostname clients actually use. Deliberately a SEPARATE job so the
+    # failure names the layer: liveness red = the service is down; this red
+    # while liveness is green = DNS, the custom-domain binding, or TLS.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: GET /livez over the public domain (DNS + custom domain + TLS)
+        run: |
+          url="$PUBLIC_URL/livez"
+          for attempt in 1 2; do
+            # --fail-with-body so a TLS or DNS failure is a non-zero exit, not
+            # a 000 that reads like a transient blip.
+            code=$(curl -sS -o /tmp/pub.json -w '%{http_code}' --max-time 30 "$url" || echo "000")
+            echo "attempt $attempt: GET $url -> $code"
+            cat /tmp/pub.json 2>/dev/null || true
+            echo
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            [ "$attempt" = "1" ] && sleep 60
+          done
+          echo "::error::$PUBLIC_URL/livez returned $code twice while the onrender slug may still be healthy. Check Cloudflare DNS for theshovel.ai (both apex and www should CNAME to the-fork-jn3t.onrender.com), the custom-domain binding on the Render service, and certificate validity."
           exit 1
 
   readiness:
