@@ -17,8 +17,6 @@ loud. A test that only checked the returned identity would have stayed green
 through the entire incident.
 """
 
-import logging
-
 from app import main as app_main
 
 
@@ -30,38 +28,47 @@ class _Req:
         self.client = type("C", (), {"host": host})()
 
 
-class _Recorder(logging.Handler):
-    def __init__(self):
-        super().__init__(level=logging.WARNING)
-        self.records: list[logging.LogRecord] = []
+class _StubLogger:
+    """Records warning CALLS. Not a logging.Handler on purpose.
 
-    def emit(self, record):
-        self.records.append(record)
+    Two earlier attempts measured the logging framework instead of the code and
+    both passed alone while failing inside the full CI suite:
+
+    1. ``caplog`` -- observes records only if they PROPAGATE to root, so any
+       earlier test that touched propagation or handlers changed the answer.
+    2. A handler attached to ``app.main``'s logger -- still subject to logger
+       level, ``logging.disable()``, and whatever global state 3000-odd other
+       tests leave behind.
+
+    The property under test is "does this function report the failure?", and
+    that is a question about the call, not about delivery. Substituting the
+    module-level ``logger`` name that ``_rate_limit_identity`` closes over
+    answers exactly that question and cannot be perturbed by ambient config.
+    """
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+
+    def warning(self, msg, *args, **kwargs) -> None:
+        try:
+            self.warnings.append(str(msg) % args if args else str(msg))
+        except (TypeError, ValueError):  # %-formatting must never fail a test
+            self.warnings.append(str(msg))
+
+    def __getattr__(self, _name):  # info/debug/error are irrelevant here
+        return lambda *a, **k: None
 
 
 def _identity(req, _unused=None):
-    """Call the function with a handler attached DIRECTLY to its logger.
-
-    Deliberately not pytest's caplog: caplog observes records via propagation
-    to the root logger, so it is sensitive to whatever any earlier test in the
-    session did to logging. This test passed alone and failed inside the full
-    CI suite for exactly that reason. Attaching to ``app.main``'s own logger
-    object measures what the function actually emits, independent of ambient
-    configuration.
-    """
-    rec = _Recorder()
-    lg = app_main.logger
-    prev_level, prev_disabled = lg.level, logging.root.manager.disable
-    logging.disable(logging.NOTSET)
-    lg.setLevel(logging.WARNING)
-    lg.addHandler(rec)
+    """Run the function with its module-level ``logger`` swapped for a stub."""
+    stub = _StubLogger()
+    real = app_main.logger
+    app_main.logger = stub
     try:
         ident = app_main._rate_limit_identity(req)
     finally:
-        lg.removeHandler(rec)
-        lg.setLevel(prev_level)
-        logging.disable(prev_disabled)
-    _identity.records = rec.records
+        app_main.logger = real
+    _identity.records = stub.warnings
     return ident
 
 
@@ -71,7 +78,7 @@ def test_api_key_caller_is_identified_without_logging():
     assert ident.startswith("key:"), ident
     assert not _identity.records, (
         "an API key is not a JWT - that is the normal path and must be silent; "
-        f"got {[r.getMessage() for r in _identity.records]}"
+        f"got {_identity.records}"
     )
 
 
@@ -89,14 +96,25 @@ def test_unexpected_failure_is_still_loud(monkeypatch):
     A missing signing secret is not "this isn't a JWT" — it must still warn,
     or the fix would have traded noise for blindness.
     """
+    called: list[str] = []
+
     def _boom(_t):
+        called.append(_t)
         raise RuntimeError("signing secret unavailable")
 
     monkeypatch.setattr(app_main._jwt_auth, "decode_token", _boom)
     ident = _identity(_Req("Bearer whatever"))
     assert ident.startswith("key:")
-    assert any("_rate_limit_identity" in r.getMessage() for r in _identity.records), (
-        "an unexpected exception must still be logged loudly"
+    # Diagnostic, not decoration: an earlier CI-only failure here was
+    # indistinguishable between "the warning was not emitted" and "the patched
+    # decode_token was never reached". Report both so a repeat names itself.
+    assert called, (
+        "decode_token was never invoked - the monkeypatch did not reach the "
+        "function under test, so this says nothing about logging"
+    )
+    assert any("_rate_limit_identity" in m for m in _identity.records), (
+        "an unexpected exception must still be logged loudly; "
+        f"decode_token calls={len(called)} warnings={_identity.records}"
     )
 
 
