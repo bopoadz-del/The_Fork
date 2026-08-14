@@ -71,6 +71,18 @@
   line-height: 1.5;
 }
 
+/* Neutral counterpart to .auth-error: registration succeeded, or the email
+   link was followed. Same shape so the two never jump the layout. */
+.auth-notice {
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(37, 99, 235, 0.06);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  line-height: 1.5;
+}
+
 /* ── Submit button ── */
 .auth-submit {
   margin-top: var(--space-2);

@@ -88,7 +88,14 @@ def _bootstrap_first_user() -> None:
     if users_store.get_user_by_email(email) is not None:
         return
     try:
-        users_store.create_user(email, password, role="admin")
+        # email_verified=True: this account comes from operator-set env vars,
+        # not a signup, so there is nobody to click a link. A fresh install
+        # runs migration 0015's backfill against an empty table, so without
+        # this the first admin would be created unverified and locked out of
+        # its own login by the verification gate.
+        users_store.create_user(
+            email, password, role="admin", email_verified=True,
+        )
         logger.info("bootstrap: created first user %s", email)
     except Exception as e:
         # Fail loud — a silent warning lets a broken bootstrap hide. If the

@@ -55,6 +55,7 @@ def _as_dict(user: User) -> Dict[str, Any]:
         "display_name": user.display_name,
         "role": user.role,
         "created_at": user.created_at,
+        "email_verified": bool(user.email_verified),
     }
 
 
@@ -156,8 +157,15 @@ def _public(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def create_user(
     email: str, password: str, display_name: Optional[str] = None,
-    role: str = "user",
+    role: str = "user", email_verified: bool = False,
 ) -> Dict[str, Any]:
+    """Create a user. ``email_verified`` defaults FALSE.
+
+    Callers that provision a TRUSTED account out of band -- the env-driven
+    bootstrap admin -- pass True explicitly. A fresh install runs the 0015
+    backfill against an empty table, so that admin would otherwise be created
+    unverified with no way to receive a link.
+    """
     _ensure_db()
     email = (email or "").strip().lower()
     if not email:
@@ -180,6 +188,7 @@ def create_user(
                     display_name=display_name or email,
                     role=role,
                     created_at=_now(),
+                    email_verified=email_verified,
                 )
             )
             session.commit()
@@ -189,3 +198,24 @@ def create_user(
         finally:
             session.close()
     return _public(get_user_by_id(uid))
+
+
+def mark_email_verified(user_id: str) -> bool:
+    """Flip a user's address to verified. True if a row changed.
+
+    Idempotent by design: a verification link that is followed twice (mail
+    clients prefetch them) must not error, so re-verifying an already-verified
+    user is a no-op that still reports success to the caller.
+    """
+    _ensure_db()
+    with _lock:
+        session = SessionLocal()
+        try:
+            user = session.get(User, user_id)
+            if user is None:
+                return False
+            user.email_verified = True
+            session.commit()
+            return True
+        finally:
+            session.close()

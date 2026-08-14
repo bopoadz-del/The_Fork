@@ -202,6 +202,15 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(String, nullable=False, default="user")
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    # Has the address been proved to belong to whoever registered it?
+    # Defaults FALSE so a new signup is unverified until they follow the
+    # emailed link. Migration 0015 backfills TRUE for pre-existing rows —
+    # they predate the feature and must not be locked out — and
+    # ``_bootstrap_first_user`` sets it explicitly, because a fresh install
+    # creates that admin AFTER the backfill has already run.
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
 
 class Project(Base):

@@ -30,6 +30,15 @@ interface RegisterResponse {
   role: string
   display_name?: string
   created_at: string
+  email_verified: boolean
+  verification_email_sent: boolean
+}
+
+/** What registration produced. When the address still needs confirming there
+ *  is deliberately no session: the account exists but cannot log in yet. */
+export interface RegisterResult {
+  verificationRequired: boolean
+  verificationEmailSent: boolean
 }
 
 interface MeResponse {
@@ -44,7 +53,11 @@ interface AuthContextValue {
   user: AuthUser | null
   loading: boolean
   login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, displayName?: string) => Promise<void>
+  register: (
+    email: string,
+    password: string,
+    displayName?: string,
+  ) => Promise<RegisterResult>
   logout: () => void
 }
 
@@ -103,14 +116,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string,
     password: string,
     displayName?: string,
-  ): Promise<void> => {
-    await apiPost<RegisterResponse>('/v1/users/register', {
+  ): Promise<RegisterResult> => {
+    const data = await apiPost<RegisterResponse>('/v1/users/register', {
       email,
       password,
       ...(displayName ? { display_name: displayName } : {}),
     })
-    // Auto-login after successful registration
+    // Only auto-login when the address needed no confirmation (local/dev
+    // builds with no mail provider). Attempting it while verification is
+    // pending would surface the 403 gate as an error on a registration that
+    // actually SUCCEEDED.
+    if (!data.email_verified) {
+      return {
+        verificationRequired: true,
+        verificationEmailSent: Boolean(data.verification_email_sent),
+      }
+    }
     await login(email, password)
+    return { verificationRequired: false, verificationEmailSent: false }
   }
 
   const logout = (): void => {
