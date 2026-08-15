@@ -150,6 +150,12 @@ _SMOKE_INPUTS = {
     "concrete_volume": dict(length_m=10, width_m=5, thickness_m=0.3),
     "rebar_weight": dict(bar_diameter_mm=16, total_length_m=12, quantity=50),
     "rebar_by_area": dict(area_m2=20, spacing_mm=200, bar_diameter_mm=12),
+    "interior_finishes_takeoff": dict(
+        floor_area_m2=100, perimeter_m=90, room_count=8, floor_to_ceiling_m=2.7,
+        door_width_m=0.9, door_height_m=2.1, doors_per_room=1),
+    "resource_line_cost": dict(
+        quantity=100, daily_output=10, day_rate=280,
+        material_rate_per_unit=50, plant_fraction_of_labour=0.03),
     # Additive discipline library — earthwork/geotech.
     "excavation_volume": dict(length_m=20, width_m=10, depth_m=3),
     "backfill_volume": dict(excavation_bank_m3=600, structure_volume_m3=200),
