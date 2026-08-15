@@ -216,6 +216,42 @@ async def test_duration_shaped_completion_target_is_extracted():
     assert durations[0]["duration_days"] == 14 * 30
 
 
+# ---------------------------------------------------------------- F38
+
+
+def _chain_block():
+    # Platform-wired orchestrator, as app.dependencies builds it live.
+    from app.dependencies import _create_block_instance
+    from app.blocks.orchestrator import OrchestratorBlock
+    return _create_block_instance(OrchestratorBlock)
+
+
+@pytest.mark.asyncio
+async def test_chain_threads_per_step_input_to_the_block(tmp_path):
+    # The per-step "input" dict was silently dropped: boq_processor ran
+    # with no file_path while the caller had supplied one, then the chain
+    # wrapped the failure in a green envelope.
+    p = tmp_path / "probe.txt"
+    p.write_text("hello chain")
+    res = await _chain_block().process(
+        {"steps": [{"block": "file_hasher",
+                    "input": {"file_path": str(p)}}]}, {})
+    assert res["status"] == "success", res
+    inner = res["results"][0]["result"]
+    body = inner.get("result") if isinstance(inner.get("result"), dict) else inner
+    assert body.get("hashes", {}).get("sha256"), res
+
+
+@pytest.mark.asyncio
+async def test_chain_with_a_failed_step_is_not_a_green_envelope():
+    res = await _chain_block().process(
+        {"steps": [{"block": "file_hasher",
+                    "input": {"file_path": "/nope/missing.bin"}}]}, {})
+    assert res["status"] == "error"
+    assert "file_hasher" in res["error"]
+    assert res["failed_steps"] == [0]
+
+
 def test_agents_list_surfaces_availability():
     # Route-level shape check against the real registry: every listed agent
     # carries the availability fields, and any unavailable one names why.
