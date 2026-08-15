@@ -242,3 +242,82 @@ PRs this phase: #339, #340, #341 -- all merged, deployed, each carrying
 red-then-green fences. Every finding traced to a named mechanism before any
 fix; two fixes were verified against the live Moonshot API and Render metrics
 rather than local guesswork.
+
+## Run 13 — "nothing parked": close every open finding
+
+**F19 gate exposed F19b.** PR #343 (dispatch contract) merged and deployed;
+the slab probe returned the right number (24 m3) with a WRONG mechanism: the
+TIMING log showed iter=0 calling only smart_orchestrator and iter=1 going
+straight to final — the reply's "Routed to: formula_executor_v2" was
+fabricated. Right number over a false claim is a wrap-around green. The
+contract gained an explicit no-fabricated-dispatch rule, fenced through the
+real config parser.
+
+**F18 fixed — dual-query retrieval.** Probes on the live corpus validated the
+mechanism BEFORE any code: wrapper-stripped, phrase-intact variants rescue
+both needles (contract rank 1 at 0.933; tender rank 3-4), while phrase-broken
+stopword variants rank nowhere. The retriever now embeds the raw question AND
+its wrapper-stripped variant, searches both, merges by max score per chunk.
+Terse queries cost no second search; RAG_DUAL_QUERY=0 is the kill-switch.
+Fence: 7 red on old code including the behavioural needle test.
+
+**F11 fixed.** The priced workbook carries a Rate Basis column (source + n,
+amber for weak/fallback/NO RATE).
+
+**F10 fixed — with real data and a sharper defect found.** The contract
+volume's MEP sections carry quantities but no surviving rates (93
+arithmetic-valid priced rows are all doors/sanitary/finishes); no priced MEP
+bill exists in the operator's archives. Two observed AED lump sums from a
+2012 fit-out BOQ fill the lump-sum cells (classifier's own verdicts, n
+visible). Filling them exposed that fallback medians pooled rates ACROSS
+UNITS — a per-metre pipe would have priced from a 26,525 lump-sum median.
+Fallback tiers are now unit-commensurable (linear/area/volume/mass/count/
+lump); per-metre MEP correctly stays NO RATE. Refuse, never invent.
+
+## Run 14 — PR #344 deployed; gates found two ROOT CAUSES
+
+- G1 (contract 852 via natural-question chat): PASS with citation.
+- G4/G5 (Rate Basis live, no lump leaks): PASS — 55 exact + 1 weak, all
+  labelled. (The staged BOQ doc predated the disk fix and its file had
+  evaporated — "chunks exist, file missing" again; re-uploaded.)
+- G2 (tender years): FAIL -> **F20 found.** Retrieval was FIXED (needle rank
+  3 of 5) but MAX_RAG_TOKENS defaulted to 1500 — calibrated for the 512-char
+  chunker era. Doc-reindex emits ~3,000-char chunks, so apply_token_cap kept
+  exactly ONE of five chunks and dropped the needle whole. The model
+  truthfully said "not in context". Retrieval quality had been made
+  irrelevant by the injection cap.
+- G3 (slab): fabricated dispatch AGAIN despite the strengthened contract.
+  Stop-rule fired -> machinery dig -> **F19c root cause:** force-synthesis
+  counts smart_orchestrator as a deliverable, so the iteration after the
+  router verdict ran with_tools=False. Dispatch was STRUCTURALLY impossible;
+  the model resolved the contract-vs-capability conflict by inventing the
+  route. Two prose revisions could never have fixed a capability hole.
+
+Fixes (PR #345): smart_orchestrator joined the non-deliverable tool set; an
+empty router match injects a corrective user-role message at the decision
+point; MAX_RAG_TOKENS default raised to 6000 (fits k=5 of current chunks).
+Fences: 4 red on the old runtime (functional loop test), 2 red on the old
+cap built from the exact live chunk sizes.
+
+## Run 15 — final gates: ALL PASS, mechanisms verified
+
+- G1 contract 852: PASS ("852 days from the Commencement Date", cited).
+- G2 tender founding years: PASS 3/3 (1974 / 1981 / 1991, cited chunk 19).
+- G3 slab: PASS with the mechanism PROVEN in the TIMING log — iter=0
+  smart_orchestrator, iter=1+2 construction_calc, iter=3 final. The answer's
+  "Routed to: construction_calc ... 24.0 m3, order 25.2 m3 with 5% waste" is
+  now a true statement about a real tool execution.
+- G4 Rate Basis column: PASS live. G5 no lump-median leaks: PASS live.
+
+## Phase 3 final tally
+
+Every finding from this phase is fixed, merged, deployed, and live-gated:
+F10 (data + commensurable fallbacks), F11 (rate provenance), F12-F17 + D1
+(previous runs), F18 (dual-query retrieval), F19/b/c (dispatch contract +
+no-fabrication rule + force-synthesis exemption + empty-match nudge),
+F20 (injection cap sized for real chunks).
+
+PRs this phase: #339-#345, all merged with red-then-green fences. The last
+three defects were only findable through the green surface: a correct number
+over a fabricated mechanism, and a truthful "not in context" over a
+retrieval that had actually succeeded.
