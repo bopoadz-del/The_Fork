@@ -208,6 +208,17 @@ def extract_query_identifiers(query: str) -> List[str]:
     # 4. Standalone alphanumeric codes containing digits.
     for m in _ALPHANUMERIC_RE.finditer(query):
         token = m.group(0).strip("-.:,;")
+        # A pure number with a decimal point is a QUANTITY, not a reference
+        # code. Live find 2026-08-15 (F21): a costing request carrying
+        # measured quantities ("1947.87 square metres ... 2342.20 metres")
+        # had both decimals extracted as identifiers; no chunk contains
+        # them, so the exact-reference gate short-circuited every grounded
+        # costing question with "could not confirm this reference".
+        # Letterless dot/comma-separated digits are never document codes;
+        # hyphenated digit pairs (drawing/sheet refs like 054-0009) keep
+        # matching.
+        if re.fullmatch(r"\d+[.,]\d+", token):
+            continue
         if len(token) >= 5 and not _is_prose_compound(token):
             found.add(token.lower())
 
