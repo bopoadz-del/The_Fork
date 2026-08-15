@@ -457,6 +457,85 @@ def _gk_lexical_bonus(query_terms: frozenset, chunk_text: str) -> float:
     return min(overlap * _GK_TERM_BONUS, _GK_BONUS_CAP)
 
 
+# Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
+# contract and a 129-page tender: the needle chunk ranks FIRST for a query
+# whose wording overlaps the answer's, and falls out of the top-12 for the
+# same fact asked as a natural question — the interrogative scaffolding
+# ("In the X, how many days is ...") drags the query vector away from the
+# declarative prose of the document. Stopword stripping does NOT fix it
+# (it breaks the noun phrases that carry the signal); what does, verified
+# by live probes, is removing ONLY the wrapper while keeping every content
+# phrase contiguous: "In the Conditions of Contract, how many days is the
+# Time for Completion for the whole of the Works?" -> "days is the Time
+# for Completion for the whole of the Works" moved the needle from
+# outside the top-12 to rank 1 (0.933). The retriever therefore searches
+# with BOTH phrasings and merges candidates by max score per chunk.
+_WRAPPER_LEAD_RX = re.compile(
+    # a short "In/From/Per/According to <source>," clause before the question
+    r"^(?:in|from|under|per|according\s+to|based\s+on|as\s+per)\s+[^,]{1,60},\s*",
+    re.IGNORECASE,
+)
+_WRAPPER_IMPERATIVE_RX = re.compile(
+    r"^(?:please\s+)?(?:tell\s+me|give\s+me|show\s+me|state|list|specify)\s+",
+    re.IGNORECASE,
+)
+_WRAPPER_TOKEN_RX = re.compile(
+    # interrogative tokens only -- NEVER articles/copulas ("is", "the", "of"),
+    # which are the glue inside the phrases that must stay contiguous
+    r"\b(?:how\s+(?:many|much|long)|what|which|who|whose|when|why|does|did|please)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_question_wrapper(query: str) -> Optional[str]:
+    """The wrapper-stripped, phrase-intact variant of a natural question,
+    or None when stripping changes nothing (terse queries cost no second
+    search). Interior word order and every content phrase are preserved."""
+    base = (query or "").strip().rstrip("?").strip()
+    if not base:
+        return None
+    s = _WRAPPER_LEAD_RX.sub("", base)
+    s = _WRAPPER_IMPERATIVE_RX.sub("", s)
+    s = _WRAPPER_TOKEN_RX.sub(" ", s)
+    s = re.sub(r"\s{2,}", " ", s).strip(" ,.;:")
+    if len(s.split()) < 3 or s.lower() == base.lower():
+        return None
+    return s
+
+
+def _dual_query_enabled() -> bool:
+    """ON by default -- RAG_DUAL_QUERY=0/false/no/off is the kill-switch."""
+    return (os.getenv("RAG_DUAL_QUERY") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _dual_search(
+    store, project_id: str, query_vec, query: str,
+    alt_vec, alt_query: Optional[str], *, k: int,
+) -> List[Chunk]:
+    """Search with the raw query and (when present) the wrapper-stripped
+    variant; merge by chunk_id keeping each chunk's BEST score. The alt
+    leg failing can never break the primary results."""
+    hits = store.search(project_id, query_vec, k=k, query_text=query)
+    if alt_vec is None:
+        return hits
+    try:
+        alt_hits = store.search(project_id, alt_vec, k=k, query_text=alt_query)
+    except Exception as exc:  # noqa: BLE001 -- alt leg is best-effort
+        logger.warning(
+            "dual-query alt retrieval for %s failed: %s; primary results stand",
+            project_id, exc,
+        )
+        return hits
+    best: Dict[str, Chunk] = {c.chunk_id: c for c in hits}
+    for c in alt_hits:
+        prev = best.get(c.chunk_id)
+        if prev is None or (c.score or 0.0) > (prev.score or 0.0):
+            best[c.chunk_id] = c
+    return sorted(best.values(), key=lambda c: -(c.score or 0.0))
+
+
 def retrieve_with_filter(
     query: str,
     project_id: str,
@@ -529,6 +608,10 @@ def retrieve_with_filter(
 
     embedder = get_embedder()
     query_vec = embedder.encode_queries([query])[0]
+    # F18 dual-query: also embed the wrapper-stripped phrase-intact variant
+    # of a natural question (None for terse queries -- no extra cost).
+    alt_query = _strip_question_wrapper(query) if _dual_query_enabled() else None
+    alt_vec = embedder.encode_queries([alt_query])[0] if alt_query else None
     store = get_store(dim=embedder.dim)
     over_fetch = max(k * 4, 20)
     # The GK corpus is small and curated (units / CESMM / FIDIC / procedures), so
@@ -538,7 +621,9 @@ def retrieve_with_filter(
     gk_over_fetch = max(k * 12, 80)
 
     # Active project (operator's own corpus — first so it wins ties).
-    raw_active = store.search(project_id, query_vec, k=over_fetch, query_text=query)
+    raw_active = _dual_search(
+        store, project_id, query_vec, query, alt_vec, alt_query, k=over_fetch,
+    )
 
     # STEP 0b — empty/thin detection for the labeled Master-Corpus fallback.
     # "Thin" reuses RAG_CONFIDENCE_THRESHOLD (the same bar rag_inject applies):
@@ -590,7 +675,11 @@ def retrieve_with_filter(
     raw_fb: List[Chunk] = []
     if use_fallback:
         try:
-            raw_fb = store.search(fb_id, query_vec, k=over_fetch, query_text=query)
+            # Dual-query applies here too: a client's contract in the Master
+            # Corpus has the same declarative prose the alt variant rescues.
+            raw_fb = _dual_search(
+                store, fb_id, query_vec, query, alt_vec, alt_query, k=over_fetch,
+            )
         except Exception as exc:  # noqa: BLE001 — fallback must never break the turn
             logger.warning(
                 "master-corpus fallback retrieval for %s failed: %s", fb_id, exc,

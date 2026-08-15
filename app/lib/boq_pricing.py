@@ -24,13 +24,13 @@ import json
 import os
 import re
 import statistics as st
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # ── rate-card data (loaded once, path relative to this module) ───────────────
 _CARD_PATH = os.path.join(os.path.dirname(__file__), "data", "boq_rate_card.json")
 
 
-def _load_card() -> Dict[str, Any]:
+def _load_card() -> dict[str, Any]:
     if not os.path.exists(_CARD_PATH):
         raise RuntimeError(
             f"Rate-card data not found at {_CARD_PATH}. The priced-BOQ feature "
@@ -104,7 +104,7 @@ def categorize(desc: Any) -> str:
     offset resolve exactly as they did before.
     """
     d = str(desc).lower()
-    best: Optional[Tuple[Tuple[int, int], str]] = None
+    best: tuple[tuple[int, int], str] | None = None
     for idx, (name, rx) in enumerate(_CATS_RX):
         m = rx.search(d)
         if m is None:
@@ -115,7 +115,7 @@ def categorize(desc: Any) -> str:
     return best[1] if best else "Other/Uncategorized"
 
 
-def _num(x: Any) -> Optional[float]:
+def _num(x: Any) -> float | None:
     """Coerce a possibly-dirty numeric cell to float, or None."""
     if x is None:
         return None
@@ -130,31 +130,51 @@ def _num(x: Any) -> Optional[float]:
 
 
 # ── rate-card lookup (ported logic: exact -> category -> asset -> NO RATE) ────
-def available_assets() -> Dict[str, List[str]]:
+def available_assets() -> dict[str, list[str]]:
     """Return ``asset_type -> [currency, ...]`` for every card in the rate-card,
     so the endpoint can validate requests and report the valid options."""
     return {asset: list(ccys.keys()) for asset, ccys in _CARD["cards"].items()}
 
 
-def _build_lookup(asset: str, ccy: str) -> Tuple[Dict[Tuple[str, str], Tuple[float, int]],
-                                                  Dict[str, List[Tuple[float, int]]],
-                                                  List[Tuple[float, int]]]:
+def _build_lookup(asset: str, ccy: str) -> tuple[dict[tuple[str, str], tuple[float, int]],
+                                                  dict[str, list[tuple[float, int, str]]],
+                                                  list[tuple[float, int, str]]]:
     """Build (exact, by-category, by-asset) rate structures for (asset, ccy).
 
     Returns empty structures when the asset/currency is not in the card -- the
     caller then flags every line NO RATE rather than raising, so an unknown
     combination degrades gracefully (endpoint-level validation is separate)."""
     rows = _CARD["cards"].get(asset, {}).get(ccy, [])
-    exact: Dict[Tuple[str, str], Tuple[float, int]] = {}
-    bycat: Dict[str, List[Tuple[float, int]]] = {}
-    byasset: List[Tuple[float, int]] = []
+    exact: dict[tuple[str, str], tuple[float, int]] = {}
+    bycat: dict[str, list[tuple[float, int, str]]] = {}
+    byasset: list[tuple[float, int, str]] = []
     for r in rows:
         median = float(r["median"])
         n = int(r["n"])
         exact[(r["cat"], r["unit"])] = (median, n)
-        bycat.setdefault(r["cat"], []).append((median, n))
-        byasset.append((median, n))
+        bycat.setdefault(r["cat"], []).append((median, n, r["unit"]))
+        byasset.append((median, n, r["unit"]))
     return exact, bycat, byasset
+
+
+# Unit commensurability (F10, phase-3 campaign). A fallback median is only
+# meaningful when it is built from rates measured the same WAY as the line
+# being priced: an AED 37,250 lump-sum "plumbing works" rate must never price
+# a per-metre pipe run just because both classify as Pipework/Drainage. Units
+# outside this map (%, months, '?') have no class -- lines carrying them keep
+# the legacy any-unit pools, because commensurability cannot be judged.
+_UNIT_CLASS: dict[str, str] = {
+    "m": "linear",
+    "m2": "area",
+    "m3": "volume",
+    "kg": "mass", "t": "mass", "mt": "mass", "ton": "mass", "tonne": "mass",
+    "no": "count", "set": "count", "pair": "count", "bay": "count",
+    "ls": "lump",
+}
+
+
+def _unit_class(unit: str) -> str | None:
+    return _UNIT_CLASS.get(unit)
 
 
 def _lookup(cat, unit, exact, bycat, byasset):
@@ -162,26 +182,40 @@ def _lookup(cat, unit, exact, bycat, byasset):
 
     rate_source is one of: 'exact (cat+unit)', 'fallback (category median)',
     'weak (asset median)', 'NO RATE'. NO RATE yields rate None -- never an
-    invented number."""
+    invented number.
+
+    Fallback tiers are unit-commensurable: the category and asset medians are
+    computed only over rates whose unit belongs to the same class (linear /
+    area / volume / mass / count / lump) as the line being priced. A tier with
+    no commensurable rates is skipped -- NO RATE is more honest than a number
+    with the wrong dimensions."""
     if (cat, unit) in exact:
         m, n = exact[(cat, unit)]
         return m, n, "exact (cat+unit)"
-    if cat in bycat:
-        vals = bycat[cat]
-        m = st.median([v for v, _ in vals])
-        n = sum(n for _, n in vals)
+    cls = _unit_class(unit)
+
+    def _pool(vals):
+        if cls is None:
+            return vals
+        return [v for v in vals if _unit_class(v[2]) == cls]
+
+    pool = _pool(bycat.get(cat, []))
+    if pool:
+        m = st.median([v for v, _, _ in pool])
+        n = sum(n for _, n, _ in pool)
         return round(m, 2), n, "fallback (category median)"
-    if byasset:
-        m = st.median([v for v, _ in byasset])
-        return round(m, 2), sum(n for _, n in byasset), "weak (asset median)"
+    pool = _pool(byasset)
+    if pool:
+        m = st.median([v for v, _, _ in pool])
+        return round(m, 2), sum(n for _, n, _ in pool), "weak (asset median)"
     return None, 0, "NO RATE"
 
 
 def price_line_items(
-    line_items: List[Dict[str, Any]],
+    line_items: list[dict[str, Any]],
     asset_type: str,
     currency: str,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Price a list of UNPRICED boq_processor line items from the rate-card.
 
     ``line_items``: boq_processor output dicts (keys: description, quantity,
@@ -200,7 +234,7 @@ def price_line_items(
     asset/currency lives in the endpoint (via ``available_assets``)."""
     exact, bycat, byasset = _build_lookup(asset_type, currency)
 
-    priced: List[Dict[str, Any]] = []
+    priced: list[dict[str, Any]] = []
     n_exact = n_fallback = n_norate = 0
     grand_total = 0.0
 
