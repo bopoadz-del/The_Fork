@@ -1439,10 +1439,28 @@ class DrawingQTOBlock(UniversalBlock):
                         fo.write(fh.read())
                 # Args: in_dir out_dir output_version output_format
                 #       (ACAD2018, DXF, recurse-flag, audit-flag)
+                # Live failure (exit 134): ODA's bundled Qt aborts with
+                # 'Could not find the Qt platform plugin "offscreen" in ""'
+                # -- the plugin search path is EMPTY when launched via the
+                # /usr/bin symlink. Resolve the real install dir and point
+                # Qt at its bundled plugins explicitly.
+                real_tool = os.path.realpath(tool)
+                tool_dir = os.path.dirname(real_tool)
+                qt_env = {"QT_QPA_PLATFORM": "offscreen"}
+                for plugdir in (os.path.join(tool_dir, "platforms"),
+                                os.path.join(tool_dir, "plugins", "platforms")):
+                    if os.path.isdir(plugdir):
+                        qt_env["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugdir
+                        qt_env["QT_PLUGIN_PATH"] = os.path.dirname(plugdir)
+                        break
+                existing_ld = os.environ.get("LD_LIBRARY_PATH", "")
+                qt_env["LD_LIBRARY_PATH"] = (
+                    f"{tool_dir}:{existing_ld}" if existing_ld else tool_dir
+                )
                 proc = subprocess.run(
-                    [tool, src_dir, dst_dir, "ACAD2018", "DXF", "0", "1"],
+                    [real_tool, src_dir, dst_dir, "ACAD2018", "DXF", "0", "1"],
                     timeout=120, check=False, capture_output=True,
-                    env=scrubbed_env(),  # audit §6.1
+                    env=scrubbed_env(qt_env),  # audit §6.1
                 )
                 dxf_name = os.path.splitext(os.path.basename(file_path))[0] + ".dxf"
                 converted = os.path.join(dst_dir, dxf_name)

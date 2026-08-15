@@ -410,6 +410,29 @@ _TOOL_ERROR_NUDGE = (
 _TOOL_ERROR_NUDGE_CAP = 2
 
 
+def _tool_result_errored(tool_result: Any) -> bool:
+    """True when a tool round FAILED, wherever the failure hides.
+
+    F42: container results arrive envelope-green -- ``ok: True`` with
+    ``status: "error"`` one or two levels down (the construction container
+    wraps its route's error in a success-shaped transport envelope). The
+    non-streaming loop only checked ``ok`` and never nudged; walk the
+    nested ``result`` chain a few levels instead.
+    """
+    if not isinstance(tool_result, dict):
+        return False
+    if tool_result.get("ok") is False:
+        return True
+    node = tool_result.get("result")
+    for _ in range(4):
+        if not isinstance(node, dict):
+            return False
+        if node.get("status") == "error":
+            return True
+        node = node.get("result")
+    return False
+
+
 _EMPTY_ROUTER_NUDGE = (
     "The router matched NO action. If the request is a computation (volume, "
     "quantity, capacity, EVM, any arithmetic), you MUST now call the "
@@ -3473,7 +3496,8 @@ class Agent:
                 })
                 if _empty_router_verdict(tool_result):
                     messages.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
-                elif not ok and error_nudges < _TOOL_ERROR_NUDGE_CAP:
+                elif (_tool_result_errored(tool_result)
+                      and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                     error_nudges += 1
                     messages.append({"role": "user", "content": _TOOL_ERROR_NUDGE})
 
@@ -4121,12 +4145,8 @@ class Agent:
                 if _empty_router_verdict(tool_result):
                     messages.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
                 else:
-                    _inner_s = tool_result.get("result") if isinstance(tool_result, dict) else None
-                    _errored = (
-                        tool_result.get("ok") is False
-                        or (isinstance(_inner_s, dict) and _inner_s.get("status") == "error")
-                    )
-                    if _errored and error_nudges < _TOOL_ERROR_NUDGE_CAP:
+                    if (_tool_result_errored(tool_result)
+                            and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                         error_nudges += 1
                         messages.append({"role": "user", "content": _TOOL_ERROR_NUDGE})
 
@@ -5036,7 +5056,15 @@ class Agent:
                 block = get_block_instance("construction")
                 params = dict(args.get("params") or {})
                 params["action"] = route
-                result = await block.process(args.get("input") or args, params)
+                _alias_input = args.get("input") or args
+                # F43: container file actions need the same original-name ->
+                # stored-path resolution as file-schema blocks (dicts only).
+                if project_id and isinstance(_alias_input, dict):
+                    _alias_input = _resolve_block_file_input(project_id, _alias_input)
+                if project_id and isinstance(params, dict):
+                    params = _resolve_block_file_input(project_id, params)
+                    params["action"] = route
+                result = await block.process(_alias_input, params)
             except Exception as e:  # noqa: BLE001 — a tool error is a payload, not a crash
                 result = {"status": "error", "error": f"{route} failed: {e}"}
             payload = result if isinstance(result, dict) else {"result": result}
@@ -5088,6 +5116,17 @@ class Agent:
         if name in _FILE_CONSUMING_BLOCKS and project_id:
             block_input = _resolve_block_file_input(project_id, block_input)
             block_params = _resolve_block_file_input(project_id, block_params)
+        elif name == "construction" and project_id:
+            # F43: the construction container's file actions (bim_extract,
+            # boq_process, drawing takeoffs) received the BARE filename and
+            # died on 'File not found: qa_building.ifc' while file-schema
+            # blocks got the stored path. Dict payloads only -- a bare-string
+            # input here is a natural-language request, and the resolver's
+            # substring matching must never rewrite prose into a file path.
+            if isinstance(block_input, dict):
+                block_input = _resolve_block_file_input(project_id, block_input)
+            if isinstance(block_params, dict):
+                block_params = _resolve_block_file_input(project_id, block_params)
         try:
             result = await instance.execute(block_input, block_params)
             envelope = {"name": name, "ok": True, "result": result}
