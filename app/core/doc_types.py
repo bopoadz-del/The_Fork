@@ -8,6 +8,7 @@ content-aware, not filename-only, and an unmatched document is reported as
 """
 
 import json
+import re
 import os
 import threading
 from typing import Any, Dict, List
@@ -114,7 +115,11 @@ def classify(filename: str = "", content_sample: str = "") -> Dict[str, Any]:
         score = 0
         matched: List[str] = []
         for kw in m.get("filename", []) or []:
-            if kw.lower() in fn:
+            # Word-boundary match, not substring: "spec" must not fire inside
+            # "Inspection" (a live Work Inspection Request classified as a
+            # specification). Controlled-document names are full of hyphens,
+            # underscores and parentheses, so those count as separators.
+            if re.search(rf"(?<![a-z0-9]){re.escape(kw.lower())}(?![a-z0-9])", fn):
                 score += 2
                 matched.append(f"filename:{kw}")
         exts = [e.lower() for e in (m.get("extensions", []) or [])]
