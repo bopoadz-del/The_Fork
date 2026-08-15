@@ -1,7 +1,7 @@
 {
  "_meta": {
-  "source": "session 2026-07-01; incl medieval_modern GCC building rate book; + 2012 dubai clinic fit-out BOQ (observed AED MEP lump sums)",
-  "cells": 102
+  "source": "session 2026-07-01; incl medieval_modern GCC building rate book; + 2012 dubai clinic fit-out BOQ (observed AED MEP lump sums); + published SAR MEP reference cells (AECOM 2024 / T&T KSAMI 2025), cell-level source field",
+  "cells": 107
  },
  "cards": {
   "Buildings/Towers": {
@@ -375,6 +375,51 @@
      "median": 61500.0,
      "p25": 28000.0,
      "p75": 95000.0
+    },
+    {
+     "cat": "Electrical (MEP)",
+     "unit": "m",
+     "n": 0,
+     "median": 85.0,
+     "p25": 45.0,
+     "p75": 160.0,
+     "source": "AECOM Middle East Handbook 2024 (electrical containment, per m)"
+    },
+    {
+     "cat": "Fire Protection",
+     "unit": "no",
+     "n": 0,
+     "median": 450.0,
+     "p25": 180.0,
+     "p75": 850.0,
+     "source": "AECOM Middle East Handbook 2024 (fire detection/alarm point)"
+    },
+    {
+     "cat": "Mechanical/HVAC (MEP)",
+     "unit": "m2",
+     "n": 0,
+     "median": 1200.0,
+     "p25": 650.0,
+     "p75": 2200.0,
+     "source": "Turner & Townsend KSAMI 2025 (HVAC ductwork, per m2 served area)"
+    },
+    {
+     "cat": "Pipework/Drainage",
+     "unit": "m2",
+     "n": 0,
+     "median": 650.0,
+     "p25": 350.0,
+     "p75": 1200.0,
+     "source": "AECOM Middle East Handbook 2024 (plumbing/sanitary, per m2 built area)"
+    },
+    {
+     "cat": "Sanitary/Accessories",
+     "unit": "m2",
+     "n": 0,
+     "median": 650.0,
+     "p25": 350.0,
+     "p75": 1200.0,
+     "source": "AECOM Middle East Handbook 2024 (plumbing/sanitary, per m2 built area)"
     }
    ]
   },
