@@ -74,3 +74,42 @@ def test_previously_correct_lines_do_not_regress(desc, expected):
 def test_an_unrecognised_line_is_flagged_not_guessed():
     """Never silently bucket an unknown into a priced category."""
     assert categorize("Provide bespoke sculptural artwork") == "Other/Uncategorized"
+
+
+# ── the substructure sandwich: blinding UNDER, waterproofing AROUND,
+#    screed ON TOP of the foundation. Every one of these names "foundation"
+#    as its location, so first-in-list matching sent them all to
+#    Piling/Foundations and priced three different trades identically.
+
+@pytest.mark.parametrize("desc,expected", [
+    # AROUND -- the work is the membrane, the foundation is where it goes
+    ("Waterproofing membrane to foundation walls, two coats",
+     "Waterproofing/Insulation"),
+    ("Tanking membrane around raft foundation perimeter",
+     "Waterproofing/Insulation"),
+    ("Bituminous damp proof membrane to foundation sides",
+     "Waterproofing/Insulation"),
+    ("50mm rigid insulation to foundation perimeter",
+     "Waterproofing/Insulation"),
+    # UNDER -- blinding is concrete work
+    ("75mm concrete blinding under raft foundation", "Concrete"),
+    ("Blinding layer beneath pad foundations", "Concrete"),
+    # ON TOP -- protection screed is concrete work
+    ("50mm sand and cement screed on top of raft foundation", "Concrete"),
+    ("Protection screed over waterproofing to foundation slab", "Concrete"),
+])
+def test_the_substructure_sandwich_separates_by_trade(desc, expected):
+    assert categorize(desc) == expected, desc
+
+
+def test_the_three_layers_do_not_collapse_into_one_category():
+    """Blinding, waterproofing and screed sit within millimetres of each other
+    on site and all say 'foundation'. If they share a category they share a
+    rate, and the substructure bill is wrong three times over."""
+    got = {
+        categorize("75mm concrete blinding under raft foundation"),
+        categorize("Waterproofing membrane to foundation walls, two coats"),
+        categorize("50mm sand and cement screed on top of raft foundation"),
+    }
+    assert len(got) >= 2, f"the layers collapsed into {got}"
+    assert "Waterproofing/Insulation" in got
