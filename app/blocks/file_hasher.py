@@ -1,10 +1,11 @@
 """File Hasher Block - SHA256/MD5 hashing and file metadata extraction."""
 
 import hashlib
-import os
 import mimetypes
+import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
+
 from app.core.universal_base import UniversalBlock
 
 
@@ -43,10 +44,15 @@ class FileHasherBlock(UniversalBlock):
         ]
     }
 
-    async def process(self, input_data: Any, params: Dict = None) -> Dict:
+    async def process(self, input_data: Any, params: dict = None) -> dict:
         """Route to appropriate hasher action."""
         params = params or {}
-        action = params.get("action") or (input_data.get("action") if isinstance(input_data, dict) else "hash")
+        # Default action is "hash" whether the input is a dict or a bare
+        # path -- a dict without an explicit action used to fall through to
+        # None and error (found by the decrypt-contract fence).
+        action = (params.get("action")
+                  or (input_data.get("action") if isinstance(input_data, dict) else None)
+                  or "hash")
         handlers = {
             "hash": self.hash_file,
             "metadata": self.metadata,
@@ -58,7 +64,7 @@ class FileHasherBlock(UniversalBlock):
             return {"status": "error", "error": f"Unknown action: {action}"}
         return await handler(input_data, params)
 
-    async def hash_file(self, input_data: Any, params: Dict) -> Dict:
+    async def hash_file(self, input_data: Any, params: dict) -> dict:
         """Compute file hash(es)."""
         file_path = self._resolve_path(input_data, params)
         if not file_path:
@@ -77,10 +83,17 @@ class FileHasherBlock(UniversalBlock):
         hashers = {alg: hashlib.new(alg) for alg in algorithms if alg in hashlib.algorithms_available}
 
         try:
-            with open(path, "rb") as f:
-                while chunk := f.read(chunk_size):
-                    for hasher in hashers.values():
-                        hasher.update(chunk)
+            # F30: platform uploads are encrypted at rest with a per-file
+            # nonce, so hashing the STORED bytes gives a different digest
+            # every time the same content is saved — which defeats the whole
+            # point of a content hash (dedup, integrity, comparison). Hash
+            # the PLAINTEXT; unencrypted files pass through untouched.
+            from app.core.file_crypto import open_plaintext
+            with open_plaintext(str(path)) as plain_path:
+                with open(plain_path, "rb") as f:
+                    while chunk := f.read(chunk_size):
+                        for hasher in hashers.values():
+                            hasher.update(chunk)
 
             for alg, hasher in hashers.items():
                 results[alg] = hasher.hexdigest()
@@ -94,7 +107,7 @@ class FileHasherBlock(UniversalBlock):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    async def metadata(self, input_data: Any, params: Dict) -> Dict:
+    async def metadata(self, input_data: Any, params: dict) -> dict:
         """Extract file metadata."""
         file_path = self._resolve_path(input_data, params)
         if not file_path:
@@ -119,7 +132,7 @@ class FileHasherBlock(UniversalBlock):
             "is_readable": os.access(path, os.R_OK)
         }
 
-    async def compare(self, input_data: Any, params: Dict) -> Dict:
+    async def compare(self, input_data: Any, params: dict) -> dict:
         """Compare two files by hash."""
         file_a = params.get("file_a") or (input_data.get("file_a") if isinstance(input_data, dict) else None)
         file_b = params.get("file_b") or (input_data.get("file_b") if isinstance(input_data, dict) else None)
@@ -145,7 +158,7 @@ class FileHasherBlock(UniversalBlock):
             "hash_b": hash_b["hashes"].get("sha256")
         }
 
-    async def health_check(self, input_data: Any = None, params: Dict = None) -> Dict:
+    async def health_check(self, input_data: Any = None, params: dict = None) -> dict:
         """Health check for file hasher."""
         return {
             "status": "success",
@@ -154,10 +167,10 @@ class FileHasherBlock(UniversalBlock):
             "algorithms_available": list(hashlib.algorithms_available)
         }
 
-    def _resolve_path(self, input_data: Any, params: Dict) -> Optional[str]:
+    def _resolve_path(self, input_data: Any, params: dict) -> str | None:
         return params.get("file_path") or (input_data.get("file_path") if isinstance(input_data, dict) else (str(input_data) if isinstance(input_data, str) else None))
 
-    def get_actions(self) -> Dict[str, Any]:
+    def get_actions(self) -> dict[str, Any]:
         """Return all public methods for block registry."""
         return {
             "hash": self.hash_file,

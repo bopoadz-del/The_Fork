@@ -18,7 +18,7 @@ import base64
 import logging
 import os
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.core.universal_base import UniversalBlock
 
@@ -155,7 +155,7 @@ class VoiceBlock(UniversalBlock):
         ],
     }
 
-    async def process(self, input_data: Any, params: Dict = None) -> Dict:
+    async def process(self, input_data: Any, params: dict = None) -> dict:
         params = params or {}
         operation = params.get("operation", params.get("action", "tts"))
 
@@ -221,7 +221,7 @@ class VoiceBlock(UniversalBlock):
             # any caller that uploads a raw recording (the browser UI does)
             # would fail with the bare "file_path required" message even
             # though the audio is present in the payload.
-            cleanup_tmp: Optional[str] = None
+            cleanup_tmp: str | None = None
             if not file_path and audio_b64:
                 try:
                     raw = base64.b64decode(audio_b64, validate=False)
@@ -240,6 +240,35 @@ class VoiceBlock(UniversalBlock):
                 }
             if not os.path.exists(file_path):
                 return {"status": "error", "error": f"Audio file not found: {file_path}", "operation": "stt"}
+
+            # ── Encryption at rest (F29) ────────────────────────────────────
+            # Platform uploads are encrypted on disk (file_crypto); pydub and
+            # speech_recognition must read PLAINTEXT. The stored path used to
+            # be fed straight to the decoder, which chewed ciphertext and
+            # blamed ffmpeg ("install ffmpeg and retry" — ffmpeg was fine).
+            # Materialise a decrypted temp copy for the STT chain; plain
+            # local files pass through untouched (open_plaintext yields the
+            # original path for unencrypted files).
+            try:
+                import shutil
+
+                from app.core.file_crypto import open_plaintext
+                with open_plaintext(file_path) as _plain:
+                    if str(_plain) != str(file_path):
+                        suffix = os.path.splitext(file_path)[1] or ".bin"
+                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+                            decrypted_tmp = tf.name
+                        shutil.copyfile(_plain, decrypted_tmp)
+                        if cleanup_tmp:
+                            try:
+                                os.unlink(cleanup_tmp)
+                            except OSError:
+                                pass
+                        file_path = decrypted_tmp
+                        cleanup_tmp = decrypted_tmp
+            except Exception as e:  # noqa: BLE001 — a decrypt failure is a clear error, not a crash
+                return {"status": "error", "operation": "stt",
+                        "error": f"could not decrypt stored audio: {e}"}
 
             # ── Browser/mobile format conversion (2.2) ──────────────────────
             # speech_recognition.AudioFile only reads WAV/AIFF/FLAC. The
