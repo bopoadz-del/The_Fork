@@ -332,6 +332,57 @@ _FAILED_TURN_MESSAGE = (
 _TOOL_RESULT_MAX_CHARS = 8000
 
 
+# Empty-router dispatch enforcement (F19, phase-3 campaign). Two live gates
+# proved the prose contract alone does not make K2 dispatch after an empty
+# router match: the TIMING log showed iter=0 calling only smart_orchestrator
+# and iter=1 going straight to final -- while the ANSWER claimed "Routed to:
+# formula_executor_v2" and carried a self-computed number. Same failure on
+# two consecutive gates (requests 143ac24a and 8c1c9589) despite contract
+# revisions, so the enforcement moved into machinery: the runtime detects the
+# empty verdict at the moment it happens and injects a corrective user-role
+# message between the tool result and the next model call. In-context and
+# positionally adjacent, which K2 follows far more reliably than a system
+# contract paragraph.
+_EMPTY_ROUTER_NUDGE = (
+    "The router matched NO action. If the request is a computation (volume, "
+    "quantity, capacity, EVM, any arithmetic), you MUST now call the "
+    "construction tool (action=construction_calc) or formula_executor_v2 and "
+    "report that tool's result -- do not compute the number yourself. If no "
+    "tool fits the request, say you have no tool for it. Never write "
+    "'Routed to:' naming a tool you have not actually called in this turn."
+)
+
+
+# Tools whose result is a VERDICT or LOOKUP, not a deliverable. Their success
+# must never trigger force-synthesis, because their result exists to be acted
+# on by ANOTHER tool call: a routing verdict needs the dispatch that follows
+# it. With smart_orchestrator counted as a deliverable, iter=1 ran
+# with_tools=False -- the agent was contractually required to dispatch and
+# structurally unable to, which is exactly the state that produced fabricated
+# "Routed to:" claims on both live gates.
+_NON_DELIVERABLE_TOOLS = frozenset({"search_project_documents", "smart_orchestrator"})
+
+
+def _empty_router_verdict(tool_result: Any) -> bool:
+    """True when this tool round was smart_orchestrator returning an EMPTY
+    match (matched_actions: []) -- the state in which fabricated dispatch
+    claims were observed live."""
+    if not isinstance(tool_result, dict):
+        return False
+    if tool_result.get("name") != "smart_orchestrator":
+        return False
+    inner = tool_result.get("result")
+    if not isinstance(inner, dict):
+        return False
+    candidates = [inner]
+    if isinstance(inner.get("result"), dict):
+        candidates.append(inner["result"])
+    for node in candidates:
+        if "matched_actions" in node:
+            return not node["matched_actions"]
+    return False
+
+
 def _tool_result_content(payload: Dict[str, Any]) -> str:
     """Serialize a tool result for the `tool` message, truncating SAFELY.
 
@@ -3233,7 +3284,7 @@ class Agent:
                     err = str(_inner.get("error") or "")[:200]
                 if (
                     _force_synth_enabled and ok
-                    and tool_result.get("name") != "search_project_documents"
+                    and tool_result.get("name") not in _NON_DELIVERABLE_TOOLS
                 ):
                     force_synthesis = True
                 await _emit("tool_result", {
@@ -3252,6 +3303,8 @@ class Agent:
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
                     ),
                 })
+                if _empty_router_verdict(tool_result):
+                    messages.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
@@ -3871,7 +3924,7 @@ class Agent:
                 if (
                     _force_synth_enabled
                     and tool_result.get("ok", True)
-                    and tool_result.get("name") != "search_project_documents"
+                    and tool_result.get("name") not in _NON_DELIVERABLE_TOOLS
                 ):
                     force_synthesis = True
                 yield {
@@ -3890,6 +3943,8 @@ class Agent:
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
                     ),
                 })
+                if _empty_router_verdict(tool_result):
+                    messages.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
 
         # Hit the cap without a final answer — force one more call with tools disabled.
         _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
