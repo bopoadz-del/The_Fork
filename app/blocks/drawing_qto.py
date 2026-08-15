@@ -14,20 +14,27 @@ to "bottom 15%" or sorted top-down has been flipped accordingly.
 """
 
 import logging
-import os
 import math
+import os
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any
+
 from app.core.subprocess_env import scrubbed_env
 from app.core.universal_base import UniversalBlock
 
 _logger = logging.getLogger(__name__)
 
+# A page whose text layer is shorter than this is treated as text-free (CAD
+# plot with text as curves, or a raster scan) and eligible for the OCR
+# fallback. A real plan's text layer with room labels carries hundreds of
+# characters per drawing; plots render titles as curves and yield ~0.
+_OCR_TEXT_THRESHOLD = int(os.getenv("QTO_OCR_TEXT_THRESHOLD", "80"))
+
 
 # --- Discipline lookup ------------------------------------------------------
 # the client project (the client project) drawing-number discipline codes. Module-level
 # so tests can import + monkeypatch if a new project adds codes.
-DISCIPLINE_FULL: Dict[str, str] = {
+DISCIPLINE_FULL: dict[str, str] = {
     "TM": "Traffic Management",
     "SW": "Storm Water",
     "SG": "Sewage",
@@ -166,7 +173,7 @@ except ImportError:
 
 
 def _note_near_duplicate(
-    candidate: str, accepted: List[str], max_distance: int = 5
+    candidate: str, accepted: list[str], max_distance: int = 5
 ) -> bool:
     """True if ``candidate`` is within ``max_distance`` Levenshtein
     edit-distance of ANY string already in ``accepted``.
@@ -255,7 +262,7 @@ class DrawingQTOBlock(UniversalBlock):
         ],
     }
 
-    async def process(self, input_data: Any, params: Dict = None) -> Dict:
+    async def process(self, input_data: Any, params: dict = None) -> dict:
         params = params or {}
         data = input_data if isinstance(input_data, dict) else {}
 
@@ -287,11 +294,16 @@ class DrawingQTOBlock(UniversalBlock):
             # Merge: legacy keys first, new fields supplement.
             merged = dict(geom) if isinstance(geom, dict) else {}
             merged.update({
-                "status": text_result.get("status", merged.get("status", "success")),
                 "text": text_result.get("text", ""),
                 "drawing": text_result.get("drawing", {}),
                 "errors": text_result.get("errors", []),
             })
+            # The text extractor legitimately finds nothing on a text-free
+            # plot (text rendered as curves / raster scan); its status must
+            # not MASK a successful geometry or OCR take-off. Only when the
+            # geometry pass itself failed does the text status decide.
+            if merged.get("status") != "success":
+                merged["status"] = text_result.get("status", "error")
             return merged
 
         # --- DWG input: attempt ODA File Converter, else clear guidance ----
@@ -375,7 +387,7 @@ class DrawingQTOBlock(UniversalBlock):
             response["hatch_hole_handling"] = "may include holes as positive area"
         return response
 
-    def _extract_from_pdf(self, file_path: str, params: Dict) -> Dict:
+    def _extract_from_pdf(self, file_path: str, params: dict) -> dict:
         """Extract vector geometry from a PDF drawing via PyMuPDF.
 
         PDF drawings carry their geometry as ``page.get_drawings()`` items —
@@ -396,12 +408,15 @@ class DrawingQTOBlock(UniversalBlock):
         scale = float(params.get("pdf_scale_factor", 1.0))
         max_pages = int(params.get("max_pages", self.config.get("max_pages", 20)))
         min_length = float(params.get("min_length_units", 0.5))  # in input units
+        ocr_fallback = bool(params.get("ocr_fallback", True))
 
-        measurements: List[Dict] = []
-        areas: List[Dict] = []
-        rooms: List[Dict] = []
+        measurements: list[dict] = []
+        areas: list[dict] = []
+        rooms: list[dict] = []
         pages_inspected = 0
-        page_dims: List[Dict] = []
+        page_dims: list[dict] = []
+        pages_ocr_attempted = 0
+        pages_ocr_yielded = 0
 
         try:
             with open_plaintext(file_path) as plain_path:
@@ -416,7 +431,34 @@ class DrawingQTOBlock(UniversalBlock):
                     })
                     # Room labels carry their own dimensions, which is the
                     # only quantity a scale-less PDF can yield honestly.
-                    for room in self._extract_rooms(page.get_text() or ""):
+                    page_text = page.get_text() or ""
+                    page_rooms = self._extract_rooms(page_text)
+                    # Text-free plot fallback (drawing-reader, 2026-08-15):
+                    # CAD plots with text rendered as curves and raster scans
+                    # have an empty/near-empty text layer -- previously they
+                    # returned 0 rooms with no attempt. When the layer is
+                    # thin and yielded nothing, OCR the rendered page (the
+                    # pixel-bounded renderer from doc_index -- F26) and run
+                    # the same room extraction over the OCR text. The room
+                    # pattern's structure (name + metres-to-2dp pair) filters
+                    # OCR noise; OCR-sourced rooms are marked so a reviewer
+                    # knows to verify against the sheet.
+                    if (
+                        ocr_fallback
+                        and not page_rooms
+                        and len(page_text.strip()) < _OCR_TEXT_THRESHOLD
+                    ):
+                        pages_ocr_attempted += 1
+                        from app.core.doc_index import _ocr_pdf_page
+                        ocr_text = _ocr_pdf_page(page)
+                        if ocr_text:
+                            page_rooms = self._extract_rooms(ocr_text)
+                            if page_rooms:
+                                pages_ocr_yielded += 1
+                                for room in page_rooms:
+                                    room["source"] = "ocr"
+                    for room in page_rooms:
+                        room.setdefault("source", "text_layer")
                         room["page"] = pi + 1
                         rooms.append(room)
                     drawings = page.get_drawings() or []
@@ -472,6 +514,14 @@ class DrawingQTOBlock(UniversalBlock):
             # stand even when the geometry has no usable scale.
             "rooms_count": len(rooms),
             "rooms": rooms[:200],
+            "ocr_fallback": {
+                "enabled": ocr_fallback,
+                "pages_attempted": pages_ocr_attempted,
+                "pages_yielded": pages_ocr_yielded,
+                "note": ("rooms marked source=ocr were read from a rendered "
+                         "page; verify dimensions against the sheet")
+                        if pages_ocr_yielded else "",
+            },
             "net_room_area_m2": round(sum(r["area_m2"] for r in rooms), 2),
             "room_perimeter_m": round(sum(r["perimeter_m"] for r in rooms), 2),
             "totals": {
@@ -510,14 +560,14 @@ class DrawingQTOBlock(UniversalBlock):
     _ROOM_MIN_M = 0.6
     _ROOM_MAX_M = 60.0
 
-    def _extract_rooms(self, text: str) -> List[Dict]:
+    def _extract_rooms(self, text: str) -> list[dict]:
         """Rooms with area and perimeter, read from the drawing's text layer.
 
         Area drives floor finishes; perimeter drives skirting and the wall
         area for plaster and paint. Both are returned per room so an interior
         bill can be built without re-deriving them.
         """
-        rooms: List[Dict] = []
+        rooms: list[dict] = []
         if not text:
             return rooms
         flat = " ".join(str(text).split())
@@ -554,7 +604,7 @@ class DrawingQTOBlock(UniversalBlock):
     # unchanged. Title-block clustering sorts top-down (smaller y0 first).
 
     @staticmethod
-    def _chars_from_fitz(page) -> List[Dict]:
+    def _chars_from_fitz(page) -> list[dict]:
         """Pull span-level "char" records from a fitz Page.
 
         Each fitz span carries its own text (including internal spaces),
@@ -572,7 +622,7 @@ class DrawingQTOBlock(UniversalBlock):
             {"text", "x0", "y0", "x1", "y1", "size", "fontname"}
         Coordinates are in fitz's TOP-DOWN space (y0=0 at page top).
         """
-        out: List[Dict] = []
+        out: list[dict] = []
         try:
             d = page.get_text("dict") or {}
         except Exception:
@@ -596,10 +646,10 @@ class DrawingQTOBlock(UniversalBlock):
                     })
         return out
 
-    def _extract_drawing_text(self, file_path: str) -> Dict:
+    def _extract_drawing_text(self, file_path: str) -> dict:
         """Top-level text-extraction orchestrator: returns
         ``{"text", "drawing", "errors", "status"}``."""
-        errors: List[str] = []
+        errors: list[str] = []
         try:
             import fitz
         except ImportError:
@@ -611,7 +661,7 @@ class DrawingQTOBlock(UniversalBlock):
             }
         from app.core.file_crypto import open_plaintext
 
-        page_full_raw_texts: List[str] = []
+        page_full_raw_texts: list[str] = []
         try:
             with open_plaintext(file_path) as plain_path:
                 try:
@@ -693,9 +743,9 @@ class DrawingQTOBlock(UniversalBlock):
                 break
 
         # Aggregate notes/dimensions/cross_refs across pages
-        all_notes: List[str] = []
-        all_dims: List[str] = []
-        all_refs: List[Dict] = []
+        all_notes: list[str] = []
+        all_dims: list[str] = []
+        all_refs: list[dict] = []
         cad_filtered = 0
         dedup_dropped_total = 0
         # Dedup cross_refs across pages too, by (ref_type, target_drawing).
@@ -804,7 +854,7 @@ class DrawingQTOBlock(UniversalBlock):
                 if norm_title == norm_dn:
                     collision = True
                 elif len(norm_dn) >= 12:
-                    for i in range(0, len(norm_dn) - 11):
+                    for i in range(len(norm_dn) - 11):
                         if norm_dn[i:i + 12] in norm_title:
                             collision = True
                             break
@@ -830,7 +880,7 @@ class DrawingQTOBlock(UniversalBlock):
         }
 
     # --- per-page pipeline --------------------------------------------------
-    def _process_page(self, page, chars: List[Dict], errors: List[str]) -> Dict:
+    def _process_page(self, page, chars: list[dict], errors: list[str]) -> dict:
         """Steps 1-5 of the spec for a single page."""
         title_block_chars, drawing_zone_chars = self._split_page_chars(
             page, chars
@@ -915,7 +965,7 @@ class DrawingQTOBlock(UniversalBlock):
 
     # --- Step 1: page region split -----------------------------------------
     @staticmethod
-    def _split_page_chars(page, chars: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    def _split_page_chars(page, chars: list[dict]) -> tuple[list[dict], list[dict]]:
         """Bottom 15% of page height -> title-block zone, rest -> drawing
         zone. fitz y0=0 is the page TOP, so "bottom 15%" is the high-y0
         band: y0 > height * 0.85. (Coordinate-flip vs the pdfplumber
@@ -935,8 +985,8 @@ class DrawingQTOBlock(UniversalBlock):
     # --- helpers: reconstruct lines from chars -----------------------------
     @staticmethod
     def _lines_from_chars(
-        chars: List[Dict], y_tol: float = 2.0, x_gap: float = 30.0
-    ) -> List[Dict]:
+        chars: list[dict], y_tol: float = 2.0, x_gap: float = 30.0
+    ) -> list[dict]:
         """Cluster chars into reading-order lines.
 
         Returns a list of ``{"y": <y0>, "size": <avg>, "text": <str>}``
@@ -951,16 +1001,16 @@ class DrawingQTOBlock(UniversalBlock):
         if not chars:
             return []
         # Bucket by y0 rounded to tolerance
-        buckets: Dict[float, List[Dict]] = {}
+        buckets: dict[float, list[dict]] = {}
         for c in chars:
             key = round(c["y0"] / y_tol) * y_tol
             buckets.setdefault(key, []).append(c)
 
-        lines: List[Dict] = []
+        lines: list[dict] = []
         for y, cs in buckets.items():
             cs_sorted = sorted(cs, key=lambda c: c["x0"])
             # Split into runs separated by big x gaps
-            run: List[Dict] = []
+            run: list[dict] = []
             last_x1 = None
             for c in cs_sorted:
                 if last_x1 is not None and c["x0"] - last_x1 > x_gap:
@@ -978,14 +1028,14 @@ class DrawingQTOBlock(UniversalBlock):
         return lines
 
     # --- Step 2: title-block structured extraction -------------------------
-    def _extract_title_block(self, tb_chars: List[Dict], page) -> Dict:
+    def _extract_title_block(self, tb_chars: list[dict], page) -> dict:
         """Extract drawing_number, title, discipline, revision, scale,
         date, drafter, checked_by, project_name, sheet_number from the
         title-block char set. Uses raw char order for the drawing
         number (a single rotated Tj operator can land contiguously in
         the content stream even when its bounding boxes scatter) and
         spatial clustering for everything else."""
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "drawing_number": None,
             "drawing_title": None,
             "discipline": None,
@@ -1143,7 +1193,7 @@ class DrawingQTOBlock(UniversalBlock):
         return result
 
     @staticmethod
-    def _discipline_from_number(dn: str) -> Tuple[str, str]:
+    def _discipline_from_number(dn: str) -> tuple[str, str]:
         """Extract the 2-letter discipline code from a JCB-DWG drawing
         number and look up the human-readable name."""
         # JCB pattern places discipline 7th segment (e.g. ...-DWG-TM-200-...).
@@ -1156,8 +1206,8 @@ class DrawingQTOBlock(UniversalBlock):
 
     # --- Step 3: drawing-zone font-size classification ---------------------
     def _classify_drawing_zone(
-        self, dz_chars: List[Dict]
-    ) -> Tuple[List[str], List[str], int, int]:
+        self, dz_chars: list[dict]
+    ) -> tuple[list[str], list[str], int, int]:
         """Classify drawing-zone text clusters by font size, then pattern-
         filter the kept text. Returns
         ``(notes, dimensions, filtered_count, dedup_dropped_count)``.
@@ -1176,8 +1226,8 @@ class DrawingQTOBlock(UniversalBlock):
         # one word; words on same y line within 30px gap are one line.
         lines = self._lines_from_chars(dz_chars, y_tol=1.5, x_gap=30.0)
 
-        notes: List[str] = []
-        dimensions: List[str] = []
+        notes: list[str] = []
+        dimensions: list[str] = []
         filtered = 0
         dedup_dropped = 0
 
@@ -1228,16 +1278,16 @@ class DrawingQTOBlock(UniversalBlock):
     )
 
     @classmethod
-    def _extract_cross_refs(cls, raw_text: str) -> List[Dict]:
+    def _extract_cross_refs(cls, raw_text: str) -> list[dict]:
         """Scan raw page text for match-line / continuation / reference
         callouts. Returns one dict per (ref_type, target_drawing) tuple
         after dedup. Caps at 100 entries per page (alphabetical) with a
         guardrail error if exceeded."""
-        refs: List[Dict] = []
+        refs: list[dict] = []
         # Tolerant patterns: allow arbitrary whitespace and optional colons
         # between tokens, and capture a strict sheet-id shape only.
         sheet = r"(?P<target>[A-Z0-9]+(?:-[A-Z0-9]+){2,}|\d{2,4})"
-        patterns: List[Tuple[str, str]] = [
+        patterns: list[tuple[str, str]] = [
             ("match_line",
              r"MATCH\s*LINE\b[\s:.,\-]*"
              r"(?:FOR\s+REFERENCE\s+)?"
@@ -1253,7 +1303,7 @@ class DrawingQTOBlock(UniversalBlock):
         ]
         # Dedup by (ref_type, target_drawing) — repeated identical match-line
         # callouts collapse to one entry.
-        dedup: Dict[Tuple[str, str], Dict] = {}
+        dedup: dict[tuple[str, str], dict] = {}
         for ref_type, pat in patterns:
             for m in re.finditer(pat, raw_text, re.IGNORECASE | re.MULTILINE):
                 target = (m.group("target") or "").strip().upper()
@@ -1272,9 +1322,9 @@ class DrawingQTOBlock(UniversalBlock):
 
     # --- Step 6: raw chunk builder -----------------------------------------
     @staticmethod
-    def _build_raw_chunk(drawing: Dict) -> str:
+    def _build_raw_chunk(drawing: dict) -> str:
         """Assemble the RAG-indexable chunk per the spec's template."""
-        lines: List[str] = []
+        lines: list[str] = []
         header = drawing.get("drawing_number") or "(unknown)"
         title = drawing.get("drawing_title")
         disc_full = drawing.get("discipline_full") or drawing.get("discipline") or ""
@@ -1395,7 +1445,7 @@ class DrawingQTOBlock(UniversalBlock):
         except Exception as e:
             return {"status": "error", "error": f"DWG conversion failed: {e}"}
 
-    def _extract_measurements(self, msp, unit_factor: float) -> Tuple[List[Dict], int, Dict[str, Any]]:
+    def _extract_measurements(self, msp, unit_factor: float) -> tuple[list[dict], int, dict[str, Any]]:
         """``unit_factor`` converts raw drawing units straight to metres.
 
         Returns (measurements, bulge_segments_count, diagnostics) so the
@@ -1417,7 +1467,7 @@ class DrawingQTOBlock(UniversalBlock):
         bulge_segments_count = 0
         bulge_fallbacks = 0
         entities_skipped = 0
-        entities_skipped_reasons: List[Dict[str, Any]] = []
+        entities_skipped_reasons: list[dict[str, Any]] = []
         # Import bulge_to_arc lazily; only LWPOLYLINE with non-zero bulge needs it.
         try:
             from ezdxf.math import bulge_to_arc
@@ -1592,8 +1642,8 @@ class DrawingQTOBlock(UniversalBlock):
         return results, bulge_segments_count, diagnostics
 
     def _extract_areas(
-        self, msp, unit_factor: float, layer_filter: List[str], min_area: float
-    ) -> Tuple[List[Dict], bool, Dict[str, Any]]:
+        self, msp, unit_factor: float, layer_filter: list[str], min_area: float
+    ) -> tuple[list[dict], bool, dict[str, Any]]:
         """``unit_factor`` converts raw drawing units straight to metres.
 
         Returns (areas, hatch_hole_fallback, diagnostics). hatch_hole_fallback
@@ -1615,7 +1665,7 @@ class DrawingQTOBlock(UniversalBlock):
         hatch_hole_fallback = False
         entities_skipped = 0
         hatches_skipped = 0
-        entities_skipped_reasons: List[Dict[str, Any]] = []
+        entities_skipped_reasons: list[dict[str, Any]] = []
         try:
             from shapely.geometry import Polygon
             use_shapely = True
@@ -1743,7 +1793,7 @@ class DrawingQTOBlock(UniversalBlock):
             diagnostics,
         )
 
-    def _estimate_volumes(self, areas: List[Dict], params: Dict) -> List[Dict]:
+    def _estimate_volumes(self, areas: list[dict], params: dict) -> list[dict]:
         # Default ceiling height comes from app.core.construction_constants
         # so all blocks share the same domain assumption. Caller overrides
         # via params["height_m"] for project-specific data.
@@ -1764,7 +1814,7 @@ class DrawingQTOBlock(UniversalBlock):
         return volumes
 
 
-def _line_from_run(y: float, run: List[Dict]) -> Dict:
+def _line_from_run(y: float, run: list[dict]) -> dict:
     """Build a line record from a list of chars (fitz spans) that share
     a y baseline.
 
@@ -1777,7 +1827,7 @@ def _line_from_run(y: float, run: List[Dict]) -> Dict:
     """
     if not run:
         return {"y": y, "size": 0.0, "text": ""}
-    parts: List[str] = []
+    parts: list[str] = []
     for i, c in enumerate(run):
         if i == 0:
             parts.append(c["text"])
@@ -1842,7 +1892,7 @@ def _has_repeated_run(text: str, n: int) -> bool:
     return False
 
 
-def _shoelace(coords: List[Tuple[float, float]]) -> float:
+def _shoelace(coords: list[tuple[float, float]]) -> float:
     n = len(coords)
     area = 0.0
     for i in range(n):
