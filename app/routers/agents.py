@@ -12,7 +12,6 @@ Auth: same Bearer cb_dev_key (or any registered key) as the rest of /v1.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +28,19 @@ from app.dependencies import require_user
 router = APIRouter()
 
 _WS_PREFIX = "ws-"
+
+
+# Predefined deliverable flows may take over a turn only when the caller
+# entered through a GENERALIST agent -- addressing a specialist by name is a
+# deliberate choice the router must not override (F24).
+_PREDEFINED_GENERALISTS = frozenset({
+    "heavy-reasoning", "project-assistant", "smart-orchestrator",
+})
+
+
+def _predefined_may_intercept(requested_agent_name: str) -> bool:
+    """True when a predefined workflow is allowed to replace the agent turn."""
+    return requested_agent_name in _PREDEFINED_GENERALISTS
 
 
 def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
@@ -73,10 +85,10 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
 
 class AgentChatRequest(BaseModel):
     message: str
-    history: Optional[List[Dict[str, str]]] = None
-    model: Optional[str] = None  # override agent default if needed
-    project_id: Optional[str] = None
-    conversation_id: Optional[str] = None
+    history: list[dict[str, str]] | None = None
+    model: str | None = None  # override agent default if needed
+    project_id: str | None = None
+    conversation_id: str | None = None
 
 
 @router.get("/v1/agents/conversations/{conversation_id}/messages")
@@ -268,6 +280,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     # full design rationale. Run BEFORE we enter the StreamingResponse so the
     # redirect happens synchronously and the `route` event is the very first
     # thing the client sees (right after start).
+    requested_agent_name = agent.name
     agent, routing = await select_agent_for_message(message, agent)
 
     async def event_stream():
@@ -284,16 +297,25 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
         # the agent tool loop, which only hand-wires a couple of actions and
         # otherwise falls to a short chat answer. Gated by ORCHESTRATOR_PREDEFINED.
         try:
+            from app.core.predefined_reasoning import lookup_question_hijack
             from app.routers.chat import (
                 _predefined_enabled,
                 _predefined_workflows,
                 _stream_from_predefined,
             )
-            from app.core.predefined_reasoning import lookup_question_hijack
             _pd_action = routing.get("action")
             _use_predefined = bool(
                 _pd_action and _predefined_enabled()
                 and _pd_action in _predefined_workflows()
+                # A caller who explicitly addressed a SPECIALIST agent chose
+                # it deliberately (the agent-picker contract); a keyword in
+                # their message must not hand the whole turn to a predefined
+                # deliverable flow. Live find 2026-08-15 (F24): a costing
+                # request to quantity-surveyor containing the word "manpower"
+                # was answered by the canned histogram plan in 3 seconds,
+                # three sessions in a row. Predefined interception is for
+                # the generalist entry points only.
+                and _predefined_may_intercept(requested_agent_name)
                 # Low-confidence keyword routes must not intercept lookup
                 # questions — they belong to the RAG-grounded agent path
                 # (see lookup_question_hijack docstring for the live repro).
@@ -319,7 +341,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
                     yield chunk
                     await asyncio.sleep(0)
                 return
-            except Exception:  # noqa: BLE001 — fall back to the agent path on any error
+            except Exception:
                 logger.exception("predefined dispatch failed for %s; falling back", _pd_action)
 
         try:
