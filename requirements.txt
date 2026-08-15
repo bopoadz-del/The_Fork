@@ -215,6 +215,9 @@ numpy==2.4.6
 olefile==0.47
     # via -r requirements.in
 openpyxl==3.1.5
+# Legacy BIFF .xls BOQs (contract volumes are routinely issued in .xls) --
+# boq_processor selects this engine by extension; openpyxl cannot read BIFF.
+xlrd==2.0.2
     # via -r requirements.in
 packaging==26.2
     # via
