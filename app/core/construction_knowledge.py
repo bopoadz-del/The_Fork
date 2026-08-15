@@ -351,9 +351,13 @@ def calculate_evm(
     """
     Earned Value Management calculations - standard construction formula set.
     """
-    cpi = round(bcwp / acwp, 3) if acwp else None
+    # Derived figures come from the UNROUNDED CPI: EAC from the 3dp display
+    # value drifted 82 per 211k on the phase-3 hand-check battery (200000/0.947
+    # vs 200000/(90000/95000)). Rounding is for display only, never an input.
+    cpi_raw = (bcwp / acwp) if acwp else None
+    cpi = round(cpi_raw, 3) if cpi_raw is not None else None
     spi = round(bcwp / bcws, 3) if bcws else None
-    eac = round(bac / cpi, 2) if cpi else None
+    eac = round(bac / cpi_raw, 2) if cpi_raw else None
     etc = round(eac - acwp, 2) if eac is not None else None
     vac = round(bac - eac, 2) if eac is not None else None
     cv = round(bcwp - acwp, 2)
