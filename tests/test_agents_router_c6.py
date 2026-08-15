@@ -214,8 +214,8 @@ def test_project_assistant_loads():
         f"Got allowed_blocks={pa.allowed_blocks!r}"
     )
 
-    # Total count: the new agent makes 14
-    assert len(agents) == 14, f"Expected 14 agents total, got {len(agents)}: {sorted(agents)}"
+    # Total count: supervision-proposal (2026-08-15) makes 15
+    assert len(agents) == 15, f"Expected 15 agents total, got {len(agents)}: {sorted(agents)}"
 
     # All 13 original agents still load without error
     _ORIGINAL_AGENTS = {

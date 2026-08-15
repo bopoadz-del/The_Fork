@@ -103,7 +103,7 @@ class TestFlagOffNoop:
         assert base.id == "fork.base"
 
         hats = list_hats()
-        assert len(hats) == 5, f"Expected 5 hats, found {len(hats)}"
+        assert len(hats) == 7, f"Expected 7 hats, found {len(hats)}"
 
     def test_manifests_validate_regardless_of_flag(self):
         """Manifests should validate even when hats are disabled."""

@@ -20,6 +20,8 @@ class Discipline(str, Enum):
     CONTRACTS = "contracts"
     QAQC = "qaqc"
     PROCUREMENT = "procurement"
+    QUANTITIES = "quantities"
+    SAFETY = "safety"
 
 
 class ManifestKind(str, Enum):
