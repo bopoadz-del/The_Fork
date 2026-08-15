@@ -368,6 +368,44 @@ _EMPTY_ROUTER_NUDGE = (
 )
 
 
+# Declared hat-manifest action names -> real implementations (closes the
+# KNOWN_INCOMPLETE dispatch gap, 2026-08-15). Each alias maps to machinery
+# that actually exists: a registry calculator or a construction-container
+# route. Names with no honest backing were REMOVED from the manifests
+# instead of stubbed. The literal tuples in _run_tool_call keep the
+# AST-based synthetic-tool census (test_agent_tool_surface) counting these
+# as dispatchable the moment they dispatch.
+_HAT_CALC_ALIASES = {
+    "concrete_maturity_calculator": "concrete_maturity_strength",
+    "grout_pressure_calculator": "grout_pressure_calc",
+    "thermal_crack_assessor": "concrete_thermal_cracking_check",
+    "mix_design_validator": "concrete_mix_design_sg",
+    "crane_planner": "crane_planning",
+    "critical_path_calc": "critical_path_float",
+    "float_analysis": "critical_path_float",
+    "tender_evaluator": "evaluate_tender",
+    "supplier_scoring": "evaluate_tender",
+    "compliance_gate_checker": "enforce_critical_rules",
+    "ncr_tracker": "next_ncr_status",
+}
+_HAT_CONTAINER_ALIASES = {
+    "interim_certificate_generator": "payment_certificate",
+    "schedule_analysis": "parse_primavera_schedule",
+    "baseline_compare": "forensic_delay_analysis",
+    "eot_claim_assessor": "forensic_delay_analysis",
+    "dispute_timeline_builder": "claims_builder",
+    "variation_order_generator": "variation_order_manager",
+    "boq_cost_analyzer": "boq_process",
+    "drawing_qto_extract": "drawing_qto",
+    "milestone_tracker": "progress_tracker",
+    "rate_card_lookup": "benchmark_lookup",
+    "itp_generator": "commissioning_checklist",
+    "po_generator": "procurement_list_generator",
+}
+# Retrieval-shaped manifest actions resolve to the search synthetic tool.
+_HAT_SEARCH_ALIASES = frozenset({"search_documents", "fidic_clause_lookup", "standards_lookup"})
+
+
 # Tools whose result is a VERDICT or LOOKUP, not a deliverable. Their success
 # must never trigger force-synthesis, because their result exists to be acted
 # on by ANOTHER tool call: a routing verdict needs the dispatch that follows
@@ -4536,6 +4574,11 @@ class Agent:
 
         _call_stack = _call_stack or [self.name]
 
+        # Retrieval-shaped manifest actions are the search tool by another
+        # name; rewrite and fall through to the search branch below.
+        if name in ("search_documents", "fidic_clause_lookup", "standards_lookup"):
+            name = "search_project_documents"
+
         # ── synthetic tool: delegate_to_agent ────────────────────────────────
         if name == "delegate_to_agent":
             agent_name = args.get("agent_name") or ""
@@ -4835,6 +4878,56 @@ class Agent:
                 "name": "construction_calc",
                 "ok": isinstance(result, dict) and result.get("status") != "error",
                 "result": result,
+            }
+
+        # ── declared hat-manifest actions -> real implementations ───────────
+        # Calculator aliases: the declared name runs the registry calculator
+        # it always meant. The result carries `aliased_to` so the trace shows
+        # the real machinery that produced the numbers.
+        if name in ("concrete_maturity_calculator", "grout_pressure_calculator",
+                    "thermal_crack_assessor", "mix_design_validator",
+                    "crane_planner", "critical_path_calc", "float_analysis",
+                    "tender_evaluator", "supplier_scoring",
+                    "compliance_gate_checker", "ncr_tracker"):
+            from app.lib import construction_formulas as _cf
+            calc = _HAT_CALC_ALIASES[name]
+            result = _cf.run_calculation(calc, args.get("params") or args)
+            payload = result if isinstance(result, dict) else {"result": result}
+            return {
+                "name": name,
+                "ok": isinstance(result, dict) and result.get("status") != "error",
+                "result": {"aliased_to": f"construction_calc:{calc}", **payload},
+            }
+
+        # Container aliases: the declared name runs the construction
+        # container route that implements it (same gate as generate_wbs:
+        # the agent must hold the construction block).
+        if name in ("interim_certificate_generator", "schedule_analysis",
+                    "baseline_compare", "eot_claim_assessor",
+                    "dispute_timeline_builder", "variation_order_generator",
+                    "boq_cost_analyzer", "drawing_qto_extract",
+                    "milestone_tracker", "rate_card_lookup", "itp_generator",
+                    "po_generator"):
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error",
+                               "error": "construction container not in agent's allowed_blocks"},
+                }
+            route = _HAT_CONTAINER_ALIASES[name]
+            try:
+                from app.dependencies import get_block_instance
+                block = get_block_instance("construction")
+                params = dict(args.get("params") or {})
+                params["action"] = route
+                result = await block.process(args.get("input") or args, params)
+            except Exception as e:  # noqa: BLE001 — a tool error is a payload, not a crash
+                result = {"status": "error", "error": f"{route} failed: {e}"}
+            payload = result if isinstance(result, dict) else {"result": result}
+            return {
+                "name": name,
+                "ok": isinstance(result, dict) and result.get("status") != "error",
+                "result": {"aliased_to": f"construction:{route}", **payload},
             }
 
         if name not in BLOCK_REGISTRY:

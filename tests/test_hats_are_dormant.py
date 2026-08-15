@@ -71,7 +71,9 @@ def test_the_manifests_are_actually_being_read():
     declared = _declared_actions()
     assert len(declared) >= 6, f"only found {sorted(declared)} in {MANIFEST_DIR}"
     total = set().union(*declared.values())
-    assert len(total) >= 30, f"only {len(total)} plain action names parsed: {sorted(total)}"
+    # 35 originally; 7 unbacked names were REMOVED (not stubbed) when the
+    # dispatch gap was closed on 2026-08-15.
+    assert len(total) >= 25, f"only {len(total)} plain action names parsed: {sorted(total)}"
 
 
 def test_the_hats_are_off_by_default():
@@ -138,7 +140,10 @@ def test_the_register_states_the_current_size_of_the_gap():
     assert "FORK_HATS_ENABLED" in register, (
         "the dormant hat system is not in the register at all"
     )
-    assert len(gap) <= 32, (
+    # CLOSED 2026-08-15: every declared action now dispatches (aliases in
+    # _run_tool_call map declared names to real calculators/container
+    # routes; unbacked names were removed). The gap must STAY closed.
+    assert len(gap) == 0, (
         f"{len(gap)} declared actions are now undispatchable, but the register "
         f"says 32. The gap grew -- update KNOWN_INCOMPLETE.md:\n{sorted(gap)}"
     )
