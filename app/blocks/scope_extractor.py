@@ -85,18 +85,41 @@ class ScopeExtractorBlock(UniversalBlock):
             return doc_result
 
         # Focus the document-engine output into a schedule-scope shape.
+        # F37: this shim used to read keys the engine never emits
+        # ("summary", downstream.schedule_engine.procurement_lead_times,
+        # .target_milestones) so every field came back empty while the
+        # engine had ACTUALLY extracted equipment specs and targets -- a
+        # wrap-around green. Map the keys the engine really returns.
         downstream = doc_result.get("downstream") or {}
         schedule_feed = downstream.get("schedule_engine") or {}
+        requirements = doc_result.get("requirements", [])
+        constraints = doc_result.get("constraints", [])
+        schedule_targets = doc_result.get("schedule_targets", [])
+        equipment = [
+            s for s in doc_result.get("equipment_specs", [])
+            if s.get("source") != "ontology_default"
+        ]
+        risks = doc_result.get("risks", [])
+        n_docs = doc_result.get("documents_parsed", 0)
         scope = {
             "status": "success",
-            "summary": doc_result.get("summary", ""),
-            "requirements": doc_result.get("requirements", []),
-            "constraints": doc_result.get("constraints", []),
-            "schedule_targets": doc_result.get("schedule_targets", []),
-            "equipment_lead_times": schedule_feed.get("procurement_lead_times", []),
-            "target_milestones": schedule_feed.get("target_milestones", []),
-            "risks": doc_result.get("risks", []),
-            "documents_parsed": doc_result.get("documents_parsed", 0),
+            "summary": (
+                f"{len(requirements)} requirements, {len(constraints)} "
+                f"constraints, {len(schedule_targets)} schedule targets, "
+                f"{len(equipment)} equipment lead times, {len(risks)} risks "
+                f"from {n_docs} document(s)"
+            ),
+            "requirements": requirements,
+            "constraints": constraints,
+            "schedule_targets": schedule_targets,
+            "equipment_lead_times": equipment,
+            "target_milestones": (
+                schedule_feed.get("target_milestones")
+                or [t for t in schedule_targets if t.get("month") or t.get("year")]
+            ),
+            "procurement_activities": schedule_feed.get("procurement_activities", []),
+            "risks": risks,
+            "documents_parsed": n_docs,
         }
         if file_path:
             scope["source_file"] = file_path

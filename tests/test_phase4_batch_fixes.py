@@ -172,6 +172,50 @@ def test_prose_agent_with_no_blocks_stays_available(monkeypatch):
     assert _agent([]).unavailable_reason() is None
 
 
+# ---------------------------------------------------------------- F37
+
+
+_SCOPE_PROSE = (
+    "The works comprise a three-storey reinforced concrete office building. "
+    "Completion within 14 months. Chiller procurement lead time is 16 weeks."
+)
+
+
+@pytest.mark.asyncio
+async def test_scope_extractor_surfaces_what_the_engine_extracted():
+    # Wrap-around green: the shim read keys the engine never emits, so a
+    # scope-rich brief returned success with EVERY field empty.
+    from app.blocks.scope_extractor import ScopeExtractorBlock
+    res = await ScopeExtractorBlock().process({"text": _SCOPE_PROSE}, {})
+    assert res["status"] == "success"
+    leads = res["equipment_lead_times"]
+    assert any(s["equipment"].lower() == "chiller" for s in leads)
+    # and never the unlabelled ontology defaults masquerading as extracted
+    assert all(s.get("source") != "ontology_default" for s in leads)
+    assert res["summary"]  # a real computed summary, not ""
+
+
+@pytest.mark.asyncio
+async def test_weeks_lead_times_convert_to_days():
+    # "16 weeks" was recorded as lead_time_days=16.
+    from app.blocks.scope_extractor import ScopeExtractorBlock
+    res = await ScopeExtractorBlock().process({"text": _SCOPE_PROSE}, {})
+    chiller = next(s for s in res["equipment_lead_times"]
+                   if s["equipment"].lower() == "chiller")
+    assert chiller["lead_time_days"] == 112
+
+
+@pytest.mark.asyncio
+async def test_duration_shaped_completion_target_is_extracted():
+    # "Completion within 14 months" -- the standard contract phrasing --
+    # matched no schedule_target pattern at all.
+    from app.blocks.scope_extractor import ScopeExtractorBlock
+    res = await ScopeExtractorBlock().process({"text": _SCOPE_PROSE}, {})
+    durations = [t for t in res["schedule_targets"] if t.get("duration_days")]
+    assert durations, res["schedule_targets"]
+    assert durations[0]["duration_days"] == 14 * 30
+
+
 def test_agents_list_surfaces_availability():
     # Route-level shape check against the real registry: every listed agent
     # carries the availability fields, and any unavailable one names why.
