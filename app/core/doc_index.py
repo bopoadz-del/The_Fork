@@ -39,17 +39,17 @@ import asyncio
 import concurrent.futures
 import copy
 import json
+import logging
 import logging as _logging
-from app.core.subprocess_env import scrubbed_env
 import os
 import re
 import sqlite3
 import tempfile
 import threading
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
-
 import zlib
+from collections.abc import Callable
+from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.engine import Connection
@@ -60,7 +60,7 @@ from app.core import file_crypto
 from app.core import projects as _projects
 from app.core.db import SessionLocal, engine, get_database_url, get_engine
 from app.core.models import DocIndex, Project
-import logging
+from app.core.subprocess_env import scrubbed_env
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ def _run_sync(coro):
         return pool.submit(_worker).result()
 
 
-def _ocr_extract(file_path: str) -> Tuple[str, bool]:
+def _ocr_extract(file_path: str) -> tuple[str, bool]:
     """Run the OCR block on ``file_path``; return ``(text, low_quality)``.
 
     Never raises — any OCR error / missing text yields ``("", False)``. The
@@ -172,7 +172,7 @@ def _safety_world_extract(file_path: str, filename: str) -> str:
             return ""
 
         # Group by class, keep highest confidence per class, stable order.
-        by_class: Dict[str, float] = {}
+        by_class: dict[str, float] = {}
         for d in detections:
             cls = d.get("class", "unknown")
             conf_val = float(d.get("confidence") or 0.0)
@@ -187,23 +187,49 @@ def _safety_world_extract(file_path: str, filename: str) -> str:
         return ""
 
 
+def _ocr_dpi_for_page(width_pt: float, height_pt: float,
+                      base_dpi: int, max_pixels: int) -> int:
+    """The dpi to render a page at so the bitmap never exceeds ``max_pixels``.
+
+    F26 (live OOM 2026-08-15): dpi alone does not bound memory — an A1 CAD
+    sheet at 150 dpi is a ~35-megapixel bitmap, and rendering one during a
+    sync reindex took the box from 585 MB to the 2 GB ceiling in one minute
+    and dropped the service. The PIXEL COUNT is the real bound: small pages
+    keep the full dpi, large sheets scale down proportionally (floor 50 dpi
+    so text stays legible enough for OCR to try).
+    """
+    w_in = max(float(width_pt), 1.0) / 72.0
+    h_in = max(float(height_pt), 1.0) / 72.0
+    px = (w_in * base_dpi) * (h_in * base_dpi)
+    if px <= max_pixels:
+        return base_dpi
+    return max(50, int(base_dpi * (max_pixels / px) ** 0.5))
+
+
 def _ocr_pdf_page(page) -> str:
     """OCR a single ``fitz`` page via a rendered pixmap.
 
-    MEMORY-BOUNDED: the pixmap is dropped and the temp PNG deleted before
+    MEMORY-BOUNDED twice over: the rendered pixel count is capped via
+    ``_ocr_dpi_for_page`` (large CAD sheets scale down instead of ballooning
+    — see F26), and the pixmap is dropped and the temp PNG deleted before
     returning, so OCR'ing a long scan one page at a time can never accumulate
     bitmaps and OOM the 2 GB box. Never raises — returns "" on any error.
     """
     try:
         import pytesseract
         from PIL import Image
+
         from app.blocks.ocr import _ocr_lang
     except Exception:
         return ""
-    dpi = int(os.getenv("PDF_OCR_DPI", "150"))
-    tmp_path: Optional[str] = None
+    base_dpi = int(os.getenv("PDF_OCR_DPI", "150"))
+    max_px = int(os.getenv("PDF_OCR_MAX_PIXELS", "6000000"))
+    tmp_path: str | None = None
     pix = None
     try:
+        # Inside the try: an exotic page object without .rect must degrade to
+        # "" like every other OCR failure, never raise out of the helper.
+        dpi = _ocr_dpi_for_page(page.rect.width, page.rect.height, base_dpi, max_px)
         pix = page.get_pixmap(dpi=dpi)
         fd, tmp_path = tempfile.mkstemp(suffix=".png")
         os.close(fd)
@@ -246,7 +272,7 @@ def _pdf_tables_markdown(plumber_page) -> str:
         tables = plumber_page.extract_tables() or []
     except Exception:
         return ""
-    rows: List[str] = []
+    rows: list[str] = []
     for tbl in tables:
         for row in tbl or []:
             cells = [str(c).strip() if c is not None else "" for c in row]
@@ -255,7 +281,7 @@ def _pdf_tables_markdown(plumber_page) -> str:
     return "\n".join(rows)
 
 
-def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
+def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
     """Per-page PDF extraction.
 
     For each page: keep its text layer when present, else OCR THAT page. Also
@@ -270,7 +296,7 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
     import fitz
 
     page_cap = int(os.getenv("PDF_OCR_PAGE_CAP", "40"))
-    parts: List[str] = []
+    parts: list[str] = []
     ocr_pages = 0
     truncated = False
     try:
@@ -325,7 +351,7 @@ def _extract_pdf(file_path: str) -> Tuple[str, Dict[str, Any]]:
                         )
     except Exception:
         return "", {}
-    meta: Dict[str, Any] = {}
+    meta: dict[str, Any] = {}
     if ocr_pages > 0:
         # The doc relied on OCR for some pages — flag for lower confidence.
         meta["ocr_low_quality"] = True
@@ -345,9 +371,9 @@ def _extract_pptx(file_path: str) -> str:
 
         with file_crypto.open_plaintext(file_path) as readable_path:
             prs = pptx.Presentation(readable_path)
-        parts: List[str] = []
+        parts: list[str] = []
         for i, slide in enumerate(prs.slides, start=1):
-            slide_texts: List[str] = []
+            slide_texts: list[str] = []
             for shape in slide.shapes:
                 if hasattr(shape, "text") and shape.text:
                     slide_texts.append(shape.text.strip())
@@ -366,8 +392,8 @@ def _extract_kmz(file_path: str) -> str:
     file is locatable by its name and any embedded labels. Never raises.
     """
     try:
-        import zipfile
         import re
+        import zipfile
 
         with file_crypto.open_plaintext(file_path) as readable_path:
             with zipfile.ZipFile(readable_path, "r") as zf:
@@ -524,7 +550,7 @@ def _extract_archive(
     filename: str,
     opener,
     depth: int = 0,
-    counters: Optional[Dict[str, int]] = None,
+    counters: dict[str, int] | None = None,
 ) -> str:
     """Recursively extract text from an archive (ZIP or RAR).
 
@@ -550,7 +576,7 @@ def _extract_archive(
     except Exception:
         return ""
 
-    parts: List[str] = []
+    parts: list[str] = []
     try:
         with file_crypto.open_plaintext(file_path) as readable_path:
             with opener(readable_path) as archive:
@@ -587,7 +613,7 @@ def _extract_archive(
             break
 
         # Write the member to a temp file so existing extractors can run.
-        tmp_path: Optional[str] = None
+        tmp_path: str | None = None
         try:
             fd, tmp_path = tempfile.mkstemp(suffix=ext or ".bin", prefix="fork_arc_")
             os.close(fd)
@@ -703,7 +729,7 @@ def _legacy_index_dir() -> str:
 
 # ── text extraction ───────────────────────────────────────────────────────────
 
-def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, Any]]:
+def _extract_with_meta(file_path: str, filename: str) -> tuple[str, dict[str, Any]]:
     """Extract plaintext from a document, plus a small metadata dict.
 
     Returns ``(text, meta)`` where ``meta`` carries ``{"ocr_low_quality": True}``
@@ -728,7 +754,7 @@ def _extract_with_meta(file_path: str, filename: str) -> Tuple[str, Dict[str, An
     return text, meta
 
 
-def _extract_with_meta_impl(file_path: str, filename: str) -> Tuple[str, Dict[str, Any]]:
+def _extract_with_meta_impl(file_path: str, filename: str) -> tuple[str, dict[str, Any]]:
     """Format dispatch for ``_extract_with_meta``. May return NUL bytes."""
     try:
         _, ext = os.path.splitext((filename or "").lower())
@@ -748,7 +774,7 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> Tuple[str, Dict[st
             yolo_text = _safety_world_extract(file_path, filename or "")
             if yolo_text:
                 text = f"{text}\n\n{yolo_text}".strip() if text else yolo_text
-            meta: Dict[str, Any] = {}
+            meta: dict[str, Any] = {}
             if low_quality:
                 meta["ocr_low_quality"] = True
             return text, meta
@@ -788,7 +814,7 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> Tuple[str, Dict[st
             import openpyxl
             with file_crypto.open_plaintext(file_path) as readable_path:
                 wb = openpyxl.load_workbook(readable_path, data_only=True)
-                parts: List[str] = []
+                parts: list[str] = []
                 for sheet_name in wb.sheetnames:
                     ws = wb[sheet_name]
                     # Row-wise, not cell-wise: keep each row's cells together so
@@ -850,7 +876,7 @@ def extract_document_text(file_path: str, filename: str) -> str:
 
 # ── chunking ──────────────────────────────────────────────────────────────────
 
-def chunk_text(text: str, words_per_chunk: int = 500) -> List[str]:
+def chunk_text(text: str, words_per_chunk: int = 500) -> list[str]:
     """Split ``text`` into chunks of at most ``words_per_chunk`` words.
 
     Splits on whitespace; drops empty/whitespace-only chunks. Returns [] for
@@ -859,7 +885,7 @@ def chunk_text(text: str, words_per_chunk: int = 500) -> List[str]:
     words = text.split()
     if not words:
         return []
-    chunks: List[str] = []
+    chunks: list[str] = []
     for i in range(0, len(words), words_per_chunk):
         chunk = " ".join(words[i : i + words_per_chunk])
         if chunk.strip():
@@ -886,7 +912,7 @@ def chunk_text_with_overlap(
     target_chars: int = 500,
     overlap: int = 50,
     max_chars: int = 800,
-) -> List[str]:
+) -> list[str]:
     """Split ``text`` into chunks targeting ``target_chars`` per chunk with
     ``overlap`` characters carried into the next chunk.
 
@@ -903,7 +929,6 @@ def chunk_text_with_overlap(
 
     Empty / whitespace-only input returns ``[]``.
     """
-    import re as _re
 
     if not text or not text.strip():
         return []
@@ -911,10 +936,9 @@ def chunk_text_with_overlap(
         raise ValueError("target_chars must be positive")
     if overlap < 0 or overlap >= target_chars:
         raise ValueError("overlap must be in [0, target_chars)")
-    if max_chars < target_chars:
-        max_chars = target_chars
+    max_chars = max(max_chars, target_chars)
 
-    chunks: List[str] = []
+    chunks: list[str] = []
     i = 0
     n = len(text)
     while i < n:
@@ -969,7 +993,7 @@ def chunk_markdown(
     target_chars: int = 500,
     overlap: int = 50,
     max_table_chars: int = 2200,
-) -> List[str]:
+) -> list[str]:
     """Markdown-aware chunking for curated knowledge notes.
 
     Keeps each markdown TABLE atomic — header row + separator + all data rows,
@@ -986,8 +1010,8 @@ def chunk_markdown(
         return []
     lines = text.split("\n")
     sep_re = re.compile(r"\s*\|[\s:|\-]+\|")
-    segments: List[tuple] = []  # (kind, text)
-    prose_buf: List[str] = []
+    segments: list[tuple] = []  # (kind, text)
+    prose_buf: list[str] = []
     last_heading = ""
 
     def _flush_prose():
@@ -1025,7 +1049,7 @@ def chunk_markdown(
         i += 1
     _flush_prose()
 
-    chunks: List[str] = []
+    chunks: list[str] = []
     for kind, seg in segments:
         seg = seg.strip()
         if not seg:
@@ -1041,7 +1065,7 @@ def chunk_markdown(
 
 # ── index persistence ─────────────────────────────────────────────────────────
 
-def _index_from_row(row: DocIndex | None) -> Optional[Dict[str, Any]]:
+def _index_from_row(row: DocIndex | None) -> dict[str, Any] | None:
     if row is None:
         return None
     data = row.index_json
@@ -1173,7 +1197,7 @@ def init_db() -> None:
             # injected alias in listings).
             try:
                 _purge_spurious_master_corpus_row()
-            except Exception:  # noqa: BLE001 — never let startup die on cleanup
+            except Exception:
                 _logging.getLogger(__name__).warning(
                     "init_db: spurious master-corpus row cleanup failed", exc_info=True
                 )
@@ -1187,14 +1211,14 @@ def _ensure_db() -> None:
         init_db()
 
 
-def _load_index(project_id: str) -> Optional[Dict[str, Any]]:
+def _load_index(project_id: str) -> dict[str, Any] | None:
     """Read the stored index for ``project_id``. Returns None if absent."""
     _ensure_db()
     with SessionLocal() as session:
         return _index_from_row(session.get(DocIndex, project_id))
 
 
-def _write_index(project_id: str, data: Dict[str, Any]) -> None:
+def _write_index(project_id: str, data: dict[str, Any]) -> None:
     """Replace the stored index for ``project_id`` (a full-rebuild write).
 
     Reuses ``_update_index`` so the full-rebuild path gets the same
@@ -1208,10 +1232,10 @@ def _write_index(project_id: str, data: Dict[str, Any]) -> None:
 def _apply_index_mutation(
     session: Session,
     project_id: str,
-    mutate: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+    mutate: Callable[[dict[str, Any] | None], dict[str, Any]],
     *,
     lock_row: bool,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if lock_row:
         row = session.scalar(
             select(DocIndex)
@@ -1238,7 +1262,7 @@ def _apply_index_mutation(
 
 def _load_index_json_from_conn(
     conn: Connection, project_id: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     data = conn.execute(
         select(DocIndex.index_json).where(DocIndex.project_id == project_id)
     ).scalar_one_or_none()
@@ -1248,8 +1272,8 @@ def _load_index_json_from_conn(
 def _update_index_on_sqlite_conn(
     conn: Connection,
     project_id: str,
-    mutate: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
-) -> Dict[str, Any]:
+    mutate: Callable[[dict[str, Any] | None], dict[str, Any]],
+) -> dict[str, Any]:
     current = _load_index_json_from_conn(conn, project_id)
     updated = mutate(current)
     now = _now()
@@ -1276,8 +1300,8 @@ def _update_index_on_sqlite_conn(
 
 def _update_index(
     project_id: str,
-    mutate: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
-) -> Dict[str, Any]:
+    mutate: Callable[[dict[str, Any] | None], dict[str, Any]],
+) -> dict[str, Any]:
     """Atomic read-modify-write of a project's index.
 
     Runs ``mutate(current_or_None) -> new_index`` inside a single write
@@ -1301,17 +1325,16 @@ def _update_index(
                     raise
             return updated
 
-        with SessionLocal() as session:
-            with session.begin():
-                # FOR UPDATE does not lock missing rows; advisory lock serialises
-                # concurrent first-time inserts for the same project_id.
-                lock_key = zlib.crc32(project_id.encode("utf-8")) & 0x7FFFFFFF
-                session.execute(
-                    text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key}
-                )
-                return _apply_index_mutation(
-                    session, project_id, mutate, lock_row=True
-                )
+        with SessionLocal() as session, session.begin():
+            # FOR UPDATE does not lock missing rows; advisory lock serialises
+            # concurrent first-time inserts for the same project_id.
+            lock_key = zlib.crc32(project_id.encode("utf-8")) & 0x7FFFFFFF
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key}
+            )
+            return _apply_index_mutation(
+                session, project_id, mutate, lock_row=True
+            )
 
 
 def _ext_of(filename: str) -> str:
@@ -1319,7 +1342,7 @@ def _ext_of(filename: str) -> str:
     return ext
 
 
-def index_project(project_id: str) -> Dict[str, Any]:
+def index_project(project_id: str) -> dict[str, Any]:
     """Build (or rebuild) the full text index for ``project_id``.
 
     For each document:
@@ -1331,8 +1354,8 @@ def index_project(project_id: str) -> Dict[str, Any]:
     """
     docs = _projects.list_documents(project_id)
 
-    documents: List[Dict[str, Any]] = []
-    skipped: List[Dict[str, Any]] = []
+    documents: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
     total_chunks = 0
 
     for doc in docs:
@@ -1365,7 +1388,7 @@ def index_project(project_id: str) -> Dict[str, Any]:
             chunks = chunks + drawing_chunks
 
         fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "document_id": doc["id"],
             "filename": filename,
             "fingerprint": fingerprint,
@@ -1392,7 +1415,7 @@ def index_project(project_id: str) -> Dict[str, Any]:
                 doc["id"], exc,
             )
 
-    index_data: Dict[str, Any] = {
+    index_data: dict[str, Any] = {
         "project_id": project_id,
         "built_at": _now(),
         "documents": documents,
@@ -1452,7 +1475,7 @@ def _looks_like_boq(filename: str, ext: str) -> bool:
     return False
 
 
-def _boq_summary_chunks(result: Dict[str, Any]) -> List[str]:
+def _boq_summary_chunks(result: dict[str, Any]) -> list[str]:
     """Stringify a boq_processor result into retrievable chunks.
 
     ACCURACY GUARD (no-assumptions rule): when ``pages_skipped > 0`` the total
@@ -1467,7 +1490,7 @@ def _boq_summary_chunks(result: Dict[str, Any]) -> List[str]:
         return []
     currency = (result.get("currency") or "").strip()
     pages_skipped = result.get("pages_skipped") or 0
-    out: List[str] = []
+    out: list[str] = []
     if total is not None:
         # Phrase the total the way users actually ask ("what is the total
         # package value?"), so this chunk out-matches generic contract
@@ -1549,7 +1572,7 @@ def _boq_no_total_guard(filename: str) -> str:
 
 def _boq_chunks_for_document(
     file_path: str, filename: str, ext: str, project_id: str
-) -> List[str]:
+) -> list[str]:
     """Return BOQ summary chunks for a BOQ-type document, or [] otherwise.
 
     When the file is clearly a BOQ (by filename) but no total could be
@@ -1636,7 +1659,7 @@ def _looks_like_drawing(filename: str, ext: str) -> bool:
     return ext == ".pdf" and bool(_DRAWING_NAME_RE.search(filename or ""))
 
 
-def _drawing_table_chunks(tables: List[Dict[str, Any]], source: str) -> List[str]:
+def _drawing_table_chunks(tables: list[dict[str, Any]], source: str) -> list[str]:
     """Serialise recovered drawing tables into retrievable chunks.
 
     One chunk per table, prefixed with the sheet it came from — a project
@@ -1661,7 +1684,7 @@ def _drawing_table_chunks(tables: List[Dict[str, Any]], source: str) -> List[str
         "quantities": "quantities table — item, unit, quantity",
         "unclassified": "table",
     }
-    out: List[str] = []
+    out: list[str] = []
     src = f" [{source}]" if source else ""
     for table in tables:
         rows = table.get("rows") or []
@@ -1705,7 +1728,7 @@ def _drawing_no_table_guard(filename: str) -> str:
 
 def _drawing_chunks_for_document(
     file_path: str, filename: str, ext: str, project_id: str
-) -> List[str]:
+) -> list[str]:
     """Return schedule + title-block chunks for a drawing, or [] otherwise.
 
     Never raises — a parse failure yields the guard (or []) so the primary
@@ -1720,7 +1743,7 @@ def _drawing_chunks_for_document(
         from app.containers.construction import ConstructionContainer
 
         container = ConstructionContainer()
-        out: List[str] = []
+        out: list[str] = []
         source = ""
         any_text = False
         with fitz.open(file_path) as doc:
@@ -1759,7 +1782,7 @@ def _drawing_chunks_for_document(
         if not any_text:
             return [_drawing_no_table_guard(filename)]
         return []
-    except Exception as exc:  # noqa: BLE001 — never block indexing on a drawing parse
+    except Exception as exc:
         log.warning(
             "drawing table wiring skipped for %s: %s", filename, exc, exc_info=True
         )
@@ -1770,7 +1793,7 @@ def index_document(
     project_id: str,
     document_id: str,
     chunker: str = "default",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Incrementally index a single document into the project's index.
 
     Loads the existing index (or starts an empty one), extracts + chunks the
@@ -1797,9 +1820,9 @@ def index_document(
 
     # Slow work (text extraction, OCR, chunking) runs OUTSIDE the lock so it
     # does not serialise all indexing — only the load-modify-write below does.
-    entry: Optional[Dict[str, Any]] = None
-    skipped_entry: Optional[Dict[str, Any]] = None
-    chunks: List[str] = []
+    entry: dict[str, Any] | None = None
+    skipped_entry: dict[str, Any] | None = None
+    chunks: list[str] = []
     if ext not in _SUPPORTED_EXTS:
         skipped_entry = {
             "document_id": document_id,
@@ -1885,7 +1908,7 @@ def index_document(
     # Load-modify-write inside one SQLite transaction — a concurrent
     # index_document call for the same project (another BackgroundTask, or
     # another worker process) cannot interleave and drop this entry.
-    def _mutate(current: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _mutate(current: dict[str, Any] | None) -> dict[str, Any]:
         current = current or {
             "project_id": project_id,
             "built_at": _now(),
@@ -2021,7 +2044,7 @@ async def search_project_documents(
     project_id: str,
     query: str,
     top_k: int = 5,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Search indexed documents for ``query``, returning up to ``top_k`` results.
 
     Each result is a dict: ``{document_id, filename, snippet, score}``.
@@ -2046,14 +2069,14 @@ async def search_project_documents(
     # Hybrid retriever lives in app.core.rag.retriever; local import to
     # keep app.core.doc_index importable when the RAG stack isn't fully
     # wired (tests, minimal install).
-    from app.core.rag.retriever import retrieve_with_filter, _doc_name_for_id
+    from app.core.rag.retriever import _doc_name_for_id, retrieve_with_filter
 
     # Over-fetch chunks so we can still return ``top_k`` DISTINCT documents
     # after the "best chunk per document" collapse below. 4x is enough
     # for typical corpora where each doc has 2-10 chunks.
     over_fetch = max(top_k * 4, 20)
 
-    def _query() -> List[Any]:
+    def _query() -> list[Any]:
         try:
             chunks, _noise = retrieve_with_filter(query, project_id, k=over_fetch)
             return chunks
@@ -2085,7 +2108,7 @@ async def search_project_documents(
     if not chunks:
         return []
 
-    best: Dict[str, Dict[str, Any]] = {}
+    best: dict[str, dict[str, Any]] = {}
     for c in chunks:
         score = float(c.score or 0.0)
         prev = best.get(c.doc_id)
@@ -2112,13 +2135,13 @@ async def search_project_documents(
     # hybrid retriever's Chunk doesn't carry it; tests + UI need it for
     # the "low-confidence OCR" badge on citations.
     legacy_index = _load_index(project_id)
-    ocr_flag_by_doc: Dict[str, bool] = {}
+    ocr_flag_by_doc: dict[str, bool] = {}
     if legacy_index is not None:
         for entry in legacy_index.get("documents", []):
             if entry.get("ocr_low_quality"):
                 ocr_flag_by_doc[entry["document_id"]] = True
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     for item in ranked:
         snippet = " ".join(item["chunk"].split()[:50])
         result_row = {
