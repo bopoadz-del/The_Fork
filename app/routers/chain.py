@@ -12,6 +12,12 @@ router = APIRouter()
 class ChainStep(BaseModel):
     block: str = Field(..., description="Block name to execute")
     params: Dict[str, Any] = Field(default={}, description="Block parameters")
+    # F38b: stored workflows carry a per-step ``input`` dict; without this
+    # field pydantic silently DROPPED it at the model boundary, so a saved
+    # workflow ran its blocks with no inputs ("No file path provided")
+    # while the direct /v1/execute orchestrator path threaded it fine.
+    input: Optional[Dict[str, Any]] = Field(
+        default=None, description="Explicit input for this step (merged into params)")
     input_mapping: Optional[Dict[str, str]] = Field(default=None, description="Map previous output fields to expected input fields")
     label: Optional[str] = Field(default=None, description="Human-readable label for this step")
 
