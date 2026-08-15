@@ -202,10 +202,16 @@ What remains NOT wired is the message-scored activation ADAPTER and the
   The dormancy fence now asserts the gap STAYS zero: a newly declared name
   must alias to real machinery or not be declared.
 
-What remains registered is only the message-scored activation ADAPTER
-(`FORK_HATS_ENABLED`) itself — the auto-hat-selection layer. Its declared
-actions all dispatch now, so flipping the flag is a pure product decision
-about auto-selection, no longer blocked by missing implementations.
+**Adapter decision (2026-08-15, closes this entry): SUPERSEDED.** The
+message-scored activation adapter's purpose — putting the right discipline
+knowledge behind a turn — is delivered by the per-agent kernel binding
+(every discipline agent carries its own hats; the orchestrator carries all
+seven) plus the agent picker. Auto-hat-selection on top of that would
+duplicate routing that already exists in two layers. `FORK_HATS_ENABLED`
+stays off and the adapter code remains as a dormant library; revisit only
+if a future product need wants per-message discipline switching WITHIN a
+single generalist conversation. All its declared actions dispatch, so
+nothing is blocked either way.
 
 What the hats DO have is real: the formula bindings all resolve
 (`validate_manifest_bindings`, CI-guarded), and the manifests are schema-valid.
