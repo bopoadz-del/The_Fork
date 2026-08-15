@@ -28,7 +28,7 @@ _logger = logging.getLogger(__name__)
 # plot with text as curves, or a raster scan) and eligible for the OCR
 # fallback. A real plan's text layer with room labels carries hundreds of
 # characters per drawing; plots render titles as curves and yield ~0.
-_OCR_TEXT_THRESHOLD = int(__import__("os").getenv("QTO_OCR_TEXT_THRESHOLD", "80"))
+_OCR_TEXT_THRESHOLD = int(os.getenv("QTO_OCR_TEXT_THRESHOLD", "80"))
 
 
 # --- Discipline lookup ------------------------------------------------------
