@@ -76,10 +76,21 @@ def test_an_unrecognised_line_is_flagged_not_guessed():
     assert categorize("Provide bespoke sculptural artwork") == "Other/Uncategorized"
 
 
-# ── the substructure sandwich: blinding UNDER, waterproofing AROUND,
-#    screed ON TOP of the foundation. Every one of these names "foundation"
-#    as its location, so first-in-list matching sent them all to
-#    Piling/Foundations and priced three different trades identically.
+# ── the substructure build-up, bottom to top:
+#
+#      compacted sand / subgrade
+#      -> BLINDING concrete        (lean mix; gives a clean level bed --
+#                                   membrane is never laid on soil or loose
+#                                   sand, it would be punctured and unlayable)
+#      -> WATERPROOFING membrane   (laid ON the blinding)
+#      -> PROTECTION SCREED        (protects the membrane from rebar and site
+#                                   traffic before the raft is poured)
+#      -> raft / foundation concrete
+#
+#    Three different trades stacked within millimetres of each other, and every
+#    one of them names "foundation" as its location. First-in-list matching
+#    therefore sent all of them to Piling/Foundations -- one category, one rate,
+#    three wrong prices.
 
 @pytest.mark.parametrize("desc,expected", [
     # AROUND -- the work is the membrane, the foundation is where it goes
@@ -99,6 +110,18 @@ def test_an_unrecognised_line_is_flagged_not_guessed():
     ("Protection screed over waterproofing to foundation slab", "Concrete"),
 ])
 def test_the_substructure_sandwich_separates_by_trade(desc, expected):
+    assert categorize(desc) == expected, desc
+
+
+@pytest.mark.parametrize("desc,expected", [
+    # the sequence stated in its natural site language
+    ("Blinding concrete to receive waterproofing membrane", "Concrete"),
+    ("Waterproofing membrane laid on blinding concrete",
+     "Waterproofing/Insulation"),
+    ("Protection screed to waterproofing membrane before raft pour", "Concrete"),
+    ("Lean concrete blinding on compacted sand fill", "Concrete"),
+])
+def test_the_build_up_reads_correctly_in_site_language(desc, expected):
     assert categorize(desc) == expected, desc
 
 
