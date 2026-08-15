@@ -670,10 +670,15 @@ class MonitoringBlock(LegoBlock):
         # providers; with nothing recorded the honest answer is "unknown".
         # Reporting degraded on no data cries wolf on every single call, which
         # is how a real degradation gets ignored.
-        entries = lb["leaderboard"][:2]
-        if not entries or all(e["total_calls"] == 0 for e in entries):
+        # Judge only providers that have actually SERVED calls. The old
+        # top-2 slice mixed never-used fallbacks into the verdict: one
+        # healthy kimi call + groq at 0 calls ("unproven") reported the
+        # whole system degraded -- a false alarm on a perfectly healthy
+        # deployment (observed live, phase-4 route census).
+        observed = [e for e in lb["leaderboard"] if e["total_calls"] > 0]
+        if not observed:
             overall = "unknown"
-        elif all(e["recommendation"] == "use" for e in entries):
+        elif all(e["recommendation"] == "use" for e in observed):
             overall = "healthy"
         else:
             overall = "degraded"

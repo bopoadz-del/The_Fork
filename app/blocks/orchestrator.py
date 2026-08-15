@@ -25,6 +25,18 @@ _TEXT_OUTPUT_FIELDS = (
 )
 
 
+def _step_error_text(result: Any) -> str:
+    """Best-effort error string from a step result (may be nested)."""
+    if isinstance(result, dict):
+        for key in ("error", "message"):
+            if result.get(key):
+                return str(result[key])
+        inner = result.get("result")
+        if isinstance(inner, dict):
+            return _step_error_text(inner)
+    return "unknown error"
+
+
 def _coerce_dict_to_text(data: Dict, source_block: Optional[Any] = None) -> Optional[str]:
     """Extract the primary human-readable string from a block's JSON output.
 
@@ -261,7 +273,14 @@ class OrchestratorBlock(UniversalBlock):
         
         for i, step_config in enumerate(steps):
             block_name = step_config.get("block")
-            step_params = step_config.get("params", {})
+            step_params = dict(step_config.get("params", {}) or {})
+            # F38: a per-step ``input`` dict (the natural /v1/execute shape)
+            # was silently DROPPED -- boq_processor ran with no file_path
+            # while the caller had supplied one. Fold it into the step's
+            # params, where merged_params delivers it to the block.
+            step_input = step_config.get("input")
+            if isinstance(step_input, dict):
+                step_params = {**step_input, **step_params}
             input_mapping = step_config.get("input_mapping")
             
             if not block_name:
@@ -351,7 +370,10 @@ class OrchestratorBlock(UniversalBlock):
         
         if not steps and isinstance(input_data, dict):
             steps = input_data.get("steps", [])
-            input_data = input_data.get("initial_input", input_data)
+            # F38: without an explicit initial_input the whole
+            # {"steps": [...]} dict used to fall through as the chain's
+            # input and leak into every step's merged params.
+            input_data = input_data.get("initial_input")
 
         if not steps:
             return {"status": "error", "error": "No steps provided for chain execution"}
@@ -505,7 +527,12 @@ class OrchestratorBlock(UniversalBlock):
             # block's `text_output_field`; remember it for them.
             prev_block = step.block
 
-        return {
+        # F38: the chain used to return status success UNCONDITIONALLY --
+        # a failed step (success: false, loop broken) came back wrapped in
+        # a green envelope with the error dict as final_output. The chain's
+        # status must reflect its steps.
+        failed = [r for r in results if not r["success"]]
+        out = {
             "status": "success",
             "steps_executed": len(results),
             "final_output": context,
@@ -513,6 +540,17 @@ class OrchestratorBlock(UniversalBlock):
             "type_conversions": type_conversions,
             "validation_passed": len(validation_errors) == 0
         }
+        if failed:
+            first = failed[0]
+            out["status"] = (
+                "completed_with_errors" if params.get("continue_on_error") else "error"
+            )
+            out["error"] = (
+                f"step {first['step']} ({first['block']}) failed: "
+                f"{_step_error_text(first['result'])}"
+            )
+            out["failed_steps"] = [f["step"] for f in failed]
+        return out
 
     def _extract_output(self, block: Any, result: Dict) -> Any:
         """Extract typed output from execution result."""

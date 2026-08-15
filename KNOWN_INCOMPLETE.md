@@ -206,12 +206,13 @@ What remains NOT wired is the message-scored activation ADAPTER and the
 message-scored activation adapter's purpose — putting the right discipline
 knowledge behind a turn — is delivered by the per-agent kernel binding
 (every discipline agent carries its own hats; the orchestrator carries all
-seven) plus the agent picker. Auto-hat-selection on top of that would
-duplicate routing that already exists in two layers. `FORK_HATS_ENABLED`
-stays off and the adapter code remains as a dormant library; revisit only
-if a future product need wants per-message discipline switching WITHIN a
-single generalist conversation. All its declared actions dispatch, so
-nothing is blocked either way.
+seven) plus the agent picker. **Update 2026-08-15 (make-it-work audit):
+`FORK_HATS_ENABLED=1` is now SET on the live service.** The declared-action
+gap is zero (every action dispatches via the alias layer), the enabled-mode
+test suite is green (`tests/test_hats_are_dormant.py` hard-asserts the gap
+with the flag on), so there was nothing left to gate. The activation
+adapter is live; the off-by-default pin in code stays (deployments opt in
+via env).
 
 What the hats DO have is real: the formula bindings all resolve
 (`validate_manifest_bindings`, CI-guarded), and the manifests are schema-valid.

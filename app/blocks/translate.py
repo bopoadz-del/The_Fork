@@ -179,8 +179,19 @@ class TranslateBlock(UniversalBlock):
         if not text:
             return {"status": "error", "error": "Text is required"}
 
-        target = _normalize_lang(params.get("target") or params.get("target_language") or "es")
-        source = _normalize_lang(params.get("source") or params.get("source_language") or "auto")
+        # The language may arrive in the input dict alongside the text (the
+        # /v1/execute shape agents naturally produce). Ignoring it there and
+        # silently defaulting to Spanish translated to the WRONG LANGUAGE
+        # while reporting success -- params still win when both are given.
+        _in = input_data if isinstance(input_data, dict) else {}
+        target = _normalize_lang(
+            params.get("target") or params.get("target_language")
+            or _in.get("target") or _in.get("target_language") or "es"
+        )
+        source = _normalize_lang(
+            params.get("source") or params.get("source_language")
+            or _in.get("source") or _in.get("source_language") or "auto"
+        )
         use_mock = params.get("provider") == "mock"
 
         try:

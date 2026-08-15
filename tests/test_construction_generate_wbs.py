@@ -103,14 +103,16 @@ async def test_generate_wbs_infers_project_type_from_brief(container):
 
 
 @pytest.mark.asyncio
-async def test_generate_wbs_unknown_project_type_defaults_to_data_center(container):
-    """An unknown project_type falls back to data_center, not an error."""
+async def test_generate_wbs_unknown_project_type_defaults_to_building(container):
+    """An unknown project_type falls back to the GENERIC building template,
+    not data_center (F39: generic briefs were getting hyperscale WBS items),
+    and not an error."""
     result = await container.generate_wbs(
         input_data={},
         params={"target_count": 30, "project_type": "spacecraft"},
     )
     assert result["status"] == "success"
-    assert result["project_type"] == "data_center"
+    assert result["project_type"] == "building"
 
 
 @pytest.mark.asyncio
