@@ -116,9 +116,7 @@
   "construction_calc:cut_fill_balance",
   "construction_calc:rebar_weight",
   "construction_calc:rebar_by_area",
-  "construction_calc:unit_cost_total",
-  "drawing_qto_extract",
-  "boq_processor"
+  "construction_calc:unit_cost_total"
  ],
  "handoffs": [
   {
