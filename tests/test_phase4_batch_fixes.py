@@ -322,3 +322,26 @@ async def test_manpower_planner_warns_when_nothing_is_resourced():
         {"activities": [{"id": "A", "name": "x", "duration": 5}]}, {})
     assert res["status"] == "success"
     assert "all zeros" in res.get("warning", "")
+
+
+# ---------------------------------------------------------------- F41
+
+
+@pytest.mark.asyncio
+async def test_health_report_ignores_never_used_providers():
+    # One healthy provider + an unproven fallback with ZERO calls reported
+    # the whole system "degraded" -- crying wolf on a healthy deployment.
+    from app.infra.monitoring import MonitoringBlock
+    b = MonitoringBlock(hal_block=None, config={})
+    await b.execute({"action": "record_call", "provider": "kimi",
+                     "latency_ms": 800, "success": True})
+    rep = await b.execute({"action": "health_report"})
+    assert rep["overall_status"] == "healthy", rep["overall_status"]
+
+
+@pytest.mark.asyncio
+async def test_health_report_unknown_with_no_observations():
+    from app.infra.monitoring import MonitoringBlock
+    rep = await MonitoringBlock(hal_block=None, config={}).execute(
+        {"action": "health_report"})
+    assert rep["overall_status"] == "unknown"
