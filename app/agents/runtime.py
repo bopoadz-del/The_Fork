@@ -358,6 +358,22 @@ _TOOL_RESULT_MAX_CHARS = 8000
 # message between the tool result and the next model call. In-context and
 # positionally adjacent, which K2 follows far more reliably than a system
 # contract paragraph.
+# Tool-ERROR correction (F27, phase-4 campaign). Reproduced twice on
+# bim-analyst: the first tool call errored (construction without a valid
+# action) and the model NARRATED its next call as the final answer -- "I
+# will try bim_extract" -- without ever making it. Same failure family as
+# the fabricated-dispatch finding: prose intentions are not calls. After an
+# error tool result, the runtime injects this corrective message; capped
+# per turn so a hopeless tool cannot loop forever.
+_TOOL_ERROR_NUDGE = (
+    "That tool call FAILED -- read the error above, correct the call (tool "
+    "name, action, or arguments) and MAKE the corrected call now. Do not "
+    "describe a call you intend to make; make it. If no correction can "
+    "work, state plainly what failed and answer with what you have."
+)
+_TOOL_ERROR_NUDGE_CAP = 2
+
+
 _EMPTY_ROUTER_NUDGE = (
     "The router matched NO action. If the request is a computation (volume, "
     "quantity, capacity, EVM, any arithmetic), you MUST now call the "
@@ -3235,6 +3251,7 @@ class Agent:
         # synthesis call — see the streaming loop for the full rationale (stops
         # the tool-loop and the Groq large-context tool_use_failed/429 hang).
         force_synthesis = False
+        error_nudges = 0
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
 
         for iteration in range(MAX_TOOL_ITERATIONS):
@@ -3373,6 +3390,9 @@ class Agent:
                 })
                 if _empty_router_verdict(tool_result):
                     messages.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
+                elif not ok and error_nudges < _TOOL_ERROR_NUDGE_CAP:
+                    error_nudges += 1
+                    messages.append({"role": "user", "content": _TOOL_ERROR_NUDGE})
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
@@ -3720,6 +3740,7 @@ class Agent:
         # falls back to slow gpt-oss and the turn appears to hang for minutes.
         # Force a tool-free synthesis instead. Env-disable: AGENT_FORCE_SYNTHESIS=0.
         force_synthesis = False
+        error_nudges = 0
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
         # True token streaming for the FINAL synthesis call only. Gated to:
         #   * SYNTHESIS_STREAMING=1  (instant prod kill-switch; default off)
@@ -4013,6 +4034,15 @@ class Agent:
                 })
                 if _empty_router_verdict(tool_result):
                     messages.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
+                else:
+                    _inner_s = tool_result.get("result") if isinstance(tool_result, dict) else None
+                    _errored = (
+                        tool_result.get("ok") is False
+                        or (isinstance(_inner_s, dict) and _inner_s.get("status") == "error")
+                    )
+                    if _errored and error_nudges < _TOOL_ERROR_NUDGE_CAP:
+                        error_nudges += 1
+                        messages.append({"role": "user", "content": _TOOL_ERROR_NUDGE})
 
         # Hit the cap without a final answer — force one more call with tools disabled.
         _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
