@@ -32,7 +32,14 @@ def apply_token_cap(chunks: List[Chunk]) -> Tuple[List[Chunk], int]:
     Never truncates mid-chunk; a chunk is included or excluded whole.
     Returns ``(kept_chunks, total_estimated_tokens)``.
     """
-    cap = int(os.getenv("MAX_RAG_TOKENS", "1500"))
+    # Default sized for the CURRENT chunker output. Live failure 2026-08-15
+    # (F20): doc-reindex emits ~3,000-char chunks (~750-950 est. tokens), so
+    # the old 1500 default -- calibrated for the 512-char chunker era -- kept
+    # exactly ONE of the five retrieved chunks. Retrieval had the answer at
+    # rank 3 and the model truthfully reported "not in context" because the
+    # cap dropped it whole. 6000 fits a full k=5 of today's chunks with
+    # headroom while still bounding a runaway injection.
+    cap = int(os.getenv("MAX_RAG_TOKENS", "6000"))
     # Sort by score desc so we drop the weakest matches first when over cap.
     ordered = sorted(chunks, key=lambda c: -(c.score or 0))
     total = 0
