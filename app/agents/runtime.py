@@ -2159,6 +2159,14 @@ def _llm_config() -> Dict[str, Any]:
             # (see _provider_temperature) rather than hardcoding 1 globally — a
             # global constant would just become the next provider's 400.
             "fixed_temperature": 1,
+            # K2 spends the SHARED max_tokens budget on chain-of-thought before
+            # any content. Measured with the validation agent's own prompt:
+            # max_tokens=1024 -> finish=length, content=0c, reasoning=3940c.
+            # Any cap below the reasoning burn makes content structurally
+            # impossible — the empty-final retry then fails the same way and
+            # the user sees the canned "unable to generate" message. Floor it
+            # here (see _provider_max_tokens), like fixed_temperature.
+            "reasoning_min_tokens": int(os.getenv("KIMI_REASONING_MIN_TOKENS", "4096")),
         }
     # Default / fallthrough = Kimi (primary). OpenAI and DeepSeek are gone.
     return {
@@ -2167,6 +2175,7 @@ def _llm_config() -> Dict[str, Any]:
         "env_key": "KIMI_API_KEY",
         "default_model": os.getenv("KIMI_MODEL", KIMI_DEFAULT_MODEL),
         "fixed_temperature": 1,
+        "reasoning_min_tokens": int(os.getenv("KIMI_REASONING_MIN_TOKENS", "4096")),
     }
 
 
@@ -2236,6 +2245,22 @@ def _provider_temperature(cfg: Dict[str, Any], default: float) -> float:
     """
     fixed = cfg.get("fixed_temperature")
     return default if fixed is None else float(fixed)
+
+
+def _provider_max_tokens(cfg: Dict[str, Any], configured: int) -> int:
+    """The max_tokens this provider needs to produce any content at all.
+
+    Reasoning providers declare ``reasoning_min_tokens``: the shared budget is
+    spent on chain-of-thought first, so a configured cap below the model's
+    reasoning burn yields finish_reason=length with EMPTY content every time
+    (measured: 1024 -> 0 chars content, 3,940 chars reasoning). The floor only
+    LIFTS a starving budget; a generous agent budget passes through, and
+    providers without the field keep the agent's own value.
+    """
+    floor = cfg.get("reasoning_min_tokens")
+    if floor is None:
+        return configured
+    return max(int(configured), int(floor))
 
 
 def _is_native_ollama(cfg: Dict[str, Any]) -> bool:
@@ -4079,6 +4104,7 @@ class Agent:
             # must get that provider's accepted temperature (kimi -> 1, others ->
             # the agent's own), not the primary's.
             payload["temperature"] = _provider_temperature(a_cfg, self.temperature)
+            payload["max_tokens"] = _provider_max_tokens(a_cfg, self.max_tokens)
             if tools and with_tools:
                 payload["tool_choice"] = _tool_choice_for(a_cfg["provider"])
             try:
@@ -4305,6 +4331,7 @@ class Agent:
             model = cfg["default_model"]
         messages = _sanitize_messages_for_provider(messages)
         temperature = _provider_temperature(cfg, self.temperature)
+        stream_max_tokens = _provider_max_tokens(cfg, self.max_tokens)
         headers = (
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             if api_key
@@ -4318,7 +4345,7 @@ class Agent:
                         model=model,
                         messages=_sanitize_messages_for_ollama_native(messages),
                         temperature=temperature,
-                        max_tokens=self.max_tokens,
+                        max_tokens=stream_max_tokens,
                         stream=True,
                     )
                     async with client.stream(
@@ -4347,7 +4374,7 @@ class Agent:
                         "model": model,
                         "messages": messages,
                         "temperature": temperature,
-                        "max_tokens": self.max_tokens,
+                        "max_tokens": stream_max_tokens,
                         "stream": True,
                         "stream_options": {"include_usage": True},
                     }

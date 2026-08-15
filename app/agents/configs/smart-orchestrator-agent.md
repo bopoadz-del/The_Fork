@@ -5,7 +5,7 @@ can_delegate: true
 icon: 🚦
 model: kimi-k2.6
 temperature: 0.1
-max_tokens: 1024
+max_tokens: 4096
 allowed_blocks:
   - smart_orchestrator
   - construction
