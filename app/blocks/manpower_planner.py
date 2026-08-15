@@ -51,9 +51,27 @@ class ManpowerPlannerBlock(UniversalBlock):
             from app.lib.pm_computations import compute_cpm, resource_histogram
             from app.schemas.cpm import Activity, CPMInput
 
+            # The schema models crews as resources=[{trade, count}], but
+            # callers naturally write "manpower": 8 -- pydantic silently
+            # DROPPED the unknown key and the histogram came back all-zero
+            # with status success. Map the common shorthand keys.
+            def _with_resources(a):
+                if not isinstance(a, dict) or a.get("resources"):
+                    return a
+                mp = (a.get("manpower") or a.get("crew") or a.get("crew_size")
+                      or a.get("headcount"))
+                if mp:
+                    a = {**a, "resources": [
+                        {"trade": a.get("trade") or "General", "count": float(mp)}]}
+                return a
+
+            activities = [_with_resources(a) for a in activities]
             act_objects = [
                 Activity(**a) if isinstance(a, dict) else a for a in activities
             ]
+            unresourced = not task_resources and not any(
+                getattr(a, "resources", None) for a in act_objects
+            )
 
             if not results and act_objects:
                 cpm_output = compute_cpm(CPMInput(activities=act_objects))
@@ -71,7 +89,7 @@ class ManpowerPlannerBlock(UniversalBlock):
                 period_unit=period_unit,
                 task_resources=task_resources or None,
             )
-            return {
+            out = {
                 "status": "success",
                 "period_unit": histogram.period_unit,
                 "periods": [p.model_dump() for p in histogram.periods],
@@ -80,5 +98,12 @@ class ManpowerPlannerBlock(UniversalBlock):
                 "by_trade_totals": histogram.by_trade_totals,
                 "total_manhours": histogram.total_manhours,
             }
+            if unresourced:
+                out["warning"] = (
+                    "no resources on any activity -- histogram is all zeros; "
+                    "provide activities[].resources=[{trade, count}] (or "
+                    "manpower/crew/crew_size/headcount) or task_resources"
+                )
+            return out
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "error": f"Manpower planning failed: {exc}"}

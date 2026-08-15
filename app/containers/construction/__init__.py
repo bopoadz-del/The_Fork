@@ -2164,11 +2164,20 @@ class ConstructionContainer(
             return "solar_plant"
         if "wind" in text:
             return "wind_farm"
-        if any(k in text for k in ("office", "residential", "hospital", "school", "tower")):
+        if any(k in text for k in (
+            "office", "residential", "hospital", "school", "tower",
+            # F39: "two-storey villa" fell through to the data_center
+            # default -- a data-hall WBS silently applied to a house.
+            "villa", "apartment", "house", "hotel", "mall", "warehouse",
+            "mosque", "clinic", "storey", "story building",
+        )):
             return "building"
         if any(k in text for k in ("road", "bridge", "highway", "rail", "tunnel", "utility corridor")):
             return "infrastructure"
-        return "data_center"
+        # Unrecognised brief: the GENERIC building template, never the
+        # data-center one (that default stamped hyperscale WBS items onto
+        # unrelated projects).
+        return "building"
     async def _status(self, input_data: Any, params: Dict) -> Dict:
         # Discover available actions by calling the active route() with a
         # sentinel — its handlers dict is the source of truth. Cheaper than

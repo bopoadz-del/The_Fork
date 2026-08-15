@@ -285,3 +285,40 @@ def test_agents_list_surfaces_availability():
                 assert a["unavailable_reason"]
     finally:
         app.dependency_overrides.pop(require_user, None)
+
+
+# ---------------------------------------------------------------- F39/F40
+
+
+@pytest.mark.asyncio
+async def test_villa_brief_classifies_as_building_not_data_center():
+    # F39: "two-storey villa" fell through the keyword list to the
+    # data_center default -- a data-hall WBS silently applied to a house.
+    from app.containers.construction import ConstructionContainer
+    w = await ConstructionContainer().generate_wbs(
+        {}, {"brief": "two-storey villa, 8 month duration", "target_count": 20})
+    assert w["project_type"] == "building"
+
+
+@pytest.mark.asyncio
+async def test_manpower_planner_maps_shorthand_crew_keys():
+    # F40: "manpower": 8 was silently dropped by the schema and the
+    # histogram came back ALL ZERO with status success.
+    from app.blocks.manpower_planner import ManpowerPlannerBlock
+    res = await ManpowerPlannerBlock().process({"activities": [
+        {"id": "A", "name": "excavation", "duration": 10, "manpower": 8},
+        {"id": "B", "name": "raft", "duration": 6, "manpower": 12,
+         "predecessors": [{"predecessor_id": "A"}]}]}, {})
+    assert res["status"] == "success"
+    assert res["peak_total"] == 12.0
+    assert sum(p["total"] for p in res["periods"]) > 0
+    assert "warning" not in res
+
+
+@pytest.mark.asyncio
+async def test_manpower_planner_warns_when_nothing_is_resourced():
+    from app.blocks.manpower_planner import ManpowerPlannerBlock
+    res = await ManpowerPlannerBlock().process(
+        {"activities": [{"id": "A", "name": "x", "duration": 5}]}, {})
+    assert res["status"] == "success"
+    assert "all zeros" in res.get("warning", "")
