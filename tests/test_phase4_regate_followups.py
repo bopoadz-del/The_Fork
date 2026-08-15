@@ -182,18 +182,19 @@ def test_ok_false_is_errored_and_deep_nesting_gives_up_false():
 
 
 @pytest.mark.asyncio
-async def test_oda_launcher_points_qt_at_bundled_plugins(tmp_path, monkeypatch):
-    """The env block must run: real tool dir resolved, plugin path set when a
-    bundled platforms/ dir exists, LD_LIBRARY_PATH prepended, and the fake
-    converter's DXF output returned."""
+async def test_oda_launcher_wraps_in_xvfb_when_available(tmp_path, monkeypatch):
+    """The ODA QT6 bundle ships ONLY the xcb platform plugin (verified on the
+    deployed image: plugins/platforms/ = libqxcb.so alone), so offscreen can
+    never work. With xvfb-run on PATH the converter must run under a virtual
+    display with xcb; without it, fall back to requesting offscreen."""
     import shutil as _shutil
     import subprocess as _subprocess
     from app.blocks.drawing_qto import DrawingQTOBlock
 
-    tool_dir = tmp_path / "oda"
-    (tool_dir / "platforms").mkdir(parents=True)
-    tool = tool_dir / "ODAFileConverter"
+    tool = tmp_path / "ODAFileConverter"
     tool.write_text("#!/bin/sh\n")
+    xvfb = tmp_path / "xvfb-run"
+    xvfb.write_text("#!/bin/sh\n")
     dwg = tmp_path / "plan.dwg"
     dwg.write_bytes(b"AC1032 fake dwg")
 
@@ -201,9 +202,43 @@ async def test_oda_launcher_points_qt_at_bundled_plugins(tmp_path, monkeypatch):
 
     def fake_run(cmd, timeout, check, capture_output, env):
         captured["cmd"], captured["env"] = cmd, env
-        out_dir = cmd[2]
+        out_dir = cmd[cmd.index("ACAD2018") - 1]
         with open(f"{out_dir}/plan.dxf", "w") as f:
-            f.write("0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n")
+            f.write("0\nEOF\n")
+        class P:
+            returncode = 0
+            stderr = b""
+        return P()
+
+    def which(c):
+        return {"ODAFileConverter": str(tool), "xvfb-run": str(xvfb)}.get(c)
+
+    monkeypatch.setattr(_shutil, "which", which)
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    out = DrawingQTOBlock()._try_convert_dwg(str(dwg))
+    assert isinstance(out, str) and out.endswith(".dxf")
+    assert captured["cmd"][0] == str(xvfb)
+    assert captured["cmd"][1] == "-a"
+    assert captured["cmd"][2] == str(tool)
+    assert captured["env"]["QT_QPA_PLATFORM"] == "xcb"
+
+
+@pytest.mark.asyncio
+async def test_oda_launcher_falls_back_to_offscreen_without_xvfb(tmp_path, monkeypatch):
+    import shutil as _shutil
+    import subprocess as _subprocess
+    from app.blocks.drawing_qto import DrawingQTOBlock
+
+    tool = tmp_path / "ODAFileConverter"
+    tool.write_text("#!/bin/sh\n")
+    dwg = tmp_path / "plan.dwg"
+    dwg.write_bytes(b"AC1032 fake dwg")
+    captured = {}
+
+    def fake_run(cmd, timeout, check, capture_output, env):
+        captured["cmd"], captured["env"] = cmd, env
+        with open(f"{cmd[2]}/plan.dxf", "w") as f:
+            f.write("0\nEOF\n")
         class P:
             returncode = 0
             stderr = b""
@@ -214,8 +249,43 @@ async def test_oda_launcher_points_qt_at_bundled_plugins(tmp_path, monkeypatch):
     monkeypatch.setattr(_subprocess, "run", fake_run)
     out = DrawingQTOBlock()._try_convert_dwg(str(dwg))
     assert isinstance(out, str) and out.endswith(".dxf")
-    env = captured["env"]
-    assert env["QT_QPA_PLATFORM"] == "offscreen"
-    assert env["QT_QPA_PLATFORM_PLUGIN_PATH"] == str(tool_dir / "platforms")
-    assert env["LD_LIBRARY_PATH"].startswith(str(tool_dir))
     assert captured["cmd"][0] == str(tool)
+    assert captured["env"]["QT_QPA_PLATFORM"] == "offscreen"
+
+
+# ---------------------------------------------------------------- file-tool hint
+
+
+def _hint_docs(monkeypatch, docs):
+    import app.core.projects as projects_mod
+    monkeypatch.setattr(projects_mod, "list_documents", lambda pid: docs,
+                        raising=False)
+
+
+def test_nudge_hint_names_the_tool_for_a_real_project_file(monkeypatch):
+    _hint_docs(monkeypatch, [{"original_name": "qa_building.ifc"}])
+    msgs = [{"role": "user", "content":
+             "Element census of qa_building.ifc: how many walls?"}]
+    hint = runtime._file_tool_hint(msgs, "p1", ["bim_extractor", "construction"])
+    assert "qa_building.ifc" in hint
+    assert "bim_extractor" in hint
+
+
+def test_nudge_hint_silent_when_file_not_mentioned_or_tool_missing(monkeypatch):
+    _hint_docs(monkeypatch, [{"original_name": "qa_building.ifc"}])
+    msgs = [{"role": "user", "content": "what is the retention percentage?"}]
+    assert runtime._file_tool_hint(msgs, "p1", ["bim_extractor"]) == ""
+    msgs = [{"role": "user", "content": "census of qa_building.ifc please"}]
+    assert runtime._file_tool_hint(msgs, "p1", ["boq_processor"]) == ""
+    assert runtime._file_tool_hint(msgs, None, ["bim_extractor"]) == ""
+
+
+def test_nudge_hint_skips_prior_nudges_when_finding_the_user_turn(monkeypatch):
+    _hint_docs(monkeypatch, [{"original_name": "qa_building.ifc"}])
+    msgs = [
+        {"role": "user", "content": "census of qa_building.ifc please"},
+        {"role": "assistant", "content": "..."},
+        {"role": "user", "content": runtime._TOOL_ERROR_NUDGE},
+    ]
+    hint = runtime._file_tool_hint(msgs, "p1", ["bim_extractor"])
+    assert "bim_extractor" in hint
