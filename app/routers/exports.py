@@ -542,6 +542,11 @@ async def price_boq(
             "unit": it["unit"],
             "qty": it["qty"],
             "rate": it["rate"],
+            # Provenance travels into the workbook's Rate Basis column. F11:
+            # without it a weak asset-median guess printed identically to an
+            # exact n=45 median, and a NO RATE line looked merely cheap.
+            "rate_source": it.get("rate_source"),
+            "n": it.get("n"),
         })
     categories = [{"name": k, "items": v} for k, v in grouped.items()]
 

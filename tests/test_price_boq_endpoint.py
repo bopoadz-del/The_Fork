@@ -46,7 +46,11 @@ def test_price_line_items_exact_fallback_and_no_rate():
     assert priced[0]["rate"] > 0
 
     assert priced[1]["work_category"] == "Concrete"
-    assert priced[1]["rate_source"] == "fallback (category median)"
+    # Fallback tiers are unit-commensurable since F10: the Concrete category
+    # holds only m/m2/m3/t rates, so a per-number sundry line skips the
+    # category tier (a per-m3 median has the wrong dimensions for a count)
+    # and prices from the asset-wide count-class median instead.
+    assert priced[1]["rate_source"] == "weak (asset median)"
     assert priced[1]["rate"] > 0
 
     assert summary["exact"] == 1

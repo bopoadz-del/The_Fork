@@ -57,7 +57,8 @@ def generate_cost_boq(
     det["B3"] = meta.get("project", "")
     hdr = 5
     for j, h in enumerate(
-        ["Item No", "Description", "Unit", "Quantity", f"Rate ({ccy})", f"Amount ({ccy})"],
+        ["Item No", "Description", "Unit", "Quantity", f"Rate ({ccy})",
+         f"Amount ({ccy})", "Rate Basis"],
         start=2,
     ):
         c = det.cell(row=hdr, column=j, value=h)
@@ -76,6 +77,21 @@ def generate_cost_boq(
             qc = det.cell(row=r, column=5, value=it.get("qty", 0)); qc.font = _INPUT
             rc = det.cell(row=r, column=6, value=it.get("rate", 0)); rc.font = _INPUT; rc.number_format = _MONEY
             ac = det.cell(row=r, column=7, value=f"=E{r}*F{r}"); ac.number_format = _MONEY  # LIVE
+            # Rate provenance -- which rates are backed by data and which are
+            # fallback guesses. A real MEP bill priced a 9,971 sump pump at a
+            # 250 asset-median because the card had no Mechanical rows, and
+            # the workbook gave the reader no way to tell that from a rebar
+            # median backed by n=45. Blank when the caller predates the field.
+            src = it.get("rate_source")
+            if src:
+                basis = str(src)
+                n = it.get("n")
+                if n:
+                    basis += f" n={n}"
+                bc = det.cell(row=r, column=8, value=basis)
+                low = basis.lower()
+                if "no rate" in low or "weak" in low or "fallback" in low:
+                    bc.font = Font(color="B45309", italic=True)  # amber: check me
             r += 1
         end = r - 1
         det.cell(row=r, column=2, value=f"Subtotal - {cat['name']}").font = _BOLD

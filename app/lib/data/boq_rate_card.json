@@ -1,7 +1,7 @@
 {
  "_meta": {
-  "source": "session 2026-07-01; incl medieval_modern GCC building rate book",
-  "cells": 100
+  "source": "session 2026-07-01; incl medieval_modern GCC building rate book; + 2012 dubai clinic fit-out BOQ (observed AED MEP lump sums)",
+  "cells": 102
  },
  "cards": {
   "Buildings/Towers": {
@@ -205,6 +205,22 @@
      "median": 3000.0,
      "p25": 2850.0,
      "p75": 3000.0
+    },
+    {
+     "cat": "Mechanical/HVAC (MEP)",
+     "unit": "ls",
+     "n": 2,
+     "median": 26525.0,
+     "p25": 15800.0,
+     "p75": 37250.0
+    },
+    {
+     "cat": "Fire Protection",
+     "unit": "ls",
+     "n": 1,
+     "median": 13200.0,
+     "p25": 13200.0,
+     "p75": 13200.0
     }
    ],
    "SAR": [
