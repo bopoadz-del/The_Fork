@@ -223,3 +223,19 @@ docs, and this file does not hide that:
 If any number here matters to your decision, ask for it to be re-run live —
 several of the worst figures (§1, §6) predate the current corpus and provider
 ladder, and the honest answer today is "measured then, not re-measured since."
+
+## Decisions recorded 2026-08-15 (operator-directed residual sweep)
+
+- **RAG_LAYERED stays OFF for the pilot, by design.** Operator decision
+  ("no per-project isolation at this period"): the pilot runs one corpus;
+  the layered system is merged, tested, and reserved for per-client
+  deployments.
+- **DWG files are out of scope without an ODA converter licence.** The
+  drawing reader covers PDF (text-layer, and text-free via bounded OCR) and
+  DXF natively; native .dwg parsing requires the ODA File Converter, whose
+  licensing requires a registration the platform does not bundle. Convert
+  to DXF/PDF upstream.
+- **Compute tier stays `standard` (2 GB) for now, measured.** Both
+  2026-08-15 OOMs were code defects, since bounded (pixel cap, page-size
+  table gate, geometry skip). Neon database usage is 43 MB of the 512 MB
+  free tier. Upgrade compute only when throughput measurably demands it.
