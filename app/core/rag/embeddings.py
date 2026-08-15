@@ -64,6 +64,12 @@ def get_embedding_identity(model_name: Optional[str] = None) -> dict:
     return get_embedder(model_name=model_name).identity
 
 
+# Upper bound on texts per backend call. 64 short passages keeps the
+# tokenizer + forward-pass peak far below instance memory while staying large
+# enough that throughput is unaffected. Overridable for benchmarks.
+ENCODE_SLICE = int(os.getenv("EMBED_ENCODE_SLICE", "64"))
+
+
 def embedder_is_loaded() -> bool:
     """True if the process-cached embedder is already warm-loaded.
 
@@ -219,13 +225,25 @@ class Embedder:
         raise RuntimeError(f"Unknown backend {self._backend}")
 
     def encode(self, texts: List[str]) -> np.ndarray:
-        """Return L2-normalized float32 vectors of shape (len(texts), dim)."""
+        """Return L2-normalized float32 vectors of shape (len(texts), dim).
+
+        Encodes in bounded slices of ENCODE_SLICE texts. Callers hand this
+        whole DOCUMENTS -- indexing a 203-page contract (~600 chunks in one
+        call) spiked a 2GB instance to 1.81GB and OOM-killed it mid-index,
+        taking the request (and, pre-disk, the uploaded file) with it. Peak
+        memory is now bounded by the slice size, not the document size.
+        """
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
         if self._fake:
             return np.array([_fake_embedding(t) for t in texts], dtype=np.float32)
-        arr = self._encode_raw(texts)
-        return _l2_normalize(arr)
+        if len(texts) <= ENCODE_SLICE:
+            return _l2_normalize(self._encode_raw(texts))
+        parts = [
+            self._encode_raw(texts[i:i + ENCODE_SLICE])
+            for i in range(0, len(texts), ENCODE_SLICE)
+        ]
+        return _l2_normalize(np.concatenate(parts, axis=0))
 
 
 def _l2_normalize(arr: np.ndarray) -> np.ndarray:
