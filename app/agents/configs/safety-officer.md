@@ -3,6 +3,8 @@ name: safety-officer
 description: HSE — safety audits, risk register, compliance checks, incident analysis.
 icon: 🦺
 model: kimi-k2.6
+hats:
+  - fork.hat.safety
 temperature: 0.2
 max_tokens: 2048
 allowed_blocks:

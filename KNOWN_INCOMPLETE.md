@@ -177,23 +177,31 @@ every tool they advertise is dispatchable (fenced by
 `app/agents/manifests/fork.*.json` declares a base agent plus five discipline
 hats — planning, commercial, contracts, procurement, QA/QC — each with an
 `allowed_actions` list. That system is flag-gated behind `FORK_HATS_ENABLED`,
-which is unset everywhere, and it is **not partially wired. It is not wired at
-all**:
+which is unset everywhere. **Update 2026-08-15: the kernels themselves are now
+wired at the PROMPT level** — a ``hats:`` frontmatter key binds each discipline
+agent to its manifest(s) (quantity-surveyor, safety-officer, contracts-manager,
+construction-pm; smart-orchestrator carries all seven), merging the hat's
+system_prompt_guidance into the agent's system prompt and validating formula
+bindings at load (``_apply_hat_kernels`` in runtime.py, fenced by
+tests/test_agent_hat_kernels.py). Two hats were added: quantities and safety.
+What remains NOT wired is the message-scored activation ADAPTER and the
+``allowed_actions`` dispatch surface:
 
 - `allowed_actions` is read only inside `app/agents/` itself — `activation.py`,
   `catalog.py`, `formulas.py`. `runtime.py` contains zero references to it, so
   no live agent turn consults a hat.
-- Of the 35 plain action names the six manifests declare, **3 are dispatchable**
+- Of the 35 plain action names the eight manifests declare, **3 are dispatchable**
   (`generate_wbs`, `construction_calc`, `cash_flow_forecast`). The other **32
   resolve to nothing** — no block, no container route key, no synthetic tool.
   Measured 2026-08-12 against `BLOCK_REGISTRY` + the container handlers table +
-  the names `_run_tool_call` handles.
+  the names `_run_tool_call` handles; re-verified 2026-08-15 after the
+  quantities and safety hats landed (their calculator actions dispatch through
+  `construction_calc`; block-level work uses the agents' live allowed_blocks).
 
-So turning the flag on today would not switch on five disciplines. It would
-give agents permission to call 32 actions that do not exist. That is why this
-is registered rather than implemented: writing those 32 actions is building a
-feature, not fixing a defect, and the audit's scope was to fix what fails a
-bar, not to rewrite.
+So turning the flag on today would not switch on the adapter's disciplines. It
+would give agents permission to call 32 actions that do not exist. That is why
+this part is registered rather than implemented: writing those 32 actions is
+building a feature, not fixing a defect.
 
 What the hats DO have is real: the formula bindings all resolve
 (`validate_manifest_bindings`, CI-guarded), and the manifests are schema-valid.
@@ -210,7 +218,8 @@ and fenced by `tests/test_no_implicit_relative_imports.py`.
 **What is needed to close this:** a decision on whether the hat system is the
 intended direction (it overlaps heavily with the live 14-agent system and the
 agent-picker), and if so, dispatch coverage for the 32 names. Not a code
-blocker — a product one.
+blocker — a product one. The prompt-level kernel binding (2026-08-15) is the
+first slice of that direction, shipped without the adapter.
 
 
 Not hollow functions, so `audit_stubs.py` cannot see these. They are here

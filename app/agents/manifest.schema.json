@@ -12,7 +12,7 @@
     "description": { "type": "string", "minLength": 1 },
     "kind": { "type": "string", "enum": ["base", "hat"] },
     "extends": { "type": "string", "description": "Base manifest id (required when kind=hat)" },
-    "discipline": { "type": "string", "enum": ["base", "planning", "commercial", "contracts", "qaqc", "procurement"] },
+    "discipline": { "type": "string", "enum": ["base", "planning", "commercial", "contracts", "qaqc", "procurement", "quantities", "safety"] },
     "system_prompt_guidance": { "type": "string", "minLength": 1 },
     "activation": {
       "type": "object",
