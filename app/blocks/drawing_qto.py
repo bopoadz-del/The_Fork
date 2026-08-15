@@ -30,6 +30,11 @@ _logger = logging.getLogger(__name__)
 # characters per drawing; plots render titles as curves and yield ~0.
 _OCR_TEXT_THRESHOLD = int(os.getenv("QTO_OCR_TEXT_THRESHOLD", "80"))
 
+# F26c: skip the vector-geometry pass on pages whose content stream exceeds
+# this (dense CAD plots: ~5 MB / ~110k objects per A1 page measured live;
+# normal floor plans are ~257 KB). Rooms and OCR still run on such pages.
+_GEOMETRY_MAX_CONTENT_BYTES = int(os.getenv("QTO_GEOMETRY_MAX_CONTENT_BYTES", "2000000"))
+
 
 # --- Discipline lookup ------------------------------------------------------
 # the client project (the client project) drawing-number discipline codes. Module-level
@@ -417,6 +422,7 @@ class DrawingQTOBlock(UniversalBlock):
         page_dims: list[dict] = []
         pages_ocr_attempted = 0
         pages_ocr_yielded = 0
+        pages_geometry_skipped = 0
 
         try:
             with open_plaintext(file_path) as plain_path:
@@ -461,6 +467,21 @@ class DrawingQTOBlock(UniversalBlock):
                         room.setdefault("source", "text_layer")
                         room["page"] = pi + 1
                         rooms.append(room)
+                    # F26c: geometry extraction is bounded by content-stream
+                    # size. A dense A1 CAD plot measured ~5 MB of stream and
+                    # ~110,000 drawing objects per page (vs ~257 KB / 4,631 on
+                    # a normal floor plan); get_drawings() materialises a dict
+                    # per object and is the same OOM class that dropped the
+                    # box twice on 2026-08-15. Rooms/OCR above still ran; only
+                    # the vector-geometry pass is skipped, and the skip is
+                    # REPORTED, never silent.
+                    try:
+                        content_bytes = len(page.read_contents() or b"")
+                    except Exception:
+                        content_bytes = 0
+                    if content_bytes > _GEOMETRY_MAX_CONTENT_BYTES:
+                        pages_geometry_skipped += 1
+                        continue
                     drawings = page.get_drawings() or []
                     for d in drawings:
                         # `items` is a list of path commands: ("l", p1, p2)
@@ -514,6 +535,7 @@ class DrawingQTOBlock(UniversalBlock):
             # stand even when the geometry has no usable scale.
             "rooms_count": len(rooms),
             "rooms": rooms[:200],
+            "pages_geometry_skipped": pages_geometry_skipped,
             "ocr_fallback": {
                 "enabled": ocr_fallback,
                 "pages_attempted": pages_ocr_attempted,
