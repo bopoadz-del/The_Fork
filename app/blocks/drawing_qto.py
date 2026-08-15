@@ -399,6 +399,7 @@ class DrawingQTOBlock(UniversalBlock):
 
         measurements: List[Dict] = []
         areas: List[Dict] = []
+        rooms: List[Dict] = []
         pages_inspected = 0
         page_dims: List[Dict] = []
 
@@ -413,6 +414,11 @@ class DrawingQTOBlock(UniversalBlock):
                         "width_pt": page.rect.width,
                         "height_pt": page.rect.height,
                     })
+                    # Room labels carry their own dimensions, which is the
+                    # only quantity a scale-less PDF can yield honestly.
+                    for room in self._extract_rooms(page.get_text() or ""):
+                        room["page"] = pi + 1
+                        rooms.append(room)
                     drawings = page.get_drawings() or []
                     for d in drawings:
                         # `items` is a list of path commands: ("l", p1, p2)
@@ -461,6 +467,13 @@ class DrawingQTOBlock(UniversalBlock):
             "measurements": measurements[:200],   # cap for response size
             "areas_count": len(areas),
             "areas": areas[:200],
+            # Text-layer take-off. Independent of pdf_scale_factor: these are
+            # the dimensions the drawing STATES, already in metres, so they
+            # stand even when the geometry has no usable scale.
+            "rooms_count": len(rooms),
+            "rooms": rooms[:200],
+            "net_room_area_m2": round(sum(r["area_m2"] for r in rooms), 2),
+            "room_perimeter_m": round(sum(r["perimeter_m"] for r in rooms), 2),
             "totals": {
                 "length_pt": round(total_length, 3),
                 "length_scaled": round(total_length * scale, 6),
@@ -475,6 +488,60 @@ class DrawingQTOBlock(UniversalBlock):
                 "use 0.000352778 * 100 = 0.0352778 pt → m)."
             ),
         }
+
+    # ====================================================================
+    # Room take-off from the drawing's TEXT layer
+    # ====================================================================
+    # Architectural plans label each room with its size -- "BEDROOM 1 4.00 X
+    # 3.60". Geometry extraction returns thousands of unscaled line segments
+    # and no areas, so before this the interior take-off (floor tiling,
+    # skirting, plaster, paint) had no quantity to stand on even though the
+    # drawing stated it outright.
+    #
+    # Metres to two decimals is what makes this safe to parse: product sizes
+    # are whole millimetres ("600x600mm" tiles, "900x2100mm" doors), so
+    # requiring a decimal point excludes them without a keyword blacklist.
+    _ROOM_RE = re.compile(
+        r"([A-Za-z][A-Za-z0-9 &/.\-]{1,30}?)\s*"
+        r"(\d{1,2}\.\d{2})\s*[Xx]\s*(\d{1,2}\.\d{2})"
+    )
+    # A room is at least a cupboard and at most a hall. Outside this band the
+    # match is a grid reference, a level, or a site dimension.
+    _ROOM_MIN_M = 0.6
+    _ROOM_MAX_M = 60.0
+
+    def _extract_rooms(self, text: str) -> List[Dict]:
+        """Rooms with area and perimeter, read from the drawing's text layer.
+
+        Area drives floor finishes; perimeter drives skirting and the wall
+        area for plaster and paint. Both are returned per room so an interior
+        bill can be built without re-deriving them.
+        """
+        rooms: List[Dict] = []
+        if not text:
+            return rooms
+        flat = " ".join(str(text).split())
+        for m in self._ROOM_RE.finditer(flat):
+            name = m.group(1).strip(" -.&/")
+            try:
+                w = float(m.group(2))
+                d = float(m.group(3))
+            except ValueError:
+                continue
+            if not (self._ROOM_MIN_M <= w <= self._ROOM_MAX_M):
+                continue
+            if not (self._ROOM_MIN_M <= d <= self._ROOM_MAX_M):
+                continue
+            if not name:
+                continue
+            rooms.append({
+                "name": name,
+                "width_m": round(w, 2),
+                "depth_m": round(d, 2),
+                "area_m2": round(w * d, 2),
+                "perimeter_m": round(2 * (w + d), 2),
+            })
+        return rooms
 
     # ====================================================================
     # V1.2 -- PyMuPDF (fitz) based text extraction for CAD drawings
