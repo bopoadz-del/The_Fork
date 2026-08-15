@@ -1541,14 +1541,25 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
             _add_numbers(content, all_numbers=True)
     # Simple arithmetic derivations of grounded figures also ground: a
     # variance/overrun answer legitimately computes the SUM or DIFFERENCE of
-    # two grounded totals (SAR 5.1M - SAR 4.2M = SAR 0.9M). Bounded to pairwise
-    # combinations of the (small) grounded set; the 0.5% tolerance in
-    # _cg_is_grounded keeps this from grounding an unrelated fabricated rate.
+    # two grounded totals (SAR 5.1M - SAR 4.2M = SAR 0.9M), and a bill line
+    # legitimately computes the PRODUCT of quantity and rate -- the extension
+    # qty x rate is the QS's most basic operation, and unit-rate back-outs
+    # (amount / qty) are its inverse. Live find 2026-08-15 (F25): "extend 100
+    # square metres at the operator-instructed 250 riyals" was refused because
+    # 25,000 traced to nothing -- the closure knew sums and differences but
+    # not products. Bounded to pairwise combinations of the (small) grounded
+    # set; the 0.5% tolerance in _cg_is_grounded keeps this from grounding an
+    # unrelated fabricated rate.
     base = list(grounded)
     for i in range(len(base)):
         for j in range(i, len(base)):
             grounded.add(round(base[i] + base[j], 4))
             grounded.add(round(abs(base[i] - base[j]), 4))
+            grounded.add(round(base[i] * base[j], 4))
+            if base[j]:
+                grounded.add(round(base[i] / base[j], 4))
+            if base[i]:
+                grounded.add(round(base[j] / base[i], 4))
     return grounded
 
 
