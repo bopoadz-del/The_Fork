@@ -85,6 +85,7 @@ jobs:
         run: >
           pytest tests/ -v --tb=short --timeout=120
           --cov=app --cov-report=term-missing --cov-report=xml
+          --cov-report=json:coverage.json
           --cov-fail-under=25
         env:
           ENV: testing
@@ -98,6 +99,22 @@ jobs:
           # (test_scenario_validation timed out this way on the virgin
           # profile of run 28755289990).
           RAG_EMBEDDING_MODEL: fake
+
+      - name: No undeclared dead functions
+        # Line coverage cannot answer "has this FUNCTION ever run": a module
+        # sits at 80% while a specific function has never executed once. The
+        # 2026-08-15 sweep found 15 such functions behind 76% coverage and
+        # 3500 passing tests. This maps coverage.json back to functions via the
+        # AST and fails on any zero-coverage function with no declared reason.
+        #
+        # Production-like profile ONLY. Under the virgin profile the
+        # construction container is not loaded, so every function in
+        # app/containers/construction reads as dead and the gate would fail on
+        # a build that is behaving correctly. The production-like profile is
+        # the one that mirrors the deployed configuration, so it is the one
+        # whose dead functions actually matter.
+        if: matrix.cerebrum_virgin == 'false'
+        run: python scripts/audit_dead_functions.py coverage.json
 
       - name: Diff coverage (per-PR gate on lines changed)
         # Runs only on pull_request events. Compares coverage.xml against
