@@ -97,7 +97,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-ara \
     tesseract-ocr-eng \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
+# nodejs+npm: app.blocks.mcp_consumer spawns external MCP servers via
+# `npx -y @modelcontextprotocol/server-<name>` (F35 -- without node in the
+# RUNTIME stage the external-mcp agent was a ghost; node:20-slim above is
+# only the frontend BUILD stage and never reaches this image).
 
 # ODA File Converter — required by app.blocks.drawing_qto for DWG → DXF.
 # Override at build time if the upstream version changes:

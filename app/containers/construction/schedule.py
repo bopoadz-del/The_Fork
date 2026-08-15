@@ -1747,7 +1747,18 @@ class ConstructionScheduleMixin:
             chain — without this, identical parallel paths tie and every
             activity has zero float (degenerate critical path).
         """
-        zone_labels = [f"Hall {chr(ord('A') + i)}" for i in range(26)]
+        # Zone labels run A..Z then AA, AB, ... (Excel-style): capped at 26
+        # zones, the smaller templates (building) topped out at ~844
+        # activities and could never satisfy the documented 1000 clamp.
+        def _zone_letter(i: int) -> str:
+            s = ""
+            i += 1
+            while i:
+                i, rem = divmod(i - 1, 26)
+                s = chr(ord("A") + rem) + s
+            return s
+
+        zone_labels = [f"Hall {_zone_letter(i)}" for i in range(80)]
         # Decide zone multiplier: start with 1 zone, then escalate until target hit.
         # We do this by simulating activity counts cheaply.
         def _count_for_zones(n_zones: int) -> int:
@@ -2021,7 +2032,9 @@ class ConstructionScheduleMixin:
             or self._detect_project_type_from_brief(brief)
         )
         if project_type not in self._WBS_TEMPLATES:
-            project_type = "data_center"
+            # F39: the unknown-type fallback was data_center -- generic
+            # briefs got hyperscale WBS items. Building is the generic base.
+            project_type = "building"
 
         start_date = p.get("start_date") or data.get("start_date")
         if not start_date:

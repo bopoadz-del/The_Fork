@@ -46,6 +46,23 @@ class FastTrackAnalyzerBlock(UniversalBlock):
             return {"status": "error", "error": "No activities provided"}
         if not reductions:
             return {"status": "error", "error": "No reductions provided"}
+        # A list (or any non-mapping) used to slip past the truthiness check
+        # and crash deep in compress_schedule with "unhashable type: 'dict'"
+        # -- state the contract instead of leaking an internals error.
+        if not isinstance(reductions, dict):
+            return {
+                "status": "error",
+                "error": (
+                    "reductions must be a mapping of activity id -> working "
+                    'days to remove, e.g. {"B": 4}'
+                ),
+            }
+        bad = {k: v for k, v in reductions.items() if not isinstance(v, (int, float)) or v < 0}
+        if bad:
+            return {
+                "status": "error",
+                "error": f"reductions values must be non-negative day counts; got {bad}",
+            }
 
         try:
             from app.lib.pm_computations import compress_schedule, compute_cpm

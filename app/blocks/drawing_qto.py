@@ -1439,20 +1439,39 @@ class DrawingQTOBlock(UniversalBlock):
                         fo.write(fh.read())
                 # Args: in_dir out_dir output_version output_format
                 #       (ACAD2018, DXF, recurse-flag, audit-flag)
-                subprocess.run(
+                proc = subprocess.run(
                     [tool, src_dir, dst_dir, "ACAD2018", "DXF", "0", "1"],
-                    timeout=60, check=False, capture_output=True,
+                    timeout=120, check=False, capture_output=True,
                     env=scrubbed_env(),  # audit §6.1
                 )
                 dxf_name = os.path.splitext(os.path.basename(file_path))[0] + ".dxf"
                 converted = os.path.join(dst_dir, dxf_name)
                 if not os.path.exists(converted):
+                    # Diagnose, don't guess: ODA writes a per-file .err report
+                    # on conversion failure, and its exit code / stderr say
+                    # why nothing appeared (a bare "produced no DXF" hid a
+                    # live failure behind an unfalsifiable message).
+                    produced = os.listdir(dst_dir)
+                    err_detail = ""
+                    for name in produced:
+                        if name.endswith(".err"):
+                            try:
+                                with open(os.path.join(dst_dir, name),
+                                          encoding="utf-8", errors="replace") as fe:
+                                    err_detail = fe.read(400).strip()
+                            except OSError:
+                                pass
+                            break
+                    stderr_tail = (proc.stderr or b"")[-300:].decode(
+                        "utf-8", errors="replace").strip()
                     return {
                         "status": "error",
                         "error": (
-                            "ODA File Converter ran but produced no DXF; the "
-                            "DWG may be corrupt or a future-version export "
-                            "the bundled CLI doesn't yet support."
+                            "ODA File Converter produced no DXF "
+                            f"(exit code {proc.returncode})."
+                            + (f" Converter report: {err_detail}" if err_detail else "")
+                            + (f" stderr: {stderr_tail}" if stderr_tail else "")
+                            + (f" Output dir contents: {produced}" if produced and not err_detail else "")
                         ),
                     }
                 # Move into a path that survives the temp-dir teardown.

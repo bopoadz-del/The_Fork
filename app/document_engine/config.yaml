@@ -20,9 +20,14 @@ document_engine:
       - "(?:operational|RFS|completion|substantial completion)\\s+(?:by|before|no later than)\\s+(?P<month>\\w+)\\s+(?P<year>\\d{4})"
       - "EOY\\s+(?P<year>\\d{4})"
       - "(?P<month>\\w+)\\s+(?P<year>\\d{4})\\s+(?:target|milestone|RFS)"
+      # Duration-shaped targets -- "completion within 14 months" is the
+      # standard contract phrasing and matched NOTHING before (F37).
+      - "(?:completion|complete|handover|hand-over|duration)\\s+(?:within|in|of)\\s+(?P<qty>\\d+)\\s*(?P<unit>months?|weeks?|days?)"
     equipment_lead_time:
       - "(?P<equipment>generator|chiller|switchgear|transformer|UPS|CRAH)\\w*\\s+.*?(?P<days>\\d+)\\s*days?"
-      - "(?P<equipment>generator|chiller|switchgear|transformer|UPS|CRAH)\\w*\\s+.*?(?P<days>\\d+)\\s*weeks?"
+      # weeks capture in its OWN group -- it was captured as <days>, so
+      # "lead time is 16 weeks" recorded 16 DAYS (F37).
+      - "(?P<equipment>generator|chiller|switchgear|transformer|UPS|CRAH)\\w*\\s+.*?(?P<weeks>\\d+)\\s*weeks?"
     risk:
       - "\\b(winter|supply chain|Indigenous|TFO|blast radius|load.shed|permit delay|weather|labour shortage)\\b"
 

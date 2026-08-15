@@ -5,6 +5,9 @@ icon: 🎓
 model: kimi-k2.6
 temperature: 0.2
 max_tokens: 1024
+# F34: corrections arrive IN the user's message ("the actual invoice was 480
+# SAR/m3") -- strict corpus-grounding would forbid recording them.
+user_data_authoritative: true
 allowed_blocks:
   - learning_engine
   - recommendation_template

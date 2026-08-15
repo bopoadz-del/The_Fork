@@ -126,6 +126,10 @@ async def list_agents(auth: dict = Depends(require_user)):
                 "model": a.model,
                 "tools": a.allowed_blocks,
                 "tool_count": len(a.allowed_blocks),
+                # F35: an agent whose functional blocks all failed to load is
+                # surfaced as unavailable instead of listing as a ghost.
+                "available": a.unavailable_reason() is None,
+                "unavailable_reason": a.unavailable_reason(),
             }
             for a in AGENT_REGISTRY.values()
         ],
@@ -154,6 +158,9 @@ async def agent_chat(name: str, req: AgentChatRequest, auth: dict = Depends(requ
     agent = get_agent(name)
     if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
+    _reason = agent.unavailable_reason()
+    if _reason:
+        raise HTTPException(503, f"Agent '{name}' is unavailable: {_reason}")
 
     # Authoritative ownership check: a ws-{pid} conversation_id binds to a
     # project; the caller must own it. This runs BEFORE the agent so an attacker
@@ -239,6 +246,9 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
     agent = get_agent(name)
     if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
+    _reason = agent.unavailable_reason()
+    if _reason:
+        raise HTTPException(503, f"Agent '{name}' is unavailable: {_reason}")
     try:
         body = await request.json()
     except Exception:

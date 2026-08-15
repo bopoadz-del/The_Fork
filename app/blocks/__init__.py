@@ -34,6 +34,18 @@ _GENERIC_BLOCK_SPECS: List[Tuple[str, str, str]] = [
     ("orchestrator",     "app.blocks.orchestrator",    "OrchestratorBlock"),
     ("validation_pipeline", "app.blocks.validation_pipeline", "ValidationPipelineBlock"),
     ("async_processor",  "app.blocks.async_processor", "AsyncProcessorBlock"),
+    # F35: every block an agent config references must LOAD on every
+    # deployment -- gated behind CEREBRUM_VIRGIN=false they left shipped
+    # agents listed but silently toolless (external-mcp had no mcp_consumer;
+    # document-ingestion lost its three drive connectors; self-coding lost
+    # its sandbox pre-flight). Blocks needing outbound access still refuse
+    # under the on-prem (air-gap) profile at call time; drive connectors
+    # without credentials error loudly naming the missing config.
+    ("mcp_consumer",     "app.blocks.mcp_consumer",    "MCPConsumerBlock"),
+    ("local_drive",      "app.blocks.local_drive",     "LocalDriveBlock"),
+    ("google_drive",     "app.blocks.google_drive",    "GoogleDriveBlock"),
+    ("onedrive",         "app.blocks.onedrive",        "OneDriveBlock"),
+    ("sandbox",          "app.blocks.sandbox",         "SandboxBlock"),
 ]
 
 # Extended platform blocks — loaded when CEREBRUM_VIRGIN=false (legacy production).
@@ -42,13 +54,8 @@ _EXTENDED_PLATFORM_SPECS: List[Tuple[str, str, str]] = [
     ("pdf_v2",              "app.blocks.pdf_v2",               "PDFBlockV2"),
     ("ocr_v2",              "app.blocks.ocr_v2",               "OCRBlockV2"),
     ("llm_enhancer",        "app.blocks.llm_enhancer",         "LLMEnhancerBlock"),
-    ("local_drive",         "app.blocks.local_drive",          "LocalDriveBlock"),
-    ("google_drive",        "app.blocks.google_drive",         "GoogleDriveBlock"),
-    ("onedrive",            "app.blocks.onedrive",             "OneDriveBlock"),
     ("android_drive",       "app.blocks.android_drive",        "AndroidDriveBlock"),
     ("mcp_adapter",         "app.blocks.mcp_adapter",          "MCPAdapterBlock"),
-    ("mcp_consumer",        "app.blocks.mcp_consumer",         "MCPConsumerBlock"),
-    ("sandbox",             "app.blocks.sandbox",              "SandboxBlock"),
     ("webhook",             "app.blocks.webhook",              "WebhookBlock"),
 ]
 
