@@ -250,17 +250,39 @@ def _ocr_pdf_page(page) -> str:
                 )
 
 
-def _pdf_tables_enabled(file_path: str) -> bool:
+def _pdf_tables_enabled(file_path: str, readable_path: str | None = None) -> bool:
     """Whether to run pdfplumber table extraction on this PDF.
 
     pdfplumber loads the whole PDF into memory, which is the OOM hazard on the
     2 GB box for large scans. Skip it above ``PDF_TABLES_MAX_MB`` — per-page OCR
     still captures the text, and image-only scans have no extractable tables
     anyway. Digital table BOQs (small files) keep the table extraction.
+
+    F26b (live OOM 2026-08-15, the SECOND one): file size is not the only
+    proxy for cost. A 5 MB vector CAD plot carried ~110,000 drawing objects
+    PER A1 PAGE; pdfplumber materialises a Python object for every path, and
+    the sync reindex took the box down again after the pixmap bound shipped.
+    Sheets larger than ``PDF_TABLES_MAX_PAGE_PT`` on their long side (default
+    1250 pt ≈ just over A3) are drawings, not table BOQs — table extraction
+    is skipped for them outright.
     """
     try:
         max_mb = float(os.getenv("PDF_TABLES_MAX_MB", "25"))
-        return (os.path.getsize(file_path) / (1024 * 1024)) <= max_mb
+        if (os.path.getsize(file_path) / (1024 * 1024)) > max_mb:
+            return False
+        max_page_pt = float(os.getenv("PDF_TABLES_MAX_PAGE_PT", "1250"))
+        probe = readable_path or file_path
+        try:
+            import fitz
+            with fitz.open(probe) as _doc:
+                for _page in _doc:
+                    if max(_page.rect.width, _page.rect.height) > max_page_pt:
+                        return False
+        except Exception:
+            # Unreadable via fitz here — let the main extractor decide; the
+            # size gate above still holds.
+            pass
+        return True
     except Exception:
         return False
 
@@ -310,7 +332,7 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
             plumber = None
             # Skip pdfplumber on large scans — it loads the whole PDF and is
             # the OOM hazard; per-page OCR still captures the text.
-            if _pdf_tables_enabled(file_path):
+            if _pdf_tables_enabled(file_path, readable_path):
                 try:
                     import pdfplumber
                     plumber = pdfplumber.open(readable_path)
