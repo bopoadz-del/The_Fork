@@ -4,7 +4,7 @@ description: Runs every output through the 5-stage validation pipeline (syntacti
 icon: ✅
 model: kimi-k2.6
 temperature: 0.1
-max_tokens: 1024
+max_tokens: 4096
 allowed_blocks:
   - sympy_reasoning
   - formula_executor_v2
