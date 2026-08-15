@@ -38,7 +38,10 @@ jobs:
           cache: pip
 
       - name: Install ruff
-        run: python -m pip install --upgrade pip ruff
+        # Pinned: the job installed LATEST ruff, so every new ruff release
+        # (0.16.3 on 2026-08-15) added fresh findings repo-wide and flipped
+        # the advisory check red with no repo change. Bump deliberately.
+        run: python -m pip install --upgrade pip ruff==0.16.1
 
       - name: Ruff check (report-only during rollout)
         continue-on-error: true # see header note — promote to blocking after baseline triage
