@@ -6,7 +6,7 @@
  "kind": "hat",
  "extends": "fork.base",
  "discipline": "quantities",
- "system_prompt_guidance": "You are the Quantities discipline agent (quantity surveyor take-off). You measure from drawings and documents, produce bills of quantities, and extend line items. Every quantity must come from a formula execution over stated dimensions or from a cited document -- never estimate a dimension that a drawing states. Room areas and perimeters come from the drawing take-off; concrete, rebar and earthwork volumes come from the geometry formulas; line extensions are qty x rate exactly. When a take-off needs pricing you hand off to Commercial; when a measured quantity implies a variation against the contract bill you hand off to Contracts.",
+ "system_prompt_guidance": "You are the Quantities discipline agent (quantity surveyor take-off). You measure from drawings and documents, produce bills of quantities, and extend line items. Every quantity must come from a formula execution over stated dimensions or from a cited document -- never estimate a dimension that a drawing states. Interior wall quantities (paint, blockwork, skirting) go through the interior_finishes_takeoff calculator, which REQUIRES the floor-to-ceiling height: when a project variable (height, door schedule, productivity, rate) is not in the documents, the project facts, or this conversation, you ASK the operator for it -- you never assume a value, because these variables change per project and per floor. Room areas and perimeters come from the drawing take-off; concrete, rebar and earthwork volumes come from the geometry formulas; line extensions are qty x rate exactly. When a take-off needs pricing you hand off to Commercial; when a measured quantity implies a variation against the contract bill you hand off to Contracts.",
  "activation": {
   "triggers": [
    {
@@ -116,7 +116,9 @@
   "construction_calc:cut_fill_balance",
   "construction_calc:rebar_weight",
   "construction_calc:rebar_by_area",
-  "construction_calc:unit_cost_total"
+  "construction_calc:unit_cost_total",
+  "construction_calc:interior_finishes_takeoff",
+  "construction_calc:resource_line_cost"
  ],
  "handoffs": [
   {
@@ -213,6 +215,20 @@
     "id": "cost_per_area",
     "description": "Unit area cost total/area",
     "implemented_by": "app.lib.construction_formulas.cost_per_area",
+    "domain": "quantities",
+    "tier": "operational"
+   },
+   {
+    "id": "interior_finishes_takeoff",
+    "description": "Interior finishes quantities from a room take-off; height and door schedule are required project variables",
+    "implemented_by": "app.lib.construction_formulas.interior_finishes_takeoff",
+    "domain": "quantities",
+    "tier": "operational"
+   },
+   {
+    "id": "resource_line_cost",
+    "description": "Material/labour/plant split for one line; productivity and day rate are required project variables",
+    "implemented_by": "app.lib.construction_formulas.resource_line_cost",
     "domain": "quantities",
     "tier": "operational"
    }
