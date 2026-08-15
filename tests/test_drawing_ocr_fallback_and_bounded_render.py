@@ -118,3 +118,48 @@ async def test_ocr_noise_does_not_become_rooms(tmp_path, monkeypatch):
     assert res["rooms_count"] == 0
     assert res["ocr_fallback"]["pages_attempted"] == 1
     assert res["ocr_fallback"]["pages_yielded"] == 0
+
+
+# -- F26b/F26c: the SECOND live OOM, same afternoon ------------------------
+# The pixmap bound shipped and the box died again: pdfplumber and
+# get_drawings() materialise per-object Python structures, and a dense A1
+# CAD plot measured ~110,000 drawing objects / ~5 MB content stream PER
+# PAGE (a normal floor plan: 4,631 objects / 257 KB). Both passes are now
+# bounded by cheap pre-checks, and every skip is reported.
+
+def test_table_extraction_refuses_oversize_sheets(tmp_path):
+    """A1 sheets are drawings, not table BOQs -- pdfplumber never opens."""
+    import fitz
+
+    from app.core.doc_index import _pdf_tables_enabled
+    doc = fitz.open()
+    doc.new_page(width=2384, height=1684)  # the exact killer page size
+    p = str(tmp_path / "a1.pdf")
+    doc.save(p)
+    assert _pdf_tables_enabled(p) is False
+
+
+def test_table_extraction_still_runs_on_normal_pages(tmp_path):
+    import fitz
+
+    from app.core.doc_index import _pdf_tables_enabled
+    doc = fitz.open()
+    doc.new_page(width=595, height=842)  # A4
+    p = str(tmp_path / "a4.pdf")
+    doc.save(p)
+    assert _pdf_tables_enabled(p) is True
+
+
+@pytest.mark.asyncio
+async def test_dense_pages_skip_geometry_but_report_it(tmp_path, monkeypatch):
+    """Content stream over the cap: the vector pass is skipped and COUNTED,
+    rooms/OCR still run, and the turn succeeds fast instead of ballooning."""
+    import app.blocks.drawing_qto as dq
+    import app.core.doc_index as di
+    monkeypatch.setattr(dq, "_GEOMETRY_MAX_CONTENT_BYTES", 10)  # everything is dense
+    monkeypatch.setattr(di, "_ocr_pdf_page", lambda page: "SUITE 5.10 X 4.30")
+    res = await DrawingQTOBlock().process({"file_path": _text_free_pdf(tmp_path)}, {})
+    assert res["status"] == "success"
+    assert res["pages_geometry_skipped"] == 1
+    assert res["measurements_count"] == 0 and res["areas_count"] == 0
+    assert res["rooms_count"] == 1  # OCR leg unaffected by the geometry skip
