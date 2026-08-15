@@ -93,6 +93,18 @@ def _is_capability_request(text: str) -> bool:
     t = " ".join((text or "").lower().split())
     if not t:
         return False
+    # An INSTRUCTION that prohibits or constrains tool use is work, not a
+    # question about the agent. Live find 2026-08-15 (F22): "do not run any
+    # schedule, workbook, or generator tool -- write the document text"
+    # contained "you"/"tool" and short-circuited a costing turn into the
+    # agent's tool roster. Prohibition phrasing wins over the co-occurrence
+    # heuristic below.
+    if re.search(
+        r"\b(?:do\s+not|don'?t|never|without|no)\s+"
+        r"(?:run|use|call|invoke)?\s*(?:any\s+)?(?:\w+[ ,]+){0,4}tool",
+        t,
+    ) or re.search(r"\brun\s+no\s+tool", t):
+        return False
     if any(p in t for p in _CAPABILITY_META_PHRASES):
         return True
     # Generic: self-reference ("you"/"your") + a capability keyword, unless the
