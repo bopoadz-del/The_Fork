@@ -57,8 +57,8 @@ CATS = [
     ("Earthworks/Excavation", r"excavat|earthwork|backfill|\bfill\b|grading|clearing|disposal|dewater|trench"),
     ("Demolition", r"demolit|dismantl|\bbreak|removal|salvage|strip"),
     ("Piling/Foundations", r"pil(e|ing)|bored|caisson|footing|foundation"),
-    ("Concrete", r"concrete|\brcc\b|blinding|screed|\bslab|grade \d|c\d{2}\b|pour"),
-    ("Reinforcement", r"reinforc|rebar|steel bar|\bmesh|bending"),
+    ("Concrete", r"concrete(?!\s*block)|\brcc\b|blinding|screed|\bslab|grade \d|c\d{2}\b|pour"),
+    ("Reinforcement", r"reinforc(?!ed\s+concrete)|rebar|steel bar|\bmesh|bending"),
     ("Formwork", r"formwork|shutter|falsework"),
     ("Structural Steel", r"structural steel|steelwork|\bfabricat|purlin|truss|bracing"),
     ("Masonry/Blockwork", r"block|brick|masonry|thermal ?stone"),
@@ -87,13 +87,32 @@ def norm_unit(u: Any) -> str:
     return m.get(u, u) or "?"
 
 
+_CATS_RX = [(name, re.compile(pat)) for name, pat in CATS]
+
+
 def categorize(desc: Any) -> str:
-    """Classify a line-item description into one of the ~19 work categories."""
+    """Classify a line-item description into one of the ~19 work categories.
+
+    The category whose pattern matches EARLIEST wins, not the first one in list
+    order. A BOQ line names its work first and its substrate second -- "plaster
+    render to blockwork walls", "waterproofing membrane to wet area floors" --
+    so first-in-list matching let a trailing substrate keyword decide the trade
+    and price the line as the wrong one. Measured 2026-08-15: plaster priced as
+    blockwork (88/m2) and waterproofing priced as finishes (38/m2).
+
+    List order remains the tie-break, so two categories matching at the same
+    offset resolve exactly as they did before.
+    """
     d = str(desc).lower()
-    for name, pat in CATS:
-        if re.search(pat, d):
-            return name
-    return "Other/Uncategorized"
+    best: Optional[Tuple[Tuple[int, int], str]] = None
+    for idx, (name, rx) in enumerate(_CATS_RX):
+        m = rx.search(d)
+        if m is None:
+            continue
+        key = (m.start(), idx)
+        if best is None or key < best[0]:
+            best = (key, name)
+    return best[1] if best else "Other/Uncategorized"
 
 
 def _num(x: Any) -> Optional[float]:
