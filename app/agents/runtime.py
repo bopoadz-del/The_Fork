@@ -18,16 +18,19 @@ import logging
 import os
 import re
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import (
+    Any,
+)
 
 import httpx
 
 from app.blocks import BLOCK_REGISTRY
 from app.core.rag.inject import rag_inject
 from app.core.rag.retriever import project_is_rag_ready
-from app.dependencies import block_instances, _create_block_instance
+from app.dependencies import _create_block_instance, block_instances
 
 _LOG = logging.getLogger(__name__)
 
@@ -110,7 +113,7 @@ def _is_capability_request(text: str) -> bool:
     return False
 
 
-def _build_capability_answer(agent: "Agent", project_id: Optional[str]) -> str:
+def _build_capability_answer(agent: Agent, project_id: str | None) -> str:
     """Deterministic answer describing the agent's REAL tools + the project's
     REAL documents. No LLM, no RAG — cannot fabricate or answer the wrong thing."""
     lines = [f"I'm the **{agent.name}** agent."]
@@ -383,7 +386,7 @@ def _empty_router_verdict(tool_result: Any) -> bool:
     return False
 
 
-def _tool_result_content(payload: Dict[str, Any]) -> str:
+def _tool_result_content(payload: dict[str, Any]) -> str:
     """Serialize a tool result for the `tool` message, truncating SAFELY.
 
     NEVER slice serialized JSON. `json.dumps` emits ASCII with \\uXXXX
@@ -437,7 +440,7 @@ def _tool_result_content(payload: Dict[str, Any]) -> str:
     return out
 
 
-def _persist_failed_turn(conversation_id: Optional[str]) -> None:
+def _persist_failed_turn(conversation_id: str | None) -> None:
     """Record that a turn died, so reloaded history is not silently missing it.
 
     Never raises: a bookkeeping failure must not mask the original error the
@@ -465,8 +468,8 @@ _MISSING_REFERENCE_ANSWER = (
 
 
 def _should_short_circuit_rag_miss(
-    audit_rec: Optional[Dict[str, Any]],
-    rag_sys_msg: Optional[Dict[str, str]],
+    audit_rec: dict[str, Any] | None,
+    rag_sys_msg: dict[str, str] | None,
 ) -> bool:
     """True when retrieval has definitively missed an exact reference.
 
@@ -497,8 +500,8 @@ def _should_short_circuit_rag_miss(
 
 
 def _build_missing_reference_answer(
-    project_id: Optional[str],
-    user_id: Optional[str],
+    project_id: str | None,
+    user_id: str | None,
 ) -> str:
     """Return a user-facing not-found answer, optionally naming the project."""
     project_name = ""
@@ -886,7 +889,8 @@ def _fetch_document_content(
     text = ""
     source = "chunks"
     try:
-        from app.core.rag import retriever as _rag, vector_store as _vs
+        from app.core.rag import retriever as _rag
+        from app.core.rag import vector_store as _vs
         if _rag.available():
             chunks = _vs.get_store().doc_chunk_texts(project_id, [doc["id"]])
             text = "\n\n".join(chunks.get(doc["id"], []) or [])
@@ -913,7 +917,7 @@ def _fetch_document_content(
     return {"text": text, "truncated": truncated, "source": source}, doc, None
 
 
-def _build_attached_documents_note(attached: List[Dict[str, Any]]) -> str:
+def _build_attached_documents_note(attached: list[dict[str, Any]]) -> str:
     """System note pinning this turn's attached document(s) for the model.
 
     ``attached`` items carry ``id`` / ``original_name`` (and optionally
@@ -977,7 +981,7 @@ _HALLUC_TABLE_RE = re.compile(
 )
 
 
-def _scrub_history(turns: List[Dict[str, str]]) -> List[Dict[str, str]]:
+def _scrub_history(turns: list[dict[str, str]]) -> list[dict[str, str]]:
     """Replace assistant turns that contain a WBS/BOQ-shaped table with a
     placeholder so the model can't pattern-match to a prior (often
     hallucinated) table when it should be calling the tool.
@@ -986,7 +990,7 @@ def _scrub_history(turns: List[Dict[str, str]]) -> List[Dict[str, str]]:
     Legitimate operator-pasted tables in user turns are NOT touched.
     Returns a new list; the caller's history is left intact.
     """
-    out: List[Dict[str, str]] = []
+    out: list[dict[str, str]] = []
     for t in turns:
         if t.get("role") == "assistant" and _HALLUC_TABLE_RE.search(t.get("content") or ""):
             out.append({**t, "content": "[Previous schedule/BOQ output omitted — call the tool to re-derive.]"})
@@ -1017,7 +1021,7 @@ _DELIVERABLE_PHRASES = (
 )
 
 
-def _user_intent_requires_tool(messages: List[Dict[str, Any]]) -> bool:
+def _user_intent_requires_tool(messages: list[dict[str, Any]]) -> bool:
     """True iff the latest turn is the operator's first request AND it
     names a deliverable that should be produced by a tool call.
 
@@ -1099,13 +1103,13 @@ _INTENT_TOOL_MAP = (
 #
 # Kill switch: FORCE_CALC_ON_DIMENSIONS=0.
 _CALC_VERB_RE = re.compile(
-    r"\b(calculate|compute|work out|how many|how much)\b", re.I
+    r"\b(calculate|compute|work out|how many|how much)\b", re.IGNORECASE
 )
 # A number attached to a unit: 25m, 1.2 m, 6m3, 900,000 kg, 45 days
 _DIMENSION_RE = re.compile(
     r"\b\d[\d,\.]*\s*"
     r"(mm|cm|m|km|m2|m3|sqm|cum|kg|tonne|tons?|t|kn|mpa|days?|weeks?|months?|%)\b",
-    re.I,
+    re.IGNORECASE,
 )
 _MIN_DIMENSIONS_FOR_CALC = 2
 
@@ -1121,7 +1125,7 @@ def _looks_like_self_contained_calculation(text: str) -> bool:
     return len(_DIMENSION_RE.findall(text)) >= _MIN_DIMENSIONS_FOR_CALC
 
 
-def _forced_specific_tool(messages: List[Dict[str, Any]], available: set) -> Optional[str]:
+def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str | None:
     """Return a tool name to force via named tool_choice for this turn, or None.
     Gated to the user-tail (iter 0) and to tools actually available, mirroring
     ``_user_intent_requires_tool``."""
@@ -1402,11 +1406,11 @@ _CG_COST_QUERY_RE = re.compile(
 )
 
 
-def _is_cost_shaped_query(user_message: Optional[str]) -> bool:
+def _is_cost_shaped_query(user_message: str | None) -> bool:
     return bool(user_message and _CG_COST_QUERY_RE.search(user_message))
 
 
-def _construction_calc_tool_schema() -> Dict[str, Any]:
+def _construction_calc_tool_schema() -> dict[str, Any]:
     """Schema for the `construction_calc` deterministic-calculator tool. The
     calculation enum is built from the live registry so it never drifts from the
     library. For cost build-ups the model is told to pass real rates from RAG;
@@ -1448,14 +1452,14 @@ def _construction_calc_tool_schema() -> Dict[str, Any]:
     }
 
 
-def _cg_to_number(s: Any) -> Optional[float]:
+def _cg_to_number(s: Any) -> float | None:
     try:
         return round(float(str(s).replace(",", "").strip()), 2)
     except (ValueError, TypeError):
         return None
 
 
-def _cg_money_values(text: str) -> List[Tuple[str, float]]:
+def _cg_money_values(text: str) -> list[tuple[str, float]]:
     """Every money/rate-shaped figure in ``text`` as (fragment, value).
 
     Folds a trailing magnitude word (million/billion/k) for CURRENCY money forms
@@ -1463,7 +1467,7 @@ def _cg_money_values(text: str) -> List[Tuple[str, float]]:
     of being false-refused. Group 3 is the rate-unit form ("1.25 /m3"), which
     never carries a magnitude word, so it is left as-is."""
     text = text or ""
-    out: List[Tuple[str, float]] = []
+    out: list[tuple[str, float]] = []
     for m in _CG_MONEY_RE.finditer(text):
         raw = next((g for g in m.groups() if g), None)
         v = _cg_to_number(raw)
@@ -1479,7 +1483,7 @@ def _cg_money_values(text: str) -> List[Tuple[str, float]]:
     return out
 
 
-def _cg_grounded_numbers(rag_context: str, messages: List[Dict[str, Any]]) -> set:
+def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> set:
     """Numbers a cost claim may be grounded against:
 
     * RAG context, classified PER CHUNK — in a rate-semantic chunk every number
@@ -1543,8 +1547,8 @@ def _cg_is_grounded(value: float, grounded: set) -> bool:
 
 def _cost_grounding_gate(
     text: str,
-    rag_sys_msg: Optional[Dict[str, Any]],
-    messages: List[Dict[str, Any]],
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]],
 ) -> str:
     """Refuse a cost/rate answer whose figures don't trace to a rate-semantic
     retrieved chunk or a computed tool result. Non-cost answers pass untouched.
@@ -1564,13 +1568,13 @@ def _cost_grounding_gate(
             [f for f, _ in figs],
         )
         return _CG_REFUSAL
-    except Exception:  # noqa: BLE001 — a gate must never break an answer
+    except Exception:
         logger.exception("cost_grounding_gate failed; passing answer through")
         return text
 
 
 def format_excerpts_as_rag_context(
-    excerpts: Optional[List[Dict[str, Any]]],
+    excerpts: list[dict[str, Any]] | None,
 ) -> str:
     """Render project-document excerpts into the SAME per-chunk marker form the
     agent path's ``format_chunks_as_system_message`` emits, so the cost-grounding
@@ -1585,7 +1589,7 @@ def format_excerpts_as_rag_context(
     Excerpt shape matches ``search_project_documents`` /
     ``_with_doc_search`` output (``snippet`` / ``filename`` / ``document_id`` /
     ``score``). Returns "" when there are no usable excerpts."""
-    blocks: List[str] = []
+    blocks: list[str] = []
     for i, e in enumerate(excerpts or []):
         if not isinstance(e, dict):
             continue
@@ -1603,8 +1607,8 @@ def gate_cost_answer(
     text: str,
     *,
     rag_context: str = "",
-    authoritative_texts: Optional[List[str]] = None,
-    user_message: Optional[str] = None,
+    authoritative_texts: list[str] | None = None,
+    user_message: str | None = None,
 ) -> str:
     """Run the tested cost-grounding gate over an answer produced by a NON-agent
     answer path (``/chat``, ``/v1/project/ask``) that doesn't itself build the
@@ -1625,7 +1629,7 @@ def gate_cost_answer(
         rag_sys_msg = (
             {"role": "system", "content": rag_context} if rag_context else None
         )
-        messages: List[Dict[str, Any]] = []
+        messages: list[dict[str, Any]] = []
         if user_message:
             messages.append({"role": "user", "content": user_message})
         for t in authoritative_texts or []:
@@ -1657,7 +1661,7 @@ def _standards_advisory(text: str) -> str:
         if not violations:
             return text
         seen: set = set()
-        lines: List[str] = []
+        lines: list[str] = []
         for v in violations:
             rid = v.get("rule_id")
             if rid in seen:
@@ -1672,7 +1676,7 @@ def _standards_advisory(text: str) -> str:
             "\n\n> **Standards note (advisory — flagging, not blocking):**\n"
             + "\n".join(lines)
         )
-    except Exception:  # noqa: BLE001 — advisory must never break an answer
+    except Exception:
         logger.exception("standards advisory failed; passing answer through")
         return text
 
@@ -1689,8 +1693,8 @@ _MASTER_CORPUS_FALLBACK_NOTE = (
 
 def _postprocess_answer(
     text: str,
-    rag_sys_msg: Optional[Dict[str, Any]],
-    messages: List[Dict[str, Any]],
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]],
     fallback_used: bool = False,
 ) -> str:
     """Final-answer post-processing: cost-grounding gate (may refuse an
@@ -1715,7 +1719,7 @@ def _postprocess_answer(
     return text
 
 
-def _parse_source_tail(tail: str) -> Tuple[str, str]:
+def _parse_source_tail(tail: str) -> tuple[str, str]:
     """Split a source mention into filename and optional chunk-number blob.
 
     Examples:
@@ -1741,7 +1745,7 @@ def _parse_source_tail(tail: str) -> Tuple[str, str]:
     return _strip_source_quotes(tail), ""
 
 
-def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
+def _extract_cited_chunk_indexes(text: str) -> list[tuple[str, int]]:
     """Pull (filename, chunk_index) pairs from the agent's final text.
 
     Recognised patterns (case-insensitive):
@@ -1756,7 +1760,7 @@ def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
     """
     if not text:
         return []
-    out: List[Tuple[str, int]] = []
+    out: list[tuple[str, int]] = []
 
     for m in _CITATION_RE.finditer(text):
         fname, nums_blob = _parse_source_tail(m.group(1))
@@ -1801,9 +1805,9 @@ def _extract_cited_chunk_indexes(text: str) -> List[Tuple[str, int]]:
 
 
 def _build_sources_from_audit(
-    audit_rec: Dict[str, Any],
+    audit_rec: dict[str, Any],
     final_text: str = "",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Build the SSE end-event sources list.
 
     Behaviour:
@@ -1856,7 +1860,7 @@ def _build_sources_from_audit(
         "general_knowledge": "Knowledge base",
     }
 
-    def _format(chunk_meta: Dict[str, Any], doc_name: str) -> Dict[str, Any]:
+    def _format(chunk_meta: dict[str, Any], doc_name: str) -> dict[str, Any]:
         score = chunk_meta.get("score") or 0.0
         conf = "High" if score >= 0.75 else "Medium" if score >= 0.5 else "Low"
         layer = chunk_meta.get("layer") or "own"
@@ -1883,7 +1887,7 @@ def _build_sources_from_audit(
     # 1) Try to extract citations from the agent's text first.
     cites = _extract_cited_chunk_indexes(final_text)
     if cites:
-        matched: List[Dict[str, Any]] = []
+        matched: list[dict[str, Any]] = []
         seen: set = set()
         # Set of injected doc_ids for the doc-id-keyed citation branch.
         injected_doc_ids = {c.get("doc_id") for c in chunks}
@@ -1931,7 +1935,7 @@ def _build_sources_from_audit(
     #    document.
     if final_text:
         text_n = _normalise_filename(final_text)
-        mention_hits: List[Dict[str, Any]] = []
+        mention_hits: list[dict[str, Any]] = []
         seen_mentions: set = set()
         for c in sorted(chunks, key=lambda x: -(x.get("score") or 0)):
             doc_id = c.get("doc_id")
@@ -1955,7 +1959,7 @@ _BOQ_COST_EXPORT_EXTS = (".xlsx", ".csv")
 _BOQ_NAME_HINTS = ("boq", "bill of quantities", "priced", "tender")
 
 
-def _is_cost_boq_source(doc: Dict[str, Any]) -> bool:
+def _is_cost_boq_source(doc: dict[str, Any]) -> bool:
     """Cheap, metadata-only test for 'this cited doc can back a cost-BOQ
     export'. NEVER runs boq_processor — gating on name/type/extension keeps
     the SSE end path off the OOM-prone parse. The real parse happens on click,
@@ -1976,7 +1980,7 @@ _SPEC_NAME_HINTS = ("rfp", "request for proposal", "bod", "basis of design",
                     "employer requirement", "design brief")
 
 
-def _is_spec_or_rfp_source(doc: Dict[str, Any]) -> bool:
+def _is_spec_or_rfp_source(doc: dict[str, Any]) -> bool:
     """Metadata-only test for 'this cited doc is an RFP/BOD/spec that
     document_engine can extract equipment lead times + target milestones from',
     to drive a document-aware schedule offer. The extract runs on click,
@@ -1991,10 +1995,10 @@ def _is_spec_or_rfp_source(doc: Dict[str, Any]) -> bool:
 
 
 def _build_exports_from_audit(
-    audit_rec: Dict[str, Any],
+    audit_rec: dict[str, Any],
     final_text: str = "",
-    tool_calls: Optional[List[Dict[str, Any]]] = None,
-) -> List[Dict[str, Any]]:
+    tool_calls: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """SSE end-event `exports` list — data-backed download offers for the bubble.
 
     Each descriptor is something the platform can actually produce (not from
@@ -2016,7 +2020,7 @@ def _build_exports_from_audit(
     except Exception:
         _projects = None
 
-    exports: List[Dict[str, Any]] = []
+    exports: list[dict[str, Any]] = []
     sources = _build_sources_from_audit(audit_rec, final_text)
 
     # ── Cost BOQ offers (from cited documents) ──────────────────────────────
@@ -2045,7 +2049,7 @@ def _build_exports_from_audit(
     # extracted lead times (document_engine) rather than a generic template.
     # Only spec-type sources qualify, capped, and only digital formats — running
     # document_engine on a scanned BOQ is exactly the OOM path we avoid.
-    rfp_doc_ids: List[str] = []
+    rfp_doc_ids: list[str] = []
     if sources and _projects is not None:
         seen_rfp: set = set()
         for s in sources:
@@ -2069,7 +2073,7 @@ def _build_exports_from_audit(
         if not (isinstance(res, dict) and res.get("status") == "success"):
             continue
         total = res.get("activities_total") or res.get("actual_count") or 0
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "brief": res.get("brief") or "",
             "target_count": res.get("target_count") or 200,
             "currency": "SAR",
@@ -2140,7 +2144,7 @@ OLLAMA_DEFAULT_URL = "http://localhost:11434/v1/chat/completions"
 OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
 
 
-def _llm_config() -> Dict[str, Any]:
+def _llm_config() -> dict[str, Any]:
     """Pick the active LLM provider's URL + env-key + default model.
 
     Precedence:
@@ -2230,7 +2234,7 @@ def _llm_config() -> Dict[str, Any]:
     }
 
 
-def _llm_fallback_config(primary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _llm_fallback_config(primary: dict[str, Any]) -> dict[str, Any] | None:
     """Config for the fallback LLM call, or ``None`` when none is usable.
 
     Two fallback shapes, checked in order:
@@ -2284,7 +2288,7 @@ def _llm_fallback_config(primary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return cfg
 
 
-def _provider_temperature(cfg: Dict[str, Any], default: float) -> float:
+def _provider_temperature(cfg: dict[str, Any], default: float) -> float:
     """The temperature this provider will actually accept.
 
     Some providers pin temperature. Moonshot's K2 reasoning models 400 on any
@@ -2298,7 +2302,7 @@ def _provider_temperature(cfg: Dict[str, Any], default: float) -> float:
     return default if fixed is None else float(fixed)
 
 
-def _provider_max_tokens(cfg: Dict[str, Any], configured: int) -> int:
+def _provider_max_tokens(cfg: dict[str, Any], configured: int) -> int:
     """The max_tokens this provider needs to produce any content at all.
 
     Reasoning providers declare ``reasoning_min_tokens``: the shared budget is
@@ -2314,22 +2318,22 @@ def _provider_max_tokens(cfg: Dict[str, Any], configured: int) -> int:
     return max(int(configured), int(floor))
 
 
-def _is_native_ollama(cfg: Dict[str, Any]) -> bool:
+def _is_native_ollama(cfg: dict[str, Any]) -> bool:
     """True when the configured Ollama endpoint uses the native /api/chat
     protocol rather than the OpenAI-compatible /v1/chat/completions path."""
     return cfg.get("provider") == "ollama" and str(cfg.get("url", "")).endswith("/api/chat")
 
 
 def _sanitize_messages_for_ollama_native(
-    messages: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
+    messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Adapt OpenAI-shaped messages for Ollama's native /api/chat protocol.
 
     Native Ollama does not accept the ``tool`` role; tool responses must be
     sent as ``user`` messages. It also expects ``function.arguments`` inside
     assistant ``tool_calls`` to be a parsed dict, not a JSON string.
     """
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for m in messages:
         if not isinstance(m, dict):
             out.append(m)
@@ -2345,7 +2349,7 @@ def _sanitize_messages_for_ollama_native(
             cm = {"role": "assistant", "content": m.get("content", "")}
             tcs = m.get("tool_calls")
             if isinstance(tcs, list):
-                clean_tcs: List[Dict[str, Any]] = []
+                clean_tcs: list[dict[str, Any]] = []
                 for tc in tcs:
                     if not isinstance(tc, dict):
                         clean_tcs.append(tc)
@@ -2377,19 +2381,19 @@ def _sanitize_messages_for_ollama_native(
 
 def _native_ollama_payload(
     model: str,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     temperature: float,
     max_tokens: int,
-    tools: Optional[List[Dict[str, Any]]] = None,
+    tools: list[dict[str, Any]] | None = None,
     stream: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build an Ollama-native /api/chat payload from our OpenAI-shaped inputs.
 
     Ollama's native protocol expects ``options.temperature`` and
     ``options.num_predict`` (token limit), and ``tools`` in OpenAI format.
     ``tool_choice`` is not supported natively, so the caller omits it.
     """
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": stream,
@@ -2403,19 +2407,19 @@ def _native_ollama_payload(
     return payload
 
 
-def _ollama_message_to_openai(message: Dict[str, Any]) -> Dict[str, Any]:
+def _ollama_message_to_openai(message: dict[str, Any]) -> dict[str, Any]:
     """Convert an Ollama-native ``message`` dict into an OpenAI-style message.
 
     Native tool_calls carry ``function.arguments`` as a parsed dict; we
     serialise it back to JSON so the rest of the runtime stays unchanged.
     """
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "role": message.get("role", "assistant"),
         "content": message.get("content", ""),
     }
     tool_calls = message.get("tool_calls")
     if isinstance(tool_calls, list):
-        clean: List[Dict[str, Any]] = []
+        clean: list[dict[str, Any]] = []
         for i, tc in enumerate(tool_calls):
             fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
             name = fn.get("name") or ""
@@ -2458,11 +2462,11 @@ class _SynthStreamError(Exception):
 
 
 def _sanitize_messages_for_provider(
-    messages: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
+    messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Return a copy of ``messages`` with only OpenAI-standard keys per message
     (and per tool_call). Never mutates the input list."""
-    clean: List[Dict[str, Any]] = []
+    clean: list[dict[str, Any]] = []
     for m in messages:
         if not isinstance(m, dict):
             clean.append(m)
@@ -2656,14 +2660,17 @@ class Agent:
     name: str
     description: str
     system_prompt: str
-    allowed_blocks: List[str] = field(default_factory=list)
+    allowed_blocks: list[str] = field(default_factory=list)
     model: str = KIMI_DEFAULT_MODEL
     temperature: float = 0.3
     max_tokens: int = 2048
     icon: str = ""
     can_delegate: bool = False
+    # Discipline-hat kernels bound at load time (manifest ids); the guidance
+    # is already merged into system_prompt by _apply_hat_kernels.
+    hats: list[str] = field(default_factory=list)
 
-    def tool_definitions(self, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def tool_definitions(self, project_id: str | None = None) -> list[dict[str, Any]]:
         """Build DeepSeek-style tool definitions.
 
         Includes one tool per allowed block, plus synthetic tools:
@@ -3003,15 +3010,15 @@ class Agent:
     async def chat(
         self,
         user_message: str,
-        history: Optional[List[Dict[str, str]]] = None,
-        api_key: Optional[str] = None,
-        project_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
-        on_event: Optional[Callable[[str, Dict[str, Any]], Union[None, Awaitable[None]]]] = None,
-        user_id: Optional[str] = None,
+        history: list[dict[str, str]] | None = None,
+        api_key: str | None = None,
+        project_id: str | None = None,
+        conversation_id: str | None = None,
+        on_event: Callable[[str, dict[str, Any]], None | Awaitable[None]] | None = None,
+        user_id: str | None = None,
         _depth: int = 0,
-        _call_stack: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        _call_stack: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Single round-trip: returns {answer, tool_calls, history}.
 
         Optional new params (all default to today's behavior when omitted):
@@ -3032,7 +3039,7 @@ class Agent:
           because of an event handler.
         - ``_depth`` / ``_call_stack`` — internal, for inter-agent delegation.
         """
-        async def _emit(name: str, payload: Dict[str, Any]) -> None:
+        async def _emit(name: str, payload: dict[str, Any]) -> None:
             if on_event is None:
                 return
             try:
@@ -3156,7 +3163,7 @@ class Agent:
                 "sources": [],
             }
 
-        tool_calls_made: List[Dict[str, Any]] = []
+        tool_calls_made: list[dict[str, Any]] = []
         # Root fix for the tool-loop (mirrors chat_stream): cap explicit
         # search_project_documents calls, then stop offering the tool so the
         # model answers from injected context instead of grinding to the cap.
@@ -3342,16 +3349,16 @@ class Agent:
     async def chat_stream(
         self,
         user_message: str,
-        history: Optional[List[Dict[str, str]]] = None,
-        api_key: Optional[str] = None,
-        user_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
+        history: list[dict[str, str]] | None = None,
+        api_key: str | None = None,
+        user_id: str | None = None,
+        project_id: str | None = None,
+        conversation_id: str | None = None,
         rag_debug: bool = False,
-        attached_documents: Optional[List[Dict[str, Any]]] = None,
+        attached_documents: list[dict[str, Any]] | None = None,
         _depth: int = 0,
-        _call_stack: Optional[List[str]] = None,
-    ) -> AsyncIterator[Dict[str, Any]]:
+        _call_stack: list[str] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Generator: yields {type, ...} events. Types: start, tool_call, tool_result, token, end, error, heartbeat.
 
         Tool-calling is non-streamed (we collect the whole assistant turn before deciding),
@@ -3515,16 +3522,16 @@ class Agent:
     async def _chat_stream_impl(
         self,
         user_message: str,
-        history: Optional[List[Dict[str, str]]] = None,
-        api_key: Optional[str] = None,
-        user_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
+        history: list[dict[str, str]] | None = None,
+        api_key: str | None = None,
+        user_id: str | None = None,
+        project_id: str | None = None,
+        conversation_id: str | None = None,
         rag_debug: bool = False,
-        attached_documents: Optional[List[Dict[str, Any]]] = None,
+        attached_documents: list[dict[str, Any]] | None = None,
         _depth: int = 0,
-        _call_stack: Optional[List[str]] = None,
-    ) -> AsyncIterator[Dict[str, Any]]:
+        _call_stack: list[str] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Internal implementation. ``chat_stream`` wraps this with an emit
         guarantee so silent / crashing exits become structured error events."""
         cfg = _llm_config()
@@ -3634,7 +3641,7 @@ class Agent:
 
         # Tool results accumulated this turn — feeds the schedule download offer
         # (a generate_wbs call becomes a 'Schedule (Excel)' export descriptor).
-        stream_tool_results: List[Dict[str, Any]] = []
+        stream_tool_results: list[dict[str, Any]] = []
         # Root fix for the tool-loop: RAG context is injected pre-loop, yet the
         # model keeps re-calling search_project_documents when an exact value
         # isn't found — grinding to the iteration cap. Allow a few explicit
@@ -3686,7 +3693,7 @@ class Agent:
         # configured provider apart from a silent fallback (e.g. Kimi K2 vs an
         # Ollama fallback) per run. The model string alone is a sufficient
         # discriminator; None until the first successful call.
-        served_model: Optional[str] = None
+        served_model: str | None = None
         for iteration in range(MAX_TOOL_ITERATIONS):
             _LOG.info("chat_stream: iter=%d agent=%s force_synthesis=%s", iteration, self.name, force_synthesis)
             # ── True token streaming for the forced synthesis call ────────────
@@ -3699,7 +3706,7 @@ class Agent:
             if force_synthesis and _synth_stream_enabled:
                 streamed_any = False
                 fell_back = False
-                acc: List[str] = []
+                acc: list[str] = []
                 pending = ""
                 try:
                     async for _delta in self._stream_synthesis(
@@ -3984,10 +3991,10 @@ class Agent:
     def _build_messages(
         self,
         user_message: str,
-        history: List[Dict[str, str]],
-        project_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        msgs: List[Dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
+        history: list[dict[str, str]],
+        project_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        msgs: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
 
         # Project context — facts + document listing — as a second system message.
         if project_id:
@@ -4031,13 +4038,13 @@ class Agent:
 
     async def _call_llm(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         api_key: str,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         with_tools: bool = True,
-        user_id: Optional[str] = None,
-        exclude_tools: Optional[set] = None,
-    ) -> Dict[str, Any]:
+        user_id: str | None = None,
+        exclude_tools: set | None = None,
+    ) -> dict[str, Any]:
         cfg = _llm_config()
         # Soft daily cap: refuse the call when today's spend already meets
         # USAGE_DAILY_CAP_USD for this user. Only enforced for authenticated
@@ -4151,7 +4158,7 @@ class Agent:
                 return "required"
             return "auto"
 
-        last_error: Dict[str, Any] = {"status": "error", "error": "LLM call failed"}
+        last_error: dict[str, Any] = {"status": "error", "error": "LLM call failed"}
         for attempt_idx, (a_cfg, a_key, a_model) in enumerate(attempts):
             is_last = attempt_idx == len(attempts) - 1
             payload["model"] = a_model
@@ -4339,10 +4346,10 @@ class Agent:
 
     async def _stream_synthesis(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         api_key: str,
-        project_id: Optional[str] = None,
-        user_id: Optional[str] = None,
+        project_id: str | None = None,
+        user_id: str | None = None,
     ) -> AsyncIterator[str]:
         """Stream a tool-free synthesis completion, yielding content deltas.
 
@@ -4392,7 +4399,7 @@ class Agent:
             if api_key
             else {"Content-Type": "application/json"}
         )
-        usage: Optional[Dict[str, Any]] = None
+        usage: dict[str, Any] | None = None
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(_llm_http_timeout(), read=_llm_http_timeout())) as client:
                 if native_ollama:
@@ -4481,13 +4488,13 @@ class Agent:
 
     async def _run_tool_call(
         self,
-        tool_call: Dict[str, Any],
-        api_key: Optional[str] = None,
-        project_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
+        tool_call: dict[str, Any],
+        api_key: str | None = None,
+        project_id: str | None = None,
+        conversation_id: str | None = None,
         _depth: int = 0,
-        _call_stack: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        _call_stack: list[str] | None = None,
+    ) -> dict[str, Any]:
         fn = tool_call.get("function") or {}
         name = fn.get("name") or ""
         raw_args = fn.get("arguments") or "{}"
@@ -4901,7 +4908,7 @@ def _block_should_auto_validate(name: str) -> bool:
     return bool(getattr(cls, "auto_validate", True))
 
 
-def _collect_numerics(result: Any) -> List[Dict[str, Any]]:
+def _collect_numerics(result: Any) -> list[dict[str, Any]]:
     """Walk a block result dict and pick out numeric payloads worth checking.
 
     Yields a list of ``{value, unit?, context}`` packets in the shape
@@ -4910,7 +4917,7 @@ def _collect_numerics(result: Any) -> List[Dict[str, Any]]:
     """
     if not isinstance(result, dict):
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
 
     # sympy_reasoning / recommendation_template / formula_executor_v2 shapes
     for key, ctx_extra in (
@@ -4948,7 +4955,7 @@ def _collect_numerics(result: Any) -> List[Dict[str, Any]]:
     return out
 
 
-async def _auto_validate(envelope: Dict[str, Any]) -> None:
+async def _auto_validate(envelope: dict[str, Any]) -> None:
     """In-place: attach a `validation` field to the tool envelope.
 
     Runs the validation_pipeline block over every numeric in the result.
@@ -4971,7 +4978,8 @@ async def _auto_validate(envelope: Dict[str, Any]) -> None:
         return
     try:
         from app.blocks import BLOCK_REGISTRY
-        from app.dependencies import block_instances as _bi, _create_block_instance as _create
+        from app.dependencies import _create_block_instance as _create
+        from app.dependencies import block_instances as _bi
         if "validation_pipeline" not in BLOCK_REGISTRY:
             envelope["validation"] = {"skipped": "validation_pipeline not registered"}
             return
@@ -4983,9 +4991,9 @@ async def _auto_validate(envelope: Dict[str, Any]) -> None:
         envelope["validation"] = {"skipped": f"validation_pipeline init failed: {type(e).__name__}"}
         return
 
-    per: List[Dict[str, Any]] = []
+    per: list[dict[str, Any]] = []
     overall = "pass"
-    first_failure: Optional[str] = None
+    first_failure: str | None = None
     for n in numerics[:8]:  # hard cap
         try:
             envelope_inner = await vp_block.execute(n, {})
@@ -5021,10 +5029,10 @@ async def _auto_validate(envelope: Dict[str, Any]) -> None:
 
 
 # ── Loader ────────────────────────────────────────────────────────────────
-AGENT_REGISTRY: Dict[str, Agent] = {}
+AGENT_REGISTRY: dict[str, Agent] = {}
 
 
-def load_agents(configs_dir: Optional[Path] = None) -> Dict[str, Agent]:
+def load_agents(configs_dir: Path | None = None) -> dict[str, Agent]:
     """Load every `.md` config under `configs_dir` into AGENT_REGISTRY (replaces existing)."""
     configs_dir = configs_dir or CONFIGS_DIR
     AGENT_REGISTRY.clear()
@@ -5039,7 +5047,7 @@ def load_agents(configs_dir: Optional[Path] = None) -> Dict[str, Agent]:
     return AGENT_REGISTRY
 
 
-def get_agent(name: str) -> Optional[Agent]:
+def get_agent(name: str) -> Agent | None:
     return AGENT_REGISTRY.get(name)
 
 
@@ -5070,10 +5078,10 @@ def get_agent(name: str) -> Optional[Agent]:
 #     unit tests) skip it entirely. The gate is also kill-switchable via
 #     SMART_ORCH_ROUTING_DISABLED=true for fast prod rollback.
 
-_SMART_ORCH_BLOCK_CACHE: Optional[Any] = None
+_SMART_ORCH_BLOCK_CACHE: Any | None = None
 
 
-def _get_smart_orchestrator_block() -> Optional[Any]:
+def _get_smart_orchestrator_block() -> Any | None:
     """Lazy-load and cache a SmartOrchestratorBlock instance.
 
     Returns None if the block isn't registered (e.g. running without the
@@ -5102,7 +5110,7 @@ def _routing_disabled() -> bool:
 async def select_agent_for_message(
     user_message: str,
     requested_agent: Agent,
-) -> tuple[Agent, Dict[str, Any]]:
+) -> tuple[Agent, dict[str, Any]]:
     """Decide which agent should actually handle this message.
 
     Returns ``(final_agent, routing_info)``. ``routing_info`` is a dict
@@ -5130,7 +5138,7 @@ async def select_agent_for_message(
     classification result so the caller can observe what would have
     happened, and so the UI can show a "stayed on" badge if it wants.
     """
-    info: Dict[str, Any] = {
+    info: dict[str, Any] = {
         "requested": requested_agent.name,
         "final": requested_agent.name,
         "action": None,
@@ -5210,8 +5218,8 @@ def _parse_agent_file(path: Path) -> Agent:
 
     # Lightweight YAML parsing — we don't import PyYAML to keep deps minimal.
     # Supports: key: value scalars, and `key:` followed by `  - item` lists.
-    config: Dict[str, Any] = {}
-    current_list_key: Optional[str] = None
+    config: dict[str, Any] = {}
+    current_list_key: str | None = None
     for raw_line in frontmatter.splitlines():
         line = raw_line.rstrip()
         if not line or line.lstrip().startswith("#"):
@@ -5233,6 +5241,7 @@ def _parse_agent_file(path: Path) -> Agent:
     name = config.get("name") or path.stem
     if not body:
         raise ValueError(f"empty system prompt in {path}")
+    body, hat_ids = _apply_hat_kernels(body, config.get("hats"), path)
     return Agent(
         name=name,
         description=config.get("description", ""),
@@ -5243,7 +5252,49 @@ def _parse_agent_file(path: Path) -> Agent:
         max_tokens=int(config.get("max_tokens", 2048)),
         icon=config.get("icon", ""),
         can_delegate=_resolve_can_delegate(config),
+        hats=hat_ids,
     )
+
+
+def _apply_hat_kernels(body: str, hats_cfg: Any, path: Path) -> tuple[str, list[str]]:
+    """Bind an agent to its discipline-hat kernels (app/agents/manifests/).
+
+    ``hats:`` in the config frontmatter is a list of manifest ids, or the
+    scalar ``all`` (the orchestrator carries every discipline kernel). Each
+    resolved hat's system_prompt_guidance is appended to the agent's system
+    prompt under a Discipline Kernels section, and formula bindings are
+    validated at load so a manifest pointing at a missing implementation
+    fails HERE, not mid-conversation. An unknown hat id raises -- a typo
+    must not silently produce an unhatted agent."""
+    if not hats_cfg:
+        return body, []
+    from app.agents import catalog as _hat_catalog
+    from app.agents.formulas import validate_manifest_bindings
+
+    if isinstance(hats_cfg, str):
+        if hats_cfg.strip().lower() == "all":
+            manifests = sorted(_hat_catalog.list_hats(), key=lambda m: m.id)
+        else:
+            manifests = [m for m in [_hat_catalog.get_hat_by_id(hats_cfg.strip())] if m]
+            if not manifests:
+                raise ValueError(f"unknown hat '{hats_cfg}' in {path}")
+    else:
+        manifests = []
+        for hid in hats_cfg:
+            m = _hat_catalog.get_hat_by_id(str(hid).strip())
+            if m is None:
+                raise ValueError(f"unknown hat '{hid}' in {path}")
+            manifests.append(m)
+    if not manifests:
+        return body, []
+    for m in manifests:
+        errors = validate_manifest_bindings(m)
+        if errors:
+            raise ValueError(f"hat '{m.id}' has broken formula bindings: {errors}")
+    sections = ["\n\n## Discipline kernels\n"]
+    for m in manifests:
+        sections.append(f"### {m.name} ({m.id})\n{m.system_prompt_guidance}\n")
+    return body + "".join(sections), [m.id for m in manifests]
 
 
 def _agent_delegation_enabled() -> bool:
@@ -5256,7 +5307,7 @@ def _agent_delegation_enabled() -> bool:
     return (os.getenv("FORK_AGENT_DELEGATION") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def _resolve_can_delegate(config: Dict[str, Any]) -> bool:
+def _resolve_can_delegate(config: dict[str, Any]) -> bool:
     """Explicit ``can_delegate`` always wins; otherwise a dormant agent that
     declares ``can_delegate_when_enabled`` delegates ONLY when the master flag is
     on (W7). Default-off: unchanged behaviour."""
@@ -5269,7 +5320,7 @@ def _resolve_can_delegate(config: Dict[str, Any]) -> bool:
     return False
 
 
-def _chunks(text: str, n: int) -> List[str]:
+def _chunks(text: str, n: int) -> list[str]:
     return [text[i:i + n] for i in range(0, len(text), n)]
 
 

@@ -103,7 +103,12 @@ def _build_mock_registry():
 
 @pytest.fixture(scope="module")
 def registry():
-    return _build_mock_registry()
+    """The REAL binding registry -- the hand-kept mock below went stale the
+    first time new hats landed (quantities/safety, 2026-08-15), which is the
+    exact stale-twin failure mode test_hats_are_dormant warns about. The mock
+    is retained for the shape-documentation tests only."""
+    from app.agents.formulas import _build_registry
+    return dict(_build_registry())
 
 
 # -- Tests ----------------------------------------------------------------
@@ -138,7 +143,7 @@ class TestFormulaBindings:
         counts = Counter(fid for _, fid in all_formula_ids)
         duplicates = {fid: c for fid, c in counts.items() if c > 1}
 
-        allowed_shared = {"crane_planning", "modulus_of_elasticity_concrete"}
+        allowed_shared = {"crane_planning", "modulus_of_elasticity_concrete", "guardrail_top_rail_height"}
         unexpected = {k: v for k, v in duplicates.items() if k not in allowed_shared}
 
         if unexpected:

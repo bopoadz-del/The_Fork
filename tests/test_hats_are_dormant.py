@@ -138,9 +138,10 @@ def test_the_register_states_the_current_size_of_the_gap():
     assert "FORK_HATS_ENABLED" in register, (
         "the dormant hat system is not in the register at all"
     )
-    assert len(gap) <= 32, (
+    # 32 measured 2026-08-12; 33 after the quantities/safety hats (2026-08-15).
+    assert len(gap) <= 33, (
         f"{len(gap)} declared actions are now undispatchable, but the register "
-        f"says 32. The gap grew -- update KNOWN_INCOMPLETE.md:\n{sorted(gap)}"
+        f"says 33. The gap grew -- update KNOWN_INCOMPLETE.md:\n{sorted(gap)}"
     )
 
 

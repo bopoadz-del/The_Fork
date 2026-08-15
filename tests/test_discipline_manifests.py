@@ -273,6 +273,6 @@ class TestManifestContent:
                 )
 
     def test_expected_hats_count(self, all_manifests: dict):
-        """Should have exactly 5 hats + 1 base = 6 manifests."""
+        """Should have exactly 7 hats + 1 base = 8 manifests (quantities and safety added 2026-08-15)."""
         hats = [m for m in all_manifests.values() if m.is_hat]
-        assert len(hats) == 5, f"Expected 5 hats, found {len(hats)}: {[h.id for h in hats]}"
+        assert len(hats) == 7, f"Expected 7 hats, found {len(hats)}: {[h.id for h in hats]}"

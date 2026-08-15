@@ -4,6 +4,9 @@ can_delegate_when_enabled: true  # W7: delegates only when FORK_AGENT_DELEGATION
 description: QS — BOQ takeoff, drawing measurements, cost estimates, variance analysis.
 icon: 📐
 model: kimi-k2.6
+hats:
+  - fork.hat.quantities
+  - fork.hat.commercial
 temperature: 0.1
 max_tokens: 2048
 allowed_blocks:
