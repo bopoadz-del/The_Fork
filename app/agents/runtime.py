@@ -167,7 +167,9 @@ def _build_capability_answer(agent: Agent, project_id: str | None) -> str:
     return "\n".join(lines)
 
 
-def _apply_rag_context(messages: list, rag_sys_msg: dict) -> bool:
+def _apply_rag_context(
+    messages: list, rag_sys_msg: dict, user_data_authoritative: bool = False
+) -> bool:
     """Fold retrieved RAG context INTO the final user turn rather than adding a
     separate system message.
 
@@ -238,6 +240,29 @@ def _apply_rag_context(messages: list, rag_sys_msg: dict) -> bool:
                 "references) that aren't in the context, but DO generate the "
                 "standard professional content requested (checklist items, risk "
                 "entries, methodology, etc.).\n\nREQUEST: "
+            )
+        elif user_data_authoritative:
+            # Agents whose JOB is to consume figures the user supplies (the
+            # learning agent recording corrections) must not be strict-grounded
+            # against the retrieved corpus. Live 2026-08-15: "the actual
+            # supplier invoice came to 480 SAR/m3 -- record it" was REFUSED
+            # with "480 SAR/m3 does not appear in the authoritative reference
+            # context". The user's own correction IS the primary source; the
+            # strict directive below actively forbids the agent's purpose.
+            # Same class as the self-contained-calculation carve-out above:
+            # the model was obeying, the directive had to change.
+            directive = (
+                "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+                "The message below may contain figures, outcomes or "
+                "corrections SUPPLIED BY THE USER (actual costs, measured "
+                "quantities, real durations). Those user-supplied figures are "
+                "AUTHORITATIVE first-party data -- they are not supposed to "
+                "be in the reference context, and their absence from it is "
+                "never a reason to refuse. Record or act on them with your "
+                "tools as your role requires, and say plainly what you "
+                "recorded. Use the reference context only as background for "
+                "comparison. Do not invent figures the user did not "
+                "supply.\n\nMESSAGE: "
             )
         else:
             directive = (
@@ -429,7 +454,15 @@ _HAT_SEARCH_ALIASES = frozenset({"search_documents", "fidic_clause_lookup", "sta
 # with_tools=False -- the agent was contractually required to dispatch and
 # structurally unable to, which is exactly the state that produced fabricated
 # "Routed to:" claims on both live gates.
-_NON_DELIVERABLE_TOOLS = frozenset({"search_project_documents", "smart_orchestrator"})
+# cache_manager joined the set after a live document-ingestion turn ended on
+# "Let me route this through the boq_processor" -- a narrated FUTURE dispatch
+# as the final answer. The turn's only tool calls were search (already
+# non-deliverable) + a cache lookup, which counted as a deliverable and
+# disarmed force-synthesis. A cache hit/miss is infrastructure, never the
+# artifact the user asked for.
+_NON_DELIVERABLE_TOOLS = frozenset(
+    {"search_project_documents", "smart_orchestrator", "cache_manager"}
+)
 
 
 def _empty_router_verdict(tool_result: Any) -> bool:
@@ -2730,6 +2763,11 @@ def _cm_prompt_fragment_for_turn(user_message: str) -> str:
         return ""
 
 
+# Blocks that are pure infrastructure -- their presence alone does not make an
+# agent functional (see Agent.unavailable_reason).
+_INFRA_ONLY_BLOCKS = frozenset({"cache_manager"})
+
+
 @dataclass
 class Agent:
     """Declarative agent definition."""
@@ -2746,6 +2784,28 @@ class Agent:
     # Discipline-hat kernels bound at load time (manifest ids); the guidance
     # is already merged into system_prompt by _apply_hat_kernels.
     hats: list[str] = field(default_factory=list)
+    # F34: this agent consumes figures the user supplies (corrections, actuals)
+    # -- RAG injection must not strict-ground it against the corpus.
+    user_data_authoritative: bool = False
+
+    def unavailable_reason(self) -> str | None:
+        """F35: an agent whose every functional block failed to load is a GHOST
+        -- it lists in /v1/agents, accepts a chat, and then truthfully tells
+        the user it has no tools (observed live: external-mcp on a virgin
+        deployment, where mcp_consumer only loads with CEREBRUM_VIRGIN=false).
+        Blocks absent from BLOCK_REGISTRY are silently skipped when building
+        tool definitions, so this is the one place the gap is visible.
+        Infra-only blocks (cache_manager) don't count as functional; agents
+        that declare no blocks at all are prose agents and stay available."""
+        functional = [b for b in self.allowed_blocks if b not in _INFRA_ONLY_BLOCKS]
+        if functional and not any(b in BLOCK_REGISTRY for b in functional):
+            return (
+                "none of this agent's functional blocks ("
+                + ", ".join(functional)
+                + ") are loaded on this deployment (extended platform blocks "
+                "require CEREBRUM_VIRGIN=false)"
+            )
+        return None
 
     def tool_definitions(self, project_id: str | None = None) -> list[dict[str, Any]]:
         """Build DeepSeek-style tool definitions.
@@ -3201,7 +3261,10 @@ class Agent:
             history=effective_history,
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
-            _apply_rag_context(messages, _rag_sys_msg)
+            _apply_rag_context(
+                messages, _rag_sys_msg,
+                user_data_authoritative=self.user_data_authoritative,
+            )
 
         # Capability / self-introspection short-circuit: a question ABOUT this
         # agent (its tools, abilities, accessible documents) is answered from the
@@ -3690,7 +3753,10 @@ class Agent:
             history=effective_history,
         )
         if _rag_sys_msg and _rag_sys_msg.get("content"):
-            _apply_rag_context(messages, _rag_sys_msg)
+            _apply_rag_context(
+                messages, _rag_sys_msg,
+                user_data_authoritative=self.user_data_authoritative,
+            )
 
         # Capability / self-introspection short-circuit: a question ABOUT this
         # agent (its tools, abilities, accessible documents) is answered from the
@@ -5399,6 +5465,10 @@ def _parse_agent_file(path: Path) -> Agent:
         icon=config.get("icon", ""),
         can_delegate=_resolve_can_delegate(config),
         hats=hat_ids,
+        user_data_authoritative=(
+            str(config.get("user_data_authoritative", "false")).strip().lower()
+            in ("true", "1", "yes", "on")
+        ),
     )
 
 
