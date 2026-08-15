@@ -172,6 +172,22 @@ def test_prose_agent_with_no_blocks_stays_available(monkeypatch):
     assert _agent([]).unavailable_reason() is None
 
 
+def test_agent_referenced_blocks_load_on_every_deployment():
+    # F35 part 2: surfacing the ghost was NOT the fix ("make everything
+    # work is your mission, not surface honesty"). Every block an agent
+    # config references must LOAD on every deployment: external-mcp's
+    # mcp_consumer (runtime image gets node/npx in the same change),
+    # document-ingestion's three drive connectors, self-coding's sandbox
+    # pre-flight. Gated behind CEREBRUM_VIRGIN=false they silently
+    # vanished from shipped agents' tool rosters.
+    from app.blocks import BLOCK_REGISTRY, _GENERIC_BLOCK_SPECS
+    generic = {s[0] for s in _GENERIC_BLOCK_SPECS}
+    for name in ("mcp_consumer", "local_drive", "google_drive",
+                 "onedrive", "sandbox"):
+        assert name in generic, name
+        assert name in BLOCK_REGISTRY, name
+
+
 # ---------------------------------------------------------------- F37
 
 
