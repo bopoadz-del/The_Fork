@@ -152,6 +152,21 @@ class PrimaveraParserBlock(UniversalBlock):
             "resource_definitions": resource_definitions[:max_resources],
             "activity_count": len(activities),
         }
+        # Say TRUNCATED out loud. activity_count already carried the true
+        # total, but detecting the cap required a caller to compare it against
+        # len(activities) -- and a live run against an 11,149-task baseline
+        # was nearly reported as "5,000 activities" because nothing stated the
+        # list was cut. A cap that has to be inferred reads as completeness.
+        response["activities_returned"] = len(response["activities"])
+        response["activities_truncated"] = (
+            len(response["activities"]) < len(activities)
+        )
+        if response["activities_truncated"]:
+            response["truncation_note"] = (
+                f"activities list capped at {len(response['activities'])} of "
+                f"{len(activities)} (raise params.max_activities or pass 0 for "
+                "all); CPM below is computed on the FULL network regardless."
+            )
 
         # ── Real CPM via app.lib.pm_computations ─────────────────────────
         # The block's "activities" list keys by task_id (numeric P6 row id);

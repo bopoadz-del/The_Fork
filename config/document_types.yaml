@@ -39,6 +39,25 @@ document_types:
       content: ["liquidated damages", "the employer", "the contractor", "defects liability"]
     expected_fields: ["contract_value", "contract_type", "employer", "contractor"]
 
+  # QA/QC controlled documents (QMS). Listed BEFORE the generic 'report'
+  # entry and with acronym keywords, so an NCR beats 'report' on score:
+  # acronym + full phrase both match -> 4 vs report's 2.
+  - name: ncr
+    description: Non-conformance report (QA/QC)
+    match:
+      filename: ["ncr", "non-conformance", "non conformance", "nonconformance"]
+  - name: inspection_request
+    description: Work / material inspection request (WIR, MIR, RFI-inspection)
+    match:
+      filename: ["wir", "mir", "inspection request", "inspection"]
+  - name: itp
+    description: Inspection and test plan
+    match:
+      filename: ["itp", "inspection and test plan", "test plan"]
+  - name: material_submittal
+    description: Material approval / submittal (MAR, TSF, AMS, SAF)
+    match:
+      filename: ["mar", "material approval", "material submittal", "tsf"]
   - name: specification
     description: Technical specifications
     match:
@@ -66,7 +85,7 @@ document_types:
   - name: report
     description: Progress / inspection / site reports
     match:
-      filename: ["report", "daily", "weekly", "minutes", "inspection"]
+      filename: ["report", "daily", "weekly", "minutes"]
       extensions: []
       content: ["progress", "site instruction", "weather", "manpower"]
     expected_fields: []
