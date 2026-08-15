@@ -120,6 +120,19 @@ def test_default_agents_keep_strict_grounding():
     assert "using ONLY the reference context" in msgs[-1]["content"]
 
 
+def test_strict_grounding_directive_carves_out_tool_extraction():
+    # F36 -- "say you don't have it" suppressed ALL tool calls: bim-analyst
+    # refused an IFC element census with zero tool calls because the census
+    # wasn't in the retrieved text, while bim_extract sat in its roster.
+    # The strict directive must rank tools ABOVE refusal.
+    msgs = _msgs("How many walls are in qa_building.ifc?")
+    runtime._apply_rag_context(
+        msgs, {"role": "system", "content": "CTX: unrelated BOQ text"})
+    folded = msgs[-1]["content"]
+    assert "CALL THE TOOL" in folded
+    assert "neither the context nor your tools" in folded
+
+
 def test_learning_agent_config_declares_user_data_authoritative():
     runtime.load_agents()
     agent = runtime.AGENT_REGISTRY.get("learning")

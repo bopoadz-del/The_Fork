@@ -265,14 +265,25 @@ def _apply_rag_context(
                 "supply.\n\nMESSAGE: "
             )
         else:
+            # F36: "say you don't have it" must not outrank the agent's TOOLS.
+            # Live 2026-08-15: bim-analyst, asked for the element census of an
+            # uploaded IFC, made ZERO tool calls and refused with "the
+            # reference context does not contain any extracted data from
+            # qa_building.ifc" -- obeying this directive to the letter while a
+            # bim tool that answers the question sat in its roster. Retrieved
+            # text is one source; the agent's extractors are another.
             directive = (
                 "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
                 "Answer the question below using ONLY the reference context "
                 "above. Reproduce its specific facts — numbers, deadlines, clause "
                 "references, named principles, definitions — EXACTLY. If the "
                 "context conflicts with what you think you know, the context "
-                "wins. If the context does not contain the answer, say you don't "
-                "have it rather than inventing one.\n\nQUESTION: "
+                "wins. If the context does not contain the answer but one of "
+                "your TOOLS can extract or compute it from the project's files "
+                "(BIM/IFC extraction, BOQ parsing, drawing take-off, "
+                "calculators), CALL THE TOOL and answer from its result. Only "
+                "say you don't have it when neither the context nor your tools "
+                "can produce the answer — never invent one.\n\nQUESTION: "
             )
         messages[-1] = {**messages[-1], "content": content + directive + question}
         return True
