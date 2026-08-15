@@ -63,3 +63,16 @@ def scrub_identifiers(text: str) -> str:
     for pat, repl in _compiled():
         text = pat.sub(repl, text)
     return text
+
+
+def scrub_identifiers_filename(name: str) -> str:
+    """Scrub a FILENAME for display (sources panel, citations).
+
+    Filenames bind identifiers with underscores ("DGII_MS-001.pdf"), which
+    are word characters, so the prose rules' ``\\b`` boundaries never fire
+    -- the answer text was scrubbed while the sources panel leaked the
+    identity verbatim. Normalise underscores to spaces first; the result is
+    a display label, not a path, so the change is safe."""
+    if not name or not _enabled():
+        return name
+    return scrub_identifiers(name.replace("_", " "))

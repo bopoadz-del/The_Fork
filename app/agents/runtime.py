@@ -1992,9 +1992,18 @@ def _build_sources_from_audit(
         label = _LAYER_LABELS.get(layer, "Knowledge base")
         if chunk_meta.get("knowledge_layer") == "user_session":
             label = "Your upload"
+        # Confidentiality: the answer TEXT is scrubbed in _finalize, but this
+        # panel used to ship the original filename verbatim -- a Master-Corpus
+        # or knowledge-base chunk named after another client leaked the
+        # identity through the Sources tab. The user's own project documents
+        # keep their real names.
+        display_name = _clean_path_label(doc_name)
+        if layer != "own":
+            from app.core.identifier_scrub import scrub_identifiers_filename
+            display_name = scrub_identifiers_filename(display_name)
         return {
             "doc_id": chunk_meta["doc_id"],
-            "doc_name": _clean_path_label(doc_name),
+            "doc_name": display_name,
             "page_or_section": f"chunk #{chunk_meta['chunk_index']}",
             "chunk_index": chunk_meta.get("chunk_index"),
             "chunk_id": chunk_meta.get("chunk_id"),
