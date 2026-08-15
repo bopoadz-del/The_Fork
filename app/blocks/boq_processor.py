@@ -152,10 +152,44 @@ class BOQProcessorBlock(UniversalBlock):
         df = pd.read_csv(file_path)
         return self._process_dataframe(df, params)
 
+    # How many leading rows to scan for the real column header. Contract
+    # volumes open with project/employer/bill-number banner rows; 60 covers
+    # every real bill seen while keeping the scan trivial.
+    _HEADER_SCAN_ROWS = 60
+
+    def _detect_header_row(self, df_raw) -> int:
+        """Row index of the actual column header, or 0.
+
+        A header row is the first row whose cells resolve to at least two
+        DISTINCT canonical columns, one of which is `description`. Matching
+        through _resolve_columns keeps this in lockstep with the alias map --
+        a new alias automatically improves detection too.
+        """
+        limit = min(self._HEADER_SCAN_ROWS, len(df_raw))
+        for i in range(limit):
+            cells = [str(c).strip() for c in df_raw.iloc[i].tolist()]
+            resolved = self._resolve_columns(cells)
+            if "description" in resolved and len(resolved) >= 2:
+                return i
+        return 0
+
     async def _parse_excel(self, file_path: str, params: Dict) -> Dict:
         import pandas as pd
         sheet = params.get("sheet_name", 0)
-        df = pd.read_excel(file_path, sheet_name=sheet, engine="openpyxl")
+        # Engine by format, not one-size: openpyxl reads only zip-based .xlsx,
+        # so the old hardcoded engine="openpyxl" made every legacy BIFF .xls
+        # die with "File is not a zip file" -- while the block's own ui_schema
+        # advertises ".xls". Real contract-volume BOQs are routinely issued in
+        # .xls (found live: 12,971-row Vol III bill). xlrd is the BIFF engine.
+        engine = "xlrd" if str(file_path).lower().endswith(".xls") else "openpyxl"
+        # Real bills open with banner rows (project, employer, bill number),
+        # so the column header is rarely row 0. Read headerless, find the
+        # header by alias match, then promote it. Found live: a 12,971-row
+        # bill parsed to ZERO items because row 0 was a title fragment.
+        raw = pd.read_excel(file_path, sheet_name=sheet, engine=engine, header=None)
+        hdr = self._detect_header_row(raw)
+        df = raw.iloc[hdr + 1:].reset_index(drop=True)
+        df.columns = [str(c).strip() for c in raw.iloc[hdr].tolist()]
         return self._process_dataframe(df, params)
 
     async def _parse_pdf(self, file_path: str, params: Dict) -> Dict:
