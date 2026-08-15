@@ -68,7 +68,7 @@ async def test_the_iteration_after_a_router_verdict_still_offers_tools(monkeypat
     the second call ran with_tools=False -- dispatch was impossible."""
     calls = []
     agent = _wire(monkeypatch, calls, matched_actions=[])
-    res = await agent.chat("concrete volume for a slab 12 x 8 x 0.25")
+    res = await agent.chat("concrete volume for a slab 12 x 8 x 0.25", api_key="test-key")
     assert res["status"] == "success"
     assert len(calls) >= 2
     assert calls[1]["with_tools"] is True, "router verdict disabled tools"
@@ -78,7 +78,7 @@ async def test_the_iteration_after_a_router_verdict_still_offers_tools(monkeypat
 async def test_an_empty_router_match_injects_the_dispatch_correction(monkeypatch):
     calls = []
     agent = _wire(monkeypatch, calls, matched_actions=[])
-    await agent.chat("concrete volume for a slab 12 x 8 x 0.25")
+    await agent.chat("concrete volume for a slab 12 x 8 x 0.25", api_key="test-key")
     joined = " ".join(str(m.get("content") or "") for m in calls[1]["messages"])
     assert "router matched NO action" in joined
     assert "have not actually called" in joined
@@ -90,7 +90,7 @@ async def test_a_matched_router_verdict_injects_no_correction(monkeypatch):
     calls = []
     agent = _wire(monkeypatch, calls,
                   matched_actions=[{"action": "drawing_qto_extract"}])
-    await agent.chat("do QTO on this drawing")
+    await agent.chat("do QTO on this drawing", api_key="test-key")
     joined = " ".join(str(m.get("content") or "") for m in calls[1]["messages"])
     assert "router matched NO action" not in joined
 
@@ -123,7 +123,7 @@ async def test_a_deliverable_tool_still_forces_synthesis(monkeypatch):
     monkeypatch.delenv("AGENT_FORCE_SYNTHESIS", raising=False)
     agent = rt.Agent(name="qs", description="", system_prompt="qs",
                      allowed_blocks=["boq_processor"])
-    await agent.chat("parse the boq")
+    await agent.chat("parse the boq", api_key="test-key")
     assert calls[1]["with_tools"] is False
 
 
