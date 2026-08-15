@@ -9,12 +9,12 @@ accumulated knowledge without re-attaching the source document.
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core import projects as store
 
 # Durable fields worth remembering, mapped to a human label.
-DURABLE_FIELDS: Dict[str, str] = {
+DURABLE_FIELDS: dict[str, str] = {
     "contract_value": "Contract value",
     "contract_type": "Contract type",
     "commencement_date": "Commencement date",
@@ -35,9 +35,9 @@ DURABLE_FIELDS: Dict[str, str] = {
 _JUNK = {"", "none", "null", "n/a", "unknown", "0", "0.0"}
 
 
-def extract_facts(result: Dict[str, Any]) -> List[Dict[str, str]]:
+def extract_facts(result: dict[str, Any]) -> list[dict[str, str]]:
     """Pull durable facts from an analysis result (depth-limited dict scan)."""
-    found: Dict[str, str] = {}
+    found: dict[str, str] = {}
 
     def scan(node: Any, depth: int = 0) -> None:
         if depth > 2 or not isinstance(node, dict):
@@ -59,9 +59,9 @@ def extract_facts(result: Dict[str, Any]) -> List[Dict[str, str]]:
 
 def remember_from_result(
     project_id: str,
-    result: Dict[str, Any],
-    source_document: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    result: dict[str, Any],
+    source_document: str | None = None,
+) -> list[dict[str, Any]]:
     """Extract durable facts from a result and persist them to project memory."""
     saved = []
     for fact in extract_facts(result):
@@ -96,7 +96,7 @@ def build_project_context(project_id: str, query: str = "", limit: int = 8) -> s
     if not facts_block and not total_docs:
         return ""
 
-    parts: List[str] = []
+    parts: list[str] = []
     if facts_block:
         parts.append(facts_block)
     if docs:
@@ -119,15 +119,26 @@ def build_project_context(project_id: str, query: str = "", limit: int = 8) -> s
 def build_memory_context(project_id: str, query: str = "", limit: int = 8) -> str:
     """A compact text block of relevant project facts, for injection into chat.
 
-    With a query, returns the matching facts; without one, the whole memory.
-    Empty string when the project has no facts yet.
+    Query-MATCHED facts rank first, but the remaining facts still fill the
+    limit: keyword-gating used to EXCLUDE everything the message didn't
+    happen to mention, which inverts the store's purpose — the fact the
+    user forgot to name is exactly the one the model needs surfaced. Live
+    find 2026-08-15 (F23): a take-off request matched the stored
+    floor-to-ceiling height (via the word "floor") but the stored door
+    schedule never reached the model, which then asked the operator for a
+    value the project already carried. A project's durable facts are few
+    and the limit caps the block, so including the rest costs tokens only
+    when the facts exist.
     """
-    facts = (
-        store.search_facts(project_id, query) if query
-        else store.list_facts(project_id)
-    )
-    if not facts:
+    all_facts = store.list_facts(project_id)
+    if not all_facts:
         return ""
+    if query:
+        matched = store.search_facts(project_id, query) or []
+        matched_keys = {f["key"] for f in matched}
+        facts = matched + [f for f in all_facts if f["key"] not in matched_keys]
+    else:
+        facts = all_facts
     lines = ["Known facts about this project:"]
     for f in facts[:limit]:
         label = DURABLE_FIELDS.get(
