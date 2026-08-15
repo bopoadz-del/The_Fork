@@ -69,7 +69,7 @@ CATS = [
     ("Waterproofing/Insulation", r"waterproof|membrane|insulat|damp proof|tanking"),
     ("Electrical (MEP)", r"cable|switchgear|transformer|busduct|electric|lighting|\bpanel|\bmv\b|\bhv\b|\blv\b|earthing|containment"),
     ("Mechanical/HVAC (MEP)", r"chiller|\bpump|hvac|cooling|\bcrah|\bcdu\b|ducting|\bahu\b|ventilat|refrigerant|mechanical"),
-    ("Fire Protection", r"fire (extinguish|blanket|protec|alarm|fighting)|sprinkler|\bfe-\d"),
+    ("Fire Protection", r"fire (extinguish|blanket|protec|detec|alarm|fighting)|sprinkler|\bfe-\d"),
     ("Sanitary/Accessories", r"toilet|sanitary|\bwc\b|mirror|towel|holder|\bbin\b|basin|accessor|\btray\b"),
     ("Landscape/Softscape", r"\bplant|\btree|palm|softscape|landscape|irrigat|shrub|turf|topsoil"),
     ("Preliminaries/General", r"prelim|mobiliz|insurance|provisional|general item|attendance|supervision|overhead"),
@@ -145,13 +145,16 @@ def _build_lookup(asset: str, ccy: str) -> tuple[dict[tuple[str, str], tuple[flo
     caller then flags every line NO RATE rather than raising, so an unknown
     combination degrades gracefully (endpoint-level validation is separate)."""
     rows = _CARD["cards"].get(asset, {}).get(ccy, [])
-    exact: dict[tuple[str, str], tuple[float, int]] = {}
+    exact: dict[tuple[str, str], tuple[float, int, str | None]] = {}
     bycat: dict[str, list[tuple[float, int, str]]] = {}
     byasset: list[tuple[float, int, str]] = []
     for r in rows:
         median = float(r["median"])
         n = int(r["n"])
-        exact[(r["cat"], r["unit"])] = (median, n)
+        # cell-level provenance: observed cells have no source field; cells
+        # transcribed from published references carry it, and the label
+        # surfaces all the way into the priced workbook's Rate Basis column.
+        exact[(r["cat"], r["unit"])] = (median, n, r.get("source"))
         bycat.setdefault(r["cat"], []).append((median, n, r["unit"]))
         byasset.append((median, n, r["unit"]))
     return exact, bycat, byasset
@@ -190,7 +193,9 @@ def _lookup(cat, unit, exact, bycat, byasset):
     no commensurable rates is skipped -- NO RATE is more honest than a number
     with the wrong dimensions."""
     if (cat, unit) in exact:
-        m, n = exact[(cat, unit)]
+        m, n, src = exact[(cat, unit)]
+        if src:
+            return m, n, f"published reference ({src})"
         return m, n, "exact (cat+unit)"
     cls = _unit_class(unit)
 

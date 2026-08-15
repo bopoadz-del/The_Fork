@@ -24,7 +24,7 @@ def _lookup_env(rows):
     """Build the lookup structures from raw (cat, unit, median, n) rows."""
     exact, bycat, byasset = {}, {}, []
     for cat, unit, median, n in rows:
-        exact[(cat, unit)] = (median, n)
+        exact[(cat, unit)] = (median, n, None)
         bycat.setdefault(cat, []).append((median, n, unit))
         byasset.append((median, n, unit))
     return exact, bycat, byasset
