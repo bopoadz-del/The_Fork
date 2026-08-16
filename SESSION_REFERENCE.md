@@ -8,7 +8,7 @@ A pointer for picking this work back up. Last updated 2026-05-20.
 - **Last commit:** `dd9f750` (pushed to `origin`)
 - **Tests:** 396 passing, 90 skipped (full suite, `tests/` minus `tests/browser`).
   Skips are env-gated: Redis tests need `REDIS_URL`, live-LLM tests need
-  `DEEPSEEK_API_KEY`.
+  `LIVE_LLM_TESTS=1` plus `KIMI_API_KEY` or `GROQ_API_KEY`.
 
 ## Two workstreams
 
@@ -41,7 +41,7 @@ implemented, tested, committed and pushed.**
   `app/static/index.html`.
 
 **Pending only on credentials:** live end-to-end LLM tests are written and
-`@pytest.mark.skipif`-gated on `DEEPSEEK_API_KEY` (key pending refill). No code
+`@pytest.mark.skipif`-gated on `LIVE_LLM_TESTS=1` plus a Kimi or Groq key. No code
 change needed once funded — the tests just stop skipping.
 
 ## Run locally

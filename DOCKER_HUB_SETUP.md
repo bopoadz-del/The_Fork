@@ -54,10 +54,8 @@ docker run -p 8000:8000 bopoadz-del/cerebrum-blocks:latest
 
 # Run with your API keys
 docker run -p 8000:8000 \
-  -e DEEPSEEK_API_KEY=your_deepseek_key \
+  -e KIMI_API_KEY=your_kimi_key \
   -e GROQ_API_KEY=your_groq_key \
-  -e OPENAI_API_KEY=your_openai_key \
-  -e ANTHROPIC_API_KEY=your_anthropic_key \
   bopoadz-del/cerebrum-blocks:latest
 
 # Run with persistent data

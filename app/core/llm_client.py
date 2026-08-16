@@ -3,7 +3,7 @@ dynamic reasoning uses for UNDERSTAND / PLAN.
 
 Reuses `runtime._llm_config()` so it follows whatever provider is configured:
 Ollama Cloud in production (LLM_PROVIDER=ollama + OLLAMA_URL + OLLAMA_API_KEY +
-a -cloud model), local Ollama for dev, or Groq/DeepSeek. The reasoner never
+a -cloud model), local Ollama for dev, or Kimi/Groq. The reasoner never
 hardcodes a provider — "on the cloud" is a config choice, not a code change.
 """
 from __future__ import annotations

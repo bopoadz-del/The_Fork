@@ -511,7 +511,7 @@ from app.core.session_store import InMemorySessionStore
 @pytest.fixture
 def client(monkeypatch):
     # Inject a fresh in-memory store and a scripted mock reasoner so the
-    # route is tested without DeepSeek.
+    # route is tested without the configured LLM.
     store = InMemorySessionStore()
     monkeypatch.setattr(project_router, "_store", store)
 
@@ -910,7 +910,7 @@ Expected: PASS — all prior tests still pass, plus the new tests from Tasks 1�
 - [ ] **Step 2: Manual UI smoke check (optional but recommended)**
 
 Start the app, open the UI, tick "Project mode", and ask "what is the critical
-path?" — confirm the request hits `/v1/project/ask`. With `DEEPSEEK_API_KEY`
+path?" — confirm the request hits `/v1/project/ask`. With `KIMI_API_KEY`
 still unset the reasoner returns a plan-build error; that is expected until the
 key is funded. The route, persistence, and UI wiring are fully covered by the
 mock-LLM tests above.
