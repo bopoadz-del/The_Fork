@@ -463,6 +463,76 @@ def _file_tool_hint(messages: list, project_id: str | None,
     return ""
 
 
+# Extensions whose analysis is deterministically PRE-DISPATCHED: when the
+# user's message literally names a project file of this type and the agent
+# holds the tool, the runtime runs the tool itself BEFORE the model answers
+# and injects the result as authoritative context. Born from the IFC census
+# gate: K2 rejects forced tool_choice, and across three live rounds the
+# model variously refused (F36), narrated (F27), and flailed into
+# code-generation returning zeros -- while bim_extractor sat one call away.
+# Machinery, not model behaviour. Kill-switch: AGENT_FILE_PREDISPATCH=0.
+_FILE_PREDISPATCH_EXTS = {".ifc": "bim_extractor"}
+
+
+async def _predispatch_file_tool(
+    agent: "Agent", messages: list, project_id: str | None,
+) -> dict[str, Any] | None:
+    """Run the matching file tool up front and fold its result into the turn.
+
+    Returns the tool-call record (for the response's tool_calls list) or
+    None when the conditions don't hold. Never raises -- a pre-dispatch
+    failure must not kill the turn; the model then proceeds normally and
+    the corrective-nudge machinery covers the rest."""
+    if os.getenv("AGENT_FILE_PREDISPATCH", "1") == "0" or not project_id:
+        return None
+    try:
+        user_msg = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                user_msg = str(m.get("content", ""))
+                break
+        if not user_msg:
+            return None
+        low = user_msg.lower()
+        from app.core import projects as _projects
+        docs = _projects.list_documents(project_id) or []
+        target = None
+        for d in docs:
+            name = (d.get("original_name") or "").strip()
+            if name and name.lower() in low:
+                tool = _FILE_PREDISPATCH_EXTS.get(
+                    os.path.splitext(name)[1].lower())
+                if tool and tool in agent.allowed_blocks:
+                    target = (name, tool)
+                    break
+        if not target:
+            return None
+        name, tool = target
+        resolved = _resolve_file_path(project_id, name)
+        instance = block_instances.get(tool) or _create_block_instance(tool)
+        result = await instance.execute({"file_path": resolved}, {})
+        ok = isinstance(result, dict) and result.get("status") != "error"
+        if not ok:
+            return None  # fall back to the normal loop + nudges
+        payload = json.dumps(result, default=str)[:6000]
+        messages.append({
+            "role": "user",
+            "content": (
+                f"PLATFORM PRE-DISPATCH: the {tool} tool has ALREADY been "
+                f"run on '{name}' because the request names that file. Its "
+                f"authoritative result:\n{payload}\n"
+                "Answer the request directly from this result. Do not "
+                "re-run the tool unless a different action is needed."
+            ),
+        })
+        return {"name": tool, "ok": True, "predispatched": True,
+                "result": result}
+    except Exception:  # noqa: BLE001
+        _LOG.warning("file pre-dispatch failed; continuing normally",
+                     exc_info=True)
+        return None
+
+
 def _tool_result_errored(tool_result: Any) -> bool:
     """True when a tool round FAILED, wherever the failure hides.
 
@@ -3400,6 +3470,12 @@ class Agent:
             }
 
         tool_calls_made: list[dict[str, Any]] = []
+        # Deterministic file pre-dispatch (see _predispatch_file_tool): when
+        # the request names a project IFC and this agent holds the extractor,
+        # run it NOW and let the model synthesize from real data.
+        _pre = await _predispatch_file_tool(self, messages, project_id)
+        if _pre:
+            tool_calls_made.append(_pre)
         # Root fix for the tool-loop (mirrors chat_stream): cap explicit
         # search_project_documents calls, then stop offering the tool so the
         # model answers from injected context instead of grinding to the cap.
@@ -3888,6 +3964,13 @@ class Agent:
         # Tool results accumulated this turn — feeds the schedule download offer
         # (a generate_wbs call becomes a 'Schedule (Excel)' export descriptor).
         stream_tool_results: list[dict[str, Any]] = []
+        # Deterministic file pre-dispatch (see _predispatch_file_tool).
+        _pre = await _predispatch_file_tool(self, messages, project_id)
+        if _pre:
+            yield {"type": "tool_call", "name": _pre["name"],
+                   "predispatched": True}
+            yield {"type": "tool_result", "name": _pre["name"], "ok": True,
+                   "result": _summarize_result(_pre["result"])}
         # Root fix for the tool-loop: RAG context is injected pre-loop, yet the
         # model keeps re-calling search_project_documents when an exact value
         # isn't found — grinding to the iteration cap. Allow a few explicit
