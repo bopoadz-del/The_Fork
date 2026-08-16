@@ -78,9 +78,29 @@ async def test_plain_api_key_is_NOT_promoted_to_admin(monkeypatch):
     assert principal.get("role") != "admin"                    # authority NOT granted
 
     from app.routers.admin import _require_admin
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(HTTPException) as exec_exc:
         _require_admin(principal)
-    assert exc.value.status_code == 403
+    assert exec_exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_require_user_plain_api_key_is_NOT_promoted_to_admin(monkeypatch):
+    """Same identity-only rule as require_api_key: never copy system-user role."""
+    deps = _validate_key_returning(
+        monkeypatch,
+        {"user": "reporting", "tier": "standard", "rate_limit": 1000, "valid": True},
+    )
+    monkeypatch.setattr(
+        deps.users_store,
+        "get_user_by_id",
+        lambda uid: {"id": uid, "role": "admin", "email": "system@local"},
+    )
+
+    principal = await deps.require_user(_Creds("plain-key"))
+
+    assert principal["user_id"] == users_store.SYSTEM_USER_ID
+    assert principal["auth_method"] == "api_key"
+    assert principal.get("role") != "admin"
 
 
 @pytest.mark.asyncio

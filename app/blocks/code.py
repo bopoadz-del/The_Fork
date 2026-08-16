@@ -209,6 +209,15 @@ class CodeBlock(UniversalBlock):
                 **analysis,
             }
 
+        analysis = _analyze(code)
+        if analysis.get("issues"):
+            return {
+                "status": "error",
+                "error": "Refusing to execute: " + "; ".join(analysis["issues"]),
+                "operation": operation,
+                "issues": analysis["issues"],
+            }
+
         # execute
         if language in ("python", "py"):
             result = _run_python(code, timeout)

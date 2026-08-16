@@ -7,19 +7,15 @@ from app.blocks import BLOCK_REGISTRY
 from app.dependencies import require_user
 from app.dependencies import block_instances, _create_block_instance
 from app.core.input_adapter import adapt_input
+from app.core.privileges import (
+    raise_if_privileged_block,
+    raise_if_privileged_steps,
+)
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Blocks that execute arbitrary code (subprocess / exec) — restricted to admin
-# callers so an ordinary authenticated user cannot get remote code execution
-# through the generic /execute endpoint.
-# Blocks that execute arbitrary code (subprocess / exec) — restricted to admin
-# callers so an ordinary authenticated user cannot get remote code execution
-# through the generic /execute endpoint.
-_PRIVILEGED_BLOCKS = {"code", "sandbox"}
 
 
 class ExecuteRequest(BaseModel):
@@ -40,11 +36,10 @@ async def execute(request: ExecuteRequest, auth: dict = Depends(require_user)):
     if block_name.startswith("container_"):
         raise HTTPException(400, f"Container '{block_name}' cannot be executed directly. Use Block Store.")
 
-    # Code-execution blocks are admin-only.
-    if block_name in _PRIVILEGED_BLOCKS and auth.get("role") != "admin":
-        raise HTTPException(
-            403, f"Block '{block_name}' executes arbitrary code and is admin-only."
-        )
+    # Code-execution blocks are admin-only (including via orchestrator steps).
+    raise_if_privileged_block(block_name, auth.get("role"))
+    if block_name == "orchestrator":
+        raise_if_privileged_steps((request.params or {}).get("steps"), auth.get("role"))
 
     try:
         if block_name not in block_instances:

@@ -111,34 +111,45 @@ class TestExecuteEndpoint:
 
 
 class TestChainEndpoint:
-    """Tests for chain endpoint."""
-    
-    @pytest.mark.skip(reason="Predates Bearer-auth middleware; needs Authorization header to work and chat block expects different mock provider shape now")
-    def test_chain_execution(self):
-        """Test chain execution."""
-        response = client.post("/chain", json={
+    """Tests for chain endpoint — auth + privilege must not rot."""
+
+    def test_chain_rejects_missing_auth(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        bare = TestClient(app)
+        response = bare.post("/v1/chain", json={
+            "steps": [{"block": "translate", "params": {"target": "en"}}],
+            "initial_input": "Hello",
+        })
+        assert response.status_code in (401, 403)
+
+    def test_chain_rejects_privileged_block_for_non_admin(self):
+        response = client.post("/v1/chain", json={
+            "steps": [{"block": "code", "params": {"operation": "execute"}}],
+            "initial_input": "print(1)",
+        })
+        assert response.status_code == 403
+
+    def test_chain_empty_steps(self):
+        """Empty chain is auth-gated then handled (200 error envelope or 422)."""
+        response = client.post("/v1/chain", json={
+            "steps": [],
+            "initial_input": "test"
+        })
+        assert response.status_code in [200, 422]
+
+    def test_chain_non_privileged_block(self):
+        response = client.post("/v1/chain", json={
             "steps": [
-                {"block": "chat", "params": {"provider": "mock"}},
                 {"block": "translate", "params": {"provider": "mock", "target": "es"}}
             ],
             "initial_input": "Hello World"
         })
-        
         assert response.status_code == 200
         data = response.json()
         assert "steps_executed" in data
         assert "final_output" in data
-    
-    @pytest.mark.skip(reason="Predates Bearer-auth middleware — empty-chain handler now requires auth before validation")
-    def test_empty_chain(self):
-        """Test empty chain."""
-        response = client.post("/chain", json={
-            "steps": [],
-            "initial_input": "test"
-        })
-        
-        # Should either succeed or handle gracefully
-        assert response.status_code in [200, 422]
 
 
 @pytest.mark.extended_boot

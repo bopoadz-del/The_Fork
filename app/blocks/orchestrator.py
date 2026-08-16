@@ -378,6 +378,10 @@ class OrchestratorBlock(UniversalBlock):
         if not steps:
             return {"status": "error", "error": "No steps provided for chain execution"}
 
+        from app.core.privileges import raise_if_privileged_steps
+
+        raise_if_privileged_steps(steps)
+
         max_steps = params.get("max_steps", self.config.get("max_steps", 50))
         if len(steps) > max_steps:
             return {"status": "error", "error": f"Chain exceeds max_steps ({max_steps})"}

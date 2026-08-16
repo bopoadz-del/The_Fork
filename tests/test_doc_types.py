@@ -5,8 +5,18 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core import doc_types
+from app.core import jwt_auth
+from app.core import users as users_store
 
 H = {"Authorization": "Bearer cb_dev_key"}
+
+
+def _admin_headers():
+    """Mutations on the global registry are admin-only; cb_dev_key is not."""
+    users_store.ensure_user_exists(
+        "doc-types-admin", role="admin", email="doc-types-admin@local"
+    )
+    return {"Authorization": f"Bearer {jwt_auth.create_token('doc-types-admin')}"}
 
 
 @pytest.fixture(scope="module")
@@ -66,7 +76,8 @@ def test_document_types_api(client):
     assert r.status_code == 200
     assert len(r.json()["document_types"]) >= 8
 
-    r = client.post("/v1/document-types", headers=H, json={
+    admin = _admin_headers()
+    r = client.post("/v1/document-types", headers=admin, json={
         "name": "method_statement",
         "match": {"filename": ["method statement"], "extensions": [], "content": []},
         "expected_fields": [],
@@ -78,5 +89,5 @@ def test_document_types_api(client):
                      json={"filename": "Piling Method Statement.docx"})
     assert r.json()["name"] == "method_statement"
 
-    r = client.delete("/v1/document-types/method_statement", headers=H)
+    r = client.delete("/v1/document-types/method_statement", headers=admin)
     assert r.status_code == 200

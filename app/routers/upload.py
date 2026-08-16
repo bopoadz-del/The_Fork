@@ -90,7 +90,6 @@ async def upload_v1(
         response = {
             "filename": original_name,
             "stored_as": filename,
-            "file_path": filepath,
             "size": file_size,
         }
 

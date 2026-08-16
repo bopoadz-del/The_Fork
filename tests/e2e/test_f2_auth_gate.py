@@ -77,3 +77,12 @@ def test_an_authenticated_non_admin_is_still_denied_admin_actions(client):
     assert client.post(
         "/v1/memory/get", json={"key": "x"}, headers=VALID
     ).status_code not in (401, 403)
+    # Privileged code-execution blocks must stay 403 for a non-admin key.
+    assert client.post(
+        "/v1/execute", json={"block": "code", "input": "x"}, headers=VALID
+    ).status_code == 403
+    assert client.post(
+        "/v1/chain",
+        json={"steps": [{"block": "code", "params": {}}]},
+        headers=VALID,
+    ).status_code == 403

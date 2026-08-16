@@ -97,6 +97,8 @@ async def test_upload_enqueues_job_when_redis_configured(
     assert response["indexed"] is True
     assert response["indexing_status"] == "queued"
     assert response["document_id"] == uploaded_doc["id"]
+    assert "stored_as" in response
+    assert "file_path" not in response
 
     # Verify the ingestion job row was created.
     with SessionLocal() as db:

@@ -12,7 +12,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from app.dependencies import require_api_key
+from app.dependencies import require_api_key, get_block_instance
+from app.core.privileges import raise_if_privileged_block
 
 router = APIRouter()
 
@@ -101,9 +102,8 @@ if mcp_router_available():
         )
         return True
 
-    def _build_server() -> "Server":
+    def _build_server(role: Optional[str] = None) -> "Server":
         from app.blocks import BLOCK_REGISTRY
-        from app.dependencies import block_instances, _create_block_instance
 
         server = Server("cerebrum-blocks")
 
@@ -126,9 +126,10 @@ if mcp_router_available():
 
         @server.call_tool()
         async def _call_tool(name: str, arguments: dict):
+            raise_if_privileged_block(name, role)
             if name not in BLOCK_REGISTRY:
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]
-            instance = block_instances.get(name) or _create_block_instance(name)
+            instance = get_block_instance(name)
             block_input = (arguments or {}).get("input")
             block_params = (arguments or {}).get("params") or {}
             result = await instance.execute(block_input, block_params)
@@ -141,7 +142,7 @@ if mcp_router_available():
     async def mcp_sse(request: Request,
                       auth: dict = Depends(require_api_key)):
         async with _sse.connect_sse(request.scope, request.receive, request._send) as streams:
-            server = _build_server()
+            server = _build_server(auth.get("role"))
             await server.run(streams[0], streams[1], server.create_initialization_options())
 
 else:
@@ -151,7 +152,7 @@ else:
         return False
 
     @router.get("/mcp/sse")
-    async def mcp_sse_unavailable():
+    async def mcp_sse_unavailable(auth: dict = Depends(require_api_key)):
         return JSONResponse(
             status_code=503,
             content={"detail": "MCP SSE transport not available — install 'mcp[server]'."},

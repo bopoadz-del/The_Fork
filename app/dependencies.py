@@ -13,6 +13,7 @@ from app.blocks import BLOCK_REGISTRY
 from app.core.auth import auth as auth_manager
 from app.core import jwt_auth
 from app.core import users as users_store
+from app.core.privileges import set_caller_role
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ async def require_api_key(
             user = users_store.get_user_by_id(payload.get("user_id"))
             if not user:
                 raise HTTPException(status_code=401, detail="Token user no longer exists")
-            return {
+            principal = {
                 # Legacy require_api_key keys (callers read these)
                 "user": user["email"],
                 "tier": user.get("role") or "user",
@@ -186,6 +187,8 @@ async def require_api_key(
                 "email": user["email"],
                 "auth_method": "jwt",
             }
+            set_caller_role(principal.get("role"))
+            return principal
 
     # JWT decode failed or no credentials — fall through to legacy key validation.
     # validate_key(None) raises HTTPException(401) preserving the no-credentials behavior.
@@ -212,6 +215,7 @@ async def require_api_key(
     if not principal.get("user_id"):
         principal["user_id"] = users_store.SYSTEM_USER_ID
         principal["auth_method"] = "api_key"
+    set_caller_role(principal.get("role"))
     return principal
 
 
@@ -263,19 +267,26 @@ async def require_user(
         user = users_store.get_user_by_id(payload.get("user_id"))
         if not user:
             raise HTTPException(status_code=401, detail="Token user no longer exists")
-        return {
+        principal = {
             "user_id": user["id"],
             "role": user["role"],
             "email": user["email"],
             "auth_method": "jwt",
         }
+        set_caller_role(principal.get("role"))
+        return principal
 
-    # 2) Fall back to legacy API key -> system user.
-    auth_manager.validate_key(credentials)  # raises 401/429 on bad key
+    # 2) Fall back to legacy API key -> system user identity.
+    # Authority comes from the key record (only CEREBRUM_MASTER_KEY is minted
+    # with role=admin). NEVER copy `role` from the system user row — that row
+    # IS admin, and copying it would promote every standard API key.
+    principal = auth_manager.validate_key(credentials)  # raises 401/429 on bad key
     sys_user = users_store.get_user_by_id(users_store.SYSTEM_USER_ID)
-    return {
+    resolved = {
         "user_id": users_store.SYSTEM_USER_ID,
-        "role": sys_user["role"] if sys_user else "admin",
+        "role": principal.get("role") or "user",
         "email": sys_user["email"] if sys_user else "system@local",
         "auth_method": "api_key",
     }
+    set_caller_role(resolved.get("role"))
+    return resolved
