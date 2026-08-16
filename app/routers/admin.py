@@ -1844,3 +1844,20 @@ async def admin_dead_letter(auth: dict = Depends(require_api_key)):
 
 
 import asyncio  # for asyncio.iscoroutinefunction used above
+
+
+@router.post("/v1/admin/debug/sweep-plaintext")
+def admin_sweep_plaintext(
+    max_age_seconds: int = 3600,
+    auth: dict = Depends(require_api_key),
+):
+    """Run the decrypted-temp sweeper on demand and return its counts.
+
+    The sweeper also runs at boot and hourly (see main.lifespan); this
+    endpoint exists so an operator — or a live gate — can verify the
+    reaping behaviour deterministically instead of waiting for the timer.
+    """
+    _require_admin(auth)
+    from app.core.file_crypto import sweep_stale_plaintext
+
+    return {"status": "ok", **sweep_stale_plaintext(max_age_seconds)}

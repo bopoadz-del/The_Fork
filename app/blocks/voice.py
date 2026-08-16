@@ -252,11 +252,17 @@ class VoiceBlock(UniversalBlock):
             try:
                 import shutil
 
-                from app.core.file_crypto import open_plaintext
+                from app.core.file_crypto import open_plaintext, shred_file
                 with open_plaintext(file_path) as _plain:
                     if str(_plain) != str(file_path):
                         suffix = os.path.splitext(file_path)[1] or ".bin"
-                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+                        # fork_dec_ prefix: the plaintext sweeper
+                        # (file_crypto.sweep_stale_plaintext) reaps orphans
+                        # of this pattern, so a crash here has a bounded
+                        # plaintext lifetime instead of an indefinite one.
+                        with tempfile.NamedTemporaryFile(
+                                suffix=suffix, prefix="fork_dec_",
+                                delete=False) as tf:
                             decrypted_tmp = tf.name
                         shutil.copyfile(_plain, decrypted_tmp)
                         if cleanup_tmp:
@@ -264,13 +270,17 @@ class VoiceBlock(UniversalBlock):
                                 os.unlink(cleanup_tmp)
                             except OSError:
                                 # Never silent: this temp file holds DECRYPTED
-                                # audio, so a failed unlink leaves client
-                                # plaintext on disk. Log the path so it can be
-                                # reaped rather than lingering unnoticed.
+                                # audio. Shred the contents so nothing readable
+                                # remains even if the name survives.
+                                shredded = shred_file(cleanup_tmp)
                                 _LOG.warning(
                                     "could not remove decrypted temp file %s — "
-                                    "plaintext may remain on disk",
-                                    cleanup_tmp, exc_info=True,
+                                    "contents %s",
+                                    cleanup_tmp,
+                                    "zero-overwritten" if shredded
+                                    else "COULD NOT be overwritten; plaintext "
+                                         "may remain on disk",
+                                    exc_info=True,
                                 )
                         file_path = decrypted_tmp
                         cleanup_tmp = decrypted_tmp
