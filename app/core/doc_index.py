@@ -280,8 +280,15 @@ def _pdf_tables_enabled(file_path: str, readable_path: str | None = None) -> boo
                         return False
         except Exception:
             # Unreadable via fitz here — let the main extractor decide; the
-            # size gate above still holds.
-            pass
+            # size gate above still holds. LOGGED, not silent: a probe that
+            # always throws would silently disable the page-size half of the
+            # OOM guard, which is precisely how the second dense-CAD OOM got
+            # through (F26b).
+            logger.warning(
+                "swallowed %s probing page size in _pdf_tables_enabled(%s) — "
+                "size gate still applies",
+                "Exception", probe, exc_info=True,
+            )
         return True
     except Exception:
         return False
