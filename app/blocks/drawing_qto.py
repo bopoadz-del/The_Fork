@@ -1439,26 +1439,26 @@ class DrawingQTOBlock(UniversalBlock):
                         fo.write(fh.read())
                 # Args: in_dir out_dir output_version output_format
                 #       (ACAD2018, DXF, recurse-flag, audit-flag)
-                # Live failure (exit 134): ODA's bundled Qt aborts with
-                # 'Could not find the Qt platform plugin "offscreen" in ""'
-                # -- the plugin search path is EMPTY when launched via the
-                # /usr/bin symlink. Resolve the real install dir and point
-                # Qt at its bundled plugins explicitly.
-                real_tool = os.path.realpath(tool)
-                tool_dir = os.path.dirname(real_tool)
-                qt_env = {"QT_QPA_PLATFORM": "offscreen"}
-                for plugdir in (os.path.join(tool_dir, "platforms"),
-                                os.path.join(tool_dir, "plugins", "platforms")):
-                    if os.path.isdir(plugdir):
-                        qt_env["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugdir
-                        qt_env["QT_PLUGIN_PATH"] = os.path.dirname(plugdir)
-                        break
-                existing_ld = os.environ.get("LD_LIBRARY_PATH", "")
-                qt_env["LD_LIBRARY_PATH"] = (
-                    f"{tool_dir}:{existing_ld}" if existing_ld else tool_dir
-                )
+                # Live failure (exit 134): the ODA QT6 bundle ships ONLY the
+                # xcb platform plugin -- inspection of the deployed image
+                # showed plugins/platforms/ contains just libqxcb.so, so
+                # QT_QPA_PLATFORM=offscreen can NEVER work with this build.
+                # Run under a virtual X display instead: xvfb-run gives xcb a
+                # real (virtual) DISPLAY and the bundled qt.conf resolves the
+                # plugin paths itself. Falls back to a bare launch (with
+                # offscreen requested) only when xvfb-run is absent, so dev
+                # boxes with a display still convert.
+                cmd = [tool, src_dir, dst_dir, "ACAD2018", "DXF", "0", "1"]
+                qt_env: dict[str, str] = {}
+                xvfb = shutil.which("xvfb-run")
+                if xvfb:
+                    cmd = [xvfb, "-a", *cmd]
+                    # xcb is the only bundled plugin; do not force offscreen.
+                    qt_env["QT_QPA_PLATFORM"] = "xcb"
+                else:
+                    qt_env["QT_QPA_PLATFORM"] = "offscreen"
                 proc = subprocess.run(
-                    [real_tool, src_dir, dst_dir, "ACAD2018", "DXF", "0", "1"],
+                    cmd,
                     timeout=120, check=False, capture_output=True,
                     env=scrubbed_env(qt_env),  # audit §6.1
                 )
