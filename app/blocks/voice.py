@@ -263,7 +263,15 @@ class VoiceBlock(UniversalBlock):
                             try:
                                 os.unlink(cleanup_tmp)
                             except OSError:
-                                pass
+                                # Never silent: this temp file holds DECRYPTED
+                                # audio, so a failed unlink leaves client
+                                # plaintext on disk. Log the path so it can be
+                                # reaped rather than lingering unnoticed.
+                                _LOG.warning(
+                                    "could not remove decrypted temp file %s — "
+                                    "plaintext may remain on disk",
+                                    cleanup_tmp, exc_info=True,
+                                )
                         file_path = decrypted_tmp
                         cleanup_tmp = decrypted_tmp
             except Exception as e:  # noqa: BLE001 — a decrypt failure is a clear error, not a crash
