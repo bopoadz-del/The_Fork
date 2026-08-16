@@ -150,7 +150,15 @@ class LearningEngineBlock(UniversalBlock):
         # Default to "status" when called with bare text (no structured correction data)
         has_correction_data = data.get("formula_id") or data.get("correction_data") or params.get("formula_id")
         default_op = "record_correction" if has_correction_data else "status"
-        operation = data.get("operation") or params.get("operation") or (data.get("text") or data.get("input") or "").strip() or default_op
+        operation = (data.get("operation") or params.get("operation")
+                     # every other block takes "action"; callers (and the
+                     # learning agent's own config) naturally use it here too
+                     or data.get("action") or params.get("action")
+                     or (data.get("text") or data.get("input") or "").strip()
+                     or default_op)
+        # the agent config documented action:"summary"; the real op is status
+        if operation == "summary":
+            operation = "status"
 
         if operation == "record_correction":
             return await self._record_correction(data, params)
