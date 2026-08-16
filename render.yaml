@@ -52,7 +52,11 @@ services:
     plan: starter
     region: oregon
     branch: main
-    autoDeploy: true
+    # git-push-equals-prod is off. A push to main must NOT rebuild the live
+    # client service. Deploy only after CI is green: Render Dashboard →
+    # the-fork → Manual Deploy, or Apply Blueprint. This file change does
+    # not take effect until the blueprint is applied in the dashboard.
+    autoDeploy: false
     # Documentation-only commits must not redeploy a live client service.
     # Observed 2026-08-02: merging a markdown-only PR rebuilt the image and
     # returned 502 for ~40s. Nothing in this list can change runtime
@@ -129,10 +133,20 @@ services:
       # ── Required in production (set in dashboard) ──────────────────────
       - key: SECRET_KEY # JWT signing — app refuses to start in prod without it
         sync: false
-      - key: DATA_ENCRYPTION_KEY # encrypts uploaded files at rest
+      - key: DATA_ENCRYPTION_KEY # encrypts uploaded files at rest — required in prod
         sync: false
       - key: CEREBRUM_MASTER_KEY # admin API key
         sync: false
+      - key: DATABASE_URL # Neon (or other) Postgres — required in prod
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+
+      # ── Block registry (this repo is source of truth; do not pull store kits) ─
+      - key: CEREBRUM_VIRGIN
+        value: "false"
+      - key: CEREBRUM_DOMAIN_KITS
+        value: construction
 
       # ── LLM providers (set in dashboard) ───────────────────────────────
       # The cloud ladder is exactly two providers (DECISIONS.md 2026-07-24):
@@ -143,8 +157,8 @@ services:
       #              free account 413s payloads >~12k tokens across all its
       #              models — it catches normal-size turns, not large grounded
       #              ones (PLATFORM_HEALTH_REPORT F1a: Dev-tier upgrade lifts it).
-      # No OpenAI, no DeepSeek — both removed 2026-07-25. Ollama is the
-      # ON-PREM provider only (see deploy/onprem); it is not a cloud fallback.
+      # Ollama is the ON-PREM provider only (see deploy/onprem); it is not a
+      # cloud fallback.
       - key: LLM_PROVIDER
         sync: false
       - key: LLM_FALLBACK_PROVIDER

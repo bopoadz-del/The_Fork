@@ -73,6 +73,22 @@ def test_env_example_declares_every_required_key():
     )
 
 
+def test_env_example_uses_cors_extra_origins():
+    """The app reads CORS_EXTRA_ORIGINS, not CORS_ORIGINS."""
+    repo_root = Path(__file__).resolve().parent.parent
+    text = (repo_root / ".env.example").read_text(encoding="utf-8")
+    declared = _declared_keys(text)
+    assert "CORS_EXTRA_ORIGINS" in declared
+    assert "CORS_ORIGINS" not in declared
+
+
+def test_env_example_has_no_deepseek():
+    repo_root = Path(__file__).resolve().parent.parent
+    text = (repo_root / ".env.example").read_text(encoding="utf-8")
+    assert "DEEPSEEK" not in text
+    assert "deepseek" not in text.lower()
+
+
 def test_env_example_does_not_default_to_production():
     """ENV=production as the literal default is a footgun: copying the
     file and running it crashes the startup guard (missing SECRET_KEY).

@@ -9,8 +9,18 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core import audit
+from app.core import jwt_auth
+from app.core import users as users_store
 
 H = {"Authorization": "Bearer cb_dev_key"}
+
+
+def _admin_headers():
+    """Governance status/purge are admin-only; cb_dev_key is not."""
+    users_store.ensure_user_exists(
+        "gov-admin", role="admin", email="gov-admin@local"
+    )
+    return {"Authorization": f"Bearer {jwt_auth.create_token('gov-admin')}"}
 
 
 @pytest.fixture(scope="module")
@@ -95,7 +105,7 @@ def test_delete_missing_document_404(client):
 # ── governance status / purge ───────────────────────────────────────────────
 
 def test_governance_status(client):
-    r = client.get("/v1/governance", headers=H)
+    r = client.get("/v1/governance", headers=_admin_headers())
     assert r.status_code == 200
     body = r.json()
     assert body["audit_logging"] is True
@@ -105,7 +115,7 @@ def test_governance_status(client):
 
 def test_purge_is_noop_without_retention(client):
     # DATA_RETENTION_DAYS not set in the test environment
-    r = client.post("/v1/governance/purge", headers=H)
+    r = client.post("/v1/governance/purge", headers=_admin_headers())
     assert r.status_code == 200
     assert r.json()["status"] == "skipped"
 
@@ -140,7 +150,7 @@ def test_governance_purge_audits_each_document(client, monkeypatch):
         session.commit()
     monkeypatch.setenv("DATA_RETENTION_DAYS", "1")
 
-    r = client.post("/v1/governance/purge", headers=H)
+    r = client.post("/v1/governance/purge", headers=_admin_headers())
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "purged"
