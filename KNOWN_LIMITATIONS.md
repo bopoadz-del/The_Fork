@@ -230,11 +230,14 @@ ladder, and the honest answer today is "measured then, not re-measured since."
   ("no per-project isolation at this period"): the pilot runs one corpus;
   the layered system is merged, tested, and reserved for per-client
   deployments.
-- **DWG files are out of scope without an ODA converter licence.** The
-  drawing reader covers PDF (text-layer, and text-free via bounded OCR) and
-  DXF natively; native .dwg parsing requires the ODA File Converter, whose
-  licensing requires a registration the platform does not bundle. Convert
-  to DXF/PDF upstream.
+- ~~**DWG files are out of scope without an ODA converter licence.**~~
+  **RESOLVED 2026-08-16.** The image bundles the ODA File Converter and
+  DWG take-off is live-verified: a real 2.1 MB road-plan DWG converted and
+  measured (19 layers, 469 measurements, 14 areas). Getting there needed
+  three rounds of evidence — the converter's true error had to be surfaced
+  (exit code + its .err report), which showed ODA's QT6 bundle ships ONLY
+  `libqxcb.so` (no offscreen plugin can ever be selected), so conversion
+  runs under `xvfb-run` with `xauth` for the display cookie.
 - **Compute tier stays `standard` (2 GB) for now, measured.** Both
   2026-08-15 OOMs were code defects, since bounded (pixel cap, page-size
   table gate, geometry skip). Neon database usage is 43 MB of the 512 MB
