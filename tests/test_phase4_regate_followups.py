@@ -289,3 +289,28 @@ def test_nudge_hint_skips_prior_nudges_when_finding_the_user_turn(monkeypatch):
     ]
     hint = runtime._file_tool_hint(msgs, "p1", ["bim_extractor"])
     assert "bim_extractor" in hint
+
+
+# ---------------------------------------------------------------- block contract strays
+
+
+@pytest.mark.asyncio
+async def test_sandbox_bare_code_payload_defaults_to_safety_check():
+    # "Unknown action: None" on {"code": ...} -- same class as file_hasher
+    # F30b; a bare code payload IS the pre-flight safety check.
+    from app.blocks.sandbox import SandboxBlock
+    res = await SandboxBlock().process({"code": "print(1+1)"}, {})
+    assert "Unknown action" not in str(res)
+    assert res.get("status") in ("success", "safe", "unsafe") or "safe" in str(res).lower()
+
+
+@pytest.mark.asyncio
+async def test_learning_engine_accepts_action_key_and_summary_alias(tmp_path, monkeypatch):
+    monkeypatch.setenv("LEARNING_ENGINE_STATE", str(tmp_path / "state.json"))
+    from app.blocks.learning_engine import LearningEngineBlock
+    b = LearningEngineBlock(hal_block=None, config={})
+    rec = await b.process({"action": "record_correction", "formula_id": "f1",
+                           "predicted": 100, "actual": 120}, {})
+    assert rec["status"] == "success", rec
+    summ = await b.process({"action": "summary"}, {})
+    assert summ.get("status") != "error", summ

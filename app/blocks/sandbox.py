@@ -132,6 +132,12 @@ class SandboxBlock(UniversalBlock):
     async def process(self, input_data: Dict, params: Dict = None) -> Dict:
         """Handle sandbox actions"""
         action = (params or {}).get("action") or (input_data.get("action") if isinstance(input_data, dict) else None)
+        # A bare {"code": ...} payload is a pre-flight safety check -- the
+        # block's whole purpose (see self-coding agent config). Without this
+        # default it died with "Unknown action: None" (same class as the
+        # file_hasher F30b find).
+        if action is None and isinstance(input_data, dict) and input_data.get("code"):
+            action = "check_safety"
         
         if action == "execute":
             return await self._execute_sandboxed(input_data)
