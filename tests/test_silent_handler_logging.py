@@ -93,7 +93,12 @@ def test_plaintext_temp_cleanup_failure_is_logged(monkeypatch, tmp_path):
         assert open(p, "rb").read() == b"confidential contents"
 
     assert any("decrypted temp file" in w for w in warnings), warnings
-    assert any("plaintext may" in w for w in warnings), warnings
+    # The contract strengthened with the fork_dec_ sweeper work: a failed
+    # unlink now SHREDS the contents in place, so the honest message is
+    # "zero-overwritten" on success and "plaintext may remain" only when
+    # even the overwrite failed. Either way the failure is loud.
+    assert any("zero-overwritten" in w or "plaintext may" in w
+               for w in warnings), warnings
 
 
 def test_cleanup_failure_does_not_propagate(monkeypatch, tmp_path):
