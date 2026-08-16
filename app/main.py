@@ -1,15 +1,18 @@
 """Cerebrum Blocks - Simple Block Execution API."""
 
 import asyncio
+import logging
 import os
 import sys
+import shutil
+
+logger = logging.getLogger(__name__)
 
 # Force fresh bytecode on deployments (clear stale __pycache__)
 for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
     for d in dirs:
         if d == "__pycache__":
             try:
-                import shutil
                 shutil.rmtree(os.path.join(root, d))
             except Exception:
                 logger.warning(
@@ -17,7 +20,6 @@ for root, dirs, files in os.walk(os.path.dirname(os.path.abspath(__file__))):
                     "Exception", exc_info=True,
                 )
 
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -110,8 +112,10 @@ def _validate_startup_env() -> None:
 
     SECRET_KEY is required: without it the JWT signing secret is generated
     per-process, so tokens are invalidated on every restart and differ across
-    scaled instances. DATA_ENCRYPTION_KEY only warns — encryption at rest is
-    opt-in.
+    scaled instances. DATA_ENCRYPTION_KEY is required in production so
+    uploaded documents are never stored as plaintext. The construction kit
+    must be loaded from THIS repo (CEREBRUM_VIRGIN=false and
+    CEREBRUM_DOMAIN_KITS=construction) — do not pull kits from the store.
     """
     env = os.getenv("ENV", os.getenv("ENVIRONMENT", "")).strip().lower()
     if env not in ("prod", "production"):
@@ -131,9 +135,28 @@ def _validate_startup_env() -> None:
             "DATABASE_URL to the Postgres connection string."
         )
     if not os.getenv("DATA_ENCRYPTION_KEY"):
-        logger.warning(
-            "DATA_ENCRYPTION_KEY is not set — uploaded documents are stored "
-            "UNENCRYPTED at rest."
+        raise RuntimeError(
+            "DATA_ENCRYPTION_KEY is required when ENV=production — without it "
+            "uploaded documents are stored unencrypted at rest. Set "
+            "DATA_ENCRYPTION_KEY in the environment."
+        )
+    virgin = os.getenv("CEREBRUM_VIRGIN", "true").strip().lower()
+    kits = {
+        k.strip()
+        for k in os.getenv("CEREBRUM_DOMAIN_KITS", "").split(",")
+        if k.strip()
+    }
+    if virgin not in ("0", "false", "no") or "construction" not in kits:
+        raise RuntimeError(
+            "Production Fork requires CEREBRUM_VIRGIN=false and "
+            "CEREBRUM_DOMAIN_KITS=construction (this repo's construction kit)."
+        )
+    from app.blocks import BLOCK_REGISTRY
+    if "construction" not in BLOCK_REGISTRY:
+        raise RuntimeError(
+            "Production boot failed: construction kit/container is missing "
+            "from BLOCK_REGISTRY. Pin CEREBRUM_DOMAIN_KITS=construction and "
+            "ensure this repo's construction container loaded."
         )
 
 

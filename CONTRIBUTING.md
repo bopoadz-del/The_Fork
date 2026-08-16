@@ -64,11 +64,11 @@ Test the override in `tests/test_chain_text_output_field.py` and the legacy glob
 
 By default, all changes land via PRs. The repo owner has opted into allowing direct pushes to `main` in personal Claude Code sessions (see `.claude/settings.local.json`), but the team norm is still PR-first — direct pushes bypass CI, CodeQL, and any review.
 
-`main` auto-deploys to prod (`render.yaml`: `branch: main`, `autoDeploy: true`). Every merge is a deploy — treat it accordingly.
+`main` does **not** auto-deploy (`render.yaml`: `autoDeploy: false`). Deploy only after CI is green — Render Dashboard manual deploy, or Apply Blueprint.
 
 ## Pre-deploy smoke
 
-`main` auto-deploys, and the chat/deliverable path has a failure mode that unit tests don't catch: a contaminated message replayed to the provider 400s on every *tool-calling* turn, which the browser renders as a silent hang (see the reasoning-field bug, commits `d3cb9fc`/`dc2c2d1`). The tripwire for that whole class of bug is a live smoke run.
+`main` does not auto-deploy. After CI is green, trigger a Render manual deploy for any change that touches `app/agents/runtime.py`, the `app/agents/` chat routes, or the frontend chat path (`frontend/src/pages/ProjectWorkspace.tsx`). The chat/deliverable path has a failure mode that unit tests don't catch: a contaminated message replayed to the provider 400s on every *tool-calling* turn, which the browser renders as a silent hang (see the reasoning-field bug, commits `d3cb9fc`/`dc2c2d1`). The tripwire for that whole class of bug is a live smoke run.
 
 **Run the smoke before AND after any deploy that touches `app/agents/runtime.py`, the `app/agents/` chat routes, or the frontend chat path (`frontend/src/pages/ProjectWorkspace.tsx`).**
 

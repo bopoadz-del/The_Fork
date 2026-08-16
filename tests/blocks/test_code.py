@@ -56,6 +56,18 @@ def hello():
 
 
 @pytest.mark.asyncio
+async def test_code_block_refuses_execute_when_analyze_finds_danger(code_block):
+    """operation=execute must refuse code that _analyze flags as dangerous."""
+    result = await code_block.execute(
+        "import os\nos.system('echo pwned')",
+        {"operation": "execute", "language": "python"},
+    )
+    inner = result.get("result", result)
+    assert inner.get("status") == "error"
+    assert "unsafe" in (inner.get("error") or "").lower() or "dangerous" in (inner.get("error") or "").lower()
+
+
+@pytest.mark.asyncio
 async def test_code_block_lint(code_block):
     """Test Code block lint operation."""
     result = await code_block.execute(
