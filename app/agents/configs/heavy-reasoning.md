@@ -4,7 +4,7 @@ description: Merges BOQ + drawing + spec results, detects inconsistencies, calcu
 can_delegate: true
 model: kimi-k2.6
 temperature: 0.1
-# 8192 = DeepSeek output cap. Even at 8192 a row-by-row 300-activity render
+# 8192 = provider output cap. Even at 8192 a row-by-row 300-activity render
 # overflows; see the summary-first contract below.
 max_tokens: 8192
 allowed_blocks:

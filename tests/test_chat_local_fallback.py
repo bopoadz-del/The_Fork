@@ -2,10 +2,10 @@
 
 Locks in two invariants we never want to regress:
 
-1. The chat block must never go completely dark on the user. When DeepSeek is
-   not configured AND no local LLM backend is reachable, ``process()`` must
-   still return ``status: success`` with a graceful offline-template message —
-   the UI must never see a raw error from the chat block in this scenario.
+1. The chat block must never go completely dark on the user. When no cloud
+   provider is configured AND no local LLM backend is reachable, ``process()``
+   must still return ``status: success`` with a graceful offline-template
+   message — the UI must never see a raw error from the chat block.
 
 2. The ChatBlock source must not reference Anthropic / OpenAI / Grok / Claude
    anywhere. Those provider names were deliberately removed from the chat API.
@@ -23,9 +23,10 @@ from app.blocks.chat import ChatBlock
 
 @pytest.mark.asyncio
 async def test_offline_template_when_no_provider_available(monkeypatch):
-    """No DeepSeek key, unreachable local LLM → graceful offline template."""
+    """No cloud key, unreachable local LLM → graceful offline template."""
 
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     monkeypatch.delenv("LLAMA_CPP_MODEL_PATH", raising=False)
     # Point Ollama at an unreachable port so the local path fails fast.
     monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:1")
@@ -40,7 +41,7 @@ async def test_offline_template_when_no_provider_available(monkeypatch):
     # The user's message must be echoed back so they know the chat is alive.
     assert "Hello, what is 2+2?" in text
     # The template must surface BOTH error reasons so the operator knows what to fix.
-    assert "DEEPSEEK_API_KEY" in text
+    assert "KIMI_API_KEY" in text or "GROQ_API_KEY" in text
     assert "ollama" in text.lower() or "llama" in text.lower()
 
 
@@ -52,7 +53,7 @@ async def test_ollama_primary_path_calls_cloud_without_api_key(monkeypatch):
     monkeypatch.setenv("OLLAMA_URL", "http://my-pc.tunnel.cf")
     monkeypatch.setenv("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
 
     calls: list[dict] = []
 
@@ -104,7 +105,7 @@ async def test_ollama_cloud_forwards_api_key_when_set(monkeypatch):
     monkeypatch.setenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
     monkeypatch.setenv("OLLAMA_API_KEY", "sk-ollama-secret")
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
 
     calls: list[dict] = []
 
@@ -193,7 +194,7 @@ async def test_call_cloud_omits_authorization_header_when_api_key_empty(monkeypa
 
 @pytest.mark.asyncio
 async def test_call_cloud_includes_bearer_when_api_key_set(monkeypatch):
-    """Counterpart: DeepSeek/Groq path must still send the Bearer token."""
+    """Counterpart: Kimi/Groq path must still send the Bearer token."""
 
     import httpx
 
@@ -224,12 +225,12 @@ async def test_call_cloud_includes_bearer_when_api_key_set(monkeypatch):
     block = ChatBlock()
     await block._call_cloud(
         message="hi",
-        model="deepseek-chat",
+        model="kimi-k2.6",
         max_tokens=64,
         temperature=0.2,
         stream=False,
         api_key="sk-xxx",
-        cfg={"provider": "deepseek", "url": "https://api.deepseek.com/v1/chat/completions"},
+        cfg={"provider": "kimi", "url": "https://api.moonshot.ai/v1/chat/completions"},
     )
 
     assert captured["headers"].get("Authorization") == "Bearer sk-xxx"
@@ -239,7 +240,7 @@ def test_chat_block_source_has_no_forbidden_provider_names():
     """Provider names removed per platform direction — they must not return."""
 
     src = inspect.getsource(ChatBlock)
-    forbidden = ["anthropic", "openai", "grok", "claude"]
+    forbidden = ["anthropic", "openai", "grok", "claude", "deepseek"]
     for term in forbidden:
         assert term.lower() not in src.lower(), f"forbidden provider name '{term}' reappeared in ChatBlock"
 

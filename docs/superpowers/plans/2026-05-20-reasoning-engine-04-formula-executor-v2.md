@@ -7,11 +7,11 @@
 
 **Architecture:**
 - `app/prompts/codegen_system.py` — a pure function `build_codegen_prompt(...)` that assembles the system prompt for the code-generation LLM call. No I/O, no AI — just string building, so it is unit-testable without a key.
-- `app/blocks/formula_executor_v2.py` — `FormulaExecutorV2Block`, a `UniversalBlock`. It owns the generate → run → cache → retry loop. The LLM call is isolated behind a single overridable method `_call_llm(...)` so mock-LLM tests can subclass it and live tests can hit DeepSeek.
+- `app/blocks/formula_executor_v2.py` — `FormulaExecutorV2Block`, a `UniversalBlock`. It owns the generate → run → cache → retry loop. The LLM call is isolated behind a single overridable method `_call_llm(...)` so mock-LLM tests can subclass it and live tests can hit the configured LLM.
 - `app/blocks/formula_executor.py` — MODIFIED into a thin deprecation wrapper: `FormulaExecutorBlock.process` delegates to a `FormulaExecutorV2Block` instance, keeping the old `name = "formula_executor"` registration working unchanged.
 - `app/blocks/__init__.py` — MODIFIED to import and register `FormulaExecutorV2Block` under the key `formula_executor_v2`.
 
-**LLM provider:** DeepSeek, same call shape as `app/blocks/chat.py` (`ChatBlock._call_deepseek`) — `POST https://api.deepseek.com/v1/chat/completions`, `Authorization: Bearer <DEEPSEEK_API_KEY>`, model `deepseek-chat`. The key (`DEEPSEEK_API_KEY`) is **pending refill** — this plan ships with **mock-LLM tests only**; the live end-to-end test is written but `@pytest.mark.skipif` on the key (Task 6) and runs once the key is funded.
+**LLM provider:** the configured LLM, same call shape as `app/blocks/chat.py` (`ChatBlock._call_cloud`) — `POST https://api.moonshot.ai/v1/chat/completions`, `Authorization: Bearer <KIMI_API_KEY>`, model `kimi-k2.6`. The key (`KIMI_API_KEY`) is **pending refill** — this plan ships with **mock-LLM tests only**; the live end-to-end test is written but `@pytest.mark.skipif` on the key (Task 6) and runs once the key is funded.
 
 **Sandbox contract (from Plan 3 — assumed API):** `app/core/sandbox.py` exposes `run_sandboxed(code: str, variables: dict, *, allowed_imports: list[str] | None = None, timeout_seconds: int = 10) -> SandboxResult`, where `SandboxResult` has fields `ok: bool`, `result: Any` (the value bound to `result` in the snippet), `stdout: str`, `error: str | None`, `traceback: str | None`. If Plan 3's final API differs, adjust the calls in Tasks 2–4 to match — the loop logic is unchanged.
 
@@ -169,7 +169,7 @@ from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
 
 
 class _MockLLMBlock(FormulaExecutorV2Block):
-    """Test double — returns canned code instead of calling DeepSeek.
+    """Test double — returns canned code instead of calling the configured LLM.
 
     `scripted` is a list of code strings yielded one per LLM call, so a test
     can script a first failing attempt followed by a passing retry.
@@ -264,7 +264,7 @@ class FormulaExecutorV2Block(UniversalBlock):
     default_config = {
         "max_retries": 2,        # extra attempts after the first
         "timeout_seconds": 10,
-        "model": "deepseek-chat",
+        "model": "kimi-k2.6",
     }
 
     ui_schema = {
@@ -287,18 +287,18 @@ class FormulaExecutorV2Block(UniversalBlock):
     }
 
     async def _call_llm(self, prompt: str) -> str:
-        """Send the code-gen prompt to DeepSeek and return the raw reply.
+        """Send the code-gen prompt to the configured LLM and return the raw reply.
 
         Overridden by test doubles. Raises RuntimeError when no key is set so
         callers get a clear, non-secret error.
         """
-        api_key = os.getenv("DEEPSEEK_API_KEY")
+        api_key = os.getenv("KIMI_API_KEY")
         if not api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY not configured")
-        model = self.config.get("model", "deepseek-chat")
+            raise RuntimeError("KIMI_API_KEY not configured")
+        model = self.config.get("model", "kimi-k2.6")
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.moonshot.ai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
                 json={
@@ -309,7 +309,7 @@ class FormulaExecutorV2Block(UniversalBlock):
             )
             if resp.status_code != 200:
                 raise RuntimeError(
-                    f"DeepSeek API error (HTTP {resp.status_code})"
+                    f"the configured LLM API error (HTTP {resp.status_code})"
                 )
             return resp.json()["choices"][0]["message"]["content"]
 
@@ -749,7 +749,7 @@ git commit -m "feat(codegen): deprecate FormulaExecutorBlock, register v2 block"
 **Files:**
 - Test: `tests/test_formula_executor_v2_live.py`
 
-This is the real DeepSeek round-trip. It is **skipped** while `DEEPSEEK_API_KEY`
+This is the real the configured LLM round-trip. It is **skipped** while `KIMI_API_KEY`
 is unset (pending refill); once the key is funded, it runs unchanged and is the
 acceptance check for genuine LLM code generation.
 
@@ -758,9 +758,9 @@ acceptance check for genuine LLM code generation.
 Create `tests/test_formula_executor_v2_live.py`:
 
 ```python
-"""LIVE DeepSeek end-to-end test — Reasoning Engine Plan 4.
+"""LIVE the configured LLM end-to-end test — Reasoning Engine Plan 4.
 
-Skipped until DEEPSEEK_API_KEY is funded. This is the acceptance check for
+Skipped until KIMI_API_KEY is funded. This is the acceptance check for
 real LLM code generation. The mock-LLM coverage is in
 tests/test_formula_executor_v2.py and runs always.
 """
@@ -772,8 +772,8 @@ import pytest
 from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
 
 pytestmark = pytest.mark.skipif(
-    not os.getenv("DEEPSEEK_API_KEY"),
-    reason="DEEPSEEK_API_KEY not configured — pending refill",
+    not os.getenv("KIMI_API_KEY"),
+    reason="KIMI_API_KEY not configured — pending refill",
 )
 
 
@@ -812,7 +812,7 @@ Expected (key unset): `2 skipped`. Expected (key funded): `2 passed`.
 
 ```bash
 git add tests/test_formula_executor_v2_live.py
-git commit -m "test(codegen): live DeepSeek e2e test (skipped until key funded)"
+git commit -m "test(codegen): live the configured LLM e2e test (skipped until key funded)"
 ```
 
 ---

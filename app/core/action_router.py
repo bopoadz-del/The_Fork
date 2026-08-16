@@ -13,7 +13,7 @@ Why a hint, not a block dispatch:
     expect structured input (file paths, parameters), not a freeform chat
     message. Dispatching a raw user message to them would fail in ways the
     user can't recover from.
-  - The chat block (DeepSeek) is already the right thing to answer freeform
+  - The chat block is already the right thing to answer freeform
     questions about uploaded files — it just needs a nudge about *which*
     domain the user is asking inside of.
 

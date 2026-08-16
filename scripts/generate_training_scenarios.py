@@ -226,7 +226,7 @@ async def _run(
     if not rows:
         logger.error(
             "ZERO pairs generated. Check that the chat block has a working "
-            "LLM provider (DEEPSEEK_API_KEY set, or a local model configured)."
+            "LLM provider (KIMI_API_KEY or GROQ_API_KEY set, or a local model configured)."
         )
         return 1
 
@@ -383,14 +383,14 @@ def main() -> int:
     )
     parser.add_argument(
         "--provider", default="any",
-        choices=("any", "deepseek", "local_ollama", "local_llama_cpp", "local_lora", "ollama"),
+        choices=("any", "kimi", "groq", "local_ollama", "local_llama_cpp", "local_lora", "ollama"),
         help="Require this provider on chat responses (default: any non-offline)",
     )
     args = parser.parse_args()
 
     # When the operator forces 'ollama' (the cloud-style provider routed via
     # _llm_config), propagate that selection to the chat block via the env
-    # var it reads. Without this, the chat block would pick groq/deepseek
+    # var it reads. Without this, the chat block would pick kimi/groq
     # based on whichever API key is configured and the provider-hint match
     # at _generate_for_chunk would drop every chunk.
     if args.provider == "ollama":

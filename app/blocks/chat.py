@@ -15,7 +15,7 @@ The chat must never go completely dark on the user. Order of attempts:
    path always succeeds, so the chat never returns an unhandled error.
 
 The block exposes a single ``provider`` field on the response so callers can
-see which path served the answer (``deepseek`` / ``local_ollama`` /
+see which path served the answer (``kimi`` / ``groq`` / ``local_ollama`` /
 ``local_llama_cpp`` / ``offline_template``).
 """
 
@@ -55,7 +55,7 @@ class ChatBlock(TypedBlock):
     required_input_one_of = ["text", "message"]
 
     # Canonical text key for chain unwrapping. ChatBlock returns either
-    # ``{"text": "..."}`` (DeepSeek path) or ``{"response": "..."}`` (local
+    # ``{"text": "..."}`` (cloud path) or ``{"response": "..."}`` (local
     # LoRA path); ``"text"`` is the primary shape, so declaring it locks
     # the contract for the common case. The orchestrator's global fallback
     # still picks up ``"response"`` on the local path because it's in
@@ -192,7 +192,7 @@ class ChatBlock(TypedBlock):
                     "use_local_model requested but local stack unavailable; falling back to cloud"
                 )
 
-        # ── Cloud provider selection — DeepSeek or Groq depending on which
+        # ── Cloud provider selection — Kimi or Groq depending on which
         # creds are set. This is the same _llm_config() the agent runtime
         # uses so that LLM_PROVIDER=groq applies uniformly across the chat
         # block route and the agent path.
@@ -200,7 +200,7 @@ class ChatBlock(TypedBlock):
         cfg = _llm_config()
         # Provider auth. ``_llm_config`` sets env_key="OLLAMA_API_KEY" when an
         # Ollama Cloud key is present, "" for self-hosted Ollama, and the
-        # provider key for DeepSeek/Groq. Check env_key FIRST so Ollama Cloud
+        # provider key for Kimi/Groq. Check env_key FIRST so Ollama Cloud
         # (ollama.com — returns HTTP 401 without a Bearer) gets its key
         # forwarded, exactly like the agent runtime path. Only fall back to an
         # empty key for self-hosted Ollama, which needs no auth.
@@ -330,7 +330,7 @@ class ChatBlock(TypedBlock):
             return None
 
     # ────────────────────────────────────────────────────────────────────────
-    # Cloud provider — chat completions (DeepSeek / Groq, OAI-shape protocol)
+    # Cloud provider — chat completions (Kimi / Groq, OAI-shape protocol)
     # ────────────────────────────────────────────────────────────────────────
 
     async def _call_cloud(
@@ -586,7 +586,7 @@ class ChatBlock(TypedBlock):
             "generate an AI response right now. Your message was received intact:\n\n"
             f"> {snippet or '(empty)'}\n\n"
             "**How to restore full chat:**\n"
-            "- Set `GROQ_API_KEY` (free tier) or `DEEPSEEK_API_KEY` in `.env` to use a cloud provider, **or**\n"
+            "- Set `KIMI_API_KEY` or `GROQ_API_KEY` in `.env` to use a cloud provider, **or**\n"
             "- Run a local model: `ollama serve` + `ollama pull qwen2.5:3b-instruct`\n"
             "  (optionally set `OLLAMA_URL` and `LOCAL_LLM_MODEL`), **or**\n"
             "- Provide a GGUF file via `LLAMA_CPP_MODEL_PATH` with `llama-cpp-python` installed.\n\n"

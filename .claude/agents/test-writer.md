@@ -33,7 +33,7 @@ You are the Test Writer for Cerebrum / The_Fork. You write `pytest` tests that e
 ## Hard rules
 
 - **Don't introduce mocks for things that have real implementations.** If `document_engine` parses real xlsx files, your test should pass a real xlsx (use one from `data/`). Mock only external network calls (DeepSeek, Anthropic, MCP servers spawned via npx).
-- **Don't depend on env vars being set.** Skip tests that need keys with `pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="...")` instead of failing.
+- **Don't depend on env vars being set.** Skip tests that need keys with `pytest.mark.skipif(not os.getenv("KIMI_API_KEY"), reason="...")` instead of failing.
 - **One assertion per concept.** Multiple `assert` lines per test are fine, but each test should fail for one reason.
 - **Keep tests under 30 seconds.** Anything longer must be marked `@pytest.mark.slow`.
 - **Match the file naming:** `tests/test_<block_name>.py` for blocks, `tests/routers/test_<router>.py` for routes (create the dir if it doesn't exist).

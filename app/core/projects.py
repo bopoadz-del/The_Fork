@@ -568,9 +568,12 @@ def get_project_accessible(project_id: str, user_id: Optional[str] = None):
     Returns the project dict or None; archived projects stay invisible on
     every path.
 
-    SECURITY (legacy-admin tenancy fix): ``require_user`` maps EVERY legacy
-    API key to the singleton ``system`` user with ``role="admin"``, so the
-    admin fallthrough below is reachable by any legacy/master-key holder.
+    SECURITY (legacy-admin tenancy fix): ``require_user`` maps a legacy
+    API key to the singleton ``system`` user for *identity* only. Authority
+    (``role``) comes from the key record — only ``CEREBRUM_MASTER_KEY`` is
+    minted with ``role="admin"``. A plain API key must not inherit admin
+    from the system user row. The admin fallthrough below is therefore
+    reachable by genuine admins and the master key, not every legacy key.
     The admin cross-tenant read is therefore scoped to PLATFORM projects
     (``_is_platform_project``) — system/seed-owned corpora and admin-approved
     shared projects — and NEVER a real end-user's private project. Genuine

@@ -26,7 +26,7 @@ You are the Chain Debugger for Cerebrum / The_Fork. Your job is to find the *roo
 | Right panel stuck on old data after new chat | `sendMessage` not updating outcomes | `app/static/index.html:sendMessage` |
 | Panel shows raw JSON | `panel.type` not handled in `renderPanels` | `app/static/index.html:renderPanels` |
 | `procurement` panel renders empty even when items exist | `panel.data` shape mismatch — renderer reads `pd.procurement_list` | `auto_pipeline` panel emit |
-| Chat returns "(no response)" | No DEEPSEEK_API_KEY or ANTHROPIC_API_KEY → block returns `{status:"error"}` | `app/blocks/chat.py` |
+| Chat returns "(no response)" | No KIMI_API_KEY or GROQ_API_KEY → block returns `{status:"error"}` | `app/blocks/chat.py` |
 | SSE truncates | Buffering proxy or `X-Accel-Buffering` missing | `app/routers/chat.py` |
 | Office file (.xlsx/.docx) crashes silently | `_process_drawing` uses `fitz` which only handles PDFs | `app/containers/construction.py:_process_office_document` covers it |
 | `mcp_consumer` 500s on a known server | npx package not installed or wrong server name | `app/blocks/mcp_consumer.py` |

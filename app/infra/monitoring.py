@@ -357,7 +357,7 @@ class MonitoringBlock(LegoBlock):
     tags = ["monitoring", "observability", "core"]
     # The roster must match the ladder the platform can actually call:
     # Kimi primary, Groq fallback, Ollama on-prem (DECISIONS.md 2026-07-24).
-    # DeepSeek, OpenAI and Anthropic were removed 2026-07-25 and were still
+    # Removed cloud providers must not reappear on the roster.
     # listed here until 2026-08-12, so /v1/leaderboard printed three providers
     # the platform has no key for and cannot reach. Pinned against the
     # providers `_llm_config` can return by

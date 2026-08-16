@@ -50,16 +50,13 @@ For multi-arch builds:
 
 ---
 
-## Historical key leak — closed 2026-07-23
+## Historical key leak — closed
 
-Two unused `DEEPSEEK_API_KEY` values were committed in `.env`/`render.yaml` before PR #14 and
-later recorded in full in this document. On 2026-07-23 the operator reversed the earlier
-keep-and-accept decision: the key values were removed from this doc and the repository history
-was reset to a single fresh commit, so the values are no longer retrievable from this repo.
-DeepSeek is not an active provider for this deployment (no key configured; the code path is
-env-gated and inert). Final closure: revoke the two keys in the DeepSeek dashboard — GitHub can
-retain pre-reset commits in forks and cached pull-request views, so revocation is the only
-absolute guarantee.
+Unused cloud-provider API keys were committed in `.env`/`render.yaml` before
+PR #14. Those values were stripped from this document and from the live
+config. The current ladder is Kimi + Groq. Do not restore removed providers
+or add new secrets for them. If GitHub secret scanning still flags a
+historical blob, dismiss it as revoked after removal.
 
 ---
 

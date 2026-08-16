@@ -604,7 +604,7 @@ In `scripts/generate_training_scenarios.py`, find the argparse `--provider` line
 ```python
 parser.add_argument(
     "--provider", default="any",
-    choices=["any", "deepseek", "local_lora", "offline_template", "ollama"],
+    choices=["any", "kimi", "local_lora", "offline_template", "ollama"],
     help="Force a specific chat provider; 'any' lets the chat block pick.",
 )
 ```

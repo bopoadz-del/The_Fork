@@ -1087,7 +1087,7 @@ def _heuristic_global_summary(
 
 async def _call_chat(prompt: str, max_tokens: int = 600) -> tuple[str, str]:
     """Invoke the ChatBlock and return (text, provider). The ChatBlock's
-    fallback chain (DeepSeek → Ollama → llama.cpp → offline template) guarantees
+    fallback chain (Kimi → Groq → Ollama → llama.cpp → offline template) guarantees
     a response so hydration never crashes on a missing model."""
     from app.blocks import BLOCK_REGISTRY
 

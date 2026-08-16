@@ -1,9 +1,9 @@
 hal_profile: cloud_render
 blocks:
   chat:
-    provider: deepseek
+    provider: kimi
     fallback: groq
-    emergency: gpt4o_mini
+    emergency: groq
   vector:
     backend: chroma
     fallback: memory

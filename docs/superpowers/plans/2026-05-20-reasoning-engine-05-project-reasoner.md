@@ -9,7 +9,7 @@
 - `app/schemas/execution_plan.py` — `PlanStep` and `ExecutionPlan` Pydantic models. A plan is an ordered list of typed steps the executor can run.
 - `app/core/plan_executor.py` — `PlanExecutor`: takes an `ExecutionPlan` + a `ProjectSession`, runs each step, writes results into `session.data`, returns a `PlanRunResult`. No AI — pure dispatch over a step-type registry.
 - `app/prompts/reasoner_system.py` — `build_reasoner_prompt(session, request)`: a pure function that assembles the dynamic system prompt, injecting what the session already knows (activities loaded? CPM computed? artifacts?) so follow-up questions build on prior state.
-- `app/blocks/project_reasoner.py` — `ProjectReasonerBlock`, a `UniversalBlock`. Orchestrates UNDERSTAND→PLAN→EXECUTE→DELIVER. The two LLM calls (plan, deliver) are isolated behind `_call_llm` so mock-LLM tests subclass it; live tests hit DeepSeek.
+- `app/blocks/project_reasoner.py` — `ProjectReasonerBlock`, a `UniversalBlock`. Orchestrates UNDERSTAND→PLAN→EXECUTE→DELIVER. The two LLM calls (plan, deliver) are isolated behind `_call_llm` so mock-LLM tests subclass it; live tests hit the configured LLM.
 
 **Step types (v1):**
 - `compute_cpm` — run `compute_cpm` over `session.data["activities"]`, store `cpm_results`.
@@ -18,7 +18,7 @@
 - `compress` — run `compress_schedule` with a `reductions` arg, store `compressed`.
 - `generate_code` — delegate to `FormulaExecutorV2Block` (Plan 4) for novel logic; store the result under the step's `output_key`.
 
-**LLM provider:** DeepSeek (same shape as Plan 4 / `ChatBlock`). `DEEPSEEK_API_KEY` is **pending refill** — this plan ships **mock-LLM tests only**; the live test is written and `skipif` on the key (Task 6).
+**LLM provider:** the configured LLM (same shape as Plan 4 / `ChatBlock`). `KIMI_API_KEY` is **pending refill** — this plan ships **mock-LLM tests only**; the live test is written and `skipif` on the key (Task 6).
 
 **Tech Stack:** Python 3.11, Pydantic v2, `httpx`. No new dependencies.
 
@@ -376,7 +376,7 @@ from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
 
 
 class _MockCodeGen(FormulaExecutorV2Block):
-    """Code-gen double — returns canned code, no DeepSeek call."""
+    """Code-gen double — returns canned code, no the configured LLM call."""
     async def _call_llm(self, prompt):
         return "result = a + b"
 
@@ -728,7 +728,7 @@ class ProjectReasonerBlock(UniversalBlock):
     tags = ["domain", "construction", "reasoning", "agent", "llm"]
     requires = []
 
-    default_config = {"model": "deepseek-chat"}
+    default_config = {"model": "kimi-k2.6"}
 
     ui_schema = {
         "input": {
@@ -750,14 +750,14 @@ class ProjectReasonerBlock(UniversalBlock):
     }
 
     async def _call_llm(self, prompt: str) -> str:
-        """DeepSeek call. Overridden by test doubles."""
-        api_key = os.getenv("DEEPSEEK_API_KEY")
+        """the configured LLM call. Overridden by test doubles."""
+        api_key = os.getenv("KIMI_API_KEY")
         if not api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY not configured")
-        model = self.config.get("model", "deepseek-chat")
+            raise RuntimeError("KIMI_API_KEY not configured")
+        model = self.config.get("model", "kimi-k2.6")
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.moonshot.ai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
                 json={"model": model,
@@ -766,7 +766,7 @@ class ProjectReasonerBlock(UniversalBlock):
             )
             if resp.status_code != 200:
                 raise RuntimeError(
-                    f"DeepSeek API error (HTTP {resp.status_code})"
+                    f"the configured LLM API error (HTTP {resp.status_code})"
                 )
             return resp.json()["choices"][0]["message"]["content"]
 
@@ -862,9 +862,9 @@ git commit -m "feat(reasoner): ProjectReasonerBlock — UNDERSTAND/PLAN/EXECUTE/
 Create `tests/test_project_reasoner_live.py`:
 
 ```python
-"""LIVE DeepSeek end-to-end test — Reasoning Engine Plan 5.
+"""LIVE the configured LLM end-to-end test — Reasoning Engine Plan 5.
 
-Skipped until DEEPSEEK_API_KEY is funded. Acceptance check for the real
+Skipped until KIMI_API_KEY is funded. Acceptance check for the real
 reasoning loop. Mock-LLM coverage is in tests/test_project_reasoner.py.
 """
 
@@ -876,8 +876,8 @@ from app.blocks.project_reasoner import ProjectReasonerBlock
 from app.core.session_store import InMemorySessionStore
 
 pytestmark = pytest.mark.skipif(
-    not os.getenv("DEEPSEEK_API_KEY"),
-    reason="DEEPSEEK_API_KEY not configured — pending refill",
+    not os.getenv("KIMI_API_KEY"),
+    reason="KIMI_API_KEY not configured — pending refill",
 )
 
 
@@ -926,7 +926,7 @@ Expected (key unset): `2 skipped`. Expected (key funded): `2 passed`.
 
 ```bash
 git add tests/test_project_reasoner_live.py
-git commit -m "test(reasoner): live DeepSeek e2e test (skipped until key funded)"
+git commit -m "test(reasoner): live the configured LLM e2e test (skipped until key funded)"
 ```
 
 ---
