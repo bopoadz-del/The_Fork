@@ -80,7 +80,8 @@ def test_call_llm_no_auth_required_for_ollama(monkeypatch):
     proceed to make the HTTP call with an empty bearer."""
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     monkeypatch.setenv("OLLAMA_URL", "http://my-pc.tunnel.cf")
 
     agent = _agent()
@@ -109,7 +110,8 @@ def test_groq_still_requires_api_key(monkeypatch):
     confirming the ollama skip is provider-scoped, not global."""
     monkeypatch.setenv("LLM_PROVIDER", "groq")
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     agent = _agent()
     # chat() returns the no-key error before any HTTP call. Use a stub

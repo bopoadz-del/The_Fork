@@ -1,6 +1,6 @@
-"""LIVE DeepSeek end-to-end test — Reasoning Engine Plan 5.
+"""LIVE LLM end-to-end test — Reasoning Engine Plan 5.
 
-Off by default — even with DEEPSEEK_API_KEY in .env, this test stays skipped
+Off by default — even with a cloud key in .env, this test stays skipped
 unless LIVE_LLM_TESTS=1 is explicitly set. Two-key gate prevents a routine
 `pytest` run from silently burning the LLM credit.
 """
@@ -13,8 +13,8 @@ from app.blocks.project_reasoner import ProjectReasonerBlock
 from app.core.session_store import InMemorySessionStore
 
 pytestmark = pytest.mark.skipif(
-    not (os.getenv("DEEPSEEK_API_KEY") and os.getenv("LIVE_LLM_TESTS") == "1"),
-    reason="live LLM tests off — set LIVE_LLM_TESTS=1 (plus DEEPSEEK_API_KEY) to arm",
+    not ((os.getenv("KIMI_API_KEY") or os.getenv("GROQ_API_KEY")) and os.getenv("LIVE_LLM_TESTS") == "1"),
+    reason="live LLM tests off — set LIVE_LLM_TESTS=1 (plus KIMI_API_KEY or GROQ_API_KEY) to arm",
 )
 
 

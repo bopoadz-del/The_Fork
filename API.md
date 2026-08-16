@@ -65,7 +65,7 @@ POST /execute
 {
   "block": "chat",
   "input": "Explain quantum computing",
-  "params": {"provider": "deepseek"}
+  "params": {"provider": "kimi"}
 }
 ```
 
@@ -76,7 +76,7 @@ POST /execute
   "status": "success",
   "result": {
     "text": "Quantum computing is...",
-    "provider": "deepseek",
+    "provider": "kimi",
     "tokens_total": 26
   }
 }

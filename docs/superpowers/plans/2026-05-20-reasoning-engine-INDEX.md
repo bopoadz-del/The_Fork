@@ -43,7 +43,7 @@ USER ──▶ LAYER 1: REASONING ENGINE
 
 | Need | Status | Affects |
 |------|--------|---------|
-| LLM API key — `DEEPSEEK_API_KEY` in `.env` | ⏳ user has a DeepSeek key, **pending refill** | Plans 4 & 5 get full end-to-end tests once the key is funded; until then they ship with mock-LLM tests |
+| LLM API key — `KIMI_API_KEY` in `.env` | ⏳ user has a the configured LLM key, **pending refill** | Plans 4 & 5 get full end-to-end tests once the key is funded; until then they ship with mock-LLM tests |
 | `RestrictedPython` package | ❌ not installed — Plan 3 adds it to `requirements.txt` | Plan 3 |
 | Redis | ❌ not present — **not required**; Plan 2 uses in-memory backend, Redis adapter optional | Plan 2 (prod only) |
 
@@ -100,6 +100,6 @@ Legend: doc = plan document written · impl = implemented + tests passing.
 | 6 — API & UI | ✅ | ✅ |
 
 All 7 plans implemented. Reasoning Engine suite: 128 passed, 1 skipped
-(Redis + live-LLM tests skip without `REDIS_URL` / `DEEPSEEK_API_KEY`).
+(Redis + live-LLM tests skip without `REDIS_URL` / `KIMI_API_KEY`).
 
 Execute Plan N only after Plan N-1's tests pass.

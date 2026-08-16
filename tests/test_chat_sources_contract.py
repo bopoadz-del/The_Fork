@@ -17,11 +17,11 @@ def _stub_llm_key(monkeypatch):
     reached. These tests monkeypatch _call_llm so no network call ever
     happens, but the guard still fires when the key is unset (e.g. in CI,
     where conftest's load_dotenv finds no .env key). Pin the provider to
-    the deepseek default so the guard checks DEEPSEEK_API_KEY regardless
-    of a developer's LLM_PROVIDER, then satisfy it with a placeholder.
+    kimi so the guard checks KIMI_API_KEY regardless of a developer's
+    LLM_PROVIDER, then satisfy it with a placeholder.
 
     Deliberately a per-file fixture, not in conftest.py: a global key would
-    un-skip the live DEEPSEEK acceptance tests (their skipif is evaluated at
+    un-skip the live LLM acceptance tests (their skipif is evaluated at
     collection time) and make them run against the real API with a fake key.
     """
     monkeypatch.setenv("LLM_PROVIDER", "kimi")

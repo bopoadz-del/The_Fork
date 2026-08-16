@@ -31,7 +31,7 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _stub_llm_key(monkeypatch):
-    """Agent.chat() guards on DEEPSEEK_API_KEY *before* _call_llm is reached.
+    """Agent.chat() guards on the provider API key *before* _call_llm is reached.
 
     These tests monkeypatch _call_llm so no network call ever happens, but the
     guard still fires when the key is unset (e.g. in CI, where conftest's
