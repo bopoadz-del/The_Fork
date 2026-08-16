@@ -40,7 +40,8 @@ def test_legacy_api_key_maps_to_system_user(app_client):
     assert r.status_code == 200
     assert r.json()["user_id"] == "system"
     assert r.json()["auth_method"] == "api_key"
-    assert r.json()["role"] == "admin"
+    # Identity only — never copy role from the system user row (which IS admin).
+    assert r.json()["role"] != "admin"
 
 
 def test_valid_jwt_resolves_to_user(app_client, isolated_users):

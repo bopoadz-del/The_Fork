@@ -1,10 +1,15 @@
 from typing import Any, Dict, List, Optional
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.blocks import BLOCK_REGISTRY
-from app.dependencies import require_api_key
+from app.core.privileges import raise_if_privileged_block
+from app.dependencies import require_user
 from app.dependencies import block_instances, _create_block_instance
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -44,10 +49,13 @@ class ChainResponse(BaseModel):
 
 
 @router.post("/chain")
-async def chain_execute(request: ChainRequest, auth: dict = Depends(require_api_key)):
+async def chain_execute(request: ChainRequest, auth: dict = Depends(require_user)):
     """Execute a chain of blocks via OrchestratorBlock."""
     if "orchestrator" not in BLOCK_REGISTRY:
         raise HTTPException(500, "Orchestrator block not available")
+
+    for step in request.steps:
+        raise_if_privileged_block(step.block, auth.get("role"))
 
     try:
         if "orchestrator" not in block_instances:
@@ -122,11 +130,14 @@ async def chain_execute(request: ChainRequest, auth: dict = Depends(require_api_
             "validation_passed": inner.get("validation_passed", True)
         }
 
-    except Exception as e:
-        raise HTTPException(500, f"Chain execution failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("chain execution failed")
+        raise HTTPException(500, "Chain execution failed")
 
 
 @router.post("/v1/chain")
-async def chain_execute_v1(request: ChainRequest, auth: dict = Depends(require_api_key)):
+async def chain_execute_v1(request: ChainRequest, auth: dict = Depends(require_user)):
     """Execute a chain of blocks (v1 API)."""
     return await chain_execute(request, auth)
