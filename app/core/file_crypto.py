@@ -171,11 +171,79 @@ def open_plaintext(path: str):
         except OSError:
             # NOT harmless enough to swallow silently: tmp_path holds the
             # DECRYPTED document. If the unlink fails the plaintext stays on
-            # disk, which is exactly the state encryption exists to prevent —
-            # and it would do so with no signal at all. Cleanup still must not
-            # raise (that would mask whatever the caller was doing), so log
-            # loudly and continue.
+            # disk, which is exactly the state encryption exists to prevent.
+            # Defence in depth: shred (zero-overwrite) the contents so even a
+            # file whose NAME survives holds no plaintext, then log. Cleanup
+            # still must not raise (that would mask whatever the caller was
+            # doing).
+            shredded = shred_file(tmp_path)
             logger.warning(
-                "could not remove decrypted temp file %s — plaintext may "
-                "remain on disk", tmp_path, exc_info=True,
+                "could not remove decrypted temp file %s — contents %s",
+                tmp_path,
+                "zero-overwritten (no plaintext remains)" if shredded
+                else "COULD NOT be overwritten; plaintext may remain on disk",
+                exc_info=True,
             )
+
+
+def shred_file(path: str) -> bool:
+    """Zero-overwrite a file's contents in place, then retry the unlink.
+
+    For decrypted temp files whose removal failed: a name that lingers is
+    cosmetic, plaintext that lingers is an incident. Returns True when the
+    contents were overwritten (whether or not the unlink then succeeded).
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "r+b") as fh:
+            fh.write(b"\0" * size)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError:
+        return False
+    try:
+        os.remove(path)
+    except OSError:
+        # Zeroed but not removed — the sweeper will reap the empty husk.
+        pass
+    return True
+
+
+def sweep_stale_plaintext(
+    max_age_seconds: int = 3600, tmp_dir: str | None = None,
+) -> dict:
+    """Reap orphaned decrypted temp files (``fork_dec_*``).
+
+    Every code path that materialises plaintext cleans up after itself, but
+    a crash between decrypt and cleanup — or a failed unlink — can orphan a
+    file holding CLIENT PLAINTEXT. This bounds that exposure: anything with
+    the decrypted-temp prefix older than ``max_age_seconds`` is removed
+    (shredded first if removal fails). Runs at boot, hourly, and on demand
+    via /v1/admin/debug/sweep-plaintext.
+    """
+    import glob
+    import time as _time
+
+    tmp_dir = tmp_dir or tempfile.gettempdir()
+    cutoff = _time.time() - max_age_seconds
+    scanned = reaped = shredded = 0
+    failed: list[str] = []
+    for path in glob.glob(os.path.join(tmp_dir, "fork_dec_*")):
+        scanned += 1
+        try:
+            if os.path.getmtime(path) > cutoff:
+                continue  # fresh — some request is still using it
+            os.remove(path)
+            reaped += 1
+        except OSError:
+            if shred_file(path):
+                shredded += 1
+            else:
+                failed.append(path)
+    result = {"scanned": scanned, "reaped": reaped,
+              "shredded": shredded, "failed": failed}
+    if reaped or shredded or failed:
+        logger.warning("plaintext sweep: %s", result)
+    else:
+        logger.info("plaintext sweep: clean (%d scanned)", scanned)
+    return result

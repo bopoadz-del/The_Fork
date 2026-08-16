@@ -197,9 +197,30 @@ async def lifespan(app: FastAPI):
         await _warm_models()
     else:
         warm_task = asyncio.create_task(_warm_models())
+
+    # Decrypted-temp sweeper: reap orphaned fork_dec_* plaintext files at
+    # boot and hourly. Every decrypt path cleans up after itself, but a
+    # crash mid-request (or a failed unlink) can leave CLIENT PLAINTEXT in
+    # /tmp indefinitely — this bounds that exposure to one sweep interval.
+    async def _plaintext_sweep_loop():
+        from app.core.file_crypto import sweep_stale_plaintext
+        interval = int(os.getenv("PLAINTEXT_SWEEP_INTERVAL_SECONDS", "3600"))
+        while True:
+            try:
+                await asyncio.to_thread(sweep_stale_plaintext, interval)
+            except Exception:  # noqa: BLE001 — the sweeper must outlive one bad pass
+                logger.exception("plaintext sweep pass failed; will retry")
+            await asyncio.sleep(interval)
+
+    sweep_task = asyncio.create_task(_plaintext_sweep_loop())
     try:
         yield
     finally:
+        sweep_task.cancel()
+        try:
+            await sweep_task
+        except asyncio.CancelledError:
+            logger.debug("plaintext sweeper cancelled at shutdown")
         if warm_task is not None:
             warm_task.cancel()
             try:
