@@ -409,6 +409,59 @@ _TOOL_ERROR_NUDGE = (
 )
 _TOOL_ERROR_NUDGE_CAP = 2
 
+# Extension -> the file-consuming tool that analyses it. Used ONLY to build
+# the corrective-nudge hint below; never a routing table.
+_EXT_TOOL_HINTS = {
+    ".ifc": "bim_extractor",
+    ".dwg": "drawing_qto",
+    ".dxf": "drawing_qto",
+    ".xlsx": "boq_processor",
+    ".csv": "boq_processor",
+    ".pdf": "pdf",
+    ".xer": "primavera_parser",
+}
+
+
+def _file_tool_hint(messages: list, project_id: str | None,
+                    allowed_blocks: list[str]) -> str:
+    """When the user's request names a REAL project file and the agent has
+    the tool that reads it, say so in the corrective nudge.
+
+    Live 2026-08-16: bim-analyst, asked for an IFC element census, flailed
+    across fetch_document and formula_executor_v2 (generated code returning
+    zeros) while bim_extractor -- the tool built for exactly this -- sat
+    unused in its roster. K2 rejects forced tool_choice, so the only
+    deterministic lever is DATA: name the file that exists and the tool
+    that opens it. Not keyword routing -- the hint only fires when the
+    message literally contains a document that is in the project store."""
+    if not project_id:
+        return ""
+    user_msg = ""
+    for m in reversed(messages):
+        if m.get("role") == "user" and not str(m.get("content", "")).startswith(
+                (_TOOL_ERROR_NUDGE[:20], _EMPTY_ROUTER_NUDGE[:20])):
+            user_msg = str(m.get("content", ""))
+            break
+    if not user_msg:
+        return ""
+    low = user_msg.lower()
+    try:
+        from app.core import projects as _projects
+        docs = _projects.list_documents(project_id) or []
+    except Exception:  # noqa: BLE001
+        return ""
+    for d in docs:
+        name = (d.get("original_name") or "").strip()
+        if name and name.lower() in low:
+            tool = _EXT_TOOL_HINTS.get(os.path.splitext(name)[1].lower())
+            if tool and tool in allowed_blocks:
+                return (
+                    f" The project file '{name}' EXISTS in this project. "
+                    f"Call the {tool} tool with file_path='{name}' -- it is "
+                    "built for exactly this file type."
+                )
+    return ""
+
 
 def _tool_result_errored(tool_result: Any) -> bool:
     """True when a tool round FAILED, wherever the failure hides.
@@ -3499,7 +3552,9 @@ class Agent:
                 elif (_tool_result_errored(tool_result)
                       and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                     error_nudges += 1
-                    messages.append({"role": "user", "content": _TOOL_ERROR_NUDGE})
+                    messages.append({"role": "user", "content": _TOOL_ERROR_NUDGE
+                                     + _file_tool_hint(messages, project_id,
+                                                       self.allowed_blocks)})
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
@@ -4148,7 +4203,10 @@ class Agent:
                     if (_tool_result_errored(tool_result)
                             and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                         error_nudges += 1
-                        messages.append({"role": "user", "content": _TOOL_ERROR_NUDGE})
+                        messages.append({"role": "user",
+                                         "content": _TOOL_ERROR_NUDGE
+                                         + _file_tool_hint(messages, project_id,
+                                                           self.allowed_blocks)})
 
         # Hit the cap without a final answer — force one more call with tools disabled.
         _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
