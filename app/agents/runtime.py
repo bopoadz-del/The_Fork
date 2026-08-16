@@ -5,8 +5,9 @@ markdown body for the system prompt). Each agent can call any block in its
 `allowed_blocks` list as a tool. The runtime handles the back-and-forth with the
 LLM: turn → optional tool call(s) → run blocks → return results → continue.
 
-Provider: DeepSeek (`/v1/chat/completions` JSON protocol). A local-inference
-adapter is wired into the chat block as a fallback; see ``app/blocks/chat.py``.
+Provider: OpenAI-compatible `/v1/chat/completions` JSON protocol (Kimi / Groq /
+Ollama). A local-inference adapter is wired into the chat block as a fallback;
+see ``app/blocks/chat.py``.
 """
 
 from __future__ import annotations
@@ -2767,8 +2768,8 @@ def _sanitize_messages_for_provider(
     return clean
 
 
-# ── DeepSeek DSML tool-call markup handling ─────────────────────────────────
-# deepseek-chat sometimes emits a tool call as inline text markup inside the
+# ── DSML inline tool-call markup handling ─────────────────────────────────
+# Some models emit a tool call as inline text markup inside the
 # message `content` (its own "DSML" token format) instead of, or in addition
 # to, the structured `tool_calls` array. If the runtime only reads
 # the structured field it treats the raw markup as a final answer and shows
@@ -4662,9 +4663,9 @@ class Agent:
                     # — the exact failure the hardened smoke catches externally.
                     # Emit one grep-able marker so a resurgence is queryable from
                     # prod logs (list_logs text="TOOL_SKIP"). This does NOT act:
-                    # no forced retry is triggered here. (A deepseek DSML-in-prose
-                    # tool call recovered downstream would false-positive here,
-                    # but we don't run deepseek in prod and this only logs.)
+                    # no forced retry is triggered here. (DSML-in-prose
+                    # tool call recovered downstream would false-positive here;
+                    # this only logs.)
                     if requires_tool:
                         _LOG.warning(
                             "TOOL_SKIP agent=%s provider=%s model=%s answer_chars=%d "
@@ -4693,7 +4694,7 @@ class Agent:
 
         Used ONLY for the forced (``with_tools=False``) synthesis call and only
         on Groq (the verified provider). Mirrors ``_call_llm``'s setup — same
-        ``_llm_config``, same deepseek->default model remap, same soft daily-cap
+        ``_llm_config``, same leftover-model-name remap, same soft daily-cap
         semantics, and critically the SAME ``_sanitize_messages_for_provider``
         chokepoint — but sets ``stream=True`` and offers NO tools, so no
         tool_call deltas can appear (honours "tool iterations stay

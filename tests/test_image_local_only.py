@@ -58,7 +58,8 @@ async def test_analyze_operation_works_with_no_env_vars(monkeypatch):
     """Even with no API keys at all, analyze must succeed locally."""
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     path = _make_tmp_image()
     try:

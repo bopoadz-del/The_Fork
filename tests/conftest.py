@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Load .env before test collection so env-gated tests (e.g. the live
-# DEEPSEEK_API_KEY acceptance tests) see keys placed in .env. The app loads
+# LLM acceptance tests) see keys placed in .env. The app loads
 # .env itself; conftest does it too so `skipif`s evaluated at collection time
 # pick the key up without needing it exported in the shell.
 try:

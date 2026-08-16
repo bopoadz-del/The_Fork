@@ -90,7 +90,7 @@ def test_text_is_fallback_only():
 def test_execute_response_carries_artifacts(client, monkeypatch):
     # formula_executor now delegates to the LLM-backed v2 block (Reasoning
     # Engine Plan 4). Mock the LLM seam so this plumbing test stays
-    # deterministic without a DEEPSEEK_API_KEY.
+    # deterministic without a live LLM API key.
     from app.blocks.formula_executor_v2 import FormulaExecutorV2Block
 
     async def _fake_llm(self, prompt):

@@ -96,7 +96,7 @@ Direct invocation without the server (for block/internal changes):
 - The app loads **35 blocks** at startup; `GET /v1/blocks` lists **34**
   (the `construction` container is registered but not surfaced in that list).
 - `formula_executor` / `project_reasoner` / `/v1/project/ask` need a funded
-  `DEEPSEEK_API_KEY` in `.env` — the driver deliberately smoke-tests
+  `KIMI_API_KEY` or `GROQ_API_KEY` in `.env` — the driver deliberately smoke-tests
   `translate` instead (pure compute, no LLM, no historical-benchmark dep).
 
 ## Troubleshooting

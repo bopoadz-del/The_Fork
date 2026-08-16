@@ -143,8 +143,7 @@ class ProjectReasonerBlock(UniversalBlock):
     async def _call_llm(self, prompt: str) -> str:
         """Active-LLM-provider call. Overridden by test doubles.
 
-        Routes via app.agents.runtime._llm_config — auto-uses Groq when
-        GROQ_API_KEY is set, otherwise DeepSeek.
+        Routes via app.agents.runtime._llm_config — Kimi primary, Groq fallback.
         """
         from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
         cfg = _llm_config()

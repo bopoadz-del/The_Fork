@@ -647,7 +647,7 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
         # Report the ACTUAL provider/model that served the turn, not the
         # request's placeholder default ("kimi-k2.6"). The placeholder is
         # remapped onto the active provider's model inside the chat block, so
-        # echoing request.model misreported Ollama responses as DeepSeek.
+        # echoing request.model misreported Ollama responses as the wrong provider.
         inner = result.get("result", {}) if isinstance(result, dict) else {}
         answer = inner.get("text", "")
         # Cost-grounding gate (§3.2 coverage): refuse an ungrounded cost/rate
