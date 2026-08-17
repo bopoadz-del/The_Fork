@@ -47,6 +47,29 @@ jobs:
           fi
           echo "credentials present"
 
+      - name: Preflight auth (status only, no secrets)
+        env:
+          FORK_API_KEY: ${{ secrets.FORK_API_KEY }}
+          FORK_BASE_URL: ${{ secrets.FORK_BASE_URL }}
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          import httpx
+          base = (os.environ.get("FORK_BASE_URL") or "https://the-fork-jn3t.onrender.com").rstrip("/")
+          parsed = urlparse(base)
+          print(f"base_scheme={parsed.scheme}")
+          print(f"base_host={parsed.netloc}")
+          key = os.environ.get("FORK_API_KEY") or ""
+          print(f"key_set={bool(key)} key_len={len(key)}")
+          r = httpx.get(
+              f"{base}/v1/projects",
+              headers={"Authorization": f"Bearer {key}"} if key else {},
+              timeout=30,
+          )
+          print(f"projects_http={r.status_code}")
+          PY
+
       - name: Run scripts/smoke.sh against live
         env:
           FORK_API_KEY: ${{ secrets.FORK_API_KEY }}

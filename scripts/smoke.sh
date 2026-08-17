@@ -128,6 +128,11 @@ for i in $(seq 1 "$RUNS"); do
 
   printf 'run%2d  %s  tool=%s  total=%ss  first_token=%s  answer_chars=%6s  model=%s\n' \
     "$i" "$ok" "$has_tool" "${total:-?}" "${ftok:-?}" "$chars" "$model"
+  if [ "$ok" != "OK  " ]; then
+    echo "----- run $i cli output (truncated) -----"
+    printf '%s\n' "$out" | head -n 40
+    echo "----- end run $i -----"
+  fi
 done
 
 printf '=%.0s' $(seq 1 72); echo
