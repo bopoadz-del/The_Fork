@@ -288,10 +288,25 @@ def _warm_embedder() -> None:
     FIRST /v1/chat/stream RAG query — eating the cold load inside the stream
     deadline, which surfaces as an intermittent chat hang / empty bubble.
     """
-    from app.core.rag.embeddings import get_embedder
+    from app.core.rag.embeddings import embedder_health, get_embedder
+
+    # Probe first: embedder_health reports WHY a load failed instead of letting
+    # the exception surface as a generic warm-up failure. The weights are baked
+    # into the image and HF_HUB_OFFLINE is set, so a failure here means a broken
+    # image (wrong RAG_EMBEDDING_MODEL vs the baked ARG, or a missing cache) —
+    # not a transient network problem, and not something that will fix itself
+    # on the first user question.
+    health = embedder_health()
+    if not health["ok"]:
+        raise RuntimeError(
+            f"embedder {health['model']!r} could not be loaded: {health['error']}"
+        )
     emb = get_embedder()
     emb.encode(["warmup"])
-    logger.info("RAG embedder warm-loaded: %s dim=%d", emb.model_name, emb.dim)
+    logger.info(
+        "RAG embedder warm-loaded: %s dim=%d backend=%s",
+        emb.model_name, emb.dim, emb.backend,
+    )
 
 
 def _seed_knowledge() -> None:

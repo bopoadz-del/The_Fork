@@ -1917,21 +1917,47 @@ def index_document(
         # sentence-transformers isn't installed. Idempotent via
         # upsert_chunks: re-indexing the same doc replaces its chunks.
         rag_indexed = 0
+        rag_error: str | None = None
         try:
             from app.core.rag import retriever as _rag
-            if _rag.available() and chunks:
+            if not _rag.available():
+                rag_error = "embedding stack unavailable"
+            elif chunks:
                 rag_indexed = _rag.index_chunks(project_id, document_id, chunks) or 0
                 if rag_indexed:
                     entry["rag_indexed"] = rag_indexed
+                else:
+                    # Text was extracted but nothing reached the vector store,
+                    # so the document is unretrievable by semantic search. Same
+                    # end state as ZERO_CHUNK, different cause — and it used to
+                    # look identical to success.
+                    rag_error = f"embedded 0 of {len(chunks)} chunks"
         except Exception as exc:  # noqa: BLE001
             # Never let a RAG failure abort the primary doc-index path
+            rag_error = f"{type(exc).__name__}: {exc}"
             import logging as _logging
             import traceback as _traceback
             _logging.getLogger(__name__).warning(
-                "RAG indexing skipped for %s: %s", document_id, exc
-            )
-            _logging.getLogger(__name__).warning(
                 "RAG indexing traceback for %s:\n%s", document_id, _traceback.format_exc()
+            )
+
+        if rag_error:
+            # RAG_INDEX_FAILED is the grep-able marker, and this is an ERROR,
+            # not a warning. A document that extracts text but never reaches the
+            # vector store is stored, registered and listed in the sidebar while
+            # being permanently unsearchable — the exact silent state the
+            # ZERO_CHUNK marker above exists to prevent, reached by a different
+            # route. It was logged as a warning and dropped, so a failed
+            # embedder download (e.g. a 403 from the model host) presented to
+            # the user as a successful upload that simply never had answers in
+            # it. Recorded on the entry as well so the condition is queryable
+            # after the fact, not only findable in log scrollback.
+            import logging as _logging
+            entry["rag_error"] = rag_error
+            _logging.getLogger(__name__).error(
+                "RAG_INDEX_FAILED project=%s doc=%s file=%s chunks=%d — %s; "
+                "document is stored but NOT semantically searchable",
+                project_id, document_id, filename, len(chunks), rag_error,
             )
 
     # Load-modify-write inside one SQLite transaction — a concurrent
@@ -1969,7 +1995,7 @@ def index_document(
             "skipped_unsupported": 1,
             "total_chunks": 0,
         }
-    return {
+    result = {
         "status": "ok",
         "project_id": project_id,
         "indexed": 1,
@@ -1977,6 +2003,12 @@ def index_document(
         "total_chunks": len(chunks),
         "rag_indexed": rag_indexed,
     }
+    if rag_error:
+        # Surfaced to the CALLER, not just the log. The upload path reports
+        # indexing status back to the user; without this it reported success
+        # for a document that cannot be retrieved.
+        result["rag_error"] = rag_error
+    return result
 
 
 def invalidate_project(project_id: str) -> None:
