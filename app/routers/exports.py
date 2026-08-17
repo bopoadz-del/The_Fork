@@ -128,6 +128,32 @@ class ScheduleFromBriefRequest(BaseModel):
     crew_per_trade: int = 4
 
 
+class ScheduleFromBOQRequest(BaseModel):
+    """Cost-loaded L2 schedule DERIVED FROM a priced BOQ.
+
+    Unlike the document route (which mines a document only for equipment lead
+    times and target milestones — neither of which a BOQ carries), this turns
+    each BOQ line into an activity whose duration is quantity / output.
+
+    ``productivity`` is required and per-project: output per crew-day keyed by
+    work category, in that category's own unit. Nothing is defaulted — a
+    category with no rate is refused by name, because a schedule resting on an
+    invented output rate is indistinguishable from a real one until it slips.
+    """
+    document_id: str = Field(..., description="the priced BOQ to schedule")
+    productivity: Dict[str, float] = Field(
+        ..., description="work category -> output per crew-day, in the category's own unit")
+    crews: Optional[Dict[str, int]] = Field(
+        None, description="work category -> number of crews (default 1)")
+    category_overrides: Optional[Dict[str, str]] = Field(
+        None, description="item_key or description -> corrected work category")
+    project_name: Optional[str] = None
+    currency: str = "SAR"
+    start_date: Optional[str] = None
+    day_rate: Optional[float] = Field(None, description="opt-in indicative labor rate/day")
+    crew_per_trade: int = 4
+
+
 class ScheduleFromDocumentRequest(BaseModel):
     """Cost-loaded L2 schedule driven by real RFP/BOD documents: runs
     document_engine to extract equipment lead times + target milestones, injects
@@ -937,3 +963,85 @@ async def export_conversation_message(
     safe_name = _sanitize_filename(project_name)
     download_name = f"{safe_name}-{conversation_id[:8]}.{ext}"
     return FileResponse(path, media_type=media, filename=download_name)
+
+
+@router.post("/v1/projects/{project_id}/export/schedule-from-boq")
+async def export_schedule_from_boq(
+    project_id: str,
+    req: ScheduleFromBOQRequest,
+    auth: Dict[str, Any] = Depends(require_user),
+):
+    """Cost-loaded L2 schedule DERIVED FROM the BOQ's own quantities.
+
+    The document route mines a file for equipment lead times and target
+    milestones, then builds activities from a per-project-type template — so a
+    BOQ contributed nothing to it (measured 2026-08-17: 46 activities, zero
+    referencing the BOQ's scope). Here each priced line becomes an activity
+    with duration = quantity / (output per crew-day x crews), sequenced in
+    construction order, then handed to the SAME CPM, cost-loading bridge and
+    workbook writer the template path uses.
+    """
+    proj = _check_owner(project_id, auth["user_id"])
+    doc = projects_store.get_document(req.document_id)
+    if not doc or not doc.get("file_path"):
+        raise HTTPException(404, "document not found")
+
+    from app.blocks.boq_processor import BOQProcessorBlock
+    res = await BOQProcessorBlock().process(
+        {"file_path": doc["file_path"], "project_id": project_id})
+    if res.get("status") != "success" or not res.get("line_items"):
+        raise HTTPException(
+            422, "could not extract line items from that document -- a "
+                 "digital/xlsx BOQ is required (scanned PDFs won't parse).")
+
+    from app.lib import boq_schedule
+    try:
+        activities = boq_schedule.activities_from_boq(
+            res["line_items"],
+            productivity=req.productivity,
+            crews=req.crews,
+            category_overrides=req.category_overrides,
+        )
+    except boq_schedule.MissingProductivity as exc:
+        # 422 with the machine-readable gap: the caller (chat or UI) asks the
+        # operator for exactly these rates rather than inventing them.
+        raise HTTPException(
+            422, {"error": str(exc), "missing_productivity": exc.missing},
+        ) from exc
+    if not activities:
+        raise HTTPException(422, "the BOQ produced no schedulable line items")
+
+    from app.containers.construction import ConstructionContainer
+    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+    from app.lib.pm_excel import generate_cost_loaded_schedule
+
+    enriched, summary, cpm_error = ConstructionContainer()._attach_cpm_to_activities(
+        activities, req.start_date)
+    if cpm_error:
+        raise HTTPException(422, f"CPM failed on the BOQ-derived activities: {cpm_error}")
+
+    bridged = bridge_wbs_to_cost_loaded(
+        enriched, crew_per_trade=req.crew_per_trade, day_rate=req.day_rate)
+    name = req.project_name or proj.get("name") or "Project"
+    meta: Dict[str, Any] = {
+        "project": name,
+        "currency": req.currency,
+        "assumptions": boq_schedule.schedule_basis(req.productivity, req.crews),
+    }
+    if req.start_date:
+        meta["start_date"] = req.start_date
+    if req.day_rate:
+        meta["cost_basis"] = "Indicative Labor"
+    wb = generate_cost_loaded_schedule(meta, bridged)
+    fd, path = tempfile.mkstemp(prefix="sched_boq_", suffix=".xlsx"); os.close(fd)
+    wb.save(path)
+    return FileResponse(
+        path, media_type=_XLSX_MEDIA,
+        filename=f"{name.replace(' ', '_')}_BOQ_schedule.xlsx",
+        headers={
+            "X-Activities": str(len(activities)),
+            "X-Duration-Days": str(summary.get("total_duration_days", 0)),
+            "X-Uncategorized": str(len(boq_schedule.uncategorized(
+                res["line_items"], req.category_overrides))),
+        },
+    )
