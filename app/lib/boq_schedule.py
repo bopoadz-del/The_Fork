@@ -253,6 +253,42 @@ def uncategorized(line_items: Iterable[Dict[str, Any]],
     ]
 
 
+def _norm_desc(text: Any) -> str:
+    """Collapse a description to its work identity for aggregation."""
+    return re.sub(r"\s+", " ", str(text or "").strip().lower())
+
+
+def aggregate_lines(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Merge BOQ lines describing the SAME work into one measured item.
+
+    A real BOQ measures the same work many times — per floor, per zone, per
+    block — so scheduling one activity per line is not a programme: the live
+    run of a 640-line BOQ produced 640 chained activities and an 18,400-day
+    (73-year) duration, because 160 repeats of "RC C40 to columns" each became
+    their own sequential 6-day task. Planners schedule WORK PACKAGES: the
+    quantities add up, the activity is one.
+
+    Quantities and costs are summed; ``line_count`` records how many BOQ lines
+    the activity represents, so the aggregation stays visible rather than
+    looking like a shorter BOQ.
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    for item in items or []:
+        key = _norm_desc(item.get("description") or item.get("item_key"))
+        cur = merged.get(key)
+        if cur is None:
+            cur = dict(item)
+            cur["quantity"] = _qty(item)
+            cur["line_count"] = 1
+            cur["total_cost"] = float(item.get("total_cost") or 0)
+            merged[key] = cur
+            continue
+        cur["quantity"] += _qty(item)
+        cur["line_count"] += 1
+        cur["total_cost"] += float(item.get("total_cost") or 0)
+    return list(merged.values())
+
+
 def activities_from_boq(
     line_items: Iterable[Dict[str, Any]],
     *,
@@ -262,6 +298,7 @@ def activities_from_boq(
     hours_per_day: float = DEFAULT_HOURS_PER_DAY,
     min_quantity: float = 0.0,
     category_overrides: Optional[Dict[str, str]] = None,
+    aggregate: bool = True,
 ) -> List[Dict[str, Any]]:
     """Turn priced BOQ lines into CPM-ready, man-hour-loaded activities.
 
@@ -281,6 +318,10 @@ def activities_from_boq(
     planner's decision, not a derivation.
     """
     crew_size = crew_size or {}
+    # Same work measured many times over is ONE activity (see aggregate_lines):
+    # without this a 640-line BOQ becomes 640 chained tasks and a 73-year
+    # programme. Pass aggregate=False for a line-by-line programme.
+    line_items = aggregate_lines(line_items) if aggregate else list(line_items or [])
     grouped = group_by_category(line_items, category_overrides)
     grouped = {cat: [i for i in items if _qty(i) > min_quantity]
                for cat, items in grouped.items()}
@@ -345,6 +386,7 @@ def activities_from_boq(
                     "hours_per_day": hours_per_day,
                     "category": cat,
                     "stage": stage,
+                    "line_count": int(item.get("line_count") or 1),
                     "unit_cost": item.get("unit_cost"),
                     "total_cost": item.get("total_cost"),
                 },
