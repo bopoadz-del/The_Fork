@@ -21,6 +21,38 @@ import './ChatComposer.css'
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000'
 
+type UploadLimits = { max_document_bytes: number; allowed_extensions: string[] }
+
+let _limitsCache: UploadLimits | null = null
+
+/** Server-published upload caps, fetched once per session.
+ *
+ * Returns null if unreachable — an unknown limit must never BLOCK an upload
+ * that might succeed, it only forfeits the pre-flight check. */
+async function fetchUploadLimits(): Promise<UploadLimits | null> {
+  if (_limitsCache) return _limitsCache
+  try {
+    const res = await fetch(`${API_BASE}/v1/upload-limits`)
+    if (!res.ok) return null
+    _limitsCache = (await res.json()) as UploadLimits
+    return _limitsCache
+  } catch {
+    return null
+  }
+}
+
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return `${n} B`
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = n
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
+}
+
 export interface AgentOption {
   name: string
   description?: string
@@ -159,7 +191,30 @@ export default function ChatComposer({
 
   async function uploadFile(file: File, role = 'other') {
     setUploading(true)
-    setAttachStatus(`Uploading ${file.name}…`)
+    // Check the file against the server's real limits BEFORE sending it.
+    // An oversize upload used to be discovered only by attempting it, and the
+    // failure arrived as a bare "Failed to fetch": when the connection dies or
+    // the server rejects mid-body, fetch() reports a network error and the HTTP
+    // status never reaches JS. That is unactionable, and on a phone it costs
+    // minutes of uploading first. A local size check is instant and exact.
+    const limits = await fetchUploadLimits()
+    if (limits && file.size > limits.max_document_bytes) {
+      setAttachStatus(
+        `${file.name} is ${formatBytes(file.size)}, over the ` +
+          `${formatBytes(limits.max_document_bytes)} limit. Ask an admin to ` +
+          `raise MAX_DOC_UPLOAD_SIZE, or split the file.`,
+      )
+      setUploading(false)
+      return
+    }
+    if (file.size === 0) {
+      // A 0-byte file uploads "successfully" and indexes to nothing, which is
+      // how documents end up listed but unsearchable.
+      setAttachStatus(`${file.name} is empty (0 bytes) — nothing to upload.`)
+      setUploading(false)
+      return
+    }
+    setAttachStatus(`Uploading ${file.name} (${formatBytes(file.size)})…`)
     try {
       const token = getToken() || ''
       const fd = new FormData()
@@ -201,7 +256,21 @@ export default function ChatComposer({
       setText((prev) => (prev ? `${prev}\n` : '') + inlineTag)
       setTimeout(() => setAttachStatus(null), 6000)
     } catch (err) {
-      setAttachStatus(`Upload error: ${(err as Error).message}`)
+      // "Failed to fetch" is what fetch() reports for EVERY transport-level
+      // failure — connection reset, timeout, the server closing mid-body, a
+      // blocked request. It names none of them, so echoing it verbatim told the
+      // user nothing they could act on. Say what it actually means and what to
+      // try, and keep the raw text for anyone reading a bug report.
+      const raw = (err as Error).message || String(err)
+      const transportFailure = /failed to fetch|networkerror|load failed/i.test(raw)
+      setAttachStatus(
+        transportFailure
+          ? `Upload of ${file.name} (${formatBytes(file.size)}) did not reach ` +
+            `the server — the connection dropped mid-transfer. Usually the file ` +
+            `is too large for the proxy, or the network is too slow to finish. ` +
+            `(${raw})`
+          : `Upload error: ${raw}`,
+      )
     } finally {
       setUploading(false)
     }
