@@ -124,14 +124,22 @@ async def upload_v1(
                     response["indexed"] = True
                     response["indexing_status"] = "scheduled"
                     if response["document_id"]:
-                        job = create_ingestion_job(project_id, response["document_id"])
-                        ok = await enqueue_ingest(project_id, response["document_id"], str(job.id))
+                        # Queue and index under the id the document was STORED
+                        # under. For the master-corpus alias that is the backing
+                        # corpus — the alias has no project row, so anything
+                        # keyed to it either violates a foreign key or indexes
+                        # into a project the document does not live in.
+                        storage_pid = projects_store.storage_project_id(project_id)
+                        job = create_ingestion_job(storage_pid, response["document_id"])
+                        ok = await enqueue_ingest(
+                            storage_pid, response["document_id"], str(job.id),
+                        )
                         if ok:
                             response["indexing_status"] = "queued"
                         elif background_tasks is not None:
                             background_tasks.add_task(
                                 doc_index.maybe_eager_index,
-                                project_id,
+                                storage_pid,
                                 response["document_id"],
                             )
                 else:

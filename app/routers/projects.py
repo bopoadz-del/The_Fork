@@ -823,7 +823,13 @@ async def add_document(
     )
     audit.record("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
-    background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
+    # Index under the id the document was actually STORED under. For the
+    # master-corpus alias that is the backing corpus, not the virtual id —
+    # indexing under the alias would put the chunks in a different project
+    # from the document row they describe.
+    background_tasks.add_task(
+        doc_index.maybe_eager_index, store.storage_project_id(project_id), doc["id"],
+    )
 
     # V2 inline safety + QA/QC detection for image uploads — runs PIL +
     # COCO YOLO + the fine-tuned safety_qaqc detector and surfaces a

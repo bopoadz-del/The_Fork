@@ -727,6 +727,33 @@ def set_aconex(project_id: str, connected: bool) -> bool:
 
 # ── documents ───────────────────────────────────────────────────────────────
 
+def storage_project_id(project_id: str) -> str:
+    """The project id rows must actually be WRITTEN under.
+
+    ``MASTER_CORPUS_PROJECT_ID`` is a VIRTUAL alias: it is injected into
+    listings on the fly and deliberately has no ``projects`` row (see
+    ``_is_master_corpus_alias``). Every reader already resolves it —
+    ``get_project``, ``list_documents``, ``count_documents`` and friends all
+    open with ``_master_corpus_source(project_id) or project_id``.
+
+    ``add_document`` did not, and it is a WRITER. So uploading to the Master
+    Corpus passed the permission check (the reader resolved the alias and found
+    the backing corpus) and then tried to insert a Document row whose
+    ``project_id`` foreign key pointed at an id with no project behind it:
+
+        sqlite3.IntegrityError: FOREIGN KEY constraint failed
+
+    An unhandled exception mid-request means the response never completes, and
+    a request that dies without a response is reported by the browser as
+    ``TypeError: Failed to fetch`` — with no status, because there is no
+    response to read a status from. Uploading to the Master Corpus was
+    therefore impossible, and said so in the least diagnosable way available.
+
+    Readers may keep using the alias; only writes need resolving.
+    """
+    return _master_corpus_source(project_id) or project_id
+
+
 def resolve_document_size(size: int, file_path: Optional[str]) -> int:
     """The size to record for a document — measured from disk when not supplied.
 
@@ -781,6 +808,10 @@ def add_document(
 ) -> Dict[str, Any]:
     """Register a document under a project. Storing only — runs no analysis."""
     _ensure_db()
+    # Writes go to the BACKING corpus, never the virtual alias — see
+    # storage_project_id. Without this, uploading to the Master Corpus violated
+    # the project_id foreign key and killed the request.
+    project_id = storage_project_id(project_id)
     # A recorded size must describe the bytes that exist, not the default of
     # whichever caller forgot to pass one — see resolve_document_size.
     size = resolve_document_size(size, file_path)
@@ -820,6 +851,9 @@ def create_ingestion_job(project_id: str, document_id: str):
     from app.core.models import IngestionJob
 
     _ensure_db()
+    # Same alias-vs-row hazard as add_document: IngestionJob.project_id is a
+    # foreign key, and the alias has no row to point at.
+    project_id = storage_project_id(project_id)
     db = SessionLocal()
     try:
         job = IngestionJob(project_id=project_id, document_id=document_id, status="pending")
