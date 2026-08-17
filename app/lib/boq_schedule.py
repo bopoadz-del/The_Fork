@@ -138,6 +138,16 @@ _ALWAYS_SUBSTRUCTURE = frozenset({
 _ENABLING_RX = re.compile(r"(blinding|lean\s+concrete|sub[\s-]?base|"
                           r"levelling\s+course)", re.IGNORECASE)
 
+# Vertical/applied-after work inside the substructure: tanking to retaining
+# walls, protection boards to raft sides. These follow the pour, unlike the
+# horizontal membrane below it.
+_AFTER_POUR_RX = re.compile(
+    r"(retaining\s+wall|to\s+walls?\b|wall\s+face|vertical|"
+    r"tanking\s+to\s+(?:walls?|sides?)|sides?\s+of|external\s+face|"
+    r"protection\s+board)",
+    re.IGNORECASE,
+)
+
 SUBSTRUCTURE = "substructure"
 SUPERSTRUCTURE = "superstructure"
 
@@ -354,14 +364,29 @@ def activities_from_boq(
     # after (live 2026-08-17).
     seq_index = {c: i for i, c in enumerate(CONSTRUCTION_SEQUENCE)}
     _enabling_rank = seq_index["Piling/Foundations"] + 0.5
+    # Horizontal substructure waterproofing goes ON the blinding and UNDER the
+    # raft — between the blinding and the steel fixed on top of it. Ranking it
+    # by trade (Waterproofing sits after Concrete) scheduled the membrane after
+    # the pour it is meant to protect (operator, 2026-08-17: "waterproofing is
+    # after blinding and after raft"). Vertical/applied-after work — tanking to
+    # retaining walls, protection boards to raft sides — keeps the post-pour
+    # slot, which is the other half of that sentence.
+    _membrane_rank = seq_index["Piling/Foundations"] + 0.7
+    _after_pour_rank = seq_index["Concrete"] + 0.5
 
     staged: Dict[tuple, List[Dict[str, Any]]] = {}
     for cat, items in grouped.items():
         for item in items:
-            desc = item.get("description") or item.get("item_key") or ""
+            desc = str(item.get("description") or item.get("item_key") or "")
             stage = element_stage(desc, cat)
-            rank = (_enabling_rank if _ENABLING_RX.search(str(desc))
-                    else float(seq_index.get(cat, len(seq_index))))
+            if _ENABLING_RX.search(desc):
+                rank = _enabling_rank
+            elif (stage == SUBSTRUCTURE
+                  and cat == "Waterproofing/Insulation"):
+                rank = (_after_pour_rank if _AFTER_POUR_RX.search(desc)
+                        else _membrane_rank)
+            else:
+                rank = float(seq_index.get(cat, len(seq_index)))
             staged.setdefault((stage, rank, cat), []).append(item)
 
     ordered = sorted(
