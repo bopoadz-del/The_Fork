@@ -133,18 +133,30 @@ class ScheduleFromBOQRequest(BaseModel):
 
     Unlike the document route (which mines a document only for equipment lead
     times and target milestones — neither of which a BOQ carries), this turns
-    each BOQ line into an activity whose duration is quantity / output.
+    each BOQ line into an activity loaded with MAN-HOURS:
 
-    ``productivity`` is required and per-project: output per crew-day keyed by
-    work category, in that category's own unit. Nothing is defaulted — a
-    category with no rate is refused by name, because a schedule resting on an
-    invented output rate is indistinguishable from a real one until it slips.
+        man-hours = quantity x manhours_per_unit
+        duration  = man-hours / (crew_size x hours_per_day)
+
+    Man-hours, not crew-days: a norm of 0.8 mh/m2 is a property of the work,
+    while a crew-day figure bundles crew size and shift length into one number
+    that cannot be re-planned when the gang changes, and cannot produce an
+    honest manpower histogram.
+
+    ``manhours_per_unit`` is required and per-project. Nothing is defaulted —
+    a category with no norm is refused by name, because a programme resting on
+    an invented output is indistinguishable from a real one until it slips.
+    Norms measured from the project's own built programmes
+    (``boq_schedule.norms_from_programme``) take precedence over published
+    references.
     """
     document_id: str = Field(..., description="the priced BOQ to schedule")
-    productivity: Dict[str, float] = Field(
-        ..., description="work category -> output per crew-day, in the category's own unit")
-    crews: Optional[Dict[str, int]] = Field(
-        None, description="work category -> number of crews (default 1)")
+    manhours_per_unit: Dict[str, float] = Field(
+        ..., description="work category -> MAN-HOURS per unit, in the category's own unit "
+                         "(mh/m3 concrete, mh/m2 blockwork, mh/kg rebar)")
+    crew_size: Optional[Dict[str, int]] = Field(
+        None, description="work category -> heads per crew (default 4)")
+    hours_per_day: float = Field(8.0, description="shift length in hours")
     category_overrides: Optional[Dict[str, str]] = Field(
         None, description="item_key or description -> corrected work category")
     project_name: Optional[str] = None
@@ -998,8 +1010,9 @@ async def export_schedule_from_boq(
     try:
         activities = boq_schedule.activities_from_boq(
             res["line_items"],
-            productivity=req.productivity,
-            crews=req.crews,
+            manhours_per_unit=req.manhours_per_unit,
+            crew_size=req.crew_size,
+            hours_per_day=req.hours_per_day,
             category_overrides=req.category_overrides,
         )
     except boq_schedule.MissingProductivity as exc:
@@ -1026,7 +1039,8 @@ async def export_schedule_from_boq(
     meta: Dict[str, Any] = {
         "project": name,
         "currency": req.currency,
-        "assumptions": boq_schedule.schedule_basis(req.productivity, req.crews),
+        "assumptions": boq_schedule.schedule_basis(
+            req.manhours_per_unit, req.crew_size, req.hours_per_day),
     }
     if req.start_date:
         meta["start_date"] = req.start_date
@@ -1041,6 +1055,7 @@ async def export_schedule_from_boq(
         headers={
             "X-Activities": str(len(activities)),
             "X-Duration-Days": str(summary.get("total_duration_days", 0)),
+            "X-Total-Manhours": str(boq_schedule.total_manhours(activities)),
             "X-Uncategorized": str(len(boq_schedule.uncategorized(
                 res["line_items"], req.category_overrides))),
         },

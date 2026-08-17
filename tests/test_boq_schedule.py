@@ -48,11 +48,13 @@ BOQ = [
 # hand-written key silently fails to match the extracted line.
 OVERRIDES = {"Chilled water piping DN200 insulated": "Mechanical/HVAC (MEP)"}
 
+# MAN-HOURS per unit (operator: "everything is in manhour"). Crew of 4 on an
+# 8 h shift is the default, so e.g. facade 0.53 mh/m2 -> 1310 x 0.53 / 32 = 22 d.
 RATES = {
-    "Structural Steel": 4,         # ton / crew-day
-    "Windows/Doors/Facade": 60,    # m2 / crew-day
-    "Mechanical/HVAC (MEP)": 40,   # m / crew-day
-    "Earthworks/Excavation": 400,  # m3 / crew-day
+    "Structural Steel": 8.0,          # mh / ton
+    "Windows/Doors/Facade": 0.53,     # mh / m2
+    "Mechanical/HVAC (MEP)": 0.8,     # mh / m
+    "Earthworks/Excavation": 0.08,    # mh / m3
 }
 
 
@@ -62,29 +64,54 @@ def _by_name(acts):
 
 # ── durations are derived, not invented ────────────────────────────────────
 
-def test_duration_is_quantity_over_output():
-    assert duration_days(1310, 60) == math.ceil(1310 / 60) == 22
-    assert duration_days(2500, 400) == 7
-    assert duration_days(47, 4) == 12
+def test_manhours_are_quantity_times_norm():
+    from app.lib.boq_schedule import manhours
+    assert manhours(1250, 0.8) == 1000.0
+    assert manhours(420, 1.37) == pytest.approx(575.4)
 
 
-def test_crews_divide_the_duration():
-    assert duration_days(1310, 60, crews=2) == math.ceil(1310 / 120) == 11
+def test_duration_is_manhours_over_crew_and_shift():
+    # 1000 mh, crew of 4, 8 h shift -> 31.25 -> 32 working days
+    assert duration_days(1000, 4, 8) == 32
+    assert duration_days(576, 6, 8) == 12
+
+
+def test_a_bigger_gang_shortens_the_same_manhours():
+    assert duration_days(1000, 8, 8) == 16
+    assert duration_days(1000, 4, 8) == 32
+
+
+def test_shift_length_is_a_variable_not_a_constant():
+    """10 h shifts and Ramadan 6 h both happen; the norm does not change."""
+    assert duration_days(1000, 4, 10) == 25
+    assert duration_days(1000, 4, 6) == 42
 
 
 def test_a_measurable_item_never_takes_zero_days():
-    assert duration_days(0.5, 400) == 1
+    assert duration_days(1.0, 4, 8) == 1
 
 
-def test_zero_or_negative_output_is_an_error_not_a_division():
+def test_zero_crew_or_shift_is_an_error_not_a_division():
     with pytest.raises(ValueError):
-        duration_days(100, 0)
+        duration_days(100, 0, 8)
+    with pytest.raises(ValueError):
+        duration_days(100, 4, 0)
+    from app.lib.boq_schedule import manhours as _mh
+    with pytest.raises(ValueError):
+        _mh(100, 0)
+
+
+def test_published_daily_output_converts_to_a_manhour_norm():
+    """Handbooks publish units/man-day; planning needs mh/unit."""
+    from app.lib.boq_schedule import from_daily_output
+    assert from_daily_output(10) == 0.8        # 10 m2/man-day -> 0.8 mh/m2
+    assert from_daily_output(18) == pytest.approx(0.444, abs=0.001)
 
 
 # ── the BOQ's own scope becomes the activity list ──────────────────────────
 
 def test_activities_carry_the_boq_scope_not_a_template():
-    acts = activities_from_boq(BOQ, productivity=RATES, category_overrides=OVERRIDES)
+    acts = activities_from_boq(BOQ, manhours_per_unit=RATES, category_overrides=OVERRIDES)
     names = " | ".join(a["name"].lower() for a in acts)
     for term in ("steel roof truss", "cladding", "chilled water piping", "excavation"):
         assert term in names, f"{term!r} missing from {names}"
@@ -94,18 +121,20 @@ def test_activities_carry_the_boq_scope_not_a_template():
 
 
 def test_each_activity_traces_back_to_its_boq_line():
-    acts = _by_name(activities_from_boq(BOQ, productivity=RATES, category_overrides=OVERRIDES))
+    acts = _by_name(activities_from_boq(BOQ, manhours_per_unit=RATES, category_overrides=OVERRIDES))
     cladding = acts["Aluminium composite cladding to facade"]
-    assert cladding["duration_days"] == 22
     assert cladding["boq"]["quantity"] == 1310
     assert cladding["boq"]["unit"] == "m2"
-    assert cladding["boq"]["rate_used_per_crew_day"] == 60
+    assert cladding["boq"]["manhours_per_unit"] == 0.53
+    assert cladding["total_manhours"] == pytest.approx(694.3, abs=0.1)
+    # 694.3 mh / (4 heads x 8 h) = 21.7 -> 22 days
+    assert cladding["duration_days"] == 22
     assert cladding["boq"]["total_cost"] == 517450.0
 
 
 def test_activity_shape_matches_generate_wbs():
     """The CPM engine, cost bridge and Excel writer consume this unchanged."""
-    for a in activities_from_boq(BOQ, productivity=RATES, category_overrides=OVERRIDES):
+    for a in activities_from_boq(BOQ, manhours_per_unit=RATES, category_overrides=OVERRIDES):
         assert {"id", "code", "name", "duration_days", "predecessors",
                 "resources", "wbs_phase"} <= set(a)
         assert isinstance(a["duration_days"], int) and a["duration_days"] >= 1
@@ -116,7 +145,7 @@ def test_activity_shape_matches_generate_wbs():
 # ── sequencing is construction order ───────────────────────────────────────
 
 def test_packages_run_in_construction_order():
-    acts = activities_from_boq(BOQ, productivity=RATES, category_overrides=OVERRIDES)
+    acts = activities_from_boq(BOQ, manhours_per_unit=RATES, category_overrides=OVERRIDES)
     phases = [a["wbs_phase"] for a in acts]
     order = {p: i for i, p in enumerate(dict.fromkeys(phases))}
     # earthworks precedes steel precedes facade precedes MEP
@@ -126,7 +155,7 @@ def test_packages_run_in_construction_order():
 
 
 def test_first_activity_has_no_predecessor_and_the_rest_chain():
-    acts = activities_from_boq(BOQ, productivity=RATES, category_overrides=OVERRIDES)
+    acts = activities_from_boq(BOQ, manhours_per_unit=RATES, category_overrides=OVERRIDES)
     assert acts[0]["predecessors"] == []
     ids = {a["id"] for a in acts}
     for a in acts[1:]:
@@ -148,8 +177,8 @@ def test_an_unrecognised_line_is_still_scheduled_and_reported():
     items = BOQ + [{"item_key": "novel", "description": "Zzz unknown novel work",
                     "quantity": 10, "unit": "no"}]
     assert "Zzz unknown novel work" in uncategorized(items, OVERRIDES)
-    rates = dict(RATES); rates["Other/Uncategorized"] = 5
-    acts = activities_from_boq(items, productivity=rates, category_overrides=OVERRIDES)
+    rates = dict(RATES); rates["Other/Uncategorized"] = 1.0
+    acts = activities_from_boq(items, manhours_per_unit=rates, category_overrides=OVERRIDES)
     assert any("novel work" in a["name"].lower() for a in acts)
     # and it sorts last, after the recognised packages
     assert acts[-1]["wbs_phase"] == "other_uncategorized"
@@ -170,10 +199,11 @@ def test_an_override_moves_a_line_to_the_right_package():
 
 def test_missing_productivity_refuses_and_names_the_gap():
     with pytest.raises(MissingProductivity) as exc:
-        activities_from_boq(BOQ, productivity={"Structural Steel": 4},
+        activities_from_boq(BOQ, manhours_per_unit={"Structural Steel": 8.0},
                             category_overrides=OVERRIDES)
     msg = str(exc.value)
     assert "Windows/Doors/Facade" in msg and "m2" in msg
+    assert "man-hour" in msg.lower()
     assert "Mechanical/HVAC (MEP)" in msg
     # the machine-readable form drives the operator question
     assert exc.value.missing["Earthworks/Excavation"] == "m3"
@@ -186,15 +216,15 @@ def test_no_category_carries_a_built_in_rate():
     from app.lib import boq_schedule
     src = inspect.getsource(boq_schedule)
     body = src.split("CONSTRUCTION_SEQUENCE")[0]
-    assert "per_crew_day = " not in body
+    assert "manhours_per_unit = " not in body
     with pytest.raises(MissingProductivity):
-        activities_from_boq(BOQ, productivity={}, category_overrides=OVERRIDES)
+        activities_from_boq(BOQ, manhours_per_unit={}, category_overrides=OVERRIDES)
 
 
 def test_basis_states_what_every_duration_rests_on():
-    basis = " ".join(schedule_basis(RATES, crews={"Structural Steel": 2}))
-    assert "quantity /" in basis
-    assert "Structural Steel: 4 per crew-day x 2 crews" in basis
+    basis = " ".join(schedule_basis(RATES, crew_size={"Structural Steel": 8}))
+    assert "Man-hours = quantity x norm" in basis
+    assert "Structural Steel: 8 man-hours/unit, crew of 8" in basis
     assert "not assumed" in basis
 
 
@@ -231,7 +261,7 @@ async def test_endpoint_builds_a_workbook_from_the_boq(tmp_path, monkeypatch):
                                      base_url="http://testserver") as client:
             res = await client.post(
                 "/v1/projects/p1/export/schedule-from-boq",
-                json={"document_id": "d1", "productivity": RATES,
+                json={"document_id": "d1", "manhours_per_unit": RATES,
                       "category_overrides": OVERRIDES, "start_date": "2026-09-01"})
     finally:
         app_main.app.dependency_overrides.pop(require_user, None)
@@ -278,7 +308,7 @@ async def test_endpoint_refuses_and_names_the_missing_rates(tmp_path, monkeypatc
         async with httpx.AsyncClient(transport=transport,
                                      base_url="http://testserver") as client:
             res = await client.post("/v1/projects/p1/export/schedule-from-boq",
-                                    json={"document_id": "d1", "productivity": {}})
+                                    json={"document_id": "d1", "manhours_per_unit": {}})
     finally:
         app_main.app.dependency_overrides.pop(require_user, None)
 
@@ -287,3 +317,176 @@ async def test_endpoint_refuses_and_names_the_missing_rates(tmp_path, monkeypatc
     detail = body.get("detail", body)
     assert "Earthworks/Excavation" in json.dumps(detail)
     assert "m3" in json.dumps(detail)
+
+
+# ── substructure before superstructure (operator-reported, 2026-08-17) ─────
+#
+# "rc for foundation?" — the pricing categorizer answers WHICH TRADE, never
+# WHICH PART OF THE BUILDING, so "Reinforced concrete C40 to raft foundation"
+# and "...to columns" are both plain Concrete. Scheduled as one package in BOQ
+# order, a raft listed second lands AFTER the columns it carries: a wrong
+# programme, not a cosmetic one.
+
+FOUNDATION_BOQ = [
+    # deliberately listed columns-first, the order that used to break it
+    {"item_key": "rc_columns", "description": "Reinforced concrete C40 to columns",
+     "quantity": 180, "unit": "m3"},
+    {"item_key": "rc_raft", "description": "Reinforced concrete C40 to raft foundation",
+     "quantity": 420, "unit": "m3"},
+    {"item_key": "blinding", "description": "Plain concrete blinding to foundations",
+     "quantity": 160, "unit": "m2"},
+    {"item_key": "rebar_found", "description": "Rebar cut bend and fix to foundations",
+     "quantity": 38000, "unit": "kg"},
+    {"item_key": "blockwork", "description": "Supply and install 200mm blockwork wall",
+     "quantity": 1250, "unit": "m2"},
+]
+FOUNDATION_RATES = {"Concrete": 1.37, "Reinforcement": 0.023, "Masonry/Blockwork": 0.8}
+
+
+def _order(acts):
+    return {a["name"]: i for i, a in enumerate(acts)}
+
+
+def test_foundation_concrete_precedes_column_concrete():
+    acts = activities_from_boq(FOUNDATION_BOQ, manhours_per_unit=FOUNDATION_RATES)
+    pos = _order(acts)
+    assert pos["Reinforced concrete C40 to raft foundation"] < pos["Reinforced concrete C40 to columns"]
+    assert pos["Plain concrete blinding to foundations"] < pos["Reinforced concrete C40 to columns"]
+
+
+def test_substructure_work_is_marked_and_phased_separately():
+    acts = activities_from_boq(FOUNDATION_BOQ, manhours_per_unit=FOUNDATION_RATES)
+    by_name = {a["name"]: a for a in acts}
+    raft = by_name["Reinforced concrete C40 to raft foundation"]
+    cols = by_name["Reinforced concrete C40 to columns"]
+    assert raft["boq"]["stage"] == "substructure"
+    assert cols["boq"]["stage"] == "superstructure"
+    # and they are different WBS phases, so a planner sees two packages
+    assert raft["wbs_phase"] != cols["wbs_phase"]
+    assert raft["wbs_phase"].endswith("_substructure")
+
+
+def test_the_whole_substructure_finishes_before_the_superstructure_starts():
+    acts = activities_from_boq(FOUNDATION_BOQ, manhours_per_unit=FOUNDATION_RATES)
+    subs = [i for i, a in enumerate(acts) if a["boq"]["stage"] == "substructure"]
+    supers = [i for i, a in enumerate(acts) if a["boq"]["stage"] == "superstructure"]
+    assert subs and supers
+    assert max(subs) < min(supers)
+
+
+def test_foundation_rebar_is_staged_too_not_just_concrete():
+    acts = activities_from_boq(FOUNDATION_BOQ, manhours_per_unit=FOUNDATION_RATES)
+    rebar = next(a for a in acts if "Rebar" in a["name"])
+    assert rebar["boq"]["stage"] == "substructure"
+
+
+@pytest.mark.parametrize("desc", [
+    "Reinforced concrete C40 to raft foundation",
+    "RC foundation footings C35",
+    "Plain concrete blinding to foundations",
+    "Reinforced concrete to pile caps",
+    "Concrete to ground beam",
+    "Waterproofing/tanking to substructure walls",
+])
+def test_substructure_phrasings_are_recognised(desc):
+    from app.lib.boq_pricing import categorize
+    from app.lib.boq_schedule import SUBSTRUCTURE, element_stage
+    assert element_stage(desc, categorize(desc)) == SUBSTRUCTURE, categorize(desc)
+
+
+def test_superstructure_work_is_not_swept_into_substructure():
+    from app.lib.boq_pricing import categorize
+    from app.lib.boq_schedule import SUPERSTRUCTURE, element_stage
+    for desc in ("Reinforced concrete C40 to columns",
+                 "Reinforced concrete to suspended slab",
+                 "Cement plaster 15mm to internal walls",
+                 "Waterproofing membrane to roof slab"):
+        assert element_stage(desc, categorize(desc)) == SUPERSTRUCTURE, desc
+
+
+# ── the built programme teaches the norms (operator, 2026-08-17) ───────────
+#
+# "the built programs and its manpower histogram should tell u the
+# productivity per manhour" — a completed programme IS a productivity record.
+# Man-hours consumed / quantity delivered = the norm for that work, measured
+# with these crews on this project, which outranks any published reference.
+
+BUILT_PROGRAMME = [
+    {"id": "A", "name": "Supply and install 200mm blockwork wall",
+     "duration_days": 32, "crew_size": 4},
+    {"id": "B", "name": "Reinforced concrete C40 to raft foundation",
+     "duration_days": 12, "crew_size": 6},
+    {"id": "C", "name": "Blockwork to lift shaft walls",
+     "duration_days": 5, "crew_size": 4},
+]
+BUILT_QUANTITIES = {"A": 1250, "B": 420, "C": 190}
+
+
+def test_norms_are_derived_from_a_built_programme():
+    from app.lib.boq_schedule import norms_from_programme
+    norms = norms_from_programme(BUILT_PROGRAMME, BUILT_QUANTITIES)
+    block = norms["Masonry/Blockwork"]
+    # (32d x 4 x 8h) + (5d x 4 x 8h) = 1184 mh over 1440 m2
+    assert block["total_manhours"] == pytest.approx(1184.0)
+    assert block["total_quantity"] == pytest.approx(1440.0)
+    assert block["manhours_per_unit"] == pytest.approx(1184 / 1440, abs=0.001)
+    assert block["samples"] == 2
+
+
+def test_a_derived_norm_agrees_with_the_published_reference():
+    """Sanity: 32 days for 1250 m2 with 4 men lands on the handbook's 0.8 mh/m2."""
+    from app.lib.boq_schedule import from_daily_output, norms_from_programme
+    norms = norms_from_programme([BUILT_PROGRAMME[0]], {"A": 1250})
+    assert norms["Masonry/Blockwork"]["manhours_per_unit"] == pytest.approx(
+        from_daily_output(10), abs=0.03)
+
+
+def test_the_norm_is_quantity_weighted_not_an_average_of_ratios():
+    """A 4,000 m2 slab and a 20 m2 landing must not carry equal weight."""
+    from app.lib.boq_schedule import norms_from_programme
+    prog = [
+        {"id": "big", "name": "Cement plaster to walls", "duration_days": 40, "crew_size": 10},
+        {"id": "small", "name": "Cement plaster to lift lobby", "duration_days": 4, "crew_size": 2},
+    ]
+    norms = norms_from_programme(prog, {"big": 4000, "small": 20})
+    # weighted: (3200 + 64) / 4020 = 0.812  |  mean-of-ratios would be 2.0
+    assert norms["Finishes"]["manhours_per_unit"] == pytest.approx(0.812, abs=0.005)
+
+
+def test_explicit_manhours_beat_crew_times_duration():
+    """A P6 resource assignment carries real man-hours; prefer it."""
+    from app.lib.boq_schedule import activity_manhours
+    assert activity_manhours({"total_manhours": 900, "crew_size": 4,
+                              "duration_days": 32}) == 900
+    assert activity_manhours({"target_qty": 750, "duration_days": 10}) == 750
+    assert activity_manhours({"crew_size": 4, "duration_days": 10}) == 320
+
+
+def test_an_activity_with_no_manhours_teaches_nothing_rather_than_zero():
+    from app.lib.boq_schedule import activity_manhours, norms_from_programme
+    assert activity_manhours({"name": "milestone only"}) is None
+    norms = norms_from_programme(
+        [{"id": "m", "name": "Blockwork milestone"}], {"m": 100})
+    assert norms == {}
+
+
+def test_unmeasured_activities_are_skipped_not_guessed():
+    """No quantity means no norm — an unmeasured activity cannot teach one."""
+    from app.lib.boq_schedule import norms_from_programme
+    norms = norms_from_programme(BUILT_PROGRAMME, {"A": 1250})  # B and C unmeasured
+    assert set(norms) == {"Masonry/Blockwork"}
+    assert norms["Masonry/Blockwork"]["samples"] == 1
+
+
+def test_derived_norms_feed_straight_back_into_a_new_programme():
+    """The loop closes: measure on the last job, plan the next one with it."""
+    from app.lib.boq_schedule import norms_from_programme
+    derived = norms_from_programme(BUILT_PROGRAMME, BUILT_QUANTITIES)
+    norms = {cat: v["manhours_per_unit"] for cat, v in derived.items()}
+    acts = activities_from_boq(
+        [{"description": "Supply and install 200mm blockwork wall",
+          "quantity": 2500, "unit": "m2"}],
+        manhours_per_unit=norms)
+    # 2500 x 0.822 mh = 2056 mh / (4 x 8) = 64.2 -> 65 days
+    assert acts[0]["duration_days"] == 65
+    assert acts[0]["boq"]["manhours_per_unit"] == pytest.approx(0.822, abs=0.002)
