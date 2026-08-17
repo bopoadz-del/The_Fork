@@ -490,3 +490,86 @@ def test_derived_norms_feed_straight_back_into_a_new_programme():
     # 2500 x 0.822 mh = 2056 mh / (4 x 8) = 64.2 -> 65 days
     assert acts[0]["duration_days"] == 65
     assert acts[0]["boq"]["manhours_per_unit"] == pytest.approx(0.822, abs=0.002)
+
+
+# ── the histogram must agree with the planned man-hours ────────────────────
+
+def test_bridge_reads_crew_size_instead_of_multiplying_heads_by_trades():
+    """resources carries one entry per HEAD for man-hour activities; the old
+    len(resources) x crew_per_trade turned a crew of 4 into 16 men and
+    inflated man-days, the S-curve and the histogram together."""
+    from app.lib.schedule_bridge import bridge_activity
+    act = {"id": "1.1", "name": "Blockwork", "duration_days": 32,
+           "resources": ["masonry"] * 4, "crew_size": 4, "total_manhours": 1000.0}
+    out = bridge_activity(act, crew_per_trade=4)
+    assert out["manpower"] == 4
+    assert out["manhours"] == 1000.0
+
+
+def test_bridge_still_guesses_for_template_activities():
+    """generate_wbs puts one entry per TRADE and states no crew — unchanged."""
+    from app.lib.schedule_bridge import bridge_activity
+    out = bridge_activity({"id": "1.1", "name": "Survey", "duration_days": 7,
+                           "resources": ["geotech"]}, crew_per_trade=4)
+    assert out["manpower"] == 4
+    assert "manhours" not in out
+
+
+def test_manhours_reconcile_with_crew_times_duration_times_shift():
+    """The two derivations of the same labour must land together."""
+    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+    acts = activities_from_boq(
+        [{"description": "Supply and install 200mm blockwork wall",
+          "quantity": 1250, "unit": "m2"}],
+        manhours_per_unit={"Masonry/Blockwork": 0.8})
+    bridged = bridge_wbs_to_cost_loaded(acts, crew_per_trade=4)
+    b = bridged[0]
+    man_days = b["duration"] * b["manpower"]
+    assert b["manhours"] == pytest.approx(1000.0)
+    # 32 d x 4 heads x 8 h = 1024 mh vs 1000 planned: the rounding-up of the
+    # final part-day, never more than one crew-shift.
+    assert 0 <= man_days * 8 - b["manhours"] <= b["manpower"] * 8
+
+
+def test_workbook_shows_manhours_when_planned_in_them(tmp_path):
+    from openpyxl import load_workbook
+
+    from app.lib.pm_excel import generate_cost_loaded_schedule
+    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+    from app.containers.construction import ConstructionContainer
+
+    acts = activities_from_boq(
+        [{"description": "Supply and install 200mm blockwork wall", "quantity": 1250, "unit": "m2"},
+         {"description": "Reinforced concrete C40 to raft foundation", "quantity": 420, "unit": "m3"}],
+        manhours_per_unit={"Masonry/Blockwork": 0.8, "Concrete": 1.37})
+    enriched, _summary, err = ConstructionContainer()._attach_cpm_to_activities(acts, None)
+    assert not err
+    wb = generate_cost_loaded_schedule(
+        {"project": "P", "currency": "SAR", "hours_per_day": 8},
+        bridge_wbs_to_cost_loaded(enriched, crew_per_trade=4))
+    out = tmp_path / "s.xlsx"; wb.save(out)
+    ws = load_workbook(out)["Manpower Histogram"]
+    header = [c.value for c in ws[3]]
+    assert "Planned man-hours" in header
+    col = header.index("Planned man-hours") + 1
+    # look the row up by name: substructure sorts FIRST, so row 4 is the raft
+    rows = {ws.cell(r, 2).value: r for r in range(4, ws.max_row + 1)}
+    assert ws.cell(rows["Supply and install 200mm blockwork wall"], col).value         == pytest.approx(1000.0)
+    assert ws.cell(rows["Reinforced concrete C40 to raft foundation"], col).value         == pytest.approx(575.4, abs=0.1)
+
+
+def test_workbook_omits_the_manhour_columns_for_template_schedules(tmp_path):
+    """A brief-driven schedule has no man-hours; the sheet must look unchanged."""
+    from openpyxl import load_workbook
+
+    from app.lib.pm_excel import generate_cost_loaded_schedule
+    from app.lib.schedule_bridge import bridge_wbs_to_cost_loaded
+
+    plain = [{"id": "1.1", "name": "Survey", "duration_days": 7,
+              "resources": ["geotech"], "wbs_phase": "site", "predecessors": []}]
+    wb = generate_cost_loaded_schedule({"project": "P", "currency": "SAR"},
+                                       bridge_wbs_to_cost_loaded(plain))
+    out = tmp_path / "t.xlsx"; wb.save(out)
+    header = [c.value for c in load_workbook(out)["Manpower Histogram"][3]]
+    assert header[:5] == ["ID", "Activity", "Dur", "Manpower", "Man-days"]
+    assert "Planned man-hours" not in header

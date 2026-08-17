@@ -40,9 +40,25 @@ def _wbs(a: Dict[str, Any]) -> str:
 
 
 def _manpower(a: Dict[str, Any], crew_per_trade: int) -> int:
+    """Heads on the activity.
+
+    Order matters, and the middle branch is why this is not just a fallback
+    chain: an explicit ``manpower`` wins, then a stated ``crew_size``, and only
+    then the trade-count guess.
+
+    ``resources`` is ambiguous by construction — ``generate_wbs`` puts one
+    entry per TRADE ("geotech"), while man-hour-derived BOQ activities put one
+    entry per HEAD so the histogram can sum them. Multiplying the second shape
+    by ``crew_per_trade`` counts a crew of 4 as 16 men and inflates every
+    man-day, the S-curve and the histogram together. ``crew_size`` states the
+    headcount unambiguously, so it is consulted before the guess.
+    """
     v = a.get("manpower")
     if isinstance(v, (int, float)) and v > 0:
         return int(v)
+    crew = a.get("crew_size")
+    if isinstance(crew, (int, float)) and crew > 0:
+        return int(crew)
     res = a.get("resources")
     n = len(res) if isinstance(res, (list, tuple)) else 0
     return max(1, n * crew_per_trade)
@@ -70,6 +86,15 @@ def bridge_activity(
         "predecessors": [str(p) for p in (a.get("predecessors") or [])],
         "manpower": mp,
     }
+    # Carry man-hours through when the activity was planned in them (BOQ-derived
+    # schedules are). The workbook's man-days come from Dur x Manpower, so
+    # without this the resource curve is a SECOND derivation of the same
+    # quantity and the two can silently disagree; with it, a reader can check
+    # crew x duration x shift against the planned man-hours in one glance.
+    mh = a.get("total_manhours")
+    if isinstance(mh, (int, float)) and mh > 0:
+        out["manhours"] = round(float(mh), 1)
+
     existing = a.get("cost")
     if isinstance(existing, (int, float)) and existing:
         out["cost"] = float(existing)
