@@ -31,11 +31,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 DATA_DIR = os.getenv("DATA_DIR", "./data")
-# Cap document uploads so one large file can't OOM the shared instance — the
-# whole file is read into memory here (and copied again to encrypt). Larger
-# than the generic 10MB /upload cap because this path accepts BIM/schedule
-# formats (.rvt/.ifc/.xer); raise MAX_DOC_UPLOAD_SIZE on a bigger box.
-MAX_DOC_UPLOAD_SIZE = int(os.getenv("MAX_DOC_UPLOAD_SIZE", str(50 * 1024 * 1024)))
+# Cap + accepted formats come from app.core.upload_limits so this route and
+# /upload can never drift apart again (they had different caps AND different
+# extension sets). Read through the function so a deployment-time env change
+# takes effect — the old module-level int bound the limit at import.
+from app.core import upload_limits
+
+
+def _max_doc_upload_size() -> int:
+    return upload_limits.max_document_bytes()
 # Pilot guardrail: approved Drive projects with this many or fewer indexed
 # documents are treated as incomplete shells and suppressed from non-admin
 # project lists so pilot users land on the master corpus instead.
@@ -52,16 +56,7 @@ except PermissionError:
     import tempfile
     DATA_DIR = tempfile.gettempdir()
 
-ALLOWED_DOC_EXTENSIONS = {
-    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff",
-    ".txt", ".md", ".csv", ".json", ".xml",
-    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    # Construction-domain formats the registered blocks know how to parse.
-    # ezdxf reads .dxf; ifcopenshell reads .ifc; xer/mpp are schedule exports;
-    # .dwg is kept even though drawing_qto rejects it with a "convert to DXF"
-    # message so the upload doesn't 400 before the user sees that guidance.
-    ".dxf", ".dwg", ".ifc", ".xer", ".mpp", ".rvt",
-}
+ALLOWED_DOC_EXTENSIONS = upload_limits.ALLOWED_UPLOAD_EXTENSIONS
 
 
 def _owned_or_404(
@@ -780,17 +775,19 @@ async def add_document(
     if ext not in ALLOWED_DOC_EXTENSIONS:
         raise HTTPException(400, f"File type '{ext}' not allowed")
 
-    # Reject oversize uploads BEFORE reading the file into memory — this path
-    # buffers the whole file (and copies it to encrypt), so an unbounded upload
-    # of a large BIM model OOMs the single shared worker and drops every
-    # concurrent user, not just the uploader.
+    max_size = _max_doc_upload_size()
+    # Reject oversize uploads BEFORE materialising the file — this used to read
+    # the whole document into memory (and copy it again to encrypt), so a large
+    # BIM model OOM'd the shared worker and dropped every concurrent user, not
+    # just the uploader. write_document_stream copies in 1 MB blocks and aborts
+    # the moment the cap is exceeded, removing the partial file.
     file.file.seek(0, 2)
-    upload_size = file.file.tell()
+    declared_size = file.file.tell()
     file.file.seek(0)
-    if upload_size > MAX_DOC_UPLOAD_SIZE:
+    if declared_size > max_size:
         raise HTTPException(
             413,
-            f"File too large ({upload_size} bytes). Max is {MAX_DOC_UPLOAD_SIZE} bytes.",
+            f"File too large ({declared_size} bytes). Max is {max_size} bytes.",
         )
 
     file_id = str(uuid.uuid4())[:8]
@@ -799,10 +796,16 @@ async def add_document(
     # Persist the document — encrypted at rest iff DATA_ENCRYPTION_KEY is set
     # (opt-in; plaintext otherwise — see app/core/file_crypto.py). The recorded
     # `size` is the original plaintext size, not the (larger) ciphertext size.
-    file.file.seek(0)
-    raw_bytes = file.file.read()
-    file_crypto.write_document(filepath, raw_bytes)
-    size = len(raw_bytes)
+    try:
+        size = file_crypto.write_document_stream(
+            filepath, file.file, max_bytes=max_size,
+        )
+    except file_crypto.UploadTooLarge as exc:
+        # Reachable when the declared size understated the stream (chunked
+        # transfer encoding sends no length).
+        raise HTTPException(
+            413, f"File too large. Max is {exc.limit} bytes.",
+        ) from exc
 
     if role is not None and role not in store.VALID_ROLES:
         raise HTTPException(
@@ -820,7 +823,13 @@ async def add_document(
     )
     audit.record("document.added", project_id=project_id,
                  document_id=doc["id"], name=original_name, size=size, user_id=auth["user_id"])
-    background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc["id"])
+    # Index under the id the document was actually STORED under. For the
+    # master-corpus alias that is the backing corpus, not the virtual id —
+    # indexing under the alias would put the chunks in a different project
+    # from the document row they describe.
+    background_tasks.add_task(
+        doc_index.maybe_eager_index, store.storage_project_id(project_id), doc["id"],
+    )
 
     # V2 inline safety + QA/QC detection for image uploads — runs PIL +
     # COCO YOLO + the fine-tuned safety_qaqc detector and surfaces a

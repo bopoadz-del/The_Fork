@@ -288,10 +288,25 @@ def _warm_embedder() -> None:
     FIRST /v1/chat/stream RAG query — eating the cold load inside the stream
     deadline, which surfaces as an intermittent chat hang / empty bubble.
     """
-    from app.core.rag.embeddings import get_embedder
+    from app.core.rag.embeddings import embedder_health, get_embedder
+
+    # Probe first: embedder_health reports WHY a load failed instead of letting
+    # the exception surface as a generic warm-up failure. The weights are baked
+    # into the image and HF_HUB_OFFLINE is set, so a failure here means a broken
+    # image (wrong RAG_EMBEDDING_MODEL vs the baked ARG, or a missing cache) —
+    # not a transient network problem, and not something that will fix itself
+    # on the first user question.
+    health = embedder_health()
+    if not health["ok"]:
+        raise RuntimeError(
+            f"embedder {health['model']!r} could not be loaded: {health['error']}"
+        )
     emb = get_embedder()
     emb.encode(["warmup"])
-    logger.info("RAG embedder warm-loaded: %s dim=%d", emb.model_name, emb.dim)
+    logger.info(
+        "RAG embedder warm-loaded: %s dim=%d backend=%s",
+        emb.model_name, emb.dim, emb.backend,
+    )
 
 
 def _seed_knowledge() -> None:
@@ -383,25 +398,71 @@ _extra_origins = [
     if o.strip()
 ]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:4173",
-        "http://localhost:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:4173",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:8000",
-        *_extra_origins,
-    ],
-    allow_credentials=True,
-    # Enumerate methods/headers rather than "*" — a credentialed CORS config
-    # should not reflect arbitrary methods/headers back to the browser.
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
-)
+# A browser reports EVERY blocked cross-origin request as the same opaque
+# "Failed to fetch" — no status, no body — which is exactly how the production
+# upload failure presented. The allow-list above is localhost-only, so a
+# deployed frontend on its own domain is served entirely by CORS_EXTRA_ORIGINS;
+# if that var is unset or misspelled in the environment, every upload from the
+# real site fails with a message that looks like a network outage.
+# CORS_ALLOW_ORIGIN_REGEX covers deploy-preview domains whose hostnames are not
+# known ahead of time (e.g. r"https://.*\.vercel\.app"). Left unset it changes
+# nothing.
+_origin_regex = (os.getenv("CORS_ALLOW_ORIGIN_REGEX") or "").strip() or None
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:4173",
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:4173",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+    *_extra_origins,
+]
+
+# NOTE: CORSMiddleware is registered LAST in this module (after the rate-limit
+# and observability middleware), because Starlette runs the most recently added
+# middleware OUTERMOST. It used to be registered here — first, and therefore
+# innermost — which meant every response produced by an OUTER middleware
+# (rate-limit 429s, and now oversize 413s) reached the browser with no CORS
+# headers at all. A cross-origin caller cannot read such a response: the fetch
+# rejects with the opaque "Failed to fetch", identical to the server being
+# unreachable. See the registration site below.
+
+
+# ── Oversize-body guard ────────────────────────────────────────────────────
+# Reject a too-large upload from its Content-Length, BEFORE Starlette spools
+# the body to disk. Without this the server accepts an entire 345 MB upload
+# and only then answers 413 — minutes of transfer, and any proxy/gateway
+# timeout along the way turns that into a connection reset, which the browser
+# surfaces as that same opaque "Failed to fetch".
+@app.middleware("http")
+async def _reject_oversize_bodies(request: Request, call_next):
+    from app.core import upload_limits
+
+    raw_length = request.headers.get("content-length")
+    if raw_length:
+        try:
+            declared = int(raw_length)
+        except ValueError:
+            declared = 0
+        limit = upload_limits.request_body_limit()
+        # Multipart framing adds boundary/header overhead around the file, so
+        # compare with headroom: the per-route check does the exact accounting
+        # on the file itself. This guard only catches bodies no route could
+        # possibly accept.
+        if declared > limit + (1024 * 1024):
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "detail": (
+                        f"Request body too large ({declared} bytes). The maximum "
+                        f"upload is {limit} bytes."
+                    )
+                },
+            )
+    return await call_next(request)
 
 
 # NOTE: a previous "file upload security" middleware was removed here. It
@@ -492,6 +553,27 @@ async def rate_limit_middleware(request: Request, call_next):
             level="error",
         )
     return response
+
+
+# ── CORS — registered LAST so it is the OUTERMOST middleware ───────────────
+# Starlette wraps the most recently added middleware around all earlier ones.
+# Registering CORS last means EVERY response carries CORS headers, including
+# ones short-circuited by the middleware above (rate-limit 429, oversize 413)
+# and unhandled 500s. Previously CORS sat innermost, so exactly the responses
+# a user most needs to read — "too large", "slow down" — arrived unreadable and
+# surfaced in the browser as "Failed to fetch" with no status at all.
+#
+# Move this call and that breaks again; it is ordering-sensitive, not stylistic.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_origin_regex=_origin_regex,
+    allow_credentials=True,
+    # Enumerate methods/headers rather than "*" — a credentialed CORS config
+    # should not reflect arbitrary methods/headers back to the browser.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+)
 
 
 # ── Unified error envelope ────────────────────────────────────────────────

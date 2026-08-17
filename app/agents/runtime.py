@@ -1114,33 +1114,79 @@ def _fetch_document_content(
     except Exception as exc:  # noqa: BLE001 — surface as tool error, not crash
         return None, None, f"document lookup unavailable: {exc}"
 
+    # Every document the RETRIEVER can cite must be fetchable, not just the
+    # active project's own. Retrieval merges general-knowledge projects and
+    # (for a thin project) the Master-Corpus fallback into the context, so the
+    # model routinely sees a [doc_id=...] marker for a document that
+    # list_documents(project_id) does not contain. It would then call
+    # fetch_document, get "no document with id X in this project", and report
+    # the file as unavailable — while quoting from it. Live example: the model
+    # cited the seeded ksa_saudi_building_code reference, then could not open
+    # it. A citation the model cannot resolve is a citation the USER cannot
+    # trust, so the fetch scope must match the retrieval scope exactly.
+    #
+    # Each extra corpus is recorded with the project id it lives under, because
+    # the chunk lookup below is project-scoped: querying GK chunks under the
+    # ACTIVE project id silently returns nothing.
+    doc_sources: List[tuple] = [(project_id, docs)]
+    try:
+        from app.core.rag import retriever as _rag_retriever
+
+        extra_pids = list(_rag_retriever._general_knowledge_project_ids())
+        fallback_pid = _rag_retriever._master_corpus_fallback_id()
+        if fallback_pid:
+            extra_pids.append(fallback_pid)
+        for pid in extra_pids:
+            if not pid or pid == project_id:
+                continue
+            try:
+                extra_docs = _projects.list_documents(pid) or []
+            except Exception:  # noqa: BLE001 — one bad corpus must not break the tool
+                continue
+            if extra_docs:
+                doc_sources.append((pid, extra_docs))
+    except Exception:  # noqa: BLE001 — retrieval config unavailable: active only
+        _LOG.warning(
+            "could not resolve general-knowledge corpora for fetch_document; "
+            "falling back to the active project only", exc_info=True,
+        )
+
+    # Flattened view for name matching, keeping each doc's owning project.
+    all_docs: List[tuple] = [
+        (owner_pid, d) for owner_pid, doc_list in doc_sources for d in doc_list
+    ]
+
     doc = None
+    doc_project_id = project_id
     if doc_id:
-        for d in docs:
+        for owner_pid, d in all_docs:
             if (d.get("id") or "") == doc_id:
-                doc = d
+                doc, doc_project_id = d, owner_pid
                 break
         if doc is None:
             return None, None, f"no document with id '{doc_id}' in this project"
     else:
         needle = filename.strip().lower()
-        exact = [d for d in docs if (d.get("original_name") or "").strip().lower() == needle]
+        exact = [
+            (pid, d) for pid, d in all_docs
+            if (d.get("original_name") or "").strip().lower() == needle
+        ]
         if exact:
-            doc = exact[-1]  # duplicates: latest upload wins
+            doc_project_id, doc = exact[-1]  # duplicates: latest upload wins
         else:
             partial = [
-                d for d in docs
+                (pid, d) for pid, d in all_docs
                 if needle in (d.get("original_name") or "").strip().lower()
             ]
             if not partial:
                 return None, None, f"no document named '{filename}' in this project"
             if len(partial) > 1:
-                names = ", ".join(sorted((d.get("original_name") or "?") for d in partial))
+                names = ", ".join(sorted((d.get("original_name") or "?") for _p, d in partial))
                 return None, None, (
                     f"{len(partial)} documents match '{filename}' ({names}) — "
                     "ask the user which one, or call again with its document_id."
                 )
-            doc = partial[0]
+            doc_project_id, doc = partial[0]
 
     # Preferred source: the indexed RAG chunks (already extracted/cleaned).
     text = ""
@@ -1149,7 +1195,11 @@ def _fetch_document_content(
         from app.core.rag import retriever as _rag
         from app.core.rag import vector_store as _vs
         if _rag.available():
-            chunks = _vs.get_store().doc_chunk_texts(project_id, [doc["id"]])
+            # Scoped to the document's OWNING project — a general-knowledge or
+            # Master-Corpus document's chunks are not stored under the active
+            # project id, so querying that would return nothing and silently
+            # fall through to raw extraction (or an empty-document error).
+            chunks = _vs.get_store().doc_chunk_texts(doc_project_id, [doc["id"]])
             text = "\n\n".join(chunks.get(doc["id"], []) or [])
     except Exception:  # noqa: BLE001 — fall through to raw extraction
         text = ""
