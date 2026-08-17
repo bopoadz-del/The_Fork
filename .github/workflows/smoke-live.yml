@@ -1,0 +1,58 @@
+name: smoke-live
+
+# Routine deliverable smoke against the LIVE deployment.
+# Uses repository secrets FORK_API_KEY + FORK_BASE_URL (never printed).
+# VERDICT: scripts/smoke.sh exit 0 (all runs succeed + tool path fired).
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "SMOKE_RUNS (routine=3, release=10)"
+        default: "3"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-live
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: live deliverable smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install smoke client deps
+        run: pip install httpx
+
+      - name: Check credentials are configured
+        env:
+          FORK_API_KEY: ${{ secrets.FORK_API_KEY }}
+          FORK_EMAIL: ${{ secrets.FORK_EMAIL }}
+          FORK_PASSWORD: ${{ secrets.FORK_PASSWORD }}
+          FORK_TOKEN: ${{ secrets.FORK_TOKEN }}
+        run: |
+          if [ -z "$FORK_API_KEY" ] && [ -z "$FORK_TOKEN" ] && { [ -z "$FORK_EMAIL" ] || [ -z "$FORK_PASSWORD" ]; }; then
+            echo "::error::Missing credentials. Add FORK_API_KEY (or FORK_TOKEN, or FORK_EMAIL + FORK_PASSWORD) as repository secrets."
+            exit 1
+          fi
+          echo "credentials present"
+
+      - name: Run scripts/smoke.sh against live
+        env:
+          FORK_API_KEY: ${{ secrets.FORK_API_KEY }}
+          FORK_EMAIL: ${{ secrets.FORK_EMAIL }}
+          FORK_PASSWORD: ${{ secrets.FORK_PASSWORD }}
+          FORK_TOKEN: ${{ secrets.FORK_TOKEN }}
+          FORK_BASE_URL: ${{ secrets.FORK_BASE_URL }}
+          SMOKE_RUNS: ${{ inputs.runs || '3' }}
+        run: bash scripts/smoke.sh
