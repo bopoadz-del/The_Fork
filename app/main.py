@@ -437,6 +437,33 @@ CORS_ALLOWED_ORIGINS = [
 # and only then answers 413 — minutes of transfer, and any proxy/gateway
 # timeout along the way turns that into a connection reset, which the browser
 # surfaces as that same opaque "Failed to fetch".
+async def _drain_request_body(request: Request, *, seconds: float) -> bool:
+    """Consume the client's body so it can actually READ our error response.
+
+    An HTTP peer that is still streaming a body cannot receive a response on a
+    socket the server closes underneath it: the send fails first, and both
+    browsers and httpx report a bare transport error rather than the status we
+    sent. Measured on the live service before this existed — a 60 MB POST to
+    an upload route died after 34s with "Server disconnected without sending a
+    response", which the browser shows as the opaque "Failed to fetch" this
+    guard was written to prevent.
+
+    Bounded by ``seconds`` so a genuinely enormous upload cannot pin a worker:
+    if the budget runs out we answer anyway (best effort) and say so in the
+    log. Returns True when the body was fully drained.
+    """
+    import time as _time
+
+    deadline = _time.monotonic() + seconds
+    try:
+        async for _chunk in request.stream():
+            if _time.monotonic() > deadline:
+                return False
+    except Exception:  # noqa: BLE001 — client vanished mid-drain; nothing to answer
+        return False
+    return True
+
+
 @app.middleware("http")
 async def _reject_oversize_bodies(request: Request, call_next):
     from app.core import upload_limits
@@ -453,6 +480,18 @@ async def _reject_oversize_bodies(request: Request, call_next):
         # on the file itself. This guard only catches bodies no route could
         # possibly accept.
         if declared > limit + (1024 * 1024):
+            # Drain BEFORE answering. Rejecting on Content-Length alone still
+            # avoids spooling the file to disk (the point of this guard), but
+            # the client must be allowed to finish sending or it never sees
+            # the 413 — which turned a clear "file too large" into the very
+            # "Failed to fetch" this middleware exists to eliminate.
+            budget = float(os.getenv("OVERSIZE_DRAIN_SECONDS", "30"))
+            if not await _drain_request_body(request, seconds=budget):
+                logger.warning(
+                    "oversize body (%s bytes) not fully drained within %ss — "
+                    "the client may see a transport error instead of the 413",
+                    declared, budget,
+                )
             return JSONResponse(
                 status_code=413,
                 content={
