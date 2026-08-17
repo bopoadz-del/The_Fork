@@ -172,7 +172,20 @@ def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[st
     # ── Manpower Histogram (man-days table + time-phased demand + chart) ────
     mp = wb.create_sheet("Manpower Histogram")
     mp["A1"] = "MANPOWER HISTOGRAM"; mp["A1"].font = _TITLE
-    _header(mp, 3, ["ID", "Activity", "Dur", "Manpower", "Man-days"])
+    # Planned man-hours are shown beside the schedule-derived man-days whenever
+    # the activities were planned in man-hours (BOQ-derived programmes are:
+    # man-hours = quantity x norm). Both describe the same labour, so a reader
+    # can reconcile them in the sheet -- Dur x Manpower x shift should equal the
+    # planned man-hours, and a gap means the crew or duration was changed
+    # without re-deriving. Column is omitted entirely when nothing carries
+    # man-hours, so template-driven schedules look exactly as before.
+    _has_mh = any(isinstance(a.get("manhours"), (int, float)) and a.get("manhours")
+                  for a in acts.values())
+    _hours_per_day = float(meta.get("hours_per_day") or 8)
+    cols = ["ID", "Activity", "Dur", "Manpower", "Man-days"]
+    if _has_mh:
+        cols += ["Planned man-hours", f"Man-hours @ {_hours_per_day:g}h (=Man-days x shift)"]
+    _header(mp, 3, cols)
     rr = 4
     for i in order:
         a = acts[i]
@@ -180,9 +193,15 @@ def generate_cost_loaded_schedule(meta: Dict[str, Any], activities: List[Dict[st
         mp.cell(rr, 3, a.get("duration", 0)).font = _INPUT
         mp.cell(rr, 4, a.get("manpower", 0)).font = _INPUT
         mp.cell(rr, 5, f"=C{rr}*D{rr}").number_format = "#,##0"   # man-days = Dur*Manpower
+        if _has_mh:
+            mp.cell(rr, 6, a.get("manhours", 0)).number_format = "#,##0"
+            mp.cell(rr, 7, f"=E{rr}*{_hours_per_day:g}").number_format = "#,##0"
         rr += 1
     mp.cell(rr, 2, "TOTAL").font = _BOLD
     mp.cell(rr, 5, f"=SUM(E4:E{rr - 1})").font = _BOLD
+    if _has_mh:
+        mp.cell(rr, 6, f"=SUM(F4:F{rr - 1})").font = _BOLD
+        mp.cell(rr, 7, f"=SUM(G4:G{rr - 1})").font = _BOLD
 
     # Time-phased weekly staffing demand: each activity contributes its
     # manpower across its ES->EF window; sum per week = the histogram.
