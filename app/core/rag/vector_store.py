@@ -228,6 +228,65 @@ def _rag_vector_namespace() -> str:
     return os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
 
 
+def get_lexical_store(
+    db_path: Optional[str] = None,
+    namespace: Optional[str] = None,
+) -> "VectorStore":
+    """Open the store WITHOUT constructing an embedder — for BM25-only use.
+
+    ``get_store`` always builds the embedder, purely to read ``identity["dim"]``
+    for the table width. That made every read path depend on the embedding
+    model, including BM25, which never touches the vector column: remove the
+    model and keyword search over an already-indexed corpus died with it, even
+    though the text was fully present and matchable.
+
+    The width and model name are read from the table's OWN rows instead, so the
+    identity check this constructs with is the identity already stored — it can
+    neither trip the mixed-model guard nor mislabel what is written (nothing is
+    written through this path; it is read-only by construction).
+
+    Falls back to the configured/default identity for an empty table, where
+    there is nothing to be inconsistent with.
+    """
+    path = db_path or _default_db_path()
+    url = _database_url(path)
+    ns = namespace if namespace is not None else _rag_vector_namespace()
+    table = rag_chunk_table_name(ns)
+
+    model_name: Optional[str] = None
+    dim: Optional[int] = None
+    try:
+        with _engine_for_url(url).connect() as conn:
+            row = conn.execute(
+                text(f"SELECT embedding_model, embedding_dim FROM {table} LIMIT 1")
+            ).first()
+        if row and row[0]:
+            model_name, dim = str(row[0]), int(row[1])
+    except Exception:  # noqa: BLE001
+        # Missing table, or the legacy namespace whose rows have no identity
+        # columns. The configured defaults below are correct in both cases, so
+        # this is recoverable — but not silent: if the identity probe fails for
+        # any OTHER reason, the store opens on assumed defaults, and that is
+        # worth being able to see.
+        logger.info(
+            "lexical store: could not read stored identity from %s; using "
+            "configured defaults", table, exc_info=True,
+        )
+
+    if not model_name:
+        model_name = (os.getenv("RAG_EMBEDDING_MODEL") or "").strip() or "unknown"
+    if not dim:
+        dim = EMBEDDING_DIM
+
+    key = (url, ns, model_name, dim)
+    with _CACHE_LOCK:
+        if key not in _STORE_CACHE:
+            _STORE_CACHE[key] = VectorStore(
+                db_path=path, dim=dim, namespace=ns, model_name=model_name,
+            )
+    return _STORE_CACHE[key]
+
+
 def get_store(
     dim: Optional[int] = None,
     db_path: Optional[str] = None,

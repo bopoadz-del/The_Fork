@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Optional, Set, Tuple
 
 from app.core.rag.embeddings import Embedder, get_embedder
-from app.core.rag.vector_store import Chunk, get_store
+from app.core.rag.vector_store import Chunk, get_lexical_store, get_store
 from app.core.rag import layers
 from app.core.rag import revision as _revision
 from app.core.rag import reranker as _reranker
@@ -624,6 +624,70 @@ def _dual_search(
     return sorted(best.values(), key=lambda c: -(c.score or 0.0))
 
 
+def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
+    """BM25-only retrieval for when no embedder can be loaded.
+
+    Used when the embedding model is absent, removed, or failed to load. The
+    vector leg is unavailable, so ranking is purely lexical — worse than hybrid,
+    and dramatically better than the empty list this used to return.
+
+    Deliberately mirrors the main path's shape: active project first (so its
+    chunks win ties over general knowledge), GK merged, noise-filtered, top-k,
+    and the same ``(chunks, noise_filtered_count)`` tuple. Chunks are tagged
+    ``layer="general_knowledge"`` for GK hits exactly as the main path does, so
+    every downstream consumer — citation markers, the sources panel, disclosure
+    — behaves identically.
+
+    Failures here return ``([], 0)`` rather than raising: this IS the
+    degradation path, and it must not become a new way to break a request.
+    """
+    if not query or not query.strip():
+        return [], 0
+    if not project_id:
+        raise ValueError("project_id is required")
+
+    try:
+        # get_lexical_store, not get_store: the latter constructs an embedder
+        # just to read the table width, which is the coupling this path exists
+        # to break.
+        store = get_lexical_store()
+    except Exception as exc:  # noqa: BLE001 — degradation must not raise
+        logger.warning("lexical-only retrieval unavailable: %s", exc)
+        return [], 0
+
+    over_fetch = max(k * 4, 20)
+    candidates: List[Chunk] = []
+    try:
+        candidates.extend(store.bm25_search(project_id, query, over_fetch))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("lexical retrieval failed for %s: %s", project_id, exc)
+        return [], 0
+
+    for gk_pid in _general_knowledge_project_ids():
+        if gk_pid == project_id:
+            continue
+        try:
+            for chunk in store.bm25_search(gk_pid, query, over_fetch):
+                chunk.layer = "general_knowledge"
+                candidates.append(chunk)
+        except Exception as exc:  # noqa: BLE001 — GK never breaks the primary leg
+            logger.warning("lexical GK retrieval for %s failed: %s", gk_pid, exc)
+
+    # Stable sort keeps the active project ahead of GK on equal scores.
+    candidates.sort(key=lambda c: -(c.score or 0.0))
+
+    kept: List[Chunk] = []
+    noise_filtered = 0
+    for chunk in candidates:
+        if _is_noise_filename(_doc_name_for_id(chunk.doc_id)):
+            noise_filtered += 1
+            continue
+        kept.append(chunk)
+        if len(kept) >= k:
+            break
+    return kept, noise_filtered
+
+
 def retrieve_with_filter(
     query: str,
     project_id: str,
@@ -687,8 +751,17 @@ def retrieve_with_filter(
     tuned from data.
     """
     if not available():
-        logger.debug("retrieve called but embedding stack not available; returning []")
-        return [], 0
+        # NOT an automatic []. BM25 is pure text matching over chunks.text and
+        # needs no embedder at all — the vector leg does. Returning [] here
+        # coupled the ENTIRE search surface to the embedder: remove the model
+        # and search_project_documents went to zero hits on a corpus whose text
+        # was sitting right there, fully indexed and matchable.
+        #
+        # This is what lets the embedder be removed, swapped, or fail without
+        # taking search down with it: semantic ranking is lost, keyword
+        # retrieval survives. Degrade a capability, not the product.
+        logger.debug("embedding stack unavailable; retrieving lexical-only")
+        return _lexical_only_retrieve(query, project_id, k)
     if not query or not query.strip():
         return [], 0
     if not project_id:
