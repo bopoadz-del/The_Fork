@@ -123,6 +123,8 @@ def stream_turn(client: httpx.Client, args, cred: str, message: str,
         if r.status_code != 200:
             r.read()
             print(f"HTTP {r.status_code}: {r.text[:500]}", file=sys.stderr)
+            print(f"turn summary: total={time.monotonic() - t0:.2f}s  "
+                  f"first_token=-  events=0  answer_chars=0  model=?")
             return conversation_id
         for line in r.iter_lines():
             if not line or not line.startswith("data:"):
