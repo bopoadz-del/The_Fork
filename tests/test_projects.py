@@ -171,9 +171,13 @@ def test_purge_archived_project_only_touches_archived(client):
 
 def test_document_upload_rejects_oversize(client, monkeypatch):
     """A too-large upload must be rejected with 413 BEFORE being read into
-    memory — otherwise one big BIM file OOMs the shared instance."""
-    import app.routers.projects as projects_router
-    monkeypatch.setattr(projects_router, "MAX_DOC_UPLOAD_SIZE", 64)
+    memory — otherwise one big BIM file OOMs the shared instance.
+
+    Drives the real env var rather than monkeypatching a module constant: the
+    limit is now read per-request from app.core.upload_limits, so patching an
+    import-time attribute would test a binding the product no longer has.
+    """
+    monkeypatch.setenv("MAX_DOC_UPLOAD_SIZE", "64")
     proj = _new_project(client, "Size Guard")
     files = {"file": ("big.pdf", b"%PDF-1.4 " + b"x" * 500, "application/pdf")}
     r = client.post(

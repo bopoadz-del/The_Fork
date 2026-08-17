@@ -15,16 +15,13 @@ from app.worker.ingest_queue import enqueue_ingest
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", "10485760"))  # 10MB
-ALLOWED_UPLOAD_EXTENSIONS = {
-    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff",
-    ".txt", ".md", ".csv", ".json", ".xml",
-    ".mp3", ".mp4", ".wav", ".webm",
-    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    # Construction-domain formats matched against the registered blocks:
-    # drawing_qto (.dxf, .dwg), bim (.ifc), primavera_parser (.xer), MS Project (.mpp), Revit (.rvt).
-    ".dxf", ".dwg", ".ifc", ".xer", ".mpp", ".rvt",
-}
+# Cap + accepted formats are shared with /v1/projects/{id}/documents via
+# app.core.upload_limits. These two routes previously carried DIFFERENT caps
+# (10 MB here, 50 MB there) and different extension sets, so whether a file was
+# accepted depended on which route the client happened to call.
+from app.core import upload_limits
+
+ALLOWED_UPLOAD_EXTENSIONS = upload_limits.ALLOWED_UPLOAD_EXTENSIONS
 
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 try:
@@ -56,11 +53,12 @@ async def upload_v1(
     """
     try:
         # Validate file size
+        max_size = upload_limits.max_upload_bytes()
         file.file.seek(0, 2)
         file_size = file.file.tell()
         file.file.seek(0)
-        if file_size > MAX_UPLOAD_SIZE:
-            raise HTTPException(status_code=413, detail=f"File too large. Max size: {MAX_UPLOAD_SIZE} bytes")
+        if file_size > max_size:
+            raise HTTPException(status_code=413, detail=f"File too large. Max size: {max_size} bytes")
 
         # Validate and sanitize filename
         original_name = (file.filename or "unknown").strip()
@@ -79,9 +77,16 @@ async def upload_v1(
         filepath = os.path.join(DATA_DIR, filename)
 
         # Save uploaded file — encrypted at rest iff DATA_ENCRYPTION_KEY is set
-        # (opt-in; plaintext otherwise — see app/core/file_crypto.py).
-        file.file.seek(0)
-        file_crypto.write_document(filepath, file.file.read())
+        # (opt-in; plaintext otherwise — see app/core/file_crypto.py). Streamed
+        # in blocks so a large drawing set never sits in memory whole.
+        try:
+            file_size = file_crypto.write_document_stream(
+                filepath, file.file, max_bytes=max_size,
+            )
+        except file_crypto.UploadTooLarge as exc:
+            raise HTTPException(
+                status_code=413, detail=f"File too large. Max size: {exc.limit} bytes",
+            ) from exc
 
         # NB: uploaded files live under DATA_DIR, not on any static route —
         # the old ``/static/{filename}`` URL 404'd. Documents are reached

@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import cast, delete, func, select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import json as json_lib
@@ -84,6 +84,58 @@ def _sanitize_fts5_query(query: str) -> str:
     if not tokens:
         return ""
     return " OR ".join(tokens)
+
+
+# Words websearch_to_tsquery reads as OPERATORS. Passing them through as if
+# they were search terms changes the meaning of the query.
+_WEBSEARCH_OPERATORS = frozenset({"or", "and", "not"})
+
+
+def _sanitize_websearch_query(query: str) -> str:
+    """OR-join tokens for PostgreSQL's ``websearch_to_tsquery``.
+
+    THE DEFECT THIS FIXES — the production retrieval failure
+    --------------------------------------------------------
+    The SQLite leg above OR-joins its tokens, and its docstring states the
+    reason plainly: AND semantics return zero hits on natural-language queries,
+    so BM25 can never contribute and hybrid collapses to semantic-only. That
+    diagnosis was correct — and it was only ever applied to SQLite.
+
+    PostgreSQL, which is what production runs, used ``plainto_tsquery``, and
+    ``plainto_tsquery`` ANDs every term. The consequences in prod:
+
+      * A chunk had to contain EVERY word of the question to be eligible. Ask
+        "what is the soil backfilling specification" and only a chunk carrying
+        soil AND backfilling AND specification could match.
+      * ONE word absent from the whole corpus — a typo ("buiding"), a plural, a
+        product name — reduced the entire BM25 leg to zero rows.
+      * ``search()`` then hits ``if not bm25_results: return sem_results[:k]``
+        and silently degrades to pure cosine, with nothing logged and nothing
+        in the answer to say retrieval ran on one leg.
+
+    So in production the lexical half of "hybrid" retrieval was dead for most
+    real questions, and ranking fell to cosine alone over a corpus of thousands
+    of chunks at k=5. That is why the same corpus answered a question correctly
+    on one turn and reported the material absent on the next: nothing about the
+    retrieval was stable, only the phrasing of the question changed.
+
+    And it was structurally invisible to the test suite: dev and CI run SQLite,
+    which takes the forgiving OR path, so no test could observe the semantics
+    production actually used. The backends have to agree, which is what this
+    makes true.
+
+    ``websearch_to_tsquery`` is used rather than a hand-built ``to_tsquery``
+    because it is the one tsquery parser designed for untrusted user input: it
+    never raises a syntax error on stray punctuation or an unbalanced quote,
+    where ``to_tsquery`` does.
+    """
+    if not query:
+        return ""
+    cleaned = _FTS5_SAFE_RE.sub(" ", query)
+    tokens = [t for t in cleaned.split() if t.lower() not in _WEBSEARCH_OPERATORS]
+    if not tokens:
+        return ""
+    return " or ".join(tokens)
 
 
 # ── Public types ──────────────────────────────────────────────────────────
@@ -724,6 +776,18 @@ class VectorStore:
 
         if not bm25_results:
             # Graceful degrade to semantic-only; respect caller's k.
+            #
+            # Graceful, but no longer SILENT. With bag-of-words semantics on
+            # both backends, an empty BM25 leg means no query term appears
+            # anywhere in the project — rare enough to be worth a line, and the
+            # single clearest signal that retrieval ran at half strength. While
+            # this was silent (and PostgreSQL ANDed its terms, so it fired
+            # constantly) the platform served cosine-only answers that were
+            # indistinguishable, to the reader, from fully-grounded ones.
+            logger.info(
+                "bm25 leg empty for project=%s; retrieval degraded to "
+                "semantic-only. query=%r", project_id, (query_text or "")[:120],
+            )
             return sem_results[:k]
 
         return _rrf_combine(sem_results, bm25_results, k)
@@ -948,16 +1012,24 @@ class VectorStore:
     def _bm25_postgres(
         self, project_id: str, query: str, k: int
     ) -> List[Chunk]:
-        """ts_rank + GIN. The plainto_tsquery accepts natural language
-        (no manual sanitization needed; Postgres handles it).
+        """ts_rank + GIN over a BAG-OF-WORDS tsquery.
+
+        Bag-of-words (OR), not plainto_tsquery's AND — see
+        ``_sanitize_websearch_query`` for the production failure that came from
+        requiring every query term to appear in a chunk. ``ts_rank`` still ranks
+        a chunk matching more of the terms above one matching fewer, so relaxing
+        the predicate widens recall without flattening precision.
         """
+        safe_query = _sanitize_websearch_query(query)
+        if not safe_query:
+            return []
         table = self._table_name
         sql = text(
             f"""
             SELECT c.chunk_id, c.project_id, c.doc_id, c.chunk_index,
                    c.text, c.knowledge_layer, c.authority,
                    ts_rank(c.text_search, q) AS rank
-            FROM {table} c, plainto_tsquery('english', :q) AS q
+            FROM {table} c, websearch_to_tsquery('english', :q) AS q
             WHERE c.text_search @@ q
               AND c.project_id = :project_id
             ORDER BY rank DESC
@@ -969,11 +1041,20 @@ class VectorStore:
                 with self._session_factory()() as session:
                     rows = session.execute(
                         sql,
-                        {"q": query, "project_id": project_id, "k": k},
+                        {"q": safe_query, "project_id": project_id, "k": k},
                     ).all()
-        except OperationalError as e:
-            logger.warning(
-                "bm25_search (postgres) failed: %s; query=%r", e, query
+        except SQLAlchemyError as e:
+            # Deliberately broader than OperationalError. A missing
+            # ``text_search`` column raises ProgrammingError (UndefinedColumn),
+            # which this used to let escape — turning a degraded lexical leg
+            # into a failed request. Either way the leg is unavailable, so
+            # degrade to semantic-only; log at ERROR because a silently
+            # half-working retriever is what let this class of bug live in
+            # production while every test stayed green.
+            logger.error(
+                "bm25_search (postgres) unavailable on %s: %s; query=%r — "
+                "retrieval is running SEMANTIC-ONLY for this request",
+                table, e, query, exc_info=True,
             )
             return []
         return [

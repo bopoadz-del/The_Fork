@@ -1110,6 +1110,13 @@ class _BulkInsertRequest(BaseModel):
     # None -> the ACTIVE namespace (RAG_VECTOR_NAMESPACE, prod "v2"). Explicit
     # "" would target the retired legacy table — allowed only deliberately.
     namespace: Optional[str] = None
+    # Sizeless document rows are REJECTED by default. The pilot corpus was
+    # loaded through this endpoint with the size field dropped in the payload
+    # transform (the source rag_backfill_*.json carry a real `size` per file),
+    # which is why every document rendered as "0 B" in the UI. A silent default
+    # made a data-integrity bug look like a UI bug for weeks. Operators who
+    # genuinely mean to register metadata-only rows opt in explicitly.
+    allow_missing_size: bool = False
 
 
 @router.post("/v1/admin/corpus/bulk-insert")
@@ -1148,6 +1155,27 @@ def admin_corpus_bulk_insert(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     store = get_store(namespace=req.namespace) if req.namespace is not None else get_store()
+
+    # Reject sizeless document rows BEFORE writing anything — a document that
+    # claims 0 bytes renders as "0 B" forever and no downstream check catches
+    # it. Whole-payload rejection (not per-row skip) so a partial corpus is
+    # never half-loaded with half the sizes missing.
+    if not req.allow_missing_size:
+        sizeless = [d.id for d in req.documents if (d.size or 0) <= 0]
+        if sizeless:
+            preview = ", ".join(sizeless[:10])
+            more = f" (+{len(sizeless) - 10} more)" if len(sizeless) > 10 else ""
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{len(sizeless)} document row(s) have size <= 0: {preview}"
+                    f"{more}. A sizeless document renders as '0 B' and cannot be "
+                    f"distinguished from a failed ingest. Populate `size` from "
+                    f"the source payload, or resend with allow_missing_size=true "
+                    f"to register metadata-only rows deliberately. Nothing was "
+                    f"written."
+                ),
+            )
 
     now_iso = datetime.now(timezone.utc).isoformat()
     counts: Dict[str, int] = {"projects": 0, "documents": 0, "chunks": 0,
@@ -1228,7 +1256,40 @@ def admin_corpus_bulk_insert(
         "counts": counts,
         "namespace_table": namespace_table,
         "verified_chunks_by_doc": verified,
+        # Non-zero only when the operator opted into metadata-only rows.
+        "documents_without_size": sum(
+            1 for d in req.documents if (d.size or 0) <= 0
+        ),
     }
+
+
+class _RepairSizesRequest(BaseModel):
+    # None = every project. Scoped by default in the caller's hands, because a
+    # corpus-wide repair stats every file on disk.
+    project_id: Optional[str] = None
+    # Report-only by default: an operator sees the damage before writing.
+    dry_run: bool = True
+
+
+@router.post("/v1/admin/corpus/repair-document-sizes")
+def admin_repair_document_sizes(
+    req: _RepairSizesRequest,
+    auth: dict = Depends(require_api_key),
+):
+    """Recompute recorded document sizes from the bytes on disk.
+
+    Repairs corpora already loaded by the pre-fix code paths — the rows behind
+    the "every document shows 0 B" report. Measures PLAINTEXT length (so
+    encrypted-at-rest files report their real size, not the inflated
+    ciphertext), fixes rows that disagree with disk, and reports the rows it
+    could not repair because the file is gone rather than inventing a number.
+    """
+    _require_admin(auth)
+
+    from app.core import projects as _p
+
+    result = _p.repair_document_sizes(req.project_id, dry_run=req.dry_run)
+    return {"status": "ok", **result}
 
 
 class _DeleteDocsRequest(BaseModel):
