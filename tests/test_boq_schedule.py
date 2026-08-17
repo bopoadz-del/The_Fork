@@ -573,3 +573,67 @@ def test_workbook_omits_the_manhour_columns_for_template_schedules(tmp_path):
     header = [c.value for c in load_workbook(out)["Manpower Histogram"][3]]
     assert header[:5] == ["ID", "Activity", "Dur", "Manpower", "Man-days"]
     assert "Planned man-hours" not in header
+
+
+# ── a BOQ measures the same work many times (live find, 2026-08-17) ────────
+#
+# The first live run against a 640-line BOQ produced 640 chained activities
+# and an 18,400-day (73-year) programme: 160 repeats of "RC C40 to columns"
+# each became their own sequential 6-day task. Real BOQs measure per floor,
+# per zone, per block; planners schedule WORK PACKAGES, not lines.
+
+REPEATED = (
+    [{"description": "Reinforced concrete C40 to columns", "quantity": 180,
+      "unit": "m3", "total_cost": 73800.0}] * 4 +
+    [{"description": "Supply and install 200mm blockwork wall", "quantity": 1250,
+      "unit": "m2", "total_cost": 106250.0}] * 3
+)
+REPEAT_NORMS = {"Concrete": 1.371, "Masonry/Blockwork": 0.8}
+
+
+def test_repeated_lines_become_one_activity_with_summed_quantity():
+    acts = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS)
+    assert len(acts) == 2, [a["name"] for a in acts]
+    conc = next(a for a in acts if "columns" in a["name"])
+    assert conc["boq"]["quantity"] == 720          # 4 x 180
+    assert conc["boq"]["line_count"] == 4
+    assert conc["boq"]["total_cost"] == pytest.approx(295200.0)
+
+
+def test_aggregation_is_visible_not_a_silently_shorter_boq():
+    """line_count keeps the merge auditable against the source document."""
+    acts = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS)
+    assert sum(a["boq"]["line_count"] for a in acts) == len(REPEATED)
+
+
+def test_distinct_work_is_never_merged():
+    items = [
+        {"description": "Reinforced concrete C40 to columns", "quantity": 180, "unit": "m3"},
+        {"description": "Reinforced concrete C40 to raft foundation", "quantity": 420, "unit": "m3"},
+    ]
+    acts = activities_from_boq(items, manhours_per_unit={"Concrete": 1.371})
+    assert len(acts) == 2
+    assert {a["boq"]["quantity"] for a in acts} == {180, 420}
+
+
+def test_merging_ignores_case_and_whitespace_only_differences():
+    items = [
+        {"description": "Supply and install 200mm blockwork wall", "quantity": 100, "unit": "m2"},
+        {"description": "  supply and  install 200MM blockwork wall ", "quantity": 50, "unit": "m2"},
+    ]
+    acts = activities_from_boq(items, manhours_per_unit={"Masonry/Blockwork": 0.8})
+    assert len(acts) == 1
+    assert acts[0]["boq"]["quantity"] == 150
+
+
+def test_line_by_line_programme_is_still_available():
+    acts = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS, aggregate=False)
+    assert len(acts) == len(REPEATED)
+
+
+def test_manhours_are_conserved_by_aggregation():
+    """Merging changes the activity count, never the labour."""
+    from app.lib.boq_schedule import total_manhours
+    merged = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS)
+    per_line = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS, aggregate=False)
+    assert total_manhours(merged) == pytest.approx(total_manhours(per_line), abs=0.5)
