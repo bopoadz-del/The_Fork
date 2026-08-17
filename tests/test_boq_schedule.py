@@ -148,8 +148,9 @@ def test_packages_run_in_construction_order():
     acts = activities_from_boq(BOQ, manhours_per_unit=RATES, category_overrides=OVERRIDES)
     phases = [a["wbs_phase"] for a in acts]
     order = {p: i for i, p in enumerate(dict.fromkeys(phases))}
-    # earthworks precedes steel precedes facade precedes MEP
-    assert order["earthworks_excavation"] < order["structural_steel"]
+    # Earthworks is substructure by definition (it digs for the foundations),
+    # so it carries the _substructure phase suffix and leads the programme.
+    assert order["earthworks_excavation_substructure"] < order["structural_steel"]
     assert order["structural_steel"] < order["windows_doors_facade"]
     assert order["windows_doors_facade"] < order["mechanical_hvac_mep"]
 
@@ -637,3 +638,62 @@ def test_manhours_are_conserved_by_aggregation():
     merged = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS)
     per_line = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS, aggregate=False)
     assert total_manhours(merged) == pytest.approx(total_manhours(per_line), abs=0.5)
+
+
+# ── real construction order (live find, 2026-08-17) ───────────────────────
+
+REAL_SITE = [
+    {"description": "Bulk excavation to reduced level", "quantity": 980, "unit": "m3"},
+    {"description": "Plain concrete blinding to foundations", "quantity": 210, "unit": "m2"},
+    {"description": "Rebar cut bend and fix to foundations", "quantity": 26000, "unit": "kg"},
+    {"description": "Reinforced concrete C40 to raft foundation", "quantity": 240, "unit": "m3"},
+    {"description": "Reinforced concrete C40 to columns", "quantity": 95, "unit": "m3"},
+]
+SITE_NORMS = {"Earthworks/Excavation": 0.08, "Concrete": 1.371, "Reinforcement": 0.023}
+
+
+def _seq(acts):
+    return [a["name"] for a in acts]
+
+
+def test_excavation_precedes_the_foundations_it_digs_for():
+    """Live: excavation sorted into the superstructure block and landed on
+    day 32, AFTER the raft. Earthworks is substructure by definition."""
+    acts = activities_from_boq(REAL_SITE, manhours_per_unit=SITE_NORMS)
+    names = _seq(acts)
+    assert names.index("Bulk excavation to reduced level") == 0
+    assert (names.index("Bulk excavation to reduced level")
+            < names.index("Reinforced concrete C40 to raft foundation"))
+
+
+def test_blinding_is_struck_before_the_rebar_fixed_on_top_of_it():
+    """Blinding IS Concrete, so trade order alone scheduled it after the
+    Reinforcement package. It is enabling work and ranks with the foundations."""
+    acts = activities_from_boq(REAL_SITE, manhours_per_unit=SITE_NORMS)
+    names = _seq(acts)
+    assert (names.index("Plain concrete blinding to foundations")
+            < names.index("Rebar cut bend and fix to foundations"))
+    assert (names.index("Rebar cut bend and fix to foundations")
+            < names.index("Reinforced concrete C40 to raft foundation"))
+
+
+def test_the_whole_sequence_is_buildable():
+    """excavate -> blind -> fix rebar -> pour raft -> pour columns."""
+    acts = activities_from_boq(REAL_SITE, manhours_per_unit=SITE_NORMS)
+    assert _seq(acts) == [
+        "Bulk excavation to reduced level",
+        "Plain concrete blinding to foundations",
+        "Rebar cut bend and fix to foundations",
+        "Reinforced concrete C40 to raft foundation",
+        "Reinforced concrete C40 to columns",
+    ]
+
+
+def test_no_stray_control_characters_in_the_module():
+    """A heredoc wrote a literal backspace (0x08) where \b belonged, so the
+    enabling pattern silently never matched and blinding kept sorting last.
+    The pattern LOOKED right when printed — invisible bytes need a fence."""
+    import app.lib.boq_schedule as m
+    src = open(m.__file__, encoding="utf-8").read()
+    stray = {hex(ord(c)) for c in src if ord(c) < 32 and c not in "\n\t"}
+    assert not stray, f"control characters in source: {stray}"

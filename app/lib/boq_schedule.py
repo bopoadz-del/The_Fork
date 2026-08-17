@@ -123,8 +123,20 @@ _STAGED_CATEGORIES = frozenset({
     "Masonry/Blockwork",
 })
 
-# Categories that ARE substructure by definition — no keyword needed.
-_ALWAYS_SUBSTRUCTURE = frozenset({"Piling/Foundations"})
+# Categories that ARE substructure/enabling by definition — no keyword needed.
+# Live 2026-08-17: without Earthworks here, "Bulk excavation to reduced level"
+# sorted into the superstructure block and scheduled on day 32, AFTER the
+# foundations it digs for. Demolition and site clearance are the same class:
+# they precede everything, always.
+_ALWAYS_SUBSTRUCTURE = frozenset({
+    "Piling/Foundations", "Earthworks/Excavation", "Demolition",
+})
+
+# Enabling operations that precede the reinforcement they are poured under.
+# Blinding is categorised as Concrete (it is), but a blinding layer is struck
+# before rebar is fixed, not after it — trade order alone puts it last.
+_ENABLING_RX = re.compile(r"(blinding|lean\s+concrete|sub[\s-]?base|"
+                          r"levelling\s+course)", re.IGNORECASE)
 
 SUBSTRUCTURE = "substructure"
 SUPERSTRUCTURE = "superstructure"
@@ -335,24 +347,31 @@ def activities_from_boq(
     if missing:
         raise MissingProductivity(missing)
 
+    # Package key carries an ORDER RANK beside the category so enabling work
+    # can be sequenced apart from its trade while still using that trade's
+    # norm, crew and phase. Blinding is Concrete (it is), but it is struck
+    # BEFORE the rebar fixed on top of it; ranking by trade alone scheduled it
+    # after (live 2026-08-17).
+    seq_index = {c: i for i, c in enumerate(CONSTRUCTION_SEQUENCE)}
+    _enabling_rank = seq_index["Piling/Foundations"] + 0.5
+
     staged: Dict[tuple, List[Dict[str, Any]]] = {}
     for cat, items in grouped.items():
         for item in items:
-            stage = element_stage(
-                item.get("description") or item.get("item_key") or "", cat)
-            staged.setdefault((stage, cat), []).append(item)
+            desc = item.get("description") or item.get("item_key") or ""
+            stage = element_stage(desc, cat)
+            rank = (_enabling_rank if _ENABLING_RX.search(str(desc))
+                    else float(seq_index.get(cat, len(seq_index))))
+            staged.setdefault((stage, rank, cat), []).append(item)
 
-    seq_index = {c: i for i, c in enumerate(CONSTRUCTION_SEQUENCE)}
     ordered = sorted(
-        staged,
-        key=lambda k: (0 if k[0] == SUBSTRUCTURE else 1,
-                       seq_index.get(k[1], len(seq_index))),
+        staged, key=lambda k: (0 if k[0] == SUBSTRUCTURE else 1, k[1], k[2]),
     )
 
     activities: List[Dict[str, Any]] = []
     prev_package_tail: Optional[str] = None
     for p_idx, key in enumerate(ordered, start=1):
-        stage, cat = key
+        stage, _rank, cat = key
         norm = float(manhours_per_unit[cat])
         crew = int(crew_size.get(cat, default_crew_size))
         trade = _TRADE_OF.get(cat, "general")
