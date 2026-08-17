@@ -89,9 +89,62 @@ def loaded_embedder_identity() -> Optional[dict]:
 
 def reset_embedder_cache() -> None:
     """Drop the cached embedder. Used by tests to swap fake/real cleanly."""
-    global _EMBEDDER_CACHE
+    global _EMBEDDER_CACHE, _LOAD_FAILURE
     with _CACHE_LOCK:
         _EMBEDDER_CACHE = None
+        _LOAD_FAILURE = None
+
+
+# Remembers WHY the configured embedder could not be constructed, so the
+# condition can be reported instead of being rediscovered on every call.
+_LOAD_FAILURE: Optional[str] = None
+
+
+def embedder_health() -> dict:
+    """Whether the configured embedder can actually be CONSTRUCTED.
+
+    ``Embedder.available()`` answers a much weaker question — whether the
+    backend LIBRARIES import — and callers have been reading it as "retrieval
+    works". Those are different claims, and the gap between them was a silent
+    production outage: the libraries ship in the image, but the model WEIGHTS
+    were fetched from the model host at runtime, so ``available()`` returned
+    True while every embed call failed. Documents were then stored, listed, and
+    indexed with zero chunks, with the failure logged as a warning and dropped.
+
+    LOADING, not just importing, is what this checks. It is deliberately NOT
+    wired into ``available()``: that is called on hot paths and by readiness
+    probes, and a cold construction costs seconds and hundreds of MB — the
+    trap ``embedder_is_loaded`` already documents. Use this from health/admin
+    surfaces and from boot warm-up, where paying for the truth is the point.
+
+    Returns ``{"ok", "model", "backend", "dim", "loaded", "error"}``. Never
+    raises: a health probe that dies tells you nothing.
+    """
+    global _LOAD_FAILURE
+    name = os.getenv("RAG_EMBEDDING_MODEL") or DEFAULT_MODEL2VEC
+    report = {
+        "ok": False, "model": name, "backend": None,
+        "dim": None, "loaded": embedder_is_loaded(), "error": None,
+    }
+    if _LOAD_FAILURE is not None:
+        report["error"] = _LOAD_FAILURE
+        return report
+    try:
+        emb = get_embedder()
+    except Exception as exc:  # noqa: BLE001 — probes report, they don't raise
+        _LOAD_FAILURE = f"{type(exc).__name__}: {exc}"
+        report["error"] = _LOAD_FAILURE
+        logger.error(
+            "EMBEDDER_UNAVAILABLE model=%s — %s; semantic retrieval and "
+            "document indexing cannot work in this process",
+            name, _LOAD_FAILURE,
+        )
+        return report
+    report.update(
+        ok=True, backend=emb.backend, dim=emb.dim,
+        loaded=True, model=emb.model_name,
+    )
+    return report
 
 
 class Embedder:
@@ -145,7 +198,16 @@ class Embedder:
 
     @staticmethod
     def available() -> bool:
-        """True when ANY real embedding backend can be loaded."""
+        """True when a backend LIBRARY is importable.
+
+        NOT a statement that embedding works. The libraries are installed in
+        the image unconditionally, so this returns True even when the model
+        weights cannot be loaded — which is precisely how a broken embedder
+        presented as a healthy one while documents indexed to zero chunks.
+        Kept cheap on purpose (hot paths and readiness probes call it); use
+        :func:`embedder_health` when the question is "does embedding actually
+        work".
+        """
         return _has_sentence_transformers() or _has_model2vec()
 
     @property

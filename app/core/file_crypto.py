@@ -139,6 +139,100 @@ def read_document(path: str) -> bytes:
     return decrypt_bytes(raw)
 
 
+class UploadTooLarge(Exception):
+    """A streamed write exceeded its ``max_bytes`` budget. Carries the limit so
+    the caller can build the 413 without re-reading config."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"stream exceeded {limit} bytes")
+        self.limit = limit
+
+
+def plaintext_size(path: str) -> int:
+    """Byte length of the document's PLAINTEXT content at ``path``.
+
+    ``os.path.getsize`` reports the CIPHERTEXT length for an encrypted file
+    (Fernet base64 inflates by ~33%), so it is NOT the number to record as a
+    document's size. Encryption off / legacy plaintext takes the cheap stat
+    path; a real Fernet token is decrypted to be measured.
+
+    Propagates OSError when the file is unreadable — callers decide whether a
+    missing file is fatal or merely unknown.
+    """
+    if not encryption_enabled():
+        return os.path.getsize(path)
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    if not looks_encrypted(raw):
+        return len(raw)
+    return len(decrypt_bytes(raw))
+
+
+def write_document_stream(
+    path: str,
+    fileobj,
+    *,
+    max_bytes: Optional[int] = None,
+    chunk_size: int = 1024 * 1024,
+) -> int:
+    """Copy ``fileobj`` to ``path``, returning the PLAINTEXT byte count written.
+
+    Why this exists: the upload routes used ``file.file.read()``, which holds
+    the ENTIRE document in memory (and again while encrypting) — a 345 MB
+    drawing set on a shared worker is an OOM that drops every concurrent user,
+    not just the uploader. Copying in ``chunk_size`` blocks keeps peak memory
+    flat regardless of file size.
+
+    Fernet has no streaming mode, so when encryption is ON the payload must be
+    buffered whole before it can be encrypted; the block loop still bounds the
+    read and enforces ``max_bytes``, so an oversize file is rejected before it
+    is ever materialised.
+
+    ``max_bytes`` (when set) aborts with :class:`UploadTooLarge` the moment the
+    stream exceeds the limit, removing the partial file first — so a rejected
+    upload leaves nothing behind on disk.
+    """
+    try:
+        fileobj.seek(0)
+    except (AttributeError, OSError):
+        pass  # non-seekable stream — read from wherever it is
+
+    if encryption_enabled():
+        buf = bytearray()
+        while True:
+            block = fileobj.read(chunk_size)
+            if not block:
+                break
+            buf.extend(block)
+            if max_bytes is not None and len(buf) > max_bytes:
+                raise UploadTooLarge(max_bytes)
+        payload = encrypt_bytes(bytes(buf))
+        with open(path, "wb") as out:
+            out.write(payload)
+        return len(buf)
+
+    written = 0
+    try:
+        with open(path, "wb") as out:
+            while True:
+                block = fileobj.read(chunk_size)
+                if not block:
+                    break
+                written += len(block)
+                if max_bytes is not None and written > max_bytes:
+                    raise UploadTooLarge(max_bytes)
+                out.write(block)
+    except UploadTooLarge:
+        # Never leave a truncated document behind for a rejected upload — a
+        # partial file on disk is indistinguishable from a complete one later.
+        try:
+            os.remove(path)
+        except OSError:
+            logger.warning("could not remove partial upload %s", path, exc_info=True)
+        raise
+    return written
+
+
 @contextlib.contextmanager
 def open_plaintext(path: str):
     """Yield a filesystem path that contains the document's plaintext.

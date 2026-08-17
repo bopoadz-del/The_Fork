@@ -15,7 +15,15 @@ drawing ("SAND AS BACKFILL MATERIAL PLACED ... IN 150mm") that a
 keyword-rich query surfaced on the first try.
 
 The expansion is DETERMINISTIC (no LLM rewrite) and flag-gated:
-RAG_FOLLOWUP_CONTEXT, default OFF.
+RAG_FOLLOWUP_CONTEXT.
+
+2026-08-17 — DEFAULT FLIPPED TO ON. This fix shipped dormant, and a dormant
+fix fixes nothing: the same failure mode recurred across an entire operator
+session of thin follow-ups ("Backfilling above foundations ?", "geotechnical
+standards what does it contain ??", "Saudi buiding code"), where consecutive
+turns about the same corpus contradicted each other because a two-or-three-word
+query carries too little signal to retrieve on. The flag remains as a kill
+switch (RAG_FOLLOWUP_CONTEXT=0), but the safe state is enabled.
 """
 from __future__ import annotations
 
@@ -42,19 +50,29 @@ def flag_on(monkeypatch):
 
 @pytest.fixture
 def flag_off(monkeypatch):
-    monkeypatch.delenv("RAG_FOLLOWUP_CONTEXT", raising=False)
+    """The kill switch must be set EXPLICITLY now — unset means enabled."""
+    monkeypatch.setenv("RAG_FOLLOWUP_CONTEXT", "0")
 
 
 # ── the flag is a real kill switch ───────────────────────────────────────────
 
-def test_flag_off_is_byte_identical(flag_off):
-    """Default behaviour must be untouched — this ships dormant."""
+def test_the_kill_switch_restores_the_raw_query(flag_off):
+    """RAG_FOLLOWUP_CONTEXT=0 must be byte-identical to the pre-feature path."""
     assert build_retrieval_query("layers thickness ?", LIVE_HISTORY) == "layers thickness ?"
 
 
-def test_garbage_flag_value_means_off(monkeypatch):
+def test_expansion_is_on_when_the_variable_is_unset(monkeypatch):
+    """The whole point of the 2026-08-17 change: an operator who configures
+    nothing gets the fix, not the failure it was written to close."""
+    monkeypatch.delenv("RAG_FOLLOWUP_CONTEXT", raising=False)
+    assert build_retrieval_query("layers thickness ?", LIVE_HISTORY) != "layers thickness ?"
+
+
+def test_an_unrecognised_value_keeps_the_safe_state(monkeypatch):
+    """A typo'd value must not silently revert retrieval to the broken
+    behaviour — only an explicit falsy value disables."""
     monkeypatch.setenv("RAG_FOLLOWUP_CONTEXT", "maybe")
-    assert build_retrieval_query("layers thickness ?", LIVE_HISTORY) == "layers thickness ?"
+    assert build_retrieval_query("layers thickness ?", LIVE_HISTORY) != "layers thickness ?"
 
 
 # ── the live failure ─────────────────────────────────────────────────────────

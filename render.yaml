@@ -110,6 +110,24 @@ services:
       # docs/step0-retrieval-isolation.md. Set to "" to make GK fallback-only too.
       - key: RAG_GENERAL_KNOWLEDGE_PROJECTS
         value: curated_kb
+      # PINNED, and it must stay in lockstep with the Dockerfile's
+      # RAG_EMBEDDING_MODEL build ARG — that ARG decides which weights get
+      # baked into the image, and HF_HUB_OFFLINE=1 means a mismatch cannot be
+      # papered over by a runtime download: the embedder simply fails to load.
+      #
+      # It also must not change without re-embedding the corpus. Every vector
+      # carries an embedding identity ({model, dim, normalized}) and
+      # VectorStore._verify_embedding_identity refuses a namespace whose stamp
+      # disagrees, so a new model name takes retrieval down until every chunk
+      # is rebuilt.
+      #
+      # This was previously UNSET, which left the value to code defaults
+      # (embeddings.DEFAULT_MODEL2VEC) — meaning the model production embedded
+      # its whole corpus with was implicit, and a change to that constant would
+      # have silently invalidated the corpus. Pinned to the value already in
+      # use, so this is a no-op for existing data.
+      - key: RAG_EMBEDDING_MODEL
+        value: minishlab/potion-base-8M
       # Phase 1 pilot: route the schedule workflow through the orchestrator's
       # predefined reasoning. Non-breaking (only intercepts high-confidence
       # generate_wbs intents); remove to revert to the tool-agent path.

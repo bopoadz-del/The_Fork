@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Optional, Set, Tuple
 
 from app.core.rag.embeddings import Embedder, get_embedder
-from app.core.rag.vector_store import Chunk, get_store
+from app.core.rag.vector_store import Chunk, get_lexical_store, get_store
 from app.core.rag import layers
 from app.core.rag import revision as _revision
 from app.core.rag import reranker as _reranker
@@ -468,6 +468,83 @@ def _gk_lexical_bonus(query_terms: frozenset, chunk_text: str) -> float:
     return min(overlap * _GK_TERM_BONUS, _GK_BONUS_CAP)
 
 
+# ── lexical term rescue ─────────────────────────────────────────────────────
+#
+# Live failure (2026-08-17): the operator asked about the "Saudi Building Code".
+# Two turns earlier the assistant had itself quoted "SBC 304 — Saudi Building
+# Code" out of the structural general notes, so the phrase demonstrably sits in
+# the corpus. The later turn retrieved five unrelated chunks (cable ladders, LV
+# single-line diagrams, fire alarm, water pipelines, road alignment) and the
+# model reported the corpus "does not mention the Saudi Building Code at all".
+#
+# Two things went wrong. The overclaim is handled in rag/inject.py (an answer
+# may only speak for the retrieved excerpts). The RECALL miss is handled here.
+#
+# Why the existing machinery did not catch it: extract_query_identifiers only
+# fires on code-SHAPED tokens (digits, hyphens, uppercase runs). "Saudi Building
+# Code" is three ordinary words, so no identifier was extracted and no lexical
+# pass ran at all — the turn was pure cosine over a 227-document corpus with
+# k=5, and the user's typo ("buiding") degraded the lexical half of the hybrid
+# search too.
+#
+# The rescue therefore matches on term CO-OCCURRENCE rather than exact phrase:
+# terms are taken pairwise, so "saudi"+"code" still selects the right chunk when
+# "building" is misspelt beyond recognition. A single common term ("code") is
+# never enough to match, which is what keeps this from dragging in boilerplate —
+# the failure mode a naive OR-any-term search would have.
+#
+# It runs ONLY when the semantic pass has already failed to surface any chunk
+# carrying two or more of the query's distinctive terms, so on a healthy
+# retrieval it is a no-op and costs one cheap SQL query at most.
+_TERM_RESCUE_BONUS_MAX = 1.0   # below IDENTIFIER_BONUS_MAX: exact codes still win
+_TERM_RESCUE_MAX_TERMS = 5     # caps the pair expansion at C(5,2) = 10 clauses
+_TERM_RESCUE_MIN_TERMS = 2     # co-occurrence needs at least a pair
+
+
+def term_rescue_enabled() -> bool:
+    """Kill-switch. On by default — this fixes a live recall defect, so the
+    safe state is enabled; set RAG_TERM_RESCUE=0 to fall back to pre-fix
+    behaviour if it ever proves noisy on a specific corpus."""
+    return (os.getenv("RAG_TERM_RESCUE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def extract_rescue_terms(query: str) -> List[str]:
+    """The distinctive content terms of ``query``, most distinctive first.
+
+    Proper-noun-shaped terms (capitalised) rank above ordinary words, then
+    longer above shorter, because those carry the naming that makes a corpus
+    lookup specific ("Saudi", "Building" before "code").
+    """
+    words = re.findall(r"[A-Za-z][A-Za-z0-9]{3,}", query or "")
+    seen: Set[str] = set()
+    ranked: List[Tuple[bool, int, str]] = []
+    for word in words:
+        lowered = word.lower()
+        if lowered in seen or lowered in _GK_STOPWORDS or lowered in _STOPWORDS:
+            continue
+        seen.add(lowered)
+        ranked.append((word[:1].isupper(), len(lowered), lowered))
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [term for _cap, _len, term in ranked[:_TERM_RESCUE_MAX_TERMS]]
+
+
+def build_rescue_phrases(terms: List[str]) -> List[str]:
+    """Pairwise co-occurrence phrases for :meth:`VectorStore.identifier_search`.
+
+    identifier_search AND-matches the tokens within one phrase and OR-matches
+    across phrases, so a list of pairs asks exactly: "any chunk containing at
+    least two of these terms". Scoring comes back as the fraction of pairs
+    matched, which ranks a chunk carrying all the terms above one carrying two.
+    """
+    import itertools
+
+    return [" ".join(pair) for pair in itertools.combinations(terms, 2)]
+
+
+
+
 # Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
 # contract and a 129-page tender: the needle chunk ranks FIRST for a query
 # whose wording overlaps the answer's, and falls out of the top-12 for the
@@ -547,6 +624,70 @@ def _dual_search(
     return sorted(best.values(), key=lambda c: -(c.score or 0.0))
 
 
+def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
+    """BM25-only retrieval for when no embedder can be loaded.
+
+    Used when the embedding model is absent, removed, or failed to load. The
+    vector leg is unavailable, so ranking is purely lexical — worse than hybrid,
+    and dramatically better than the empty list this used to return.
+
+    Deliberately mirrors the main path's shape: active project first (so its
+    chunks win ties over general knowledge), GK merged, noise-filtered, top-k,
+    and the same ``(chunks, noise_filtered_count)`` tuple. Chunks are tagged
+    ``layer="general_knowledge"`` for GK hits exactly as the main path does, so
+    every downstream consumer — citation markers, the sources panel, disclosure
+    — behaves identically.
+
+    Failures here return ``([], 0)`` rather than raising: this IS the
+    degradation path, and it must not become a new way to break a request.
+    """
+    if not query or not query.strip():
+        return [], 0
+    if not project_id:
+        raise ValueError("project_id is required")
+
+    try:
+        # get_lexical_store, not get_store: the latter constructs an embedder
+        # just to read the table width, which is the coupling this path exists
+        # to break.
+        store = get_lexical_store()
+    except Exception as exc:  # noqa: BLE001 — degradation must not raise
+        logger.warning("lexical-only retrieval unavailable: %s", exc)
+        return [], 0
+
+    over_fetch = max(k * 4, 20)
+    candidates: List[Chunk] = []
+    try:
+        candidates.extend(store.bm25_search(project_id, query, over_fetch))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("lexical retrieval failed for %s: %s", project_id, exc)
+        return [], 0
+
+    for gk_pid in _general_knowledge_project_ids():
+        if gk_pid == project_id:
+            continue
+        try:
+            for chunk in store.bm25_search(gk_pid, query, over_fetch):
+                chunk.layer = "general_knowledge"
+                candidates.append(chunk)
+        except Exception as exc:  # noqa: BLE001 — GK never breaks the primary leg
+            logger.warning("lexical GK retrieval for %s failed: %s", gk_pid, exc)
+
+    # Stable sort keeps the active project ahead of GK on equal scores.
+    candidates.sort(key=lambda c: -(c.score or 0.0))
+
+    kept: List[Chunk] = []
+    noise_filtered = 0
+    for chunk in candidates:
+        if _is_noise_filename(_doc_name_for_id(chunk.doc_id)):
+            noise_filtered += 1
+            continue
+        kept.append(chunk)
+        if len(kept) >= k:
+            break
+    return kept, noise_filtered
+
+
 def retrieve_with_filter(
     query: str,
     project_id: str,
@@ -610,8 +751,17 @@ def retrieve_with_filter(
     tuned from data.
     """
     if not available():
-        logger.debug("retrieve called but embedding stack not available; returning []")
-        return [], 0
+        # NOT an automatic []. BM25 is pure text matching over chunks.text and
+        # needs no embedder at all — the vector leg does. Returning [] here
+        # coupled the ENTIRE search surface to the embedder: remove the model
+        # and search_project_documents went to zero hits on a corpus whose text
+        # was sitting right there, fully indexed and matchable.
+        #
+        # This is what lets the embedder be removed, swapped, or fail without
+        # taking search down with it: semantic ranking is lost, keyword
+        # retrieval survives. Degrade a capability, not the product.
+        logger.debug("embedding stack unavailable; retrieving lexical-only")
+        return _lexical_only_retrieve(query, project_id, k)
     if not query or not query.strip():
         return [], 0
     if not project_id:
@@ -775,6 +925,101 @@ def retrieve_with_filter(
                 fused[chunk_id] = (
                     sem_chunk, sem_score, local_score * IDENTIFIER_BONUS_MAX,
                 )
+
+    # ── lexical term rescue ────────────────────────────────────────────────
+    # Two passes, because the live failure had two distinct shapes and only
+    # doing one of them leaves the other broken:
+    #
+    #  (a) IN-POOL. The chunk carrying the query's terms WAS fetched, but sits
+    #      deep in the over-fetch (rank ~15 of 20) on cosine alone and never
+    #      reaches the top-5 the user sees. Bonusing it in place is what lifts
+    #      it. An earlier version of this fix gated the whole rescue on "is a
+    #      term-carrying chunk anywhere in the candidate pool" — which this case
+    #      satisfies, so the rescue was skipped and the chunk still never
+    #      surfaced. The gate reproduced the very bug it was meant to fix.
+    #
+    #  (b) OUT-OF-POOL. The chunk was never fetched at all (the SBC 304 case:
+    #      one document in 227, no semantic pull, k*4 candidates). Only a
+    #      lexical lookup can recover it, so that runs when — and only when —
+    #      pass (a) found nothing, keeping the extra SQL off the healthy path.
+    if term_rescue_enabled():
+        rescue_terms = extract_rescue_terms(query)
+        if len(rescue_terms) >= _TERM_RESCUE_MIN_TERMS:
+            pairs = build_rescue_phrases(rescue_terms)
+
+            def _pair_fraction(text: str) -> float:
+                """Fraction of term PAIRS co-occurring in ``text``. Graduated:
+                a chunk with every term scores 1.0, one with two of five scores
+                0.1 — so a passing word overlap earns a token bonus, not a
+                promotion."""
+                lowered = (text or "").lower()
+                if not pairs:
+                    return 0.0
+                matched = sum(
+                    1 for pair in pairs
+                    if all(tok in lowered for tok in pair.split())
+                )
+                return matched / len(pairs)
+
+            # Healthy-retrieval gate. If the top-K the user would ALREADY see
+            # carries the query's terms, retrieval is working and the rescue
+            # must be a strict no-op — scores included. Without this the bonus
+            # perturbs every ordinary query, inflating top_score and pushing
+            # marginal retrievals past RAG_CONFIDENCE_THRESHOLD, which trades a
+            # recall bug for an ungrounded-answer bug.
+            provisional_top = sorted(
+                fused.values(), key=lambda e: -((e[1] or 0.0) + (e[2] or 0.0)),
+            )[:k]
+            already_grounded = any(
+                _pair_fraction(chunk.text) > 0.0 for chunk, _s, _b in provisional_top
+            )
+
+            # (a) bonus every candidate already in the pool.
+            found_in_pool = False
+            for chunk_id, (chunk, sem_score, id_bonus) in list(fused.items()):
+                fraction = _pair_fraction(chunk.text)
+                if fraction <= 0.0:
+                    continue
+                found_in_pool = True
+                if already_grounded:
+                    continue
+                bonus = fraction * _TERM_RESCUE_BONUS_MAX
+                # Never displace a stronger identifier bonus — an exact code
+                # match remains the strongest signal available.
+                fused[chunk_id] = (chunk, sem_score, max(id_bonus, bonus))
+
+            # (b) lexical fetch for chunks the semantic pass never saw.
+            if not found_in_pool and not already_grounded:
+                rescue_pids = [project_id] + gk_ids
+                if use_fallback and fb_id:
+                    rescue_pids.append(fb_id)
+                recovered = 0
+                for pid in rescue_pids:
+                    try:
+                        hits = store.identifier_search(pid, pairs, k=over_fetch)
+                    except Exception as exc:  # noqa: BLE001 — never break the turn
+                        logger.warning(
+                            "lexical term rescue for %s failed: %s", pid, exc,
+                        )
+                        continue
+                    for chunk in hits:
+                        if chunk.chunk_id in fused:
+                            continue
+                        # Enters on the rescue bonus alone (zero cosine), so it
+                        # ranks below any genuine semantic match — but above
+                        # nothing, which is what the corpus-wide "does not
+                        # mention it at all" answer amounted to.
+                        fused[chunk.chunk_id] = (
+                            chunk, 0.0,
+                            _pair_fraction(chunk.text) * _TERM_RESCUE_BONUS_MAX,
+                        )
+                        recovered += 1
+                if recovered:
+                    logger.info(
+                        "term rescue recovered %d chunk(s) for terms %r that "
+                        "semantic retrieval missed entirely",
+                        recovered, rescue_terms,
+                    )
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).

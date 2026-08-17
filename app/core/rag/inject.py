@@ -70,6 +70,22 @@ def format_chunks_as_system_message(
         "prior knowledge — your training data on this topic may be wrong or generic. "
         "If a detail the user asks for is not in this context, say you don't have it "
         "rather than inventing a plausible answer.\n"
+        # Scoped-absence rule. These excerpts are a top-K sample of a corpus that
+        # can run to thousands of chunks — they are evidence of what IS present,
+        # never evidence of what is absent. Live failure (2026-08-17): asked about
+        # the Saudi Building Code, the model received five unrelated excerpts and
+        # answered that the corpus "does not mention the Saudi Building Code at
+        # all" — two turns after it had itself quoted SBC 304 from that same
+        # corpus. The retrieval miss is fixed in rag/retriever.py; this stops a
+        # miss from being reported to the user as a fact about the project.
+        "SCOPE OF ABSENCE — you are seeing a small sample of the corpus selected "
+        "by search, NOT the whole of it. If something is missing from the excerpts "
+        "below, the ONLY claim you may make is that it is not in the retrieved "
+        "excerpts for this question. NEVER state or imply that the project, the "
+        "corpus, or the documents do not contain it, that it is 'not mentioned "
+        "anywhere', or that it 'does not apply' — you cannot see far enough to "
+        "know that. Say what you did not find, then offer to search again with "
+        "the exact document name, code, or section number.\n"
         f"(top {len(chunks)} of {total_candidates} matches; cosine in "
         f"[{min(scores):.3f}, {max(scores):.3f}])\n"
     )
@@ -143,9 +159,27 @@ def _content_terms(text: str) -> List[str]:
 
 
 def followup_context_enabled() -> bool:
-    return (os.getenv("RAG_FOLLOWUP_CONTEXT", "") or "").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
+    """ON by default; ``RAG_FOLLOWUP_CONTEXT=0`` is the kill switch.
+
+    This shipped dormant (default OFF) after closing the 2026-08-02 failure
+    where "layers thickness ?" lost its subject and retrieved front-matter. A
+    dormant fix does not fix anything: on 2026-08-17 the same failure mode
+    recurred across a whole session of thin follow-ups — "Backfilling above
+    foundations ?", "geotechnical standards what does it contain ??", "Saudi
+    buiding code" — each retrieving on two or three words with no subject, and
+    each producing an answer that contradicted an earlier turn in the SAME
+    conversation.
+
+    A two-word follow-up genuinely cannot be retrieved on: the corpus has
+    thousands of chunks and the query carries almost no signal. Leaving the
+    expansion off means those turns are decided by noise, which is precisely
+    the instability that reads to a user as the assistant contradicting itself.
+
+    Only explicit falsy values disable it now — an unrecognised value keeps the
+    safe (enabled) state rather than silently reverting to the broken one.
+    """
+    raw = (os.getenv("RAG_FOLLOWUP_CONTEXT", "") or "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 def build_retrieval_query(

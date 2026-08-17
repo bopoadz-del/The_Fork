@@ -727,6 +727,75 @@ def set_aconex(project_id: str, connected: bool) -> bool:
 
 # ── documents ───────────────────────────────────────────────────────────────
 
+def storage_project_id(project_id: str) -> str:
+    """The project id rows must actually be WRITTEN under.
+
+    ``MASTER_CORPUS_PROJECT_ID`` is a VIRTUAL alias: it is injected into
+    listings on the fly and deliberately has no ``projects`` row (see
+    ``_is_master_corpus_alias``). Every reader already resolves it —
+    ``get_project``, ``list_documents``, ``count_documents`` and friends all
+    open with ``_master_corpus_source(project_id) or project_id``.
+
+    ``add_document`` did not, and it is a WRITER. So uploading to the Master
+    Corpus passed the permission check (the reader resolved the alias and found
+    the backing corpus) and then tried to insert a Document row whose
+    ``project_id`` foreign key pointed at an id with no project behind it:
+
+        sqlite3.IntegrityError: FOREIGN KEY constraint failed
+
+    An unhandled exception mid-request means the response never completes, and
+    a request that dies without a response is reported by the browser as
+    ``TypeError: Failed to fetch`` — with no status, because there is no
+    response to read a status from. Uploading to the Master Corpus was
+    therefore impossible, and said so in the least diagnosable way available.
+
+    Readers may keep using the alias; only writes need resolving.
+    """
+    return _master_corpus_source(project_id) or project_id
+
+
+def resolve_document_size(size: int, file_path: Optional[str]) -> int:
+    """The size to record for a document — measured from disk when not supplied.
+
+    Live incident: the Master Corpus listed every one of its ~227 documents as
+    "0 B" in the UI. ``size`` defaulted to 0 and NOTHING ever checked it against
+    the bytes actually on disk, so a caller that forgot the argument (or a
+    migration payload whose transform dropped the field) silently registered a
+    document whose recorded size was a lie. The UI rendered that lie faithfully.
+
+    Policy: a caller-supplied positive size wins (it is the plaintext length the
+    writer just measured, and is correct even when the file is encrypted at
+    rest). Otherwise, if a readable ``file_path`` exists, measure it. If the
+    file is missing or unreadable the size stays 0 — a metadata-only row is a
+    legitimate thing to register (bulk-inserted corpora reference files that
+    live on an operator's drive, not ours) — but it is logged, because a
+    document that claims zero bytes is nearly always a defect upstream.
+    """
+    try:
+        if int(size or 0) > 0:
+            return int(size)
+    except (TypeError, ValueError):
+        pass  # unparsable size is treated as "not supplied"
+    if not file_path:
+        return 0
+    try:
+        from app.core import file_crypto
+
+        measured = file_crypto.plaintext_size(file_path)
+        if measured > 0:
+            return measured
+        logger.warning(
+            "document at %s measures 0 bytes on disk — registering size 0",
+            file_path,
+        )
+        return 0
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "could not measure size of %s (%s); registering size 0", file_path, exc,
+        )
+        return 0
+
+
 def add_document(
     project_id: str,
     original_name: str,
@@ -739,6 +808,13 @@ def add_document(
 ) -> Dict[str, Any]:
     """Register a document under a project. Storing only — runs no analysis."""
     _ensure_db()
+    # Writes go to the BACKING corpus, never the virtual alias — see
+    # storage_project_id. Without this, uploading to the Master Corpus violated
+    # the project_id foreign key and killed the request.
+    project_id = storage_project_id(project_id)
+    # A recorded size must describe the bytes that exist, not the default of
+    # whichever caller forgot to pass one — see resolve_document_size.
+    size = resolve_document_size(size, file_path)
     did = str(uuid.uuid4())[:8]
     doc_type = classify_doc_type(original_name)
     doc_role = role if role in VALID_ROLES else classify_doc_role(original_name)
@@ -775,6 +851,9 @@ def create_ingestion_job(project_id: str, document_id: str):
     from app.core.models import IngestionJob
 
     _ensure_db()
+    # Same alias-vs-row hazard as add_document: IngestionJob.project_id is a
+    # foreign key, and the alias has no row to point at.
+    project_id = storage_project_id(project_id)
     db = SessionLocal()
     try:
         job = IngestionJob(project_id=project_id, document_id=document_id, status="pending")
@@ -874,6 +953,89 @@ def count_documents(project_id: str) -> int:
             )
             or 0
         )
+
+
+def audit_document_sizes(project_id: Optional[str] = None) -> Dict[str, Any]:
+    """Report documents whose recorded size does not describe reality.
+
+    Read-only counterpart to :func:`repair_document_sizes` — an operator (or a
+    test) can assert the corpus is honest without mutating it. Buckets:
+
+    * ``zero_with_file``   — size 0 but a readable file exists (REPAIRABLE; this
+      is the "0 B" corpus defect).
+    * ``zero_no_file``     — size 0 and no file on disk (metadata-only row; only
+      repairable by re-ingesting the source).
+    * ``mismatched``       — recorded size differs from the bytes on disk.
+    """
+    _ensure_db()
+    from app.core import file_crypto
+
+    source_id = _master_corpus_source(project_id) or project_id
+    with SessionLocal() as session:
+        stmt = select(Document)
+        if source_id:
+            stmt = stmt.where(Document.project_id == source_id)
+        rows = session.scalars(stmt).all()
+        docs = [_document_as_dict(d) for d in rows]
+
+    report: Dict[str, Any] = {
+        "total": len(docs), "ok": 0,
+        "zero_with_file": [], "zero_no_file": [], "mismatched": [],
+    }
+    for doc in docs:
+        recorded = int(doc.get("size") or 0)
+        path = doc.get("file_path") or ""
+        actual: Optional[int] = None
+        if path:
+            try:
+                actual = file_crypto.plaintext_size(path)
+            except (OSError, ValueError):
+                actual = None
+        entry = {"id": doc.get("id"), "original_name": doc.get("original_name"),
+                 "recorded_size": recorded, "actual_size": actual}
+        if recorded <= 0:
+            (report["zero_with_file"] if actual and actual > 0
+             else report["zero_no_file"]).append(entry)
+        elif actual is not None and actual != recorded:
+            report["mismatched"].append(entry)
+        else:
+            report["ok"] += 1
+    report["repairable"] = len(report["zero_with_file"]) + len(report["mismatched"])
+    return report
+
+
+def repair_document_sizes(
+    project_id: Optional[str] = None, *, dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Recompute recorded sizes from the bytes on disk.
+
+    Repairs rows already written by the pre-fix code paths (the 0 B corpus).
+    ``dry_run`` reports what WOULD change without writing — the default is to
+    write, because a size that disagrees with disk is never the correct value.
+    Rows whose file is missing are reported, never guessed at.
+    """
+    audit = audit_document_sizes(project_id)
+    targets = audit["zero_with_file"] + audit["mismatched"]
+    repaired = 0
+    if not dry_run and targets:
+        with _lock:
+            with SessionLocal() as session:
+                for entry in targets:
+                    document = session.get(Document, entry["id"])
+                    if document is None or not entry.get("actual_size"):
+                        continue
+                    document.size = int(entry["actual_size"])
+                    repaired += 1
+                session.commit()
+    return {
+        "dry_run": dry_run,
+        "scanned": audit["total"],
+        "repaired": repaired,
+        "repairable": audit["repairable"],
+        "unrepairable_no_file": len(audit["zero_no_file"]),
+        "details": {k: audit[k] for k in
+                    ("zero_with_file", "zero_no_file", "mismatched")},
+    }
 
 
 def get_document(doc_id: str) -> Optional[Dict[str, Any]]:

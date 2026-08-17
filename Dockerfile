@@ -64,6 +64,43 @@ RUN pip uninstall -y opencv-python opencv-python-headless \
 # this; model2vec alone cannot load them.
 RUN pip install --no-cache-dir "sentence-transformers==5.5.1"
 
+# ── Bake the RAG embedder weights into the image ────────────────────────────
+#
+# WHY: the weights were never in the image. Only the LIBRARIES were installed,
+# so the first embed call resolved the model name against huggingface.co at
+# RUNTIME via snapshot_download. Render containers are ephemeral and no
+# HF_HOME/persistent cache was configured, which made every deploy, restart and
+# scale event re-download the model — a live third-party host sitting in the
+# boot path of the retrieval stack.
+#
+# The failure mode was silent, which is what made it dangerous: doc_index wraps
+# its RAG hook in try/except, so a failed download meant a document was stored,
+# registered and listed while being indexed with ZERO chunks. No failed upload,
+# no error in the UI — just a document that is permanently unsearchable. A live
+# 403 from the Hub reproduced exactly that.
+#
+# Baking it here makes the image self-contained: the model is present before
+# the container ever starts, and HF_HUB_OFFLINE in the runtime stage means a
+# network fetch cannot be attempted at all.
+#
+# The model name is an ARG so it stays single-sourced, but it MUST match what
+# the running corpus was embedded with. Vectors carry an embedding identity
+# ({model, dim, normalized}) and VectorStore._verify_embedding_identity refuses
+# a namespace whose stamp disagrees — so changing this value without
+# re-embedding the corpus takes retrieval down. It is pinned to the value the
+# code already defaulted to (embeddings.DEFAULT_MODEL2VEC), which is what
+# production has been running with RAG_EMBEDDING_MODEL unset.
+ARG RAG_EMBEDDING_MODEL="minishlab/potion-base-8M"
+ENV HF_HOME=/opt/hf
+# The script mirrors Embedder.__init__'s backend selection (sentence-
+# transformers first, model2vec second) so the cache is populated by the SAME
+# loader that will read it at runtime, and verifies the weights load offline
+# before the layer is committed. No "|| true": a model that cannot be fetched
+# must fail the BUILD, loudly, rather than become a silent empty index in
+# production.
+COPY scripts/prefetch_embedder.py /tmp/prefetch_embedder.py
+RUN python /tmp/prefetch_embedder.py "${RAG_EMBEDDING_MODEL}" && rm /tmp/prefetch_embedder.py
+
 # Frontend stage: build the React SPA. VITE_API_BASE='' makes the app talk to
 # the same origin it was served from, so a single Render service is enough.
 FROM node:20-slim AS frontend
@@ -128,6 +165,22 @@ ENV QT_QPA_PLATFORM=offscreen
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
+# ── RAG embedder weights, baked (see the builder stage for the full rationale)
+#
+# HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE are the load-bearing half: without them a
+# cache MISS silently falls back to a network fetch, which is the behaviour
+# being removed. With them, a miss raises at load time — a loud failure instead
+# of documents silently indexed with zero chunks.
+#
+# HF_HOME lives OUTSIDE /app on purpose: /app/data is a mounted volume at
+# runtime and the mount overlay would hide anything baked underneath it (the
+# same trap the safety detector weights already work around by copying to
+# /app/models).
+COPY --from=builder /opt/hf /opt/hf
+ENV HF_HOME=/opt/hf \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
 COPY . .
 # Replace the (gitignored) frontend/dist with the freshly built one.
 COPY --from=frontend /frontend/dist /app/frontend/dist
@@ -140,10 +193,12 @@ RUN mkdir -p /app/models \
 
 # Run as an unprivileged user. /app/data (the persistent volume) and the app
 # tree must be owned by it so the process can write its DBs and uploads.
+# /opt/hf is chowned too: huggingface_hub writes lock files beside the cache
+# even on a pure read, so a root-owned cache would fail for the app user.
 RUN useradd --create-home --uid 10001 appuser \
     && chmod +x /app/entrypoint.sh \
     && mkdir -p /app/data \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app /opt/hf
 USER appuser
 
 # Persistent data for ingest

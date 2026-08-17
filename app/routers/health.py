@@ -57,6 +57,32 @@ def livez():
     return {"status": "alive", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
+@router.get("/v1/upload-limits")
+def upload_limits():
+    """What the server will actually accept — published so the CLIENT can tell
+    the user BEFORE attempting an upload that cannot succeed.
+
+    Without this the browser had no way to know the cap, so an oversize file was
+    discovered only by sending it. On a mobile connection that means minutes of
+    uploading, and the failure surfaces as a bare ``TypeError: Failed to fetch``
+    — because when a connection dies (or the server rejects and closes) while
+    the body is still being sent, fetch() reports a network error and the real
+    HTTP status never reaches JavaScript. "Failed to fetch" was therefore the
+    one message the user could NOT act on, and the one they kept seeing.
+
+    Unauthenticated and I/O-free on purpose: it is configuration, not data, and
+    the composer needs it before any token work. Read live from the environment
+    so raising the cap takes effect on restart without a rebuild.
+    """
+    from app.core import upload_limits as _limits
+
+    return {
+        "max_document_bytes": _limits.max_document_bytes(),
+        "max_upload_bytes": _limits.max_upload_bytes(),
+        "allowed_extensions": sorted(_limits.ALLOWED_UPLOAD_EXTENSIONS),
+    }
+
+
 @router.get("/health")
 def health():
     """Liveness + evaluated component health.
