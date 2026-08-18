@@ -6,16 +6,19 @@ wants a DELIVERABLE or an ANSWER. This is the "dynamic reasoning over predefined
 routes" the operator asked for — the model understands "how long is procurement"
 is a QUESTION, which keyword routing (procurement_list_generator) cannot.
 
-Runs on whatever LLM is configured (Ollama Cloud in prod). Bounded output: a
-known workflow name or "none", so a bad/hallucinated read simply falls through
-to the dynamic agent — never invents a step.
+Runs on the configured cloud ladder (Kimi primary, Groq fallback) or on-prem
+Ollama. Bounded output: a known workflow name or "none", so a bad/hallucinated
+read simply falls through to the dynamic agent — never invents a step.
 """
 from __future__ import annotations
 
+import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from app.core.llm_client import complete_json
+
+logger = logging.getLogger(__name__)
 
 # Semantic workflow -> smart_orchestrator action (WORKFLOW_REGISTRY key).
 WORKFLOW_TO_ACTION = {
@@ -44,6 +47,30 @@ _SYSTEM = (
 )
 
 
+def _intent_model() -> Optional[str]:
+    """Return ORCHESTRATOR_INTENT_MODEL only when the active provider can serve it.
+
+    Cloud prod is Kimi (+ Groq fallback). Ollama ids use ``name:tag``
+    (``gpt-oss:20b-cloud``). Sending that to Moonshot 400s every chat turn
+    and the exception is swallowed, so predefined schedule routing never
+    fires. Ignore a colon-tag override unless LLM_PROVIDER=ollama.
+    """
+    override = (os.getenv("ORCHESTRATOR_INTENT_MODEL") or "").strip()
+    if not override:
+        return None
+    provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
+    if provider != "ollama" and ":" in override:
+        logger.warning(
+            "ORCHESTRATOR_INTENT_MODEL=%r ignored: LLM_PROVIDER=%s cannot "
+            "serve an Ollama-style model id; using the provider default so "
+            "intent routing does not 400 every chat turn",
+            override,
+            provider or "kimi",
+        )
+        return None
+    return override
+
+
 async def understand_intent(message: str, has_documents: bool = False) -> Dict[str, Any]:
     """Return {action, mode, params, workflow} for a message, or workflow
     'none' (action None) when it is not a known workflow. Never raises."""
@@ -55,9 +82,9 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
         user += "\n\n(Note: the user has attached document(s) to this project.)"
     try:
         # Intent routing is cheap work — pin it to a lighter model when
-        # ORCHESTRATOR_INTENT_MODEL is set (e.g. gpt-oss:20b-cloud), instead of
-        # the heavy answering model. Unset -> provider default (local dev).
-        model = os.getenv("ORCHESTRATOR_INTENT_MODEL") or None
+        # ORCHESTRATOR_INTENT_MODEL is set to an id the ACTIVE provider can
+        # serve. Unset -> provider default (Kimi in cloud prod).
+        model = _intent_model()
         # Fail FAST: a per-turn router must never hang a chat for 2 minutes on a
         # slow/broken cloud LLM. Short timeout -> exception -> fall through to
         # the agent path. Configurable via ORCHESTRATOR_INTENT_TIMEOUT.

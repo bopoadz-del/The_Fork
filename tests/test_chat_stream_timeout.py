@@ -14,7 +14,7 @@ by events). When the deadline expires before the producer finishes, a
 structured error event is emitted and the wrapper returns cleanly.
 
 All three tests use a short test-mode timeout (1-3s) so the suite still runs
-in seconds, not the production-default 90.
+in seconds, not the production-default 240.
 """
 from __future__ import annotations
 
