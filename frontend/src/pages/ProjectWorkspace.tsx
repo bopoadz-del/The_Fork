@@ -1029,11 +1029,11 @@ export default function ProjectWorkspace() {
         const { done, value } = await reader.read()
         if (done) break
 
-        // NOTE: do NOT reset the deadline on raw byte arrival. Heartbeats are
-        // bytes too, so resetting here let a stalled answer (heartbeat-only,
-        // zero tokens) keep the spinner alive forever. The reset now happens
-        // per-event below, and ONLY for substantive events — a heartbeat-only
-        // stream must still time out so the user gets a banner, not a spinner.
+        // Do not reset on raw bytes (partial SSE). Reset per parsed event
+        // below, including heartbeats — those fire every ~15s while Kimi is
+        // still reasoning. Ignoring them made the UI abort at 95s with
+        // "took too long" on multi-tool RFP turns that the server (240s)
+        // was still producing.
         sseBuffer += decoder.decode(value, { stream: true })
 
         // SSE events are separated by \n\n
@@ -1056,19 +1056,16 @@ export default function ProjectWorkspace() {
 
             const evtType = evt['type'] as string | undefined
 
-            // Substantive progress (route/start/token/tool/end/error) resets the
-            // stall deadline. Heartbeats deliberately do NOT — a stream that only
-            // heartbeats is stalled, and must hit the deadline so we surface a
-            // friendly timeout instead of an indefinite spinner + locked composer.
-            if (evtType && evtType !== 'heartbeat') resetReaderDeadline()
+            // Any parsed event is proof of life, including heartbeat.
+            // A truly stalled TCP stream (no events for READER_TIMEOUT_MS)
+            // still aborts. A heartbeat-only reasoning burst must not.
+            if (evtType) resetReaderDeadline()
 
             if (evtType === 'start') {
               // Agent stream start — {type, agent}. No session_id to echo back.
             } else if (evtType === 'heartbeat') {
               // Server is alive but the LLM hasn't produced a token yet.
-              // The byte arrival already reset the reader deadline above;
-              // we render nothing for heartbeats — they exist solely as
-              // proof of life for the consumer-side wall-clock.
+              // Deadline already reset above; render nothing.
             } else if (evtType === 'tool_call') {
               // Show ephemeral status inside the assistant bubble while tools run.
               const toolName = typeof evt['tool'] === 'string' ? evt['tool'] : 'tool'
