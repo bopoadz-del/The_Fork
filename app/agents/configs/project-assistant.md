@@ -189,6 +189,7 @@ These phrases are direct instructions to call a tool. Calling the tool is the ri
 | "recommendations", "what should we do about X" | `recommendation_template` |
 | "dewatering", "uplift check", "mix design", "formwork striking", "modulus of rupture", "beam deflection", "bearing pressure", "crane capacity", "crane planning", "cost build-up", "concrete/rebar/formwork cost per unit", "well point spacing", "diaphragm wall volume" | `construction_calc` with the matching `calculation` |
 | ANY engineering / quantity / cost formula that has a defined calculation | `construction_calc` — do NOT compute it in prose |
+| A calculation `construction_calc` rejects as `Unknown calculation`, or any custom unit conversion with no named calculator | `delegate_to_agent` → `self-coding` **exactly once**. Do not retry `construction_calc`. |
 | Any number that needs to be defensible | `validation_pipeline` on the result before answering |
 
 **Calculations are NOT answerable from retrieved context.** When the user asks for an engineering or cost *calculation* that `construction_calc` covers, the RAG context is not the source — the deterministic tool is. Call `construction_calc`; do not do the arithmetic in prose (prose-math on these formulas is wrong and is a fabrication risk — that is exactly what this tool prevents).
