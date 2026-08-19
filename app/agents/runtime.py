@@ -472,7 +472,17 @@ def _file_tool_hint(messages: list, project_id: str | None,
 # model variously refused (F36), narrated (F27), and flailed into
 # code-generation returning zeros -- while bim_extractor sat one call away.
 # Machinery, not model behaviour. Kill-switch: AGENT_FILE_PREDISPATCH=0.
-_FILE_PREDISPATCH_EXTS = {".ifc": "bim_extractor"}
+_FILE_PREDISPATCH_EXTS = {
+    ".ifc": "bim_extractor",
+    ".dxf": "drawing_qto",
+    ".dwg": "drawing_qto",
+}
+# PDF drawings share the .pdf extension with specs/contracts. Only
+# pre-dispatch drawing_qto when the turn is actually a take-off.
+_PDF_QTO_HINT = re.compile(
+    r"\b(qto|take-?off|take off|quantit(?:y|ies)|measur)",
+    re.IGNORECASE,
+)
 
 
 async def _predispatch_file_tool(
@@ -501,8 +511,14 @@ async def _predispatch_file_tool(
         for d in docs:
             name = (d.get("original_name") or "").strip()
             if name and name.lower() in low:
-                tool = _FILE_PREDISPATCH_EXTS.get(
-                    os.path.splitext(name)[1].lower())
+                ext = os.path.splitext(name)[1].lower()
+                tool = _FILE_PREDISPATCH_EXTS.get(ext)
+                if (
+                    tool is None
+                    and ext == ".pdf"
+                    and _PDF_QTO_HINT.search(user_msg)
+                ):
+                    tool = "drawing_qto"
                 if tool and tool in agent.allowed_blocks:
                     target = (name, tool)
                     break
@@ -3336,6 +3352,47 @@ class Agent:
             })
             # ── synthetic tool: construction_calc (deterministic formulas) ───
             tools.append(_construction_calc_tool_schema())
+            # ── synthetic tool: cash_flow_forecast (S-curve) ────────────────
+            # Same reason as generate_wbs: the generic `construction` tool's
+            # input/params shape lets the model narrate an S-curve instead of
+            # calling cash_flow_forecast (pinned construction-pm, 12-month
+            # cash flow). A typed top-level tool is the deterministic lever;
+            # K2 rejects forced tool_choice.
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "cash_flow_forecast",
+                    "description": (
+                        "Build a monthly S-curve / cash-flow forecast from a "
+                        "contract value and duration. CALL THIS immediately "
+                        "when the user asks for an S-curve, cash flow, spend "
+                        "curve, or monthly drawdown. Do not invent monthly "
+                        "percents in prose — this tool is deterministic."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "contract_value": {
+                                "type": ["number", "string"],
+                                "description": "Contract / project value (numeric).",
+                            },
+                            "duration_months": {
+                                "type": ["integer", "string"],
+                                "description": "Forecast horizon in months (e.g. 12).",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": (
+                                    "Original user request. Used to parse "
+                                    "figures when contract_value / duration "
+                                    "are omitted."
+                                ),
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            })
 
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
@@ -5145,6 +5202,57 @@ class Agent:
                 "result": result,
             }
 
+        # ── synthetic tool: cash_flow_forecast (direct construction shortcut)
+        if name == "cash_flow_forecast":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            cv_raw = args.get("contract_value")
+            try:
+                cv = float(cv_raw) if cv_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                cv = None
+            dm_raw = args.get("duration_months")
+            try:
+                dm = int(dm_raw) if dm_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                dm = None
+            params: dict[str, Any] = {}
+            if cv is not None:
+                params["contract_value"] = cv
+            if dm is not None:
+                params["duration_months"] = dm
+            try:
+                result = await container.cash_flow_forecast(
+                    {"message": args.get("message") or ""}, params,
+                )
+            except Exception as e:
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {"status": "error", "error": f"cash_flow_forecast failed: {e}"},
+                }
+            return {
+                "name": "cash_flow_forecast",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
         # ── synthetic tool: commissioning_checklist ──────────────────────────
         if name == "commissioning_checklist":
             if "construction" not in self.allowed_blocks:
@@ -5570,6 +5678,18 @@ def _routing_disabled() -> bool:
     return os.getenv("SMART_ORCH_ROUTING_DISABLED", "").strip().lower() in ("1", "true", "yes")
 
 
+# Generalist entry points that MAY be redirected to heavy-reasoning (and
+# whose turns MAY be replaced by a predefined deliverable flow). A caller
+# who addressed a specialist by name (learning, quantity-surveyor, …) chose
+# that agent deliberately — keyword routing must not steal the turn.
+# Live find: /v1/agents/learning/chat with "invoice rate 480 SAR/m³" was
+# classified as payment_certificate and answered by heavy-reasoning, which
+# has no learning_engine. Same contract as F24 (predefined intercept).
+ROUTING_GENERALISTS = frozenset({
+    "heavy-reasoning", "project-assistant", "smart-orchestrator",
+})
+
+
 async def select_agent_for_message(
     user_message: str,
     requested_agent: Agent,
@@ -5648,6 +5768,10 @@ async def select_agent_for_message(
 
     if not needs_planning(action, confidence):
         info["reason"] = "below_routing_gate"
+        return requested_agent, info
+
+    if requested_agent.name not in ROUTING_GENERALISTS:
+        info["reason"] = "specialist_passthrough"
         return requested_agent, info
 
     # Already on the heavy path — no redirect needed.
