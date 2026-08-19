@@ -33,6 +33,49 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_LOCAL_MODEL = "qwen2.5:3b-instruct"
 
 
+def _native_ollama_chat_url(base_url: str) -> str:
+    """POST target for ChatBlock's native Ollama fallback.
+
+    Operators often set ``OLLAMA_URL`` to a full ``.../api/chat`` path (the
+    same value the agent runtime uses). Blindly appending ``/api/chat`` then
+    produced ``/api/chat/api/chat`` and a 404. If the URL already names the
+    native endpoint, use it; otherwise append once.
+    """
+    url = (base_url or DEFAULT_OLLAMA_URL).rstrip("/")
+    if url.endswith("/api/chat"):
+        return url
+    return f"{url}/api/chat"
+
+
+def _shaped_cloud_payload(
+    cfg: Dict[str, Any],
+    *,
+    model: str,
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    stream: bool = False,
+) -> Dict[str, Any]:
+    """OpenAI-shape body with per-provider temperature / max_tokens pins.
+
+    Moonshot's K2 reasoning models 400 on any temperature but 1. Agent runtime
+    and ``llm_client.complete`` already honor ``cfg['fixed_temperature']``;
+    ChatBlock used to send its default 0.7 and fall through to the offline
+    template. Shape here so both the stream and non-stream branches agree.
+    """
+    from app.agents.runtime import _provider_max_tokens, _provider_temperature
+
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": _provider_max_tokens(cfg, int(max_tokens)),
+        "temperature": _provider_temperature(cfg, float(temperature)),
+    }
+    if stream:
+        payload["stream"] = True
+    return payload
+
+
 class ChatBlock(TypedBlock):
     """AI chat completions — active cloud provider with local-inference fallback."""
 
@@ -341,12 +384,20 @@ class ChatBlock(TypedBlock):
         temperature: float,
         stream: bool,
         api_key: str,
-        cfg: Dict[str, str],
+        cfg: Dict[str, Any],
         system_prompt: Optional[str] = None,
     ) -> Dict:
         url = cfg["url"]
         provider_name = cfg["provider"]
         messages = self._build_messages(message, system_prompt)
+        payload = _shaped_cloud_payload(
+            cfg,
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=stream,
+        )
         if stream:
             async def _stream_generator():
                 async with httpx.AsyncClient(timeout=60.0) as client:
@@ -364,13 +415,7 @@ class ChatBlock(TypedBlock):
                         "POST",
                         url,
                         headers=cloud_headers,
-                        json={
-                            "model": model,
-                            "messages": messages,
-                            "max_tokens": max_tokens,
-                            "temperature": temperature,
-                            "stream": True,
-                        },
+                        json=payload,
                     ) as response:
                         if response.status_code != 200:
                             err = await response.aread()
@@ -411,12 +456,7 @@ class ChatBlock(TypedBlock):
                 response = await client.post(
                     url,
                     headers=cloud_headers,
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                    },
+                    json=payload,
                 )
                 if response.status_code != 200:
                     return {
@@ -500,7 +540,7 @@ class ChatBlock(TypedBlock):
                 headers["Authorization"] = f"Bearer {api_key}"
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
-                    f"{base_url.rstrip('/')}/api/chat",
+                    _native_ollama_chat_url(base_url),
                     headers=headers,
                     json={
                         "model": model,
