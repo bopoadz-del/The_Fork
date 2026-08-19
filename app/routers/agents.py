@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agents import AGENT_REGISTRY, get_agent
-from app.agents.runtime import select_agent_for_message
+from app.agents.runtime import ROUTING_GENERALISTS, select_agent_for_message
 from app.core import agent_memory
 from app.core import projects as store
 from app.dependencies import require_user
@@ -57,10 +57,9 @@ def _workspace_project_candidates(conversation_id: str) -> list[str]:
 
 # Predefined deliverable flows may take over a turn only when the caller
 # entered through a GENERALIST agent -- addressing a specialist by name is a
-# deliberate choice the router must not override (F24).
-_PREDEFINED_GENERALISTS = frozenset({
-    "heavy-reasoning", "project-assistant", "smart-orchestrator",
-})
+# deliberate choice the router must not override (F24). Same set as the
+# smart_orchestrator redirect allowlist in runtime.ROUTING_GENERALISTS.
+_PREDEFINED_GENERALISTS = ROUTING_GENERALISTS
 
 
 def _predefined_may_intercept(requested_agent_name: str) -> bool:

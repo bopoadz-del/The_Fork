@@ -95,7 +95,7 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
                                 "contractor bids", "compare bids", "score bids", "tender scoring", "evaluate bids"]),
     ("procurement_list_generator", ["procurement", "material list", "purchase list", "buy list", "vendor list", "procurement list", "what materials", "need to buy", "materials list"]),
     ("procurement_optimizer", ["optimize procurement", "best supplier", "cheapest", "optimize cost"]),
-    ("payment_certificate",   ["payment cert", "valuation", "progress payment", "invoice", "certificate"]),
+    ("payment_certificate",   ["payment cert", "valuation", "progress payment", "invoice certificate", "payment invoice", "certificate"]),
     ("cash_flow_forecast",    ["cash flow", "s-curve", "payment schedule", "fund flow", "s curve", "spend curve", "cumulative spend", "cumulative cost curve", "drawdown"]),
     # Specifications
     ("spec_analyze",          ["spec", "specification", "material spec", "grade requirement", "astm", "aci", "saso", "standard", "compliance check", "specification requirements", "material specs", "material specifications", "concrete specification", "specs"]),

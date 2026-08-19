@@ -22,7 +22,7 @@ def test_specialists_are_never_intercepted():
     for name in (
         "quantity-surveyor", "safety-officer", "contracts-manager",
         "construction-pm", "bim-analyst", "document-analyst",
-        "validation", "self-coding", "supervision-proposal",
+        "validation", "self-coding", "supervision-proposal", "learning",
     ):
         assert _predefined_may_intercept(name) is False, name
 
