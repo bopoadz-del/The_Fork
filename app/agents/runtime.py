@@ -3755,9 +3755,9 @@ class Agent:
         # Read knobs at call-time so tests can monkeypatch env. Bad values
         # fall back to safe defaults rather than crashing the stream.
         try:
-            timeout_s = float(os.getenv("CHAT_STREAM_TIMEOUT_SECONDS") or "90")
+            timeout_s = float(os.getenv("CHAT_STREAM_TIMEOUT_SECONDS") or "240")
         except ValueError:
-            timeout_s = 90.0
+            timeout_s = 240.0
         try:
             heartbeat_s = float(os.getenv("CHAT_STREAM_HEARTBEAT_SECONDS") or "15")
         except ValueError:
