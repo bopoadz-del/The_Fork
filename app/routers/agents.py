@@ -30,6 +30,31 @@ router = APIRouter()
 _WS_PREFIX = "ws-"
 
 
+def _workspace_project_candidates(conversation_id: str) -> list[str]:
+    """Project ids a ``ws-*`` conversation id could refer to.
+
+    The workspace UI has two shapes (``ProjectWorkspace.tsx``):
+      * ``ws-{projectId}`` — default / legacy thread
+      * ``ws-{projectId}-{unix_ms}`` — "New chat" mints a numeric suffix
+
+    Ownership is derived from the id, not the stored row. Try the full remainder
+    first (legacy), then strip one trailing ``-{suffix}`` so New-chat ids still
+    bind to the project. Attackers targeting ``ws-{victim}-{anything}`` still
+    404 because they do not own ``victim``.
+    """
+    if not conversation_id.startswith(_WS_PREFIX):
+        return []
+    rest = conversation_id[len(_WS_PREFIX):]
+    if not rest:
+        return []
+    out = [rest]
+    if "-" in rest:
+        pid, suffix = rest.rsplit("-", 1)
+        if pid and suffix:
+            out.append(pid)
+    return out
+
+
 # Predefined deliverable flows may take over a turn only when the caller
 # entered through a GENERALIST agent -- addressing a specialist by name is a
 # deliberate choice the router must not override (F24).
@@ -63,13 +88,13 @@ def _enforce_conversation_access(conversation_id: str, auth: dict) -> None:
     Raises HTTPException(404) when access is denied.
     """
     if conversation_id.startswith(_WS_PREFIX):
-        project_id = conversation_id[len(_WS_PREFIX):]
-        include_admin = project_id == store.MASTER_CORPUS_PROJECT_ID
-        if store.get_project(
-            project_id, user_id=auth["user_id"], include_admin_approved=include_admin
-        ) is None:
-            raise HTTPException(404, "Conversation not found")
-        return
+        for project_id in _workspace_project_candidates(conversation_id):
+            include_admin = project_id == store.MASTER_CORPUS_PROJECT_ID
+            if store.get_project(
+                project_id, user_id=auth["user_id"], include_admin_approved=include_admin
+            ) is not None:
+                return
+        raise HTTPException(404, "Conversation not found")
 
     # Non-workspace conversation id — fall back to the stored row's binding.
     conv = agent_memory.get_conversation(conversation_id)
