@@ -27,12 +27,13 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _make_agent(name: str, blocks=()) -> Agent:
+def _make_agent(name: str, blocks=(), can_delegate: bool = False) -> Agent:
     return Agent(
         name=name,
         description=f"{name} test stub",
         system_prompt="(test stub)",
         allowed_blocks=list(blocks),
+        can_delegate=can_delegate,
     )
 
 
@@ -152,10 +153,12 @@ def test_quantity_surveyor_qto_is_not_redirected_to_heavy(monkeypatch):
 def test_project_assistant_still_redirects_generative_intents(monkeypatch):
     pa = _make_agent("project-assistant")
     heavy = _make_agent("heavy-reasoning")
+    sc = _make_agent("self-coding")
     monkeypatch.setattr(runtime_module, "_SMART_ORCH_BLOCK_CACHE", None)
     runtime_module.AGENT_REGISTRY.clear()
     runtime_module.AGENT_REGISTRY["project-assistant"] = pa
     runtime_module.AGENT_REGISTRY["heavy-reasoning"] = heavy
+    runtime_module.AGENT_REGISTRY["self-coding"] = sc
     try:
         final, routing = _run(select_agent_for_message(
             "Create L2 schedule with 200 activities for the data center.",
@@ -163,6 +166,7 @@ def test_project_assistant_still_redirects_generative_intents(monkeypatch):
         ))
         assert final.name == "heavy-reasoning"
         assert routing["reason"] == "needs_planning"
+        assert final is not sc
     finally:
         runtime_module.AGENT_REGISTRY.clear()
 
@@ -325,3 +329,100 @@ async def test_named_pdf_without_qto_intent_is_not_predispatched(monkeypatch):
     msgs = [{"role": "user", "content": "summarise contract_vol2.pdf"}]
     assert await runtime_module._predispatch_file_tool(agent, msgs, "p1") is None
     assert len(msgs) == 1
+
+
+# ── Self-coding: one hop when no feature/formula exists ─────────────────────
+
+
+@requires_construction_kit
+def test_pinned_self_coding_is_not_stolen_by_generate_wbs(monkeypatch):
+    sc = _make_agent("self-coding", ["formula_executor_v2"])
+    heavy = _make_agent("heavy-reasoning")
+    monkeypatch.setattr(runtime_module, "_SMART_ORCH_BLOCK_CACHE", None)
+    runtime_module.AGENT_REGISTRY.clear()
+    runtime_module.AGENT_REGISTRY["self-coding"] = sc
+    runtime_module.AGENT_REGISTRY["heavy-reasoning"] = heavy
+    try:
+        final, routing = _run(select_agent_for_message(
+            "Create L2 schedule with 200 activities for the data center.",
+            sc,
+        ))
+        assert final is sc
+        assert routing["reason"] == "specialist_passthrough"
+    finally:
+        runtime_module.AGENT_REGISTRY.clear()
+
+
+@requires_construction_kit
+def test_unmatched_calc_from_assistant_goes_to_self_coding_once(monkeypatch):
+    pa = _make_agent("project-assistant", can_delegate=True)
+    sc = _make_agent("self-coding")
+    heavy = _make_agent("heavy-reasoning")
+    monkeypatch.setattr(runtime_module, "_SMART_ORCH_BLOCK_CACHE", None)
+    runtime_module.AGENT_REGISTRY.clear()
+    runtime_module.AGENT_REGISTRY["project-assistant"] = pa
+    runtime_module.AGENT_REGISTRY["self-coding"] = sc
+    runtime_module.AGENT_REGISTRY["heavy-reasoning"] = heavy
+    try:
+        final, routing = _run(select_agent_for_message(
+            "No registered formula exists. Convert 480 SAR/m3 to USD/yd3 "
+            "using 3.75 SAR per 1 USD.",
+            pa,
+        ))
+        assert final is sc
+        assert routing["reason"] in (
+            "self_coding_requested", "no_feature_or_formula",
+        )
+        assert routing["final"] == "self-coding"
+    finally:
+        runtime_module.AGENT_REGISTRY.clear()
+
+
+@requires_construction_kit
+def test_named_calculator_stays_on_project_assistant(monkeypatch):
+    pa = _make_agent("project-assistant")
+    sc = _make_agent("self-coding")
+    heavy = _make_agent("heavy-reasoning")
+    monkeypatch.setattr(runtime_module, "_SMART_ORCH_BLOCK_CACHE", None)
+    runtime_module.AGENT_REGISTRY.clear()
+    runtime_module.AGENT_REGISTRY["project-assistant"] = pa
+    runtime_module.AGENT_REGISTRY["self-coding"] = sc
+    runtime_module.AGENT_REGISTRY["heavy-reasoning"] = heavy
+    try:
+        final, routing = _run(select_agent_for_message(
+            "calculate beam_moment_simple with udl_w_kn_m 10 and span_m 6",
+            pa,
+        ))
+        assert final is pa, routing
+        assert routing["final"] != "self-coding"
+    finally:
+        runtime_module.AGENT_REGISTRY.clear()
+
+
+def test_unknown_calc_nudge_is_a_single_self_coding_handoff():
+    agent = Agent(
+        name="project-assistant",
+        description="",
+        system_prompt="x",
+        allowed_blocks=[],
+        can_delegate=True,
+    )
+    rec = {
+        "name": "construction_calc",
+        "ok": False,
+        "result": {
+            "status": "error",
+            "error": "Unknown calculation 'mohr_coulomb'.",
+        },
+    }
+    nudge = runtime_module._nudge_for_failed_tool(rec, agent)
+    assert "self-coding" in nudge.lower()
+    assert "EXACTLY ONCE" in nudge
+    sc_agent = _make_agent("self-coding")
+    generic = runtime_module._nudge_for_failed_tool(rec, sc_agent)
+    assert generic == runtime_module._TOOL_ERROR_NUDGE
+
+
+def test_self_coding_prompt_caps_formula_executor_at_one_call():
+    text = load_agents()["self-coding"].system_prompt.lower()
+    assert "exactly once" in text or "exactly ONCE" in load_agents()["self-coding"].system_prompt

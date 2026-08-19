@@ -409,6 +409,19 @@ _TOOL_ERROR_NUDGE = (
     "work, state plainly what failed and answer with what you have."
 )
 _TOOL_ERROR_NUDGE_CAP = 2
+# construction_calc "Unknown calculation" means the formula is not in the
+# registry. Retrying another calculator name loops; self-coding writes
+# Python once and returns. Only injected when the agent can delegate.
+_UNKNOWN_CALC_SELF_CODING_NUDGE = (
+    "That calculation is not a registered formula. Delegate to agent "
+    "'self-coding' EXACTLY ONCE with the original question so it can "
+    "write and run Python. Do not retry construction_calc with another "
+    "name. Do not invent the number in prose."
+)
+_SELF_CODING_PHRASES = (
+    "self-coding", "self coding", "write python", "generate python",
+    "no formula", "no calculator", "no registered formula",
+)
 
 # Extension -> the file-consuming tool that analyses it. Used ONLY to build
 # the corrective-nudge hint below; never a routing table.
@@ -3736,9 +3749,9 @@ class Agent:
                 elif (_tool_result_errored(tool_result)
                       and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                     error_nudges += 1
-                    messages.append({"role": "user", "content": _TOOL_ERROR_NUDGE
-                                     + _file_tool_hint(messages, project_id,
-                                                       self.allowed_blocks)})
+                    messages.append({"role": "user", "content": _nudge_for_failed_tool(
+                        tool_result, self) + _file_tool_hint(
+                            messages, project_id, self.allowed_blocks)})
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
@@ -4395,7 +4408,8 @@ class Agent:
                             and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                         error_nudges += 1
                         messages.append({"role": "user",
-                                         "content": _TOOL_ERROR_NUDGE
+                                         "content": _nudge_for_failed_tool(
+                                             tool_result, self)
                                          + _file_tool_hint(messages, project_id,
                                                            self.allowed_blocks)})
 
@@ -5678,6 +5692,54 @@ def _routing_disabled() -> bool:
     return os.getenv("SMART_ORCH_ROUTING_DISABLED", "").strip().lower() in ("1", "true", "yes")
 
 
+def _asks_self_coding(text: str) -> bool:
+    t = (text or "").lower()
+    return any(p in t for p in _SELF_CODING_PHRASES)
+
+
+def _message_names_registered_calculator(text: str) -> bool:
+    """True when the message literally names a registry calculator.
+
+    Named formulas are an existing feature — construction_calc stays in
+    charge. Unnamed custom arithmetic is self-coding's job.
+    """
+    try:
+        from app.lib.construction_formulas import CALCULATORS
+    except Exception:  # noqa: BLE001
+        return False
+    raw = text or ""
+    t = raw.lower().replace("-", "_")
+    spaced = raw.lower()
+    for name in CALCULATORS:
+        if len(name) < 6:
+            continue
+        if name.lower() in t or name.replace("_", " ") in spaced:
+            return True
+    return False
+
+
+def _should_handoff_unmatched_calc(text: str) -> bool:
+    """Computation-shaped, no registered formula name → self-coding once."""
+    if _message_names_registered_calculator(text):
+        return False
+    return _looks_like_self_contained_calculation(text) or _asks_self_coding(text)
+
+
+def _nudge_for_failed_tool(tool_result: dict[str, Any], agent: "Agent") -> str:
+    """Prefer a one-shot self-coding handoff over retrying unknown formulas."""
+    inner = tool_result.get("result") if isinstance(tool_result, dict) else None
+    err = ""
+    if isinstance(inner, dict):
+        err = str(inner.get("error") or "")
+    if (
+        agent.can_delegate
+        and agent.name != "self-coding"
+        and "unknown calculation" in err.lower()
+    ):
+        return _UNKNOWN_CALC_SELF_CODING_NUDGE
+    return _TOOL_ERROR_NUDGE
+
+
 # Generalist entry points that MAY be redirected to heavy-reasoning (and
 # whose turns MAY be replaced by a predefined deliverable flow). A caller
 # who addressed a specialist by name (learning, quantity-surveyor, …) chose
@@ -5766,7 +5828,34 @@ async def select_agent_for_message(
     info["action"] = action
     info["confidence"] = confidence
 
+    # Explicit "use self-coding" from a generalist wins even when the
+    # classifier also matched a deliverable. One hop to self-coding.
+    if (
+        requested_agent.name in ROUTING_GENERALISTS
+        and requested_agent.name != "self-coding"
+        and _asks_self_coding(user_message)
+    ):
+        sc = AGENT_REGISTRY.get("self-coding")
+        if sc is not None:
+            info["final"] = sc.name
+            info["reason"] = "self_coding_requested"
+            return sc, info
+
     if not needs_planning(action, confidence):
+        # No existing feature/workflow. A computation with no registered
+        # calculator name is self-coding's job — one hop, then that agent
+        # runs formula_executor_v2 once. Named calculators stay on the
+        # requested generalist so construction_calc remains the path.
+        if (
+            requested_agent.name in ROUTING_GENERALISTS
+            and requested_agent.name != "self-coding"
+            and _should_handoff_unmatched_calc(user_message)
+        ):
+            sc = AGENT_REGISTRY.get("self-coding")
+            if sc is not None:
+                info["final"] = sc.name
+                info["reason"] = "no_feature_or_formula"
+                return sc, info
         info["reason"] = "below_routing_gate"
         return requested_agent, info
 
