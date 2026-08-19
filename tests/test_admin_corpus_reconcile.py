@@ -7,11 +7,13 @@ the drive_archive migration.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import time
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from app.main import app
 from app.core.db import SessionLocal, engine
@@ -52,13 +54,30 @@ def _ensure_schema():
             session.commit()
 
 
+def _commit_retry(session):
+    """SQLite in CI occasionally raises 'database is locked' on the reconcile
+    wipe/seed commits while TestClient still holds a connection. Wait and retry
+    rather than flake the production-like job."""
+    delay = 0.05
+    for attempt in range(8):
+        try:
+            session.commit()
+            return
+        except OperationalError as exc:
+            session.rollback()
+            if "database is locked" not in str(exc).lower() or attempt == 7:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 1.0)
+
+
 def _wipe(*pids: str):
     with SessionLocal() as session:
         for pid in pids:
             session.query(RagChunk).filter(RagChunk.project_id == pid).delete()
             session.query(Document).filter(Document.project_id == pid).delete()
             session.query(Project).filter(Project.id == pid).delete()
-        session.commit()
+        _commit_retry(session)
 
 
 def _wipe_all():
@@ -73,7 +92,7 @@ def _wipe_all():
         session.query(RagChunk).delete()
         session.query(Document).delete()
         session.query(Project).delete()
-        session.commit()
+        _commit_retry(session)
 
 
 def _seed_misplaced_chunks():
@@ -140,7 +159,7 @@ def _seed_misplaced_chunks():
                 doc_id="doc_missing", chunk_index=0, text="content",
                 embedding=vec, created_at=now,
             ))
-        session.commit()
+        _commit_retry(session)
 
 
 def test_reconcile_detects_misplaced_chunks(client):
@@ -213,7 +232,7 @@ def test_reconcile_reports_no_mismatches_when_clean(client):
             doc_id="doc_clean", chunk_index=0, text="content",
             embedding=vec, created_at=now,
         ))
-        session.commit()
+        _commit_retry(session)
 
     resp = client.post("/v1/admin/corpus/reconcile")
     assert resp.status_code == 200
