@@ -148,8 +148,9 @@ def test_packages_run_in_construction_order():
     acts = activities_from_boq(BOQ, manhours_per_unit=RATES, category_overrides=OVERRIDES)
     phases = [a["wbs_phase"] for a in acts]
     order = {p: i for i, p in enumerate(dict.fromkeys(phases))}
-    # earthworks precedes steel precedes facade precedes MEP
-    assert order["earthworks_excavation"] < order["structural_steel"]
+    # Earthworks is substructure by definition (it digs for the foundations),
+    # so it carries the _substructure phase suffix and leads the programme.
+    assert order["earthworks_excavation_substructure"] < order["structural_steel"]
     assert order["structural_steel"] < order["windows_doors_facade"]
     assert order["windows_doors_facade"] < order["mechanical_hvac_mep"]
 
@@ -637,3 +638,138 @@ def test_manhours_are_conserved_by_aggregation():
     merged = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS)
     per_line = activities_from_boq(REPEATED, manhours_per_unit=REPEAT_NORMS, aggregate=False)
     assert total_manhours(merged) == pytest.approx(total_manhours(per_line), abs=0.5)
+
+
+# ── real construction order (live find, 2026-08-17) ───────────────────────
+
+REAL_SITE = [
+    {"description": "Bulk excavation to reduced level", "quantity": 980, "unit": "m3"},
+    {"description": "Plain concrete blinding to foundations", "quantity": 210, "unit": "m2"},
+    {"description": "Rebar cut bend and fix to foundations", "quantity": 26000, "unit": "kg"},
+    {"description": "Reinforced concrete C40 to raft foundation", "quantity": 240, "unit": "m3"},
+    {"description": "Reinforced concrete C40 to columns", "quantity": 95, "unit": "m3"},
+]
+SITE_NORMS = {"Earthworks/Excavation": 0.08, "Concrete": 1.371, "Reinforcement": 0.023}
+
+
+def _seq(acts):
+    return [a["name"] for a in acts]
+
+
+def test_excavation_precedes_the_foundations_it_digs_for():
+    """Live: excavation sorted into the superstructure block and landed on
+    day 32, AFTER the raft. Earthworks is substructure by definition."""
+    acts = activities_from_boq(REAL_SITE, manhours_per_unit=SITE_NORMS)
+    names = _seq(acts)
+    assert names.index("Bulk excavation to reduced level") == 0
+    assert (names.index("Bulk excavation to reduced level")
+            < names.index("Reinforced concrete C40 to raft foundation"))
+
+
+def test_blinding_is_struck_before_the_rebar_fixed_on_top_of_it():
+    """Blinding IS Concrete, so trade order alone scheduled it after the
+    Reinforcement package. It is enabling work and ranks with the foundations."""
+    acts = activities_from_boq(REAL_SITE, manhours_per_unit=SITE_NORMS)
+    names = _seq(acts)
+    assert (names.index("Plain concrete blinding to foundations")
+            < names.index("Rebar cut bend and fix to foundations"))
+    assert (names.index("Rebar cut bend and fix to foundations")
+            < names.index("Reinforced concrete C40 to raft foundation"))
+
+
+def test_the_whole_sequence_is_buildable():
+    """excavate -> blind -> fix rebar -> pour raft -> pour columns."""
+    acts = activities_from_boq(REAL_SITE, manhours_per_unit=SITE_NORMS)
+    assert _seq(acts) == [
+        "Bulk excavation to reduced level",
+        "Plain concrete blinding to foundations",
+        "Rebar cut bend and fix to foundations",
+        "Reinforced concrete C40 to raft foundation",
+        "Reinforced concrete C40 to columns",
+    ]
+
+
+def test_no_stray_control_characters_in_the_module():
+    """A heredoc wrote a literal backspace (0x08) where \b belonged, so the
+    enabling pattern silently never matched and blinding kept sorting last.
+    The pattern LOOKED right when printed — invisible bytes need a fence."""
+    import app.lib.boq_schedule as m
+    src = open(m.__file__, encoding="utf-8").read()
+    stray = {hex(ord(c)) for c in src if ord(c) < 32 and c not in "\n\t"}
+    assert not stray, f"control characters in source: {stray}"
+
+
+# ── waterproofing is three different operations (operator, 2026-08-17) ─────
+#
+# "waterproofing is after blinding and after raft" / "roof waterproofing is
+# something else, and should be after roof slab". One BOQ category, three
+# positions in the programme:
+#   * horizontal membrane  -> ON the blinding, UNDER the raft
+#   * tanking to walls     -> AFTER the raft pour
+#   * roof waterproofing   -> AFTER the roof slab
+# Ranking by trade alone (Waterproofing sits after Concrete) put the
+# under-raft membrane after the pour it protects.
+
+WP_BOQ = [
+    {"description": "Bulk excavation to reduced level", "quantity": 980, "unit": "m3"},
+    {"description": "Plain concrete blinding to foundations", "quantity": 210, "unit": "m2"},
+    {"description": "Waterproofing membrane to blinding below raft foundation",
+     "quantity": 230, "unit": "m2"},
+    {"description": "Rebar cut bend and fix to foundations", "quantity": 26000, "unit": "kg"},
+    {"description": "Reinforced concrete C40 to raft foundation", "quantity": 240, "unit": "m3"},
+    {"description": "Tanking to retaining walls of substructure", "quantity": 180, "unit": "m2"},
+    {"description": "Reinforced concrete C40 to suspended roof slab", "quantity": 310, "unit": "m3"},
+    {"description": "Waterproofing membrane to roof slab", "quantity": 320, "unit": "m2"},
+]
+WP_NORMS = {"Earthworks/Excavation": 0.08, "Concrete": 1.371,
+            "Reinforcement": 0.023, "Waterproofing/Insulation": 1.6}
+
+
+def _names(acts):
+    return [a["name"] for a in acts]
+
+
+def test_under_raft_membrane_sits_between_blinding_and_rebar():
+    acts = activities_from_boq(WP_BOQ, manhours_per_unit=WP_NORMS)
+    n = _names(acts)
+    i_blind = n.index("Plain concrete blinding to foundations")
+    i_memb = n.index("Waterproofing membrane to blinding below raft foundation")
+    i_rebar = n.index("Rebar cut bend and fix to foundations")
+    i_raft = n.index("Reinforced concrete C40 to raft foundation")
+    assert i_blind < i_memb < i_rebar < i_raft
+
+
+def test_tanking_to_walls_follows_the_raft_pour():
+    acts = activities_from_boq(WP_BOQ, manhours_per_unit=WP_NORMS)
+    n = _names(acts)
+    assert (n.index("Reinforced concrete C40 to raft foundation")
+            < n.index("Tanking to retaining walls of substructure"))
+
+
+def test_roof_waterproofing_follows_the_roof_slab():
+    acts = activities_from_boq(WP_BOQ, manhours_per_unit=WP_NORMS)
+    n = _names(acts)
+    assert (n.index("Reinforced concrete C40 to suspended roof slab")
+            < n.index("Waterproofing membrane to roof slab"))
+
+
+def test_roof_waterproofing_is_not_dragged_into_the_substructure():
+    """It shares a BOQ category with the under-raft membrane but not a stage."""
+    acts = activities_from_boq(WP_BOQ, manhours_per_unit=WP_NORMS)
+    by_name = {a["name"]: a for a in acts}
+    assert by_name["Waterproofing membrane to roof slab"]["boq"]["stage"] == "superstructure"
+    assert by_name["Waterproofing membrane to blinding below raft foundation"]["boq"]["stage"] == "substructure"
+
+
+def test_the_whole_waterproofing_sequence_is_buildable():
+    acts = activities_from_boq(WP_BOQ, manhours_per_unit=WP_NORMS)
+    assert _names(acts) == [
+        "Bulk excavation to reduced level",
+        "Plain concrete blinding to foundations",
+        "Waterproofing membrane to blinding below raft foundation",
+        "Rebar cut bend and fix to foundations",
+        "Reinforced concrete C40 to raft foundation",
+        "Tanking to retaining walls of substructure",
+        "Reinforced concrete C40 to suspended roof slab",
+        "Waterproofing membrane to roof slab",
+    ]
