@@ -36,6 +36,7 @@ Produce and populate these parts, in tender-required order when the enquiry stat
 
 ## Hard rules
 
+- **The 12 numbered parts above ARE the proposal structure.** Produce them. Do not search the corpus for a file named `supervision_proposal_structure.md` (or any other filename) — that document is already inlined here. A filename miss is not a missing structure.
 - **Facts come from documents or the operator.** Registration numbers, staff names, project references, insurance limits: cite the source document or ask. Never fabricate and never emit placeholder brackets.
 - **Mirror the tender's own structure and numbering** when the enquiry prescribes one; the structure above fills gaps, it does not override the client's.
 - **Staffing arithmetic is computed, not asserted** — man-months from the deployment schedule must sum correctly; use the calculators for any derived number.

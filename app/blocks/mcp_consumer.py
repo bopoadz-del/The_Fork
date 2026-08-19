@@ -8,12 +8,29 @@ The block spawns the configured MCP server via stdio (`npx -y @modelcontextproto
 by default), opens a ClientSession, calls the requested tool, and returns the result.
 """
 
+import asyncio
+import os
 from typing import Any, Dict
 
 from app.core.universal_base import UniversalBlock
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Servers the platform does not ship. Calling them used to `npx -y` a
+# community package with no timeout and hang the chat turn (weather).
+_UNCONFIGURED_MCP_SERVERS = frozenset({"weather", "geocode", "currency"})
+_DEFAULT_MCP_TIMEOUT_SECONDS = 8.0
+
+
+def _mcp_timeout_seconds() -> float:
+    raw = (os.getenv("MCP_CONSUMER_TIMEOUT_SECONDS") or "").strip()
+    if not raw:
+        return _DEFAULT_MCP_TIMEOUT_SECONDS
+    try:
+        return max(0.5, float(raw))
+    except ValueError:
+        return _DEFAULT_MCP_TIMEOUT_SECONDS
 
 
 class MCPConsumerBlock(UniversalBlock):
@@ -47,8 +64,23 @@ class MCPConsumerBlock(UniversalBlock):
         if not server_name or not tool_name:
             return {"status": "error", "error": "Provide 'server' and 'tool'."}
 
+        custom_command = data.get("command") or params.get("command")
+        if (
+            str(server_name).strip().lower() in _UNCONFIGURED_MCP_SERVERS
+            and not custom_command
+        ):
+            return {
+                "status": "error",
+                "server": server_name,
+                "tool": tool_name,
+                "error": (
+                    f"MCP server '{server_name}' is not configured on this "
+                    "platform. Do not spawn npx. Tell the user it is unavailable."
+                ),
+            }
+
         # Allow custom command/args for self-hosted MCP servers
-        command = data.get("command") or params.get("command") or "npx"
+        command = custom_command or "npx"
         args = data.get("args") or params.get("args")
         if args is None:
             args = ["-y", f"@modelcontextprotocol/server-{server_name}"]
@@ -59,18 +91,33 @@ class MCPConsumerBlock(UniversalBlock):
         except ImportError as e:
             return {"status": "error", "error": f"MCP package not installed: {e}"}
 
-        try:
+        timeout = _mcp_timeout_seconds()
+
+        async def _invoke():
             server_params = StdioServerParameters(command=command, args=args)
             async with stdio_client(server_params) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
-                    result = await session.call_tool(tool_name, tool_params)
-                    return {
-                        "status": "success",
-                        "server": server_name,
-                        "tool": tool_name,
-                        "result": _serialize(result),
-                    }
+                    return await session.call_tool(tool_name, tool_params)
+
+        try:
+            result = await asyncio.wait_for(_invoke(), timeout=timeout)
+            return {
+                "status": "success",
+                "server": server_name,
+                "tool": tool_name,
+                "result": _serialize(result),
+            }
+        except asyncio.TimeoutError:
+            return {
+                "status": "error",
+                "server": server_name,
+                "tool": tool_name,
+                "error": (
+                    f"MCP server '{server_name}' timed out after {timeout:.0f}s "
+                    "and was not spawned further."
+                ),
+            }
         except Exception as e:
             return {"status": "error", "server": server_name, "tool": tool_name, "error": str(e)}
 
