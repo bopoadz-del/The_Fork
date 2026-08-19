@@ -219,6 +219,21 @@ function msgId(): string {
  */
 function friendlyErrorMessage(raw: string): string {
   const r = raw.toLowerCase()
+  // Billing 429s include both "429" and "insufficient_quota" / "balance".
+  // Match credit failures FIRST so they are not mislabeled as rate-limit.
+  if (
+    (r.includes('insufficient') &&
+      (r.includes('balance') || r.includes('quota') || r.includes('credit') || r.includes('billing'))) ||
+    (r.includes('org') && (r.includes('suspend') || r.includes('disabled')))
+  ) {
+    return 'The language-model account is out of credit or suspended. Top up Kimi/Moonshot (or Groq) and try again.'
+  }
+  if (r.includes('offline mode') || r.includes('no cloud or local language model')) {
+    return 'Chat is running in offline mode. No language model is reachable right now.'
+  }
+  if (r.includes('invalid temperature') || (r.includes('temperature') && r.includes('only 1'))) {
+    return 'The assistant is misconfigured for this model. Please try again in a moment.'
+  }
   if (
     r.includes('errno -2') ||
     r.includes('errno -3') ||

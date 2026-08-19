@@ -252,3 +252,89 @@ def test_chat_block_metadata():
     assert ChatBlock.version.startswith("3.")
     assert "ai" in ChatBlock.tags
     assert "chat" in ChatBlock.tags
+
+
+def test_native_ollama_url_does_not_double_api_chat():
+    """Render sets OLLAMA_URL to a full /api/chat path; appending again 404s."""
+    from app.blocks.chat import _native_ollama_chat_url
+
+    assert _native_ollama_chat_url("https://ollama.example/api/chat") == (
+        "https://ollama.example/api/chat"
+    )
+    assert _native_ollama_chat_url("https://ollama.example/api/chat/") == (
+        "https://ollama.example/api/chat"
+    )
+    assert _native_ollama_chat_url("http://127.0.0.1:11434") == (
+        "http://127.0.0.1:11434/api/chat"
+    )
+
+
+def test_shaped_cloud_payload_pins_kimi_temperature():
+    """K2 400s on any temperature but 1. ChatBlock used to send 0.7."""
+    from app.blocks.chat import _shaped_cloud_payload
+
+    kimi = {
+        "provider": "kimi",
+        "url": "https://api.moonshot.ai/v1/chat/completions",
+        "fixed_temperature": 1,
+        "reasoning_min_tokens": 4096,
+    }
+    payload = _shaped_cloud_payload(
+        kimi, model="kimi-k2.6", messages=[], max_tokens=128, temperature=0.7,
+    )
+    assert payload["temperature"] == 1
+    assert payload["max_tokens"] >= 4096
+
+    groq = {"provider": "groq", "url": "https://api.groq.com/openai/v1/chat/completions"}
+    groq_payload = _shaped_cloud_payload(
+        groq, model="llama", messages=[], max_tokens=128, temperature=0.7,
+    )
+    assert groq_payload["temperature"] == 0.7
+    assert groq_payload["max_tokens"] == 128
+
+
+@pytest.mark.asyncio
+async def test_call_cloud_posts_temperature_1_for_kimi(monkeypatch):
+    """Live /v1/chat 400'd with invalid temperature until the payload chokepoint."""
+    import httpx
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None, **kwargs):
+            captured["json"] = dict(json or {})
+            return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    block = ChatBlock()
+    result = await block._call_cloud(
+        message="hi",
+        model="kimi-k2.6",
+        max_tokens=64,
+        temperature=0.7,
+        stream=False,
+        api_key="sk-xxx",
+        cfg={
+            "provider": "kimi",
+            "url": "https://api.moonshot.ai/v1/chat/completions",
+            "fixed_temperature": 1,
+        },
+    )
+    assert result["status"] == "success"
+    assert captured["json"]["temperature"] == 1

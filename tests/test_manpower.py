@@ -80,3 +80,32 @@ async def test_manpower_planner_uses_cpm_results_when_provided(block):
 def test_manpower_planner_block_metadata():
     assert ManpowerPlannerBlock.name == "manpower_planner"
     assert "manpower" in ManpowerPlannerBlock.tags
+
+
+@pytest.mark.asyncio
+async def test_manpower_planner_accepts_boq_derived_activities(block):
+    """schedule-from-boq emits duration_days + crew_size + string predecessors.
+
+    /v1/schedule/manpower used to 422 those payloads because CPM Activity
+    requires duration + resources=[{trade,count}] + Dependency objects.
+    """
+    activities = [
+        {
+            "id": "A",
+            "name": "Bulk excavation",
+            "duration_days": 10,
+            "crew_size": 6,
+            "predecessors": [],
+        },
+        {
+            "id": "B",
+            "name": "Raft concrete",
+            "duration_days": 5,
+            "crew_size": 8,
+            "predecessors": ["A"],
+        },
+    ]
+    result = await block.process({"activities": activities, "period_unit": "week"})
+    assert result["status"] == "success", result
+    assert result["by_trade_totals"]["General"] > 0
+    assert result["total_manhours"] > 0

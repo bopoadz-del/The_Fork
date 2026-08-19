@@ -11,6 +11,48 @@ from typing import Any, Dict, List, Optional
 from app.core.universal_base import UniversalBlock
 
 
+def _normalize_activity(a: Any) -> Any:
+    """Coerce BOQ / generate_wbs activity shapes into CPM ``Activity`` input.
+
+    The schema models crews as ``resources=[{trade, count}]`` and duration as
+    ``duration``. Callers naturally write ``manpower`` / ``crew_size`` and
+    ``duration_days``, and predecessors as bare id strings. Pydantic v2 then
+    either drops the unknown keys (histogram all-zero, status success) or
+    rejects the payload (422 on ``/v1/schedule/manpower``).
+    """
+    if not isinstance(a, dict):
+        return a
+    out = dict(a)
+    if out.get("duration") is None and out.get("duration_days") is not None:
+        try:
+            out["duration"] = int(out["duration_days"])
+        except (TypeError, ValueError):
+            pass
+    preds = out.get("predecessors") or []
+    coerced: List[Any] = []
+    for p in preds:
+        if isinstance(p, str):
+            coerced.append({"predecessor_id": p})
+        elif isinstance(p, dict) and "predecessor_id" not in p and p.get("id"):
+            coerced.append({**p, "predecessor_id": p["id"]})
+        else:
+            coerced.append(p)
+    out["predecessors"] = coerced
+    resources = out.get("resources")
+    if isinstance(resources, list) and resources and isinstance(resources[0], str):
+        mp = out.get("manpower") or out.get("crew") or out.get("crew_size") or 1
+        out["resources"] = [{"trade": t, "count": float(mp)} for t in resources]
+        return out
+    if not resources:
+        mp = (out.get("manpower") or out.get("crew") or out.get("crew_size")
+              or out.get("headcount"))
+        if mp:
+            out["resources"] = [
+                {"trade": out.get("trade") or "General", "count": float(mp)}
+            ]
+    return out
+
+
 class ManpowerPlannerBlock(UniversalBlock):
     auto_validate = False
     name = "manpower_planner"
@@ -51,21 +93,11 @@ class ManpowerPlannerBlock(UniversalBlock):
             from app.lib.pm_computations import compute_cpm, resource_histogram
             from app.schemas.cpm import Activity, CPMInput
 
-            # The schema models crews as resources=[{trade, count}], but
-            # callers naturally write "manpower": 8 -- pydantic silently
-            # DROPPED the unknown key and the histogram came back all-zero
-            # with status success. Map the common shorthand keys.
-            def _with_resources(a):
-                if not isinstance(a, dict) or a.get("resources"):
-                    return a
-                mp = (a.get("manpower") or a.get("crew") or a.get("crew_size")
-                      or a.get("headcount"))
-                if mp:
-                    a = {**a, "resources": [
-                        {"trade": a.get("trade") or "General", "count": float(mp)}]}
-                return a
-
-            activities = [_with_resources(a) for a in activities]
+            # CPM Activity wants duration + resources=[{trade,count}] +
+            # predecessors=[{predecessor_id}]. BOQ-derived schedules emit
+            # duration_days, crew_size/manpower, and predecessor id strings,
+            # which used to 422 the /v1/schedule/manpower shim.
+            activities = [_normalize_activity(a) for a in activities]
             act_objects = [
                 Activity(**a) if isinstance(a, dict) else a for a in activities
             ]
