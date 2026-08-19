@@ -258,6 +258,9 @@ function friendlyErrorMessage(raw: string): string {
   if (r.includes('401') || r.includes('unauthorized') || r.includes('403')) {
     return 'Your session has expired. Please refresh the page and sign in again.'
   }
+  if (r.includes('conversation not found') || r.includes('http 404')) {
+    return 'This chat session could not be found. Start a new chat and try again.'
+  }
   if (r.includes('aborterror') || r.includes('aborted')) {
     return 'Request was cancelled.'
   }

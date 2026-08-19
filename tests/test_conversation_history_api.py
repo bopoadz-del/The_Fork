@@ -267,3 +267,58 @@ def test_attacker_cannot_read_victim_conversation_even_if_precreated(client, mon
     assert resp_victim.status_code == 200, resp_victim.text
     contents = [m["content"] for m in resp_victim.json()["messages"]]
     assert "victim secret" in contents
+
+
+def test_new_chat_suffixed_ws_id_is_owned_by_project_owner(client):
+    """UI 'New chat' mints ws-{pid}-{Date.now()}. That must not 404 the owner.
+
+    _enforce_conversation_access used to treat everything after 'ws-' as the
+    project id, so ws-{pid}-1740000000000 looked up a nonexistent project and
+    the workspace showed 'Something went wrong' on the first send.
+    """
+    headers = _register_and_login(client, "newchat-owner")
+    proj = client.post(
+        "/v1/projects", json={"name": f"NewChat-{_RUN}"}, headers=headers
+    )
+    assert proj.status_code in (200, 201), proj.text
+    pid = proj.json()["id"]
+    cid = f"ws-{pid}-1740000000000"
+
+    resp = client.get(
+        f"/v1/agents/conversations/{cid}/messages", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["conversation_id"] == cid
+    assert resp.json()["messages"] == []
+
+
+def test_new_chat_suffixed_ws_id_still_404s_for_an_attacker(client):
+    """A suffix must not let an attacker skip the project-ownership check."""
+    victim = _register_and_login(client, "newchat-victim")
+    attacker = _register_and_login(client, "newchat-attacker")
+    proj = client.post(
+        "/v1/projects", json={"name": f"NewChatVictim-{_RUN}"}, headers=victim
+    )
+    assert proj.status_code in (200, 201), proj.text
+    pid = proj.json()["id"]
+    cid = f"ws-{pid}-1740000000000"
+
+    resp = client.get(
+        f"/v1/agents/conversations/{cid}/messages", headers=attacker
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_workspace_project_candidates_covers_legacy_and_new_chat():
+    from app.routers.agents import _workspace_project_candidates
+
+    assert _workspace_project_candidates("ws-5942b19b") == ["5942b19b"]
+    assert _workspace_project_candidates("ws-5942b19b-1740000000000") == [
+        "5942b19b-1740000000000",
+        "5942b19b",
+    ]
+    assert _workspace_project_candidates("ws-master_corpus-1") == [
+        "master_corpus-1",
+        "master_corpus",
+    ]
+    assert _workspace_project_candidates("hr-user-default") == []
