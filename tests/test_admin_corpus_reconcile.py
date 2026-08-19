@@ -54,30 +54,56 @@ def _ensure_schema():
             session.commit()
 
 
+def _is_sqlite_locked(exc: BaseException) -> bool:
+    return "database is locked" in str(exc).lower()
+
+
 def _commit_retry(session):
     """SQLite in CI occasionally raises 'database is locked' on the reconcile
     wipe/seed commits while TestClient still holds a connection. Wait and retry
     rather than flake the production-like job."""
-    delay = 0.05
-    for attempt in range(8):
+    delay = 0.1
+    for attempt in range(10):
         try:
             session.commit()
             return
         except OperationalError as exc:
             session.rollback()
-            if "database is locked" not in str(exc).lower() or attempt == 7:
+            if not _is_sqlite_locked(exc) or attempt == 9:
                 raise
             time.sleep(delay)
-            delay = min(delay * 2, 1.0)
+            delay = min(delay * 2, 1.5)
+
+
+def _wipe_retry(work) -> None:
+    """Retry the whole DML unit — DELETE can lock before commit() runs.
+
+    production-like CI failed at ``_wipe('reconcile_clean')`` with
+    ``DELETE FROM chunks ... database is locked``. ``_commit_retry`` never
+    ran because the flush happened on ``.delete()``.
+    """
+    delay = 0.1
+    for attempt in range(10):
+        try:
+            with SessionLocal() as session:
+                work(session)
+                session.commit()
+            return
+        except OperationalError as exc:
+            if not _is_sqlite_locked(exc) or attempt == 9:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 1.5)
 
 
 def _wipe(*pids: str):
-    with SessionLocal() as session:
+    def _do(session):
         for pid in pids:
             session.query(RagChunk).filter(RagChunk.project_id == pid).delete()
             session.query(Document).filter(Document.project_id == pid).delete()
             session.query(Project).filter(Project.id == pid).delete()
-        _commit_retry(session)
+
+    _wipe_retry(_do)
 
 
 def _wipe_all():
@@ -88,11 +114,13 @@ def _wipe_all():
     everything before seeding the reconcile fixture.
     """
     _ensure_schema()
-    with SessionLocal() as session:
+
+    def _do(session):
         session.query(RagChunk).delete()
         session.query(Document).delete()
         session.query(Project).delete()
-        _commit_retry(session)
+
+    _wipe_retry(_do)
 
 
 def _seed_misplaced_chunks():
