@@ -145,3 +145,21 @@ async def test_a_real_api_key_does_send_the_authorization_header():
         await _drain(await block._call_cloud(
             "hi", "m", 10, 0.0, True, "sk-live", CFG, None))
     assert (seen.get("headers") or {}).get("Authorization") == "Bearer sk-live"
+
+
+@pytest.mark.asyncio
+async def test_stream_payload_pins_kimi_temperature():
+    """Streaming ChatBlock must send temperature=1 for K2, same as non-stream."""
+    seen: dict = {}
+    fake = _FakeStream([_sse("x"), "data: [DONE]"])
+    block = ChatBlock()
+    kimi_cfg = {
+        "url": "https://api.moonshot.ai/v1/chat/completions",
+        "provider": "kimi",
+        "fixed_temperature": 1,
+    }
+    with _patch_stream(fake, recorder=seen):
+        await _drain(await block._call_cloud(
+            "hi", "kimi-k2.6", 10, 0.7, True, "sk-live", kimi_cfg, None))
+    assert (seen.get("json") or {}).get("temperature") == 1
+    assert (seen.get("json") or {}).get("stream") is True
