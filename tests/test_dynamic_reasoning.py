@@ -52,3 +52,49 @@ def test_extract_json_tolerant():
     assert _extract_json_object('```json\n{"a": 1}\n```') == {"a": 1}
     assert _extract_json_object('sure: {"workflow": "schedule"} ok') == {"workflow": "schedule"}
     assert _extract_json_object("no json here") == {}
+
+
+def test_intent_model_unset_uses_provider_default(monkeypatch):
+    monkeypatch.delenv("ORCHESTRATOR_INTENT_MODEL", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    assert dr._intent_model() is None
+
+
+def test_intent_model_ignores_ollama_id_on_kimi(monkeypatch):
+    """A leftover dashboard pin of gpt-oss:20b-cloud must not reach Moonshot."""
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("ORCHESTRATOR_INTENT_MODEL", "gpt-oss:20b-cloud")
+    assert dr._intent_model() is None
+
+
+def test_intent_model_ignores_ollama_id_when_provider_unset(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("ORCHESTRATOR_INTENT_MODEL", "glm-5.2:cloud")
+    assert dr._intent_model() is None
+
+
+def test_intent_model_honors_kimi_compatible_override(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("ORCHESTRATOR_INTENT_MODEL", "kimi-k2.6")
+    assert dr._intent_model() == "kimi-k2.6"
+
+
+def test_intent_model_honors_ollama_tag_when_provider_is_ollama(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("ORCHESTRATOR_INTENT_MODEL", "gpt-oss:20b-cloud")
+    assert dr._intent_model() == "gpt-oss:20b-cloud"
+
+
+def test_understand_intent_does_not_pass_ollama_id_to_kimi(monkeypatch):
+    captured = {}
+
+    async def fake(system, user, **kw):
+        captured.update(kw)
+        return {"workflow": "schedule", "mode": "produce", "params": {}}
+
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("ORCHESTRATOR_INTENT_MODEL", "gpt-oss:20b-cloud")
+    monkeypatch.setattr(dr, "complete_json", fake)
+    r = asyncio.run(dr.understand_intent("produce a schedule"))
+    assert captured.get("model") is None
+    assert r["action"] == "generate_wbs"

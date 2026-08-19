@@ -907,12 +907,13 @@ export default function ProjectWorkspace() {
     const controller = new AbortController()
     abortRef.current = controller
 
-    // Reader-side wall-clock deadline (FOLLOW-UP #92). Resets on every
+    // Reader-side silence deadline (FOLLOW-UP #92). Resets on every
     // chunk read — token, heartbeat, or tool event all count as proof of
     // life. If 95s pass with no bytes from the server, abort the fetch and
     // surface a friendly timeout banner instead of an indefinite spinner.
-    // 95s is intentionally larger than the server's CHAT_STREAM_TIMEOUT_SECONDS
-    // (90s default) so the server's structured error reaches us first.
+    // This is NOT the server wall-clock (CHAT_STREAM_TIMEOUT_SECONDS, 240s
+    // default). Heartbeats every CHAT_STREAM_HEARTBEAT_SECONDS keep this
+    // timer reset for the whole Kimi reasoning burst.
     const READER_TIMEOUT_MS = 95_000
     let didTimeout = false
     let readerTimer: ReturnType<typeof setTimeout> | null = null

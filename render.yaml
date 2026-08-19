@@ -133,17 +133,26 @@ services:
       # generate_wbs intents); remove to revert to the tool-agent path.
       - key: ORCHESTRATOR_PREDEFINED
         value: "1"
-      # Intent routing runs on every chat turn. The chat/answering model is
-      # OLLAMA_MODEL=glm-5.2:cloud (Ollama Cloud); intent classification is
-      # now pinned to the light gpt-oss:20b-cloud (20B MoE, ~3.6B active,
-      # built for low-latency/agentic routing). The classifier request is
-      # tiny (classifier prompt + the user message, not the project context),
-      # so running it on the heavy model only added per-turn latency.
-      # dynamic_reasoning.py falls back to the provider default when unset.
-      # NOTE: render.yaml env does NOT auto-sync — set the same value in the
-      # Render dashboard (or Apply the blueprint) for prod to pick it up.
-      - key: ORCHESTRATOR_INTENT_MODEL
-        value: gpt-oss:20b-cloud
+      # Intent routing uses the PRIMARY provider's default model (Kimi
+      # kimi-k2.6 on cloud). Do NOT pin ORCHESTRATOR_INTENT_MODEL to an
+      # Ollama id such as gpt-oss:20b-cloud: Moonshot 400s that name every
+      # turn and the exception is swallowed, so ORCHESTRATOR_PREDEFINED
+      # never fires. To use a lighter Kimi/Groq id, set it in the dashboard
+      # to a model THAT provider actually serves.
+      # Kimi reasoning bursts exceed the old 90s stream wall-clock; 240s
+      # is the live value that cleared the deadline (PLATFORM_HEALTH_REPORT).
+      - key: CHAT_STREAM_TIMEOUT_SECONDS
+        value: "240"
+      # Client-facing origin for export footers and email-verify links.
+      # RENDER_EXTERNAL_URL is the onrender slug; without this override,
+      # generated files stamp the-fork-jn3t.onrender.com instead of the
+      # hostname clients actually use.
+      - key: PUBLIC_BASE_URL
+        value: https://theshovel.ai
+      # No ingest worker is deployed (see header). Pin false so a leftover
+      # dashboard `true` cannot enqueue uploads onto a queue nobody drains.
+      - key: INGEST_WORKER_ENABLED
+        value: "false"
       # Cap document uploads so one large BIM file can't OOM the box.
       - key: MAX_DOC_UPLOAD_SIZE
         value: "52428800" # 50 MB
