@@ -3,10 +3,10 @@
 ## Cursor Cloud specific instructions
 
 The Fork is a **FastAPI** backend (`app/`) plus a **React + Vite + TypeScript**
-frontend (`frontend/`). The startup update script provisions dependencies (a
-Python 3.11 venv at `.venv` from `requirements.txt`, and `npm --prefix frontend
-ci`); the notes below cover only non-obvious run/test caveats. For full detail
-see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.md`.
+frontend (`frontend/`). Cloud Agent bootstrap is repo-managed in
+`.cursor/environment.json` (Python 3.11 venv + `frontend` `npm ci`, uvicorn on
+`:8000`). The notes below cover only non-obvious run/test caveats. For full
+detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.md`.
 
 ### Runtime prerequisites (baked into the environment, not the update script)
 - **Python 3.11** is required (`.python-version` / `runtime.txt`; `requirements.txt`

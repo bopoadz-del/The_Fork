@@ -1,0 +1,17 @@
+{
+  "name": "The Fork",
+  "install": "python3.11 -m venv .venv\n.venv/bin/pip install -U pip\n.venv/bin/pip install -r requirements.txt\nnpm --prefix frontend ci",
+  "terminals": [
+    {
+      "name": "uvicorn",
+      "command": "CEREBRUM_VIRGIN=false CEREBRUM_DOMAIN_KITS=construction ENV=development DATA_DIR=\"$PWD/data\" PYTHONIOENCODING=utf-8 .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+      "description": "FastAPI backend + SPA on :8000 (SQLite). Build frontend/dist first for the real UI."
+    }
+  ],
+  "ports": [
+    {
+      "name": "The Fork API + UI",
+      "port": 8000
+    }
+  ]
+}
