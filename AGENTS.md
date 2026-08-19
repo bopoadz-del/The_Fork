@@ -1,0 +1,66 @@
+# AGENTS.md
+
+## Cursor Cloud specific instructions
+
+The Fork is a **FastAPI** backend (`app/`) plus a **React + Vite + TypeScript**
+frontend (`frontend/`). The startup update script provisions dependencies (a
+Python 3.11 venv at `.venv` from `requirements.txt`, and `npm --prefix frontend
+ci`); the notes below cover only non-obvious run/test caveats. For full detail
+see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.md`.
+
+### Runtime prerequisites (baked into the environment, not the update script)
+- **Python 3.11** is required (`.python-version` / `runtime.txt`; `requirements.txt`
+  is pinned for 3.11). The venv is built with `python3.11`, not the system 3.12.
+- System packages the app needs at runtime: `tesseract-ocr` (+ `tesseract-ocr-ara`),
+  `antiword`, `unrar`, `libgl1`, `libglib2.0-0`, `libmagic1` (see `Aptfile` /
+  `render-build.sh`). These live in the base image, not the update script.
+
+### Running the backend
+- Dev launch: `./start-local.sh` (binds `0.0.0.0:8000`, sets `ENV=development`,
+  `DATA_DIR=$PWD/data`, `PYTHONIOENCODING=utf-8`). It uses the system `uvicorn`,
+  so activate `.venv` first or run uvicorn from the venv directly:
+  `CEREBRUM_VIRGIN=false CEREBRUM_DOMAIN_KITS=construction ENV=development \
+  DATA_DIR="$PWD/data" .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`
+- `ENV=development` is mandatory: it skips the production startup guard and
+  enables the dev API key. All `/v1/*` calls need `Authorization: Bearer cb_dev_key`
+  (that key is rejected unless `ENV=development`).
+- No database is required locally: with `DATABASE_URL` unset the app uses SQLite
+  at `$DATA_DIR/the_fork.db`. Postgres 16 + pgvector is the production config only.
+- The production block profile is `CEREBRUM_VIRGIN=false` +
+  `CEREBRUM_DOMAIN_KITS=construction` (loads 48 blocks). Unset/`true` loads a
+  smaller generic set; some tests only run under the full profile.
+- First boot downloads the `model2vec` embedder (`minishlab/potion-base-8M`) from
+  Hugging Face into `HF_HOME`; needs network once. For tests set
+  `RAG_EMBEDDING_MODEL=fake` to skip the download.
+- Registration auto-verifies in dev (no `RESEND_API_KEY`), so you can
+  `POST /v1/users/register` then `/v1/users/login` and use the app without email.
+- LLM chat (`/v1/chat/stream`, `/v1/agents/*/chat`) needs a funded `KIMI_API_KEY`
+  or `GROQ_API_KEY`; everything else (auth, projects, uploads, block `/v1/execute`)
+  works without any provider key.
+
+### Frontend
+- The chat UI is a **build artifact** — `frontend/dist` is gitignored and NOT
+  committed, so the update script does not build it. uvicorn only serves the real
+  UI at `/` once `frontend/dist` exists. Build it with
+  `npm --prefix frontend run build`, then (re)start uvicorn. Without a build, `/`
+  returns a tiny placeholder page while the API and `/docs` still work.
+- For hot-reload dev use `npm --prefix frontend run dev` (Vite on `:5173`). There
+  is no dev proxy; it calls the backend directly at `VITE_API_BASE`
+  (default `http://localhost:8000`), so keep uvicorn running alongside it.
+
+### Lint / test
+- Backend fast gate: `.venv/bin/python -m pytest tests/e2e/ -q` (seconds). Full
+  suite (`pytest tests/`) is ~35-40 min. Before pushing run
+  `.venv/bin/python scripts/test_matrix.py` — CI runs the suite under BOTH the
+  virgin and construction profiles and a plain `pytest tests/` covers only one.
+- Frontend lint: `npm --prefix frontend run lint` (eslint; errors block CI,
+  warnings are allowed).
+- Python lint gates: `scripts/audit_stubs.py` and `scripts/scan_secrets.py` (stdlib
+  only). The ruff S110 gate uses ruff, which is **not** in `requirements.txt` — CI
+  installs `ruff==0.16.1` on demand; do the same locally if you need it
+  (`pip install ruff==0.16.1`).
+
+### Stale docs to ignore
+- `README.md` and `.claude/skills/run-the-fork/SKILL.md` claim the React frontend
+  was deleted and only `app/static/index.html` is served. That is outdated: the
+  Vite React app in `frontend/` is the real UI (served from `frontend/dist`).
