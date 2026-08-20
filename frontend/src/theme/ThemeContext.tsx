@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- provider + useTheme share this module */
 /* Theme provider — light / dark with localStorage + prefers-color-scheme.
  *
  * Sets `data-theme="light|dark"` on the document root. tokens.css keys

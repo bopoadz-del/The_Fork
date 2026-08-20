@@ -36,23 +36,24 @@ type PreviewData =
   | { kind: 'unsupported'; ext: string }
 
 export default function DocumentPreview({ projectId, document: doc, emptyLabel }: Props) {
+  if (!doc || !projectId) {
+    return (
+      <div className="doc-preview doc-preview--empty">
+        {emptyLabel ?? 'Select a document to preview'}
+      </div>
+    )
+  }
+  return <DocumentPreviewLoaded key={doc.id} projectId={projectId} document={doc} />
+}
+
+function DocumentPreviewLoaded({ projectId, document: doc }: { projectId: string; document: DocRef }) {
   const [data, setData] = useState<PreviewData | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeSheet, setActiveSheet] = useState(0)
 
-  // ── Fetch the JSON preview whenever the selected document changes ──────────
   useEffect(() => {
-    if (!doc || !projectId) {
-      setData(null)
-      setError(null)
-      return
-    }
     let cancelled = false
-    setLoading(true)
-    setError(null)
-    setData(null)
-    setActiveSheet(0)
     void (async () => {
       try {
         const resp = await apiGet<PreviewData>(
@@ -73,15 +74,7 @@ export default function DocumentPreview({ projectId, document: doc, emptyLabel }
       }
     })()
     return () => { cancelled = true }
-  }, [projectId, doc])
-
-  if (!doc) {
-    return (
-      <div className="doc-preview doc-preview--empty">
-        {emptyLabel ?? 'Select a document to preview'}
-      </div>
-    )
-  }
+  }, [projectId, doc.id])
 
   if (loading) {
     return (
@@ -121,7 +114,7 @@ export default function DocumentPreview({ projectId, document: doc, emptyLabel }
         />
       )}
       {data.kind === 'pdf' && (
-        <PdfPreview projectId={projectId} docId={doc.id} name={doc.original_name} />
+        <PdfPreview key={doc.id} projectId={projectId} docId={doc.id} name={doc.original_name} />
       )}
       {data.kind === 'text' && (
         <div className="doc-preview__scroll">
@@ -228,8 +221,6 @@ function PdfPreview({ projectId, docId, name }: PdfPreviewProps) {
   useEffect(() => {
     let cancelled = false
     let objectUrl: string | null = null
-    setUrl(null)
-    setError(null)
     void (async () => {
       try {
         const token = getToken()
