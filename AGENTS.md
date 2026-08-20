@@ -54,11 +54,35 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   `.venv/bin/python scripts/test_matrix.py` — CI runs the suite under BOTH the
   virgin and construction profiles and a plain `pytest tests/` covers only one.
 - Frontend lint: `npm --prefix frontend run lint` (eslint; errors block CI,
-  warnings are allowed).
+  warnings are allowed). Context files (`AuthContext`, `ThemeContext`) keep a
+  file-level `react-refresh/only-export-components` disable because the hook
+  lives next to the provider.
+- Leftover L1 named-file fetch: `_predispatch_file_tool` runs `fetch_document`
+  for `.txt`/`.md`/`.docx`/`.doc` when the user names the file (full name or a
+  ≥12-char stem, so `khor_waterproofing_spec` matches a timestamped upload).
+  Empty RAG chunks fall through to disk `extract_document_text`. Do **not**
+  re-ingest/reindex that docx; another agent owns RAG. Predispatch runs
+  **before** the identifier RAG-miss short-circuit — a timestamped `.docx`
+  looks like a drawing code and used to return "could not confirm this
+  reference" in ~1s without fetching bytes.
+- Clash detection stays **off** unless the user message contains `clash`.
+  Predispatch then sets `run_clash_detection: True`. Default-on was hung on
+  leftover L2 geom — do not flip the default.
+- Named-calculator override (`_message_wants_named_calculator`) keeps
+  "interim payment" + figures on `construction_calc`. A no-figure
+  "issue/generate … payment certificate" is **not** stolen; it stays a
+  `payment_certificate` deliverable (honest missing-`contract_value` is OK).
+- Currency rate units (`AED/m2`, `USD/ft2`) are not document identifiers.
+  Pinned self-coding conversions must not hit the RAG-miss short-circuit.
 - Python lint gates: `scripts/audit_stubs.py` and `scripts/scan_secrets.py` (stdlib
   only). The ruff S110 gate uses ruff, which is **not** in `requirements.txt` — CI
   installs `ruff==0.16.1` on demand; do the same locally if you need it
   (`pip install ruff==0.16.1`).
+
+### Production Render (non-obvious)
+- Live service is `the-fork` (`srv-d9s6l67avr4c73aiujsg`) at `https://theshovel.ai`. `autoDeploy` is **false** (see `CONTRIBUTING.md`). A Render API deploy **without** `commitId` ships whatever is currently on `main`, not the feature-branch SHA. Pass the pushed commit explicitly.
+- `/v1/agents/*/chat` and `/v1/chat/stream` conversation ids must be `ws-{projectId}-{unix_ms}` only. Extra path segments 404.
+- Kimi HTTP 400 on orphaned `tool_call_id`s ("must be followed by tool messages") or `tokenization failed` is retryable: skip any remaining Moonshot hop and take `LLM_FALLBACK_PROVIDER` (Groq). Generic 400/401/403/404 still do not fall back. User nudges wait until every tool in the assistant batch has a result so the pairing 400 is not generated in the first place.
 
 ### Stale docs to ignore
 - `README.md` and `.claude/skills/run-the-fork/SKILL.md` claim the React frontend

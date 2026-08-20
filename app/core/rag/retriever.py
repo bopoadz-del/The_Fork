@@ -128,6 +128,11 @@ _UNIT_ATOMS = frozenset({
     "w", "kw", "mw", "kwh", "wh", "v", "kv", "a", "ma", "hz", "khz",
     "c", "f", "k",
     "pcs", "pc", "no", "nos", "ea", "each", "unit",
+    # Currencies in rate units (AED/m2, USD/ft2). Live 2026-08-20: a
+    # self-coding conversion was identifier-miss short-circuited because
+    # `aed/m2` contains a digit (the exponent) but is not a document code.
+    "aed", "usd", "sar", "eur", "gbp", "qar", "bhd", "kwd", "omr", "egp",
+    "cny", "inr", "jpy",
 })
 
 

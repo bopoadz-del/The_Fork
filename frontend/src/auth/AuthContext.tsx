@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- provider + useAuth share this module */
 import {
   createContext,
   useContext,
@@ -66,7 +67,7 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => Boolean(getToken()))
   // Guard against StrictMode double-invocation
   const bootstrapped = useRef(false)
 
@@ -76,7 +77,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const token = getToken()
     if (!token) {
-      setLoading(false)
       return
     }
 

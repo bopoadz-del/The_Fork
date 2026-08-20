@@ -160,6 +160,7 @@ EXPECTED_EXTERNAL_ONLY = {
     "orchestrate",          # entered from the orchestrator layer above this one
     "jetson_dispatch",      # edge-device caller lives outside the repo
     "formula_execute",      # /v1/execute callers name this directly
+    "bim_extractor",        # LLM names the standalone block; aliased to bim_extract
     "primavera_parse",      # ditto — block delegation, called by API clients
     "learn",                # ditto
     "benchmark_lookup",     # ditto

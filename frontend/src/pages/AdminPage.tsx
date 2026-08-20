@@ -693,7 +693,32 @@ function ApprovedProjectsSection({
 
   // Re-fetch when the parent bumps refreshKey (a Drive approve just
   // landed) so the new row appears without a manual click.
-  useEffect(() => { void load() }, [refreshKey])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const pResp = await apiGet<{ projects: ProjectRow[] }>('/v1/projects')
+        if (cancelled) return
+        setProjects(pResp.projects ?? [])
+        try {
+          const cResp = await apiGet<CorpusResponse>('/v1/admin/corpus/collections?folder_breakdown=false')
+          if (cancelled) return
+          const map: Record<string, CorpusCollection> = {}
+          for (const c of cResp.collections ?? []) map[c.project_id] = c
+          setCorpus(map)
+        } catch { /* counts optional; rows + Hide still render */ }
+      } catch (err) {
+        if (cancelled) return
+        const msg = err instanceof Error ? err.message : 'Failed to load approved projects.'
+        setError(err instanceof ApiError && err.status === 403
+          ? 'Admin role required to view approved projects. You are logged in but not as an admin.'
+          : msg)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [refreshKey])
 
   async function runReindex(p: ProjectRow) {
     setReindexArmId(null)

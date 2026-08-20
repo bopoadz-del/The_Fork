@@ -115,6 +115,8 @@ def _payment_figures_from_message(text: str) -> Dict[str, float]:
         return float(m.group(1)) if m else None
 
     v = (_amount(rf"gross\s+(?:valuation|value|work\s+done(?:\s+to\s+date)?){_FIG_GAP}{_FIG_NUM}")
+         # "gross 750000" — live F5; label without the word valuation.
+         or _amount(rf"gross{_FIG_GAP}{_FIG_NUM}")
          # "work valued at 900,000" / "work to the value of 900,000" — the
          # phrasing the live Q12 battery prompt uses (verified failing
          # 2026-08-02: the certificate refused for lack of a valuation).

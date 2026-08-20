@@ -116,3 +116,57 @@ def test_call_llm_sends_sanitized_payload(monkeypatch):
     assert sent[1]["tool_calls"][0]["function"] == {"name": "commissioning_checklist", "arguments": "{}"}
     # caller's original list is untouched (still contaminated)
     assert "reasoning" in contaminated[1]
+
+
+def _fetch_tc(n):
+    return {
+        "id": f"fetch_document:{n}",
+        "type": "function",
+        "function": {"name": "fetch_document", "arguments": "{}"},
+    }
+
+
+def test_interleaved_user_nudge_is_moved_after_all_tool_results():
+    """Live IPC_NEG: Kimi 400'd Missing fetch_document:3,:4 because a user
+    nudge landed after the second of four tool results."""
+    messages = [
+        {"role": "user", "content": "issue the payment certificate"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [_fetch_tc(1), _fetch_tc(2), _fetch_tc(3), _fetch_tc(4)],
+        },
+        {"role": "tool", "tool_call_id": "fetch_document:1", "name": "fetch_document", "content": "{}"},
+        {"role": "tool", "tool_call_id": "fetch_document:2", "name": "fetch_document", "content": "{}"},
+        {"role": "user", "content": "The router matched NO action. Dispatch a calculator."},
+        {"role": "tool", "tool_call_id": "fetch_document:3", "name": "fetch_document", "content": "{}"},
+        {"role": "tool", "tool_call_id": "fetch_document:4", "name": "fetch_document", "content": "{}"},
+    ]
+    out = _sanitize_messages_for_provider(messages)
+    roles_ids = [
+        (m.get("role"), m.get("tool_call_id")) for m in out
+    ]
+    assert roles_ids == [
+        ("user", None),
+        ("assistant", None),
+        ("tool", "fetch_document:1"),
+        ("tool", "fetch_document:2"),
+        ("tool", "fetch_document:3"),
+        ("tool", "fetch_document:4"),
+        ("user", None),
+    ]
+    assert "router matched NO action" in out[-1]["content"]
+
+
+def test_missing_tool_results_are_stubbed_so_the_payload_is_legal():
+    messages = [
+        {"role": "assistant", "content": "",
+         "tool_calls": [_fetch_tc(3), _fetch_tc(4)]},
+        {"role": "user", "content": "please continue"},
+    ]
+    out = _sanitize_messages_for_provider(messages)
+    assert out[0]["role"] == "assistant"
+    assert out[1]["role"] == "tool" and out[1]["tool_call_id"] == "fetch_document:3"
+    assert out[2]["role"] == "tool" and out[2]["tool_call_id"] == "fetch_document:4"
+    assert out[3]["role"] == "user"
+    assert "missing from history" in out[1]["content"]

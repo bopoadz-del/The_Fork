@@ -196,17 +196,18 @@ class BIMExtractorBlock(UniversalBlock):
 
         return {
             "status": "success",
+            "ifc_schema": model.schema,
+            "element_count": len(building_elements),
+            "element_count_returned": len(building_elements_capped),
+            "quantities": quantities,
+            "quantities_truncated": list(quantities_truncated),
             "building_elements": building_elements_capped,
             "building_elements_truncated": building_elements_truncated,
             "spaces_truncated": spaces_truncated,
-            "quantities": quantities,
-            "quantities_truncated": list(quantities_truncated),
             "clash_report": clash_report,
             "project_info": project_info,
             "storeys": storeys,
             "spaces": spaces_capped,
-            "element_count": len(building_elements),
-            "element_count_returned": len(building_elements_capped),
             "duplicate_subtypes_skipped": duplicate_subtypes_skipped,
             # Categories whose model.by_type() raised — quantities for these
             # IFC types are 0 in this result but the underlying model may
@@ -215,7 +216,6 @@ class BIMExtractorBlock(UniversalBlock):
             # Elements for which get_psets() raised — properties and pset-
             # derived quantities (NetVolume, NetArea, etc.) are missing.
             "psets_failed": psets_failed,
-            "ifc_schema": model.schema,
             "truncated": any_truncated,
             "truncation_caps": {
                 "category_item_cap": _CATEGORY_ITEM_CAP,
