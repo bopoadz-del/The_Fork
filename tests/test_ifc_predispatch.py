@@ -183,3 +183,46 @@ async def test_named_ifc_clash_predispatch_sets_run_clash_detection(monkeypatch)
     rec = await runtime._predispatch_file_tool(_agent(), msgs, "p1")
     assert rec and rec["predispatched"]
     assert fake.param_calls == [{"run_clash_detection": False}]
+
+
+@pytest.mark.asyncio
+async def test_clash_predispatch_unwraps_execute_envelope(monkeypatch):
+    """UniversalBlock.execute nests process output under result; the 6k
+    inject must still lead with clash_report."""
+    import app.core.projects as projects_mod
+    monkeypatch.setattr(
+        projects_mod, "list_documents",
+        lambda pid: [{"original_name": "sample_office.ifc"}],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runtime, "_resolve_file_path",
+        lambda pid, raw: "/app/data/" + raw,
+    )
+
+    class _Wrapped:
+        async def execute(self, input_data, params=None):
+            assert params == {"run_clash_detection": True}
+            inner = {
+                "status": "success",
+                "ifc_schema": "IFC4",
+                "quantities": {"walls": {"count": 8}},
+                "building_elements": [{"ifc_type": "IfcWall"}] * 8,
+                "clash_report": {
+                    "clashes": [],
+                    "detection_method": "aabb_intersection",
+                    "detection_method_disclaimer": "bounding-box",
+                },
+            }
+            return {"block": "bim_extractor", "status": "success", "result": inner}
+
+    monkeypatch.setattr(
+        runtime, "block_instances", {"bim_extractor": _Wrapped()}, raising=False,
+    )
+    msgs = [{"role": "user", "content": "Run clash detection on sample_office.ifc"}]
+    rec = await runtime._predispatch_file_tool(_agent(), msgs, "p1")
+    assert rec and rec["predispatched"]
+    injected = msgs[-1]["content"]
+    assert "clash_detection_ran=true" in injected
+    assert "aabb_intersection" in injected
+    assert injected.find("clash_report") < injected.find("building_elements")

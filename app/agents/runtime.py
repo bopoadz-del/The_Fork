@@ -607,35 +607,47 @@ async def _predispatch_file_tool(
         name, tool = target
         resolved = _resolve_file_path(project_id, name)
         instance = block_instances.get(tool) or _create_block_instance(tool)
+        want_clash = bool(re.search(r"\bclash", user_msg, re.I))
         result = await instance.execute(
             {"file_path": resolved},
-            ({"run_clash_detection": True} if re.search(r"\bclash", user_msg, re.I)
+            ({"run_clash_detection": True} if want_clash
              else {"run_clash_detection": False}),
         )
         ok = isinstance(result, dict) and result.get("status") != "error"
         if not ok:
             return None  # fall back to the normal loop + nudges
-        # Lead with schema / quantities / clash so the 6k inject cap cannot
-        # drop leftover L2 walls or a clash_report sitting at the tail.
-        if tool == "bim_extractor" and isinstance(result, dict):
+        # UniversalBlock.execute wraps process() as {status, result: inner}.
+        # Lead keys and clash_report live on the INNER dict; using the envelope
+        # made leftover clash-on look like "element counts only" after the 6k cap.
+        inner = result
+        nested = result.get("result") if isinstance(result, dict) else None
+        if isinstance(nested, dict) and (
+            "ifc_schema" in nested
+            or "clash_report" in nested
+            or "quantities" in nested
+            or "building_elements" in nested
+        ):
+            inner = nested
+        if tool == "bim_extractor" and isinstance(inner, dict):
             lead_keys = (
                 "status", "ifc_schema", "element_count", "quantities",
                 "clash_report",
             )
-            ordered = {k: result[k] for k in lead_keys if k in result}
-            for k, v in result.items():
+            ordered = {k: inner[k] for k in lead_keys if k in inner}
+            for k, v in inner.items():
                 if k not in ordered:
                     ordered[k] = v
-            result = ordered
+            inner = ordered
         clash_lead = ""
-        if isinstance(result, dict) and result.get("clash_report"):
-            cr = result["clash_report"]
+        cr = inner.get("clash_report") if isinstance(inner, dict) else None
+        if want_clash:
+            cr = cr or {}
             clash_lead = (
-                f"clash_detection_ran=true clash_count="
+                f"clash_detection_ran={str(bool(cr)).lower()} clash_count="
                 f"{len(cr.get('clashes') or [])} "
                 f"method={cr.get('detection_method')}\n"
             )
-        payload = clash_lead + json.dumps(result, default=str)[:6000]
+        payload = clash_lead + json.dumps(inner, default=str)[:6000]
         messages.append({
             "role": "user",
             "content": (
@@ -647,7 +659,7 @@ async def _predispatch_file_tool(
             ),
         })
         return {"name": tool, "ok": True, "predispatched": True,
-                "result": result}
+                "result": inner}
     except Exception:  # noqa: BLE001
         _LOG.warning("file pre-dispatch failed; continuing normally",
                      exc_info=True)
