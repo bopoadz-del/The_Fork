@@ -54,7 +54,21 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   `.venv/bin/python scripts/test_matrix.py` — CI runs the suite under BOTH the
   virgin and construction profiles and a plain `pytest tests/` covers only one.
 - Frontend lint: `npm --prefix frontend run lint` (eslint; errors block CI,
-  warnings are allowed).
+  warnings are allowed). Context files (`AuthContext`, `ThemeContext`) keep a
+  file-level `react-refresh/only-export-components` disable because the hook
+  lives next to the provider.
+- Leftover L1 named-file fetch: `_predispatch_file_tool` runs `fetch_document`
+  for `.txt`/`.md`/`.docx`/`.doc` when the user names the file (full name or a
+  ≥12-char stem, so `khor_waterproofing_spec` matches a timestamped upload).
+  Empty RAG chunks fall through to disk `extract_document_text`. Do **not**
+  re-ingest/reindex that docx; another agent owns RAG.
+- Clash detection stays **off** unless the user message contains `clash`.
+  Predispatch then sets `run_clash_detection: True`. Default-on was hung on
+  leftover L2 geom — do not flip the default.
+- Named-calculator override (`_message_wants_named_calculator`) keeps
+  "interim payment" + figures on `construction_calc`. A no-figure
+  "issue/generate … payment certificate" is **not** stolen; it stays a
+  `payment_certificate` deliverable (honest missing-`contract_value` is OK).
 - Python lint gates: `scripts/audit_stubs.py` and `scripts/scan_secrets.py` (stdlib
   only). The ruff S110 gate uses ruff, which is **not** in `requirements.txt` — CI
   installs `ruff==0.16.1` on demand; do the same locally if you need it
