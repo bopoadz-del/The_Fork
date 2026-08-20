@@ -540,7 +540,11 @@ async def _predispatch_file_tool(
         name, tool = target
         resolved = _resolve_file_path(project_id, name)
         instance = block_instances.get(tool) or _create_block_instance(tool)
-        result = await instance.execute({"file_path": resolved}, {})
+        result = await instance.execute(
+            {"file_path": resolved},
+            ({"run_clash_detection": True} if re.search(r"\bclash", user_msg, re.I)
+             else {"run_clash_detection": False}),
+        )
         ok = isinstance(result, dict) and result.get("status") != "error"
         if not ok:
             return None  # fall back to the normal loop + nudges
@@ -650,6 +654,46 @@ _HAT_SEARCH_ALIASES = frozenset({"search_documents", "fidic_clause_lookup", "sta
 _NON_DELIVERABLE_TOOLS = frozenset(
     {"search_project_documents", "smart_orchestrator", "cache_manager"}
 )
+
+
+def _tool_process_payload(tool_result: Any) -> dict[str, Any]:
+    """Unwrap the execute envelope to the block's ``process()`` dict."""
+    if not isinstance(tool_result, dict):
+        return {}
+    inner = tool_result.get("result")
+    if not isinstance(inner, dict):
+        return {}
+    nested = inner.get("result")
+    if isinstance(nested, dict) and any(
+        k in nested for k in ("variances", "value", "stages", "overall", "expression")
+    ):
+        return nested
+    return inner
+
+
+def _should_force_synthesis(tool_result: Any) -> bool:
+    """True when this tool round produced the artifact the user asked for.
+
+    Empty sympy_reasoning (no variances, no evaluated expression) is NOT a
+    deliverable — live leftover-hat L7: the model called sympy with no
+    boq/drawing payload, got formula metadata, then force_synthesis disarmed
+    formula_executor_v2 so the turn ended on "I will dispatch to the
+    construction formula executor instead" with no 2.4 / 6840.
+    """
+    if not isinstance(tool_result, dict):
+        return False
+    if tool_result.get("ok") is False:
+        return False
+    name = tool_result.get("name")
+    if name in _NON_DELIVERABLE_TOOLS:
+        return False
+    if name == "sympy_reasoning":
+        payload = _tool_process_payload(tool_result)
+        has_expr = payload.get("value") is not None and payload.get("expression")
+        has_var = bool(payload.get("variances") or payload.get("cost_impacts"))
+        if not has_expr and not has_var:
+            return False
+    return True
 
 
 def _empty_router_verdict(tool_result: Any) -> bool:
@@ -1819,6 +1863,90 @@ def _cg_money_values(text: str) -> list[tuple[str, float]]:
     return out
 
 
+_CG_SMALL = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30,
+    "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+    "ninety": 90,
+}
+_CG_SCALES = {"hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
+_CG_NUMBER_WORDS = set(_CG_SMALL) | set(_CG_SCALES) | {"and"}
+
+
+def _cg_words_to_int(words: list[str]) -> float | None:
+    """Convert a run of English number words to an int (four million → 4e6)."""
+    if not words:
+        return None
+    total = 0
+    current = 0
+    saw = False
+    for w in words:
+        if w == "and":
+            continue
+        if w in _CG_SMALL:
+            current += _CG_SMALL[w]
+            saw = True
+        elif w == "hundred":
+            current = (current or 1) * 100
+            saw = True
+        elif w in _CG_SCALES:
+            current = (current or 1) * _CG_SCALES[w]
+            total += current
+            current = 0
+            saw = True
+        else:
+            return None
+    if not saw:
+        return None
+    return float(total + current)
+
+
+def _cg_english_and_percent_values(text: str) -> list[float]:
+    """Number-words and 'N percent of X' from a user message.
+
+    Live leftover-hat L3: 'ten percent of four million eight hundred thousand'
+    produced a 480,000 LD cap the cost gate refused because the user never
+    typed digits. Word phrases and percent-of products are the user's own
+    figures — same authority as SAR 4.2M in the prompt.
+    """
+    if not text:
+        return []
+    tokens = re.findall(r"[a-z]+|%|\d[\d,]*(?:\.\d+)?", text.lower())
+    out: list[float] = []
+    i = 0
+    while i < len(tokens):
+        run: list[str] = []
+        j = i
+        while j < len(tokens) and tokens[j] in _CG_NUMBER_WORDS:
+            run.append(tokens[j])
+            j += 1
+        parsed = _cg_words_to_int(run) if run else None
+        if parsed is not None:
+            out.append(parsed)
+            i = j
+            continue
+        i += 1
+    # "ten percent of four million…" / "10% of 4800000"
+    for m in re.finditer(
+        r"(?P<pct>\d[\d,]*(?:\.\d+)?|[a-z]+(?:\s+[a-z]+){0,6})\s*"
+        r"(?:percent|per\s+cent|%)\s+of\s+"
+        r"(?P<base>\d[\d,]*(?:\.\d+)?|[a-z]+(?:\s+[a-z]+){0,8})",
+        text.lower(),
+    ):
+        pct_raw, base_raw = m.group("pct"), m.group("base")
+        pct = _cg_to_number(pct_raw)
+        if pct is None:
+            pct = _cg_words_to_int(re.findall(r"[a-z]+", pct_raw))
+        base = _cg_to_number(base_raw)
+        if base is None:
+            base = _cg_words_to_int(re.findall(r"[a-z]+", base_raw))
+        if pct is not None and base is not None:
+            out.append(round(base * (pct / 100.0), 4))
+    return out
+
+
 def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> set:
     """Numbers a cost claim may be grounded against:
 
@@ -1863,6 +1991,8 @@ def _cg_grounded_numbers(rag_context: str, messages: list[dict[str, Any]]) -> se
         content = msg.get("content")
         if role in ("tool", "user") and isinstance(content, str):
             _add_numbers(content, all_numbers=True)
+            for v in _cg_english_and_percent_values(content):
+                grounded.add(v)
     # Simple arithmetic derivations of grounded figures also ground: a
     # variance/overrun answer legitimately computes the SUM or DIFFERENCE of
     # two grounded totals (SAR 5.1M - SAR 4.2M = SAR 0.9M), and a bill line
@@ -3713,6 +3843,7 @@ class Agent:
                     conversation_id=conversation_id,
                     _depth=_depth,
                     _call_stack=_call_stack,
+                    user_message=user_message,
                 )
                 duration_ms = int((time.monotonic() - _t0) * 1000)
                 tool_calls_made.append(tool_result)
@@ -3723,10 +3854,7 @@ class Agent:
                 if isinstance(_inner, dict) and _inner.get("status") == "error":
                     ok = False
                     err = str(_inner.get("error") or "")[:200]
-                if (
-                    _force_synth_enabled and ok
-                    and tool_result.get("name") not in _NON_DELIVERABLE_TOOLS
-                ):
+                if _force_synth_enabled and ok and _should_force_synthesis(tool_result):
                     force_synthesis = True
                 await _emit("tool_result", {
                     "name": tool_result.get("name", tc_name),
@@ -4374,6 +4502,7 @@ class Agent:
                     conversation_id=conversation_id,
                     _depth=_depth,
                     _call_stack=_call_stack,
+                    user_message=user_message,
                 )
                 stream_tool_results.append(tool_result)
                 # A successful deliverable tool (anything but search) means the
@@ -4382,7 +4511,7 @@ class Agent:
                 if (
                     _force_synth_enabled
                     and tool_result.get("ok", True)
-                    and tool_result.get("name") not in _NON_DELIVERABLE_TOOLS
+                    and _should_force_synthesis(tool_result)
                 ):
                     force_synthesis = True
                 yield {
@@ -4954,6 +5083,7 @@ class Agent:
         conversation_id: str | None = None,
         _depth: int = 0,
         _call_stack: list[str] | None = None,
+        user_message: str | None = None,
     ) -> dict[str, Any]:
         fn = tool_call.get("function") or {}
         name = fn.get("name") or ""
@@ -5421,6 +5551,23 @@ class Agent:
         else:
             block_input = args.get("input")
             block_params = args.get("params") or {}
+        if name == "validation_pipeline":
+            # Leftover-hat L4: the model called validation_pipeline with
+            # value=null on a prose claim (40 m span / 50 mm beam). The
+            # pipeline short-circuited at syntactic and skipped Physical.
+            # Fold top-level LLM keys and the user message in as `claim`.
+            merged: dict[str, Any] = {}
+            if isinstance(block_input, dict):
+                merged.update(block_input)
+            if isinstance(block_params, dict):
+                for k, v in block_params.items():
+                    merged.setdefault(k, v)
+            for k, v in args.items():
+                if k not in ("input", "params"):
+                    merged.setdefault(k, v)
+            if merged.get("value") is None and not merged.get("claim") and user_message:
+                merged["claim"] = user_message
+            block_input = merged
         # File-consuming blocks: the LLM typically supplies just the filename
         # (e.g. 'Infra-1 - Demolition BOQ.pdf') because that is what the
         # user said. The block then calls os.path.exists on a bare filename

@@ -48,6 +48,23 @@ async def test_syntactic_none_fails_and_short_circuits(block):
 
 
 @pytest.mark.asyncio
+async def test_prose_claim_without_value_runs_physical(block):
+    """Leftover-hat L4: worded 40 m / 50 mm beam must fail Physical, not skip."""
+    result = await _run(block, {
+        "value": None,
+        "claim": (
+            "forty metres span on a fifty millimetre steel section "
+            "with eight hundred kilonewtons per metre"
+        ),
+    })
+    assert _stage(result, "syntactic")["pass"] is True
+    assert _stage(result, "physical")["pass"] is False
+    assert result["first_failure"] == "physical"
+    assert result["overall"] == "fail"
+    assert result.get("tier") == 4
+
+
+@pytest.mark.asyncio
 async def test_syntactic_bool_fails(block):
     result = await _run(block, {"value": True})
     assert result["first_failure"] == "syntactic"
