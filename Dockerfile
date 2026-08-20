@@ -134,9 +134,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-ara \
     tesseract-ocr-eng \
+    antiword \
+    catdoc \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/*
+# antiword/catdoc: app.core.doc_index._extract_doc converts legacy binary .doc
+# by shelling out to antiword, then catdoc. Neither was in the image, and its
+# remaining fallbacks cannot apply here -- textract is not a declared
+# dependency and win32com is Windows-only -- so shutil.which() returned None
+# for both, the converter list came out EMPTY, and EVERY .doc extracted to ""
+# and indexed as ZERO_CHUNK. Confirmed live 2026-08-20 on a freshly uploaded
+# .doc whose file was definitely present.
 # nodejs+npm: app.blocks.mcp_consumer spawns external MCP servers via
 # `npx -y @modelcontextprotocol/server-<name>` (F35 -- without node in the
 # RUNTIME stage the external-mcp agent was a ghost; node:20-slim above is

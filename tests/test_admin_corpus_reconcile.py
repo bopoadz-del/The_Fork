@@ -17,8 +17,39 @@ from sqlalchemy.exc import OperationalError
 
 from app.main import app
 from app.core.db import SessionLocal, engine
-from app.core.models import Document, Project, RagChunk, User
+from app.core.models import (
+    EMBEDDING_DIM,
+    Document,
+    Project,
+    User,
+    make_rag_chunk_class,
+    rag_chunk_table_name,
+)
 from app.dependencies import require_api_key
+
+
+def _active_namespace() -> str:
+    import os
+    return (os.getenv("RAG_VECTOR_NAMESPACE", "v2") or "").strip()
+
+
+def _chunk_cls():
+    """Model for the chunk table the RETRIEVER actually reads.
+
+    These tests used to seed the static ``RagChunk`` model, which maps the
+    RETIRED legacy ``chunks`` table. Reconcile queried that same table, so the
+    pair agreed with each other while disagreeing with production: post-v2
+    ``chunks`` holds 0 rows, and the endpoint reported a clean corpus no matter
+    how badly the live store was mismatched. Seeding the ACTIVE namespaced
+    table is what makes these tests fail against that bug.
+    """
+    cls = make_rag_chunk_class(_active_namespace(), EMBEDDING_DIM, "test")
+    cls.__table__.create(bind=engine, checkfirst=True)
+    return cls
+
+
+def _chunk_table() -> str:
+    return rag_chunk_table_name(_active_namespace())
 
 
 @pytest.fixture
@@ -39,7 +70,7 @@ def _admin_override():
 def _ensure_schema():
     from app.core.projects import init_db as init_projects_db
     init_projects_db()
-    RagChunk.__table__.create(bind=engine, checkfirst=True)
+    _chunk_cls()
     with SessionLocal() as session:
         if session.get(User, "test-admin") is None:
             session.add(User(
@@ -99,7 +130,8 @@ def _wipe_retry(work) -> None:
 def _wipe(*pids: str):
     def _do(session):
         for pid in pids:
-            session.query(RagChunk).filter(RagChunk.project_id == pid).delete()
+            cls = _chunk_cls()
+            session.query(cls).filter(cls.project_id == pid).delete()
             session.query(Document).filter(Document.project_id == pid).delete()
             session.query(Project).filter(Project.id == pid).delete()
 
@@ -116,7 +148,7 @@ def _wipe_all():
     _ensure_schema()
 
     def _do(session):
-        session.query(RagChunk).delete()
+        session.query(_chunk_cls()).delete()
         session.query(Document).delete()
         session.query(Project).delete()
 
@@ -146,13 +178,13 @@ def _seed_misplaced_chunks():
             doc_role="other", size=0, uploaded_at=now,
         ))
         # doc_a's chunk is wrongly stored under reconcile_b.
-        session.add(RagChunk(
+        session.add(_chunk_cls()(
             chunk_id="misplaced_1", project_id="reconcile_b",
             doc_id="doc_a", chunk_index=0, text="content",
             embedding=vec, created_at=now,
         ))
         # doc_b's chunk is correctly stored under reconcile_b.
-        session.add(RagChunk(
+        session.add(_chunk_cls()(
             chunk_id="correct_1", project_id="reconcile_b",
             doc_id="doc_b", chunk_index=0, text="content",
             embedding=vec, created_at=now,
@@ -164,9 +196,9 @@ def _seed_misplaced_chunks():
         if session.bind.dialect.name == "postgresql":
             session.execute(text("SET session_replication_role = 'replica'"))
             session.execute(
-                text("""
-                INSERT INTO chunks (chunk_id, project_id, doc_id, chunk_index,
-                                    text, embedding, created_at)
+                text(f"""
+                INSERT INTO {_chunk_table()} (chunk_id, project_id, doc_id,
+                                    chunk_index, text, embedding, created_at)
                 VALUES (:chunk_id, :project_id, :doc_id, :chunk_index,
                         :text, :embedding, :created_at)
                 """),
@@ -182,7 +214,7 @@ def _seed_misplaced_chunks():
             )
             session.execute(text("SET session_replication_role = 'origin'"))
         else:
-            session.add(RagChunk(
+            session.add(_chunk_cls()(
                 chunk_id="dangling_1", project_id="reconcile_a",
                 doc_id="doc_missing", chunk_index=0, text="content",
                 embedding=vec, created_at=now,
@@ -219,7 +251,7 @@ def test_reconcile_repairs_misplaced_chunks(client):
 
     # After repair, the chunk is under the correct project.
     with SessionLocal() as session:
-        chunk = session.get(RagChunk, "misplaced_1")
+        chunk = session.get(_chunk_cls(), "misplaced_1")
         assert chunk is not None
         assert chunk.project_id == "reconcile_a"
         assert chunk.doc_id == "doc_a"
@@ -255,7 +287,7 @@ def test_reconcile_reports_no_mismatches_when_clean(client):
             original_name="clean.pdf", doc_type="document",
             doc_role="other", size=0, uploaded_at=now,
         ))
-        session.add(RagChunk(
+        session.add(_chunk_cls()(
             chunk_id="clean_chunk", project_id="reconcile_clean",
             doc_id="doc_clean", chunk_index=0, text="content",
             embedding=vec, created_at=now,

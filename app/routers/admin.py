@@ -841,6 +841,52 @@ def admin_pilot_preflight(auth: dict = Depends(require_api_key)):
             else:
                 dim_ok = actual_dim == expected_dim
 
+            # Storage headroom. Bulk re-ingest is gated on this and there was
+            # no way to read it without shell access — the sandboxed code
+            # block has DATABASE_URL scrubbed, by design.
+            try:
+                db_size_mb = round(
+                    (conn.execute(
+                        text("SELECT pg_database_size(current_database())")
+                    ).scalar() or 0) / 1048576, 1
+                )
+            except Exception:  # noqa: BLE001 — diagnostic only
+                db_size_mb = None
+
+            # Corpus integrity. A restored / bulk-inserted corpus carries
+            # document rows whose FILE never reached this host: extraction
+            # cannot run, re-index is a no-op, and the row is invisible in
+            # every count that only looks at `documents`. 2026-08-19: 95 of
+            # 232 Master Folder docs had zero chunks and ALL 232 had no file
+            # on disk, which no existing gate reported. Counted here so the
+            # gap is visible before someone concludes "ingestion is broken".
+            integrity: Dict[str, Any] = {}
+            try:
+                rows = conn.execute(
+                    text(
+                        f"""
+                        SELECT d.id, d.file_path, COALESCE(c.n, 0) AS n_chunks
+                        FROM documents d
+                        LEFT JOIN (
+                            SELECT doc_id, COUNT(*) AS n
+                            FROM {active_table} GROUP BY doc_id
+                        ) c ON c.doc_id = d.id
+                        """
+                    )
+                ).all()
+                missing = sum(
+                    1 for r in rows
+                    if not (r.file_path and os.path.exists(r.file_path))
+                )
+                zero = sum(1 for r in rows if not r.n_chunks)
+                integrity = {
+                    "documents_total": len(rows),
+                    "documents_zero_chunk": zero,
+                    "documents_missing_file": missing,
+                }
+            except Exception as exc:  # noqa: BLE001 — diagnostic only
+                integrity = {"error": f"{type(exc).__name__}: {exc}"}
+
             out["postgres"] = {
                 "active_chunk_table": active_table,
                 "active_chunk_embedding_type": active_type,
@@ -850,6 +896,8 @@ def admin_pilot_preflight(auth: dict = Depends(require_api_key)):
                 "embedder_loaded": identity is not None,
                 "embedding_dim_ok": dim_ok,
                 "row_counts": counts,
+                "db_size_mb": db_size_mb,
+                "corpus_integrity": integrity,
             }
     except Exception as exc:  # noqa: BLE001 — diagnostic only
         out["postgres"] = {"error": f"{type(exc).__name__}: {exc}"}
@@ -1438,6 +1486,16 @@ def admin_corpus_reconcile(
 
     from sqlalchemy import text
     from app.core.db import SessionLocal
+    from app.core.models import rag_chunk_table_name
+
+    # Reconcile the SAME table the retriever reads — the namespaced store
+    # (chunks_v2 by default), NOT the retired legacy `chunks` table. This
+    # queried `chunks` literally, which has 0 rows post-v2-migration, so the
+    # endpoint reported a clean corpus no matter how badly the real store was
+    # mismatched. Same false-zero class as the admin corpus count fixed above.
+    chunks_table = rag_chunk_table_name(
+        os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
+    )
 
     mismatches: List[Dict[str, Any]] = []
     dangling: List[Dict[str, Any]] = []
@@ -1447,11 +1505,11 @@ def admin_corpus_reconcile(
         # 1) Chunks whose project_id disagrees with their parent document.
         mismatch_rows = session.execute(
             text(
-                """
+                f"""
                 SELECT c.chunk_id, c.doc_id,
                        c.project_id AS current_project_id,
                        d.project_id AS correct_project_id
-                FROM chunks c
+                FROM {chunks_table} c
                 JOIN documents d ON c.doc_id = d.id
                 WHERE c.project_id != d.project_id
                 ORDER BY c.project_id, d.project_id, c.doc_id
@@ -1481,9 +1539,9 @@ def admin_corpus_reconcile(
         # 2) Chunks whose doc_id has no parent document at all.
         dangling_rows = session.execute(
             text(
-                """
+                f"""
                 SELECT c.chunk_id, c.project_id, c.doc_id
-                FROM chunks c
+                FROM {chunks_table} c
                 LEFT JOIN documents d ON c.doc_id = d.id
                 WHERE d.id IS NULL
                 ORDER BY c.project_id, c.doc_id
@@ -1505,18 +1563,20 @@ def admin_corpus_reconcile(
             # duplicate chunks and will raise so the operator can inspect.
             result = session.execute(
                 text(
-                    """
-                    UPDATE chunks
+                    f"""
+                    UPDATE {chunks_table}
                     SET project_id = (
-                        SELECT project_id FROM documents WHERE id = chunks.doc_id
+                        SELECT project_id FROM documents
+                        WHERE id = {chunks_table}.doc_id
                     )
                     WHERE doc_id IN (
-                        SELECT doc_id FROM chunks c2
+                        SELECT doc_id FROM {chunks_table} c2
                         JOIN documents d2 ON c2.doc_id = d2.id
                         WHERE c2.project_id != d2.project_id
                     )
                     AND project_id != (
-                        SELECT project_id FROM documents WHERE id = chunks.doc_id
+                        SELECT project_id FROM documents
+                        WHERE id = {chunks_table}.doc_id
                     )
                     """
                 )
@@ -1527,6 +1587,9 @@ def admin_corpus_reconcile(
     return {
         "dry_run": not execute,
         "execute": execute,
+        # Name the table that was actually reconciled. Without this the caller
+        # cannot tell a genuinely clean corpus from a scan of the wrong table.
+        "chunks_table": chunks_table,
         "mismatches_sample": mismatches,
         "mismatches_total": len(mismatch_rows),
         "dangling_sample": dangling,

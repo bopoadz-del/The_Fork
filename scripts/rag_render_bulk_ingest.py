@@ -40,12 +40,19 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 PG_ID = "dpg-d8m22mcm0tmc73b04elg-a"
-PROJECT_ID = "client_infra_pack_1"
-DEFAULT_JSONL = REPO / "rag_backfill_client_clean_all.jsonl"
+# The project + expected totals were hardcoded to the first backfill
+# (client_infra_pack_1, 27 docs / 7538 chunks). They are env-overridable so the
+# same hardened writer can load another corpus -- e.g. the 2,924-doc
+# drive_archive text recovered from the laptop vector store -- without forking
+# the script. Defaults are unchanged, so existing invocations behave identically.
+PROJECT_ID = os.getenv("INGEST_PROJECT_ID", "client_infra_pack_1")
+DEFAULT_JSONL = Path(
+    os.getenv("INGEST_JSONL", str(REPO / "rag_backfill_client_clean_all.jsonl"))
+)
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 EXPECTED_DIM = 384
-EXPECTED_DOCS = 27
-EXPECTED_CHUNKS = 7538
+EXPECTED_DOCS = int(os.getenv("INGEST_EXPECTED_DOCS", "27"))
+EXPECTED_CHUNKS = int(os.getenv("INGEST_EXPECTED_CHUNKS", "7538"))
 DEFAULT_BATCH = 256
 CHECKPOINT_PATH = REPO / "rag_render_bulk_ingest_checkpoint.json"
 LOCK_PATH = REPO / "rag_render_bulk_ingest.lock"
