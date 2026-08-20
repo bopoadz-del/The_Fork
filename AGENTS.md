@@ -72,6 +72,11 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   "interim payment" + figures on `construction_calc`. A no-figure
   "issue/generate … payment certificate" is **not** stolen; it stays a
   `payment_certificate` deliverable (honest missing-`contract_value` is OK).
+- Leftover L6 (trench bank volume): the smart-orchestrator hat calls
+  `construction` with `action=construction_calc`. That action is aliased to
+  the formula registry (`excavation_volume` for L×W×D). Extra LLM kwargs
+  such as `text` are stripped. Do not send the model to `drawing_qto` when
+  the user already supplied the dimensions.
 - Currency rate units (`AED/m2`, `USD/ft2`) are not document identifiers.
   Pinned self-coding conversions must not hit the RAG-miss short-circuit.
 - Python lint gates: `scripts/audit_stubs.py` and `scripts/scan_secrets.py` (stdlib

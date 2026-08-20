@@ -556,6 +556,10 @@ async def _predispatch_file_tool(
                 break
         if not user_msg:
             return None
+        # A self-contained L×W×D volume ask must not steal drawing_qto just
+        # because the project happens to have a PDF (leftover L6).
+        if _looks_like_self_contained_calculation(user_msg):
+            return None
         low = user_msg.lower()
         from app.core import projects as _projects
         docs = _projects.list_documents(project_id) or []
@@ -1633,7 +1637,8 @@ def _message_wants_named_calculator(text: str) -> bool:
 #
 # Kill switch: FORCE_CALC_ON_DIMENSIONS=0.
 _CALC_VERB_RE = re.compile(
-    r"\b(calculate|compute|work out|how many|how much)\b", re.IGNORECASE
+    r"\b(calculate|compute|work out|how many|how much|volume|excavation)\b",
+    re.IGNORECASE,
 )
 # A number attached to a unit: 25m, 1.2 m, 6m3, 900,000 kg, 45 days
 _DIMENSION_RE = re.compile(

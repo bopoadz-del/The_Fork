@@ -970,6 +970,15 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     params = params or {}
     if not isinstance(params, dict):
         return {"status": "error", "error": "params must be an object of keyword arguments."}
+    # LLMs (and the construction-block envelope) often pass extra keys
+    # like ``text`` / ``formula``. Drop unknowns rather than TypeError.
+    sig = _inspect.signature(fn)
+    accepted = {
+        k for k, p in sig.parameters.items()
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    if accepted and not any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values()):
+        params = {k: v for k, v in params.items() if k in accepted}
     try:
         result = fn(**params)
     except TypeError as exc:

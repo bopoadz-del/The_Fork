@@ -52,22 +52,23 @@ def test_version_is_1_1_0():
     assert SmartOrchestratorBlock.version == "1.1.0"
 
 
-def test_description_says_53_actions():
-    # construction_advisor (commit 9fcba83) is the 42nd smart_orch action,
-    # taking the net unique count 52 -> 53; the label must track it.
-    assert "53-action" in SmartOrchestratorBlock.description
+def test_description_says_54_actions():
+    # construction_calc (leftover L6) is the 43rd smart_orch action,
+    # taking the net unique count 53 -> 54; the label must track it.
+    assert "54-action" in SmartOrchestratorBlock.description
+    assert "53-action" not in SmartOrchestratorBlock.description
     assert "52-action" not in SmartOrchestratorBlock.description
     assert "39-action" not in SmartOrchestratorBlock.description
 
 
-def test_unique_action_count_is_53():
+def test_unique_action_count_is_54():
     """Net unique action names in ACTION_PATTERNS (PROCEDURE + smart_orch lists
-    combined) must equal 53: 17 PROCEDURE + 42 smart_orch − 6 collisions.
-    (The 42nd smart_orch action, construction_advisor, was added in 9fcba83.)"""
+    combined) must equal 54: 17 PROCEDURE + 43 smart_orch − 6 collisions.
+    (construction_calc was added so leftover L6 bank-volume routes.)"""
     seen = set()
     for action, _ in ACTION_PATTERNS:
         seen.add(action)
-    assert len(seen) == 53, f"expected 53 unique actions, got {len(seen)}"
+    assert len(seen) == 54, f"expected 54 unique actions, got {len(seen)}"
 
 
 # ── Regression guards: previously-dropped keywords must now route ───────────

@@ -1,10 +1,10 @@
-"""Smart Orchestrator Block - 53-action keyword router for construction workflows.
+"""Smart Orchestrator Block - 54-action keyword router for construction workflows.
 
 The runtime action list is built by prepending PROCEDURE_ROUTING_ADDITIONS
 (17 procedure-specific actions, PRC-301..PRC-606) to the in-file ACTION_PATTERNS
 list (41 entries). Six action names appear in both lists; their keyword
 lists are MERGED at scoring time so neither source loses coverage.
-Net unique actions: 17 + (41 - 6) = 52.
+Net unique actions: 17 + (42 - 6) + 1 (construction_calc) = 54.
 """
 
 import re
@@ -59,6 +59,13 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
         "uplift", "factor of safety", "diaphragm wall", "post-tension",
         "sealant joint", "rebar coupler", "tunnel cross section",
         "earthworks production", "haul distance", "design formula",
+    ]),
+    # Leftover L6: "bank volume of a rectangular trench 14.5 × 3.2 × 1.75"
+    # used to miss every keyword, fall through to intelligent_workflow, then
+    # the hat called construction action=construction_calc (Unknown action).
+    ("construction_calc", [
+        "bank volume", "excavation volume", "trench volume", "pit volume",
+        "rectangular trench", "rectangular pit", "cut volume",
     ]),
     # BOQ / Cost
     ("boq_process",           ["boq", "bill of quantities", "bill of quantity", "quantities sheet", "cost sheet", "price list", ".xlsx", ".csv"]),
@@ -192,7 +199,7 @@ class SmartOrchestratorBlock(UniversalBlock):
     auto_validate = False
     name = "smart_orchestrator"
     version = "1.1.0"
-    description = "53-action construction keyword router: maps user messages to action queues with parallel execution hints"
+    description = "54-action construction keyword router: maps user messages to action queues with parallel execution hints"
     layer = 2
     tags = ["infrastructure", "construction", "orchestration", "routing", "nlp"]
     requires = []
