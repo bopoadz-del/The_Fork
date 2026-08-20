@@ -517,6 +517,21 @@ def _extract_doc(file_path: str) -> str:
     if catdoc:
         converters.append([catdoc, "-d", "utf-8"])
 
+    if not converters:
+        # Neither converter on PATH. The remaining fallbacks cannot rescue a
+        # Linux container -- textract is not a declared dependency and
+        # win32com is Windows-only -- so every .doc silently extracted to ""
+        # and indexed as ZERO_CHUNK. That was true in production until
+        # antiword/catdoc were added to the image (2026-08-20); the failure
+        # was invisible because the empty return looked like an empty file.
+        # Say so once per call rather than letting the corpus fill with
+        # contentless .doc rows.
+        logger.warning(
+            "no .doc converter on PATH (antiword/catdoc missing) — %s will "
+            "extract to empty text; install antiword or catdoc in the image",
+            os.path.basename(file_path),
+        )
+
     for cmd in converters:
         try:
             with file_crypto.open_plaintext(file_path) as readable_path:

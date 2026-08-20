@@ -24,8 +24,38 @@ def test_layer_columns_are_nullable():
 
 
 def test_namespaced_chunk_class_also_carries_columns():
-    # prod writes to chunks_v2 (RAG_VECTOR_NAMESPACE=v2), not legacy chunks
-    cls = make_rag_chunk_class("v2", 256, "fake-model")
+    """Dynamic chunks_<ns> classes carry the layer columns, like RagChunk does.
+
+    Uses a namespace of its own rather than "v2". The claim under test is about
+    NAMESPACED classes in general, not about v2 specifically -- and pinning
+    "v2" at dim 256 encoded a contradiction, because production maps v2 at 384
+    (bge-small). In a full-suite run the live embedder registers ("v2", 384)
+    first, so this then asked for a second width on the same namespace. That
+    passed in isolation and failed only in a full run.
+    """
+    cls = make_rag_chunk_class("layercols_probe", 256, "fake-model")
     cols = {c.name for c in cls.__table__.columns}
     assert "knowledge_layer" in cols
     assert "authority" in cols
+
+
+def test_one_namespace_cannot_be_remapped_to_a_second_dim():
+    """A namespace owns one table, so it owns one embedding width.
+
+    Keying the class cache by (namespace, dim) allowed two classes per
+    namespace; the second declaration then hit
+    "Table 'chunks_v2' is already defined for this MetaData instance".
+    Refuse the remap with a readable error instead of a SQLAlchemy crash --
+    and never hand back a class whose vector width differs from the request.
+    """
+    import pytest
+
+    ns = "dimconflict_probe"
+    first = make_rag_chunk_class(ns, 256, "fake-model")
+    assert make_rag_chunk_class(ns, 256, "other-model") is first, (
+        "same namespace + same dim must reuse the cached class; model_name is "
+        "metadata only"
+    )
+
+    with pytest.raises(ValueError, match="already mapped at dim"):
+        make_rag_chunk_class(ns, 384, "fake-model")
