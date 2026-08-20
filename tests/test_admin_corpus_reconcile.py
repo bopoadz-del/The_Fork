@@ -23,6 +23,7 @@ from app.core.models import (
     Project,
     User,
     make_rag_chunk_class,
+    rag_chunk_class_for,
     rag_chunk_table_name,
 )
 from app.dependencies import require_api_key
@@ -43,7 +44,12 @@ def _chunk_cls():
     how badly the live store was mismatched. Seeding the ACTIVE namespaced
     table is what makes these tests fail against that bug.
     """
-    cls = make_rag_chunk_class(_active_namespace(), EMBEDDING_DIM, "test")
+    ns = _active_namespace()
+    # Reuse whatever width this namespace was already opened at. A namespace
+    # owns one table and therefore one vector width, so guessing EMBEDDING_DIM
+    # here would trip the dim-conflict guard whenever the live embedder (384)
+    # registered the namespace first.
+    cls = rag_chunk_class_for(ns) or make_rag_chunk_class(ns, EMBEDDING_DIM, "test")
     cls.__table__.create(bind=engine, checkfirst=True)
     return cls
 
