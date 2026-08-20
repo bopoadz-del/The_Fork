@@ -63,6 +63,30 @@ async def test_construction_calc_infers_excavation_from_formula_string():
 
 @requires_construction_kit
 @pytest.mark.asyncio
+async def test_construction_calc_ignores_extra_text_kwarg():
+    """Live UI L6: model passed input text as an extra calculator kwarg."""
+    from app.containers.construction import ConstructionContainer
+
+    r = await ConstructionContainer().route(
+        "construction_calc",
+        {"text": "Bank volume of a rectangular trench 14.5 m"},
+        {
+            "action": "construction_calc",
+            "name": "excavation_volume",
+            "length_m": 14.5,
+            "width_m": 3.2,
+            "depth_m": 1.75,
+            "text": "Bank volume of a rectangular trench 14.5 m",
+        },
+    )
+    assert r.get("status") == "success", r
+    inner = r.get("result") or r
+    bank = inner.get("bank_volume_m3") or (inner.get("result") or {}).get("bank_volume_m3")
+    assert bank == pytest.approx(81.2)
+
+
+@requires_construction_kit
+@pytest.mark.asyncio
 async def test_construction_execute_accepts_hat_shape():
     from app.containers.construction import ConstructionContainer
 
