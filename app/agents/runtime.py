@@ -2870,8 +2870,63 @@ def _llm_config() -> dict[str, Any]:
     }
 
 
+def _kimi_model_fallback(primary: dict[str, Any]) -> dict[str, Any] | None:
+    """Same-Moonshot-key fast model, or None. No ``fixed_temperature`` so
+    moonshot-v1 accepts the caller's temperature."""
+    if primary.get("provider") != "kimi":
+        return None
+    fb_model = (os.getenv("KIMI_FALLBACK_MODEL") or "").strip()
+    if not fb_model or fb_model == primary.get("default_model"):
+        return None
+    return {
+        "provider": "kimi",
+        "url": KIMI_API_URL,
+        "env_key": "KIMI_API_KEY",
+        "default_model": fb_model,
+    }
+
+
+def _cross_provider_fallback(primary: dict[str, Any]) -> dict[str, Any] | None:
+    """``LLM_FALLBACK_PROVIDER`` config, or None when unset/unusable."""
+    name = (os.getenv("LLM_FALLBACK_PROVIDER") or "").strip().lower()
+    if not name or name == primary.get("provider"):
+        return None
+    prev = os.environ.get("LLM_PROVIDER")
+    os.environ["LLM_PROVIDER"] = name
+    try:
+        cfg = _llm_config()
+    finally:
+        if prev is None:
+            os.environ.pop("LLM_PROVIDER", None)
+        else:
+            os.environ["LLM_PROVIDER"] = prev
+    if cfg.get("provider") == primary.get("provider"):
+        return None
+    if cfg.get("env_key") and not os.getenv(cfg["env_key"]):
+        return None
+    return cfg
+
+
+def _llm_fallback_ladder(primary: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every usable fallback, same-provider model first, then cross-provider.
+
+    A Kimi conversation-shape 400 (orphaned ``tool_call_id``s, tokenization)
+    cannot be fixed by another Moonshot model — Groq must still be on the
+    ladder even when ``KIMI_FALLBACK_MODEL`` is set.
+    """
+    out: list[dict[str, Any]] = []
+    same = _kimi_model_fallback(primary)
+    if same:
+        out.append(same)
+    cross = _cross_provider_fallback(primary)
+    if cross:
+        out.append(cross)
+    return out
+
+
 def _llm_fallback_config(primary: dict[str, Any]) -> dict[str, Any] | None:
-    """Config for the fallback LLM call, or ``None`` when none is usable.
+    """First fallback only — callers that want the full ladder use
+    ``_llm_fallback_ladder``.
 
     Two fallback shapes, checked in order:
 
@@ -2892,36 +2947,8 @@ def _llm_fallback_config(primary: dict[str, Any]) -> dict[str, Any] | None:
     Reuses ``_llm_config`` for URL/suffix normalisation by pinning the provider
     through the env for the duration of one synchronous call.
     """
-    # 1. Same-provider (Kimi) model fallback — no fixed_temperature so the fast
-    #    moonshot-v1 model accepts the caller's temperature.
-    if primary.get("provider") == "kimi":
-        fb_model = (os.getenv("KIMI_FALLBACK_MODEL") or "").strip()
-        if fb_model and fb_model != primary.get("default_model"):
-            return {
-                "provider": "kimi",
-                "url": KIMI_API_URL,
-                "env_key": "KIMI_API_KEY",
-                "default_model": fb_model,
-            }
-
-    # 2. Cross-provider fallback.
-    name = (os.getenv("LLM_FALLBACK_PROVIDER") or "").strip().lower()
-    if not name or name == primary.get("provider"):
-        return None
-    prev = os.environ.get("LLM_PROVIDER")
-    os.environ["LLM_PROVIDER"] = name
-    try:
-        cfg = _llm_config()
-    finally:
-        if prev is None:
-            os.environ.pop("LLM_PROVIDER", None)
-        else:
-            os.environ["LLM_PROVIDER"] = prev
-    if cfg.get("provider") == primary.get("provider"):
-        return None
-    if cfg.get("env_key") and not os.getenv(cfg["env_key"]):
-        return None
-    return cfg
+    ladder = _llm_fallback_ladder(primary)
+    return ladder[0] if ladder else None
 
 
 def _provider_temperature(cfg: dict[str, Any], default: float) -> float:
@@ -3097,6 +3124,148 @@ class _SynthStreamError(Exception):
     one-way door away from the working behaviour."""
 
 
+def _http_400_is_retryable(body: str) -> bool:
+    """True for provider 400s another model CAN serve.
+
+    Generic 400s (bad key, unknown model, malformed JSON we sent) stay
+    non-retryable. Kimi conversation-shape / tokenizer 400s are the same
+    class as Groq ``tool_use_failed``-as-prose: the next provider on the
+    ladder is the recovery, not a quota burn on a broken request.
+    """
+    text = (body or "").lower()
+    if "tokenization failed" in text:
+        return True
+    if "tool_call_id" in text and "followed" in text:
+        return True
+    if "must be followed by tool messages" in text:
+        return True
+    if "invalid request" in text and "tool_call" in text:
+        return True
+    return False
+
+
+def _normalize_tool_call_ids(tool_calls: list[Any]) -> list[Any]:
+    """Give every tool_call a stable id. Kimi infers ``name:index`` when ``id``
+    is missing; our tool results must use the same string or the next call 400s.
+    """
+    out: list[Any] = []
+    for i, tc in enumerate(tool_calls):
+        if not isinstance(tc, dict):
+            out.append(tc)
+            continue
+        ctc = dict(tc)
+        fn = ctc.get("function") if isinstance(ctc.get("function"), dict) else {}
+        name = fn.get("name") or ctc.get("name") or "tool"
+        if not ctc.get("id"):
+            ctc["id"] = f"{name}:{i}"
+        out.append(ctc)
+    return out
+
+
+def _repair_tool_call_pairing(
+    messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Legal OpenAI tool history: every assistant ``tool_calls[].id`` is
+    answered by the immediately-following ``role=tool`` messages.
+
+    Live 2026-08-20: a user-role empty-router/error nudge inserted AFTER the
+    second of four ``fetch_document`` results made Kimi 400
+    (``Missing: fetch_document:3, fetch_document:4``) and the turn died
+    because HTTP 400 was non-retryable. Move interleaved non-tool messages
+    to after the batch and stub any still-missing ids so Groq (and a
+    retried Kimi) can accept the payload.
+    """
+    out: list[dict[str, Any]] = []
+    i = 0
+    n = len(messages)
+    while i < n:
+        m = messages[i]
+        if not (isinstance(m, dict) and m.get("role") == "assistant"
+                and isinstance(m.get("tool_calls"), list) and m["tool_calls"]):
+            if isinstance(m, dict) and m.get("role") == "tool":
+                out.append({
+                    "role": "user",
+                    "content": (
+                        f"Tool result ({m.get('name') or 'unknown'}): "
+                        f"{m.get('content') or ''}"
+                    ),
+                })
+                i += 1
+                continue
+            out.append(m)
+            i += 1
+            continue
+
+        assistant = dict(m)
+        tcs = _normalize_tool_call_ids(list(assistant.get("tool_calls") or []))
+        assistant["tool_calls"] = tcs
+        out.append(assistant)
+        needed_ids = [
+            tc.get("id") for tc in tcs
+            if isinstance(tc, dict) and tc.get("id")
+        ]
+        needed_set = set(needed_ids)
+        found: dict[str, dict[str, Any]] = {}
+        deferred: list[Any] = []
+        i += 1
+        while i < n:
+            nxt = messages[i]
+            if not isinstance(nxt, dict):
+                deferred.append(nxt)
+                i += 1
+                continue
+            role = nxt.get("role")
+            if role == "assistant":
+                break
+            if role == "tool":
+                tid = nxt.get("tool_call_id")
+                if tid in needed_set and tid not in found:
+                    tm = dict(nxt)
+                    tm["tool_call_id"] = tid
+                    found[tid] = tm
+                elif not tid:
+                    for nid in needed_ids:
+                        if nid not in found:
+                            tm = dict(nxt)
+                            tm["tool_call_id"] = nid
+                            found[nid] = tm
+                            break
+                    else:
+                        deferred.append(nxt)
+                else:
+                    deferred.append(nxt)
+                i += 1
+                continue
+            deferred.append(nxt)
+            i += 1
+
+        for tid in needed_ids:
+            if tid in found:
+                out.append(found[tid])
+            else:
+                out.append({
+                    "role": "tool",
+                    "tool_call_id": tid,
+                    "name": "unknown",
+                    "content": json.dumps({
+                        "status": "error",
+                        "error": "tool result missing from history",
+                    }),
+                })
+        for d in deferred:
+            if isinstance(d, dict) and d.get("role") == "tool":
+                out.append({
+                    "role": "user",
+                    "content": (
+                        f"Tool result ({d.get('name') or 'unknown'}): "
+                        f"{d.get('content') or ''}"
+                    ),
+                })
+            else:
+                out.append(d)
+    return out
+
+
 def _sanitize_messages_for_provider(
     messages: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -3124,7 +3293,7 @@ def _sanitize_messages_for_provider(
                 clean_tcs.append(ctc)
             cm["tool_calls"] = clean_tcs
         clean.append(cm)
-    return clean
+    return _repair_tool_call_pairing(clean)
 
 
 # ── DSML inline tool-call markup handling ─────────────────────────────────
@@ -3965,7 +4134,10 @@ class Agent:
                     }
 
             # Persist the assistant turn that contained the tool calls
+            tool_calls = _normalize_tool_call_ids(list(tool_calls))
+            assistant_msg = {**assistant_msg, "tool_calls": tool_calls}
             messages.append(assistant_msg)
+            pending_nudges: list[dict[str, Any]] = []
             for tc in tool_calls:
                 # Surface the tool call to the event stream BEFORE running it
                 # so the UI can show "️ tool_name — running…" live.
@@ -4023,13 +4195,14 @@ class Agent:
                     ),
                 })
                 if _empty_router_verdict(tool_result):
-                    messages.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
+                    pending_nudges.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
                 elif (_tool_result_errored(tool_result)
                       and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                     error_nudges += 1
-                    messages.append({"role": "user", "content": _nudge_for_failed_tool(
+                    pending_nudges.append({"role": "user", "content": _nudge_for_failed_tool(
                         tool_result, self) + _file_tool_hint(
                             messages, project_id, self.allowed_blocks)})
+            messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled
         # so the model is required to emit a plain-text summary.
@@ -4625,7 +4798,10 @@ class Agent:
                     }
                     return
 
+            tool_calls = _normalize_tool_call_ids(list(tool_calls))
+            assistant_msg = {**assistant_msg, "tool_calls": tool_calls}
             messages.append(assistant_msg)
+            pending_nudges: list[dict[str, Any]] = []
             for tc in tool_calls:
                 fn = (tc.get("function") or {})
                 if fn.get("name") == "search_project_documents":
@@ -4681,16 +4857,17 @@ class Agent:
                     ),
                 })
                 if _empty_router_verdict(tool_result):
-                    messages.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
+                    pending_nudges.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
                 else:
                     if (_tool_result_errored(tool_result)
                             and error_nudges < _TOOL_ERROR_NUDGE_CAP):
                         error_nudges += 1
-                        messages.append({"role": "user",
+                        pending_nudges.append({"role": "user",
                                          "content": _nudge_for_failed_tool(
                                              tool_result, self)
                                          + _file_tool_hint(messages, project_id,
                                                            self.allowed_blocks)})
+            messages.extend(pending_nudges)
 
         # Hit the cap without a final answer — force one more call with tools disabled.
         _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
@@ -4859,16 +5036,17 @@ class Agent:
             forced_tool = None
             requires_tool = False
 
-        # Provider attempts: primary first, then the configured fallback (if
-        # any) on a RETRYABLE failure only — 413 (request too large), 429
-        # (rate limit), 5xx, or a network/timeout error. Auth/validation
-        # errors (400/401/403/404) are not retried: a different provider
-        # won't fix a bad key or a malformed request.
-        fallback_cfg = _llm_fallback_config(cfg)
+        # Provider attempts: primary first, then the full fallback ladder
+        # (same-provider model, then cross-provider). Retryable failures
+        # (413/429/5xx/timeout) walk the ladder. Auth/validation 401/403/404
+        # and generic 400s are not retried. Kimi conversation-shape 400s
+        # (orphaned tool_call_id / tokenization) ARE retried, skipping any
+        # remaining same-provider hop — another Moonshot model 400s the
+        # same way; Groq is the recovery.
         attempts = [(cfg, api_key, model)]
-        if fallback_cfg:
-            fb_key = os.getenv(fallback_cfg["env_key"]) if fallback_cfg["env_key"] else ""
-            attempts.append((fallback_cfg, fb_key, fallback_cfg["default_model"]))
+        for fb in _llm_fallback_ladder(cfg):
+            fb_key = os.getenv(fb["env_key"]) if fb.get("env_key") else ""
+            attempts.append((fb, fb_key, fb["default_model"]))
 
         def _is_retryable(status: int) -> bool:
             return status in (408, 413, 429) or status >= 500
@@ -4898,8 +5076,13 @@ class Agent:
             return "auto"
 
         last_error: dict[str, Any] = {"status": "error", "error": "LLM call failed"}
+        skip_providers: set[str] = set()
         for attempt_idx, (a_cfg, a_key, a_model) in enumerate(attempts):
             is_last = attempt_idx == len(attempts) - 1
+            if a_cfg.get("provider") in skip_providers:
+                if is_last:
+                    return last_error
+                continue
             payload["model"] = a_model
             # Per-attempt like tool_choice: a fallback to a different provider
             # must get that provider's accepted temperature (kimi -> 1, others ->
@@ -5020,9 +5203,20 @@ class Agent:
                         "(json.JSONDecodeError, KeyError, TypeError)", exc_info=True,
                     )
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
-                if (_is_retryable(r.status_code) or tool_use_failed_unrecovered) and not is_last:
-                    reason = "tool_use_failed (prose)" if tool_use_failed_unrecovered else f"HTTP {r.status_code}"
-                    _LOG.warning("llm: %s %s — falling back to %s", a_cfg["provider"], reason, attempts[attempt_idx + 1][0]["provider"])
+                shape_400 = r.status_code == 400 and _http_400_is_retryable(body)
+                if shape_400:
+                    skip_providers.add(str(a_cfg.get("provider") or ""))
+                if (_is_retryable(r.status_code) or tool_use_failed_unrecovered or shape_400) and not is_last:
+                    reason = (
+                        "tool_use_failed (prose)" if tool_use_failed_unrecovered
+                        else ("conversation-shape 400" if shape_400 else f"HTTP {r.status_code}")
+                    )
+                    nxt_provider = next(
+                        (c[0].get("provider") for c in attempts[attempt_idx + 1:]
+                         if c[0].get("provider") not in skip_providers),
+                        attempts[attempt_idx + 1][0]["provider"],
+                    )
+                    _LOG.warning("llm: %s %s — falling back to %s", a_cfg["provider"], reason, nxt_provider)
                     continue
                 # No fallback taken (non-retryable status, or this was the last
                 # provider): this error ENDS the turn. A silently-returned 4xx

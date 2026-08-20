@@ -245,6 +245,99 @@ async def test_a_non_retryable_status_does_not_fall_back(monkeypatch, http, stat
     assert "kimi" in result["error"], "the failing provider is not named in the error"
 
 
+_PAIRING_400 = (
+    "Invalid request: an assistant message with 'tool_calls' must be "
+    "followed by tool messages responding to each 'tool_call_id'. "
+    "Missing: fetch_document:3, fetch_document:4"
+)
+
+
+@pytest.mark.asyncio
+async def test_kimi_tool_pairing_400_falls_back_to_groq(monkeypatch, http):
+    """Live UI IPC_NEG: Kimi 400'd the orphaned fetch_document ids and the
+    turn died because HTTP 400 was non-retryable. Groq can serve the turn
+    once history is repaired, so this 400 MUST hop."""
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(_Resp(400, text=_PAIRING_400), _Resp(200, _ok_body("recovered")))
+
+    broken = [
+        {"role": "user", "content": "issue the payment certificate"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "fetch_document:1", "type": "function",
+             "function": {"name": "fetch_document", "arguments": "{}"}},
+            {"id": "fetch_document:2", "type": "function",
+             "function": {"name": "fetch_document", "arguments": "{}"}},
+            {"id": "fetch_document:3", "type": "function",
+             "function": {"name": "fetch_document", "arguments": "{}"}},
+            {"id": "fetch_document:4", "type": "function",
+             "function": {"name": "fetch_document", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "fetch_document:1", "name": "fetch_document", "content": "{}"},
+        {"role": "tool", "tool_call_id": "fetch_document:2", "name": "fetch_document", "content": "{}"},
+        {"role": "user", "content": "The router matched NO action."},
+        {"role": "tool", "tool_call_id": "fetch_document:3", "name": "fetch_document", "content": "{}"},
+        {"role": "tool", "tool_call_id": "fetch_document:4", "name": "fetch_document", "content": "{}"},
+    ]
+    result = await _agent()._call_llm(broken, "kimi-test-key")
+
+    assert len(fake.calls) == 2, (
+        f"Kimi tool-pairing 400 did not fall back: {fake.urls}"
+    )
+    assert fake.urls == [KIMI_API_URL, GROQ_API_URL], fake.urls
+    assert result["status"] == "success", result
+    assert result["choice"]["message"]["content"] == "recovered"
+    groq_roles = [m.get("role") for m in fake.calls[1]["payload"]["messages"]]
+    assert groq_roles == [
+        "user", "assistant", "tool", "tool", "tool", "tool", "user"
+    ], groq_roles
+
+
+@pytest.mark.asyncio
+async def test_kimi_tokenization_400_falls_back_to_groq(monkeypatch, http):
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(
+        _Resp(400, text='{"message": "Invalid request: tokenization failed"}'),
+        _Resp(200, _ok_body("recovered")),
+    )
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert len(fake.calls) == 2, fake.urls
+    assert result["status"] == "success", result
+
+
+@pytest.mark.asyncio
+async def test_kimi_pairing_400_skips_same_provider_model_and_uses_groq(
+        monkeypatch, http):
+    """KIMI_FALLBACK_MODEL is another Moonshot hop — it 400s the same
+    pairing error. Skip it and take Groq."""
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    monkeypatch.setenv("KIMI_FALLBACK_MODEL", "moonshot-v1-128k")
+    fake = http(_Resp(400, text=_PAIRING_400), _Resp(200, _ok_body("recovered")))
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert fake.urls == [KIMI_API_URL, GROQ_API_URL], fake.urls
+    assert fake.models[1] != "moonshot-v1-128k", fake.models
+    assert result["status"] == "success", result
+
+
+@pytest.mark.asyncio
+async def test_generic_kimi_400_still_does_not_fall_back(monkeypatch, http):
+    """The fence still holds: a junk 400 is not a reason to burn Groq."""
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(_Resp(400, text="bad request"), _Resp(200, _ok_body("should never run")))
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert len(fake.calls) == 1, fake.urls
+    assert result["status"] == "error", result
+
+
 @pytest.mark.asyncio
 async def test_a_timeout_falls_back(monkeypatch, http):
     """The Kimi-primary failure mode with a name: K2 is a slow reasoning model
@@ -772,6 +865,17 @@ def test_fallback_config_resolves_ollama_with_url_normalisation(monkeypatch):
     cfg = _llm_fallback_config({"provider": "kimi"})
     assert cfg is not None and cfg["provider"] == "ollama"
     assert cfg["url"].endswith("/v1/chat/completions"), cfg["url"]
+
+
+def test_fallback_ladder_keeps_groq_when_kimi_model_fallback_is_set(monkeypatch):
+    from app.agents.runtime import _llm_fallback_ladder
+
+    monkeypatch.setenv("KIMI_FALLBACK_MODEL", "moonshot-v1-128k")
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test-key")
+    ladder = _llm_fallback_ladder({"provider": "kimi", "default_model": "kimi-k2.6"})
+    assert [c["provider"] for c in ladder] == ["kimi", "groq"], ladder
+    assert ladder[0]["default_model"] == "moonshot-v1-128k"
 
 
 # ── llm_client.complete(): the orchestrator intent path ─────────────────
