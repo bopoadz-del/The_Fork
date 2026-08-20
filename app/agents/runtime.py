@@ -474,6 +474,12 @@ def _file_tool_hint(messages: list, project_id: str | None,
                     f"Call the {tool} tool with file_path='{name}' -- it is "
                     "built for exactly this file type."
                 )
+            if os.path.splitext(name)[1].lower() in _TEXT_PREDISPATCH_EXTS:
+                return (
+                    f" The project file '{name}' EXISTS. Call fetch_document "
+                    f"with filename='{name}' and quote unique tokens verbatim. "
+                    "Do not stop after listing the filename."
+                )
     return ""
 
 
@@ -490,6 +496,8 @@ _FILE_PREDISPATCH_EXTS = {
     ".dxf": "drawing_qto",
     ".dwg": "drawing_qto",
 }
+# Plain-text specs have no block; fetch_document is the synthetic reader.
+_TEXT_PREDISPATCH_EXTS = {".txt", ".md"}
 # PDF drawings share the .pdf extension with specs/contracts. Only
 # pre-dispatch drawing_qto when the turn is actually a take-off.
 _PDF_QTO_HINT = re.compile(
@@ -521,10 +529,13 @@ async def _predispatch_file_tool(
         from app.core import projects as _projects
         docs = _projects.list_documents(project_id) or []
         target = None
+        text_target = None
         for d in docs:
             name = (d.get("original_name") or "").strip()
             if name and name.lower() in low:
                 ext = os.path.splitext(name)[1].lower()
+                if ext in _TEXT_PREDISPATCH_EXTS and text_target is None:
+                    text_target = name
                 tool = _FILE_PREDISPATCH_EXTS.get(ext)
                 if (
                     tool is None
@@ -535,6 +546,31 @@ async def _predispatch_file_tool(
                 if tool and tool in agent.allowed_blocks:
                     target = (name, tool)
                     break
+        if text_target and not target:
+            content, doc, err = _fetch_document_content(project_id, "", text_target)
+            if err or not content:
+                return None
+            payload = str((content or {}).get("text") or "")[:6000]
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"PLATFORM PRE-DISPATCH: fetch_document has ALREADY been "
+                    f"run on '{text_target}' because the request names that "
+                    f"file. Its authoritative contents:\n{payload}\n"
+                    "Quote unique tokens from this result verbatim. Do not "
+                    "stop at listing the filename."
+                ),
+            })
+            return {
+                "name": "fetch_document",
+                "ok": True,
+                "predispatched": True,
+                "result": {
+                    "filename": (doc or {}).get("original_name") or text_target,
+                    "content": (content or {}).get("text"),
+                    "truncated": (content or {}).get("truncated"),
+                },
+            }
         if not target:
             return None
         name, tool = target
@@ -1455,6 +1491,22 @@ _INTENT_TOOL_MAP = (
       "tender evaluation", "evaluate tenders", "score the tenders", "bid evaluation",
       "risk score", "probability and impact"), "construction_calc"),
 )
+
+
+def _message_wants_named_calculator(text: str) -> bool:
+    """True when the turn is a registered ``construction_calc``, not a deliverable.
+
+    Live F5: "interim payment certificate gross 750000 with 5 percent
+    retention" was classified as ``payment_certificate``, rerouted to
+    heavy-reasoning, then predefined intercept ran the container action with
+    empty params. Named calculators stay on the requested agent so
+    ``construction_calc`` remains the path.
+    """
+    low = (text or "").lower()
+    for phrases, tool in _INTENT_TOOL_MAP:
+        if tool == "construction_calc" and any(p in low for p in phrases):
+            return True
+    return _looks_like_self_contained_calculation(text)
 
 
 # A question that carries its OWN numbers is arithmetic, not a document lookup.
@@ -5995,6 +6047,15 @@ async def select_agent_for_message(
             info["final"] = sc.name
             info["reason"] = "self_coding_requested"
             return sc, info
+
+    # Named construction_calc questions must not be stolen by a keyword
+    # deliverable (payment_certificate, resource_histogram, …). Clear
+    # ``action`` so the agent-chat predefined intercept cannot run the
+    # container with empty params. Stay on the requested agent.
+    if _message_wants_named_calculator(user_message):
+        info["action"] = None
+        info["reason"] = "named_calculator"
+        return requested_agent, info
 
     if not needs_planning(action, confidence):
         # No existing feature/workflow. A computation with no registered

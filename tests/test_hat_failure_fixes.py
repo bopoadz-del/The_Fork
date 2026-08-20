@@ -399,6 +399,35 @@ def test_named_calculator_stays_on_project_assistant(monkeypatch):
         runtime_module.AGENT_REGISTRY.clear()
 
 
+@requires_construction_kit
+def test_interim_payment_calculator_is_not_stolen_as_ipc(monkeypatch):
+    """Live F5: project-assistant API was rerouted to heavy-reasoning and
+    predefined intercept ran payment_certificate with empty params."""
+    pa = _make_agent("project-assistant")
+    sc = _make_agent("self-coding")
+    heavy = _make_agent("heavy-reasoning")
+    monkeypatch.setattr(runtime_module, "_SMART_ORCH_BLOCK_CACHE", None)
+    runtime_module.AGENT_REGISTRY.clear()
+    runtime_module.AGENT_REGISTRY["project-assistant"] = pa
+    runtime_module.AGENT_REGISTRY["self-coding"] = sc
+    runtime_module.AGENT_REGISTRY["heavy-reasoning"] = heavy
+    try:
+        final, routing = _run(select_agent_for_message(
+            "Interim payment certificate gross 750000 with 5 percent retention. "
+            "Net payable? Use the registered interim payment calculator.",
+            pa,
+        ))
+        assert final is pa, routing
+        assert routing["final"] == "project-assistant"
+        assert routing["action"] is None
+        assert routing["reason"] == "named_calculator"
+        assert runtime_module._message_wants_named_calculator(
+            "Interim payment certificate gross 750000 with 5 percent retention."
+        )
+    finally:
+        runtime_module.AGENT_REGISTRY.clear()
+
+
 def test_unknown_calc_nudge_is_a_single_self_coding_handoff():
     agent = Agent(
         name="project-assistant",

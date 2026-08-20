@@ -87,3 +87,29 @@ async def test_kill_switch_disables_predispatch(monkeypatch):
     monkeypatch.setenv("AGENT_FILE_PREDISPATCH", "0")
     msgs = [{"role": "user", "content": "census of qa_building.ifc"}]
     assert await runtime._predispatch_file_tool(_agent(), msgs, "p1") is None
+
+
+@pytest.mark.asyncio
+async def test_named_txt_is_predispatched_via_fetch_document(monkeypatch):
+    import app.core.projects as projects_mod
+    monkeypatch.setattr(
+        projects_mod, "list_documents",
+        lambda pid: [{"original_name": "ui_khor_grout_spec.txt"}],
+        raising=False,
+    )
+
+    def fake_fetch(pid, doc_id, filename):
+        assert filename == "ui_khor_grout_spec.txt"
+        return (
+            {"text": "TOKEN UI-KHOR-GROUT-TOKEN-88421", "truncated": False, "source": "file"},
+            {"original_name": filename, "id": "d1"},
+            None,
+        )
+
+    monkeypatch.setattr(runtime, "_fetch_document_content", fake_fetch)
+    msgs = [{"role": "user",
+             "content": "Find ui_khor_grout_spec.txt. Quote the unique token."}]
+    rec = await runtime._predispatch_file_tool(_agent(blocks=()), msgs, "p1")
+    assert rec and rec["predispatched"] and rec["name"] == "fetch_document"
+    assert "UI-KHOR-GROUT-TOKEN-88421" in msgs[-1]["content"]
+    assert "PLATFORM PRE-DISPATCH" in msgs[-1]["content"]
