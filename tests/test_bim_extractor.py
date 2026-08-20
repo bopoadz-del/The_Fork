@@ -109,10 +109,18 @@ def test_extracts_elements_from_ifc2x3_sample():
     assert storey_names == {"Ground Floor", "Level 1"}
 
 
+def test_clash_off_by_default_omits_aabb_report():
+    """Leftover-hat L2: counting walls must not run the geom clash pass."""
+    result = _run({"file_path": FIXTURE})
+    assert result["status"] == "success"
+    assert result.get("clash_report") in ({}, None)
+    assert result["quantities"]["walls"]["count"] == 8
+
+
 def test_clash_report_carries_operator_disclaimer():
     """Operator-locked text. Chat must show this on every clash response so
     pilot users don't read AABB output as Navisworks-grade precision."""
-    result = _run({"file_path": FIXTURE})
+    result = _run({"file_path": FIXTURE}, {"run_clash_detection": True})
     assert result["status"] == "success"
     clash = result["clash_report"]
     assert "detection_method_disclaimer" in clash

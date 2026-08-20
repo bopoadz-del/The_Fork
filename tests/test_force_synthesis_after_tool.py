@@ -94,6 +94,23 @@ def test_force_synthesis_after_deliverable_tool(monkeypatch):
     assert any(e.get("type") == "token" for e in events)
 
 
+def test_empty_sympy_metadata_does_not_force_synthesis():
+    """Leftover-hat L7: sympy with no boq_data returns formula metadata only.
+    That must NOT disarm tools, or formula_executor_v2 never runs."""
+    from app.agents.runtime import _should_force_synthesis
+    rec = {
+        "name": "sympy_reasoning",
+        "ok": True,
+        "result": {
+            "status": "success",
+            "variances": [],
+            "cost_impacts": [],
+            "formulas": {"variance_pct": "x"},
+        },
+    }
+    assert _should_force_synthesis(rec) is False
+
+
 def test_search_result_does_not_force_synthesis(monkeypatch):
     """A search result is exploratory — it must NOT force synthesis, so the
     model can keep working (2nd call still has tools)."""

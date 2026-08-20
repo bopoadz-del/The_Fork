@@ -143,7 +143,9 @@ async def test_ifc_planted_clash_detected_and_distant_wall_clean(tmp_path):
     from app.blocks.bim_extractor import BIMExtractorBlock
 
     path = _make_ifc(tmp_path)
-    result = await BIMExtractorBlock().process({"file_path": path})
+    result = await BIMExtractorBlock().process(
+        {"file_path": path}, {"run_clash_detection": True}
+    )
     assert result.get("status") == "success", result
 
     report = result.get("clash_report") or {}

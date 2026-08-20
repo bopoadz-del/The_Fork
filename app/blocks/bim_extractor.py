@@ -3,6 +3,7 @@
 import logging
 import os
 import math
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 
@@ -61,7 +62,8 @@ class BIMExtractorBlock(UniversalBlock):
 
     default_config = {
         "extract_properties": True,
-        "run_clash_detection": True,
+        "run_clash_detection": False,
+        "clash_timeout_s": 8.0,
         "clash_tolerance_mm": 10.0,
         "max_elements": 10000,
     }
@@ -155,7 +157,10 @@ class BIMExtractorBlock(UniversalBlock):
 
         max_el = int(params.get("max_elements", self.config.get("max_elements", 10000)))
         extract_props = params.get("extract_properties", self.config.get("extract_properties", True))
-        run_clash = params.get("run_clash_detection", self.config.get("run_clash_detection", True))
+        run_clash = params.get(
+            "run_clash_detection",
+            self.config.get("run_clash_detection", False),
+        )
 
         (
             building_elements,
@@ -460,7 +465,12 @@ class BIMExtractorBlock(UniversalBlock):
 
         boxes: List[Tuple[Dict, Tuple[float, float, float, float, float, float]]] = []
         skipped_no_geom = 0
+        deadline = time.monotonic() + float(self.config.get("clash_timeout_s", 8.0))
+        timed_out = False
         for el in elements[:elem_cap]:
+            if time.monotonic() > deadline:
+                timed_out = True
+                break
             ifc_el = self._lookup_ifc_element(model, el)
             if ifc_el is None:
                 skipped_no_geom += 1
@@ -525,6 +535,7 @@ class BIMExtractorBlock(UniversalBlock):
             "elements_analyzed": len(boxes),
             "elements_without_geometry": skipped_no_geom,
             "pair_cap_reached": len(clashes) >= pair_cap,
+            "timed_out": timed_out,
             "note": (
                 "AABB overlap is a coarse-pass: it catches every real clash "
                 "but may flag false positives for adjacent elements that touch "

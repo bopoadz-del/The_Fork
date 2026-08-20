@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from typing import Any, Dict, Optional, Tuple
 
 from app.core.universal_base import UniversalBlock
@@ -264,6 +265,125 @@ def _infer_metric(value: Any, unit: Optional[str], ctx: Dict[str, Any]) -> Optio
         return "percent"
 
     return None
+
+
+_EN_SMALL = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30,
+    "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+    "ninety": 90,
+}
+_EN_SCALES = {"hundred": 100, "thousand": 1_000, "million": 1_000_000}
+_EN_WORDS = set(_EN_SMALL) | set(_EN_SCALES) | {"and"}
+
+
+def _en_words_to_int(words: list[str]) -> Optional[float]:
+    if not words:
+        return None
+    total = 0
+    current = 0
+    saw = False
+    for w in words:
+        if w == "and":
+            continue
+        if w in _EN_SMALL:
+            current += _EN_SMALL[w]
+            saw = True
+        elif w == "hundred":
+            current = (current or 1) * 100
+            saw = True
+        elif w in _EN_SCALES:
+            current = (current or 1) * _EN_SCALES[w]
+            total += current
+            current = 0
+            saw = True
+        else:
+            return None
+    return float(total + current) if saw else None
+
+
+def _digitize_english_quantities(claim: str) -> str:
+    """Rewrite 'forty metres' / 'fifty millimetre' as '40 metres' / '50 millimetre'."""
+    tokens = re.findall(r"[A-Za-z]+|[\d,.]+|[^\sA-Za-z\d]", claim)
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        run: list[str] = []
+        j = i
+        while j < len(tokens) and tokens[j].lower() in _EN_WORDS:
+            run.append(tokens[j].lower())
+            j += 1
+        parsed = _en_words_to_int(run) if run else None
+        if parsed is not None:
+            out.append(str(int(parsed) if parsed == int(parsed) else parsed))
+            i = j
+            continue
+        out.append(tokens[i])
+        i += 1
+    return " ".join(out)
+
+
+def _lengths_m_from_claim(claim: str) -> list[float]:
+    """Lengths in metres extracted from a prose claim."""
+    out: list[float] = []
+    for m in re.finditer(
+        r"(\d[\d,]*(?:\.\d+)?)\s*-?\s*"
+        r"(millimetres?|millimeters?|mm|centimetres?|centimeters?|cm|"
+        r"metres?|meters?|m)\b",
+        claim,
+        re.IGNORECASE,
+    ):
+        v = float(m.group(1).replace(",", ""))
+        u = m.group(2).lower()
+        if u.startswith("mm") or "milli" in u:
+            out.append(v / 1000.0)
+        elif u.startswith("cm") or "centi" in u:
+            out.append(v / 100.0)
+        else:
+            out.append(v)
+    return out
+
+
+def _check_physical_claim(claim: str) -> Dict[str, Any]:
+    """Physical red flags in an unstructured claim (no single `value`).
+
+    Leftover-hat L4: a 40 m office-floor span on a 50 mm steel I-section.
+    Span/depth > 50 is not a real beam; flag Physical even when the caller
+    never supplied a numeric payload.
+    """
+    claim = _digitize_english_quantities(claim)
+    lengths = _lengths_m_from_claim(claim)
+    positives = [x for x in lengths if x > 0]
+    if len(positives) >= 2:
+        span, depth = max(positives), min(positives)
+        if span / depth > 50:
+            return {
+                "pass": False,
+                "reason": (
+                    f"span/depth {span / depth:.0f}:1 "
+                    f"({span:g} m / {depth:g} m) is physically implausible "
+                    "for a beam or floor member"
+                ),
+            }
+    udl = re.search(
+        r"(\d[\d,]*(?:\.\d+)?)\s*(kN/m|kn/m|kilonewtons?\s+per\s+metre)",
+        claim,
+        re.I,
+    )
+    if udl and lengths:
+        w = float(udl.group(1).replace(",", ""))
+        depth = min(x for x in lengths if x > 0) if any(x > 0 for x in lengths) else 0
+        if depth and depth < 0.15 and w >= 50:
+            return {
+                "pass": False,
+                "reason": (
+                    f"{w:g} kN/m on a {depth*1000:.0f} mm deep section "
+                    "is physically unrealizable"
+                ),
+            }
+    return {"pass": True, "reason": "no physical red-flag in claim text"}
 
 
 def _check_syntactic(value: Any) -> Dict[str, Any]:
@@ -516,6 +636,9 @@ class ValidationPipelineBlock(UniversalBlock):
         value = data.get("value", params.get("value"))
         unit = data.get("unit", params.get("unit"))
         ctx = dict(data.get("context") or params.get("context") or {})
+        claim = data.get("claim") or data.get("text") or data.get("description") or params.get("claim")
+        if isinstance(input_data, str) and not claim:
+            claim = input_data
 
         # Params can promote slack_factor / strict / currency without
         # forcing every caller to nest them under `context`.
@@ -523,8 +646,46 @@ class ValidationPipelineBlock(UniversalBlock):
             if k not in ctx and k in params:
                 ctx[k] = params[k]
 
-        # Stage 1 — syntactic gates the rest. If the input isn't numeric,
-        # downstream checks can't run cleanly.
+        # Prose claim with no numeric payload: still run Physical on the
+        # extracted lengths. Do NOT skip remaining stages (leftover-hat L4).
+        if value is None and claim:
+            syntactic = {
+                "pass": True,
+                "reason": "prose claim with extractable quantities — no single value required",
+            }
+            physical = _check_physical_claim(str(claim))
+            dimensional = {
+                "pass": True,
+                "reason": "claim units parsed independently — no mixed-unit sum asserted",
+            }
+            empirical = {
+                "pass": True,
+                "reason": "no single metric to band — empirical skipped",
+            }
+            operational = _check_operational(ctx)
+            stages = {
+                "syntactic": syntactic,
+                "dimensional": dimensional,
+                "physical": physical,
+                "empirical": empirical,
+                "operational": operational,
+            }
+            first_failure = next(
+                (name for name, r in stages.items() if not r.get("pass")),
+                None,
+            )
+            fail_n = sum(1 for r in stages.values() if not r.get("pass"))
+            tier = 4 if fail_n >= 2 or (first_failure == "physical") else (3 if first_failure else 2)
+            return {
+                "status": "success",
+                "overall": "fail" if first_failure else "pass",
+                "stages": stages,
+                "first_failure": first_failure,
+                "tier": tier,
+                "claim": str(claim)[:500],
+            }
+
+        # Stage 1 — syntactic gates the rest when there is no claim text.
         syntactic = _check_syntactic(value)
         if not syntactic["pass"]:
             return {

@@ -73,6 +73,16 @@ class TestCostGateGroundsUserFigures:
         out = rt._cost_grounding_gate(answer, None, messages)
         assert out == rt._CG_REFUSAL
 
+    def test_english_number_words_ground_percent_of_product(self):
+        from app.agents.runtime import _cg_grounded_numbers, _cost_grounding_gate
+        messages = [{"role": "user", "content": (
+            "LD cap is ten percent of four million eight hundred thousand"
+        )}]
+        grounded = _cg_grounded_numbers("", messages)
+        assert any(abs(g - 480_000) <= 2400 for g in grounded)
+        answer = "Cap = 480,000 SAR."
+        assert _cost_grounding_gate(answer, None, messages) == answer
+
 
 class TestQ12PaymentPhrasing:
     """Live 2026-08-02 verification: Q2 (guardrail height) now passes via

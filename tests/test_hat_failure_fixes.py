@@ -426,3 +426,31 @@ def test_unknown_calc_nudge_is_a_single_self_coding_handoff():
 def test_self_coding_prompt_caps_formula_executor_at_one_call():
     text = load_agents()["self-coding"].system_prompt.lower()
     assert "exactly once" in text or "exactly ONCE" in load_agents()["self-coding"].system_prompt
+
+
+@requires_construction_kit
+def test_contracts_kernel_computes_pasted_word_numbers():
+    text = load_agents()["contracts-manager"].system_prompt.lower()
+    assert "four million" in text or "number-words" in text
+    assert "do **not** search" in text or "do not search" in text
+
+
+@requires_construction_kit
+def test_validation_kernel_passes_claim_not_null_value():
+    text = load_agents()["validation"].system_prompt
+    assert "Never call `validation_pipeline` with `value: null`" in text
+    assert "{claim:" in text
+
+
+@requires_construction_kit
+def test_heavy_kernel_uses_user_rate_and_expression():
+    text = load_agents()["heavy-reasoning"].system_prompt.lower()
+    assert "user typed" in text or "user's own message" in text
+    assert "expression" in text
+
+
+@requires_construction_kit
+def test_bim_kernel_does_not_rerun_extractor_after_predispatch():
+    text = load_agents()["bim-analyst"].system_prompt.lower()
+    assert "pre-dispatch" in text or "pre-dispatched" in text
+    assert "clash detection is off" in text or "clash" in text
