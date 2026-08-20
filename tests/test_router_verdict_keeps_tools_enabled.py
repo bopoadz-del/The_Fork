@@ -85,6 +85,57 @@ async def test_an_empty_router_match_injects_the_dispatch_correction(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_mid_batch_nudge_does_not_split_tool_results(monkeypatch):
+    """User nudges must wait until every tool_call in the assistant batch
+    has a tool result. Inserting one after fetch_document:2 made Kimi 400
+    Missing fetch_document:3,:4 on the live IPC_NEG turn."""
+    calls = []
+
+    async def fake_call_llm(self, messages, api_key=None, project_id=None,
+                            with_tools=True, user_id=None, exclude_tools=None):
+        calls.append({"messages": [dict(m) for m in messages]})
+        if len(calls) == 1:
+            return {"status": "success", "choice": {"message": {
+                "role": "assistant", "content": "",
+                "tool_calls": [
+                    {"id": "fetch_document:1", "type": "function",
+                     "function": {"name": "smart_orchestrator",
+                                  "arguments": "{}"}},
+                    {"id": "fetch_document:2", "type": "function",
+                     "function": {"name": "smart_orchestrator",
+                                  "arguments": "{}"}},
+                    {"id": "fetch_document:3", "type": "function",
+                     "function": {"name": "smart_orchestrator",
+                                  "arguments": "{}"}},
+                    {"id": "fetch_document:4", "type": "function",
+                     "function": {"name": "smart_orchestrator",
+                                  "arguments": "{}"}},
+                ]}}}
+        return {"status": "success",
+                "choice": {"message": {"role": "assistant", "content": "ok"}}}
+
+    async def fake_run_tool_call(self, tc, **kw):
+        return {"name": "smart_orchestrator",
+                "result": {"status": "success", "matched_actions": [],
+                           "action_queue": ["intelligent_workflow"],
+                           "routing_mode": "keyword"}}
+
+    monkeypatch.setattr(rt.Agent, "_call_llm", fake_call_llm)
+    monkeypatch.setattr(rt.Agent, "_run_tool_call", fake_run_tool_call)
+    monkeypatch.delenv("AGENT_FORCE_SYNTHESIS", raising=False)
+    agent = rt.Agent(name="smart-orchestrator", description="", system_prompt="route",
+                    allowed_blocks=["smart_orchestrator"])
+    await agent.chat("issue the payment certificate", api_key="test-key")
+    roles = [(m.get("role"), m.get("tool_call_id")) for m in calls[1]["messages"]]
+    # After the assistant tool-call message: four tools, THEN the nudge.
+    assistant_idx = next(i for i, r in enumerate(roles) if r[0] == "assistant")
+    following = roles[assistant_idx + 1:]
+    assert [r[0] for r in following[:4]] == ["tool", "tool", "tool", "tool"]
+    assert all(r[1] for r in following[:4])
+    assert following[4][0] == "user"
+
+
+@pytest.mark.asyncio
 async def test_a_matched_router_verdict_injects_no_correction(monkeypatch):
     """The nudge is for the empty-match failure mode only."""
     calls = []

@@ -54,7 +54,6 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
 
   // Drive picker state
   const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null)
-  const [driveStatusLoading, setDriveStatusLoading] = useState(false)
   const [driveStatusError, setDriveStatusError] = useState<string | null>(null)
   const [folderQuery, setFolderQuery] = useState('')
   const [folderResults, setFolderResults] = useState<DriveFile[]>([])
@@ -73,23 +72,25 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
   }, [onClose])
 
   // Load Drive status lazily when the user switches to the Drive tab.
-  // The driveStatusLoading flag gates the UI between three states:
-  //   * loading=true                 → "Checking Drive…" placeholder
-  //   * driveStatusError truthy      → inline error + Retry button
-  //   * driveStatus loaded           → picker OR not-connected hint
-  // Without this, a null driveStatus rendered as empty space under the
-  // "Drive folder" label (see PR D bridge test) which read as broken.
+  // Loading is derived (null status + no error + drive mode) so the
+  // effect does not setState before the fetch.
+  const driveStatusLoading = mode === 'drive' && driveStatus === null && driveStatusError === null
+
   useEffect(() => {
-    if (mode !== 'drive' || driveStatus !== null || driveStatusLoading) return
-    setDriveStatusLoading(true)
-    setDriveStatusError(null)
+    if (mode !== 'drive') return
+    if (driveStatus !== null || driveStatusError !== null) return
+    let cancelled = false
     apiGet<DriveStatus>('/v1/drive/status')
-      .then((s) => setDriveStatus(s))
-      .catch((err) => setDriveStatusError(
-        err instanceof Error ? err.message : 'Drive status check failed.',
-      ))
-      .finally(() => setDriveStatusLoading(false))
-  }, [mode, driveStatus, driveStatusLoading])
+      .then((s) => { if (!cancelled) setDriveStatus(s) })
+      .catch((err) => {
+        if (!cancelled) {
+          setDriveStatusError(
+            err instanceof Error ? err.message : 'Drive status check failed.',
+          )
+        }
+      })
+    return () => { cancelled = true }
+  }, [mode, driveStatus, driveStatusError])
 
   function retryDriveStatus() {
     setDriveStatusError(null)
@@ -122,10 +123,19 @@ export default function NewProjectModal({ onClose, onCreated }: NewProjectModalP
   // Auto-load top-level folders when entering the Drive tab + connected.
   useEffect(() => {
     if (mode !== 'drive' || !driveStatus?.connected) return
-    if (folderResults.length === 0 && !browsing) {
-      void searchFolders()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false
+    void (async () => {
+      try {
+        const resp = await apiGet<{ files: DriveFile[] }>('/v1/drive/files?folders_only=true')
+        if (cancelled) return
+        setFolderResults(resp.files.filter((f) => f.is_folder))
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Drive folder search failed.')
+        }
+      }
+    })()
+    return () => { cancelled = true }
   }, [mode, driveStatus?.connected])
 
   const canSubmit = useMemo(() => {

@@ -18,7 +18,7 @@
  * stripped per operator brief — post-pilot complexity, not needed for
  * the the client pilot. Tabs + expand stay.
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { ArrowUpRight, X } from 'lucide-react'
 import DocumentPreview from '../documents/DocumentPreview'
 import './RightPanel.css'
@@ -72,21 +72,17 @@ export default function RightPanel({
   const [tab, setTab] = useState<TabKey>('sources')
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
 
-  // Default the picker to the most recently added document, and keep the
-  // selection valid as the document list changes (e.g. an upload or delete).
-  useEffect(() => {
-    if (documents.length === 0) {
-      setSelectedDocId(null)
-      return
-    }
-    setSelectedDocId((prev) =>
-      prev && documents.some((d) => d.id === prev) ? prev : documents[0].id,
-    )
-  }, [documents])
+  // Derive a valid picker id during render. Storing a stale id after
+  // delete/upload is fine — the resolved value follows the list without
+  // a synchronizing effect.
+  const resolvedDocId =
+    selectedDocId && documents.some((d) => d.id === selectedDocId)
+      ? selectedDocId
+      : (documents[0]?.id ?? null)
 
   const selectedDoc = useMemo(
-    () => documents.find((d) => d.id === selectedDocId) ?? null,
-    [documents, selectedDocId],
+    () => documents.find((d) => d.id === resolvedDocId) ?? null,
+    [documents, resolvedDocId],
   )
 
   function renderPreviewTab(kind: 'sheet' | 'schedule' | 'chart') {
@@ -100,7 +96,7 @@ export default function RightPanel({
               <span className="right-panel__picker-label">Preview</span>
               <select
                 className="right-panel__picker-select"
-                value={selectedDocId ?? ''}
+                value={resolvedDocId ?? ''}
                 onChange={(e) => setSelectedDocId(e.target.value)}
                 aria-label="Select a document to preview"
               >

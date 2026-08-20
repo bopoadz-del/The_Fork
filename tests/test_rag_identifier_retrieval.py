@@ -120,6 +120,12 @@ def test_extract_identifiers_excludes_measurement_units():
         assert extract_query_identifiers(unit_q) == [], unit_q
     for unit in ("kg/cm2", "n/mm2", "kn/m3", "m3", "cm2", "mm2"):
         assert _looks_like_unit(unit), unit
+    for unit in ("aed/m2", "usd/ft2", "sar/m3"):
+        assert _looks_like_unit(unit), unit
+    assert extract_query_identifiers(
+        "Stay on self-coding. Convert 1250 AED/m2 to USD/ft2 using 3.6725 AED "
+        "= 1 USD and 1 m2 = 10.7639 ft2."
+    ) == []
 
     # ...but real document reference codes are UNTOUCHED (identifier lane intact).
     for code in ("prc-501", "ip-inf-054", "d999.46", "ncr-007", "12-a", "13.1"):

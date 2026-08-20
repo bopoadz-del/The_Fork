@@ -59,3 +59,9 @@ def test_hyphenated_digit_pairs_keep_matching():
     plausible document codes, deliberately NOT excluded."""
     ids = extract_query_identifiers("refer to sheet 054-0009 in the pack")
     assert any("054-0009" in i for i in ids)
+
+
+def test_currency_rate_units_are_not_document_references():
+    assert extract_query_identifiers(
+        "Convert 1250 AED/m2 to USD/ft2 using 3.6725 AED = 1 USD"
+    ) == []

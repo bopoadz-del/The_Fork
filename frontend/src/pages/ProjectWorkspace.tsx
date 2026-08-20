@@ -455,9 +455,35 @@ interface DrivePanelProps {
   onDocumentAdded: (doc: DocumentRecord) => void
 }
 
+const DRIVE_OAUTH_ERRORS: Record<string, string> = {
+  denied: 'Google consent was declined. Try connecting again.',
+  expired_state: 'The connection attempt expired. Try connecting again.',
+  invalid_state: 'The connection attempt could not be verified. Try connecting again.',
+  missing_code: 'Google returned no authorization code. Try connecting again.',
+  exchange_failed: 'Google rejected the connection. Try again or check the Drive configuration.',
+}
+
+function driveOauthErrorFromWindow(): string | null {
+  if (typeof window === 'undefined') return null
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('drive') !== 'error') return null
+  return DRIVE_OAUTH_ERRORS[params.get('reason') ?? '']
+    ?? 'Google Drive connection failed. Try again.'
+}
+
+function stripDriveOauthParams(): void {
+  if (typeof window === 'undefined') return
+  const params = new URLSearchParams(window.location.search)
+  if (!params.has('drive') && !params.has('reason')) return
+  params.delete('drive')
+  params.delete('reason')
+  const rest = params.toString()
+  window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''))
+}
+
 function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
   const [status, setStatus] = useState<DriveStatus | null>(null)
-  const [statusError, setStatusError] = useState<string | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(driveOauthErrorFromWindow)
   const [connecting, setConnecting] = useState(false)
   const [query, setQuery] = useState('')
   const [driveFiles, setDriveFiles] = useState<DriveFile[]>([])
@@ -512,25 +538,10 @@ function DrivePanel({ projectId, onDocumentAdded }: DrivePanelProps) {
   }, [])
 
   // Surface the OAuth round-trip outcome (?drive=connected / ?drive=error)
-  // the callback redirect appends, then strip it from the URL.
+  // the callback redirect appends, then strip it from the URL. The error
+  // string is read during initial state so this effect only touches history.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const outcome = params.get('drive')
-    if (!outcome) return
-    if (outcome === 'error') {
-      const reasons: Record<string, string> = {
-        denied: 'Google consent was declined. Try connecting again.',
-        expired_state: 'The connection attempt expired. Try connecting again.',
-        invalid_state: 'The connection attempt could not be verified. Try connecting again.',
-        missing_code: 'Google returned no authorization code. Try connecting again.',
-        exchange_failed: 'Google rejected the connection. Try again or check the Drive configuration.',
-      }
-      setStatusError(reasons[params.get('reason') ?? ''] ?? 'Google Drive connection failed. Try again.')
-    }
-    params.delete('drive')
-    params.delete('reason')
-    const rest = params.toString()
-    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''))
+    stripDriveOauthParams()
   }, [])
 
   async function handleConnect() {
@@ -738,8 +749,14 @@ type WorkspaceState =
 
 export default function ProjectWorkspace() {
   const { id } = useParams<{ id: string }>()
+  return <ProjectWorkspaceInner key={id ?? 'none'} id={id} />
+}
 
-  const [wsState, setWsState] = useState<WorkspaceState>({ tag: 'loading' })
+function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
+
+  const [wsState, setWsState] = useState<WorkspaceState>(
+    () => (id ? { tag: 'loading' } : { tag: 'not-found' }),
+  )
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
@@ -798,18 +815,8 @@ export default function ProjectWorkspace() {
   // ── Load project ──────────────────────────────────────────────────────────
 
   useEffect(() => {
-    // Abort any in-flight stream and reset chat when the project id changes
-    abortRef.current?.abort()
-    setMessages([])
-    setActiveConversationId(null)
-    setConversationList([])
-
-    if (!id) {
-      setWsState({ tag: 'not-found' })
-      return
-    }
+    if (!id) return
     refreshConversations()
-    setWsState({ tag: 'loading' })
     let cancelled = false
     void (async () => {
       try {
@@ -1209,7 +1216,7 @@ export default function ProjectWorkspace() {
       // sidebar CHAT HISTORY list so the new session appears named.
       refreshConversations()
     }
-  }, [id, conversationId, streaming, refreshConversations])
+  }, [id, conversationId, streaming, refreshConversations, pinnedAgent])
 
   // ── Render ────────────────────────────────────────────────────────────────
 

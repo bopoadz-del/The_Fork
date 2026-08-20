@@ -2263,6 +2263,10 @@ class ConstructionContainer(
             "jetson_dispatch": self.jetson_dispatch,
             "formula_execute": self.formula_execute,
             "bim_extract": self.bim_extract,
+            # LLM often names the standalone block; the container action is
+            # bim_extract. Live leftover-hat L2 UI: "bim_extractor is not a
+            # known action" then stall.
+            "bim_extractor": self.bim_extract,
             # Week-4 Intelligence Blocks
             "learn": self.learn,
             "benchmark_lookup": self.benchmark_lookup,
@@ -2367,6 +2371,7 @@ class ConstructionContainer(
             "jetson_dispatch": self.jetson_dispatch,
             "formula_execute": self.formula_execute,
             "bim_extract": self.bim_extract,
+            "bim_extractor": self.bim_extract,
             # Week-4 Intelligence Blocks
             "learn": self.learn,
             "benchmark_lookup": self.benchmark_lookup,
