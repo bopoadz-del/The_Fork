@@ -13,6 +13,8 @@ formulas alongside numbers so a user can see exactly what was computed.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
+import ast
+import re
 from app.core.universal_base import UniversalBlock
 
 # Symbolic expressions are built ON FIRST USE, then cached for the process.
@@ -174,6 +176,10 @@ class SymPyReasoningBlock(UniversalBlock):
         params = params or {}
         data = input_data if isinstance(input_data, dict) else {}
 
+        expr = data.get("expression") or data.get("expr") or params.get("expression") or params.get("expr")
+        if expr:
+            return self._eval_free_expression(str(expr))
+
         boq_data = data.get("boq_data", [])
         drawing_data = data.get("drawing_data", {})
         spec_data = data.get("spec_data", {})
@@ -210,6 +216,93 @@ class SymPyReasoningBlock(UniversalBlock):
             # block isn't doing something different from what its name suggests.
             "formulas": dict(_symbolic()["strings"]),
         }
+
+    def _eval_free_expression(self, expr: str) -> Dict:
+        """Evaluate a user-supplied arithmetic expression (18.4 - 16) * 2850.
+
+        Only digits and + - * / ** () . are allowed. This is the leftover-hat
+        L7 path: heavy-reasoning asked sympy for 18.4−16 then ×2850 and got
+        empty variance metadata because boq_data was missing.
+        """
+        cleaned = expr.replace(",", "").replace("×", "*").replace("−", "-").strip()
+        if not cleaned or not re.fullmatch(r"[0-9+\-*/().eE\s]+", cleaned):
+            return {
+                "status": "error",
+                "error": (
+                    "expression must be arithmetic digits and + - * / ** () only"
+                ),
+                "expression": expr,
+            }
+        try:
+            tree = ast.parse(cleaned, mode="eval")
+        except SyntaxError as e:
+            return {"status": "error", "error": f"invalid expression: {e}", "expression": expr}
+        allowed = (
+            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Load,
+            ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
+            ast.USub, ast.UAdd, ast.FloorDiv,
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, allowed):
+                return {
+                    "status": "error",
+                    "error": f"disallowed syntax: {type(node).__name__}",
+                    "expression": expr,
+                }
+        try:
+            value = float(self._eval_ast_number(tree))
+        except Exception as e:
+            return {"status": "error", "error": str(e), "expression": expr}
+        # Binary floats like (18.4-16)*2850 land on 6839.999999999996;
+        # round through a short significant-figure form so the tool
+        # result is the 6840 the user asked for.
+        value = float(format(value, ".12g"))
+        return {
+            "status": "success",
+            "expression": cleaned,
+            "value": value,
+            "variances": [],
+            "cost_impacts": [],
+            "formulas": {"expression": cleaned},
+        }
+
+    @staticmethod
+    def _eval_ast_number(node: ast.AST) -> float:
+        """Walk a vetted AST; no eval/exec — security_scan forbids both."""
+        if isinstance(node, ast.Expression):
+            return SymPyReasoningBlock._eval_ast_number(node.body)
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                raise ValueError("non-numeric constant")
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp):
+            val = SymPyReasoningBlock._eval_ast_number(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return val
+            if isinstance(node.op, ast.USub):
+                return -val
+            raise ValueError("disallowed unary op")
+        if isinstance(node, ast.BinOp):
+            left = SymPyReasoningBlock._eval_ast_number(node.left)
+            right = SymPyReasoningBlock._eval_ast_number(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                if abs(right) > 12 or abs(left) > 1e6:
+                    raise ValueError("exponent out of range")
+                return left ** right
+            raise ValueError("disallowed binary op")
+        raise ValueError(f"disallowed syntax: {type(node).__name__}")
 
     def _compute_variances(
         self, boq_data: List, benchmarks: Dict, threshold: float
