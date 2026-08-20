@@ -89,6 +89,34 @@ def test_leftover_l6_bank_volume_is_self_contained():
     assert _forced_specific_tool(_tail(q), AVAILABLE) == "construction_calc"
 
 
+@pytest.mark.asyncio
+async def test_leftover_l6_predispatch_returns_none_before_listing_docs(monkeypatch):
+    """Line 562: self-contained volume skips file predispatch entirely."""
+    from app.agents import runtime
+
+    called = []
+
+    def _boom(pid):
+        called.append(pid)
+        raise AssertionError("list_documents must not run for leftover L6")
+
+    monkeypatch.setattr("app.core.projects.list_documents", _boom, raising=False)
+    agent = runtime.Agent(
+        name="qa", description="", system_prompt="x",
+        allowed_blocks=["drawing_qto", "construction"],
+    )
+    q = (
+        "Stay on smart-orchestrator. Bank volume of a rectangular trench "
+        "14.5 m long by 3.2 m wide by 1.75 m deep. Start with the "
+        "smart_orchestrator tool then a calculator."
+    )
+    rec = await runtime._predispatch_file_tool(
+        agent, [{"role": "user", "content": q}], "p1",
+    )
+    assert rec is None
+    assert called == []
+
+
 def test_one_dimension_is_not_enough():
     """A single number is usually a reference, not a calculation input."""
     assert not _looks_like_self_contained_calculation("calculate the cost of 5 m3")
