@@ -4282,6 +4282,9 @@ class Agent:
         agent_name = self.name
         token_emitted = False
         terminal_emitted = False  # True once we yield an `end` or `error` event
+        # Tool names seen on the way out, so the synthetic `end` below can
+        # still report them when the inner generator dies before its own end.
+        tools_seen: list[str] = []
 
         # Read knobs at call-time so tests can monkeypatch env. Bad values
         # fall back to safe defaults rather than crashing the stream.
@@ -4379,6 +4382,10 @@ class Agent:
                     event = item
                     if event.get("type") == "token":
                         token_emitted = True
+                    if event.get("type") == "tool_call":
+                        _tn = event.get("tool") or event.get("name")
+                        if _tn and _tn not in tools_seen:
+                            tools_seen.append(_tn)
                     if event.get("type") in ("end", "error"):
                         terminal_emitted = True
                     yield event
@@ -4418,7 +4425,8 @@ class Agent:
             )
             if not token_emitted:
                 yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
-            yield {"type": "end", "iterations": 0, "sources": []}
+            yield {"type": "end", "iterations": 0, "sources": [],
+                   "tools": list(tools_seen)}
 
     async def _chat_stream_impl(
         self,
@@ -4436,6 +4444,19 @@ class Agent:
         """Internal implementation. ``chat_stream`` wraps this with an emit
         guarantee so silent / crashing exits become structured error events."""
         cfg = _llm_config()
+        # Names of the tools this turn actually invoked, in call order.
+        #
+        # Every `end` event carried iterations/model/sources/exports but never
+        # the tools, so a turn that ran formula_executor_v2 arrived at the UI
+        # with the field ABSENT and rendered as tools=[] -- while the answer
+        # prose said "Tool: code". The two disagreed because only the prose had
+        # the information. The TIMING log knew the names all along; the SSE
+        # contract just never carried them.
+        tools_invoked: list[str] = []
+
+        def _note_tool(name: str | None) -> None:
+            if name and name not in tools_invoked:
+                tools_invoked.append(name)
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check. The empty bearer is ignored by Ollama's OAI endpoint.
         if cfg["env_key"]:
@@ -4465,7 +4486,8 @@ class Agent:
                 agent_memory.append_message(conversation_id, "assistant", _UNINDEXED_PROJECT_MESSAGE)
             for chunk in _chunks(_UNINDEXED_PROJECT_MESSAGE, 80):
                 yield {"type": "token", "content": chunk}
-            yield {"type": "end", "iterations": 0, "sources": []}
+            yield {"type": "end", "iterations": 0, "sources": [],
+                   "tools": list(tools_invoked)}
             return
 
         effective_history = list(history or [])
@@ -4527,7 +4549,8 @@ class Agent:
                 agent_memory.append_message(conversation_id, "assistant", answer)
             for chunk in _chunks(answer, 80):
                 yield {"type": "token", "content": chunk}
-            yield {"type": "end", "iterations": 0, "sources": []}
+            yield {"type": "end", "iterations": 0, "sources": [],
+                   "tools": list(tools_invoked)}
             return
 
         # Tool results accumulated this turn — feeds the schedule download offer
@@ -4537,6 +4560,7 @@ class Agent:
         # (leftover L1 timestamped .docx looks like an identifier).
         _pre = await _predispatch_file_tool(self, messages, project_id)
         if _pre:
+            _note_tool(_pre["name"])
             yield {"type": "tool_call", "name": _pre["name"],
                    "predispatched": True}
             yield {"type": "tool_result", "name": _pre["name"], "ok": True,
@@ -4553,7 +4577,8 @@ class Agent:
                 agent_memory.append_message(conversation_id, "assistant", answer)
             for chunk in _chunks(answer, 80):
                 yield {"type": "token", "content": chunk}
-            yield {"type": "end", "iterations": 0, "sources": []}
+            yield {"type": "end", "iterations": 0, "sources": [],
+                   "tools": list(tools_invoked)}
             return
         # Root fix for the tool-loop: RAG context is injected pre-loop, yet the
         # model keeps re-calling search_project_documents when an exact value
@@ -4687,6 +4712,7 @@ class Agent:
                         "type": "end",
                         "iterations": iteration + 1,
                         "model": served_model,
+                        "tools": list(tools_invoked),
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
                         "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
                     }
@@ -4794,6 +4820,7 @@ class Agent:
                         yield {
                             "type": "end",
                             "iterations": iteration + 1,
+                            "tools": list(tools_invoked),
                             "rag_debug": {
                                 "on_response": final_text,
                                 "off_response": off_response,
@@ -4805,6 +4832,7 @@ class Agent:
                         "type": "end",
                         "iterations": iteration + 1,
                         "model": served_model,
+                        "tools": list(tools_invoked),
                         "sources": _build_sources_from_audit(_rag_audit, final_text),
                         "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
                     }
@@ -4827,6 +4855,7 @@ class Agent:
                 # "args_preview" — see frontend ProjectWorkspace.tsx. "name" is
                 # emitted as an ALIAS so a consumer written against the callback
                 # shape reads the tool name instead of silently getting None.
+                _note_tool(fn.get("name"))
                 yield {
                     "type": "tool_call",
                     "tool": fn.get("name"),
@@ -4911,6 +4940,7 @@ class Agent:
             "iterations": MAX_TOOL_ITERATIONS,
             "forced_final": True,
             "model": served_model,
+            "tools": list(tools_invoked),
             "sources": _build_sources_from_audit(_rag_audit, final_text),
             "exports": _build_exports_from_audit(_rag_audit, final_text, stream_tool_results),
         }

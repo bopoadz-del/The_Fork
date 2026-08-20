@@ -131,6 +131,77 @@ def test_clash_report_carries_operator_disclaimer():
     assert "Solibri" in disclaimer
 
 
+def test_clash_pass_actually_reads_geometry():
+    """The fixture must have real shapes, or every clash run is an empty scan.
+
+    Both IFC fixtures shipped with zero IfcProductDefinitionShape entities, so
+    ``create_shape`` failed for all 27 elements and the pass reported
+    ``elements_analyzed=0 / elements_without_geometry=27``. clash_count was
+    always 0 -- not because the model was clean, but because nothing was ever
+    compared. Asserting the analysed count is what stops that reading as a pass.
+    """
+    result = _run({"file_path": FIXTURE}, {"run_clash_detection": True})
+    assert result["status"] == "success", result.get("error")
+    clash = result["clash_report"]
+    assert clash["detection_method"] == "aabb_intersection", (
+        "fell back to the name-duplicate heuristic; ifcopenshell.geom missing?"
+    )
+    assert clash["elements_analyzed"] > 0, clash
+    assert clash["timed_out"] is False, clash
+    # Only IfcSpace + IfcBuildingStorey are intentionally geometry-free.
+    assert clash["elements_without_geometry"] == 4, clash
+
+
+def test_clash_pass_finds_the_planted_pipe_through_wall():
+    """End-to-end proof on a known-bad model: the fixture drives Pipe-Storm-001
+    through Wall-GF-E with 200mm of interpenetration, 20x the 10mm tolerance.
+
+    This is the only cross-category overlap in the fixture, so an exact count
+    of 1 also proves the same-category skip and the tolerance shrink are not
+    manufacturing extra hits.
+    """
+    result = _run({"file_path": FIXTURE}, {"run_clash_detection": True})
+    clash = result["clash_report"]
+    assert clash["clash_count"] == 1, clash["clashes"]
+    hit = clash["clashes"][0]
+    assert {hit["name_a"], hit["name_b"]} == {"Pipe-Storm-001", "Wall-GF-E"}
+    assert {hit["category_a"], hit["category_b"]} == {"pipes", "walls"}
+    assert hit["type"] == "aabb_overlap"
+    assert hit["severity"] == "warning"
+
+
+def test_clash_reports_real_interpenetration_depth():
+    """The planted pipe runs 200mm into the wall, so that is what must be
+    reported -- not a figure derived from how long the pipe happens to be."""
+    result = _run({"file_path": FIXTURE}, {"run_clash_detection": True})
+    hit = result["clash_report"]["clashes"][0]
+    assert hit["overlap_mm"] == pytest.approx(200.0, abs=1.0), hit
+
+
+@pytest.mark.parametrize(
+    "tol_mm, expected",
+    [(10.0, 1), (199.0, 1), (201.0, 0), (500.0, 0)],
+)
+def test_clash_tolerance_brackets_the_planted_overlap(tol_mm, expected):
+    """Tolerance is the minimum interpenetration that counts, so the planted
+    200mm hit must survive just under it and vanish just over it.
+
+    The old test compared each box's min against the other's MAX, which is the
+    near-face-to-far-face distance rather than the overlap depth. Because that
+    grows with the other element's length, this 2.5m pipe survived a 500mm
+    tolerance on a 200mm interpenetration -- tolerance dropped clashes in an
+    order that tracked element size, not severity. Bracketing the real overlap
+    from both sides is what pins the semantics down.
+    """
+    result = _run(
+        {"file_path": FIXTURE},
+        {"run_clash_detection": True, "clash_tolerance_mm": tol_mm},
+    )
+    clash = result["clash_report"]
+    assert clash["tolerance_mm"] == tol_mm
+    assert clash["clash_count"] == expected, clash["clashes"]
+
+
 def test_payload_caps_surface_truncated_flag():
     """The fixture is small so no cap fires â€” verify the truncated flag is
     False, truncation_caps is reported, and quantities_truncated is empty.
