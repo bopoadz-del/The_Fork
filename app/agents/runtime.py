@@ -1928,11 +1928,19 @@ def _cg_english_and_percent_values(text: str) -> list[float]:
             i = j
             continue
         i += 1
-    # "ten percent of four million…" / "10% of 4800000"
+    # "ten percent of four million…" / "10% of 4800000". Restrict both
+    # sides to digits or number-words so "LD cap is ten percent of …"
+    # does not swallow "ld cap is" into the percent (leftover-hat L3).
+    _word = (
+        r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+        r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+        r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+        r"hundred|thousand|million|billion|and)"
+    )
     for m in re.finditer(
-        r"(?P<pct>\d[\d,]*(?:\.\d+)?|[a-z]+(?:\s+[a-z]+){0,6})\s*"
+        rf"(?P<pct>{_CG_NUM}|{_word}(?:\s+{_word}){{0,8}})\s*"
         r"(?:percent|per\s+cent|%)\s+of\s+"
-        r"(?P<base>\d[\d,]*(?:\.\d+)?|[a-z]+(?:\s+[a-z]+){0,8})",
+        rf"(?P<base>{_CG_NUM}|{_word}(?:\s+{_word}){{0,10}})",
         text.lower(),
     ):
         pct_raw, base_raw = m.group("pct"), m.group("base")
