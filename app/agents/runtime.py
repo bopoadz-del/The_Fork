@@ -615,7 +615,27 @@ async def _predispatch_file_tool(
         ok = isinstance(result, dict) and result.get("status") != "error"
         if not ok:
             return None  # fall back to the normal loop + nudges
-        payload = json.dumps(result, default=str)[:6000]
+        # Lead with schema / quantities / clash so the 6k inject cap cannot
+        # drop leftover L2 walls or a clash_report sitting at the tail.
+        if tool == "bim_extractor" and isinstance(result, dict):
+            lead_keys = (
+                "status", "ifc_schema", "element_count", "quantities",
+                "clash_report",
+            )
+            ordered = {k: result[k] for k in lead_keys if k in result}
+            for k, v in result.items():
+                if k not in ordered:
+                    ordered[k] = v
+            result = ordered
+        clash_lead = ""
+        if isinstance(result, dict) and result.get("clash_report"):
+            cr = result["clash_report"]
+            clash_lead = (
+                f"clash_detection_ran=true clash_count="
+                f"{len(cr.get('clashes') or [])} "
+                f"method={cr.get('detection_method')}\n"
+            )
+        payload = clash_lead + json.dumps(result, default=str)[:6000]
         messages.append({
             "role": "user",
             "content": (
@@ -3819,11 +3839,19 @@ class Agent:
                 "sources": [],
             }
 
-        # Fast path: exact reference miss with no RAG context.  Skip the
-        # model/tool loop entirely and return a controlled not-found answer
-        # immediately.  Project facts / document listings are not useful for
-        # confirming a specific absent reference.
-        if _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg):
+        # Deterministic file pre-dispatch BEFORE the RAG-miss short-circuit.
+        # Leftover L1: a timestamped ``khor_waterproofing_spec_….docx`` looks
+        # like an identifier, retrieval misses (file not indexed), and the
+        # canned "could not confirm this reference" used to fire in ~1s
+        # without ever fetching bytes from disk.
+        tool_calls_made: list[dict[str, Any]] = []
+        _pre = await _predispatch_file_tool(self, messages, project_id)
+        if _pre:
+            tool_calls_made.append(_pre)
+
+        # Fast path: exact reference miss with no RAG context. Skip when a
+        # named project file was already fetched/extracted from disk.
+        if not _pre and _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg):
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
@@ -3837,14 +3865,6 @@ class Agent:
                 "messages": messages + [{"role": "assistant", "content": answer}],
                 "sources": [],
             }
-
-        tool_calls_made: list[dict[str, Any]] = []
-        # Deterministic file pre-dispatch (see _predispatch_file_tool): when
-        # the request names a project IFC and this agent holds the extractor,
-        # run it NOW and let the model synthesize from real data.
-        _pre = await _predispatch_file_tool(self, messages, project_id)
-        if _pre:
-            tool_calls_made.append(_pre)
         # Root fix for the tool-loop (mirrors chat_stream): cap explicit
         # search_project_documents calls, then stop offering the tool so the
         # model answers from injected context instead of grinding to the cap.
@@ -4315,10 +4335,21 @@ class Agent:
             yield {"type": "end", "iterations": 0, "sources": []}
             return
 
-        # Fast path: exact reference miss with no RAG context.  Skip the
-        # model/tool loop entirely.  Project facts / document listings are not
-        # useful for confirming a specific absent reference.
-        if _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg):
+        # Tool results accumulated this turn — feeds the schedule download offer
+        # (a generate_wbs call becomes a 'Schedule (Excel)' export descriptor).
+        stream_tool_results: list[dict[str, Any]] = []
+        # Deterministic file pre-dispatch BEFORE the RAG-miss short-circuit
+        # (leftover L1 timestamped .docx looks like an identifier).
+        _pre = await _predispatch_file_tool(self, messages, project_id)
+        if _pre:
+            yield {"type": "tool_call", "name": _pre["name"],
+                   "predispatched": True}
+            yield {"type": "tool_result", "name": _pre["name"], "ok": True,
+                   "result": _summarize_result(_pre["result"])}
+
+        # Fast path: exact reference miss with no RAG context. Skip when a
+        # named project file was already fetched/extracted from disk.
+        if not _pre and _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg):
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
@@ -4327,17 +4358,6 @@ class Agent:
                 yield {"type": "token", "content": chunk}
             yield {"type": "end", "iterations": 0, "sources": []}
             return
-
-        # Tool results accumulated this turn — feeds the schedule download offer
-        # (a generate_wbs call becomes a 'Schedule (Excel)' export descriptor).
-        stream_tool_results: list[dict[str, Any]] = []
-        # Deterministic file pre-dispatch (see _predispatch_file_tool).
-        _pre = await _predispatch_file_tool(self, messages, project_id)
-        if _pre:
-            yield {"type": "tool_call", "name": _pre["name"],
-                   "predispatched": True}
-            yield {"type": "tool_result", "name": _pre["name"], "ok": True,
-                   "result": _summarize_result(_pre["result"])}
         # Root fix for the tool-loop: RAG context is injected pre-loop, yet the
         # model keeps re-calling search_project_documents when an exact value
         # isn't found — grinding to the iteration cap. Allow a few explicit

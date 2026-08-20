@@ -339,6 +339,66 @@ async def test_chat_short_circuits_missing_exact_reference(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_named_docx_is_not_rag_miss_short_circuited(monkeypatch):
+    """Leftover L1: timestamped filename looks like an identifier, RAG
+    misses, but fetch_document predispatch from disk must still run."""
+    agent = _make_agent()
+    call_count = {"n": 0}
+
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
+        call_count["n"] += 1
+        blob = " ".join(str(m.get("content") or "") for m in messages)
+        assert "WORD-SPEC-TOKEN-KHOR" in blob
+        return {
+            "status": "success",
+            "choice": {
+                "message": {
+                    "content": "Token: WORD-SPEC-TOKEN-KHOR-20260819-081916",
+                    "tool_calls": [],
+                },
+                "finish_reason": "stop",
+            },
+        }
+
+    def fake_rag_inject(**kwargs):
+        return None, {
+            "project_id": "proj_a",
+            "identifier_miss": True,
+            "threshold_fired": True,
+            "extracted_identifiers": ["khor_waterproofing_spec_20260819-081916.docx"],
+            "chunks": [],
+        }
+
+    import app.core.projects as projects_mod
+    monkeypatch.setattr(
+        projects_mod, "list_documents",
+        lambda pid: [{"original_name": "khor_waterproofing_spec_20260819-081916.docx"}],
+        raising=False,
+    )
+
+    def fake_fetch(pid, doc_id, filename):
+        return (
+            {"text": "WORD-SPEC-TOKEN-KHOR-20260819-081916", "truncated": False, "source": "extracted"},
+            {"original_name": filename, "id": "d-docx"},
+            None,
+        )
+
+    monkeypatch.setattr("app.agents.runtime._fetch_document_content", fake_fetch)
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+    monkeypatch.setattr("app.agents.runtime.rag_inject", fake_rag_inject)
+    _patch_guardrail(monkeypatch)
+
+    result = await agent.chat(
+        "Open khor_waterproofing_spec_20260819-081916.docx and quote the unique token.",
+        project_id="proj_a",
+    )
+    assert call_count["n"] == 1
+    assert "could not confirm this reference" not in result["answer"].lower()
+    assert "WORD-SPEC-TOKEN-KHOR-20260819-081916" in result["answer"]
+    assert any(t.get("name") == "fetch_document" for t in (result.get("tool_calls") or []))
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_short_circuits_missing_exact_reference(monkeypatch):
     """Streaming absent exact reference yields controlled not-found and empty sources."""
     agent = _make_agent()

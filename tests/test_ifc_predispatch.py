@@ -172,6 +172,9 @@ async def test_named_ifc_clash_predispatch_sets_run_clash_detection(monkeypatch)
     rec = await runtime._predispatch_file_tool(_agent(), msgs, "p1")
     assert rec and rec["predispatched"] and rec["name"] == "bim_extractor"
     assert fake.param_calls == [{"run_clash_detection": True}]
+    injected = msgs[-1]["content"]
+    assert "clash_detection_ran=true" in injected
+    assert injected.find("clash_report") != -1
 
     fake.calls.clear()
     fake.param_calls.clear()

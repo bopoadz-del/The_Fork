@@ -61,7 +61,10 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   for `.txt`/`.md`/`.docx`/`.doc` when the user names the file (full name or a
   ≥12-char stem, so `khor_waterproofing_spec` matches a timestamped upload).
   Empty RAG chunks fall through to disk `extract_document_text`. Do **not**
-  re-ingest/reindex that docx; another agent owns RAG.
+  re-ingest/reindex that docx; another agent owns RAG. Predispatch runs
+  **before** the identifier RAG-miss short-circuit — a timestamped `.docx`
+  looks like a drawing code and used to return "could not confirm this
+  reference" in ~1s without fetching bytes.
 - Clash detection stays **off** unless the user message contains `clash`.
   Predispatch then sets `run_clash_detection: True`. Default-on was hung on
   leftover L2 geom — do not flip the default.
