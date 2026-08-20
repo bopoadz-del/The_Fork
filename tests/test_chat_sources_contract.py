@@ -295,6 +295,23 @@ def test_should_short_circuit_rag_miss_false_for_broad_question():
     assert _should_short_circuit_rag_miss(audit, None) is False
 
 
+def test_should_short_circuit_rag_miss_false_for_self_coding_conversion():
+    """Live 2026-08-20: pinned self-coding AED/m2 → USD/ft2 was refused as a
+    missing document because `aed/m2` carries a digit."""
+    audit = {"identifier_miss": True, "extracted_identifiers": ["aed/m2", "usd/ft2"]}
+    msg = (
+        "Stay on self-coding. No registered formula exists. Convert 1250 AED/m2 "
+        "to USD/ft2 using 3.6725 AED = 1 USD and 1 m2 = 10.7639 ft2."
+    )
+    assert _should_short_circuit_rag_miss(audit, None, msg) is False
+    # A real VO lookup still short-circuits when no calculation is asked.
+    assert _should_short_circuit_rag_miss(
+        {"identifier_miss": True, "extracted_identifiers": ["vo ref 99"]},
+        None,
+        "What is the status of VO Ref 99?",
+    ) is True
+
+
 @pytest.mark.asyncio
 async def test_chat_short_circuits_missing_exact_reference(monkeypatch):
     """Absent exact reference skips model call and returns controlled not-found."""

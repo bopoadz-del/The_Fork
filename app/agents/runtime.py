@@ -899,6 +899,7 @@ _MISSING_REFERENCE_ANSWER = (
 def _should_short_circuit_rag_miss(
     audit_rec: dict[str, Any] | None,
     rag_sys_msg: dict[str, str] | None,
+    user_message: str = "",
 ) -> bool:
     """True when retrieval has definitively missed an exact reference.
 
@@ -912,11 +913,18 @@ def _should_short_circuit_rag_miss(
 
     Broad questions with no real reference identifiers are deliberately NOT
     short-circuited so the model can still answer from project facts or
-    general knowledge.
+    general knowledge. A self-contained calculation / self-coding request
+    is never a document lookup — unit rates like ``AED/m2`` used to trip
+    this gate and return "could not confirm this reference" in ~2s.
     """
     if rag_sys_msg is not None:
         return False
     if not audit_rec:
+        return False
+    if user_message and (
+        _asks_self_coding(user_message)
+        or _looks_like_self_contained_calculation(user_message)
+    ):
         return False
     identifiers = audit_rec.get("extracted_identifiers") or []
     # Require a digit to avoid short-circuiting generic phrases like
@@ -4032,7 +4040,9 @@ class Agent:
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg):
+        if not _pre and _should_short_circuit_rag_miss(
+            _rag_audit, _rag_sys_msg, user_message
+        ):
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
@@ -4534,7 +4544,9 @@ class Agent:
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and _should_short_circuit_rag_miss(_rag_audit, _rag_sys_msg):
+        if not _pre and _should_short_circuit_rag_miss(
+            _rag_audit, _rag_sys_msg, user_message
+        ):
             answer = _build_missing_reference_answer(project_id, user_id)
             if conversation_id:
                 from app.core import agent_memory
