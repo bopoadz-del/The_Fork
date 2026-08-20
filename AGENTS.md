@@ -72,6 +72,8 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   "interim payment" + figures on `construction_calc`. A no-figure
   "issue/generate … payment certificate" is **not** stolen; it stays a
   `payment_certificate` deliverable (honest missing-`contract_value` is OK).
+- Currency rate units (`AED/m2`, `USD/ft2`) are not document identifiers.
+  Pinned self-coding conversions must not hit the RAG-miss short-circuit.
 - Python lint gates: `scripts/audit_stubs.py` and `scripts/scan_secrets.py` (stdlib
   only). The ruff S110 gate uses ruff, which is **not** in `requirements.txt` — CI
   installs `ruff==0.16.1` on demand; do the same locally if you need it
