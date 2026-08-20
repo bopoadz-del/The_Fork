@@ -353,7 +353,7 @@ async def test_named_docx_is_not_rag_miss_short_circuited(monkeypatch):
             "status": "success",
             "choice": {
                 "message": {
-                    "content": "Token: WORD-SPEC-TOKEN-KHOR-20260819-081916",
+                    "content": "Token: WORD-SPEC-TOKEN-KHOR-20260819-081916",  # pragma: allowlist secret
                     "tool_calls": [],
                 },
                 "finish_reason": "stop",
