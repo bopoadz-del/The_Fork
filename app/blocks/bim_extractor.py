@@ -175,7 +175,9 @@ class BIMExtractorBlock(UniversalBlock):
         spaces = self._extract_spaces(model)
         clash_report = {}
         if run_clash:
-            clash_report = self._basic_clash_report(model, building_elements)
+            clash_report = self._basic_clash_report(
+                model, building_elements, params
+            )
 
         # Cap response payload so a 50k-element model can't blow up the chat
         # context. Each cap fires independently; the top-level ``truncated``
@@ -417,7 +419,22 @@ class BIMExtractorBlock(UniversalBlock):
         except Exception:
             return []
 
-    def _basic_clash_report(self, model, elements: List[Dict]) -> Dict:
+    def _clash_opt(self, params: Dict, key: str, default):
+        """Resolve a clash knob: per-call params, then block config, then default.
+
+        ``run_clash_detection`` already followed this precedence but the knobs
+        that govern the RESULT did not -- they read self.config only. Asking for
+        a 25mm tolerance through params silently ran at 10mm AND reported
+        ``tolerance_mm: 10.0``, so the output looked authoritative while having
+        ignored the request.
+        """
+        if params and key in params:
+            return params[key]
+        return self.config.get(key, default)
+
+    def _basic_clash_report(
+        self, model, elements: List[Dict], params: Dict | None = None
+    ) -> Dict:
         """Clash detection: AABB intersection via ifcopenshell.geom when available.
 
         Builds an axis-aligned bounding box per element in world coordinates,
@@ -433,9 +450,11 @@ class BIMExtractorBlock(UniversalBlock):
             import ifcopenshell.geom  # noqa: F401  (probe only)
         except Exception:
             return self._name_duplicate_clash_fallback(elements)
-        return self._geometric_clash_report(model, elements)
+        return self._geometric_clash_report(model, elements, params)
 
-    def _geometric_clash_report(self, model, elements: List[Dict]) -> Dict:
+    def _geometric_clash_report(
+        self, model, elements: List[Dict], params: Dict | None = None
+    ) -> Dict:
         """Real AABB clash pass. Returns method='aabb_intersection'."""
         import ifcopenshell.geom
 
@@ -458,14 +477,18 @@ class BIMExtractorBlock(UniversalBlock):
                 "Exception", exc_info=True,
             )
 
-        tol_m = float(self.config.get("clash_tolerance_mm", 10.0)) / 1000.0
-        pair_cap = int(self.config.get("clash_pair_cap", 200))
+        params = params or {}
+        tol_mm = float(self._clash_opt(params, "clash_tolerance_mm", 10.0))
+        tol_m = tol_mm / 1000.0
+        pair_cap = int(self._clash_opt(params, "clash_pair_cap", 200))
         # Bound the geometry pass — generating shapes is the expensive step.
-        elem_cap = int(self.config.get("clash_elem_cap", 2000))
+        elem_cap = int(self._clash_opt(params, "clash_elem_cap", 2000))
 
         boxes: List[Tuple[Dict, Tuple[float, float, float, float, float, float]]] = []
         skipped_no_geom = 0
-        deadline = time.monotonic() + float(self.config.get("clash_timeout_s", 8.0))
+        deadline = time.monotonic() + float(
+            self._clash_opt(params, "clash_timeout_s", 8.0)
+        )
         timed_out = False
         for el in elements[:elem_cap]:
             if time.monotonic() > deadline:
@@ -501,12 +524,22 @@ class BIMExtractorBlock(UniversalBlock):
                 if len(clashes) >= pair_cap:
                     break
                 elb, bb = boxes[j]
-                # AABB overlap test: tol_m is the MINIMUM required interpenetration
-                # (shrink each box inward by tol_m so glancing contacts within tol
-                # don't count as clashes — increasing tolerance reduces clash count).
-                if (ba[0] + tol_m <= bb[3] and bb[0] + tol_m <= ba[3]
-                        and ba[1] + tol_m <= bb[4] and bb[1] + tol_m <= ba[4]
-                        and ba[2] + tol_m <= bb[5] and bb[2] + tol_m <= ba[5]):
+                # Per-axis interpenetration DEPTH, so tol_m means what it says:
+                # the minimum overlap that counts as a clash.
+                #
+                # This used to compare each box's min against the other's MAX
+                # (ba[0] + tol_m <= bb[3]), which is not the overlap depth -- it
+                # is the distance from one box's near face to the other's FAR
+                # face, so it grew with the other element's length. A 2.5m pipe
+                # poking 200mm through a wall survived a 500mm tolerance while a
+                # 300mm stub with the identical 200mm interpenetration did not.
+                # Tolerance was therefore untunable in practice: raising it
+                # dropped clashes in an order that tracked element length rather
+                # than how badly things actually intersected.
+                ox = min(ba[3], bb[3]) - max(ba[0], bb[0])
+                oy = min(ba[4], bb[4]) - max(ba[1], bb[1])
+                oz = min(ba[5], bb[5]) - max(ba[2], bb[2])
+                if ox > tol_m and oy > tol_m and oz > tol_m:
                     # Same-category collocation is usually expected (walls
                     # touching at corners, slabs stacked). Skip it; cross-
                     # discipline overlaps are the real clashes.
@@ -523,6 +556,11 @@ class BIMExtractorBlock(UniversalBlock):
                         "ifc_type_b": elb.get("ifc_type"),
                         "name_a": ela.get("name") or "",
                         "name_b": elb.get("name") or "",
+                        # Smallest per-axis interpenetration, in mm: how deep
+                        # the two solids actually run into each other. This is
+                        # the number to compare against tolerance_mm when
+                        # judging whether a hit is worth chasing.
+                        "overlap_mm": round(min(ox, oy, oz) * 1000.0, 1),
                         "severity": "warning",
                     })
 
@@ -531,7 +569,7 @@ class BIMExtractorBlock(UniversalBlock):
             "clashes": clashes,
             "detection_method": "aabb_intersection",
             "detection_method_disclaimer": _CLASH_DISCLAIMER,
-            "tolerance_mm": float(self.config.get("clash_tolerance_mm", 10.0)),
+            "tolerance_mm": tol_mm,
             "elements_analyzed": len(boxes),
             "elements_without_geometry": skipped_no_geom,
             "pair_cap_reached": len(clashes) >= pair_cap,
