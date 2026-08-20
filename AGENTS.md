@@ -60,6 +60,10 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   installs `ruff==0.16.1` on demand; do the same locally if you need it
   (`pip install ruff==0.16.1`).
 
+### Production Render (non-obvious)
+- Live service is `the-fork` (`srv-d9s6l67avr4c73aiujsg`) at `https://theshovel.ai`. `autoDeploy` is **false** (see `CONTRIBUTING.md`). A Render API deploy **without** `commitId` ships whatever is currently on `main`, not the feature-branch SHA. Pass the pushed commit explicitly.
+- `/v1/agents/*/chat` and `/v1/chat/stream` conversation ids must be `ws-{projectId}-{unix_ms}` only. Extra path segments 404.
+
 ### Stale docs to ignore
 - `README.md` and `.claude/skills/run-the-fork/SKILL.md` claim the React frontend
   was deleted and only `app/static/index.html` is served. That is outdated: the

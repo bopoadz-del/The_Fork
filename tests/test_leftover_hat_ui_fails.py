@@ -153,13 +153,16 @@ async def test_construction_container_aliases_bim_extractor_action():
     from app.containers.construction import ConstructionContainer
     from pathlib import Path
     c = ConstructionContainer()
+    c.wire("bim_extractor", BIMExtractorBlock())
     path = str(Path(__file__).resolve().parent / "fixtures" / "sample_office.ifc")
     r = await c.route("bim_extractor", {"file_path": path}, {"run_clash_detection": False})
     assert "Unknown action" not in str(r.get("error", ""))
     inner = r.get("result") if isinstance(r.get("result"), dict) else r
     qty = inner.get("quantities") or r.get("quantities") or {}
     walls = (qty.get("walls") or {}).get("count")
-    assert walls == 8 or inner.get("status") != "error"
+    assert walls == 8, inner
+    assert inner.get("status") != "error"
+    assert "IfcWall" in str(inner.get("ifc_schema") or "") or str(inner.get("ifc_schema") or "").startswith("IFC")
 
 
 # ── Kernels ─────────────────────────────────────────────────────────────────
