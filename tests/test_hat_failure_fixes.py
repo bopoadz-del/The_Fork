@@ -428,6 +428,48 @@ def test_interim_payment_calculator_is_not_stolen_as_ipc(monkeypatch):
         runtime_module.AGENT_REGISTRY.clear()
 
 
+def test_ipc_issue_without_figures_is_not_named_calculator():
+    """Negative for the F5 named-calculator override: a deliverable IPC
+    request with no numbers must not be classified as construction_calc."""
+    assert runtime_module._message_wants_named_calculator(
+        "Interim payment certificate gross 750000 with 5 percent retention. "
+        "Net payable? Use the registered interim payment calculator."
+    )
+    assert not runtime_module._message_wants_named_calculator(
+        "Issue an interim payment certificate from the project's uploaded "
+        "contract. Do not invent figures."
+    )
+    assert not runtime_module._message_wants_named_calculator(
+        "Issue the interim payment certificate. Do not invent figures."
+    )
+
+
+@requires_construction_kit
+def test_ipc_issue_without_figures_is_not_stolen_as_named_calculator(monkeypatch):
+    """project-assistant 'issue the certificate' (no numbers) must keep
+    the payment_certificate action so predefined intercept can run (and
+    honestly error if contract_value is missing)."""
+    pa = _make_agent("project-assistant")
+    sc = _make_agent("self-coding")
+    heavy = _make_agent("heavy-reasoning")
+    monkeypatch.setattr(runtime_module, "_SMART_ORCH_BLOCK_CACHE", None)
+    runtime_module.AGENT_REGISTRY.clear()
+    runtime_module.AGENT_REGISTRY["project-assistant"] = pa
+    runtime_module.AGENT_REGISTRY["self-coding"] = sc
+    runtime_module.AGENT_REGISTRY["heavy-reasoning"] = heavy
+    try:
+        final, routing = _run(select_agent_for_message(
+            "Issue an interim payment certificate from the project's uploaded "
+            "contract. Do not invent figures.",
+            pa,
+        ))
+        assert routing["reason"] != "named_calculator", routing
+        assert routing.get("action") == "payment_certificate", routing
+        assert final.name in ("project-assistant", "heavy-reasoning"), routing
+    finally:
+        runtime_module.AGENT_REGISTRY.clear()
+
+
 def test_unknown_calc_nudge_is_a_single_self_coding_handoff():
     agent = Agent(
         name="project-assistant",

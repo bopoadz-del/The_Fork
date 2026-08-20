@@ -436,6 +436,36 @@ _EXT_TOOL_HINTS = {
 }
 
 
+# Distinctive filename tokens in the user message (≥12 chars so ``spec``
+# never hijacks every specification file).
+_FILE_NAME_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_.\-]{11,}")
+
+
+def _user_names_project_file(user_low: str, original_name: str) -> bool:
+    """True when the user message names this project file.
+
+    Full ``original_name`` match first. A distinctive stem (≥12 chars) also
+    matches so leftover L1 can say ``khor_waterproofing_spec`` without the
+    upload timestamp suffix. The user token is the *shorter* string when
+    the stored name has a timestamp; match both directions.
+    """
+    name = (original_name or "").strip().lower()
+    if not name or not user_low:
+        return False
+    if name in user_low:
+        return True
+    stem = os.path.splitext(name)[0]
+    if len(stem) >= 12 and stem in user_low:
+        return True
+    if len(stem) < 12:
+        return False
+    for m in _FILE_NAME_TOKEN_RE.finditer(user_low):
+        token_stem = os.path.splitext(m.group(0).rstrip(".,;:)"))[0]
+        if len(token_stem) >= 12 and token_stem in stem:
+            return True
+    return False
+
+
 def _file_tool_hint(messages: list, project_id: str | None,
                     allowed_blocks: list[str]) -> str:
     """When the user's request names a REAL project file and the agent has
@@ -466,7 +496,7 @@ def _file_tool_hint(messages: list, project_id: str | None,
         return ""
     for d in docs:
         name = (d.get("original_name") or "").strip()
-        if name and name.lower() in low:
+        if name and _user_names_project_file(low, name):
             tool = _EXT_TOOL_HINTS.get(os.path.splitext(name)[1].lower())
             if tool and tool in allowed_blocks:
                 return (
@@ -496,8 +526,9 @@ _FILE_PREDISPATCH_EXTS = {
     ".dxf": "drawing_qto",
     ".dwg": "drawing_qto",
 }
-# Plain-text specs have no block; fetch_document is the synthetic reader.
-_TEXT_PREDISPATCH_EXTS = {".txt", ".md"}
+# Plain-text AND office specs: fetch_document extracts bytes from disk
+# even when RAG chunks are empty (leftover L1 khor_*.docx).
+_TEXT_PREDISPATCH_EXTS = {".txt", ".md", ".docx", ".doc"}
 # PDF drawings share the .pdf extension with specs/contracts. Only
 # pre-dispatch drawing_qto when the turn is actually a take-off.
 _PDF_QTO_HINT = re.compile(
@@ -532,7 +563,7 @@ async def _predispatch_file_tool(
         text_target = None
         for d in docs:
             name = (d.get("original_name") or "").strip()
-            if name and name.lower() in low:
+            if name and _user_names_project_file(low, name):
                 ext = os.path.splitext(name)[1].lower()
                 if ext in _TEXT_PREDISPATCH_EXTS and text_target is None:
                     text_target = name
@@ -1493,6 +1524,17 @@ _INTENT_TOOL_MAP = (
 )
 
 
+_IPC_ISSUE_RE = re.compile(
+    r"\b(issue|generate|produce|create|prepare)\b.{0,60}\b"
+    r"(interim\s+payment|payment\s+certificate|\bipc\b)",
+    re.IGNORECASE,
+)
+_NAMED_CALC_ASK_RE = re.compile(
+    r"\b(?:calculator|construction_calc|registered)\b|\bgross\s+\d",
+    re.IGNORECASE,
+)
+
+
 def _message_wants_named_calculator(text: str) -> bool:
     """True when the turn is a registered ``construction_calc``, not a deliverable.
 
@@ -1501,12 +1543,28 @@ def _message_wants_named_calculator(text: str) -> bool:
     heavy-reasoning, then predefined intercept ran the container action with
     empty params. Named calculators stay on the requested agent so
     ``construction_calc`` remains the path.
+
+    Negative: "issue an interim payment certificate from the contract"
+    with no figures is a predefined IPC deliverable — do not steal it.
     """
-    low = (text or "").lower()
-    for phrases, tool in _INTENT_TOOL_MAP:
-        if tool == "construction_calc" and any(p in low for p in phrases):
-            return True
-    return _looks_like_self_contained_calculation(text)
+    raw = text or ""
+    if _looks_like_self_contained_calculation(raw):
+        return True
+    low = raw.lower()
+    wants = any(
+        p in low
+        for phrases, tool in _INTENT_TOOL_MAP
+        if tool == "construction_calc"
+        for p in phrases
+    )
+    if not wants:
+        return False
+    if _NAMED_CALC_ASK_RE.search(raw):
+        return True
+    if _IPC_ISSUE_RE.search(raw) and not re.search(r"\d", raw):
+        return False
+    return True
+
 
 
 # A question that carries its OWN numbers is arithmetic, not a document lookup.
