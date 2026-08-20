@@ -2136,6 +2136,70 @@ class ConstructionContainer(
         if block is None:
             return {"status": "error", "error": "formula_executor_v2 block unavailable"}
         return await block.process(input_data, params)
+
+    async def construction_calc(self, input_data: Any, params: Dict) -> Dict:
+        """Run the deterministic formula registry.
+
+        The smart-orchestrator hat is told to call ``construction`` with
+        ``params.action=construction_calc``. Without this alias ``route()``
+        returned ``Unknown action: construction_calc`` and leftover L6
+        (14.5 × 3.2 × 1.75 bank volume) never emitted 81.2 m³.
+        """
+        from app.lib import construction_formulas as _cf
+
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        calc = (
+            p.get("calculation") or p.get("name") or p.get("calculator")
+            or data.get("calculation") or data.get("name") or data.get("calculator")
+        )
+        nested = p.get("params") if isinstance(p.get("params"), dict) else None
+        if nested is None:
+            nested = data.get("params") if isinstance(data.get("params"), dict) else None
+        skip = {
+            "action", "calculation", "name", "calculator", "params",
+            "block", "unit", "formula",
+        }
+        flat = {k: v for k, v in {**data, **p}.items() if k not in skip}
+        calc_params = dict(nested or {})
+        for k, v in flat.items():
+            calc_params.setdefault(k, v)
+
+        if not calc:
+            formula = str(p.get("formula") or data.get("formula") or "")
+            nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", formula)]
+            if len(nums) >= 3:
+                calc = "excavation_volume"
+                calc_params.setdefault("length_m", nums[0])
+                calc_params.setdefault("width_m", nums[1])
+                calc_params.setdefault("depth_m", nums[2])
+            else:
+                keys = {str(k).lower() for k in calc_params}
+                has_l = any("length" in k or k in {"l"} for k in keys)
+                has_w = any("width" in k or k in {"w"} for k in keys)
+                has_d = any("depth" in k or "height" in k or k in {"d"} for k in keys)
+                if has_l and has_w and has_d:
+                    calc = "excavation_volume"
+
+        aliases = {
+            "length": "length_m", "width": "width_m", "depth": "depth_m",
+            "height": "depth_m", "height_m": "depth_m",
+            "l": "length_m", "w": "width_m", "d": "depth_m",
+        }
+        for src, dst in aliases.items():
+            if src in calc_params and dst not in calc_params:
+                calc_params[dst] = calc_params[src]
+        for junk in ("formula", "unit", "block", "action"):
+            calc_params.pop(junk, None)
+
+        if not calc:
+            return {
+                "status": "error",
+                "error": "construction_calc needs a calculation name "
+                         "(e.g. excavation_volume) or length/width/depth.",
+                "available": _cf.available_calculations(),
+            }
+        return _cf.run_calculation(str(calc), calc_params)
     async def bim_extract(self, input_data: Any, params: Dict) -> Dict:
         """Delegate to BIMExtractorBlock: IFC element + quantity extraction."""
         block = self._resolve_block("bim_extractor")
@@ -2262,6 +2326,8 @@ class ConstructionContainer(
             # Week-3 Intelligence Blocks
             "jetson_dispatch": self.jetson_dispatch,
             "formula_execute": self.formula_execute,
+            # Hat prompt names the synthetic calculator as a container action.
+            "construction_calc": self.construction_calc,
             "bim_extract": self.bim_extract,
             # LLM often names the standalone block; the container action is
             # bim_extract. Live leftover-hat L2 UI: "bim_extractor is not a
@@ -2370,6 +2436,7 @@ class ConstructionContainer(
             # Week-3 Intelligence Blocks
             "jetson_dispatch": self.jetson_dispatch,
             "formula_execute": self.formula_execute,
+            "construction_calc": self.construction_calc,
             "bim_extract": self.bim_extract,
             "bim_extractor": self.bim_extract,
             # Week-4 Intelligence Blocks
