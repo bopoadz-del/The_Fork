@@ -101,7 +101,7 @@ async def test_sympy_free_expression_computes_l7_product():
     block = SymPyReasoningBlock()
     r = await block.process({"expression": "(18.4-16)*2850"})
     assert r["status"] == "success"
-    assert r["value"] == pytest.approx(6840.0)
+    assert r["value"] == 6840.0
     assert r["expression"]
 
 
