@@ -33,8 +33,21 @@ export default function Projects() {
   }
 
   useEffect(() => {
-    void loadProjects()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false
+    void (async () => {
+      try {
+        const data = await apiGet<ProjectsResponse>('/v1/projects')
+        if (!cancelled) setState({ tag: 'loaded', projects: data.projects ?? [] })
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setState({
+            tag: 'error',
+            message: err instanceof Error ? err.message : 'Failed to load projects.',
+          })
+        }
+      }
+    })()
+    return () => { cancelled = true }
   }, [])
 
   function handleCreated(project: Project) {

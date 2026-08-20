@@ -254,6 +254,23 @@ class TestPaymentCertificate:
         assert result["valuation"]["gross_valuation"] == 250_000.0
 
     @pytest.mark.asyncio
+    async def test_payment_certificate_bare_gross_amount_from_message(self, container):
+        """Live F5: 'gross 750000 with 5 percent retention' had no 'valuation' word."""
+        result = await container.payment_certificate(
+            {
+                "message": (
+                    "Interim payment certificate gross 750000 with 5 percent retention. "
+                    "Net payable?"
+                ),
+            },
+            {},
+        )
+        assert result["status"] == "success"
+        assert result["valuation"]["gross_valuation"] == 750_000.0
+        assert result["deductions"]["retention_held"] == 37_500.0
+        assert result["payment"]["net_due_this_period"] == 712_500.0
+
+    @pytest.mark.asyncio
     async def test_cash_flow_figures_from_message_with_m_suffix(self, container):
         """2026-07-24 battery FAIL repro: 'SAR 60M, 18-month project' errored
         with 'contract_value required' — figures lived only in the message."""
