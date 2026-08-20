@@ -1,6 +1,11 @@
 {
   "name": "The Fork",
-  "install": "python3.11 -m venv .venv\n.venv/bin/pip install -U pip\n.venv/bin/pip install -r requirements.txt\nnpm --prefix frontend ci",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "user": "ubuntu",
+  "install": "set -euo pipefail\nif ! command -v python3.11 >/dev/null 2>&1; then\n  sudo apt-get update\n  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common gpg-agent\n  sudo DEBIAN_FRONTEND=noninteractive add-apt-repository -y ppa:deadsnakes/ppa\n  sudo apt-get update\n  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3.11 python3.11-venv python3.11-dev\nfi\npython3.11 -m venv .venv\n.venv/bin/pip install -U pip\n.venv/bin/pip install -r requirements.txt\nnpm --prefix frontend ci",
   "terminals": [
     {
       "name": "uvicorn",
