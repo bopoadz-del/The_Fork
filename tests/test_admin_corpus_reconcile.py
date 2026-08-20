@@ -58,6 +58,19 @@ def _chunk_table() -> str:
     return rag_chunk_table_name(_active_namespace())
 
 
+def _chunk_dim() -> int:
+    """Vector width of the ACTIVE chunk table.
+
+    Must not be hardcoded. _chunk_cls() returns whatever width the namespace
+    was opened at -- 384 when the live embedder registered it first -- and
+    SQLite does not enforce vector width while PostgreSQL does. Seeding
+    np.zeros(256) into a vector(384) column passes locally and fails only in
+    the test-postgres CI job.
+    """
+    ident = getattr(_chunk_cls(), "embedding_identity", None)
+    return int(ident["dim"]) if ident else EMBEDDING_DIM
+
+
 @pytest.fixture
 def client():
     with TestClient(app) as c:
@@ -165,7 +178,7 @@ def _seed_misplaced_chunks():
     """Create two projects where one chunk is under the wrong project_id."""
     _wipe_all()
     now = datetime.now(timezone.utc).isoformat()
-    vec = np.zeros(256, dtype=np.float32)
+    vec = np.zeros(_chunk_dim(), dtype=np.float32)
     with SessionLocal() as session:
         for pid in ("reconcile_a", "reconcile_b"):
             session.add(Project(
@@ -281,7 +294,7 @@ def test_reconcile_non_admin_blocked(client):
 def test_reconcile_reports_no_mismatches_when_clean(client):
     _wipe_all()
     now = datetime.now(timezone.utc).isoformat()
-    vec = np.zeros(256, dtype=np.float32)
+    vec = np.zeros(_chunk_dim(), dtype=np.float32)
     with SessionLocal() as session:
         session.add(Project(
             id="reconcile_clean", name="reconcile_clean",
