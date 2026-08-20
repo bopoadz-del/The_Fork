@@ -214,12 +214,24 @@ def _seed_misplaced_chunks():
         # disables FK checks for this insert only.
         if session.bind.dialect.name == "postgresql":
             session.execute(text("SET session_replication_role = 'replica'"))
+            # embedding_model / embedding_dim / embedding_normalized are
+            # nullable=False on the namespaced class with PYTHON-side defaults.
+            # Raw SQL bypasses those defaults, so omitting them inserts NULL and
+            # PostgreSQL rejects the row (NotNullViolation). The legacy `chunks`
+            # table this used to target did not carry the identity columns, so
+            # the omission only became a defect when the insert was repointed
+            # at the active namespaced table.
+            ident = getattr(_chunk_cls(), "embedding_identity", {}) or {}
             session.execute(
                 text(f"""
                 INSERT INTO {_chunk_table()} (chunk_id, project_id, doc_id,
-                                    chunk_index, text, embedding, created_at)
+                                    chunk_index, text, embedding, created_at,
+                                    embedding_model, embedding_dim,
+                                    embedding_normalized)
                 VALUES (:chunk_id, :project_id, :doc_id, :chunk_index,
-                        :text, :embedding, :created_at)
+                        :text, :embedding, :created_at,
+                        :embedding_model, :embedding_dim,
+                        :embedding_normalized)
                 """),
                 {
                     "chunk_id": "dangling_1",
@@ -229,6 +241,9 @@ def _seed_misplaced_chunks():
                     "text": "content",
                     "embedding": vec.tolist(),
                     "created_at": now,
+                    "embedding_model": ident.get("model", "test"),
+                    "embedding_dim": ident.get("dim", _chunk_dim()),
+                    "embedding_normalized": bool(ident.get("normalized", True)),
                 },
             )
             session.execute(text("SET session_replication_role = 'origin'"))
