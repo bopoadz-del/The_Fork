@@ -11,6 +11,8 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
 ### Runtime prerequisites (baked into the environment, not the update script)
 - **Python 3.11** is required (`.python-version` / `runtime.txt`; `requirements.txt`
   is pinned for 3.11). The venv is built with `python3.11`, not the system 3.12.
+  Cursor's default Cloud Agent image is Ubuntu 24.04 (only 3.12). `.cursor/Dockerfile`
+  installs 3.11; the install script also bootstraps it via deadsnakes if missing.
 - System packages the app needs at runtime: `tesseract-ocr` (+ `tesseract-ocr-ara`),
   `antiword`, `unrar`, `libgl1`, `libglib2.0-0`, `libmagic1` (see `Aptfile` /
   `render-build.sh`). These live in the base image, not the update script.
