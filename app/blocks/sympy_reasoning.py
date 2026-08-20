@@ -253,6 +253,10 @@ class SymPyReasoningBlock(UniversalBlock):
             value = float(self._eval_ast_number(tree))
         except Exception as e:
             return {"status": "error", "error": str(e), "expression": expr}
+        # Binary floats like (18.4-16)*2850 land on 6839.999999999996;
+        # round through a short significant-figure form so the tool
+        # result is the 6840 the user asked for.
+        value = float(format(value, ".12g"))
         return {
             "status": "success",
             "expression": cleaned,
