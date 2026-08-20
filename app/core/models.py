@@ -79,7 +79,17 @@ class EmbeddingVector(make_embedding_vector(EMBEDDING_DIM)):
 
 # Registry so the vector store can request the same dynamic class for the
 # same namespace without re-declaring it on SQLAlchemy's Base.
-_RAG_CHUNK_CLASS_CACHE: dict[tuple[str, int, str, bool], type] = {}
+#
+# Keyed by NAMESPACE ALONE, because that is the real identity: a namespace maps
+# to exactly one table (``chunks_<ns>``) and the table name does not encode the
+# dim. Keying by ``(namespace, dim)`` let one namespace hold two classes, and
+# the second ``type(...)`` call then tried to define the SAME table name twice
+# on one MetaData -- SQLAlchemy raises "Table 'chunks_v2' is already defined".
+# Seen 2026-08-20 as a full-suite-only failure: something registers ("v2", 384)
+# from the live embedder, then a later caller asks for ("v2", 256), misses the
+# cache, and blows up. Passing in isolation and failing in a full run is the
+# signature of exactly this.
+_RAG_CHUNK_CLASS_CACHE: dict[str, type] = {}
 
 
 #: RAG namespaces are interpolated into raw SQL table identifiers, which cannot
@@ -111,6 +121,18 @@ def rag_chunk_table_name(namespace: str) -> str:
     return f"chunks_{namespace}"
 
 
+def rag_chunk_class_for(namespace: str):
+    """The mapped class already registered for ``namespace``, or None.
+
+    Lets a caller reuse whatever width a namespace was opened at instead of
+    guessing one and tripping the dim-conflict guard in
+    ``make_rag_chunk_class``. The legacy namespace is always ``RagChunk``.
+    """
+    if namespace == "":
+        return RagChunk
+    return _RAG_CHUNK_CLASS_CACHE.get(namespace)
+
+
 def make_rag_chunk_class(
     namespace: str,
     dim: int,
@@ -119,12 +141,18 @@ def make_rag_chunk_class(
 ) -> type:
     """Return a SQLAlchemy model class for ``chunks_<namespace>``.
 
-    The class is cached per (namespace, dim) so repeated calls return the
-    same mapped class. ``model_name`` only affects the default value of the
+    The class is cached per NAMESPACE so repeated calls return the same mapped
+    class. ``model_name`` only affects the default value of the
     ``embedding_model`` column and the attached identity metadata; it does
     NOT change the table schema, so a namespace opened with a different
     model reuses the same class and relies on ``VectorStore`` to fail loud
     on identity mismatch.
+
+    ``dim`` is different: it sets the ``vector(N)`` width of the embedding
+    column, so it is part of the table's shape, not just its metadata. A
+    namespace owns exactly one table and therefore one width -- asking for a
+    second width raises ``ValueError`` rather than returning a class whose
+    column does not match what the caller asked for.
 
     The legacy namespace (empty string) reuses the static ``RagChunk`` class
     so the original ``chunks`` table has exactly one mapped class.
@@ -132,9 +160,22 @@ def make_rag_chunk_class(
     if namespace == "":
         return RagChunk
 
-    schema_key = (namespace, dim)
-    if schema_key in _RAG_CHUNK_CLASS_CACHE:
-        return _RAG_CHUNK_CLASS_CACHE[schema_key]
+    cached = rag_chunk_class_for(namespace)
+    if cached is not None:
+        cached_dim = cached.embedding_identity["dim"]
+        if cached_dim != dim:
+            # One namespace = one table = one embedding width. Returning the
+            # cached class would hand back a vector(N) column for a caller that
+            # asked for vector(M) -- a silent width mismatch, the false-agreement
+            # class of bug this file keeps stamping out. Refuse instead.
+            raise ValueError(
+                f"namespace {namespace!r} is already mapped at dim "
+                f"{cached_dim}; cannot remap it to dim {dim}. A namespace has "
+                f"one table ({rag_chunk_table_name(namespace)}) and therefore "
+                f"one embedding width. Use a different namespace, or change "
+                f"RAG_VECTOR_NAMESPACE together with the embedder."
+            )
+        return cached
 
     table_name = rag_chunk_table_name(namespace)
     vector_type = make_embedding_vector(dim)
@@ -179,7 +220,7 @@ def make_rag_chunk_class(
     }
 
     DynamicRagChunk = type(class_name, (Base,), attrs)
-    _RAG_CHUNK_CLASS_CACHE[schema_key] = DynamicRagChunk
+    _RAG_CHUNK_CLASS_CACHE[namespace] = DynamicRagChunk
     return DynamicRagChunk
 
 
