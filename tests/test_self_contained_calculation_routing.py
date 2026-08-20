@@ -78,6 +78,17 @@ def test_document_questions_are_not_hijacked(q):
     assert _forced_specific_tool(_tail(q), AVAILABLE) is None
 
 
+def test_leftover_l6_bank_volume_is_self_contained():
+    """Live leftover L6 had no 'calculate' verb — 'bank volume' + L×W×D."""
+    q = (
+        "Stay on smart-orchestrator. Bank volume of a rectangular trench "
+        "14.5 m long by 3.2 m wide by 1.75 m deep. Start with the "
+        "smart_orchestrator tool then a calculator."
+    )
+    assert _looks_like_self_contained_calculation(q)
+    assert _forced_specific_tool(_tail(q), AVAILABLE) == "construction_calc"
+
+
 def test_one_dimension_is_not_enough():
     """A single number is usually a reference, not a calculation input."""
     assert not _looks_like_self_contained_calculation("calculate the cost of 5 m3")
