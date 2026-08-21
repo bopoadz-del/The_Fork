@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './auth/AuthContext'
 import ProtectedRoute from './auth/ProtectedRoute'
+import AdminRoute from './auth/AdminRoute'
 import ErrorBoundary from './components/ErrorBoundary'
 import Login from './pages/Login'
 import Projects from './pages/Projects'
@@ -35,9 +36,9 @@ export default function App() {
             <Route
               path="/admin"
               element={
-                <ProtectedRoute>
+                <AdminRoute>
                   <AdminPage />
-                </ProtectedRoute>
+                </AdminRoute>
               }
             />
               <Route path="*" element={<Navigate to="/" replace />} />
