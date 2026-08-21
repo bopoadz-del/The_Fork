@@ -298,10 +298,12 @@ export default function LeftPanel({
       )}
 
       <div className="left-panel__footer">
-        <Link to="/admin" className="left-panel__admin">
-          <Settings size={14} />
-          <span>Admin</span>
-        </Link>
+        {user?.role === 'admin' ? (
+          <Link to="/admin" className="left-panel__admin">
+            <Settings size={14} />
+            <span>Admin</span>
+          </Link>
+        ) : null}
         <button
           type="button"
           className="left-panel__signout"
