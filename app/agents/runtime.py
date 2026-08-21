@@ -311,6 +311,21 @@ _TOOL_FORMAT_FALLBACK = (
     "grounded answer. Please retry or narrow the question."
 )
 
+# Nudge appended before a forced no-tools retry when sanitization replaced the
+# model's reply with _TOOL_FORMAT_FALLBACK (raw search/tool JSON leak).
+_TOOL_FORMAT_RETRY_NUDGE = (
+    "Your previous reply looked like internal tool JSON, not a user-facing answer. "
+    "Write the complete deliverable now in plain text using the tool results already "
+    "in this thread. Do not emit JSON tool arguments or search payloads."
+)
+
+
+def _final_text_needs_forced_retry(text: str) -> bool:
+    """True when sanitization left no usable user-facing answer."""
+    if not (text or "").strip():
+        return True
+    return text == _TOOL_FORMAT_FALLBACK
+
 # Keys that strongly indicate an internal search tool argument payload.
 _SEARCH_TOOL_ARG_KEYS = {
     "query",
@@ -4376,10 +4391,12 @@ class Agent:
                     final_text = _sanitize_final_text(
                         raw_content, messages=messages, tool_results=tool_calls_made,
                     )
-                    # If sanitization left nothing usable, force one no-tools call
-                    # so the model must produce a plain-text answer instead of an
-                    # empty bubble or leaked JSON.
-                    if not final_text.strip():
+                    # If sanitization left nothing usable (empty or raw tool JSON
+                    # fallback), force one no-tools call so the model must produce
+                    # a plain-text answer instead of an empty bubble or leak.
+                    if _final_text_needs_forced_retry(final_text):
+                        if final_text == _TOOL_FORMAT_FALLBACK:
+                            messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if forced_resp.get("status") == "error":
                             final_text = _EMPTY_RESPONSE_FALLBACK
@@ -4389,7 +4406,7 @@ class Agent:
                                 forced_msg.get("content") or "",
                                 messages=messages, tool_results=tool_calls_made,
                             )
-                            if not final_text.strip():
+                            if _final_text_needs_forced_retry(final_text):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
@@ -4496,7 +4513,7 @@ class Agent:
             forced_msg.get("content") or "",
             messages=messages, tool_results=tool_calls_made,
         )
-        if not final_text.strip():
+        if _final_text_needs_forced_retry(final_text):
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
         final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
@@ -5085,14 +5102,16 @@ class Agent:
                     final_text = _sanitize_final_text(
                         raw_content, messages=messages, tool_results=stream_tool_results,
                     )
-                    # If sanitization left nothing usable, force one no-tools call
-                    # so the model must produce a plain-text answer instead of an
-                    # empty bubble or leaked JSON.
-                    if not final_text.strip():
-                        _LOG.info("chat_stream: empty final_text, forcing no-tools retry")
+                    # If sanitization left nothing usable (empty or raw tool JSON
+                    # fallback), force one no-tools call so the model must produce
+                    # a plain-text answer instead of an empty bubble or leak.
+                    if _final_text_needs_forced_retry(final_text):
+                        _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
                         if _timing:
                             _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
                                          len(raw_content), time.monotonic() - _turn_t0)
+                        if final_text == _TOOL_FORMAT_FALLBACK:
+                            messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
                         _fr_t0 = time.monotonic()
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if _timing:
@@ -5107,7 +5126,7 @@ class Agent:
                                 forced_msg.get("content") or "",
                                 messages=messages, tool_results=stream_tool_results,
                             )
-                            if not final_text.strip():
+                            if _final_text_needs_forced_retry(final_text):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
@@ -5244,10 +5263,10 @@ class Agent:
             forced_msg.get("content") or "",
             messages=messages, tool_results=stream_tool_results,
         )
-        if not final_text.strip():
+        if _final_text_needs_forced_retry(final_text):
             # Forced retry returned empty or raw tool JSON — substitute the
             # user-safe fallback so the UI never renders an empty bubble.
-            _LOG.warning("chat_stream: forced final returned empty, using fallback")
+            _LOG.warning("chat_stream: forced final unusable, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
         final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)

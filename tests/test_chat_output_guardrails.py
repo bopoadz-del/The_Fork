@@ -17,6 +17,8 @@ from app.agents.runtime import (
     _sanitize_final_text,
     _EMPTY_RESPONSE_FALLBACK,
     _TOOL_FORMAT_FALLBACK,
+    _TOOL_FORMAT_RETRY_NUDGE,
+    _final_text_needs_forced_retry,
 )
 
 
@@ -80,6 +82,68 @@ def test_sanitize_final_text_strips_dsml_and_tool_json():
         '</function_calls>'
     )
     assert _sanitize_final_text(xml_leak) == _TOOL_FORMAT_FALLBACK
+
+
+def test_final_text_needs_forced_retry_on_tool_format_fallback():
+    assert _final_text_needs_forced_retry("") is True
+    assert _final_text_needs_forced_retry("   ") is True
+    assert _final_text_needs_forced_retry(_TOOL_FORMAT_FALLBACK) is True
+    assert _final_text_needs_forced_retry("Real answer") is False
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_retries_when_sanitizer_would_emit_tool_format_fallback(monkeypatch):
+    """After search tools, a leaked search-args JSON final must trigger a forced
+    no-tools synthesis retry instead of returning the 120-char fallback."""
+    from app.agents import runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_recover_tool_calls_from_content", lambda text: [])
+
+    agent = Agent(
+        name="test-agent",
+        description="test",
+        system_prompt="You are a test assistant. Be concise.",
+        allowed_blocks=[],
+    )
+
+    search_args = json.dumps({"query": "landscaping RFP scope", "top_k": 5})
+    calls = {"n": 0}
+
+    async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {"role": "assistant", "content": search_args, "tool_calls": []},
+                    "finish_reason": "stop",
+                },
+            }
+        assert with_tools is False
+        assert any(m.get("content") == _TOOL_FORMAT_RETRY_NUDGE for m in messages if m.get("role") == "user")
+        return {
+            "status": "success",
+            "choice": {
+                "message": {
+                    "role": "assistant",
+                    "content": "# RFP\n\n## Scope\nLandscaping subcontract package.",
+                    "tool_calls": [],
+                },
+                "finish_reason": "stop",
+            },
+        }
+
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+
+    events = []
+    async for event in agent.chat_stream("Prepare an RFP for landscaping."):
+        events.append(event)
+
+    token_text = "".join(e.get("content", "") for e in events if e["type"] == "token")
+    assert search_args not in token_text
+    assert "internal search formatting issue" not in token_text.lower()
+    assert "RFP" in token_text
+    assert calls["n"] == 2
 
 
 @pytest.mark.asyncio
@@ -190,6 +254,10 @@ def test_sanitize_final_text_allows_user_requested_json():
 @pytest.mark.asyncio
 async def test_chat_blocks_raw_search_args_leak(monkeypatch):
     """A final answer that is only {"query": ..., "top_k": ...} must not reach the user."""
+    from app.agents import runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_recover_tool_calls_from_content", lambda text: [])
+
     agent = Agent(
         name="test-agent",
         description="test",
@@ -198,12 +266,26 @@ async def test_chat_blocks_raw_search_args_leak(monkeypatch):
     )
 
     search_args = json.dumps({"query": "registered capital", "top_k": 5})
+    calls = {"n": 0}
 
     async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {"role": "assistant", "content": search_args, "tool_calls": []},
+                    "finish_reason": "stop",
+                },
+            }
         return {
             "status": "success",
             "choice": {
-                "message": {"role": "assistant", "content": search_args, "tool_calls": []},
+                "message": {
+                    "role": "assistant",
+                    "content": "Registered capital is 10 million SAR per the excerpts.",
+                    "tool_calls": [],
+                },
                 "finish_reason": "stop",
             },
         }
@@ -213,12 +295,17 @@ async def test_chat_blocks_raw_search_args_leak(monkeypatch):
     result = await agent.chat("What is the registered capital?")
     assert result["status"] == "success"
     assert search_args not in result["answer"]
-    assert "internal search formatting issue" in result["answer"].lower()
+    assert "registered capital" in result["answer"].lower()
+    assert calls["n"] == 2
 
 
 @pytest.mark.asyncio
 async def test_chat_stream_blocks_raw_search_args_leak(monkeypatch):
     """Streaming must also hide raw search argument payloads."""
+    from app.agents import runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_recover_tool_calls_from_content", lambda text: [])
+
     agent = Agent(
         name="test-agent",
         description="test",
@@ -227,12 +314,26 @@ async def test_chat_stream_blocks_raw_search_args_leak(monkeypatch):
     )
 
     search_args = json.dumps({"query": "registered capital", "top_k": 5})
+    calls = {"n": 0}
 
     async def fake_call_llm(messages, api_key, *, project_id=None, user_id=None, with_tools=True, exclude_tools=None, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {"role": "assistant", "content": search_args, "tool_calls": []},
+                    "finish_reason": "stop",
+                },
+            }
         return {
             "status": "success",
             "choice": {
-                "message": {"role": "assistant", "content": search_args, "tool_calls": []},
+                "message": {
+                    "role": "assistant",
+                    "content": "Registered capital is 10 million SAR per the excerpts.",
+                    "tool_calls": [],
+                },
                 "finish_reason": "stop",
             },
         }
@@ -245,7 +346,8 @@ async def test_chat_stream_blocks_raw_search_args_leak(monkeypatch):
 
     token_text = "".join(e.get("content", "") for e in events if e["type"] == "token")
     assert search_args not in token_text
-    assert "internal search formatting issue" in token_text.lower()
+    assert "registered capital" in token_text.lower()
+    assert calls["n"] == 2
     end_events = [e for e in events if e["type"] == "end"]
     assert len(end_events) == 1
     assert end_events[0].get("sources") == []
