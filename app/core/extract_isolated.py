@@ -144,6 +144,43 @@ def _safe_close(conn) -> None:
         logger.debug("child could not close its pipe: %s", exc)
 
 
+def _parent_virtual_bytes() -> int | None:
+    """The parent's CURRENT virtual size, or None if it cannot be read."""
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("VmSize:"):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("could not read /proc/self/status VmSize: %s", exc)
+    return None
+
+
+def child_address_space_limit(budget_bytes: int) -> int | None:
+    """Absolute RLIMIT_AS for the child: parent's virtual size + budget.
+
+    RLIMIT_AS caps VIRTUAL address space, and fork() hands the child a copy of
+    the parent's entire mapping. With torch and the embedding model resident
+    the parent's VmSize is already multiple GB, so an ABSOLUTE ceiling of
+    1536 MB was breached the instant the child started: the first allocation
+    raised MemoryError, `_extract_pdf` swallowed it as an empty document, and
+    every file >= 1 MB indexed as ZERO_CHUNK with nothing logged. That shipped.
+
+    Budgeting on top of the parent's current size states the thing actually
+    intended -- "extraction may allocate this much MORE" -- and is the only
+    form that survives the parent growing over time.
+
+    Returns None when the parent's size cannot be read. No limit is then set,
+    and isolation still contains a runaway: the child is the largest process,
+    so the OOM killer takes it and the web worker lives. A weaker guarantee
+    than the rlimit, but strictly better than refusing to extract at all.
+    """
+    parent = _parent_virtual_bytes()
+    if parent is None:
+        return None
+    return parent + budget_bytes
+
+
 def _child(conn, fn: Callable[..., Any], args: tuple, mem_bytes: int) -> None:
     """Child entry point: cap the address space, extract, ship the result.
 
@@ -154,7 +191,23 @@ def _child(conn, fn: Callable[..., Any], args: tuple, mem_bytes: int) -> None:
     try:
         import resource
 
-        resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+        limit = child_address_space_limit(mem_bytes)
+        if limit is not None:
+            try:
+                soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+                if hard != resource.RLIM_INFINITY:
+                    limit = min(limit, hard)
+                resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
+            except (ValueError, OSError) as exc:
+                # Refusing to set the limit must not mean refusing to extract,
+                # and must NOT send a second message -- the parent reads one
+                # and would take it as the result. Log and carry on: the child
+                # is still the largest process, so the OOM killer takes it
+                # rather than the web worker.
+                logger.warning(
+                    "could not set RLIMIT_AS in extraction child (%s); "
+                    "continuing without it", exc,
+                )
         os.environ[_IN_CHILD_ENV] = "1"
         result = fn(*args)
         _safe_send(conn, ("ok", result))
