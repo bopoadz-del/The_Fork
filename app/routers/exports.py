@@ -191,7 +191,11 @@ class EvmExportRequest(BaseModel):
 
 
 def _check_owner(project_id: str, user_id: str) -> Dict[str, Any]:
-    proj = projects_store.get_project(project_id, user_id=user_id)
+    # master_corpus is a virtual alias — any authenticated user may read/export
+    # conversations scoped to it (same as GET /v1/projects/master_corpus).
+    proj = projects_store.get_project(
+        project_id, user_id=user_id, include_admin_approved=True
+    )
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")
     return proj

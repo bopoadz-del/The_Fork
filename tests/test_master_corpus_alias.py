@@ -412,6 +412,28 @@ def test_master_corpus_alias_clear_conversation_resolves(client):
     assert body["status"] == "cleared"
 
 
+def test_master_corpus_alias_export_conversation_resolves(client):
+    """Word/xlsx export on the alias must not 404 — same owner gate as GET project."""
+    from app.core import agent_memory
+
+    cid = f"ws-{projects_mod.MASTER_CORPUS_PROJECT_ID}-export-test"
+    agent_memory.get_or_create_conversation(
+        cid, "project-assistant", project_id=projects_mod.MASTER_CORPUS_SOURCE_PROJECT_ID
+    )
+    agent_memory.append_message(cid, "user", "Export test")
+    agent_memory.append_message(
+        cid,
+        "assistant",
+        "| Item | Qty |\n|---|---|\n| Excavation | 81.2 m3 |\n\nDone.",
+    )
+    resp = client.post(
+        f"/v1/projects/{projects_mod.MASTER_CORPUS_PROJECT_ID}/conversations/"
+        f"{cid}/export?format=xlsx"
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.content[:2] == b"PK"
+
+
 def test_master_corpus_alias_delete_project_resolves(client):
     """Deleting the alias resolves to the source corpus and SOFT-archives it
     (hidden from listings) — the row + RAG chunks are preserved, not deleted."""
