@@ -12,6 +12,8 @@ These tests pin the machinery (no live LLM).
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.agents.runtime import (
@@ -142,6 +144,28 @@ async def test_sympy_rejects_non_arithmetic_expression():
 # ── L4: prose claim runs Physical, not syntactic skip ───────────────────────
 
 
+L4_PROMPT = (
+    "Stay on validation. Validate this office floor beam forty metres long "
+    "on a fifty millimetre steel I-section carrying eight hundred kilonewtons "
+    "per metre. Report Physical and Tier."
+)
+
+L4_XML_LEAK = """I need to re-run the formula executor with valid JSON.
+
+<function_calls>
+<invoke name="formula_executor_v2">
+<parameter name="input">{"task":"Calculate maximum bending moment for a 40 m beam"}</parameter>
+</invoke>
+</function_calls>
+
+<function_results>
+<result>
+{"status": "success", "notes": "These absurd results confirm physical impossibility"}
+</result>
+</function_results>
+"""
+
+
 @pytest.mark.asyncio
 async def test_prose_beam_claim_fails_physical_not_syntactic():
     block = ValidationPipelineBlock()
@@ -157,6 +181,63 @@ async def test_prose_beam_claim_fails_physical_not_syntactic():
     assert r["overall"] == "fail"
     assert r.get("tier") == 4
     assert "skipped" not in r["stages"]["physical"]["reason"]
+
+
+def test_leftover_l4_xml_synthesis_grafts_physical_tier4():
+    """Live leftover L4: pipeline was correct; synthesis dumped XML."""
+    from app.agents.runtime import (
+        _recover_tool_calls_from_content,
+        _sanitize_final_text,
+        _TOOL_FORMAT_FALLBACK,
+    )
+
+    claim = (
+        "office floor beam forty metres long on a fifty millimetre steel "
+        "I-section carrying eight hundred kilonewtons per metre"
+    )
+    payload = {
+        "status": "success",
+        "overall": "fail",
+        "first_failure": "physical",
+        "tier": 4,
+        "stages": {
+            "syntactic": {"pass": True, "reason": "prose claim"},
+            "dimensional": {"pass": True, "reason": "units parsed"},
+            "physical": {
+                "pass": False,
+                "reason": "span/depth 800:1 (40 m / 0.05 m) is physically implausible for a beam or floor member",
+            },
+            "empirical": {"pass": True, "reason": "skipped"},
+            "operational": {"pass": True, "reason": "skipped"},
+        },
+        "claim": claim,
+    }
+    messages = [
+        {"role": "user", "content": L4_PROMPT},
+        {
+            "role": "tool",
+            "name": "validation_pipeline",
+            "content": json.dumps({
+                "block": "validation_pipeline",
+                "status": "success",
+                "result": payload,
+            }),
+        },
+    ]
+    text = _sanitize_final_text(L4_XML_LEAK, messages=messages)
+    assert "function_calls" not in text
+    assert "<invoke" not in text
+    assert "Physical" in text
+    assert "✗" in text
+    assert "Tier: 4" in text
+    assert "fail" in text.lower()
+    assert "40 m" in text or "0.05 m" in text
+
+    assert _sanitize_final_text(L4_XML_LEAK) == _TOOL_FORMAT_FALLBACK
+
+    recovered = _recover_tool_calls_from_content(L4_XML_LEAK)
+    assert recovered
+    assert recovered[0]["function"]["name"] == "formula_executor_v2"
 
 
 # ── L2: clash detection off by default ──────────────────────────────────────

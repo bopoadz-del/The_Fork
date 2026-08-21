@@ -1066,36 +1066,198 @@ def _looks_like_internal_tool_json(text: str) -> bool:
     return False
 
 
-def _sanitize_final_text(text: str) -> str:
+_XML_INVOKE_RE = re.compile(
+    r'<\s*invoke\s+name\s*=\s*["\']([^"\']+)["\']\s*>(.*?)</\s*invoke\s*>',
+    re.IGNORECASE | re.DOTALL,
+)
+_XML_PARAM_RE = re.compile(
+    r'<\s*parameter\s+name\s*=\s*["\']([^"\']+)["\']\s*>(.*?)</\s*parameter\s*>',
+    re.IGNORECASE | re.DOTALL,
+)
+_XML_TOOL_LEAK_RE = re.compile(
+    r"<\s*(?:function_calls|function_results|invoke)\b",
+    re.IGNORECASE,
+)
+_VALIDATION_STAGE_ORDER = (
+    "syntactic", "dimensional", "physical", "empirical", "operational",
+)
+
+
+def _looks_like_xml_tool_leak(text: str) -> bool:
+    """True when the model dumped Anthropic-style XML tool calls as prose.
+
+    Live leftover-hat L4: after ``validation_pipeline`` returned Physical /
+    Tier 4, force_synthesis disarmed tools and the model streamed
+    ``<function_calls><invoke name="formula_executor_v2">`` as the answer.
+    """
+    if not text:
+        return False
+    return bool(_XML_TOOL_LEAK_RE.search(text))
+
+
+def _recover_xml_tool_calls(text: str) -> list[dict]:
+    """Recover ``<invoke name=...>`` XML leaked into ``content``."""
+    if not text or not _looks_like_xml_tool_leak(text):
+        return []
+    out: list[dict] = []
+    for inv in _XML_INVOKE_RE.finditer(text):
+        name = (inv.group(1) or "").strip()
+        if not name:
+            continue
+        args: dict[str, Any] = {}
+        for param in _XML_PARAM_RE.finditer(inv.group(2) or ""):
+            pname = (param.group(1) or "").strip()
+            pvalue = (param.group(2) or "").strip()
+            if not pname:
+                continue
+            try:
+                args[pname] = json.loads(pvalue)
+            except (TypeError, json.JSONDecodeError):
+                args[pname] = pvalue
+        out.append({
+            "id": f"recovered_xml_{len(out) + 1}",
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        })
+    return out
+
+
+def _as_validation_payload(obj: Any) -> dict[str, Any] | None:
+    """Unwrap execute/tool envelopes until ``stages`` + ``overall`` appear."""
+    if not isinstance(obj, dict):
+        return None
+    if isinstance(obj.get("stages"), dict) and obj.get("overall"):
+        return obj
+    for key in ("result", "content"):
+        inner = obj.get(key)
+        if isinstance(inner, str):
+            try:
+                inner = json.loads(inner)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        found = _as_validation_payload(inner)
+        if found:
+            return found
+    return None
+
+
+def _validation_pipeline_payload(
+    messages: list[dict[str, Any]] | None = None,
+    tool_results: list[Any] | None = None,
+) -> dict[str, Any] | None:
+    """Most recent validation_pipeline process() dict from this turn."""
+    last: dict[str, Any] | None = None
+    for rec in tool_results or []:
+        if not isinstance(rec, dict):
+            continue
+        found = _as_validation_payload(rec)
+        if found:
+            last = found
+    for m in messages or []:
+        if m.get("role") != "tool":
+            continue
+        raw = m.get("content")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        envelope = raw if isinstance(raw, dict) else {}
+        if m.get("name"):
+            envelope = {"name": m.get("name"), "result": envelope}
+        found = _as_validation_payload(envelope)
+        if found:
+            last = found
+    return last
+
+
+def _format_validation_verdict(payload: dict[str, Any]) -> str:
+    """Kernel 5-stage block from a ``validation_pipeline`` result."""
+    stages = payload.get("stages") or {}
+    lines = [
+        "Output under review: validation_pipeline → claim check",
+        "",
+        "Stages:",
+    ]
+    for i, name in enumerate(_VALIDATION_STAGE_ORDER, 1):
+        st = stages.get(name) or {}
+        mark = "✓" if st.get("pass") else "✗"
+        reason = (st.get("reason") or "").strip()
+        lines.append(f"{i}. {name.capitalize()}: {mark} {reason}".rstrip())
+    overall = payload.get("overall") or (
+        "fail" if payload.get("first_failure") else "pass"
+    )
+    lines.append("")
+    tier = payload.get("tier")
+    if tier is not None:
+        lines.append(f"Tier: {tier}")
+    lines.append(f"Verdict: {overall}")
+    if overall == "fail":
+        ff = payload.get("first_failure") or "physical"
+        reason = ((stages.get(ff) or {}).get("reason") or "").strip()
+        extra = f" — {reason}" if reason else ""
+        lines.append(f"Required correction: {ff} stage failed{extra}")
+    return "\n".join(lines)
+
+
+def _graft_validation_verdict_if_unusable(
+    text: str,
+    messages: list[dict[str, Any]] | None = None,
+    tool_results: list[Any] | None = None,
+) -> str:
+    """Replace leaked XML/JSON synthesis with the pipeline verdict.
+
+    Leftover L4: ``validation_pipeline`` already failed Physical / Tier 4;
+    the user-facing turn was ``formula_executor_v2`` XML instead.
+    """
+    unusable = (not (text or "").strip()) or text == _TOOL_FORMAT_FALLBACK
+    if not unusable:
+        return text
+    payload = _validation_pipeline_payload(messages, tool_results)
+    if not payload:
+        return text
+    return _format_validation_verdict(payload)
+
+
+def _sanitize_final_text(
+    text: str,
+    messages: list[dict[str, Any]] | None = None,
+    tool_results: list[Any] | None = None,
+) -> str:
     """Prepare assistant content for display.
 
     1. Strip DeepSeek DSML tool-call markup.
-    2. Detect raw internal tool-call JSON or search-tool argument objects.
+    2. Detect raw internal tool-call JSON or Anthropic XML tool leaks.
     3. Return a controlled fallback if the content is raw internal tool args.
-    4. Return empty string if nothing usable remains.
+    4. If that fallback would hide a ``validation_pipeline`` verdict, graft it.
+    5. Return empty string if nothing usable remains.
     """
     if not text:
-        return ""
-    cleaned = _strip_dsml(text).strip()
-    if not cleaned:
-        return ""
+        cleaned = ""
+    else:
+        cleaned = _strip_dsml(text).strip()
 
-    # Markdown code block that contains only a tool/search argument payload.
-    md_code = re.match(
-        r"^```(?:json)?\s*([\s\S]*?)\s*```$",
-        cleaned,
-        re.IGNORECASE,
-    )
-    if md_code:
-        inner = md_code.group(1).strip()
-        if _looks_like_internal_tool_json(inner):
-            _LOG.warning("raw tool args inside markdown code block; replacing with fallback")
-            return _TOOL_FORMAT_FALLBACK
+    if cleaned:
+        # Markdown code block that contains only a tool/search argument payload.
+        md_code = re.match(
+            r"^```(?:json)?\s*([\s\S]*?)\s*```$",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if md_code:
+            inner = md_code.group(1).strip()
+            if _looks_like_internal_tool_json(inner):
+                _LOG.warning("raw tool args inside markdown code block; replacing with fallback")
+                cleaned = _TOOL_FORMAT_FALLBACK
 
-    if _looks_like_internal_tool_json(cleaned):
-        _LOG.warning("raw tool-call JSON detected in final answer; replacing with fallback")
-        return _TOOL_FORMAT_FALLBACK
-    return cleaned
+        if cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_xml_tool_leak(cleaned):
+            _LOG.warning("xml tool-call leak in final answer; replacing with fallback")
+            cleaned = _TOOL_FORMAT_FALLBACK
+        elif cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_internal_tool_json(cleaned):
+            _LOG.warning("raw tool-call JSON detected in final answer; replacing with fallback")
+            cleaned = _TOOL_FORMAT_FALLBACK
+
+    return _graft_validation_verdict_if_unusable(cleaned, messages, tool_results)
 
 
 _KIMI_LEAK_RE = re.compile(r"functions\.([A-Za-z0-9_.\-]+):(\d+)")
@@ -1145,6 +1307,9 @@ def _recover_tool_calls_from_content(text: str) -> list[dict]:
     kimi = _recover_kimi_leaked_tool_calls(text)
     if kimi:
         return kimi
+    xml_calls = _recover_xml_tool_calls(text)
+    if xml_calls:
+        return xml_calls
     stripped = text.strip()
     if not stripped.startswith(("{", "[")):
         return []
@@ -4137,6 +4302,11 @@ class Agent:
                     _recover_tool_calls_from_content(raw_content)
                     if not dsml_tool_calls else []
                 )
+                # Leftover L4: after a deliverable, XML/DSML leaks must not
+                # re-arm tools — graft the pipeline verdict instead.
+                if force_synthesis and (dsml_tool_calls or recovered_tool_calls):
+                    dsml_tool_calls = []
+                    recovered_tool_calls = []
                 if dsml_tool_calls:
                     # Treat this turn as a tool-calling turn.
                     tool_calls = dsml_tool_calls
@@ -4155,7 +4325,9 @@ class Agent:
                 else:
                     # Genuine final answer — sanitize DSML markup, raw tool JSON,
                     # and empty content before it reaches the user.
-                    final_text = _sanitize_final_text(raw_content)
+                    final_text = _sanitize_final_text(
+                        raw_content, messages=messages, tool_results=tool_calls_made,
+                    )
                     # If sanitization left nothing usable, force one no-tools call
                     # so the model must produce a plain-text answer instead of an
                     # empty bubble or leaked JSON.
@@ -4165,7 +4337,10 @@ class Agent:
                             final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
                             forced_msg = forced_resp["choice"].get("message") or {}
-                            final_text = _sanitize_final_text(forced_msg.get("content") or "")
+                            final_text = _sanitize_final_text(
+                                forced_msg.get("content") or "",
+                                messages=messages, tool_results=tool_calls_made,
+                            )
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
@@ -4269,7 +4444,10 @@ class Agent:
                 "messages": messages,
             }
         forced_msg = forced_resp["choice"].get("message") or {}
-        final_text = _sanitize_final_text(forced_msg.get("content") or "")
+        final_text = _sanitize_final_text(
+            forced_msg.get("content") or "",
+            messages=messages, tool_results=tool_calls_made,
+        )
         if not final_text.strip():
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
@@ -4746,7 +4924,9 @@ class Agent:
                     # sources/exports (must match the non-streaming path, not a
                     # concatenation of per-line flushes).
                     final_text = _sanitize_inline_paths(
-                        _sanitize_citation_labels(_sanitize_final_text(raw))
+                        _sanitize_citation_labels(_sanitize_final_text(
+                            raw, messages=messages, tool_results=stream_tool_results,
+                        ))
                     )
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
                     if not final_text.strip():
@@ -4761,7 +4941,10 @@ class Agent:
                         else:
                             served_model = (forced_resp.get("raw") or {}).get("model") or served_model
                             _fm = forced_resp["choice"].get("message") or {}
-                            final_text = _sanitize_final_text(_fm.get("content") or "")
+                            final_text = _sanitize_final_text(
+                                _fm.get("content") or "",
+                                messages=messages, tool_results=stream_tool_results,
+                            )
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
@@ -4815,6 +4998,11 @@ class Agent:
                     _recover_tool_calls_from_content(raw_content)
                     if not dsml_tool_calls else []
                 )
+                # Leftover L4: XML/DSML leaked during force_synthesis is the
+                # answer to sanitize/graft, not another tool round.
+                if force_synthesis and (dsml_tool_calls or recovered_tool_calls):
+                    dsml_tool_calls = []
+                    recovered_tool_calls = []
                 if dsml_tool_calls:
                     # Treat as a tool-calling turn — do NOT stream the markup.
                     tool_calls = dsml_tool_calls
@@ -4833,7 +5021,9 @@ class Agent:
                 else:
                     # Final answer — sanitize DSML markup, raw tool JSON, and
                     # empty content before streaming it to the user.
-                    final_text = _sanitize_final_text(raw_content)
+                    final_text = _sanitize_final_text(
+                        raw_content, messages=messages, tool_results=stream_tool_results,
+                    )
                     # If sanitization left nothing usable, force one no-tools call
                     # so the model must produce a plain-text answer instead of an
                     # empty bubble or leaked JSON.
@@ -4852,7 +5042,10 @@ class Agent:
                         else:
                             served_model = (forced_resp.get("raw") or {}).get("model") or served_model
                             forced_msg = forced_resp["choice"].get("message") or {}
-                            final_text = _sanitize_final_text(forced_msg.get("content") or "")
+                            final_text = _sanitize_final_text(
+                                forced_msg.get("content") or "",
+                                messages=messages, tool_results=stream_tool_results,
+                            )
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
@@ -4986,7 +5179,10 @@ class Agent:
             return
         served_model = (forced_resp.get("raw") or {}).get("model") or served_model
         forced_msg = forced_resp["choice"].get("message") or {}
-        final_text = _sanitize_final_text(forced_msg.get("content") or "")
+        final_text = _sanitize_final_text(
+            forced_msg.get("content") or "",
+            messages=messages, tool_results=stream_tool_results,
+        )
         if not final_text.strip():
             # Forced retry returned empty or raw tool JSON — substitute the
             # user-safe fallback so the UI never renders an empty bubble.

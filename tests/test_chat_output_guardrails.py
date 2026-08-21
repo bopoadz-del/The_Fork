@@ -71,6 +71,16 @@ def test_sanitize_final_text_strips_dsml_and_tool_json():
     user_json = '{"answer": "example", "result": "ok"}'
     assert _sanitize_final_text(user_json) == user_json
 
+    xml_leak = (
+        'I need to re-run the formula executor with valid JSON.\n'
+        '<function_calls>\n'
+        '<invoke name="formula_executor_v2">\n'
+        '<parameter name="input">{"task":"x"}</parameter>\n'
+        '</invoke>\n'
+        '</function_calls>'
+    )
+    assert _sanitize_final_text(xml_leak) == _TOOL_FORMAT_FALLBACK
+
 
 @pytest.mark.asyncio
 async def test_chat_replaces_raw_tool_json_with_fallback(monkeypatch):

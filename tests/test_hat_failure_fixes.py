@@ -511,6 +511,8 @@ def test_validation_kernel_passes_claim_not_null_value():
     text = load_agents()["validation"].system_prompt
     assert "Never call `validation_pipeline` with `value: null`" in text
     assert "{claim:" in text
+    assert "<function_calls>" in text
+    assert "formula_executor_v2" in text
 
 
 @requires_construction_kit
