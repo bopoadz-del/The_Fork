@@ -94,19 +94,41 @@ async def test_execute_blocked_dangerous_code(block):
 # ---------------------------------------------------------------------------
 # execute — JavaScript (best-effort, skipped if node is unavailable)
 # ---------------------------------------------------------------------------
+def test_subprocess_wall_includes_spawn_grace():
+    """Bare max_cpu_time as wall-clock killed console.log(2+3) on CI.
+
+    PR #397 virgin job (run 32449705289):
+    test_execute_javascript_simple -> {'error': 'Execution timeout', 'killed': True}
+    """
+    from app.blocks.sandbox import SandboxPolicy, _SUBPROCESS_SPAWN_GRACE_S, _subprocess_wall_s
+
+    policy = SandboxPolicy(max_cpu_time=5)
+    wall = _subprocess_wall_s(policy)
+    assert wall == 5 + _SUBPROCESS_SPAWN_GRACE_S
+    assert wall > policy.max_cpu_time
+
+
 @pytest.mark.asyncio
 async def test_execute_javascript_simple(block):
     import shutil
     if shutil.which("node") is None:
         pytest.skip("node not available")
 
-    result = await block.process({
-        "action": "execute",
-        "code": "console.log(2 + 3);",
-        "language": "javascript",
-    })
-    assert result.get("success") is True
-    assert "5" in result.get("stdout", "")
+    # Retry once: a single starved node spawn on a loaded runner used to
+    # fail this with {'error': 'Execution timeout', 'killed': True}.
+    last = None
+    for _ in range(2):
+        last = await block.process({
+            "action": "execute",
+            "code": "console.log(2 + 3);",
+            "language": "javascript",
+        })
+        if last.get("success") is True and "5" in (last.get("stdout") or ""):
+            return
+        if last.get("error") != "Execution timeout":
+            break
+    assert last.get("success") is True, last
+    assert "5" in (last.get("stdout") or "")
 
 
 # ---------------------------------------------------------------------------

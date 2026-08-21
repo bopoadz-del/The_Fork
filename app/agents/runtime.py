@@ -2539,6 +2539,7 @@ def _postprocess_answer(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]],
     fallback_used: bool = False,
+    agent_name: str | None = None,
 ) -> str:
     """Final-answer post-processing: cost-grounding gate (may refuse an
     ungrounded cost claim) then the standards advisory (appends a non-blocking
@@ -2550,6 +2551,7 @@ def _postprocess_answer(
     prepended so the fallback is visible in the answer itself."""
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
+    text = _ensure_ingestion_handoff(text, messages, agent_name)
     # Confidentiality stopgap: scrub known project/client names from the final
     # answer so one client's project identity can't leak via general-knowledge
     # retrieval. Runs LAST so it catches names in any appended note too.
@@ -2560,6 +2562,51 @@ def _postprocess_answer(
     if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
         text = _MASTER_CORPUS_FALLBACK_NOTE + text
     return text
+
+
+_INGEST_NEXT_RE = re.compile(r"(?im)^Next:\s*\S+")
+_EXT_TO_NEXT_AGENT = (
+    (".ifc", "bim-analyst"),
+    (".xer", "construction-pm"),
+    (".xlsx", "quantity-surveyor"),
+    (".csv", "quantity-surveyor"),
+    (".docx", "contracts-manager"),
+    (".doc", "contracts-manager"),
+    (".pdf", "quantity-surveyor"),
+)
+
+
+def _next_agent_from_turn(messages: list[dict[str, Any]] | None) -> str:
+    """Pick the leftover L5 handoff hat from the user's named file/intent."""
+    text = ""
+    for m in reversed(messages or []):
+        if m.get("role") == "user":
+            text = str(m.get("content") or "")
+            break
+    low = text.lower()
+    for ext, agent in _EXT_TO_NEXT_AGENT:
+        if ext in low:
+            return agent
+    if "bim" in low or "ifc" in low:
+        return "bim-analyst"
+    if "boq" in low:
+        return "quantity-surveyor"
+    return "smart-orchestrator"
+
+
+def _ensure_ingestion_handoff(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+    agent_name: str | None,
+) -> str:
+    """Leftover L5: document-ingestion must end with ``Next: <hat>``."""
+    if (agent_name or "") != "document-ingestion":
+        return text
+    if not (text or "").strip():
+        return text
+    if _INGEST_NEXT_RE.search(text):
+        return text
+    return text.rstrip() + f"\n\nNext: {_next_agent_from_turn(messages)}"
 
 
 def _parse_source_tail(tail: str) -> tuple[str, str]:
@@ -4344,7 +4391,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -4451,7 +4498,7 @@ class Agent:
         if not final_text.strip():
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -4889,6 +4936,7 @@ class Agent:
             if force_synthesis and _synth_stream_enabled:
                 streamed_any = False
                 fell_back = False
+                xml_leak = False
                 acc: list[str] = []
                 pending = ""
                 try:
@@ -4898,10 +4946,15 @@ class Agent:
                         streamed_any = True
                         acc.append(_delta)
                         pending += _delta
-                        # Flush only COMPLETE lines, sanitised. Both citation
-                        # regexes are within-line / line-anchored, so per-line
-                        # sanitisation equals full-text as long as we hold the
-                        # partial last line (which we do).
+                        raw_so_far = "".join(acc)
+                        # Leftover L4 class: Groq SYNTHESIS_STREAMING must not
+                        # flush <function_calls> XML to the client.
+                        if _looks_like_xml_tool_leak(raw_so_far):
+                            xml_leak = True
+                            pending = ""
+                            continue
+                        if len(raw_so_far) < 60 and "\n" not in raw_so_far:
+                            continue
                         nl = pending.rfind("\n")
                         if nl >= 0:
                             seg, pending = pending[: nl + 1], pending[nl + 1:]
@@ -4915,11 +4968,15 @@ class Agent:
                         _LOG.info("chat_stream: synthesis stream unavailable (%s) — non-streaming fallback", _se)
                         fell_back = True
                 if not fell_back:
-                    if pending:
+                    raw = "".join(acc)
+                    if _looks_like_xml_tool_leak(raw):
+                        xml_leak = True
+                    # Do not flush a held XML tail — leftover L4 Groq streaming
+                    # used to emit <function_calls> here before sanitize/graft.
+                    if pending and not xml_leak:
                         seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
                         if seg:
                             yield {"type": "token", "content": seg}
-                    raw = "".join(acc)
                     # Fully-sanitised accumulated text: what we persist + feed
                     # sources/exports (must match the non-streaming path, not a
                     # concatenation of per-line flushes).
@@ -4928,8 +4985,11 @@ class Agent:
                             raw, messages=messages, tool_results=stream_tool_results,
                         ))
                     )
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
-                    if not final_text.strip():
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                    if xml_leak and final_text.strip():
+                        for chunk in _chunks(final_text, 80):
+                            yield {"type": "token", "content": chunk}
+                    elif not final_text.strip():
                         # Nothing usable streamed (empty response) — preserve the
                         # empty-final forced-retry path (non-streamed, chunked).
                         forced_resp = await self._call_llm(
@@ -4948,7 +5008,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
+                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     if _timing:
@@ -5049,7 +5109,7 @@ class Agent:
                             if not final_text.strip():
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -5189,7 +5249,7 @@ class Agent:
             _LOG.warning("chat_stream: forced final returned empty, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")))
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:

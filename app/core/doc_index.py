@@ -71,7 +71,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"
 
 # Extensions we know how to extract text from.
 _SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".doc", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar", ".msg"}
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".doc", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar", ".msg", ".ifc"}
     | _IMAGE_EXTS
 )
 
@@ -1492,6 +1492,9 @@ def index_project(project_id: str) -> dict[str, Any]:
         drawing_chunks = _drawing_chunks_for_document(file_path, filename, ext, project_id)
         if drawing_chunks:
             chunks = chunks + drawing_chunks
+        ifc_chunks = _ifc_chunks_for_document(file_path, filename, ext, project_id)
+        if ifc_chunks:
+            chunks = chunks + ifc_chunks
 
         fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
         entry: dict[str, Any] = {
@@ -1895,6 +1898,89 @@ def _drawing_chunks_for_document(
         return []
 
 
+_IFC_STEP_TYPES = (
+    b"IFCWALLSTANDARDCASE",
+    b"IFCWALL",
+    b"IFCSLAB",
+    b"IFCBEAM",
+    b"IFCCOLUMN",
+    b"IFCDOOR",
+    b"IFCWINDOW",
+    b"IFCSTAIR",
+    b"IFCROOF",
+    b"IFCSPACE",
+    b"IFCBUILDINGSTOREY",
+)
+
+
+def _ifc_step_census_chunk(file_path: str, filename: str) -> list[str]:
+    """Count IFC types from STEP bytes when the BIM extractor is unavailable."""
+    try:
+        raw = file_crypto.read_document(file_path)
+    except Exception:
+        try:
+            with open(file_path, "rb") as fh:
+                raw = fh.read(2_000_000)
+        except Exception:
+            return []
+    blob = raw[:2_000_000].upper()
+    counts: list[str] = []
+    for token in _IFC_STEP_TYPES:
+        n = blob.count(token)
+        if n:
+            counts.append(f"{token.decode('ascii')} {n}")
+    if not counts:
+        return []
+    return [
+        f"IFC MODEL — {filename}. STEP census: {', '.join(counts)}."
+    ]
+
+
+def _ifc_chunks_for_document(
+    file_path: str, filename: str, ext: str, project_id: str
+) -> list[str]:
+    """Return a BIM census chunk for an IFC so it is not left 'Not indexed'.
+
+    Leftover live UI: ``sample_office.ifc`` sat at chunk_count=0 because IFC
+    was an unsupported extractor type. Clash stays off — leftover L2.
+    Never raises.
+    """
+    del project_id  # signature matches the BOQ/drawing hooks
+    if (ext or "").lower() != ".ifc" or not file_path:
+        return []
+    log = _logging.getLogger(__name__)
+    try:
+        from app.blocks.bim_extractor import BIMExtractorBlock
+
+        result = _run_sync(
+            BIMExtractorBlock().process(
+                {"file_path": file_path},
+                {"run_clash_detection": False},
+            )
+        )
+        if isinstance(result, dict) and result.get("status") != "error":
+            inner = (
+                result.get("result")
+                if isinstance(result.get("result"), dict)
+                else result
+            )
+            schema = inner.get("ifc_schema") or inner.get("schema") or "IFC"
+            qty = inner.get("quantities") or {}
+            counts = []
+            for cat, body in qty.items():
+                n = body.get("count") if isinstance(body, dict) else body
+                if isinstance(n, (int, float)) and n:
+                    counts.append(f"{cat} {int(n)}")
+            census = ", ".join(counts) if counts else "no counted categories"
+            return [
+                f"IFC MODEL — {filename}. Schema: {schema}. "
+                f"Element census: {census}."
+            ]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("IFC census wiring skipped for %s: %s", filename, exc, exc_info=True)
+    return _ifc_step_census_chunk(file_path, filename)
+
+
 def index_document(
     project_id: str,
     document_id: str,
@@ -1955,6 +2041,9 @@ def index_document(
         drawing_chunks = _drawing_chunks_for_document(file_path, filename, ext, project_id)
         if drawing_chunks:
             chunks = chunks + drawing_chunks
+        ifc_chunks = _ifc_chunks_for_document(file_path, filename, ext, project_id)
+        if ifc_chunks:
+            chunks = chunks + ifc_chunks
         if not chunks:
             # A supported file that produced zero chunks is a SILENT indexing
             # failure: the document "exists" but can never be retrieved. Three
