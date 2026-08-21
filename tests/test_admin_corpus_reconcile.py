@@ -26,6 +26,7 @@ from app.core.models import (
     rag_chunk_class_for,
     rag_chunk_table_name,
 )
+from app.core.rag.vector_store import ensure_table
 from app.dependencies import require_api_key
 
 
@@ -50,7 +51,11 @@ def _chunk_cls():
     # here would trip the dim-conflict guard whenever the live embedder (384)
     # registered the namespace first.
     cls = rag_chunk_class_for(ns) or make_rag_chunk_class(ns, EMBEDDING_DIM, "test")
-    cls.__table__.create(bind=engine, checkfirst=True)
+    # Race-safe: this helper and the app's own _ensure_schema both create the
+    # namespaced table, on different engines, and checkfirst=True is
+    # check-then-create rather than atomic. The loser used to fail the test
+    # with "table ... already exists" (or "database is locked", same race).
+    ensure_table(cls.__table__, bind=engine)
     return cls
 
 
