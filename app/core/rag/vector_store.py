@@ -382,6 +382,47 @@ def _ensure_hnsw_index(eng, table_name: str) -> None:
         )
 
 
+def table_already_exists(exc: BaseException) -> bool:
+    """True when a CREATE TABLE lost a race rather than genuinely failing.
+
+    SQLite says "table X already exists" (OperationalError); PostgreSQL says
+    "relation X already exists" with SQLSTATE 42P07 (ProgrammingError). Both
+    mean the table we wanted is now there, which is the outcome we asked for.
+    """
+    code = getattr(getattr(exc, "orig", None), "pgcode", None)
+    if code == "42P07":
+        return True
+    msg = str(exc).lower()
+    return "already exists" in msg and ("table" in msg or "relation" in msg)
+
+
+def ensure_table(table, *, bind) -> None:
+    """CREATE ``table`` if absent, tolerating a concurrent creator.
+
+    ``checkfirst=True`` is check-THEN-create and therefore not atomic: two
+    callers can both see "absent" and both issue CREATE, and the loser raises.
+    ``_INIT_LOCK`` below only serialises threads inside ONE process, so it does
+    not cover a second uvicorn worker, nor a test creating the table on its own
+    engine while the app creates it on the request thread.
+
+    That race is not theoretical. It failed CI on an unrelated PR as
+    ``table chunks_t48b48c8a1360 already exists``, and had shown up earlier as
+    ``database is locked`` from the same two writers -- one root cause, two
+    symptoms, and easy to dismiss as flakiness because each looks like a
+    different fault.
+
+    Losing this race is a success: the table exists either way.
+    """
+    try:
+        table.create(bind=bind, checkfirst=True)
+    except SQLAlchemyError as exc:
+        if not table_already_exists(exc):
+            raise
+        logger.debug(
+            "table %s was created concurrently; continuing", table.name,
+        )
+
+
 def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
     global _INITIALIZED_NAMESPACES
     table_name = rag_chunk_cls.__tablename__
@@ -393,7 +434,7 @@ def _ensure_schema(url: str, rag_chunk_cls: type) -> None:
             return
         _ensure_sqlite_parent_dir(url)
         eng = _engine_for_url(url)
-        rag_chunk_cls.__table__.create(bind=eng, checkfirst=True)
+        ensure_table(rag_chunk_cls.__table__, bind=eng)
         # `checkfirst=True` above SKIPS the whole table create — indexes
         # included — when the table already exists. A prod table that predates
         # the idx_chunks_project declaration therefore never got the btree, so
