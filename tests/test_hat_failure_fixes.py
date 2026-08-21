@@ -64,6 +64,20 @@ def test_supervision_proposal_does_not_require_the_md_filename():
     assert "already inlined" in text or "do not search the corpus for a file named" in text
 
 
+def test_supervision_proposal_does_not_loop_search_on_contractor_boq():
+    """Leftover live FAIL: hat searched leftover BOQ instead of drafting §6."""
+    agent = load_agents()["supervision-proposal"]
+    text = agent.system_prompt.lower()
+    assert "no enquiry pack is not a search loop" in text
+    assert "methodology is always written" in text
+    assert "at most one" in text and "search_project_documents" in text
+    # Distinctive §6 obligations — full words, not bare "hold"/"itp" substrings.
+    assert "inspection/wir" in text or "inspection requests/wir" in text or "wir flow" in text
+    assert "hold and witness" in text
+    assert "itp review" in text
+    assert "ncr flow" in text
+
+
 def test_learning_prompt_treats_invoice_as_a_correction():
     agent = load_agents()["learning"]
     text = agent.system_prompt.lower()
