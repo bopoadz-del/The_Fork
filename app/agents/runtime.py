@@ -611,7 +611,9 @@ async def _predispatch_file_tool(
         name, tool = target
         resolved = _resolve_file_path(project_id, name)
         instance = block_instances.get(tool) or _create_block_instance(tool)
-        want_clash = bool(re.search(r"\bclash", user_msg, re.I))
+        from app.core.clash_intent import message_wants_clash
+
+        want_clash = message_wants_clash(user_msg)
         result = await instance.execute(
             {"file_path": resolved},
             ({"run_clash_detection": True} if want_clash

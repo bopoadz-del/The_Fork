@@ -71,3 +71,20 @@ def test_clash_keyword_does_not_route_unless_present():
     )]
     assert "bim_clash_detection" not in without
     assert "bim_clash_detection" in with_clash
+
+
+@requires_construction_kit
+def test_do_not_run_clash_does_not_route_to_clash():
+    """Leftover project-assistant: negated clash must not steal the turn."""
+    from app.core.clash_intent import message_wants_clash
+
+    assert message_wants_clash("run clash detection on sample_office.ifc")
+    assert not message_wants_clash("Do not run clash detection.")
+    assert not message_wants_clash("count IfcWall")
+    block = SmartOrchestratorBlock()
+    negated = [m["action"] for m in block._match_actions(
+        "Using leftover_mini_boq.xlsx, billed excavation 81.2 m3 vs site 92 m3. "
+        "What is the variance? Do not run clash detection.",
+        None,
+    )]
+    assert "bim_clash_detection" not in negated

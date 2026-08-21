@@ -11,6 +11,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 from app.blocks._procedure_routing import PROCEDURE_ROUTING_ADDITIONS
+from app.core.clash_intent import message_wants_clash
 import logging
 
 logger = logging.getLogger(__name__)
@@ -660,6 +661,10 @@ class SmartOrchestratorBlock(UniversalBlock):
             for action, score in sorted(scores.items(), key=lambda x: x[1], reverse=True)
             if score >= _gate_for(action)
         ]
+        # "do not run clash detection" still contains the word clash.
+        # Negated phrasing is not a clash request (leftover project-assistant).
+        if not message_wants_clash(message):
+            results = [r for r in results if r["action"] != "bim_clash_detection"]
         return results
 
     def _detect_file_type(self, data: Dict, context: Dict) -> Optional[str]:
