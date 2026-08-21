@@ -49,7 +49,11 @@ services:
     name: the-fork
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    # The live service runs `pro` (4 GB / 2 CPU) and has since well before this
+    # file said `starter`. Declaring starter here made "Apply Blueprint" a
+    # DOWNGRADE waiting to happen, on a service that is also the only thing
+    # holding the 50 GB corpus disk.
+    plan: pro
     region: oregon
     branch: main
     # git-push-equals-prod is off. A push to main must NOT rebuild the live
@@ -153,9 +157,18 @@ services:
       # dashboard `true` cannot enqueue uploads onto a queue nobody drains.
       - key: INGEST_WORKER_ENABLED
         value: "false"
-      # Cap document uploads so one large BIM file can't OOM the box.
+      # Matches the live service. This used to declare 50 MB "so one large BIM
+      # file can't OOM the box", which production never applied — and which was
+      # the wrong lever anyway: the file that actually OOM-killed the instance
+      # was 4.4 MB (measured 2026-08-20, peak 3892 MB of 4096 then SIGKILL).
+      # File size does not predict extraction memory; a 4.4 MB text PDF blows
+      # up where a 200 MB scan does not. The real bound is now RLIMIT_AS on the
+      # extraction child (DOC_EXTRACT_MEM_MB, app/core/extract_isolated.py), so
+      # this cap is back to being what it should always have been: a limit on
+      # absurd uploads, not a memory guard. 50 MB would reject real contract
+      # volumes (Vol 4 Schedule is 221 MB).
       - key: MAX_DOC_UPLOAD_SIZE
-        value: "52428800" # 50 MB
+        value: "524288000" # 500 MB
 
       # ── Required in production (set in dashboard) ──────────────────────
       - key: SECRET_KEY # JWT signing — app refuses to start in prod without it
