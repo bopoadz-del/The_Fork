@@ -33,7 +33,7 @@ interface ProjectRow {
  *  project currently open. Hide Drive-approved backing shells so they do not
  *  duplicate Master Corpus. A leftover live workspace showed "No projects yet"
  *  while Leftover Hat Battery was open because this filter kept only the corpus. */
-export function isSidebarVisible(p: ProjectRow, activeProjectId?: string): boolean {
+function isSidebarVisible(p: ProjectRow, activeProjectId?: string): boolean {
   if (activeProjectId && p.id === activeProjectId) return true
   if (p.is_master_corpus === true) return true
   if (p.origin === 'admin_drive_approved') return false
