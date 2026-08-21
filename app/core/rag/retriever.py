@@ -221,8 +221,13 @@ def extract_query_identifiers(query: str) -> List[str]:
         # costing question with "could not confirm this reference".
         # Letterless dot/comma-separated digits are never document codes;
         # hyphenated digit pairs (drawing/sheet refs like 054-0009) keep
-        # matching.
+        # matching. A decimal minus a number (18.4-16) is leftover L7
+        # arithmetic, not a sheet ref — that token used to fire the
+        # RAG-miss short-circuit ("could not confirm this reference")
+        # before sympy_reasoning ever ran.
         if re.fullmatch(r"\d+[.,]\d+", token):
+            continue
+        if re.fullmatch(r"\d+[.,]\d+[-+*/]\d+(?:[.,]\d+)?", token):
             continue
         if len(token) >= 5 and not _is_prose_compound(token):
             found.add(token.lower())

@@ -65,3 +65,16 @@ def test_currency_rate_units_are_not_document_references():
     assert extract_query_identifiers(
         "Convert 1250 AED/m2 to USD/ft2 using 3.6725 AED = 1 USD"
     ) == []
+
+
+def test_leftover_l7_arithmetic_is_not_a_document_identifier():
+    """Live leftover L7: '(18.4-16)*2850' extracted '18.4-16' as a sheet
+    ref, so the RAG-miss gate returned 'could not confirm this reference'
+    in ~0s and sympy never ran."""
+    msg = (
+        "Stay on heavy-reasoning. Planned quantity 16, actual 18.4, rate 2850. "
+        "Compute (18.4-16)*2850 with sympy_reasoning {expression}. "
+        "Report the 2.4 overrun and the 6840 cost impact."
+    )
+    assert extract_query_identifiers(msg) == []
+    assert extract_query_identifiers("see sheet 054-0009")  # still a code

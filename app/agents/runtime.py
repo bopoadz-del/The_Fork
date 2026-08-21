@@ -1679,6 +1679,10 @@ _DIMENSION_RE = re.compile(
     re.IGNORECASE,
 )
 _MIN_DIMENSIONS_FOR_CALC = 2
+# Leftover L7: Compute (18.4-16)*2850 — numbers without unit suffixes.
+_ARITH_EXPR_RE = re.compile(
+    r"\(\s*\d[\d.]*\s*[-+*/]\s*\d[\d.]*\s*\)(?:\s*[-+*/]\s*\d[\d.]*)?",
+)
 
 
 def _looks_like_self_contained_calculation(text: str) -> bool:
@@ -1689,6 +1693,8 @@ def _looks_like_self_contained_calculation(text: str) -> bool:
         return False
     if not text or not _CALC_VERB_RE.search(text):
         return False
+    if _ARITH_EXPR_RE.search(text):
+        return True
     return len(_DIMENSION_RE.findall(text)) >= _MIN_DIMENSIONS_FOR_CALC
 
 
