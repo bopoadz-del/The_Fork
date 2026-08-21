@@ -94,6 +94,21 @@ type LoadState =
   | { tag: 'error'; message: string }
   | { tag: 'loaded'; projects: ProjectRow[] }
 
+function withActiveProject(
+  rows: ProjectRow[],
+  activeProjectId?: string,
+  activeProjectName?: string,
+): ProjectRow[] {
+  if (
+    activeProjectId
+    && activeProjectName
+    && !rows.some((p) => p.id === activeProjectId)
+  ) {
+    return [{ id: activeProjectId, name: activeProjectName }, ...rows]
+  }
+  return rows
+}
+
 export default function LeftPanel({
   activeProjectId,
   activeProjectName,
@@ -106,28 +121,23 @@ export default function LeftPanel({
   onSelectConversation,
   onNewConversation,
 }: Props) {
-  const { logout } = useAuth()
+  const { logout, user, loading: authLoading } = useAuth()
   const [state, setState] = useState<LoadState>({ tag: 'loading' })
 
   useEffect(() => {
+    if (authLoading) return
+    if (!user) {
+      setState({ tag: 'loaded', projects: [] })
+      return
+    }
     let cancelled = false
     async function load() {
       try {
         const data = await apiGet<ProjectsResponse>('/v1/projects')
         if (cancelled) return
-        let visible = (data.projects ?? []).filter((p) =>
+        const visible = (data.projects ?? []).filter((p) =>
           isSidebarVisible(p, activeProjectId),
         )
-        if (
-          activeProjectId
-          && activeProjectName
-          && !visible.some((p) => p.id === activeProjectId)
-        ) {
-          visible = [
-            { id: activeProjectId, name: activeProjectName },
-            ...visible,
-          ]
-        }
         setState({ tag: 'loaded', projects: visible })
       } catch (err: unknown) {
         if (cancelled) return
@@ -139,50 +149,45 @@ export default function LeftPanel({
     }
     void load()
     return () => { cancelled = true }
-  }, [activeProjectId, activeProjectName])
+  }, [activeProjectId, user, authLoading])
 
   function renderProjectsBody() {
-    if (state.tag === 'loading') {
-      if (activeProjectId && activeProjectName) {
-        return (
-          <ul className="left-panel__list">
-            <li>
-              <span className="left-panel__list-item left-panel__list-item--active">
-                {activeProjectName}
-              </span>
-            </li>
-          </ul>
-        )
-      }
+    const rows = withActiveProject(
+      state.tag === 'loaded' ? state.projects : [],
+      activeProjectId,
+      activeProjectName,
+    )
+    // Never show "No projects yet" while a project workspace is open.
+    if (rows.length > 0) {
+      return (
+        <ul className="left-panel__list">
+          {rows.map((p) => {
+            const isActive = p.id === activeProjectId
+            return (
+              <li key={p.id}>
+                <Link
+                  to={`/projects/${p.id}`}
+                  className={
+                    'left-panel__list-item' +
+                    (isActive ? ' left-panel__list-item--active' : '')
+                  }
+                  aria-current={isActive ? 'page' : undefined}
+                >
+                  {p.name}
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      )
+    }
+    if (state.tag === 'loading' || authLoading) {
       return <p className="left-panel__empty">Loading…</p>
     }
     if (state.tag === 'error') {
       return <p className="left-panel__empty">Couldn't load projects.</p>
     }
-    if (state.projects.length === 0) {
-      return <p className="left-panel__empty">No projects yet.</p>
-    }
-    return (
-      <ul className="left-panel__list">
-        {state.projects.map((p) => {
-          const isActive = p.id === activeProjectId
-          return (
-            <li key={p.id}>
-              <Link
-                to={`/projects/${p.id}`}
-                className={
-                  'left-panel__list-item' +
-                  (isActive ? ' left-panel__list-item--active' : '')
-                }
-                aria-current={isActive ? 'page' : undefined}
-              >
-                {p.name}
-              </Link>
-            </li>
-          )
-        })}
-      </ul>
-    )
+    return <p className="left-panel__empty">No projects yet.</p>
   }
 
   const showDocsSection = !!activeProjectId && !!documents
