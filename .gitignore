@@ -94,6 +94,7 @@ data/chroma_db/
 /yolov8m-worldv2.pt
 /weights/
 coverage.xml
+coverage.json
 .worktrees/
 
 # Runtime / diagnostic logs — written by the app (sandbox shell audit,
