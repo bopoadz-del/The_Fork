@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.blocks.smart_orchestrator import SmartOrchestratorBlock
+from app.core.clash_intent import message_wants_clash
 from tests.conftest import requires_construction_kit
 
 # Matrix BLOCKED rows that leftover/prod chat also never hit.
@@ -74,17 +75,37 @@ def test_clash_keyword_does_not_route_unless_present():
 
 
 @requires_construction_kit
+def test_mep_conflict_still_routes_to_clash():
+    """Fable W3: synonym keywords must survive the post-match clash filter."""
+    assert message_wants_clash("find MEP conflict issues in the coordinated model")
+    matched = _matched_actions("find MEP conflict issues in the coordinated model")
+    assert "bim_clash_detection" in matched
+
+
+@requires_construction_kit
 def test_do_not_run_clash_does_not_route_to_clash():
     """Leftover project-assistant: negated clash must not steal the turn."""
-    from app.core.clash_intent import message_wants_clash
-
+    # Fable W1 — real asks must stay on.
+    assert message_wants_clash("no rush, run clash detection")
+    assert message_wants_clash("Without further delay, run clash detection")
+    assert message_wants_clash(
+        "Run clash detection but do not include clashes below 5mm"
+    )
+    # Fable W2 — common opt-outs.
+    assert not message_wants_clash("skip clash detection")
+    assert not message_wants_clash("avoid clash detection")
+    assert not message_wants_clash("disable clash detection")
+    assert not message_wants_clash("clash detection is not needed")
     assert message_wants_clash("run clash detection on sample_office.ifc")
     assert not message_wants_clash("Do not run clash detection.")
     assert not message_wants_clash("count IfcWall")
-    block = SmartOrchestratorBlock()
-    negated = [m["action"] for m in block._match_actions(
-        "Using leftover_mini_boq.xlsx, billed excavation 81.2 m3 vs site 92 m3. "
-        "What is the variance? Do not run clash detection.",
-        None,
-    )]
-    assert "bim_clash_detection" not in negated
+
+    prompt = (
+        "Process the bill of quantities leftover_mini_boq.xlsx — billed "
+        "excavation 81.2 m3 vs site remeasure 92 m3. What is the variance? "
+        "Do not run clash detection."
+    )
+    matched = _matched_actions(prompt)
+    assert "bim_clash_detection" not in matched
+    # Lock the desired leftover path: BOQ work, not clash.
+    assert "boq_process" in matched, matched

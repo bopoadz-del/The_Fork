@@ -54,10 +54,18 @@ def _run(coro):
 def test_previously_unsent_action_is_dispatchable(action, payload):
     result = _run(_container().route(action, payload, {"action": action, **payload}))
     assert isinstance(result, dict), result
-    err = (result.get("error") or "")
-    assert "Unknown action" not in err, f"{action} not wired: {result}"
-    assert "NameError" not in err
-    assert result.get("status") in ("success", "error", "ok", None) or "result" in result or "line_items" in result
+    err = str(result.get("error") or "")
+    nested = result.get("result") if isinstance(result.get("result"), dict) else {}
+    nested_err = str(nested.get("error") or "")
+    assert "Unknown action" not in err and "Unknown action" not in nested_err, result
+    assert "NameError" not in err and "NameError" not in nested_err
+    # Honest missing-input error is OK; the action must be wired and return a shape.
+    status = result.get("status")
+    if status is None and nested:
+        status = nested.get("status")
+    assert status in ("success", "error", "ok"), (
+        f"{action}: expected status success|error|ok, got {result!r}"
+    )
 
 
 @requires_construction_kit
@@ -71,8 +79,14 @@ def test_bim_clash_detection_runs_on_sample_office_ifc():
     assert isinstance(result, dict), result
     assert result.get("status") == "success", result
     assert "No IFC file" not in (result.get("error") or "")
-    # Clash is on: report present even if zero clashes.
-    assert "clash" in str(result).lower() or result.get("status") == "success"
+    # Handler returns action "clash_detection" with a clash_summary even at 0 hits.
+    inner = result.get("result") if isinstance(result.get("result"), dict) else result
+    assert (
+        isinstance(inner.get("clash_summary"), dict)
+        or isinstance(result.get("clash_summary"), dict)
+        or "clashes" in inner
+        or "clashes" in result
+    ), result
 
 
 @requires_construction_kit
@@ -85,5 +99,7 @@ def test_extra_named_calculator_via_construction_calc(name, params):
     ))
     assert isinstance(result, dict), result
     inner = result.get("result") if isinstance(result.get("result"), dict) else result
-    assert inner.get("status") != "error" or "Unknown calculation" not in (inner.get("error") or ""), result
-    assert name in str(result) or inner.get("status") in ("success", "ok") or "result" in inner
+    err = str(inner.get("error") or result.get("error") or "")
+    assert "Unknown calculation" not in err, result
+    assert inner.get("status") == "success" or result.get("status") == "success", result
+    assert name in str(result)

@@ -86,6 +86,16 @@ def _png_bytes(color=(220, 30, 30)) -> bytes:
     return buf.getvalue()
 
 
+def _jpeg_bytes(color=(220, 30, 30)) -> bytes:
+    img = Image.new("RGB", (64, 64), (255, 255, 255))
+    for y in range(8, 24):
+        for x in range(8, 40):
+            img.putpixel((x, y), color)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
 def _xlsx_bytes() -> bytes:
     wb = Workbook()
     ws = wb.active
@@ -143,7 +153,7 @@ def test_admin_surfaces_are_forbidden_for_a_normal_user(client, session):
             r = client.get(path, headers=h)
         else:
             r = client.post(path, json=json_body, headers=h)
-        assert r.status_code in (401, 403, 404), f"{path} -> {r.status_code} {r.text[:200]}"
+        assert r.status_code == 403, f"{path} -> {r.status_code} {r.text[:200]}"
 
 
 def test_right_panel_preview_redline_photo_and_attach(client, session):
@@ -195,7 +205,7 @@ def test_right_panel_preview_redline_photo_and_attach(client, session):
 
     r = client.post(
         "/v1/chat/analyze-photo",
-        files={"file": ("site.jpg", _png_bytes(), "image/jpeg")},
+        files={"file": ("site.jpg", _jpeg_bytes(), "image/jpeg")},
         headers=h,
     )
     assert r.status_code in (200, 503), r.text
@@ -405,9 +415,11 @@ def test_construction_calc_and_clash_via_execute(client, session):
     assert r.status_code == 200, r.text
     clash = r.json()
     inner = clash.get("result") if isinstance(clash.get("result"), dict) else clash
-    assert inner.get("action") == "bim_clash_detection" or inner.get("status") in (
-        "success", "error",
+    # Handler returns action "clash_detection" (not the route name bim_clash_detection).
+    assert inner.get("status") == "success", clash
+    assert (
+        isinstance(inner.get("clash_summary"), dict)
+        or "clashes" in inner
+        or isinstance(inner.get("clashes"), list)
     ), clash
-    # Handler must actually run clash, not skip for missing IFC.
-    if inner.get("status") == "error":
-        assert "No IFC file" not in (inner.get("error") or "")
+    assert "No IFC file" not in (inner.get("error") or "")

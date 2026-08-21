@@ -118,7 +118,10 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("forensic_delay_analysis", ["delay analysis", "eot", "extension of time", "delay claim", "forensic"]),
     # BIM / IFC
     ("bim_analysis",          ["bim", "ifc", "revit", "3d model", "building model", "navisworks"]),
-    ("bim_clash_detection",   ["clash", "clash detection", "interference", "conflict", "mep conflict"]),
+    # Bare "conflict" removed — too broad (schedule conflict). Synonyms must
+    # also be recognized by message_wants_clash or the post-match filter
+    # strips bim_clash_detection whenever the literal word "clash" is absent.
+    ("bim_clash_detection",   ["clash", "clash detection", "interference", "mep conflict"]),
     ("bim_extract",           ["extract bim", "ifc quantities", "bim quantities", "model quantities"]),
     ("digital_twin_sync",     ["digital twin", "asset data", "sync model", "as-built bim"]),
     # QA/QC
