@@ -125,11 +125,7 @@ export default function LeftPanel({
   const [state, setState] = useState<LoadState>({ tag: 'loading' })
 
   useEffect(() => {
-    if (authLoading) return
-    if (!user) {
-      setState({ tag: 'loaded', projects: [] })
-      return
-    }
+    if (authLoading || !user) return
     let cancelled = false
     async function load() {
       try {
@@ -152,6 +148,9 @@ export default function LeftPanel({
   }, [activeProjectId, user, authLoading])
 
   function renderProjectsBody() {
+    if (!authLoading && !user) {
+      return <p className="left-panel__empty">No projects yet.</p>
+    }
     const rows = withActiveProject(
       state.tag === 'loaded' ? state.projects : [],
       activeProjectId,
