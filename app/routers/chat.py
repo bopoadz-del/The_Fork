@@ -200,11 +200,20 @@ async def _stream_from_heavy_reasoning(
         (tc.get("name") or "unknown")
         for tc in (result.get("tool_calls") or [])
     })
+    # `tools` in CALL ORDER, mirroring the agent stream's end event, so the UI
+    # reads one key across every stream path. `tools_used` (sorted, de-duped)
+    # stays for any consumer written against the older shape.
+    tools_ordered: list[str] = []
+    for _tc in (result.get("tool_calls") or []):
+        _nm = _tc.get("name") or "unknown"
+        if _nm not in tools_ordered:
+            tools_ordered.append(_nm)
     end_event = {
         "type": "end",
         "complete": True,
         "mode": "heavy_reasoning",
         "iterations": result.get("iterations", 0),
+        "tools": tools_ordered,
         "tools_used": tools_used,
         "request_id": get_request_id(),
     }
@@ -459,7 +468,7 @@ async def _stream_from_predefined(
         for word in param_error.split(" "):
             yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
             await asyncio.sleep(0.01)
-        yield f"data: {json.dumps({'type': 'end', 'complete': True, 'mode': 'predefined', 'workflow': action, 'plan_steps': [], 'exports': [], 'request_id': rid})}\n\n"
+        yield f"data: {json.dumps({'type': 'end', 'complete': True, 'mode': 'predefined', 'workflow': action, 'plan_steps': [], 'exports': [], 'tools': [], 'request_id': rid})}\n\n"
         return
     context["params"] = resolved_params
 
@@ -492,7 +501,12 @@ async def _stream_from_predefined(
         yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
         await asyncio.sleep(0.01)
 
-    yield f"data: {json.dumps({'type': 'end', 'complete': True, 'mode': 'predefined', 'workflow': action, 'plan_steps': out.get('plan_steps', []), 'exports': out.get('exports', []), 'request_id': rid})}\n\n"
+    # The predefined path dispatches a container action directly instead of
+    # running the agent tool loop, so nothing here ever populated `tools`. A
+    # payment_certificate turn reached the UI with the key absent and rendered
+    # as tools=[] -- the same answer/badge disagreement #390 fixed on the agent
+    # path, on the one path #390 did not touch. The action IS the tool; name it.
+    yield f"data: {json.dumps({'type': 'end', 'complete': True, 'mode': 'predefined', 'workflow': action, 'plan_steps': out.get('plan_steps', []), 'exports': out.get('exports', []), 'tools': [action], 'request_id': rid})}\n\n"
 
 
 async def _with_domain_hint(prompt: str) -> str:
@@ -736,7 +750,7 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
                     yield f"data: {json.dumps({'type': 'token', 'content': word + ' ', 'request_id': rid})}\n\n"
                     await asyncio.sleep(0.05)
 
-            yield f"data: {json.dumps({'type': 'end', 'complete': True, 'request_id': rid})}\n\n"
+            yield f"data: {json.dumps({'type': 'end', 'complete': True, 'tools': [], 'request_id': rid})}\n\n"
 
         except Exception as e:
             _report_sse_llm_failure(str(e), path="/chat/stream")

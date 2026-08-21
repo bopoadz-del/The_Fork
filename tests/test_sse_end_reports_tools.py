@@ -148,3 +148,128 @@ def test_capability_answer_early_exit_still_emits_tools():
     end = _end_of(events)
     assert end["tools"] == []
     assert end["iterations"] == 0
+
+
+# ── the heavy-reasoning stream is a SEPARATE end event ─────────────────────
+
+def test_heavy_reasoning_end_event_names_its_tools_in_call_order():
+    """`/v1/chat/stream`'s heavy path builds its own end event in chat.py, not
+    through chat_stream, so it needed the same field added separately.
+
+    It already emitted `tools_used`, but SORTED and de-duped into a set --
+    which loses the order the tools actually ran in. The agent stream reports
+    call order, so a UI reading one key across both paths would have seen the
+    same turn described two different ways. `tools` is call-ordered on both.
+    """
+    import asyncio
+    import json as _json
+
+    from app.routers import chat as chat_router
+
+    class _FakeAgent:
+        async def chat(self, **kwargs):
+            on_event = kwargs.get("on_event")
+            if on_event:
+                await on_event("tool_call", {"tool": "sympy_reasoning"})
+            return {
+                "status": "success",
+                "answer": "The unit rate is 31.62 USD/ft2.",
+                "iterations": 2,
+                # Deliberately NOT alphabetical, and with a repeat: sorted()
+                # would render this as [construction_calc, sympy_reasoning].
+                "tool_calls": [
+                    {"name": "sympy_reasoning"},
+                    {"name": "construction_calc"},
+                    {"name": "sympy_reasoning"},
+                ],
+            }
+
+    import app.agents as agents_mod
+    real_get_agent = agents_mod.get_agent
+    agents_mod.get_agent = lambda _n: _FakeAgent()
+    try:
+        async def drain():
+            out = []
+            async for chunk in chat_router._stream_from_heavy_reasoning(
+                user_message="work out the rate",
+                project_id=None,
+                user_id=None,
+                history=[],
+                session_id="t1",
+            ):
+                out.append(chunk)
+            return out
+
+        chunks = asyncio.run(drain())
+    finally:
+        agents_mod.get_agent = real_get_agent
+
+    ends = []
+    for c in chunks:
+        for line in c.splitlines():
+            if line.startswith("data: "):
+                ev = _json.loads(line[6:])
+                if ev.get("type") == "end":
+                    ends.append(ev)
+    assert len(ends) == 1, f"expected one end event, got {len(ends)}"
+    end = ends[0]
+    assert "tools" in end, "heavy-reasoning end event has no tools field"
+    assert end["tools"] == ["sympy_reasoning", "construction_calc"], end["tools"]
+    # The legacy key stays for older consumers, sorted as it always was.
+    assert end["tools_used"] == ["construction_calc", "sympy_reasoning"]
+
+
+def test_predefined_end_event_names_the_container_action():
+    """The predefined path dispatches a container action directly, so nothing
+    ever populated `tools` -- this is the path a live payment_certificate turn
+    took, and it came back with the key absent.
+
+    The action IS the tool that ran, so naming it is what makes the badge
+    agree with the answer.
+    """
+    import asyncio
+    import json as _json
+
+    from app.routers import chat as chat_router
+    import app.core.predefined_reasoning as pr
+
+    async def fake_run_workflow(action, context, session):
+        return {
+            "handled": True,
+            "answer": "Interim Payment Certificate - Error: no contract value.",
+            "plan_steps": [],
+            "exports": [],
+        }
+
+    real = pr.run_workflow
+    pr.run_workflow = fake_run_workflow
+    try:
+        async def drain():
+            out = []
+            async for chunk in chat_router._stream_from_predefined(
+                action="payment_certificate",
+                user_message="Issue the interim payment certificate.",
+                project_id=None,
+                user_id=None,
+                session_id="t1",
+                document_ids=[],
+            ):
+                out.append(chunk)
+            return out
+
+        chunks = asyncio.run(drain())
+    finally:
+        pr.run_workflow = real
+
+    ends = []
+    for c in chunks:
+        for line in c.splitlines():
+            if line.startswith("data: "):
+                ev = _json.loads(line[6:])
+                if ev.get("type") == "end":
+                    ends.append(ev)
+    assert len(ends) == 1, f"expected one end event, got {len(ends)}"
+    end = ends[0]
+    assert end["mode"] == "predefined"
+    assert end["workflow"] == "payment_certificate"
+    assert end["tools"] == ["payment_certificate"], end

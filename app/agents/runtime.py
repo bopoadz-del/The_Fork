@@ -1312,7 +1312,7 @@ def _fetch_document_content(
     # Each extra corpus is recorded with the project id it lives under, because
     # the chunk lookup below is project-scoped: querying GK chunks under the
     # ACTIVE project id silently returns nothing.
-    doc_sources: List[tuple] = [(project_id, docs)]
+    doc_sources: list[tuple] = [(project_id, docs)]
     try:
         from app.core.rag import retriever as _rag_retriever
 
@@ -1336,7 +1336,7 @@ def _fetch_document_content(
         )
 
     # Flattened view for name matching, keeping each doc's owning project.
-    all_docs: List[tuple] = [
+    all_docs: list[tuple] = [
         (owner_pid, d) for owner_pid, doc_list in doc_sources for d in doc_list
     ]
 
@@ -1605,10 +1605,42 @@ def _message_wants_named_calculator(text: str) -> bool:
         return False
     if _NAMED_CALC_ASK_RE.search(raw):
         return True
-    if _IPC_ISSUE_RE.search(raw) and not re.search(r"\d", raw):
+    if _IPC_ISSUE_RE.search(raw) and not _carries_ipc_figures(raw):
         return False
     return True
 
+
+def _carries_ipc_figures(text: str) -> bool:
+    r"""True when the message actually supplies figures an IPC could use.
+
+    This used to be ``re.search(r"\d", raw)`` -- ANY digit anywhere. The intent
+    was "no figures supplied", but a project code or a package number is not a
+    figure, so "issue the interim payment certificate ... on the DG2
+    Infrastructure Package 1 contract" tripped it on the 2 in DG2 and the 1 in
+    Package 1. The calculator branch then cleared ``action`` and the predefined
+    IPC deliverable never dispatched: instead of the clean missing-figures
+    error, the turn fell through to RAG and answered a payment question out of
+    procurement-programme excerpts. Dates, revision numbers and drawing
+    references all defeat it the same way.
+
+    ``_payment_figures_from_message`` is the parser ``payment_certificate``
+    itself uses to pull gross valuation / retention / advance out of a chat
+    message, so it is the authority on whether figures are present. Falling
+    back to the old digit test keeps behaviour unchanged if the container
+    cannot be imported.
+    """
+    raw = text or ""
+    try:
+        from app.containers.construction.boq import (
+            _payment_figures_from_message,
+        )
+        return bool(_payment_figures_from_message(raw))
+    except Exception:
+        _LOG.debug(
+            "IPC figure parser unavailable; falling back to the digit test",
+            exc_info=True,
+        )
+        return bool(re.search(r"\d", raw))
 
 
 # A question that carries its OWN numbers is arithmetic, not a document lookup.
@@ -2209,7 +2241,7 @@ def _cost_grounding_gate(
         )
         return _CG_REFUSAL
     except Exception:
-        logger.exception("cost_grounding_gate failed; passing answer through")
+        _LOG.exception("cost_grounding_gate failed; passing answer through")
         return text
 
 
@@ -2317,7 +2349,7 @@ def _standards_advisory(text: str) -> str:
             + "\n".join(lines)
         )
     except Exception:
-        logger.exception("standards advisory failed; passing answer through")
+        _LOG.exception("standards advisory failed; passing answer through")
         return text
 
 
@@ -4566,10 +4598,33 @@ class Agent:
         _pre = await _predispatch_file_tool(self, messages, project_id)
         if _pre:
             _note_tool(_pre["name"])
-            yield {"type": "tool_call", "name": _pre["name"],
+            # SSE contract: the browser reads "tool" + "args_preview" on a
+            # tool_call and "summary" on a tool_result -- see the main tool
+            # loop below, which emits "name" only as an alias. This
+            # pre-dispatch pair emitted the REVERSE (name, no tool), so the
+            # deterministic file fast path -- the IFC and named-document
+            # route -- rendered as a blank, unnamed entry in the UI. The turn
+            # then narrated work the user could not see it do, which reads as
+            # the assistant wandering rather than as a tool that ran.
+            _pre_file = ""
+            if isinstance(_pre.get("result"), dict):
+                _pre_file = str(_pre["result"].get("filename") or "")
+            _pre_summary = _summarize_result(_pre["result"])
+            yield {"type": "tool_call",
+                   "tool": _pre["name"],
+                   "name": _pre["name"],  # alias, see the main loop
+                   "args_preview": (
+                       json.dumps({"filename": _pre_file})[:200]
+                       if _pre_file else ""
+                   ),
                    "predispatched": True}
-            yield {"type": "tool_result", "name": _pre["name"], "ok": True,
-                   "result": _summarize_result(_pre["result"])}
+            yield {"type": "tool_result",
+                   "tool": _pre["name"],
+                   "name": _pre["name"],  # alias, see the main loop
+                   "ok": True,
+                   "summary": _pre_summary[:400],
+                   "result": _pre_summary,
+                   "predispatched": True}
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
