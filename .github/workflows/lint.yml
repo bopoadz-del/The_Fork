@@ -47,6 +47,36 @@ jobs:
         continue-on-error: true # see header note — promote to blocking after baseline triage
         run: ruff check app tests --output-format=github
 
+      - name: Undefined-name gate (F821) — BLOCKING
+        # Sibling of the S110 gate below, and found the same way: while fixing
+        # an unrelated bug, ruff flagged `logger.debug(...)` in a new handler
+        # in a module whose logger is named `_LOG`. Seven more were already in
+        # the tree, five of them inside `except:` blocks.
+        #
+        # An undefined name in a handler is worse than a silent one. The
+        # handler does not merely hide the error, it raises NameError on top of
+        # it, so a HANDLED failure becomes an unhandled crash on the one path
+        # written to degrade gracefully — including the cost-grounding gate's
+        # "pass the answer through" fallback.
+        #
+        # Three of those came from the 2026-08-03 S110 cleanup itself, which
+        # replaced `except: pass` with `log.warning(...)` in a module that
+        # defines `logger`. Removing a silent handler introduced a crashing
+        # one, and nothing caught it because the branch rarely runs.
+        #
+        # Baseline is 0 and must never be raised: F821 is not style debt, it
+        # is a NameError that has not fired yet.
+        run: |
+          BASELINE=0
+          COUNT=$(ruff check app --select F821 --output-format=concise | grep -c "F821" || true)
+          echo "F821 undefined names: $COUNT (baseline $BASELINE)"
+          if [ "$COUNT" -gt "$BASELINE" ]; then
+            echo "::error::$COUNT undefined names in app/ — up from $BASELINE."
+            echo "::error::Each is a NameError waiting for its branch to run."
+            ruff check app --select F821 --output-format=github
+            exit 1
+          fi
+
       - name: Silent-exception ratchet (S110) — BLOCKING
         # The general ruff job reports ~6300 legacy findings, so a new silent
         # handler would be invisible in it. This step isolates S110
