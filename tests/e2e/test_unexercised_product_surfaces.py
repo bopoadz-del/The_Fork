@@ -22,7 +22,7 @@ from openpyxl import Workbook
 from PIL import Image
 
 from app.main import app
-from tests.conftest import requires_construction_kit
+from tests.conftest import is_extended_boot, requires_construction_kit
 
 _RUN = uuid.uuid4().hex[:10]
 _FIXTURE_IFC = Path(__file__).resolve().parents[1] / "fixtures" / "sample_office.ifc"
@@ -38,13 +38,13 @@ _PREVIOUSLY_UNPINNED_HATS = (
 _API_KEY = {"Authorization": "Bearer cb_dev_key"}
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def client():
     with TestClient(app) as c:
         yield c
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def session(client):
     """Register + login a unique user; create a blank project."""
     email = f"surfaces-{_RUN}@example.com"
@@ -254,7 +254,12 @@ def test_chain_mcp_feedback_memory_hydration_usage_workflows_schedule_rag(
         },
         headers=_API_KEY,
     )
-    assert r.status_code in (200, 201), r.text
+    # Virgin profile does not load learning_engine — endpoint is honestly 503.
+    if is_extended_boot():
+        assert r.status_code in (200, 201), r.text
+    else:
+        assert r.status_code == 503, r.text
+        assert "learning_engine" in r.text
 
     r = client.get("/v1/memory/stats", headers=_API_KEY)
     assert r.status_code == 200, r.text
