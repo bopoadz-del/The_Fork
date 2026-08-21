@@ -29,14 +29,15 @@ interface ProjectRow {
   is_master_corpus?: boolean
 }
 
-/** The sidebar shows ONLY the Master Corpus (the single all-documents project)
- *  during the test phase — the operator wants one clean entry, not one row per
- *  approved pack. This also dissolves the duplicate-row problem: the backing
- *  corpus (is_master_corpus=false) can no longer self-render as a second row.
- *  Nothing is deleted — every project stays managed from the Admin page. At
- *  pilot, restore `|| p.origin === 'admin_drive_approved'` for multi-project. */
-function isSidebarVisible(p: ProjectRow): boolean {
-  return p.is_master_corpus === true
+/** Sidebar rows: the Master Corpus, the user's own projects, and always the
+ *  project currently open. Hide Drive-approved backing shells so they do not
+ *  duplicate Master Corpus. A leftover live workspace showed "No projects yet"
+ *  while Leftover Hat Battery was open because this filter kept only the corpus. */
+export function isSidebarVisible(p: ProjectRow, activeProjectId?: string): boolean {
+  if (activeProjectId && p.id === activeProjectId) return true
+  if (p.is_master_corpus === true) return true
+  if (p.origin === 'admin_drive_approved') return false
+  return true
 }
 
 interface ProjectsResponse {
@@ -114,7 +115,19 @@ export default function LeftPanel({
       try {
         const data = await apiGet<ProjectsResponse>('/v1/projects')
         if (cancelled) return
-        const visible = (data.projects ?? []).filter(isSidebarVisible)
+        let visible = (data.projects ?? []).filter((p) =>
+          isSidebarVisible(p, activeProjectId),
+        )
+        if (
+          activeProjectId
+          && activeProjectName
+          && !visible.some((p) => p.id === activeProjectId)
+        ) {
+          visible = [
+            { id: activeProjectId, name: activeProjectName },
+            ...visible,
+          ]
+        }
         setState({ tag: 'loaded', projects: visible })
       } catch (err: unknown) {
         if (cancelled) return
@@ -126,7 +139,7 @@ export default function LeftPanel({
     }
     void load()
     return () => { cancelled = true }
-  }, [])
+  }, [activeProjectId, activeProjectName])
 
   function renderProjectsBody() {
     if (state.tag === 'loading') {

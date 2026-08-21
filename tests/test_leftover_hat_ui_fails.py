@@ -1,10 +1,12 @@
-"""Regression for leftover-hat UI fails L2 / L3 / L4 / L7.
+"""Regression for leftover-hat UI fails L1 / L2 / L3 / L4 / L5 / L7.
 
 Live UI battery (pinned hats on /v1/chat/stream):
+  L1 named-file fetch of khor_waterproofing_spec (timestamped .docx)
   L2 bim-analyst hung in clash geom and never reported IfcWall=8
   L3 contracts-manager searched the project instead of computing 480,000
      from word-numbers ("ten percent of four million eight hundred thousand")
   L4 validation short-circuited at syntactic `value is None` on a prose claim
+  L5 document-ingestion omitted the Next: <hat> handoff
   L7 heavy-reasoning got empty sympy metadata then force_synthesis blocked
      formula_executor_v2, so 2.4 / 6840 never appeared
 
@@ -20,6 +22,8 @@ from app.agents.runtime import (
     _cg_english_and_percent_values,
     _cg_grounded_numbers,
     _cost_grounding_gate,
+    _ensure_ingestion_handoff,
+    _next_agent_from_turn,
     _should_force_synthesis,
     _should_short_circuit_rag_miss,
     _looks_like_self_contained_calculation,
@@ -302,3 +306,59 @@ def test_bim_kernel_clash_off_unless_asked():
     assert "clash" in text
     assert "pre-dispatch" in text or "pre-dispatched" in text
     assert "ifcwall" in text
+
+
+# ── L1: named-file fetch is not a RAG-miss identifier ───────────────────────
+
+
+L1_PROMPT = (
+    "Open khor_waterproofing_spec. Quote the unique document token "
+    "string from that file."
+)
+
+
+def test_leftover_l1_named_stem_does_not_rag_miss():
+    """The leftover L1 prompt has no digit-bearing identifier, so the
+    RAG-miss short-circuit must not fire; fetch_document predispatch
+    (tests/test_ifc_predispatch.py) supplies the token from disk."""
+    audit = {
+        "identifier_miss": True,
+        "threshold_fired": True,
+        "extracted_identifiers": ["khor_waterproofing_spec"],
+    }
+    assert not _should_short_circuit_rag_miss(audit, None, L1_PROMPT)
+
+
+# ── L5: document-ingestion must end with Next: <hat> ────────────────────────
+
+
+def test_leftover_l5_grafts_next_bim_for_ifc():
+    msgs = [{"role": "user", "content": "Ingest sample_office.ifc and classify it."}]
+    out = _ensure_ingestion_handoff(
+        "Looks like an IFC model with walls and slabs.",
+        msgs,
+        "document-ingestion",
+    )
+    assert out.rstrip().endswith("Next: bim-analyst")
+    assert _next_agent_from_turn(msgs) == "bim-analyst"
+
+
+def test_leftover_l5_keeps_existing_next_line():
+    msgs = [{"role": "user", "content": "ingest foo.ifc"}]
+    text = "Looks like IFC.\n\nNext: bim-analyst"
+    assert _ensure_ingestion_handoff(text, msgs, "document-ingestion") == text
+
+
+def test_leftover_l5_does_not_graft_other_hats():
+    msgs = [{"role": "user", "content": "ingest foo.ifc"}]
+    text = "Looks like IFC."
+    assert _ensure_ingestion_handoff(text, msgs, "bim-analyst") == text
+
+
+def test_leftover_l5_docx_handoff_is_contracts_manager():
+    msgs = [{"role": "user", "content": (
+        "Open khor_waterproofing_spec.docx and classify it."
+    )}]
+    assert _next_agent_from_turn(msgs) == "contracts-manager"
+    out = _ensure_ingestion_handoff("Looks like a spec.", msgs, "document-ingestion")
+    assert out.rstrip().endswith("Next: contracts-manager")

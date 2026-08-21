@@ -210,6 +210,31 @@ def test_non_groq_provider_never_streams(monkeypatch):
     assert call_llm.state["n"] == 2
 
 
+def test_streamed_xml_tool_leak_is_not_flushed(groq_streaming):
+    """Leftover L4 class: Groq SYNTHESIS_STREAMING must not emit XML tool calls."""
+    from app.agents.runtime import _TOOL_FORMAT_FALLBACK
+
+    call_llm = _tool_then_final()
+    xml = (
+        "<function_calls>\n"
+        '<invoke name="formula_executor_v2">\n'
+        "<parameter name=\"expression\">1+1</parameter>\n"
+        "</invoke>\n"
+        "</function_calls>\n"
+    )
+    deltas = [xml[i : i + 18] for i in range(0, len(xml), 18)]
+    with patch.object(Agent, "_call_llm", call_llm), \
+         patch.object(Agent, "_run_tool_call", _tool_ok), \
+         patch.object(Agent, "_stream_synthesis", _mk_stream(deltas)):
+        events = _run_turn(_pa_agent())
+    text = _tokens(events)
+    collapsed = text.lower().replace(" ", "")
+    assert "<function_calls" not in collapsed
+    assert "<invoke" not in collapsed
+    assert _TOOL_FORMAT_FALLBACK[:40] in text
+    assert events[-1]["type"] == "end"
+
+
 # ── _stream_synthesis unit: SSE parse + sanitiser chokepoint ──────────────────
 
 class _FakeStreamResponse:
