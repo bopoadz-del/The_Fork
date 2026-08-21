@@ -818,7 +818,17 @@ def _extract_with_meta(file_path: str, filename: str) -> tuple[str, dict[str, An
     # measured curve), so it runs in a child process under RLIMIT_AS wherever
     # the platform allows. A runaway document then dies alone instead of
     # taking the single uvicorn worker -- and every request in flight -- down.
-    from app.core.extract_isolated import run_isolated
+    from app.core.extract_isolated import run_isolated, worth_isolating
+
+    if not worth_isolating(file_path):
+        # Too small to threaten the box. Running in-process also keeps
+        # extraction's side effects observable: a forked child returns only
+        # (text, meta), so counters, caches and spies mutated during
+        # extraction are lost with it.
+        text, meta = _extract_with_meta_impl(file_path, filename)
+        if "\x00" in text:
+            text = text.replace("\x00", "")
+        return text, meta
 
     (text, meta), diag = run_isolated(
         _extract_with_meta_impl,

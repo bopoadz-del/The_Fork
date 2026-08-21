@@ -123,17 +123,45 @@ def test_env_knobs_have_headroom_defaults():
     assert extract_isolated._TIMEOUT_S >= 60
 
 
-def test_doc_index_reports_the_failure_reason_in_meta(monkeypatch):
+def test_doc_index_reports_the_failure_reason_in_meta(monkeypatch, tmp_path):
     """The wiring, not just the helper: a failed extraction must surface its
-    reason through _extract_with_meta so the document carries a diagnosis."""
+    reason through _extract_with_meta so the document carries a diagnosis.
+
+    The file must be big enough to clear the isolation threshold -- a small or
+    missing one takes the in-process path by design and never reaches
+    run_isolated at all.
+    """
     from app.core import doc_index
+
+    big = tmp_path / "report.pdf"
+    big.write_bytes(b"%PDF-1.4 " + b"0" * (2 * 1024 * 1024))
 
     def fake_run_isolated(fn, args, *, fallback, label):
         return fallback, {"extract_failed": "memory",
                           "extract_failed_detail": f"{label} hit the cap"}
 
+    monkeypatch.setattr(extract_isolated, "worth_isolating", lambda _p: True)
     monkeypatch.setattr(extract_isolated, "run_isolated", fake_run_isolated)
-    text, meta = doc_index._extract_with_meta("/nonexistent.pdf", "report.pdf")
+    text, meta = doc_index._extract_with_meta(str(big), "report.pdf")
     assert text == ""
     assert meta["extract_failed"] == "memory"
     assert "report.pdf" in meta["extract_failed_detail"]
+
+
+def test_small_documents_are_not_isolated(tmp_path):
+    """Side effects during extraction are only observable in-process, so a
+    document too small to threaten the box must NOT be forked.
+
+    This is what CI caught: test_extract_pdf_ocr_page_cap_bounds_memory counts
+    _ocr_pdf_page calls in a closure, and saw 0 because the counting happened
+    inside the child.
+    """
+    small = tmp_path / "tiny.pdf"
+    small.write_bytes(b"%PDF-1.4 dummy")
+    assert extract_isolated.worth_isolating(str(small)) is False
+
+
+def test_missing_files_are_not_isolated(tmp_path):
+    """A path that cannot be stat'd fails in-process, where the real error is
+    visible, rather than being reported as an opaque child crash."""
+    assert extract_isolated.worth_isolating(str(tmp_path / "gone.pdf")) is False

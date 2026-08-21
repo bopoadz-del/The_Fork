@@ -33,6 +33,17 @@ Isolation is skipped where fork is unavailable (Windows dev boxes), where it
 is switched off, or when already inside a child -- extraction then runs
 in-process exactly as before.
 
+SIDE EFFECTS DO NOT PROPAGATE. A forked child gets a copy of memory, so
+anything extraction does other than RETURN a value is lost when the child
+exits: counters, caches, module-level state, monkeypatched spies. Only the
+``(text, meta)`` tuple crosses back. CI caught this the first time the fork
+path actually ran -- ``test_extract_pdf_ocr_page_cap_bounds_memory`` counts
+``_ocr_pdf_page`` calls in a closure and saw 0, because the counting happened
+in the child. Anything a caller needs to observe must be returned in ``meta``.
+
+That property is also why isolation is gated on size below: forking is not
+free, and a document too small to threaten the box should not pay for it.
+
 KNOWN HAZARD, deliberately accepted: forking from a threaded server can wedge
 the child if another thread held a lock (logging, allocator) at fork time. The
 child only extracts and exits, so it never contends for the parent's locks
@@ -63,9 +74,30 @@ _ENABLED = os.getenv("DOC_EXTRACT_ISOLATE", "1").strip().lower() not in {
     "0", "false", "no", "off",
 }
 
+# Below this, extract in-process. The measured blow-up was a 4.4 MB PDF; a
+# document smaller than this cannot plausibly reach the 1.5 GB child ceiling,
+# and running it in-process keeps extraction's side effects observable (see
+# above) and avoids a fork per trivial file.
+_MIN_MB = float(os.getenv("DOC_EXTRACT_ISOLATE_MIN_MB", "1"))
+
 # Set in the child so a nested extraction (archive members recurse through
 # _extract_with_meta) does not fork again per member.
 _IN_CHILD_ENV = "DOC_EXTRACT_IN_CHILD"
+
+
+def worth_isolating(file_path: str) -> bool:
+    """True when this document is big enough to be worth a forked child.
+
+    An unreadable/missing path returns False: extraction will fail anyway, and
+    it should fail in-process where the error is visible rather than being
+    reported as a child crash.
+    """
+    if not isolation_available():
+        return False
+    try:
+        return (os.path.getsize(file_path) / (1024 * 1024)) >= _MIN_MB
+    except OSError:
+        return False
 
 
 def isolation_available() -> bool:
