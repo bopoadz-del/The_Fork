@@ -521,6 +521,22 @@ def test_contracts_kernel_computes_pasted_word_numbers():
 
 
 @requires_construction_kit
+def test_contracts_kernel_writes_procedure_deliverables():
+    """Leftover live FAIL: RFP chat stopped at 'let me search'."""
+    text = load_agents()["contracts-manager"].system_prompt.lower()
+    assert "procedure deliverables are written" in text
+    assert "never end on" in text
+
+
+@requires_construction_kit
+def test_construction_pm_kernel_writes_wir_deliverables():
+    """Leftover live FAIL: inspection_request stopped after search preamble."""
+    text = load_agents()["construction-pm"].system_prompt.lower()
+    assert "site procedures are drafted in full" in text
+    assert "witness" in text
+
+
+@requires_construction_kit
 def test_validation_kernel_passes_claim_not_null_value():
     text = load_agents()["validation"].system_prompt
     assert "Never call `validation_pipeline` with `value: null`" in text
