@@ -21,6 +21,8 @@ from app.agents.runtime import (
     _cg_grounded_numbers,
     _cost_grounding_gate,
     _should_force_synthesis,
+    _should_short_circuit_rag_miss,
+    _looks_like_self_contained_calculation,
     _CG_REFUSAL,
 )
 from app.blocks.bim_extractor import BIMExtractorBlock
@@ -66,6 +68,23 @@ def test_fabricated_rate_still_refused_with_worded_ld_prompt():
 
 
 # ── L7: empty sympy is not a deliverable; expression path yields 6840 ───────
+
+
+L7_PROMPT = (
+    "Stay on heavy-reasoning. Planned quantity 16, actual 18.4, rate 2850. "
+    "Compute (18.4-16)*2850 with sympy_reasoning {expression}. "
+    "Report the 2.4 overrun and the 6840 cost impact."
+)
+
+
+def test_leftover_l7_prompt_is_self_contained_and_skips_rag_miss():
+    assert _looks_like_self_contained_calculation(L7_PROMPT)
+    audit = {
+        "identifier_miss": True,
+        "threshold_fired": True,
+        "extracted_identifiers": ["18.4-16"],
+    }
+    assert _should_short_circuit_rag_miss(audit, None, L7_PROMPT) is False
 
 
 def test_empty_sympy_does_not_force_synthesis():
