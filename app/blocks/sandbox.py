@@ -59,6 +59,21 @@ class TimeoutException(Exception):
     pass
 
 
+# Wall-clock slack on top of SandboxPolicy.max_cpu_time for JS/bash subprocess
+# spawn. max_cpu_time is the user-code budget; process creation on a loaded
+# GitHub Actions runner (full pytest + coverage) is extra. Treating that
+# startup as "Execution timeout" failed
+# tests/test_sandbox_block.py::test_execute_javascript_simple on PR #397
+# (CI run 32449705289, virgin profile) with
+# ``{'error': 'Execution timeout', 'killed': True}`` for ``console.log(2+3)``.
+_SUBPROCESS_SPAWN_GRACE_S = 25.0
+
+
+def _subprocess_wall_s(policy: SandboxPolicy) -> float:
+    """Deadline for spawn + communicate. Always longer than max_cpu_time."""
+    return float(policy.max_cpu_time) + _SUBPROCESS_SPAWN_GRACE_S
+
+
 class SandboxBlock(UniversalBlock):
     """
     Sandbox Block - Secure code execution isolation
@@ -335,13 +350,18 @@ class SandboxBlock(UniversalBlock):
     
     async def _execute_javascript(self, code: str, policy: SandboxPolicy) -> Dict:
         """Execute JavaScript in sandbox using Node.js"""
-        import subprocess
+        import shutil
+
+        node_bin = shutil.which("node")
+        if not node_bin:
+            return {"error": "node is not installed", "success": False}
 
         # Create temp file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
             f.write(code)
             temp_path = f.name
 
+        wall_s = _subprocess_wall_s(policy)
         try:
             # The whole spawn+communicate sequence runs under ONE outer
             # deadline. The inner wait_for only covered communicate(); the
@@ -349,18 +369,23 @@ class SandboxBlock(UniversalBlock):
             # around it (subprocess creation / pipe teardown), hanging the
             # caller forever. A sandbox that can hang its caller is not a
             # sandbox — convert any stall into the timeout error path.
+            #
+            # communicate()'s deadline is wall-clock (spawn grace + CPU
+            # budget), not bare max_cpu_time: a loaded runner can take
+            # longer than 5s to exec node even for console.log(2+3).
             async def _spawn_and_wait():
                 proc = await asyncio.create_subprocess_exec(
-                    "node", temp_path,
+                    node_bin, temp_path,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     limit=policy.max_memory_mb * 1024 * 1024,
                     env=scrubbed_env(),  # audit §6.1 — no app secrets in the sandbox
+                    start_new_session=True,
                 )
                 try:
                     stdout, stderr = await asyncio.wait_for(
                         proc.communicate(),
-                        timeout=policy.max_cpu_time
+                        timeout=wall_s,
                     )
                 except asyncio.TimeoutError:
                     proc.kill()
@@ -370,7 +395,7 @@ class SandboxBlock(UniversalBlock):
             try:
                 returncode, stdout, stderr = await asyncio.wait_for(
                     _spawn_and_wait(),
-                    timeout=policy.max_cpu_time + 10,
+                    timeout=wall_s + 5,
                 )
             except asyncio.TimeoutError:
                 raise TimeoutException()
@@ -412,7 +437,10 @@ class SandboxBlock(UniversalBlock):
         # Run in restricted mode. Same outer-deadline shape as
         # _execute_javascript: spawn+communicate under one wait_for so a
         # stall anywhere in the subprocess pipeline becomes a timeout
-        # instead of hanging the caller.
+        # instead of hanging the caller. Wall clock includes spawn grace
+        # (see _subprocess_wall_s) so a loaded runner is not a false kill.
+        wall_s = _subprocess_wall_s(policy)
+
         async def _spawn_and_wait():
             proc = await asyncio.create_subprocess_shell(
                 code,
@@ -422,11 +450,12 @@ class SandboxBlock(UniversalBlock):
                 # audit §6.1 — a shell command must not be able to echo
                 # $SECRET_KEY / $DATABASE_URL out of the sandbox.
                 env=scrubbed_env(),
+                start_new_session=True,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(),
-                    timeout=policy.max_cpu_time
+                    timeout=wall_s,
                 )
             except asyncio.TimeoutError:
                 proc.kill()
@@ -436,7 +465,7 @@ class SandboxBlock(UniversalBlock):
         try:
             returncode, stdout, stderr = await asyncio.wait_for(
                 _spawn_and_wait(),
-                timeout=policy.max_cpu_time + 10,
+                timeout=wall_s + 5,
             )
         except asyncio.TimeoutError:
             raise TimeoutException()

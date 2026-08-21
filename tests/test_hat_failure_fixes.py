@@ -527,3 +527,14 @@ def test_bim_kernel_does_not_rerun_extractor_after_predispatch():
     text = load_agents()["bim-analyst"].system_prompt.lower()
     assert "pre-dispatch" in text or "pre-dispatched" in text
     assert "clash detection is off" in text or "clash" in text
+
+
+@requires_construction_kit
+def test_document_ingestion_kernel_requires_next_handoff():
+    """Leftover L5: pinned document-ingestion must name the next hat."""
+    text = load_agents()["document-ingestion"].system_prompt
+    assert "Next:" in text
+    assert "bim-analyst" in text
+    assert "quantity-surveyor" in text
+    assert "contracts-manager" in text
+    assert "Never omit this line" in text or "never omit" in text.lower()

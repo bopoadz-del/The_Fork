@@ -480,6 +480,45 @@ def test_index_project_skips_unsupported_type(fresh_db, tmp_path, monkeypatch):
     assert saved["skipped"][0]["reason"] == "unsupported_type"
 
 
+def test_index_document_indexes_ifc_census_not_unsupported(
+    fresh_db, tmp_path, monkeypatch
+):
+    """Leftover live UI: sample_office.ifc sat at chunk_count=0 / Not indexed
+    because .ifc was not a supported extractor type. Clash stays off."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
+
+    proj = projects_mod.create_project("IFC Project")
+    pid = proj["id"]
+    sample = os.path.join(FIXTURES_DIR, "sample_office.ifc")
+    content = open(sample, "rb").read()
+    doc_path = _write_txt_doc(tmp_path, "sample_office.ifc", content)
+    doc = projects_mod.add_document(
+        pid, "sample_office.ifc", file_path=doc_path, size=len(content),
+    )
+
+    result = doc_index.index_document(pid, doc["id"])
+    assert result.get("error") != "ZERO_CHUNK", result
+    assert result.get("indexed") == 1, result
+    saved = doc_index._load_index(pid)
+    assert saved is not None
+    chunks = saved["documents"][0]["chunks"]
+    blob = "\n".join(chunks).lower()
+    assert "ifc" in blob
+    assert "wall" in blob
+    skipped = saved.get("skipped") or []
+    assert all(s.get("filename") != "sample_office.ifc" for s in skipped)
+
+    from app.core.rag.embeddings import get_embedder
+    from app.core.rag.vector_store import get_store
+    counts = get_store(dim=get_embedder().dim).count_by_doc(pid)
+    assert counts.get(doc["id"], 0) >= 1
+
+
 def test_index_document_wires_boq_total_into_rag(fresh_db, tmp_path, monkeypatch):
     """A priced BOQ's total + line items become retrievable chunks so the
     platform can answer 'what is the total package value?' from the corpus.
