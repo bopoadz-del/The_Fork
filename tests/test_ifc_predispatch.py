@@ -186,6 +186,20 @@ async def test_named_ifc_clash_predispatch_sets_run_clash_detection(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_named_ifc_do_not_clash_keeps_detection_off(monkeypatch):
+    fake = _wire(
+        monkeypatch,
+        [{"original_name": "sample_office.ifc"}],
+        {"status": "success", "clash_report": {"clashes": []}},
+    )
+    msgs = [{"role": "user",
+             "content": "Parse sample_office.ifc. Do not run clash detection."}]
+    rec = await runtime._predispatch_file_tool(_agent(), msgs, "p1")
+    assert rec and rec["predispatched"]
+    assert fake.param_calls == [{"run_clash_detection": False}]
+
+
+@pytest.mark.asyncio
 async def test_clash_predispatch_unwraps_execute_envelope(monkeypatch):
     """UniversalBlock.execute nests process output under result; the 6k
     inject must still lead with clash_report."""
