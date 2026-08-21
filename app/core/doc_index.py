@@ -397,6 +397,17 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
                             "swallowed %s in _extract_pdf() — continuing",
                             "Exception", exc_info=True,
                         )
+    except MemoryError:
+        # NEVER report a memory failure as an empty document. MemoryError is a
+        # subclass of Exception, so the handler below used to absorb it and
+        # return ("", {}) -- indistinguishable from a genuinely empty file.
+        #
+        # That is exactly how the isolation rollout broke production silently:
+        # the child hit its RLIMIT_AS ceiling, this handler turned it into a
+        # clean empty extraction, and every document >= 1 MB indexed as
+        # ZERO_CHUNK with no error logged anywhere. Let it propagate so the
+        # caller can say what actually happened.
+        raise
     except Exception:
         return "", {}
     meta: dict[str, Any] = {}
@@ -941,6 +952,10 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> tuple[str, dict[st
         if ext == ".rar":
             return _extract_rar(file_path, filename), {}
 
+    except MemoryError:
+        # See _extract_pdf: a memory failure must never masquerade as an empty
+        # document, or the caller indexes ZERO_CHUNK and reports nothing wrong.
+        raise
     except Exception:
         return "", {}
 
