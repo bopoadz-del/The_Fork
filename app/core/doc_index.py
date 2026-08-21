@@ -86,6 +86,13 @@ _PDF_MAX_SIZE_MB = float(os.getenv("PDF_MAX_SIZE_MB", "100"))
 # layer. OCR'ing large scanned PDFs is the ingestion timeout/OOM path.
 _PDF_OCR_MAX_SIZE_MB = float(os.getenv("PDF_OCR_MAX_SIZE_MB", "25"))
 
+# Ceiling on the TEXT a single document may accumulate. The size guards above
+# bound the input; nothing bounded the output, so a long text-layer PDF grew
+# `parts` without limit and paid for it twice more in chunking and embedding.
+# Set well above anything real in this corpus (the largest Vol 2 specification
+# extracts ~2.2M chars) so it only catches runaway documents.
+_MAX_EXTRACT_CHARS = int(os.getenv("DOC_MAX_EXTRACT_CHARS", "12000000"))
+
 # In-process guard around index writes. Cross-process safety comes from the
 # SQLite BEGIN IMMEDIATE transaction in _update_index; this lock just avoids
 # threads in one process contending on the DB lock unnecessarily.
@@ -328,6 +335,8 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
     parts: list[str] = []
     ocr_pages = 0
     truncated = False
+    chars = 0
+    text_truncated = False
     try:
         size_mb = os.path.getsize(file_path) / (1024 * 1024)
         if _PDF_MAX_SIZE_MB > 0 and size_mb > _PDF_MAX_SIZE_MB:
@@ -348,11 +357,19 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
             doc = fitz.open(readable_path)
             try:
                 for i, page in enumerate(doc):
+                    # Stop accumulating past the text ceiling. Breaking keeps
+                    # what was read rather than discarding the document, and
+                    # the flag below tells the caller the tail is missing
+                    # instead of letting a partial doc look complete.
+                    if _MAX_EXTRACT_CHARS > 0 and chars >= _MAX_EXTRACT_CHARS:
+                        text_truncated = True
+                        break
                     page_text = (page.get_text() or "").strip()
                     # Always keep any real text layer — never discard digital
                     # text in favour of OCR.
                     if page_text:
                         parts.append(page_text)
+                        chars += len(page_text)
                     # A page whose text layer is too thin is image-only (or
                     # near-empty) — OCR it, bounded by the page cap so a long
                     # scan can't OOM the box.
@@ -361,6 +378,7 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
                             ocr_text = _ocr_pdf_page(page)
                             if ocr_text.strip():
                                 parts.append(ocr_text)
+                                chars += len(ocr_text)
                                 ocr_pages += 1
                         else:
                             truncated = True
@@ -368,6 +386,7 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
                         table_md = _pdf_tables_markdown(plumber.pages[i])
                         if table_md:
                             parts.append(table_md)
+                            chars += len(table_md)
             finally:
                 doc.close()
                 if plumber is not None:
@@ -386,6 +405,9 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
         meta["ocr_low_quality"] = True
     if truncated:
         meta["ocr_truncated"] = True
+    if text_truncated:
+        meta["text_truncated"] = True
+        meta["extract_chars"] = chars
     return "\n".join(parts), meta
 
 
@@ -792,7 +814,22 @@ def _extract_with_meta(file_path: str, filename: str) -> tuple[str, dict[str, An
     * .docx — python-docx; .xlsx — openpyxl
     * image extensions (.jpg/.png/.webp/...) — OCR via OCRBlock
     """
-    text, meta = _extract_with_meta_impl(file_path, filename)
+    # Extraction is the OOM path (see app/core/extract_isolated for the
+    # measured curve), so it runs in a child process under RLIMIT_AS wherever
+    # the platform allows. A runaway document then dies alone instead of
+    # taking the single uvicorn worker -- and every request in flight -- down.
+    from app.core.extract_isolated import run_isolated
+
+    (text, meta), diag = run_isolated(
+        _extract_with_meta_impl,
+        (file_path, filename),
+        fallback=("", {}),
+        label=f"extraction of {filename}",
+    )
+    if diag:
+        # Carry the reason, so a 0-chunk document says WHY rather than being
+        # indistinguishable from a genuinely empty file.
+        meta = {**(meta or {}), **diag}
     if "\x00" in text:
         text = text.replace("\x00", "")
     return text, meta
