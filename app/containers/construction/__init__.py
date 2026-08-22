@@ -1349,6 +1349,18 @@ class ConstructionContainer(
             {"test": "Water Tightness", "standard": "ASTM E331", "witness_required": True, "acceptance_criteria": "No leakage at test pressure"},
             {"test": "Air Infiltration", "standard": "ASTM E283", "witness_required": False, "acceptance_criteria": "Within spec"}
         ]
+
+    def _generate_waterproofing_commissioning(self) -> List[Dict]:
+        """Pre-backfill hold-point checks for torch-applied SBS / below-grade WP."""
+        return [
+            {"test": "Substrate condition", "standard": "Manufacturer method statement", "witness_required": True, "hold_point": True, "acceptance_criteria": "Concrete cured, dry, free of laitance and standing water"},
+            {"test": "Primer application", "standard": "Manufacturer TDS", "witness_required": True, "acceptance_criteria": "Even coat, tack window observed before torching"},
+            {"test": "Membrane type and thickness", "standard": "Project spec / TDS", "witness_required": True, "acceptance_criteria": "Torch-applied SBS as specified (typical 4 mm); mill certs on site"},
+            {"test": "Lap width and torching", "standard": "Manufacturer TDS", "witness_required": True, "acceptance_criteria": "Laps typically 100 mm, continuous bleed of bitumen, no fish-mouths"},
+            {"test": "Holiday / spark test", "standard": "ASTM D4787 / manufacturer", "witness_required": True, "hold_point": True, "acceptance_criteria": "No holidays on completed sheet before protection"},
+            {"test": "Protection board before backfill", "standard": "Project spec", "witness_required": True, "hold_point": True, "acceptance_criteria": "Protection in place; no plant tracking on bare membrane"},
+            {"test": "Backfill release", "standard": "ITP hold point", "witness_required": True, "hold_point": True, "acceptance_criteria": "Engineer / QC sign-off recorded before backfill"},
+        ]
     def _generate_bms_commissioning(self) -> List[Dict]:
         return [
             {"test": "Point-to-Point Checkout", "standard": "ASHRAE Guideline 13", "witness_required": False, "acceptance_criteria": "100% points verified"},

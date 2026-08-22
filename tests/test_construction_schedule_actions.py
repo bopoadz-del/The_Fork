@@ -596,16 +596,21 @@ class TestResourceHistogramRealOrHonest:
         assert r["total_assignments_in_schedule"] == 4
 
     @pytest.mark.asyncio
-    async def test_xer_without_resources_errors_not_zeroed(self, container):
+    async def test_xer_without_resources_activity_count_histogram(self, container):
         import os
         if not os.path.exists(_NORSRC_XER):
             pytest.skip("no-resource fixture missing")
         r = await container.resource_histogram({}, {"schedule_file": _NORSRC_XER})
-        assert r["status"] == "error"
-        assert "TASKRSRC" in r["error"] or "resource assignment" in r["error"]
-        # No fake-success payload leaked through.
+        assert r["status"] == "success"
+        assert r["histogram_kind"] == "activity_count"
+        assert r["source"] == "activity_cpm_counts"
+        assert "TASKRSRC" in r["labor_unavailable_reason"] or "resource assignment" in r["labor_unavailable_reason"]
+        assert r["period_count"] >= 1
+        assert r["peak_total"] >= 1
+        # Still not a fabricated labor split.
+        assert r["by_trade_totals"] == {}
         assert "total_manhours" not in r
-        assert "by_trade_totals" not in r
+        assert "concrete" not in r["by_trade_totals"]
 
     @pytest.mark.asyncio
     async def test_no_file_errors(self, container):

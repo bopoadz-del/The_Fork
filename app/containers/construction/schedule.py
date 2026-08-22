@@ -543,6 +543,8 @@ class ConstructionScheduleMixin:
                 checklists["elevators"] = self._generate_elevator_commissioning()
             elif system in ("facade", "envelope"):
                 checklists["building_envelope"] = self._generate_facade_commissioning()
+            elif system in ("waterproofing", "waterproof", "membrane"):
+                checklists["waterproofing"] = self._generate_waterproofing_commissioning()
             elif system in ("bms", "automation"):
                 checklists["bms"] = self._generate_bms_commissioning()
     
@@ -597,8 +599,8 @@ class ConstructionScheduleMixin:
         parse the ``.xer``, run CPM for the early-date timeline, then time-phase
         the schedule's REAL per-task resource assignments (TASKRSRC rows) into
         periods. A schedule with no resource loading (no TASKRSRC rows) returns
-        an honest error — never a fabricated or all-zero histogram, and never a
-        hardcoded trade split.
+        an activity-count histogram (CPM date buckets, not man-hours) — never
+        a fabricated labor split.
         """
         import os
 
@@ -675,15 +677,14 @@ class ConstructionScheduleMixin:
                 "error": "Schedule contains no activities — cannot build a resource histogram",
             }
         if not task_resources:
-            return {
-                "status": "error",
-                "action": "resource_histogram",
-                "error": (
-                    "Schedule has no resource assignments (no TASKRSRC rows) — cannot "
-                    "build a labor histogram from this .xer. Re-export the programme "
-                    "with resource loading, or provide a resource-loaded schedule."
+            return self._histogram_from_activity_counts(
+                activities,
+                period_unit,
+                reason=(
+                    "Schedule has no resource assignments (no TASKRSRC rows) — "
+                    "cannot build a labor histogram from this .xer"
                 ),
-            }
+            )
 
         # A LABOR histogram counts man-hours from RT_Labor resources ONLY. A
         # TASKRSRC target_qty for RT_Mat/RT_Equip is a material/cost/equipment
@@ -703,15 +704,14 @@ class ConstructionScheduleMixin:
         if not labor_rows:
             n_types = sorted({(resources_meta.get(tr.get("rsrc_id")) or {}).get("type", "?")
                               for tr in task_resources})
-            return {
-                "status": "error",
-                "action": "resource_histogram",
-                "error": (
-                    "Schedule has resource assignments but none are labor resources "
-                    f"(RT_Labor) — found types {n_types}. Cannot build a labor histogram; "
-                    "the non-labor quantities (material/cost/equipment) are not man-hours."
+            return self._histogram_from_activity_counts(
+                activities,
+                period_unit,
+                reason=(
+                    "Schedule has resource assignments but none are labor "
+                    f"(RT_Labor) — found types {n_types}"
                 ),
-            }
+            )
 
         try:
             cpm_out = compute_cpm(CPMInput(activities=activities))
@@ -756,6 +756,96 @@ class ConstructionScheduleMixin:
                 "trades are the P6 resource short names."
             ),
         }
+
+    def _histogram_from_activity_counts(
+        self,
+        activities: List[Dict[str, Any]],
+        period_unit: str,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """Period buckets from CPM activity spans when TASKRSRC labor is absent.
+
+        Counts overlapping activities per week/month. Does not invent man-hours
+        or a trade split — live M17 on theshovel.ai had a 20-day 3-activity
+        XER with no crew payload; the chat still needs period buckets.
+        """
+        try:
+            from app.lib.pm_computations import compute_cpm, CircularDependencyError
+            from app.schemas.cpm import CPMInput
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": f"pm_computations library unavailable: {exc}",
+            }
+        try:
+            cpm_out = compute_cpm(CPMInput(activities=activities))
+        except (CircularDependencyError, ValueError) as exc:
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": (
+                    f"{reason}. Also could not build an activity-count "
+                    f"histogram: {exc}"
+                ),
+            }
+        length = 21 if period_unit == "month" else 5
+        es_ef = {
+            r.id: (r.early_start_day, r.early_finish_day) for r in cpm_out.results
+        }
+        if not es_ef:
+            return {
+                "status": "error",
+                "action": "resource_histogram",
+                "error": f"{reason}. CPM produced no dated activities.",
+            }
+        last_day = max(ef for (_es, ef) in es_ef.values())
+        n_periods = max(1, -(-last_day // length))
+        periods: List[Dict[str, Any]] = []
+        for p in range(n_periods):
+            p_start, p_end = p * length, (p + 1) * length
+            names = []
+            for act in activities:
+                aid = getattr(act, "id", None) or (act.get("id") if isinstance(act, dict) else None)
+                span = es_ef.get(aid)
+                if not span:
+                    continue
+                es, ef = span
+                if ef <= p_start or es >= p_end:
+                    continue
+                names.append(
+                    getattr(act, "name", None)
+                    or (act.get("name") if isinstance(act, dict) else aid)
+                    or str(aid)
+                )
+            label = f"{period_unit[0].upper()}{p + 1}"
+            periods.append({
+                "index": p,
+                "label": label,
+                "total": len(names),
+                "activities": names,
+                "by_trade": {},
+            })
+        peak = max(periods, key=lambda hp: hp["total"], default=None)
+        return {
+            "status": "success",
+            "action": "resource_histogram_generated",
+            "histogram_kind": "activity_count",
+            "period_unit": period_unit,
+            "period_count": len(periods),
+            "periods": periods,
+            "peak_total": peak["total"] if peak else 0,
+            "peak_period": peak["label"] if peak else "",
+            "by_trade_totals": {},
+            "source": "activity_cpm_counts",
+            "labor_unavailable_reason": reason,
+            "note": (
+                f"{reason}. Period buckets are activity counts from CPM dates, "
+                "not man-hours. Re-export the programme with resource loading "
+                "for a labor histogram."
+            ),
+        }
+
     async def claims_builder(self, input_data: Any, params: Dict) -> Dict:
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
