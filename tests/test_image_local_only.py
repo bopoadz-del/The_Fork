@@ -78,6 +78,22 @@ async def test_analyze_operation_works_with_no_env_vars(monkeypatch):
         assert term not in desc
 
 
+@pytest.mark.asyncio
+async def test_placeholder_stub_jpeg_is_error():
+    """Leftover M16 trench_site.jpg is a 128×128 / ~1 KB stub."""
+    img = Image.new("RGB", (128, 128), (10, 10, 10))
+    f = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+    img.save(f.name, format="JPEG", quality=20)
+    f.close()
+    try:
+        result = await ImageBlock().process(f.name, {"operation": "analyze"})
+    finally:
+        os.unlink(f.name)
+    assert result["status"] == "error"
+    assert result.get("placeholder") is True
+    assert "placeholder" in result["error"].lower()
+
+
 def test_image_block_metadata():
     assert ImageBlock.name == "image"
     assert ImageBlock.version.startswith("3.")
