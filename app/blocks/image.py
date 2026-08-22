@@ -28,6 +28,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 _MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15 MB — generous for local processing
+# Leftover M16 ``trench_site.jpg`` is a 128×128 / ~884 B PIL stub. Treat
+# that class of file as unreadable so the agent answers from stated
+# trench dimensions instead of emitting an empty bubble.
+_PLACEHOLDER_MAX_EDGE = 160
+_PLACEHOLDER_MAX_BYTES = 2048
 
 # Default YOLO model — COCO-trained, ~6 MB. Override via ``YOLO_MODEL`` env
 # for custom fine-tunes (e.g. a PPE-aware model trained on site photos).
@@ -82,6 +87,52 @@ def _pil_metadata(file_path: str) -> Dict:
         )[0]
 
     return info
+
+
+def _placeholder_image_error(file_path: str) -> Optional[Dict]:
+    """Reject leftover-style stub JPEGs (128×128 / ~1 KB) as unreadable.
+
+    YOLO unit tests write 32×32 PNGs (~100 B). Those must still process.
+    A leftover site-photo stub is a JPEG around 128×128 and under 2 KB.
+    """
+    try:
+        size = os.path.getsize(file_path)
+    except OSError:
+        return None
+    width = height = 0
+    plain_size = size
+    fmt = ""
+    try:
+        from PIL import Image
+        from app.core.file_crypto import open_plaintext
+
+        with open_plaintext(file_path) as plain_path:
+            img = Image.open(plain_path)
+            width, height = img.size
+            plain_size = os.path.getsize(plain_path)
+            fmt = (img.format or Path(file_path).suffix.lstrip(".")).upper()
+    except Exception:  # noqa: BLE001 — only leftover JPEGs are in scope
+        return None
+    leftover_stub = (
+        fmt in {"JPEG", "JPG"}
+        and 64 <= width <= _PLACEHOLDER_MAX_EDGE
+        and 64 <= height <= _PLACEHOLDER_MAX_EDGE
+        and plain_size <= _PLACEHOLDER_MAX_BYTES
+    )
+    if not leftover_stub:
+        return None
+    return {
+        "status": "error",
+        "error": (
+            "Image is a placeholder / too small to analyze "
+            f"({width}x{height}, {plain_size} bytes). "
+            "Answer from stated dimensions; do not retry the photo."
+        ),
+        "placeholder": True,
+        "width": width,
+        "height": height,
+        "file_size_bytes": plain_size,
+    }
 
 
 def _avg(channel) -> float:
@@ -266,6 +317,10 @@ class ImageBlock(UniversalBlock):
             file_size = os.path.getsize(file_path)
             if file_size > _MAX_IMAGE_BYTES:
                 return {"status": "error", "error": f"Image too large (max {_MAX_IMAGE_BYTES // (1024*1024)} MB)"}
+
+            stub = _placeholder_image_error(file_path)
+            if stub:
+                return stub
 
             if operation == "metadata":
                 meta = _pil_metadata(file_path)

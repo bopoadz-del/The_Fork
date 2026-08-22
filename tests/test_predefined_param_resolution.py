@@ -50,6 +50,19 @@ class TestResolvePredefinedFileParams:
         # never silently resolved to one of them
         assert "schedule_file" not in params
 
+    def test_two_xer_named_file_wins(self, monkeypatch):
+        self._patch_docs(monkeypatch, [
+            {"original_name": "baseline_programme.xer", "file_path": "/data/a.xer"},
+            {"original_name": "resource_loaded.xer", "file_path": "/data/b.xer"}])
+        params, err = chat._resolve_predefined_file_params(
+            "resource_histogram",
+            "proj",
+            {},
+            "produce a manpower histogram from resource_loaded.xer",
+        )
+        assert err is None
+        assert params["schedule_file"] == "/data/b.xer"
+
     def test_caller_supplied_param_wins(self, monkeypatch):
         self._patch_docs(monkeypatch, [
             {"original_name": "Baseline.xer", "file_path": "/data/proj.xer"}])
