@@ -94,6 +94,18 @@ async def test_placeholder_stub_jpeg_is_error():
     assert "placeholder" in result["error"].lower()
 
 
+@pytest.mark.asyncio
+async def test_tiny_png_unit_canvas_is_not_a_placeholder():
+    """YOLO tests use 32×32 PNGs — those must still analyze."""
+    path = _make_tmp_image(width=32, height=32)
+    try:
+        result = await ImageBlock().process(path, {"operation": "analyze"})
+    finally:
+        os.unlink(path)
+    assert result["status"] == "success"
+    assert result.get("placeholder") is not True
+
+
 def test_image_block_metadata():
     assert ImageBlock.name == "image"
     assert ImageBlock.version.startswith("3.")

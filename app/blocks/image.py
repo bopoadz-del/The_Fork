@@ -92,8 +92,8 @@ def _pil_metadata(file_path: str) -> Dict:
 def _placeholder_image_error(file_path: str) -> Optional[Dict]:
     """Reject leftover-style stub JPEGs (128×128 / ~1 KB) as unreadable.
 
-    A real site photo at 128×128 is typically several KB. Combining a tiny
-    edge with a tiny byte count avoids flagging a 320×240 test thumbnail.
+    YOLO unit tests write 32×32 PNGs (~100 B). Those must still process.
+    A leftover site-photo stub is a JPEG around 128×128 and under 2 KB.
     """
     try:
         size = os.path.getsize(file_path)
@@ -101,6 +101,7 @@ def _placeholder_image_error(file_path: str) -> Optional[Dict]:
         return None
     width = height = 0
     plain_size = size
+    fmt = ""
     try:
         from PIL import Image
         from app.core.file_crypto import open_plaintext
@@ -109,18 +110,16 @@ def _placeholder_image_error(file_path: str) -> Optional[Dict]:
             img = Image.open(plain_path)
             width, height = img.size
             plain_size = os.path.getsize(plain_path)
-    except Exception:  # noqa: BLE001 — unreadable bytes still count as stub if tiny
-        if size > _PLACEHOLDER_MAX_BYTES:
-            return None
-    tiny_canvas = (
-        width > 0
-        and height > 0
-        and width <= _PLACEHOLDER_MAX_EDGE
-        and height <= _PLACEHOLDER_MAX_EDGE
+            fmt = (img.format or Path(file_path).suffix.lstrip(".")).upper()
+    except Exception:  # noqa: BLE001 — only leftover JPEGs are in scope
+        return None
+    leftover_stub = (
+        fmt in {"JPEG", "JPG"}
+        and 64 <= width <= _PLACEHOLDER_MAX_EDGE
+        and 64 <= height <= _PLACEHOLDER_MAX_EDGE
         and plain_size <= _PLACEHOLDER_MAX_BYTES
     )
-    tiny_bytes = min(plain_size, size) <= 400
-    if not tiny_canvas and not tiny_bytes:
+    if not leftover_stub:
         return None
     return {
         "status": "error",
