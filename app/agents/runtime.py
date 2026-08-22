@@ -686,6 +686,97 @@ async def _predispatch_file_tool(
         return None
 
 
+def _messages_user_and_history(messages: list) -> tuple[str, list]:
+    """Latest user text plus prior turns (for duration-override inference)."""
+    user_msg = ""
+    prior: list = []
+    for m in messages or []:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        prior.append(m)
+        if role == "user":
+            user_msg = str(m.get("content") or "")
+    history = prior[:-1] if prior else []
+    return user_msg, history
+
+
+async def _predispatch_wbs_duration_override(
+    agent: "Agent", messages: list,
+) -> dict[str, Any] | None:
+    """Re-run ``generate_wbs`` when the user overrides a template duration.
+
+    ``consider 6 and re-run`` must not depend on the model remembering to
+    pass ``duration_overrides``. Never raises — a miss falls through to
+    the normal tool loop / forced generate_wbs.
+    """
+    if os.getenv("AGENT_WBS_DURATION_PREDISPATCH", "1") == "0":
+        return None
+    if "construction" not in getattr(agent, "allowed_blocks", ()):
+        return None
+    try:
+        from app.lib.wbs_duration_overrides import (
+            collect_overrides,
+            infer_target_count,
+            message_wants_wbs_duration_rerun,
+        )
+        user_msg, history = _messages_user_and_history(messages)
+        if not user_msg or not message_wants_wbs_duration_rerun(user_msg, history):
+            return None
+        overrides = collect_overrides(user_msg, history=history)
+        if not overrides:
+            return None
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+        hist_text = "\n".join(
+            str(m.get("content") or "") for m in history if m.get("role") == "user"
+        )
+        brief = hist_text.strip() or user_msg
+        params = {
+            "brief": brief,
+            "target_count": infer_target_count(hist_text or user_msg),
+            "user_message": user_msg,
+            "history": history,
+            "duration_overrides": overrides,
+        }
+        result = await container.generate_wbs({}, params)
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        compact = dict(result)
+        acts = compact.get("activities") if isinstance(compact.get("activities"), list) else []
+        compact["activities_total"] = len(acts)
+        compact["activities_sample"] = acts[:15]
+        compact.pop("activities", None)
+        payload = json.dumps(compact, default=str)[:6000]
+        applied = compact.get("duration_overrides_applied") or []
+        applied_bits = ", ".join(
+            f"{o.get('match')}={o.get('days')}d×{o.get('activities_updated')}"
+            for o in applied
+        ) or "none matched"
+        messages.append({
+            "role": "user",
+            "content": (
+                "PLATFORM PRE-DISPATCH: generate_wbs has ALREADY been re-run "
+                f"with the user's duration override ({applied_bits}). "
+                "Authoritative result:\n"
+                f"{payload}\n"
+                "Report the new durations and recomputed total/critical path "
+                "from this result. Do not reuse a prior WBS table. Do not "
+                "re-call generate_wbs unless a different override is needed."
+            ),
+        })
+        return {
+            "name": "generate_wbs",
+            "ok": True,
+            "predispatched": True,
+            "result": compact,
+        }
+    except Exception:  # noqa: BLE001
+        _LOG.warning("WBS duration pre-dispatch failed; continuing normally",
+                     exc_info=True)
+        return None
+
+
 def _tool_result_errored(tool_result: Any) -> bool:
     """True when a tool round FAILED, wherever the failure hides.
 
@@ -1888,9 +1979,19 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     tail = messages[-1]
     if tail.get("role") != "user":
         return None
-    text = (tail.get("content") or "").lower()
+    text = tail.get("content") or ""
+    low = text.lower()
+    # Duration override + re-run must force generate_wbs, not a calculator.
+    if "generate_wbs" in available:
+        try:
+            from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
+            user_msg, history = _messages_user_and_history(messages)
+            if message_wants_wbs_duration_rerun(user_msg or text, history):
+                return "generate_wbs"
+        except Exception:  # noqa: BLE001
+            pass
     for phrases, tool in _INTENT_TOOL_MAP:
-        if tool in available and any(p in text for p in phrases):
+        if tool in available and any(p in low for p in phrases):
             return tool
     # Keyword phrases reach ~a dozen of the 76 registered calculators. Catch
     # the rest by SHAPE: a question that supplies its own dimensions and asks
@@ -4055,6 +4156,16 @@ class Agent:
                                 "type": "string",
                                 "description": "Schedule start date in ISO format (YYYY-MM-DD). Optional — defaults to today.",
                             },
+                            "duration_overrides": {
+                                "type": "object",
+                                "additionalProperties": {"type": ["integer", "string"]},
+                                "description": (
+                                    "Activity-name substring → working days "
+                                    "(e.g. {\"slab\": 6}). Parsed from the user "
+                                    "message when omitted — 'use N days per slab "
+                                    "and re-run' is applied even if this is empty."
+                                ),
+                            },
                         },
                         "required": ["brief"],
                     },
@@ -4308,10 +4419,13 @@ class Agent:
         _pre = await _predispatch_file_tool(self, messages, project_id)
         if _pre:
             tool_calls_made.append(_pre)
+        _wbs_pre = await _predispatch_wbs_duration_override(self, messages)
+        if _wbs_pre:
+            tool_calls_made.append(_wbs_pre)
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -4459,6 +4573,7 @@ class Agent:
                     _depth=_depth,
                     _call_stack=_call_stack,
                     user_message=user_message,
+                    history=effective_history,
                 )
                 duration_ms = int((time.monotonic() - _t0) * 1000)
                 tool_calls_made.append(tool_result)
@@ -4875,9 +4990,35 @@ class Agent:
                    "result": _pre_summary,
                    "predispatched": True}
 
+        _wbs_pre = await _predispatch_wbs_duration_override(self, messages)
+        if _wbs_pre:
+            _note_tool(_wbs_pre["name"])
+            stream_tool_results.append(_wbs_pre)
+            _wbs_summary = _summarize_result(_wbs_pre.get("result"))
+            yield {"type": "tool_call",
+                   "tool": _wbs_pre["name"],
+                   "name": _wbs_pre["name"],
+                   "args_preview": json.dumps({
+                       "duration_overrides": (
+                           (_wbs_pre.get("result") or {}).get(
+                               "duration_overrides_applied"
+                           )
+                           if isinstance(_wbs_pre.get("result"), dict)
+                           else None
+                       ),
+                   }, default=str)[:200],
+                   "predispatched": True}
+            yield {"type": "tool_result",
+                   "tool": _wbs_pre["name"],
+                   "name": _wbs_pre["name"],
+                   "ok": True,
+                   "summary": _wbs_summary[:400],
+                   "result": _wbs_summary,
+                   "predispatched": True}
+
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -5209,6 +5350,7 @@ class Agent:
                     _depth=_depth,
                     _call_stack=_call_stack,
                     user_message=user_message,
+                    history=effective_history,
                 )
                 stream_tool_results.append(tool_result)
                 # A successful deliverable tool (anything but search) means the
@@ -5812,6 +5954,7 @@ class Agent:
         _depth: int = 0,
         _call_stack: list[str] | None = None,
         user_message: str | None = None,
+        history: list | None = None,
     ) -> dict[str, Any]:
         fn = tool_call.get("function") or {}
         name = fn.get("name") or ""
@@ -6039,11 +6182,20 @@ class Agent:
                 tc = int(tc_raw) if tc_raw not in (None, "") else 200
             except (TypeError, ValueError):
                 tc = 200
+            from app.lib.wbs_duration_overrides import collect_overrides
             params = {
                 "brief": args.get("brief") or "",
                 "target_count": tc,
                 "project_type": args.get("project_type"),
                 "start_date": args.get("start_date"),
+                "user_message": user_message,
+                "history": history,
+                "duration_overrides": collect_overrides(
+                    user_message,
+                    args.get("brief"),
+                    explicit=args.get("duration_overrides"),
+                    history=history,
+                ),
             }
             try:
                 result = await container.generate_wbs({}, params)
@@ -6716,10 +6868,23 @@ async def select_agent_for_message(
             info["reason"] = "self_coding_requested"
             return sc, info
 
-    # Named construction_calc questions must not be stolen by a keyword
-    # deliverable (payment_certificate, resource_histogram, …). Clear
-    # ``action`` so the agent-chat predefined intercept cannot run the
-    # container with empty params. Stay on the requested agent.
+    # "use N days per slab and re-run" must re-call generate_wbs, not a
+    # named calculator or a stale WBS table from history.
+    try:
+        from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
+        if message_wants_wbs_duration_rerun(user_message):
+            info["action"] = "generate_wbs"
+            info["confidence"] = max(float(info.get("confidence") or 0.0), 0.85)
+            info["reason"] = "duration_override_rerun"
+            if requested_agent.name in ROUTING_GENERALISTS:
+                heavy = AGENT_REGISTRY.get("heavy-reasoning")
+                if heavy is not None and requested_agent.name != "heavy-reasoning":
+                    info["final"] = heavy.name
+                    return heavy, info
+            return requested_agent, info
+    except Exception:  # noqa: BLE001
+        pass
+
     if _message_wants_named_calculator(user_message):
         info["action"] = None
         info["reason"] = "named_calculator"

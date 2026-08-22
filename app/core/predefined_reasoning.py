@@ -119,11 +119,16 @@ def build_schedule_plan(context: Dict[str, Any]) -> ExecutionPlan:
     if doc_ids:
         steps.append(PlanStep(type="extract_document", args={"document_ids": doc_ids},
                               description="extract equipment lead times + milestones"))
+    from app.lib.wbs_duration_overrides import collect_overrides
+    msg = context.get("message", "") or ""
+    duration_overrides = p.get("duration_overrides") or collect_overrides(msg)
     steps.append(PlanStep(type="build_wbs", args={
-        "brief": context.get("message", ""),
+        "brief": msg,
         "target_count": p.get("target_count", 200),
         "project_type": p.get("project_type"),
         "start_date": p.get("start_date"),
+        "user_message": msg,
+        "duration_overrides": duration_overrides or None,
     }, description="build the WBS (+ long-lead procurement)"))
     steps.append(PlanStep(type="cost_load", args={
         "project_name": context.get("project_name") or "Project",
@@ -146,6 +151,15 @@ def deliver_schedule(session: ProjectSession, deliverable: bool) -> str:
         f"{s.get('duration_days')} working days "
         f"({s.get('critical_count')} on the critical path).",
     ]
+    overrides = s.get("duration_overrides_applied") or []
+    if overrides:
+        bits = ", ".join(
+            f"{o.get('match')} = {o.get('days')} days "
+            f"({o.get('activities_updated')} activities)"
+            for o in overrides if isinstance(o, dict)
+        )
+        if bits:
+            parts.append(f"User duration override applied and CPM recomputed: {bits}.")
     if s.get("procurement_injected"):
         parts.append(
             f"{s['procurement_injected']} long-lead procurement item(s) were "
@@ -180,7 +194,7 @@ def _export_descriptor(context: Dict[str, Any]) -> Dict[str, Any] | None:
         endpoint = f"/v1/projects/{project_id}/export/schedule-from-brief"
         payload = {"brief": context.get("message", "")}
     payload.update({"target_count": p.get("target_count", 200)})
-    for k in ("project_type", "start_date", "day_rate"):
+    for k in ("project_type", "start_date", "day_rate", "duration_overrides"):
         if p.get(k) is not None:
             payload[k] = p[k]
     return {"label": "Schedule (Excel)", "format": "xlsx", "method": "POST",
@@ -202,6 +216,8 @@ def build_histogram_plan(context: Dict[str, Any]) -> ExecutionPlan:
             "target_count": p.get("target_count", 150),
             "project_type": p.get("project_type"),
             "start_date": p.get("start_date"),
+            "user_message": msg,
+            "duration_overrides": p.get("duration_overrides") or None,
         }, description="build a norms-based WBS from the brief"),
         PlanStep(type="resource_histogram", args={"period_unit": unit},
                  description="time-phase the WBS crews into periods"),

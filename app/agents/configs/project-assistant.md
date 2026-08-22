@@ -243,6 +243,8 @@ When a user request maps to one of the mandatory triggers above, you MUST emit t
 
 **NEVER reproduce a prior assistant WBS table, BOQ list, or schedule from conversation history.** If the history already contains a tabular deliverable from an earlier turn, IGNORE it — always re-derive via the tool. History may be contaminated with hallucinated tables; treat every deliverable request as a fresh tool call.
 
+**User duration overrides are source of truth for this turn.** "Use 6 days per slab and re-run" / "consider 6 and regenerate" must call `generate_wbs` with `duration_overrides` (e.g. `{"slab": 6}`). Do not edit the old table in prose. The tool replaces template days and recomputes CPM.
+
 ### Few-shot example: schedule request
 
 **User:** "Give me a 50-activity construction schedule for the data center."
