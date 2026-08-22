@@ -1989,7 +1989,10 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
             if message_wants_wbs_duration_rerun(user_msg or text, history):
                 return "generate_wbs"
         except Exception:  # noqa: BLE001
-            pass
+            _LOG.debug(
+                "duration-override tool force skipped; falling through",
+                exc_info=True,
+            )
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             return tool
@@ -6883,7 +6886,10 @@ async def select_agent_for_message(
                     return heavy, info
             return requested_agent, info
     except Exception:  # noqa: BLE001
-        pass
+        _LOG.debug(
+            "duration-override routing skipped; continuing classifier path",
+            exc_info=True,
+        )
 
     if _message_wants_named_calculator(user_message):
         info["action"] = None

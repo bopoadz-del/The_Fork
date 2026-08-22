@@ -634,7 +634,10 @@ class SmartOrchestratorBlock(UniversalBlock):
             if message_wants_wbs_duration_rerun(message):
                 scores["generate_wbs"] = max(scores.get("generate_wbs", 0.0), 0.85)
         except Exception:  # noqa: BLE001
-            pass
+            logger.debug(
+                "duration-override generate_wbs boost skipped",
+                exc_info=True,
+            )
 
         # Per-action gate-1 threshold (operator brief 2026-06-19, PR #80).
         # GENERATIVE_INTENTS — the actions that legitimately need a heavy-
