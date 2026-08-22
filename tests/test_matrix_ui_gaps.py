@@ -16,16 +16,12 @@ from app.agents.runtime import (
     _CG_REFUSAL,
     _EMPTY_RESPONSE_FALLBACK,
     _cost_grounding_gate,
-    _forced_specific_tool,
     _format_commissioning_tool,
     _infer_commissioning_systems,
     _is_document_deliverable_request,
-    _message_wants_resource_histogram,
     _nudge_for_failed_tool,
     _postprocess_answer,
-    _predispatch_resource_histogram,
     _recover_answer_from_tool_messages,
-    _resolve_histogram_schedule_file,
 )
 from tests.conftest import requires_construction_kit
 
@@ -147,94 +143,3 @@ async def test_commissioning_waterproofing_not_hvac():
     assert "Backfill release" in names
     assert "Holiday / spark test" in names
     assert any(t.get("hold_point") for t in tests)
-
-
-def test_histogram_plus_xer_forces_resource_histogram_not_parser():
-    prompt = "produce a manpower histogram from resource_loaded.xer"
-    assert _message_wants_resource_histogram(prompt)
-    assert not _message_wants_resource_histogram("what is a resource histogram?")
-    assert _forced_specific_tool(
-        [{"role": "user", "content": prompt}],
-        {"resource_histogram", "primavera_parser"},
-    ) == "resource_histogram"
-    assert _forced_specific_tool(
-        [{"role": "user", "content": "parse the xer for milestones"}],
-        {"resource_histogram", "primavera_parser"},
-    ) == "primavera_parser"
-    assert _forced_specific_tool(
-        [{"role": "user", "content": "what is a resource histogram?"}],
-        {"resource_histogram", "primavera_parser"},
-    ) is None
-
-
-def test_resolve_histogram_prefers_named_xer(tmp_path, monkeypatch):
-    import os
-
-    loaded = os.path.abspath("tests/fixtures/resource_loaded.xer")
-    other = tmp_path / "baseline_programme.xer"
-    other.write_bytes(b"ERMHDR\n")
-    docs = [
-        {"original_name": "baseline_programme.xer", "file_path": str(other)},
-        {"original_name": "resource_loaded.xer", "file_path": loaded},
-    ]
-    import app.core.projects as projects
-    monkeypatch.setattr(projects, "list_documents", lambda pid, **k: docs)
-
-    fp, name = _resolve_histogram_schedule_file(
-        "proj", "histogram from resource_loaded.xer",
-    )
-    assert name == "resource_loaded.xer"
-    assert fp == loaded
-
-    fp2, name2 = _resolve_histogram_schedule_file("proj", "build the histogram")
-    assert fp2 is None
-    assert name2 == ""
-
-
-@requires_construction_kit
-@pytest.mark.asyncio
-async def test_predispatch_histogram_uses_named_xer(tmp_path, monkeypatch):
-    import os
-
-    loaded = os.path.abspath("tests/fixtures/resource_loaded.xer")
-    other = tmp_path / "baseline_programme.xer"
-    other.write_bytes(b"ERMHDR\n")
-    docs = [
-        {"original_name": "baseline_programme.xer", "file_path": str(other)},
-        {"original_name": "resource_loaded.xer", "file_path": loaded},
-    ]
-    import app.core.projects as projects
-    monkeypatch.setattr(projects, "list_documents", lambda pid, **k: docs)
-
-    class _A:
-        allowed_blocks = ["construction"]
-        name = "construction-pm"
-
-    messages = [{
-        "role": "user",
-        "content": "manpower histogram from resource_loaded.xer",
-    }]
-    out = await _predispatch_resource_histogram(_A(), messages, "proj")
-    assert out is not None
-    assert out["name"] == "resource_histogram"
-    assert out["ok"] is True
-    assert out["result"]["total_manhours"] == 700.0
-    assert out["result"]["by_trade_totals"] == {"LAB": 600.0, "CARP": 100.0}
-    injected = messages[-1]["content"]
-    assert "Do not call primavera_parser" in injected
-    assert "clash" not in injected.lower()
-
-
-@pytest.mark.asyncio
-async def test_predispatch_histogram_kill_switch(monkeypatch):
-    monkeypatch.setenv("AGENT_HISTOGRAM_PREDISPATCH", "0")
-
-    class _A:
-        allowed_blocks = ["construction"]
-
-    out = await _predispatch_resource_histogram(
-        _A(),
-        [{"role": "user", "content": "manpower histogram from resource_loaded.xer"}],
-        "proj",
-    )
-    assert out is None
