@@ -362,6 +362,12 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
 
         if _use_predefined:
             try:
+                _pd_params = dict(body.get("params") or {})
+                if not _pd_params.get("duration_overrides"):
+                    from app.lib.wbs_duration_overrides import collect_overrides
+                    _pd_params["duration_overrides"] = collect_overrides(
+                        message, history=history,
+                    ) or None
                 async for chunk in _stream_from_predefined(
                     action=_pd_action,
                     user_message=message,
@@ -369,7 +375,7 @@ async def agent_chat_stream(name: str, request: Request, auth: dict = Depends(re
                     user_id=auth["user_id"],
                     session_id=conversation_id or f"ag-{auth['user_id']}",
                     document_ids=body.get("document_ids") or [],
-                    params=body.get("params") or {},
+                    params=_pd_params,
                     emit_start=True,
                 ):
                     yield chunk
