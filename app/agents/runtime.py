@@ -2268,6 +2268,135 @@ def _is_cost_shaped_query(user_message: str | None) -> bool:
     return bool(user_message and _CG_COST_QUERY_RE.search(user_message))
 
 
+# Document deliverables (RFP, WIR, O&M, …) often mention a currency or a
+# contract sum. The cost gate used to replace the *entire* document with
+# `_CG_REFUSAL` ("I don't have a rate on file") — live M14 on theshovel.ai.
+# Skip that full-answer wipe unless the user is actually asking for a unit
+# rate / price-per. Fabricated unit rates on a rate-quote still refuse.
+_DOCUMENT_DELIVERABLE_RE = re.compile(
+    r"\b("
+    r"rfp|request for proposal|invitation to tender|"
+    r"job requisition|prequalification shortlist|"
+    r"design directive|"
+    r"commissioning checklist|"
+    r"inspection request|\bwir\b|"
+    r"o\s*&\s*m(?:\s+manual)?|\bom manual\b|"
+    r"\bncr\b|non[-\s]?conformance|"
+    r"punch list|qc inspection"
+    r")\b",
+    re.IGNORECASE,
+)
+_RATE_QUOTE_RE = re.compile(
+    r"\b(unit\s*rate|how much per|price per|rate per|quote (?:a |the )?rate)\b",
+    re.IGNORECASE,
+)
+
+
+def _latest_user_text(messages: list[dict[str, Any]] | None) -> str:
+    for m in reversed(messages or []):
+        if m.get("role") == "user":
+            return str(m.get("content") or "")
+    return ""
+
+
+def _is_document_deliverable_request(user_message: str | None) -> bool:
+    if not user_message:
+        return False
+    if _RATE_QUOTE_RE.search(user_message):
+        return False
+    return bool(_DOCUMENT_DELIVERABLE_RE.search(user_message))
+
+
+def _infer_commissioning_systems(text: str | None) -> list[str] | None:
+    """Map the user's wording onto commissioning system keys.
+
+    Live M3: "commissioning checklist for leftover torch-applied waterproofing
+    before backfill" used to fall through to HVAC/electrical/fire tables.
+    """
+    low = (text or "").lower()
+    if any(
+        k in low
+        for k in (
+            "waterproof", "torch-applied", "torch applied", "sbs",
+            "membrane", "before backfill",
+        )
+    ):
+        return ["waterproofing"]
+    return None
+
+
+def _format_commissioning_tool(payload: dict[str, Any]) -> str:
+    """User-facing checklist from a successful commissioning_checklist tool."""
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    by_sys = payload.get("checklists_by_system") or {}
+    lines = [
+        "Commissioning checklist (from the commissioning_checklist tool).",
+        "",
+        f"Systems covered: {summary.get('systems_covered', len(by_sys))}. "
+        f"Tests: {summary.get('total_tests', 0)} "
+        f"({summary.get('pending', 0)} pending).",
+        "",
+    ]
+    if not isinstance(by_sys, dict):
+        return "\n".join(lines).strip()
+    for system, tests in by_sys.items():
+        lines.append(f"## {str(system).replace('_', ' ').title()}")
+        if not isinstance(tests, list):
+            continue
+        for t in tests:
+            if not isinstance(t, dict):
+                continue
+            name = t.get("test") or "Test"
+            std = t.get("standard") or ""
+            acc = t.get("acceptance_criteria") or ""
+            wit = "witness" if t.get("witness_required") else "review"
+            hold = "hold" if t.get("hold_point") else wit
+            lines.append(f"- **{name}** ({std}) — {acc} [{hold}]")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _recover_answer_from_tool_messages(
+    text: str,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """If the model emitted the empty-turn fallback after a successful
+    deliverable tool, surface that tool result instead of 'unable to generate'."""
+    if (text or "").strip() != _EMPTY_RESPONSE_FALLBACK:
+        return text
+    for m in reversed(messages or []):
+        if m.get("role") != "tool":
+            continue
+        raw = m.get("content") or ""
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        action = payload.get("action")
+        if action == "commissioning_checklist_generated":
+            return _format_commissioning_tool(payload)
+        if action == "resource_histogram_generated":
+            kind = payload.get("histogram_kind") or "labor"
+            periods = payload.get("periods") or []
+            note = payload.get("note") or ""
+            lines = [
+                f"Resource / activity histogram ({kind}).",
+                note,
+                "",
+            ]
+            for p in periods:
+                if not isinstance(p, dict):
+                    continue
+                lines.append(
+                    f"- {p.get('label', '?')}: {p.get('total', 0)} "
+                    f"{'activities' if kind == 'activity_count' else 'units'}"
+                )
+            return "\n".join(lines).strip()
+    return text
+
+
 def _construction_calc_tool_schema() -> dict[str, Any]:
     """Schema for the `construction_calc` deterministic-calculator tool. The
     calculation enum is built from the live registry so it never drifts from the
@@ -2522,6 +2651,8 @@ def _cost_grounding_gate(
         figs = _cg_money_values(text)
         if not figs:
             return text  # not a cost/rate answer — leave it alone
+        if _is_document_deliverable_request(_latest_user_text(messages)):
+            return text
         rag_context = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         grounded = _cg_grounded_numbers(rag_context, messages)
         if all(_cg_is_grounded(v, grounded) for _, v in figs):
@@ -2669,6 +2800,7 @@ def _postprocess_answer(
     When ``fallback_used`` is set (the retriever answered from the Master Corpus
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
+    text = _recover_answer_from_tool_messages(text, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
     text = _ensure_ingestion_handoff(text, messages, agent_name)
@@ -4196,8 +4328,10 @@ class Agent:
                                 "items": {"type": "string"},
                                 "description": (
                                     "Systems to commission. Map the user's wording to "
-                                    "these keys: hvac, electrical, fire, plumbing, "
-                                    "elevator, facade, bms."
+                                    "these keys: waterproofing, hvac, electrical, fire, "
+                                    "plumbing, elevator, facade, bms. For torch-applied "
+                                    "membrane / pre-backfill waterproofing use "
+                                    "waterproofing — do not default to HVAC."
                                 ),
                             },
                         },
@@ -6296,7 +6430,12 @@ class Agent:
                     "result": {"status": "error", "error": f"construction unavailable: {e}"},
                 }
             systems = args.get("systems")
-            if not isinstance(systems, list) or not systems:
+            inferred = _infer_commissioning_systems(
+                user_message or args.get("message") or ""
+            )
+            if inferred:
+                systems = inferred
+            elif not isinstance(systems, list) or not systems:
                 systems = ["hvac", "electrical", "fire"]
             try:
                 result = await container.commissioning_checklist({}, {"systems": systems})
@@ -6767,6 +6906,14 @@ def _nudge_for_failed_tool(tool_result: dict[str, Any], agent: "Agent") -> str:
         and "unknown calculation" in err.lower()
     ):
         return _UNKNOWN_CALC_SELF_CODING_NUDGE
+    name = str((tool_result or {}).get("name") or "").lower()
+    if name in ("image", "ocr", "ocr_v2"):
+        return (
+            "The site photo could not be read (empty, placeholder, or no "
+            "usable pixels). Do not retry the image tool. Answer the safety "
+            "question from the depth, soil type, and geometry the user already "
+            "stated. Use OSHA 29 CFR 1926 Subpart P."
+        )
     return _TOOL_ERROR_NUDGE
 
 
