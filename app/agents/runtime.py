@@ -482,6 +482,78 @@ def _user_names_project_file(user_low: str, original_name: str) -> bool:
     return False
 
 
+_HISTOGRAM_PHRASES = (
+    "manpower histogram", "labour histogram", "labor histogram",
+    "resource histogram", "crew histogram", "workforce histogram",
+    "labor loading", "labour loading",
+)
+_HISTOGRAM_QA_RE = re.compile(
+    r"\b(what is|what's|whats|explain|define)\b", re.IGNORECASE,
+)
+
+
+def _message_wants_resource_histogram(text: str) -> bool:
+    """True when the turn is a histogram deliverable, not a definition Q&A.
+
+    Leftover M17: "histogram from resource_loaded.xer" must not fall through
+    to primavera_parser just because the message contains ``.xer``.
+    """
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    if any(p in low for p in _HISTOGRAM_PHRASES):
+        return True
+    return "histogram" in low and any(
+        t in low for t in (".xer", "primavera", "p6", "taskrsrc")
+    )
+
+
+def _resolve_histogram_schedule_file(
+    project_id: str | None, user_message: str,
+) -> tuple[str | None, str]:
+    """Pick a project ``.xer`` for a histogram. Prefers a file the user named.
+
+    Two unnamed ``.xer`` files → ``(None, "")`` so we never silently pick.
+    """
+    if not project_id:
+        return None, ""
+    try:
+        from app.core import projects as _projects
+        docs = _projects.list_documents(project_id) or []
+    except Exception:  # noqa: BLE001
+        return None, ""
+    xers = [
+        d for d in docs
+        if (d.get("original_name") or "").lower().endswith(".xer")
+        and d.get("file_path")
+    ]
+    if not xers:
+        return None, ""
+    low = (user_message or "").lower()
+    named = [
+        d for d in xers
+        if _user_names_project_file(low, d.get("original_name") or "")
+    ]
+    pick = None
+    if len(named) == 1:
+        pick = named[0]
+    elif len(named) > 1:
+        for d in named:
+            on = (d.get("original_name") or "").strip().lower()
+            if on and on in low:
+                pick = d
+                break
+        pick = pick or named[0]
+    elif len(xers) == 1:
+        pick = xers[0]
+    if not pick:
+        return None, ""
+    fp = pick.get("file_path") or ""
+    if not os.path.exists(fp):
+        return None, ""
+    return fp, pick.get("original_name") or os.path.basename(fp)
+
+
 def _file_tool_hint(messages: list, project_id: str | None,
                     allowed_blocks: list[str]) -> str:
     """When the user's request names a REAL project file and the agent has
@@ -513,7 +585,20 @@ def _file_tool_hint(messages: list, project_id: str | None,
     for d in docs:
         name = (d.get("original_name") or "").strip()
         if name and _user_names_project_file(low, name):
-            tool = _EXT_TOOL_HINTS.get(os.path.splitext(name)[1].lower())
+            ext = os.path.splitext(name)[1].lower()
+            if (
+                ext == ".xer"
+                and _message_wants_resource_histogram(user_msg)
+                and "construction" in allowed_blocks
+            ):
+                return (
+                    f" The project file '{name}' EXISTS in this project. "
+                    "Call the resource_histogram tool with "
+                    f"schedule_file='{name}' — it builds the manpower / "
+                    "activity histogram. Do not use primavera_parser for a "
+                    "histogram."
+                )
+            tool = _EXT_TOOL_HINTS.get(ext)
             if tool and tool in allowed_blocks:
                 return (
                     f" The project file '{name}' EXISTS in this project. "
@@ -773,6 +858,68 @@ async def _predispatch_wbs_duration_override(
         }
     except Exception:  # noqa: BLE001
         _LOG.warning("WBS duration pre-dispatch failed; continuing normally",
+                     exc_info=True)
+        return None
+
+
+async def _predispatch_resource_histogram(
+    agent: "Agent", messages: list, project_id: str | None,
+) -> dict[str, Any] | None:
+    """Run ``resource_histogram`` before the model can steal primavera_parser.
+
+    Pinned ``construction-pm`` is not in the ``_forced_specific_tool`` gate
+    (project-assistant / heavy-reasoning only). Leftover M17 therefore never
+    saw a forced histogram tool. Predispatch is the deterministic lever —
+    same pattern as WBS duration override. Kill-switch:
+    ``AGENT_HISTOGRAM_PREDISPATCH=0``.
+    """
+    if os.getenv("AGENT_HISTOGRAM_PREDISPATCH", "1") == "0":
+        return None
+    if "construction" not in getattr(agent, "allowed_blocks", ()):
+        return None
+    if not project_id:
+        return None
+    try:
+        user_msg, _history = _messages_user_and_history(messages)
+        if not user_msg or not _message_wants_resource_histogram(user_msg):
+            return None
+        schedule_file, picked_name = _resolve_histogram_schedule_file(
+            project_id, user_msg,
+        )
+        if not schedule_file:
+            return None
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+        result = await container.resource_histogram(
+            {}, {"schedule_file": schedule_file},
+        )
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        compact = dict(result)
+        periods = compact.get("periods") if isinstance(compact.get("periods"), list) else []
+        compact["periods"] = periods[:20]
+        payload = json.dumps(compact, default=str)[:6000]
+        kind = compact.get("histogram_kind") or "labor"
+        messages.append({
+            "role": "user",
+            "content": (
+                "PLATFORM PRE-DISPATCH: resource_histogram has ALREADY been "
+                f"run on '{picked_name}'. Authoritative result ({kind}):\n"
+                f"{payload}\n"
+                "Report the period buckets from this result. Do not invent "
+                "man-hours. Do not call primavera_parser for this histogram. "
+                "Do not re-call resource_histogram unless a different file "
+                "is named."
+            ),
+        })
+        return {
+            "name": "resource_histogram",
+            "ok": True,
+            "predispatched": True,
+            "result": compact,
+        }
+    except Exception:  # noqa: BLE001
+        _LOG.warning("histogram pre-dispatch failed; continuing normally",
                      exc_info=True)
         return None
 
@@ -1993,6 +2140,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
                 "duration-override tool force skipped; falling through",
                 exc_info=True,
             )
+    if "resource_histogram" in available and _message_wants_resource_histogram(text):
+        return "resource_histogram"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             return tool
@@ -4382,6 +4531,46 @@ class Agent:
                     },
                 },
             })
+            # ── synthetic tool: resource_histogram ───────────────────────────
+            # Same reason as cash_flow_forecast: pinned construction-pm will
+            # otherwise call primavera_parser (the `xer` intent map) and
+            # invent W1–W4 crew rows. A typed top-level tool + predispatch
+            # is the deterministic lever.
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "resource_histogram",
+                    "description": (
+                        "Build a time-phased manpower / activity histogram "
+                        "from a Primavera P6 .xer. CALL THIS when the user "
+                        "asks for a resource, manpower, labor, or crew "
+                        "histogram. Uses real TASKRSRC labor hours when "
+                        "present; otherwise returns CPM activity-count week "
+                        "buckets — never invent man-hours. Prefer the .xer "
+                        "the user named. Do NOT call primavera_parser for a "
+                        "histogram."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "schedule_file": {
+                                "type": "string",
+                                "description": (
+                                    "The .xer original_name "
+                                    "(e.g. resource_loaded.xer). Must be a "
+                                    "project document name."
+                                ),
+                            },
+                            "period_unit": {
+                                "type": "string",
+                                "enum": ["week", "month"],
+                                "description": "Bucket size. Default week.",
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            })
 
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
@@ -4559,10 +4748,15 @@ class Agent:
         _wbs_pre = await _predispatch_wbs_duration_override(self, messages)
         if _wbs_pre:
             tool_calls_made.append(_wbs_pre)
+        _hist_pre = await _predispatch_resource_histogram(
+            self, messages, project_id,
+        )
+        if _hist_pre:
+            tool_calls_made.append(_hist_pre)
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and not _hist_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -5153,9 +5347,41 @@ class Agent:
                    "result": _wbs_summary,
                    "predispatched": True}
 
+        _hist_pre = await _predispatch_resource_histogram(
+            self, messages, project_id,
+        )
+        if _hist_pre:
+            _note_tool(_hist_pre["name"])
+            stream_tool_results.append(_hist_pre)
+            _hist_summary = _summarize_result(_hist_pre.get("result"))
+            _hist_file = ""
+            if isinstance(_hist_pre.get("result"), dict):
+                _hist_file = str(
+                    (_hist_pre.get("result") or {}).get("source") or ""
+                )
+            yield {"type": "tool_call",
+                   "tool": _hist_pre["name"],
+                   "name": _hist_pre["name"],
+                   "args_preview": json.dumps({
+                       "source": _hist_file,
+                       "histogram_kind": (
+                           (_hist_pre.get("result") or {}).get("histogram_kind")
+                           if isinstance(_hist_pre.get("result"), dict)
+                           else None
+                       ),
+                   }, default=str)[:200],
+                   "predispatched": True}
+            yield {"type": "tool_result",
+                   "tool": _hist_pre["name"],
+                   "name": _hist_pre["name"],
+                   "ok": True,
+                   "summary": _hist_summary[:400],
+                   "result": _hist_summary,
+                   "predispatched": True}
+
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and not _hist_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -6451,6 +6677,61 @@ class Agent:
                 result = {k: v for k, v in result.items() if k != "master_test_schedule"}
             return {
                 "name": "commissioning_checklist",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
+        # ── synthetic tool: resource_histogram ───────────────────────────────
+        if name == "resource_histogram":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            raw = args.get("schedule_file") or args.get("file_path") or ""
+            resolved = _resolve_file_path(project_id, raw) if raw else ""
+            if not resolved or not os.path.exists(str(resolved)):
+                resolved, _picked = _resolve_histogram_schedule_file(
+                    project_id, user_message or "",
+                )
+            if not resolved:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": (
+                            "No schedule file resolved — name the .xer "
+                            "(e.g. resource_loaded.xer) or upload one."
+                        ),
+                    },
+                }
+            period_unit = args.get("period_unit") or "week"
+            try:
+                result = await container.resource_histogram(
+                    {},
+                    {"schedule_file": resolved, "period_unit": period_unit},
+                )
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"resource_histogram failed: {e}",
+                    },
+                }
+            return {
+                "name": "resource_histogram",
                 "ok": isinstance(result, dict) and result.get("status") == "success",
                 "result": result,
             }

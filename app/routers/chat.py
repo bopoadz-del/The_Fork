@@ -250,7 +250,10 @@ _ACTION_FILE_PARAMS: Dict[str, List[tuple]] = {
 
 
 def _resolve_predefined_file_params(
-    action: str, project_id: Optional[str], params: Dict[str, Any]
+    action: str,
+    project_id: Optional[str],
+    params: Dict[str, Any],
+    user_message: Optional[str] = None,
 ) -> tuple:
     """Populate an action's file params from the project's uploaded documents.
 
@@ -258,8 +261,8 @@ def _resolve_predefined_file_params(
       * a param the caller already supplied is never overridden;
       * NO matching file → leave the slot unset so the action returns its own
         honest "needs X" error;
-      * 2+ matching files → return an honest ask-which message instead of
-        silently picking one (the no-assumptions rule applies to files too).
+      * 2+ matching files → prefer the one the user named; otherwise return
+        an honest ask-which message instead of silently picking one.
     """
     specs = _ACTION_FILE_PARAMS.get(action)
     if not specs or not project_id:
@@ -270,7 +273,10 @@ def _resolve_predefined_file_params(
     except Exception:  # noqa: BLE001 — resolution is best-effort
         return params, None
 
+    from app.agents.runtime import _user_names_project_file
+
     resolved = dict(params)
+    low = (user_message or "").lower()
     for slot, exts in specs:
         if resolved.get(slot):
             continue  # caller-supplied value wins
@@ -282,6 +288,20 @@ def _resolve_predefined_file_params(
         if not matches:
             continue  # let the action honest-error on the missing input
         if len(matches) > 1:
+            named = [
+                d for d in matches
+                if _user_names_project_file(low, d.get("original_name") or "")
+            ]
+            if len(named) == 1:
+                resolved[slot] = named[0]["file_path"]
+                continue
+            if len(named) > 1:
+                exact = [
+                    d for d in named
+                    if (d.get("original_name") or "").strip().lower() in low
+                ]
+                resolved[slot] = (exact[0] if exact else named[0])["file_path"]
+                continue
             names = ", ".join(sorted((d.get("original_name") or "?") for d in matches))
             return resolved, (
                 f"This project has {len(matches)} Primavera schedule files ({names}). "
@@ -463,7 +483,7 @@ async def _stream_from_predefined(
     # honest ask-which is streamed as the answer when the project holds >1
     # candidate — never silently pick one.
     resolved_params, param_error = _resolve_predefined_file_params(
-        action, safe_project_id, context["params"])
+        action, safe_project_id, context["params"], user_message)
     if param_error:
         for word in param_error.split(" "):
             yield f"data: {json.dumps({'type': 'token', 'content': word + ' '})}\n\n"
