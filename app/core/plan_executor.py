@@ -196,6 +196,8 @@ class PlanExecutor:
             "target_count": step.args.get("target_count", 200),
             "project_type": step.args.get("project_type"),
             "start_date": step.args.get("start_date"),
+            "user_message": step.args.get("user_message") or step.args.get("brief") or "",
+            "duration_overrides": step.args.get("duration_overrides"),
             "procurement_lead_times": session.data.get("procurement_lead_times") or [],
             "target_milestones": session.data.get("target_milestones") or [],
         }
@@ -206,6 +208,7 @@ class PlanExecutor:
             "actual_count": wbs.get("actual_count"),
             "duration_days": (wbs.get("summary") or {}).get("total_duration_days"),
             "procurement_injected": wbs.get("procurement_injected"),
+            "duration_overrides_applied": wbs.get("duration_overrides_applied") or [],
         }
         session.data[step.output_key or "wbs_summary"] = value
         return value
@@ -246,6 +249,7 @@ class PlanExecutor:
             "activities": wbs.get("actual_count") or len(acts),
             "total_man_days": total_mandays,
             "target_milestones": milestones,
+            "duration_overrides_applied": wbs.get("duration_overrides_applied") or [],
         }
         session.data["schedule_workbook_path"] = path
         session.data["schedule_summary"] = summary

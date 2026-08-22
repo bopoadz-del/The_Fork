@@ -126,6 +126,10 @@ class ScheduleFromBriefRequest(BaseModel):
     start_date: Optional[str] = None
     day_rate: Optional[float] = Field(None, description="opt-in indicative labor rate/day")
     crew_per_trade: int = 4
+    duration_overrides: Optional[Any] = Field(
+        None,
+        description="Activity-name substring → working days (e.g. {\"slab\": 6}).",
+    )
 
 
 class ScheduleFromBOQRequest(BaseModel):
@@ -180,6 +184,10 @@ class ScheduleFromDocumentRequest(BaseModel):
     start_date: Optional[str] = None
     day_rate: Optional[float] = Field(None, description="opt-in indicative labor rate/day")
     crew_per_trade: int = 4
+    duration_overrides: Optional[Any] = Field(
+        None,
+        description="Activity-name substring → working days (e.g. {\"slab\": 6}).",
+    )
 
 
 class EvmExportRequest(BaseModel):
@@ -675,6 +683,8 @@ async def export_schedule_from_brief(
         "target_count": req.target_count,
         "project_type": req.project_type,
         "start_date": req.start_date,
+        "user_message": req.brief,
+        "duration_overrides": req.duration_overrides,
     })
     acts = wbs.get("activities") or []
     if not acts:
@@ -720,6 +730,8 @@ async def export_schedule_from_document(
         "target_count": req.target_count,
         "project_type": req.project_type,
         "start_date": req.start_date,
+        "user_message": req.brief,
+        "duration_overrides": req.duration_overrides,
         "procurement_lead_times": lead_times,
         "target_milestones": target_milestones,
     })

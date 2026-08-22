@@ -628,6 +628,17 @@ class SmartOrchestratorBlock(UniversalBlock):
                     weight = len(kw.split()) * 0.2  # multi-word keywords score higher
                     scores[action] = scores.get(action, 0.0) + weight
 
+        # "use 6 days per slab and re-run" must beat payment/calc keywords.
+        try:
+            from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
+            if message_wants_wbs_duration_rerun(message):
+                scores["generate_wbs"] = max(scores.get("generate_wbs", 0.0), 0.85)
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "duration-override generate_wbs boost skipped",
+                exc_info=True,
+            )
+
         # Per-action gate-1 threshold (operator brief 2026-06-19, PR #80).
         # GENERATIVE_INTENTS — the actions that legitimately need a heavy-
         # reasoning dispatch (generate_wbs, bim_analysis, drawing_qto, ...)

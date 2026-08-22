@@ -881,6 +881,11 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                 for k in ("target_count", "project_type", "start_date", "day_rate"):
                     if body.get(k) is not None:
                         merged[k] = body.get(k)
+                if not merged.get("duration_overrides"):
+                    from app.lib.wbs_duration_overrides import collect_overrides
+                    merged["duration_overrides"] = collect_overrides(
+                        prompt, history=history,
+                    ) or None
                 async for evt in _stream_from_predefined(
                     action=intent["action"], user_message=prompt,
                     project_id=project_id, user_id=user_id, session_id=session_id,

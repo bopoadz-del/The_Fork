@@ -2006,8 +2006,10 @@ class ConstructionScheduleMixin:
         carry CPM ES/EF/LS/LF/total_float + critical flag, computed via
         :func:`app.lib.pm_computations.compute_cpm`.
 
-        Durations are rule-of-thumb working-day defaults; replace with
-        project-specific data when available.
+        Durations are rule-of-thumb working-day defaults. A chat turn like
+        ``use 6 days per slab and re-run`` is parsed into
+        ``duration_overrides`` and applied before CPM so the recomputed
+        schedule matches the user's N, not the template.
         """
         import uuid
 
@@ -2054,6 +2056,28 @@ class ConstructionScheduleMixin:
             activities = self._inject_long_lead_procurement(activities, lead_times)
             procurement_injected = len(activities) - before
 
+        # User duration overrides ("use 6 days per slab and re-run") replace
+        # template days BEFORE CPM so the recomputed ES/EF/TF match N.
+        from app.lib.wbs_duration_overrides import collect_overrides, apply_duration_overrides
+        overrides = collect_overrides(
+            brief,
+            p.get("user_message"),
+            data.get("message"),
+            data.get("user_message"),
+            p.get("brief"),
+            explicit=(
+                p.get("duration_overrides")
+                or data.get("duration_overrides")
+            ),
+            history=p.get("history") or data.get("history"),
+        )
+        applied_overrides: list = []
+        unmatched_overrides: list = []
+        if overrides:
+            activities, applied_overrides, unmatched_overrides = apply_duration_overrides(
+                activities, overrides
+            )
+
         enriched, summary, cpm_error = self._attach_cpm_to_activities(
             activities, start_date
         )
@@ -2077,6 +2101,18 @@ class ConstructionScheduleMixin:
                 "Zone-multiplier scales repeatable activities to reach target_count.",
             ],
         }
+        if applied_overrides:
+            result["duration_overrides_applied"] = applied_overrides
+            bits = [
+                f"{o['match']} = {o['days']} working days "
+                f"({o['activities_updated']} activities)"
+                for o in applied_overrides
+            ]
+            result["assumptions"].append(
+                "User duration override (CPM recomputed): " + "; ".join(bits) + "."
+            )
+        if unmatched_overrides:
+            result["duration_overrides_unmatched"] = unmatched_overrides
         if procurement_injected:
             result["assumptions"].append(
                 f"{procurement_injected} long-lead procurement activities injected from "
