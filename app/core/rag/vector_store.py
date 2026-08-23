@@ -184,6 +184,14 @@ class Chunk:
     revision: str = field(default="", compare=False)
     drawing_number: str = field(default="", compare=False)
     superseded: bool = field(default=False, compare=False)
+    # The uploader's original filename, resolved alongside the fields above.
+    # Construction documents carry real facts in their NAMES that never reach
+    # the text layer — expiry dates, revision letters, discipline codes,
+    # status. Live example: "AM Rev Design NOC ... (exp. 17Jul25).pdf", where
+    # 17 July 2025 appears nowhere in the extracted text, so the expiry was
+    # unanswerable however good retrieval got. Passed to the model in the
+    # context marker; internal like the rest, never serialized to the wire.
+    source_name: str = field(default="", compare=False)
     # ── photo_chunks fields (kind="photo") ─────────────────────────────
     # text chunks keep kind="text" and the photo fields default to None.
     kind: str = "text"
@@ -207,6 +215,7 @@ class Chunk:
         d.pop("revision", None)
         d.pop("drawing_number", None)
         d.pop("superseded", None)
+        d.pop("source_name", None)
         # Drop photo fields for plain text chunks to keep payloads small
         if d.get("kind") == "text":
             d.pop("sha256", None)

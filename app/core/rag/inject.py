@@ -19,6 +19,12 @@ from app.core.rag.vector_store import Chunk
 _LOG = logging.getLogger(__name__)
 
 
+# A marker is repeated per excerpt, so a long engineering filename
+# ("IP-INF-053-0000-JCB-SPC-IF-000013-B_SOPR.pdf") would cost real budget
+# on every one. Long enough to keep a trailing "(exp. 17Jul25).pdf".
+_MAX_SOURCE_NAME_CHARS = 60
+
+
 def _estimate_tokens(text: str) -> int:
     """Cheap proxy: 4 chars per token. Good enough for the cap; not
     used for billing or model context sizing."""
@@ -86,6 +92,15 @@ def format_chunks_as_system_message(
         "anywhere', or that it 'does not apply' — you cannot see far enough to "
         "know that. Say what you did not find, then offer to search again with "
         "the exact document name, code, or section number.\n"
+        # Without this the model treats src= as decoration. Construction
+        # filenames routinely carry the answer -- expiry dates, revision
+        # letters, discipline codes, status -- where the text layer does not.
+        "FILENAMES ARE EVIDENCE - each excerpt is tagged with the document it "
+        "came from (src=...). A filename may state a fact the extracted text "
+        "does not, such as an expiry date, revision letter, or document "
+        "status. You may cite it, saying you are reading it from the document "
+        "name. Where the filename and the text disagree, give BOTH and say "
+        "which is which rather than silently preferring one.\n"
         f"(top {len(chunks)} of {total_candidates} matches; cosine in "
         f"[{min(scores):.3f}, {max(scores):.3f}])\n"
     )
@@ -106,8 +121,27 @@ def format_chunks_as_system_message(
         rev = getattr(c, "revision", "") or ""
         rev_s = f" rev={rev}" if rev else ""
         sup_s = " SUPERSEDED" if getattr(c, "superseded", False) else ""
+        # The FILENAME is evidence in its own right on construction documents:
+        # expiry dates, revision letters, discipline codes and status live
+        # there and frequently never reach the text layer. Live case — asked
+        # when the Street Lighting NOC expires, retrieval returned the right
+        # document, but "17 July 2025" exists only in
+        # "AM Rev Design NOC ... (exp. 17Jul25).pdf". The extracted text held
+        # only an OCR-mangled "Issue Date 13\02\2025" and "Time Duration
+        # 6 months", so the model did arithmetic on noise to reach a date the
+        # document never states. Nothing about retrieval could fix that; the
+        # model simply never saw the name.
+        #
+        # Truncated because a marker is repeated per excerpt and long
+        # engineering filenames would otherwise crowd the token budget. The
+        # tail is kept rather than the head: that is where revision letters and
+        # parenthesised dates sit.
+        name = (getattr(c, "source_name", "") or "").strip()
+        if len(name) > _MAX_SOURCE_NAME_CHARS:
+            name = "…" + name[-(_MAX_SOURCE_NAME_CHARS - 1):]
+        src_s = f" src={name}" if name else ""
         return (f"[doc_id={c.doc_id} chunk={c.chunk_index} "
-                f"score={(c.score or 0):.3f}{rev_s}{sup_s}] {c.text}")
+                f"score={(c.score or 0):.3f}{rev_s}{sup_s}{src_s}] {c.text}")
 
     body_parts = [_marker(c) for c in chunks]
     return {"role": "system", "content": header + "\n" + "\n\n".join(body_parts)}
