@@ -788,7 +788,9 @@ async def test_om_outline_and_safety_briefing_from_operator_text():
     assert om["status"] == "success"
     assert len(om.get("sections") or []) == 13
     assert "PWPS" in (om.get("title") or "") or om.get("location")
-    assert "holiday" not in json.dumps(om).lower()
+    blob = json.dumps(om).lower()
+    assert "holiday" not in blob
+    assert "spark" not in blob
 
     safety = await ConstructionContainer().safety_briefing({"text": M16}, {})
     assert safety["status"] == "success"
