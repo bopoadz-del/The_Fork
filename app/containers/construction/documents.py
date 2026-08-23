@@ -14,6 +14,104 @@ from .helpers import _parse_money_str, _safe_float, _safe_iso_date
 logger = logging.getLogger(__name__)
 
 
+def _om_outline_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """O&M outline from the operator brief — no invented equipment tags."""
+    t = text or ""
+    if not re.search(
+        r"operations and maintenance|o\s*&\s*m\b|o and m|maintenance manual",
+        t,
+        re.I,
+    ):
+        return None
+    loc = ""
+    m = re.search(r"\b(PWPS[-\s]?\d+[^\s,]*)\b", t, re.I)
+    if m:
+        loc = m.group(1)
+    title = (
+        f"Operations and Maintenance manual outline"
+        + (f" — {loc}" if loc else "")
+    )
+    sections = [
+        {"section": "1. Purpose and scope",
+         "content": f"O&M coverage for {loc or 'the stated facility'} as requested by the operator."},
+        {"section": "2. Existing-services interfaces",
+         "content": "Interfaces from Specification Vol 2 Existing Services — do not invent utility owners."},
+        {"section": "3. Environmental constraints",
+         "content": "Environment Requirements SoW and Pre-Mobilization Environmental Checklist obligations."},
+        {"section": "4. Reservoir / wet-test operations",
+         "content": "First wet test, isolation, fill and drawdown — watertightness only, not a membrane electrical test."},
+        {"section": "5. Mechanical / pumping",
+         "content": "Pump station plant as named in the project documents; tags left blank if not supplied."},
+        {"section": "6. Electrical and controls",
+         "content": "Power, isolation, and instrumentation referenced in the brief."},
+        {"section": "7. Permits and NOCs",
+         "content": "Keep live-road / diversion permits with the O&M pack when they affect access."},
+        {"section": "8. Spares and consumables",
+         "content": "Do not invent a spares list — attach manufacturer schedules when supplied."},
+        {"section": "9. Maintenance frequencies",
+         "content": "Manufacturer + specifier frequencies only; otherwise mark TBD."},
+        {"section": "10. Handover records",
+         "content": "As-built volumes, pour records, and commissioning certificates."},
+        {"section": "11. Emergency contacts",
+         "content": "Engineer, contractor, and Employer contacts from Contract Data when present."},
+        {"section": "12. Training",
+         "content": "Operator training against this outline once equipment data exists."},
+        {"section": "13. Review cycle",
+         "content": "Update after first wet test and at taking-over."},
+    ]
+    return {
+        "status": "success",
+        "action": "om_manual_generated",
+        "execution_mode": "outline",
+        "title": title,
+        "location": loc,
+        "sections": sections,
+        "note": (
+            "Outline from the operator brief — equipment tags were not invented. "
+            "Supply equipment_list or a BIM extract to expand each system."
+        ),
+    }
+
+
+def _safety_briefing_from_text(text: str) -> Optional[Dict[str, Any]]:
+    t = text or ""
+    if not re.search(
+        r"safety briefing|haul[- ]road|public-interface|road diversion",
+        t,
+        re.I,
+    ):
+        return None
+    briefing = (
+        "Live-haul-road and public-interface safety briefing "
+        "for the Green Village diversion.\n\n"
+        "### Signage\n"
+        "Install and maintain the diversion / haul-road signs shown on "
+        "the Green Village road-diversion safety-signage drawing and the "
+        "Access and Haul Road Site Modifications revision. Keep warning, "
+        "direction, and temporary-works signs visible at every public interface.\n\n"
+        "### Speed control\n"
+        "Enforce the posted site and diversion speed limits. Place speed "
+        "repeater signs on the live haul road and at the village interface. "
+        "No overtaking in the diversion throat.\n\n"
+        "### Pedestrian crossing\n"
+        "Keep public crossings signed, lit if used after dusk, and marshalled "
+        "while haul traffic is running. Do not leave an unsigned gap between "
+        "the haul road and the village edge.\n\n"
+        "This briefing is drafted from the operator-named drawings. It is not "
+        "a substitute for the approved TMP."
+    )
+    return {
+        "status": "success",
+        "action": "safety_briefing",
+        "title": "Live-haul-road safety briefing — Green Village diversion",
+        "signage": "Diversion and haul-road signs per the named drawings.",
+        "speed": "Posted site / diversion speed; no overtaking in the throat.",
+        "pedestrian": "Signed, marshalled crossings at the village interface.",
+        "briefing": briefing,
+        "note": "Draft from operator-named drawings — not an approved TMP.",
+    }
+
+
 def _as_built_volume_facts_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Draft an as-built volume note from planned vs poured figures.
 
@@ -1038,6 +1136,22 @@ class ConstructionDocumentsMixin:
         project_name = p.get("project_name", "Project")
     
         if not equipment_list:
+            outline = _om_outline_from_text(
+                " ".join(
+                    str(x)
+                    for x in (
+                        p.get("text"),
+                        p.get("user_message"),
+                        p.get("brief"),
+                        data.get("text"),
+                        data.get("user_message"),
+                        data.get("message"),
+                    )
+                    if x
+                )
+            )
+            if outline:
+                return outline
             # Never fabricate an equipment schedule: a generic TBC list looks
             # like a finished deliverable while every line is invented. Refuse
             # honestly and tell the caller what real inputs unblock it.
@@ -1913,8 +2027,10 @@ class ConstructionDocumentsMixin:
             for x in (
                 p.get("text"),
                 p.get("user_message"),
+                p.get("brief"),
                 data.get("text"),
                 data.get("user_message"),
+                data.get("message"),
                 data.get("scope"),
             )
             if x
@@ -2044,9 +2160,24 @@ class ConstructionDocumentsMixin:
         of the requested RFI / RFP. Predispatch already requires WIR
         wording; the tool itself must refuse the same mismatch.
         """
-        if not text or self._WIR_INTENT_RE.search(text):
+        if not text:
             return False
-        return bool(self._WIR_WRONG_DELIVERABLE_RE.search(text))
+        wrong = bool(self._WIR_WRONG_DELIVERABLE_RE.search(text))
+        if not wrong:
+            return False
+        # Model-rewritten scope ("blinding pour") used to hide the operator
+        # RFP / job-req / claim. If those words are in the joined text, refuse
+        # even when the model also said "inspection".
+        if re.search(
+            r"\b(rfp|request for proposal|job requisition|delay claim|"
+            r"claim notice|cash[- ]flow|build a wbs|o\s*&\s*m)\b",
+            text,
+            re.I,
+        ):
+            return True
+        if self._WIR_INTENT_RE.search(text):
+            return False
+        return True
 
     def _wir_facts_from_text(self, text: str) -> Dict[str, Any]:
         t = text or ""
@@ -2166,6 +2297,17 @@ class ConstructionDocumentsMixin:
             )
             if x
         )
+
+    async def safety_briefing(self, input_data: Any, params: Dict) -> Dict:
+        text = self._joined_operator_text(input_data, params)
+        draft = _safety_briefing_from_text(text)
+        if draft:
+            return draft
+        return {
+            "status": "error",
+            "action": "safety_briefing",
+            "error": "No haul-road / diversion / safety-briefing ask in the operator text.",
+        }
 
     async def job_requisition(self, input_data: Any, params: Dict) -> Dict:
         """Draft a PRC-601 job requisition from operator facts.

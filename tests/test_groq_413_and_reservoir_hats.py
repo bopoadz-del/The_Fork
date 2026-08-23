@@ -14,23 +14,33 @@ from app.agents.runtime import (
     _EMPTY_RESPONSE_FALLBACK,
     _approx_message_chars,
     _compact_messages_for_tpm,
+    _conflicting_tools_after_predispatch,
     _format_as_built_note,
+    _format_cash_flow,
     _format_claim_notice,
     _format_commissioning_tool,
     _format_job_requisition,
+    _format_om_outline,
     _format_payment_certificate,
     _format_rfp_draft,
+    _format_safety_briefing,
     _format_wbs_result,
     _format_wir_form,
     _infer_commissioning_systems,
     _inject_predispatch,
     _message_wants_as_built_note,
+    _message_wants_cash_flow,
     _message_wants_commissioning,
     _message_wants_delay_claim,
     _message_wants_first_run_wbs,
     _message_wants_ipc_draft,
     _message_wants_job_requisition,
+    _message_wants_locked_deliverable,
+    _message_wants_om_manual,
     _message_wants_rfp_draft,
+    _message_wants_safety_briefing,
+    _message_wants_wir_form,
+    _messages_user_and_history,
     _predispatch_construction_draft,
     _predispatch_remaining_deliverables,
     _recover_answer_from_tool_messages,
@@ -83,6 +93,22 @@ M14 = (
     "radiused or closed concrete channel. Write the invitation letter, scope "
     "of works, prequalification, evaluation method, and key dates in full "
     "paragraphs. Reference SOPR and UMA Stormwater DDC 20212200076."
+)
+M2 = (
+    "Produce a six-month cash-flow S-curve starting at commencement. Use the "
+    "Accepted Contract Amount SAR 1,754,504,456.25 from Contract Data. Apply "
+    "the 10% advance payment (14.2.1) and 10% retention on each IPC (14.3.2). "
+    "State monthly drawdown, cumulative, and net after advance recovery."
+)
+M13 = (
+    "Generate an operations and maintenance manual outline for PWPS-02 "
+    "(potable water pump station and reservoir). Cover existing-services "
+    "interfaces from Specification Vol 2 Existing Services."
+)
+M16 = (
+    "Produce a live-haul-road and public-interface safety briefing for the "
+    "Green Village diversion: required signage, speed control, and pedestrian "
+    "crossing controls."
 )
 
 
@@ -157,6 +183,8 @@ def test_message_wants_remaining_deliverables():
     assert not _message_wants_commissioning(M6)
     assert _message_wants_ipc_draft(M7)
     assert not _message_wants_ipc_draft("issue a payment certificate")
+    assert _message_wants_cash_flow(M2)
+    assert not _message_wants_ipc_draft(M2)
     assert _message_wants_delay_claim(M9)
     assert _message_wants_as_built_note(M12)
     assert _message_wants_rfp_draft(M14)
@@ -670,3 +698,137 @@ async def test_infer_then_container_reservoir_for_m3():
     blob = json.dumps(out).lower()
     assert "holiday" not in blob
     assert "spark" not in blob
+
+
+def test_messages_user_skips_platform_predispatch():
+    user, _hist = _messages_user_and_history([
+        {"role": "user", "content": M1},
+        {"role": "user", "content": "PLATFORM PRE-DISPATCH: drawing_qto ran on a PDF"},
+    ])
+    assert "build a WBS" in user
+    assert "PLATFORM PRE-DISPATCH" not in user
+    assert _message_wants_first_run_wbs(user)
+    assert _message_wants_locked_deliverable(user)
+
+
+def test_wir_yields_to_job_req_and_remaining_intents():
+    steal = M6 + " Also write an inspection request for the poles."
+    assert _message_wants_job_requisition(steal)
+    assert not _message_wants_wir_form(steal)
+    assert _message_wants_cash_flow(M2)
+    assert _message_wants_om_manual(M13)
+    assert _message_wants_safety_briefing(M16)
+    assert not _message_wants_commissioning(M13)
+    assert _message_wants_locked_deliverable(M2)
+    assert _message_wants_locked_deliverable(M13)
+    assert _message_wants_locked_deliverable(M16)
+    assert not _message_wants_locked_deliverable(
+        "Complete a Work Inspection Request for Week 53 collars"
+    )
+
+
+def test_conflicting_tools_lock_steal_surfaces():
+    assert "payment_certificate" in _conflicting_tools_after_predispatch(
+        "generate_wbs"
+    )
+    assert "drawing_qto" in _conflicting_tools_after_predispatch(
+        "cash_flow_forecast"
+    )
+    assert "wir_form" in _conflicting_tools_after_predispatch("rfp_draft")
+    assert "commissioning_checklist" in _conflicting_tools_after_predispatch(
+        "om_manual_generator"
+    )
+    assert _conflicting_tools_after_predispatch("unknown") == set()
+
+
+def test_format_cash_om_safety_and_recover():
+    cash = {
+        "action": "cash_flow_forecast",
+        "project_parameters": {"contract_value": 1_754_504_456.25},
+        "monthly_forecast": [
+            {"month": 1, "planned_progress_percent": 5,
+             "monthly_value": 1, "cumulative_value": 1,
+             "advance_recovery": 0, "retention_deduction": 0,
+             "net_cash_in": 1},
+        ],
+    }
+    rendered_cash = _format_cash_flow(cash)
+    assert "1,754,504,456.25" in rendered_cash or "1754504456.25" in (
+        rendered_cash.replace(",", "")
+    )
+    om = {
+        "action": "om_manual_generated",
+        "title": "Operations and Maintenance manual outline — PWPS-02",
+        "sections": [{"section": "1. Purpose and scope", "content": "O&M"}],
+        "note": "Outline from the operator brief",
+    }
+    assert "PWPS-02" in _format_om_outline(om)
+    safety = {
+        "action": "safety_briefing",
+        "briefing": "Signage, speed control, and pedestrian crossing.",
+    }
+    assert "pedestrian" in _format_safety_briefing(safety).lower()
+    recovered_cash = _recover_answer_from_tool_messages(
+        "HTTP 413", [{"role": "tool", "content": json.dumps(cash)}]
+    )
+    assert "1,754,504,456.25" in recovered_cash or "1754504456.25" in (
+        recovered_cash.replace(",", "")
+    )
+    assert "PWPS-02" in _recover_answer_from_tool_messages(
+        "", [{"role": "tool", "content": json.dumps(om)}]
+    )
+    assert "Signage" in _recover_answer_from_tool_messages(
+        _EMPTY_RESPONSE_FALLBACK, [{"role": "tool", "content": json.dumps(safety)}]
+    )
+
+
+@pytest.mark.asyncio
+async def test_om_outline_and_safety_briefing_from_operator_text():
+    from app.containers.construction import ConstructionContainer
+
+    om = await ConstructionContainer().om_manual_generator({"text": M13}, {})
+    assert om["status"] == "success"
+    assert len(om.get("sections") or []) == 13
+    assert "PWPS" in (om.get("title") or "") or om.get("location")
+    blob = json.dumps(om).lower()
+    assert "holiday" not in blob
+    assert "spark" not in blob
+
+    safety = await ConstructionContainer().safety_briefing({"text": M16}, {})
+    assert safety["status"] == "success"
+    blob = (safety.get("briefing") or "").lower()
+    assert "signage" in blob
+    assert "speed" in blob
+    assert "pedestrian" in blob
+
+
+@pytest.mark.asyncio
+async def test_wir_refuses_rfp_when_model_rewrote_scope():
+    from app.containers.construction import ConstructionContainer
+
+    out = await ConstructionContainer().wir_form(
+        {"text": "Blinding concrete pour", "scope": "Week 53 collars"},
+        {"user_message": M14},
+    )
+    assert out["status"] == "error"
+    assert "non-WIR" in (out.get("error") or "") or "RFP" in (out.get("error") or "")
+
+
+@pytest.mark.asyncio
+async def test_cash_flow_parses_six_month_word_and_aca():
+    from app.containers.construction.boq import _cashflow_figures_from_message
+    from app.containers.construction import ConstructionContainer
+
+    fig = _cashflow_figures_from_message(M2)
+    assert fig.get("contract_value") == 1_754_504_456.25
+    assert fig.get("duration_months") == 6
+
+    out = await ConstructionContainer().cash_flow_forecast(
+        {"message": M2, "text": M2, "user_message": M2},
+        {"user_message": M2, "brief": M2},
+    )
+    assert out["status"] == "success"
+    params = out.get("project_parameters") or {}
+    assert params.get("contract_value") == 1_754_504_456.25
+    months = out.get("monthly_forecast") or out.get("s_curve_data") or []
+    assert len(months) == 6
