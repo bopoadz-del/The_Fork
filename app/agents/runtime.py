@@ -1054,6 +1054,8 @@ def _message_wants_commissioning(text: str) -> bool:
 
 def _message_wants_ipc_draft(text: str) -> bool:
     raw = text or ""
+    if _message_wants_cash_flow(raw) or _message_wants_delay_claim(raw):
+        return False
     if not re.search(r"payment certificate|\bipc\b|interim payment", raw, re.I):
         return False
     return _carries_ipc_figures(raw)

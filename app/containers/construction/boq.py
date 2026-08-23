@@ -1641,20 +1641,19 @@ class ConstructionBoqMixin:
         # Predefined dispatch sends the chat envelope with empty params — the
         # figures ("SAR 60M, 18-month project") then live only in `message`.
         # Parsed values fill gaps ONLY; explicit params/data always win.
-        fig = _cashflow_figures_from_message(
-            " ".join(
-                str(x)
-                for x in (
-                    data.get("message"),
-                    data.get("text"),
-                    data.get("user_message"),
-                    p.get("user_message"),
-                    p.get("brief"),
-                    input_data if isinstance(input_data, str) else "",
-                )
-                if x
-            )
-        )
+        seen: list[str] = []
+        for x in (
+            data.get("message"),
+            data.get("text"),
+            data.get("user_message"),
+            p.get("user_message"),
+            p.get("brief"),
+            input_data if isinstance(input_data, str) else "",
+        ):
+            s = str(x).strip() if x else ""
+            if s and s not in seen:
+                seen.append(s)
+        fig = _cashflow_figures_from_message(" ".join(seen))
         contract_value = (data.get("contract_value") or p.get("contract_value", 0)
                           or fig.get("contract_value", 0))
         payment_terms = p.get("payment_terms", {"advance_payment": 0.10, "retention": 0.10, "payment_delay_days": 30, "mobilization_duration": 2})

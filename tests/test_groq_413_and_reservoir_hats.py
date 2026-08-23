@@ -183,6 +183,8 @@ def test_message_wants_remaining_deliverables():
     assert not _message_wants_commissioning(M6)
     assert _message_wants_ipc_draft(M7)
     assert not _message_wants_ipc_draft("issue a payment certificate")
+    assert _message_wants_cash_flow(M2)
+    assert not _message_wants_ipc_draft(M2)
     assert _message_wants_delay_claim(M9)
     assert _message_wants_as_built_note(M12)
     assert _message_wants_rfp_draft(M14)
@@ -822,7 +824,8 @@ async def test_cash_flow_parses_six_month_word_and_aca():
     assert fig.get("duration_months") == 6
 
     out = await ConstructionContainer().cash_flow_forecast(
-        {"message": M2}, {},
+        {"message": M2, "text": M2, "user_message": M2},
+        {"user_message": M2, "brief": M2},
     )
     assert out["status"] == "success"
     params = out.get("project_parameters") or {}
