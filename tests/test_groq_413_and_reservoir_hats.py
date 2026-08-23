@@ -23,24 +23,30 @@ from app.agents.runtime import (
     _format_om_outline,
     _format_payment_certificate,
     _format_rfp_draft,
+    _format_rfi,
     _format_safety_briefing,
     _format_wbs_result,
     _format_wir_form,
+    _graft_operator_claim_facts,
     _infer_commissioning_systems,
     _inject_predispatch,
     _message_wants_as_built_note,
     _message_wants_cash_flow,
     _message_wants_commissioning,
     _message_wants_delay_claim,
+    _message_wants_design_directive,
     _message_wants_first_run_wbs,
+    _message_wants_follow_on_rfi,
     _message_wants_ipc_draft,
     _message_wants_job_requisition,
     _message_wants_locked_deliverable,
     _message_wants_om_manual,
+    _message_wants_qc_punch,
     _message_wants_rfp_draft,
     _message_wants_safety_briefing,
     _message_wants_wir_form,
     _messages_user_and_history,
+    _operator_user_text,
     _predispatch_construction_draft,
     _predispatch_remaining_deliverables,
     _recover_answer_from_tool_messages,
@@ -109,6 +115,20 @@ M16 = (
     "Produce a live-haul-road and public-interface safety briefing for the "
     "Green Village diversion: required signage, speed control, and pedestrian "
     "crossing controls."
+)
+M10 = (
+    "Draft a follow-on RFI to RFI002 (24 stormwater manholes on one road "
+    "bend). Ask the Engineer to confirm whether a custom-radius GRP or closed "
+    "concrete channel is accepted, and how that change affects the Week 53 "
+    "collar pours of 11 manholes totalling 28 m3 of C-35 SRC."
+)
+M4 = (
+    "Issue a design directive answering RFI016 Underpass Length Conflict. "
+    "The road profile is 42 m and the underpass is 36 m."
+)
+M8 = (
+    "Produce a QC punch list and hold-point sign-off for the Week 53 "
+    "stormwater manhole collars. Reference the WIR template."
 )
 
 
@@ -718,6 +738,16 @@ def test_wir_yields_to_job_req_and_remaining_intents():
     assert _message_wants_cash_flow(M2)
     assert _message_wants_om_manual(M13)
     assert _message_wants_safety_briefing(M16)
+    assert not _message_wants_safety_briefing(M1)
+    assert _message_wants_follow_on_rfi(M10)
+    assert not _message_wants_wir_form(M10)
+    assert _message_wants_locked_deliverable(M10)
+    assert _message_wants_design_directive(M4)
+    assert not _message_wants_safety_briefing(M4)
+    assert _message_wants_qc_punch(M8)
+    assert not _message_wants_wir_form(M8)
+    assert _message_wants_locked_deliverable(M8)
+    assert not _message_wants_safety_briefing(M6)
     assert not _message_wants_commissioning(M13)
     assert _message_wants_locked_deliverable(M2)
     assert _message_wants_locked_deliverable(M13)
@@ -735,6 +765,13 @@ def test_conflicting_tools_lock_steal_surfaces():
         "cash_flow_forecast"
     )
     assert "wir_form" in _conflicting_tools_after_predispatch("rfp_draft")
+    assert "wir_form" in _conflicting_tools_after_predispatch("rfi_generator")
+    assert "safety_briefing" in _conflicting_tools_after_predispatch(
+        "generate_wbs"
+    )
+    assert "safety_briefing" in _conflicting_tools_after_predispatch(
+        "resource_histogram"
+    )
     assert "commissioning_checklist" in _conflicting_tools_after_predispatch(
         "om_manual_generator"
     )
@@ -832,3 +869,157 @@ async def test_cash_flow_parses_six_month_word_and_aca():
     assert params.get("contract_value") == 1_754_504_456.25
     months = out.get("monthly_forecast") or out.get("s_curve_data") or []
     assert len(months) == 6
+
+
+def test_graft_keeps_aconex_and_clause_on_rewritten_claim():
+    rewritten = (
+        "**DELAY CLAIM NOTICE**\n*Clause 4.5 – Notice of Delay*\n"
+        "Access was given 28 calendar days late. Rate 0.015%."
+    )
+    grafted = _graft_operator_claim_facts(rewritten, M9)
+    assert "Aconex" in grafted
+    assert "8.8.1" in grafted
+    polluted = [
+        {"role": "user", "content": M9},
+        {"role": "user", "content": "haul-road safety briefing signage"},
+        {"role": "user", "content": "PLATFORM PRE-DISPATCH: claims_builder ran"},
+    ]
+    blob = _operator_user_text(polluted)
+    assert "Aconex" in blob
+    assert "8.8.1" in blob
+    last, _ = _messages_user_and_history(polluted)
+    assert "Aconex" not in last
+    assert "Aconex" in _graft_operator_claim_facts(rewritten, blob)
+
+
+def test_format_rfi_tolerates_non_dict_rows():
+    rendered = _format_rfi({
+        "rfis": ["not-a-dict", {"rfi_number": "DRAFT-RFI", "question": "GRP?"}],
+    })
+    assert "DRAFT-RFI" in rendered
+    assert "GRP?" in rendered
+
+
+@pytest.mark.asyncio
+async def test_wir_refuses_follow_on_rfi_when_model_said_inspection():
+    from app.containers.construction import ConstructionContainer
+
+    out = await ConstructionContainer().wir_form(
+        {"text": "inspection request for Week 53 collars", "scope": "pour"},
+        {"user_message": M10},
+    )
+    assert out["status"] == "error"
+    err = (out.get("error") or "").lower()
+    assert "non-wir" in err or "rfi" in err
+
+    numbered = await ConstructionContainer().wir_form(
+        {"text": "inspection request for Week 53 collars", "scope": "pour"},
+        {"user_message": "Raise an inspection request for the RFI002 manhole cluster"},
+    )
+    assert numbered["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_rfi_generator_drafts_follow_on_from_operator_text():
+    from app.containers.construction import ConstructionContainer
+
+    out = await ConstructionContainer().rfi_generator(
+        {"text": M10, "user_message": M10},
+        {"user_message": M10},
+    )
+    assert out["status"] == "success"
+    assert out["rfis"]
+    rendered = _format_rfi(out)
+    assert "RFI002" in rendered or "follow-on" in rendered.lower()
+    assert "GRP" in rendered or "channel" in rendered.lower()
+    assert "28" in rendered
+
+
+@requires_construction_kit
+@pytest.mark.asyncio
+async def test_remaining_uses_operator_text_not_polluted_last_bubble():
+    class _A:
+        allowed_blocks = ["construction"]
+        name = "construction-pm"
+
+    polluted = [
+        {"role": "user", "content": M1},
+        {
+            "role": "user",
+            "content": (
+                "Access and Haul Road Site Modifications — live haul-road "
+                "and road diversion safety briefing with signage and pedestrians"
+            ),
+        },
+    ]
+    out = await _predispatch_remaining_deliverables(
+        _A(), polluted, "proj", operator_text=M1,
+    )
+    assert out is not None
+    assert out["name"] == "generate_wbs"
+
+
+@requires_construction_kit
+@pytest.mark.asyncio
+async def test_remaining_drafts_follow_on_rfi_not_wir():
+    class _A:
+        allowed_blocks = ["construction"]
+        name = "construction-pm"
+
+    msgs = [{"role": "user", "content": M10}]
+    out = await _predispatch_remaining_deliverables(_A(), msgs, "proj")
+    assert out is not None
+    assert out["name"] == "rfi_generator"
+
+
+@requires_construction_kit
+@pytest.mark.asyncio
+async def test_remaining_commissioning_uses_reservoir_systems():
+    class _A:
+        allowed_blocks = ["construction"]
+        name = "construction-pm"
+
+    msgs = [{"role": "user", "content": M3}]
+    out = await _predispatch_remaining_deliverables(_A(), msgs, "proj")
+    assert out is not None
+    assert out["name"] == "commissioning_checklist"
+    by_sys = (out.get("result") or {}).get("checklists_by_system") or {}
+    assert "reservoir" in by_sys
+    blob = json.dumps(out["result"]).lower()
+    assert "wet" in blob or "watertight" in blob
+    assert "holiday" not in blob
+    assert "spark" not in blob
+
+
+@requires_construction_kit
+@pytest.mark.asyncio
+async def test_remaining_job_req_beats_polluted_safety_bubble():
+    class _A:
+        allowed_blocks = ["construction"]
+        name = "contracts-manager"
+
+    polluted = [
+        {"role": "user", "content": M6},
+        {
+            "role": "user",
+            "content": "haul-road safety briefing signage speed pedestrian",
+        },
+    ]
+    out = await _predispatch_remaining_deliverables(
+        _A(), polluted, "proj", operator_text=M6,
+    )
+    assert out is not None
+    assert out["name"] == "job_requisition"
+
+
+@pytest.mark.asyncio
+async def test_payment_certificate_operator_aca_beats_stored_fact():
+    from app.containers.construction import ConstructionContainer
+
+    out = await ConstructionContainer().payment_certificate(
+        {"message": M7, "contract_value": 1463.0},
+        {"contract_value": 1463.0, "user_message": M7},
+    )
+    assert out["status"] == "success"
+    val = (out.get("valuation") or {}).get("contract_value")
+    assert val == 1_754_504_456.25

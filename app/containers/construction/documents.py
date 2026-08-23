@@ -2137,7 +2137,7 @@ class ConstructionDocumentsMixin:
     )
     _WIR_WRONG_DELIVERABLE_RE = re.compile(
         r"\b("
-        r"follow-on rfi|\brfi\b|request for information|"
+        r"follow-on rfi|\brfi(?:[-_]?\d+)?\b|request for information|"
         r"\brfp\b|request for proposal|invitation to tender|"
         r"delay claim|claim notice|eot claim|"
         r"job requisition|prequalification shortlist|"
@@ -2170,7 +2170,9 @@ class ConstructionDocumentsMixin:
         # even when the model also said "inspection".
         if re.search(
             r"\b(rfp|request for proposal|job requisition|delay claim|"
-            r"claim notice|cash[- ]flow|build a wbs|o\s*&\s*m)\b",
+            r"claim notice|cash[- ]flow|build a wbs|o\s*&\s*m|"
+            r"follow-on rfi|\brfi(?:[-_]?\d+)?\b|request for information|"
+            r"punch list|design directive)\b",
             text,
             re.I,
         ):
