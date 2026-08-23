@@ -104,6 +104,39 @@ def test_message_wants_wir_form_m15_not_definition():
     assert not _message_wants_wir_form("cash-flow S-curve for six months")
 
 
+M10 = (
+    "Draft a follow-on RFI to RFI002 (24 stormwater manholes on one road bend). "
+    "Ask the Engineer to confirm whether a custom-radius GRP or closed concrete "
+    "channel is accepted, and how that change affects the Week 53 collar pours "
+    "of 11 manholes totalling 28 m3 of C-35 SRC."
+)
+M14 = (
+    "Prepare an RFP for a stormwater manhole-rationalisation subcontract: "
+    "remove the 24-manhole radius cluster in RFI002 and install a formed GRP "
+    "radiused or closed concrete channel. Write the invitation letter, scope "
+    "of works, prequalification, evaluation method, and key dates in full "
+    "paragraphs. Reference SOPR and UMA Stormwater DDC 20212200076."
+)
+
+
+@requires_construction_kit
+@pytest.mark.asyncio
+async def test_wir_form_refuses_rfi_and_rfp():
+    from app.containers.construction import ConstructionContainer
+
+    c = ConstructionContainer()
+    rfi = await c.wir_form({"text": M10}, {})
+    assert rfi["status"] == "error"
+    assert rfi.get("action") == "wir_form"
+    assert "RFI" in (rfi.get("error") or "")
+    rfp = await c.wir_form({"text": M14}, {})
+    assert rfp["status"] == "error"
+    assert "RFP" in (rfp.get("error") or "")
+    still = await c.wir_form({"text": M15}, {})
+    assert still["status"] == "success"
+    assert still["week"] == "53"
+
+
 def test_work_inspection_request_is_a_document_deliverable():
     assert _is_document_deliverable_request(M15)
     assert _is_document_deliverable_request(

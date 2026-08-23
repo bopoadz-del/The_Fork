@@ -38,7 +38,14 @@ from copy import deepcopy
 import httpx
 import pytest
 
-from app.agents.runtime import GROQ_API_URL, KIMI_API_URL, Agent
+from app.agents.runtime import (
+    GROQ_API_URL,
+    GROQ_DEFAULT_MODEL,
+    KIMI_API_URL,
+    Agent,
+    _http_400_is_retryable,
+    _resolve_groq_model,
+)
 
 # Every env var that can change which branch runs. Cleared before each test.
 _LLM_ENV = (
@@ -291,6 +298,65 @@ async def test_kimi_tool_pairing_400_falls_back_to_groq(monkeypatch, http):
     assert groq_roles == [
         "user", "assistant", "tool", "tool", "tool", "tool", "user"
     ], groq_roles
+
+
+def test_http_400_content_filter_is_retryable():
+    live_m12 = (
+        '{"error":{"code":400,"message":"The request was rejected because it '
+        'was considered high risk","param":"prompt","type":"content_filter"}}'
+    )
+    assert _http_400_is_retryable(live_m12)
+    assert not _http_400_is_retryable('{"error":"bad request"}')
+
+
+def test_retired_groq_ids_remap():
+    assert _resolve_groq_model("llama-3.3-70b-versatile") == "openai/gpt-oss-120b"
+    assert _resolve_groq_model("llama-3.1-8b-instant") == "openai/gpt-oss-20b"
+    assert _resolve_groq_model("openai/gpt-oss-120b") == "openai/gpt-oss-120b"
+    assert _resolve_groq_model(None) == GROQ_DEFAULT_MODEL
+
+
+@pytest.mark.asyncio
+async def test_kimi_http_400_content_filter_falls_back_to_groq(monkeypatch, http):
+    """Live M12 on 817f224: Kimi HTTP 400 content_filter, not a 200 finish_reason."""
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(
+        _Resp(
+            400,
+            text=(
+                '{"error":{"code":400,"message":"The request was rejected '
+                'because it was considered high risk","param":"prompt",'
+                '"type":"content_filter"}}'
+            ),
+        ),
+        _Resp(200, _ok_body("as-built 40 m3 / 11.43%")),
+    )
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert len(fake.calls) == 2, fake.urls
+    assert fake.urls == [KIMI_API_URL, GROQ_API_URL], fake.urls
+    assert result["status"] == "success", result
+    assert "40" in result["choice"]["message"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_retired_groq_env_is_remapped_on_the_fallback_hop(monkeypatch, http):
+    """Render still pins GROQ_MODEL=llama-3.3-70b-versatile after the 2026-08-16 shutdown.
+
+    Hats pin kimi-k2.6 on the primary hop. The Groq hop must remap the
+    retired env id or every empty-hat fallback 404s.
+    """
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    monkeypatch.setenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    fake = http(_Resp(429, text="rate limited"), _Resp(200, _ok_body("ok")))
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert result["status"] == "success", result
+    assert fake.calls[1]["payload"]["model"] == "openai/gpt-oss-120b"
 
 
 @pytest.mark.asyncio
