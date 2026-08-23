@@ -1,0 +1,493 @@
+{
+  "source_folder": "G:\\My Drive\\Master Folder\\DG2 Infra Pack 1",
+  "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j",
+  "project_id": "f1c78383",
+  "project_name": "Infra Pack UI Aug 23",
+  "picks": [
+    {
+      "id": "1O-3rulcKxNMVdUQDoAyu54j-Tfhj-s4c",
+      "name": "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract Data.pdf",
+      "role": "contract_data"
+    },
+    {
+      "id": "1xVbEnj_UczqDiK8xsD-Hj40XaaaP5UoE",
+      "name": "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract agreement.pdf",
+      "role": "contract_agreement"
+    },
+    {
+      "id": "1jbq9LJVBgX3tcozdFo9Dz_jsdPxbGu__",
+      "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (1 of 9)_Existing Services.pdf",
+      "role": "spec_existing_services"
+    },
+    {
+      "id": "1ZXz0zMYHfGkusLNmkTSZEpELjAb4LL9F",
+      "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (5 of 9).pdf",
+      "role": "spec_vol2_p5"
+    },
+    {
+      "id": "1NFsBgUMIyN4TVkL-AjO-8L2iE-XZRbjP",
+      "name": "IP-INF-053-0000-JCB-SPC-IF-000013-B_SOPR.pdf",
+      "role": "sopr"
+    },
+    {
+      "id": "1MHq9WMtyCpos6FvWBbdHD3PA_blC-OoG",
+      "name": "1. Environment Requirements SoW_Contractors_230123.pdf",
+      "role": "env_sow"
+    },
+    {
+      "id": "1GpmYqSgnhcFWZOTxpzYrT0m1zDmEr5dq",
+      "name": "Pre-Mobilization Environmental Checklist.docx",
+      "role": "env_checklist"
+    },
+    {
+      "id": "1fNIdxbk510kfiJdqy-vfsHdo8e5aPRS5",
+      "name": "Cast In-Situ Concretes works for PWPS-02.pdf",
+      "role": "ms_pwps02"
+    },
+    {
+      "id": "1gpR6ssTI7qsHIRB3u_xm0G_Oq1eLXeSy",
+      "name": "Concrete_Pouring_Plan_for_Week-53 - caw.xlsx",
+      "role": "pour_plan"
+    },
+    {
+      "id": "1bKkoIuxyAsRBxRnN6TKAY3A4BSfR0UpE",
+      "name": "SW-SWD-550-0000-DGD-TEM-QL-000001(00) NCR_Non_Conform_Report.docx",
+      "role": "ncr_template"
+    },
+    {
+      "id": "1SltZsWVHnqeMUMbFHqQhKw-w2ubpfM-o",
+      "name": "SW-SWD-550-0000-DGD-TEM-QL-000002(00) WIR_Work_Insp_Req.docx",
+      "role": "wir_template"
+    },
+    {
+      "id": "1jPyQt7hKp8il2_aJ6ccgGsffhc68JKb5",
+      "name": "RFI002- Manhole Provision Excessive.pdf",
+      "role": "rfi002"
+    },
+    {
+      "id": "1zWc4GYmgDgz3wWV_6suXhAV__nBv1QA9",
+      "name": "RFI016 -Underpass Length.pdf",
+      "role": "rfi016"
+    },
+    {
+      "id": "1WNeiaJieuKaMwErEUdBb4E7oUNL_vIZR",
+      "name": "AM Rev Design NOC DG2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf",
+      "role": "noc_lighting"
+    },
+    {
+      "id": "1ZWG59cMZAX6UUzNlWofQNd_dgMmMfVXa",
+      "name": "UMA Rev DDC DG2 Infra Pack 1 - Stormwater DDC 20212200076 (28Jan25).pdf",
+      "role": "ddc_storm"
+    },
+    {
+      "id": "1RZ1-PzHaAYYcc0tjZTg8uWgs5ls3j_hX",
+      "name": "10_DGII_DMP_TO27A.pdf",
+      "role": "dmp_to27a"
+    },
+    {
+      "id": "1rkHj8EGFBpfsJtQC-D-gVWk4PHT5W071",
+      "name": "VO Trackers status - SWL.xlsx",
+      "role": "vo_tracker"
+    },
+    {
+      "id": "18-UzzzNxCNiXDfW4HlW1cpYT5DQTNdyb",
+      "name": "240429 Change Log Template_R4_Infra Pack 1.xlsx",
+      "role": "change_log"
+    },
+    {
+      "id": "1UvnbZ6LHeQrk1Pshct3Ho63Y6xMGZZo_",
+      "name": "Access and Haul Road Site Modifications - Rev.4 - 06.07.2025.pdf",
+      "role": "haul_mods"
+    },
+    {
+      "id": "1e1bw6hw0vbmyNY0FEHUNWK5ueMr7fju6",
+      "name": "20250622 TG-DG2-214-002 GREEN VILLAGE ROAD DIVERSION-SAFETY SIGNAGE.pdf",
+      "role": "safety_signage"
+    },
+    {
+      "id": "1P8OQ4vtOPlp0XZffyhy9qAI5LA4xcKK4",
+      "name": "DG2 site context to Riyadh.JPG",
+      "role": "site_photo"
+    },
+    {
+      "id": "1jc7bIV38zc-xiKUWG7vw95cB3wq-5ZG0",
+      "name": "Link Rd - Revised Programme 020725 - caw.pptx",
+      "role": "linkrd_programme"
+    },
+    {
+      "id": "1PSUPpsgdhIsj6grwhJfJJfbCTtlPHRvl",
+      "name": "Annexure 2 - Baseline Program XER.xer",
+      "role": "baseline_xer"
+    }
+  ],
+  "imports": [
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 1.2,
+      "id": "1O-3rulcKxNMVdUQDoAyu54j-Tfhj-s4c",
+      "name": "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract Data.pdf",
+      "role": "contract_data",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 1.6,
+      "id": "1xVbEnj_UczqDiK8xsD-Hj40XaaaP5UoE",
+      "name": "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract agreement.pdf",
+      "role": "contract_agreement",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 2.3,
+      "id": "1jbq9LJVBgX3tcozdFo9Dz_jsdPxbGu__",
+      "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (1 of 9)_Existing Services.pdf",
+      "role": "spec_existing_services",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 2.3,
+      "id": "1ZXz0zMYHfGkusLNmkTSZEpELjAb4LL9F",
+      "name": "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (5 of 9).pdf",
+      "role": "spec_vol2_p5",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 1.6,
+      "id": "1NFsBgUMIyN4TVkL-AjO-8L2iE-XZRbjP",
+      "name": "IP-INF-053-0000-JCB-SPC-IF-000013-B_SOPR.pdf",
+      "role": "sopr",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 1.3,
+      "id": "1MHq9WMtyCpos6FvWBbdHD3PA_blC-OoG",
+      "name": "1. Environment Requirements SoW_Contractors_230123.pdf",
+      "role": "env_sow",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 2.4,
+      "id": "1GpmYqSgnhcFWZOTxpzYrT0m1zDmEr5dq",
+      "name": "Pre-Mobilization Environmental Checklist.docx",
+      "role": "env_checklist",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 7.9,
+      "id": "1fNIdxbk510kfiJdqy-vfsHdo8e5aPRS5",
+      "name": "Cast In-Situ Concretes works for PWPS-02.pdf",
+      "role": "ms_pwps02",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 4.2,
+      "id": "1gpR6ssTI7qsHIRB3u_xm0G_Oq1eLXeSy",
+      "name": "Concrete_Pouring_Plan_for_Week-53 - caw.xlsx",
+      "role": "pour_plan",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 3.1,
+      "id": "1bKkoIuxyAsRBxRnN6TKAY3A4BSfR0UpE",
+      "name": "SW-SWD-550-0000-DGD-TEM-QL-000001(00) NCR_Non_Conform_Report.docx",
+      "role": "ncr_template",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 4.3,
+      "id": "1SltZsWVHnqeMUMbFHqQhKw-w2ubpfM-o",
+      "name": "SW-SWD-550-0000-DGD-TEM-QL-000002(00) WIR_Work_Insp_Req.docx",
+      "role": "wir_template",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 2.7,
+      "id": "1jPyQt7hKp8il2_aJ6ccgGsffhc68JKb5",
+      "name": "RFI002- Manhole Provision Excessive.pdf",
+      "role": "rfi002",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 2.9,
+      "id": "1zWc4GYmgDgz3wWV_6suXhAV__nBv1QA9",
+      "name": "RFI016 -Underpass Length.pdf",
+      "role": "rfi016",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 2.9,
+      "id": "1WNeiaJieuKaMwErEUdBb4E7oUNL_vIZR",
+      "name": "AM Rev Design NOC DG2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf",
+      "role": "noc_lighting",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 3.0,
+      "id": "1ZWG59cMZAX6UUzNlWofQNd_dgMmMfVXa",
+      "name": "UMA Rev DDC DG2 Infra Pack 1 - Stormwater DDC 20212200076 (28Jan25).pdf",
+      "role": "ddc_storm",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 4.2,
+      "id": "1RZ1-PzHaAYYcc0tjZTg8uWgs5ls3j_hX",
+      "name": "10_DGII_DMP_TO27A.pdf",
+      "role": "dmp_to27a",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 3.2,
+      "id": "1rkHj8EGFBpfsJtQC-D-gVWk4PHT5W071",
+      "name": "VO Trackers status - SWL.xlsx",
+      "role": "vo_tracker",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 2.5,
+      "id": "18-UzzzNxCNiXDfW4HlW1cpYT5DQTNdyb",
+      "name": "240429 Change Log Template_R4_Infra Pack 1.xlsx",
+      "role": "change_log",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 5.4,
+      "id": "1UvnbZ6LHeQrk1Pshct3Ho63Y6xMGZZo_",
+      "name": "Access and Haul Road Site Modifications - Rev.4 - 06.07.2025.pdf",
+      "role": "haul_mods",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 3.7,
+      "id": "1e1bw6hw0vbmyNY0FEHUNWK5ueMr7fju6",
+      "name": "20250622 TG-DG2-214-002 GREEN VILLAGE ROAD DIVERSION-SAFETY SIGNAGE.pdf",
+      "role": "safety_signage",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 3.0,
+      "id": "1P8OQ4vtOPlp0XZffyhy9qAI5LA4xcKK4",
+      "name": "DG2 site context to Riyadh.JPG",
+      "role": "site_photo",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 3.4,
+      "id": "1jc7bIV38zc-xiKUWG7vw95cB3wq-5ZG0",
+      "name": "Link Rd - Revised Programme 020725 - caw.pptx",
+      "role": "linkrd_programme",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    },
+    {
+      "ok": true,
+      "status": 201,
+      "elapsed_s": 6.4,
+      "id": "1PSUPpsgdhIsj6grwhJfJJfbCTtlPHRvl",
+      "name": "Annexure 2 - Baseline Program XER.xer",
+      "role": "baseline_xer",
+      "response_keys": [
+        "status",
+        "message",
+        "document",
+        "readiness"
+      ],
+      "doc_id": null,
+      "size": null
+    }
+  ]
+}

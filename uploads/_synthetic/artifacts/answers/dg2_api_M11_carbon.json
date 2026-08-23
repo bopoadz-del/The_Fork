@@ -1,0 +1,30 @@
+{
+  "status": 200,
+  "elapsed_s": 36.6,
+  "conversation_id": "ws-f1c78383-1787448493897",
+  "keys": [
+    "status",
+    "answer",
+    "tool_calls",
+    "iterations",
+    "messages",
+    "sources",
+    "exports",
+    "conversation_id",
+    "routing"
+  ],
+  "answer": "**Embodied Carbon Calculation \u2013 PWPS-02 Reservoir Blinding (C21-OPC)**\n\n### Formula\n\\[\n\\text{Embodied Carbon (kgCO}_2\\text{e)} = \\text{Concrete Quantity (m}^3) \\times \\text{Emission Factor (kgCO}_2\\text{e/m}^3)\n\\]\n\n\\[\n\\text{Saving} = (\\text{Planned Qty} - \\text{Actual Qty}) \\times \\text{Emission Factor}\n\\]\n\n### Substitution\n- Planned quantity, \\(Q_{plan}\\) = **350 m\u00b3**\n- Actual quantity, \\(Q_{actual}\\) = **310 m\u00b3**\n- Shortfall, \\(\\Delta Q\\) = **40 m\u00b3**\n- Emission factor for C21, \\(EF\\) = **230 kgCO\u2082e/m\u00b3**\n\n\\[\n\\text{Planned EC} = 350 \\times 230 = 80\\,500 \\text{ kgCO}_2\\text{e}\n\\]\n\n\\[\n\\text{Actual EC} = 310 \\times 230 = 71\\,300 \\text{ kgCO}_2\\text{e}\n\\]\n\n\\[\n\\text{Saving} = 40 \\times 230 = 9\\,200 \\text{ kgCO}_2\\text{e}\n\\]\n\n### Results\n\n| Item | Quantity (m\u00b3) | kgCO\u2082e | tCO\u2082e |\n|------|---------------|--------|-------|\n| **Planned** | 350 | **80,500** | 80.5 |\n| **Actual** | 310 | **71,300** | 71.3 |\n| **Saving from shortfall** | 40 | **9,200** | 9.2 |\n\n### Assumptions\n1. The emission factor of **230 kgCO\u2082e/m\u00b3** is representative of the specific C21-OPC mix batched for PWPS-02 ( cradle-to-gate or as defined by the project\u2019s carbon accounting boundary).\n2. The 40 m\u00b3 shortfall represents a genuine reduction in material placed, not merely a delay or a quantity transferred to another pour.\n3. No additional emissions (e.g., from aborted deliveries or remedial works) are incurred as a result of the reduced pour volume.",
+  "raw_head": "{'status': 'success', 'answer': '**Embodied Carbon Calculation \u2013 PWPS-02 Reservoir Blinding (C21-OPC)**\\n\\n### Formula\\n\\\\[\\n\\\\text{Embodied Carbon (kgCO}_2\\\\text{e)} = \\\\text{Concrete Quantity (m}^3) \\\\times \\\\text{Emission Factor (kgCO}_2\\\\text{e/m}^3)\\n\\\\]\\n\\n\\\\[\\n\\\\text{Saving} = (\\\\text{Planned Qty} - \\\\text{Actual Qty}) \\\\times \\\\text{Emission Factor}\\n\\\\]\\n\\n### Substitution\\n- Planned quantity, \\\\(Q_{plan}\\\\) = **350 m\u00b3**\\n- Actual quantity, \\\\(Q_{actual}\\\\) = **310 m\u00b3**\\n- Shortfall, \\\\(\\\\Delta Q\\\\) = **40 m\u00b3**\\n- Emission factor for C21, \\\\(EF\\\\) = **230 kgCO\u2082e/m\u00b3**\\n\\n\\\\[\\n\\\\text{Planned EC} = 350 \\\\times 230 = 80\\\\,500 \\\\text{ kgCO}_2\\\\text{e}\\n\\\\]\\n\\n\\\\[\\n\\\\text{Actual EC} = 310 \\\\times 230 = 71\\\\,300 \\\\text{ kgCO}_2\\\\text{e}\\n\\\\]\\n\\n\\\\[\\n\\\\text{Saving} = 40 \\\\times 230 = 9\\\\,200 \\\\text{ kgCO}_2\\\\text{e}\\n\\\\]\\n\\n### Results\\n\\n| Item | Quantity (m\u00b3) | kgCO\u2082e | tCO\u2082e |\\n|------|---------------|--------|-------|\\n| **Planned** | 350 | **80,500** | 80.5 |\\n| **Actual** | 310 | **71,300** | 71.3 |\\n| **Saving from shortfall** | 40 | **9,200** | 9.2 |\\n\\n### Assumptions\\n1. The emission factor of **230 kgCO\u2082e/m\u00b3** is representative of the specific C21-OPC mix batched for PWPS-02 ( cradle-to-gate or as defined by the project\u2019s carbon accounting boundary).\\n2. The 40 m\u00b3 shortfall represents a genuine reduction in material placed, not merely a delay or a quantity transferred to another pour.\\n3. No additional emissions (e.g., from aborted deliveries or remedial works) ar",
+  "id": "M11_carbon",
+  "hat": "quantity-surveyor",
+  "prompt": "Calculate embodied carbon for the PWPS-02 reservoir blinding. Planned 350 m3 C21-OPC, actual poured 310 m3. Use 230 kgCO2e per m3 for C21. Show planned kgCO2e, actual kgCO2e, and the saving from the 40 m3 shortfall.",
+  "flags": {
+    "mentions_holiday_or_spark": false,
+    "mentions_waterproofing_or_sbs": false,
+    "mentions_leftover_qty": false,
+    "mentions_pwps": true,
+    "mentions_350_or_310": true,
+    "mentions_1754": false,
+    "mentions_852": false
+  }
+}

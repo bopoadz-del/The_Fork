@@ -1,0 +1,118 @@
+{
+  "project_id": "f1c78383",
+  "project_name": "Infra Pack UI Aug 23",
+  "source_folder": "G:\\My Drive\\Master Folder\\DG2 Infra Pack 1",
+  "folder_id": "1GH3ri2gfPultO9FG56MdsLC7-7SvJB9j",
+  "note": "New questions. None of the leftover 17 prompts, quantities, or files.",
+  "documents_used": [
+    "Annexure 2 - Baseline Program XER.xer",
+    "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract (complete)_Contract Data.pdf",
+    "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (1 of 9)_Existing Services.pdf",
+    "DD-2023-118_DG2 Infra P1_Vol 2 - Specification (5 of 9).pdf",
+    "IP-INF-053-0000-JCB-SPC-IF-000013-B_SOPR.pdf",
+    "1. Environment Requirements SoW_Contractors_230123.pdf",
+    "Pre-Mobilization Environmental Checklist.docx",
+    "Cast In-Situ Concretes works for PWPS-02.pdf",
+    "Concrete_Pouring_Plan_for_Week-53 - caw.xlsx",
+    "SW-SWD-550-0000-DGD-TEM-QL-000001(00) NCR_Non_Conform_Report.docx",
+    "SW-SWD-550-0000-DGD-TEM-QL-000002(00) WIR_Work_Insp_Req.docx",
+    "RFI002- Manhole Provision Excessive.pdf",
+    "RFI016 -Underpass Length.pdf",
+    "AM Rev Design NOC DG2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf",
+    "UMA Rev DDC DG2 Infra Pack 1 - Stormwater DDC 20212200076 (28Jan25).pdf",
+    "10_DGII_DMP_TO27A.pdf",
+    "VO Trackers status - SWL.xlsx",
+    "240429 Change Log Template_R4_Infra Pack 1.xlsx",
+    "Access and Haul Road Site Modifications - Rev.4 - 06.07.2025.pdf",
+    "20250622 TG-DG2-214-002 GREEN VILLAGE ROAD DIVERSION-SAFETY SIGNAGE.pdf",
+    "DG2 site context to Riyadh.JPG",
+    "Link Rd - Revised Programme 020725 - caw.pptx"
+  ],
+  "cases": [
+    {
+      "id": "M1_wbs",
+      "hat": "construction-pm",
+      "prompt": "From Annexure 2 - Baseline Program XER.xer and Contract Data, build a WBS for the ten access-gated community milestones. Time for Completion of the whole of the Works is 852 days. Show Milestone 1 (Southern Community 1a Media, 397 days) and Milestone 3 (Boulevard Community 1c Boulevard South-West, 487 days) as separate branches with durations in calendar days."
+    },
+    {
+      "id": "M2_cash_flow",
+      "hat": "construction-pm",
+      "prompt": "Produce a six-month cash-flow S-curve starting at commencement. Use the Accepted Contract Amount SAR 1,754,504,456.25 from Contract Data. Apply the 10% advance payment (14.2.1) and 10% retention on each IPC (14.3.2). State monthly drawdown, cumulative, and net after advance recovery."
+    },
+    {
+      "id": "M3_commissioning",
+      "hat": "construction-pm",
+      "prompt": "Generate a commissioning checklist for the PWPS-02 reservoir at 1e-North Center before the first wet test. Ground it in Cast In-Situ Concretes works for PWPS-02.pdf and the Week 52 pour record: C21-OPC reservoir blinding, planned 350 m3, poured 310 m3 on 7 and 9 January 2025."
+    },
+    {
+      "id": "M4_design_directive",
+      "hat": "construction-pm",
+      "prompt": "Issue a design directive answering RFI016 Underpass Length Conflict. The road profile is 42 m and the underpass is 36 m. Instruct the IFC and BIM team whether to lengthen the underpass to 42 m or re-profile the road, and list the drawings that must be revised."
+    },
+    {
+      "id": "M5_ncr",
+      "hat": "construction-pm",
+      "prompt": "Raise an NCR using SW-SWD-550-0000-DGD-TEM-QL-000001(00) NCR_Non_Conform_Report.docx for RFI002: 24 stormwater manholes clustered on a single road bend, flagged as excessive. Recommend a formed GRP radiused section or closed concrete channel. Fill Parts 1 to 3."
+    },
+    {
+      "id": "M6_job_requisition",
+      "hat": "contracts-manager",
+      "prompt": "Prepare a job requisition for street-lighting installation. Scope is the AM Rev Design NOC for Street Lighting (expires 17 July 2025) plus the Grand Mosque Phase 2 VO items: solar 6 to 8 m single-arm 1x120W 230V 60Hz poles, traffic signage, and road markings. Include prequalification and a shortlist rubric."
+    },
+    {
+      "id": "M7_ipc",
+      "hat": "contracts-manager",
+      "prompt": "Draft Interim Payment Certificate No. 4 from Contract Data. Accepted Contract Amount SAR 1,754,504,456.25. Advance payment 10%, retention 10% of each IPC, amortisation 10% of each IPC. This period certified work is SAR 42,800,000. Show gross, advance recovery, retention, and net payable in SAR."
+    },
+    {
+      "id": "M8_qc",
+      "hat": "construction-pm",
+      "prompt": "Produce a QC punch list and hold-point sign-off for the Week 53 stormwater manhole collars on Boulevard North-West: 11 manholes MH-3-2 through MH-3-12, class C-35 SRC, planned 28 m3, supplier UBCC. Reference Specification Vol 2 part 5 and the WIR template."
+    },
+    {
+      "id": "M9_claim",
+      "hat": "contracts-manager",
+      "prompt": "Draft a delay claim notice under Contract Data clause 8.8.1 for late access to Milestone 1 (Southern Community 1a Media). Access was given 28 calendar days after the Engineer instructed date. Milestone 1 delay damages are 0.015% of the Contract Price per calendar day. Use Aconex as the approved communication method."
+    },
+    {
+      "id": "M10_rfi",
+      "hat": "construction-pm",
+      "prompt": "Draft a follow-on RFI to RFI002 (24 stormwater manholes on one road bend). Ask the Engineer to confirm whether a custom-radius GRP or closed concrete channel is accepted, and how that change affects the Week 53 collar pours of 11 manholes totalling 28 m3 of C-35 SRC."
+    },
+    {
+      "id": "M11_carbon",
+      "hat": "quantity-surveyor",
+      "prompt": "Calculate embodied carbon for the PWPS-02 reservoir blinding. Planned 350 m3 C21-OPC, actual poured 310 m3. Use 230 kgCO2e per m3 for C21. Show planned kgCO2e, actual kgCO2e, and the saving from the 40 m3 shortfall."
+    },
+    {
+      "id": "M12_as_built",
+      "hat": "construction-pm",
+      "prompt": "Prepare an as-built deviation note for PWPS-02 reservoir blinding: planned 350 m3 versus poured 310 m3 on 7 and 9 January 2025. State the 40 m3 shortfall and percent. Tie it to Cast In-Situ Concretes works for PWPS-02.pdf and the Week 52 pour sheet."
+    },
+    {
+      "id": "M13_om",
+      "hat": "construction-pm",
+      "prompt": "Generate an operations and maintenance manual outline for PWPS-02 (potable water pump station and reservoir). Cover existing-services interfaces from Specification Vol 2 Existing Services, the Environment Requirements SoW, and the Pre-Mobilization Environmental Checklist."
+    },
+    {
+      "id": "M14_rfp",
+      "hat": "contracts-manager",
+      "prompt": "Prepare an RFP for a stormwater manhole-rationalisation subcontract: remove the 24-manhole radius cluster in RFI002 and install a formed GRP radiused or closed concrete channel. Write the invitation letter, scope of works, prequalification, evaluation method, and key dates in full paragraphs. Reference SOPR and UMA Stormwater DDC 20212200076."
+    },
+    {
+      "id": "M15_wir",
+      "hat": "construction-pm",
+      "prompt": "Complete a Work Inspection Request on SW-SWD-550-0000-DGD-TEM-QL-000002(00) WIR_Work_Insp_Req.docx for Week 53 Boulevard North-West stormwater concrete collars: 11 manholes MH-3-2 to MH-3-12, C-35 SRC, 28 m3, supplier UBCC. List hold points before pour and witness points for slump, cubes, and cover."
+    },
+    {
+      "id": "M16_safety",
+      "hat": "safety-officer",
+      "prompt": "Review DG2 site context to Riyadh.JPG together with 20250622 TG-DG2-214-002 GREEN VILLAGE ROAD DIVERSION-SAFETY SIGNAGE.pdf and Access and Haul Road Site Modifications - Rev.4 - 06.07.2025.pdf. Produce a live-haul-road and public-interface safety briefing for the Green Village diversion: required signage, speed control, and pedestrian crossing controls."
+    },
+    {
+      "id": "M17_histogram",
+      "hat": "construction-pm",
+      "prompt": "Build a resource histogram from Annexure 2 - Baseline Program XER.xer for the first 16 weeks after the data date. If TASKRSRC labor is missing, use activity-count buckets and do not invent man-hours. Name the schedule file in the answer."
+    }
+  ]
+}
