@@ -108,3 +108,14 @@ review_pack/**/*.log
 # Evaluation photographs: fetched by scripts/fetch_eval_photos.py, never committed.
 # Only tests/fixtures/photo_eval_manifest.json is tracked.
 tests/fixtures/photos/
+
+# Local agent dumps that must not be in git (contract Drive pulls, raw
+# webp, answer JSON). Screenshots for `git pull` live in
+# uploads/_synthetic/screenshots/ and ARE tracked. Docker already
+# excludes the whole /uploads tree (.dockerignore), so Render never
+# copies them into the image.
+/uploads/_synthetic/artifacts/
+/uploads/_synthetic/dg2_infra_pack_1/
+/uploads/_synthetic/dg2_pack_17_questions.json
+/uploads/_synthetic/SCREENSHOTS.md
+/uploads/_synthetic/READ_ANSWERS_M3_M11.md

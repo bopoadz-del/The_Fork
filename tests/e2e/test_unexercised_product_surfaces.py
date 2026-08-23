@@ -222,7 +222,14 @@ def test_chain_mcp_feedback_memory_hydration_usage_workflows_schedule_rag(
     r = client.post(
         "/v1/chain",
         json={
-            "steps": [{"block": "translate", "params": {"target": "es"}}],
+            # provider=mock stays on-box. Live GTX 429s (same flake on main
+            # after #404 and on #405) must not fail this surface walk.
+            "steps": [
+                {
+                    "block": "translate",
+                    "params": {"provider": "mock", "target": "es"},
+                }
+            ],
             "initial_input": "hello",
         },
         headers=h,
@@ -284,7 +291,12 @@ def test_chain_mcp_feedback_memory_hydration_usage_workflows_schedule_rag(
         json={
             "name": f"surface-wf-{_RUN}",
             "project_id": pid,
-            "steps": [{"block": "translate", "params": {"target": "es"}}],
+            "steps": [
+                {
+                    "block": "translate",
+                    "params": {"provider": "mock", "target": "es"},
+                }
+            ],
         },
         headers=h,
     )
