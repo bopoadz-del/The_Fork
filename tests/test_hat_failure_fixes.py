@@ -534,6 +534,7 @@ def test_construction_pm_kernel_writes_wir_deliverables():
     text = load_agents()["construction-pm"].system_prompt.lower()
     assert "site procedures are drafted in full" in text
     assert "witness" in text
+    assert "wir_form" in text
 
 
 @requires_construction_kit

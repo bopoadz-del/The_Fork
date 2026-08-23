@@ -19,7 +19,7 @@ PROCEDURE_ACTION_MAP: Dict[str, Tuple[str, Optional[str]]] = {
     "qa_audit": ("PRC-401", "qa_qc_inspection"),
     "ncr_management": ("PRC-402", "qa_qc_inspection"),
     "handover_management": ("PRC-404", "commissioning_checklist"),
-    "inspection_request": ("PRC-405", "qa_qc_inspection"),
+    "inspection_request": ("PRC-405", "wir_form"),
     "job_requisition": ("PRC-601", None),
     "rfp_management": ("PRC-602", None),
     "contract_award": ("PRC-604", None),
