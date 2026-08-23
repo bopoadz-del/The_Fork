@@ -32,16 +32,18 @@ def _as_built_volume_facts_from_text(text: str) -> Optional[Dict[str, Any]]:
         re.IGNORECASE,
     )
     vs = re.search(
-        r"(\d+(?:\.\d+)?)\s*m(?:³|3)\b.{0,24}(?:versus|vs\.?|against).{0,16}"
+        r"(\d+(?:\.\d+)?)\s*m(?:³|3)\b.{0,24}(?:versus|vs\.?|against)\s+"
         r"(\d+(?:\.\d+)?)\s*m(?:³|3)\b",
         t,
         re.IGNORECASE,
     )
     p_m3 = float(planned.group(1)) if planned else None
     a_m3 = float(poured.group(1)) if poured else None
-    if p_m3 is None and vs:
-        p_m3 = float(vs.group(1))
-        a_m3 = float(vs.group(2))
+    if vs:
+        if p_m3 is None:
+            p_m3 = float(vs.group(1))
+        if a_m3 is None:
+            a_m3 = float(vs.group(2))
     if p_m3 is None or a_m3 is None:
         return None
     shortfall = round(p_m3 - a_m3, 3)
