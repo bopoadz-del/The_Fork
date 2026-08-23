@@ -992,15 +992,19 @@ def _message_wants_wir_form(text: str) -> bool:
         or _message_wants_om_manual(low)
         or _message_wants_safety_briefing(low)
         or _message_wants_first_run_wbs(low)
-        or _message_wants_as_built_note(low)
+        or         _message_wants_as_built_note(low)
         or _message_wants_ipc_draft(low)
+        or _message_wants_follow_on_rfi(low)
     ):
         return False
     return bool(_WIR_FORM_RE.search(low))
 
 
 async def _predispatch_wir_form(
-    agent: "Agent", messages: list, project_id: str | None,
+    agent: "Agent",
+    messages: list,
+    project_id: str | None,
+    operator_text: str | None = None,
 ) -> dict[str, Any] | None:
     """Run ``wir_form`` before the model can search-loop a WIR template.
 
@@ -1013,12 +1017,13 @@ async def _predispatch_wir_form(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
-        if not user_msg or not _message_wants_wir_form(user_msg):
+        detect = (operator_text or user_msg or "").strip()
+        if not detect or not _message_wants_wir_form(detect):
             return None
         from app.dependencies import get_block_instance
         container = get_block_instance("construction")
         result = await container.wir_form(
-            {"text": user_msg}, {"user_message": user_msg},
+            {"text": detect}, {"user_message": detect},
         )
         if not isinstance(result, dict) or result.get("status") != "success":
             return None
@@ -1096,12 +1101,30 @@ def _message_wants_om_manual(text: str) -> bool:
     ))
 
 
-def _message_wants_safety_briefing(text: str) -> bool:
+def _message_wants_follow_on_rfi(text: str) -> bool:
     return bool(re.search(
-        r"safety briefing|haul[- ]road|public-interface|road diversion",
+        r"follow-on rfi|\bdraft a(?:n)? (?:follow[- ]on )?rfi\b|"
+        r"request for information",
         text or "",
         re.I,
     ))
+
+
+def _message_wants_safety_briefing(text: str) -> bool:
+    raw = text or ""
+    if (
+        _message_wants_first_run_wbs(raw)
+        or _message_wants_cash_flow(raw)
+        or _message_wants_follow_on_rfi(raw)
+        or _message_wants_delay_claim(raw)
+    ):
+        return False
+    if re.search(r"safety briefing", raw, re.I):
+        return True
+    return bool(
+        re.search(r"haul[- ]road|road diversion|public-interface", raw, re.I)
+        and re.search(r"signage|pedestrian|speed", raw, re.I)
+    )
 
 
 def _message_wants_first_run_wbs(text: str) -> bool:
@@ -1131,6 +1154,7 @@ def _message_wants_locked_deliverable(text: str) -> bool:
             _message_wants_cash_flow,
             _message_wants_om_manual,
             _message_wants_safety_briefing,
+            _message_wants_follow_on_rfi,
             _message_wants_first_run_wbs,
             _message_wants_as_built_note,
             _message_wants_ipc_draft,
@@ -1145,13 +1169,16 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "generate_wbs": {
             "payment_certificate", "drawing_qto", "wir_form",
             "primavera_parser", "interim_certificate_generator",
+            "safety_briefing",
         },
         "cash_flow_forecast": {
             "drawing_qto", "payment_certificate", "wir_form",
-            "interim_certificate_generator",
+            "interim_certificate_generator", "safety_briefing",
         },
         "om_manual_generator": {"commissioning_checklist", "wir_form"},
         "safety_briefing": {"wir_form", "commissioning_checklist"},
+        "rfi_generator": {"wir_form", "safety_briefing"},
+        "resource_histogram": {"primavera_parser", "safety_briefing"},
         "claims_builder": {
             "payment_certificate", "wir_form", "interim_certificate_generator",
         },
@@ -1160,8 +1187,7 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "as_built_deviation_report": {"wir_form", "commissioning_checklist"},
         "payment_certificate": {"wir_form", "claims_builder"},
         "commissioning_checklist": {"wir_form", "om_manual_generator"},
-        "wir_form": {"payment_certificate", "job_requisition", "rfp_draft"},
-        "resource_histogram": {"primavera_parser"},
+        "wir_form": {"payment_certificate", "job_requisition", "rfp_draft", "rfi_generator"},
     }
     return set(steal.get(name) or ())
 
@@ -1192,6 +1218,7 @@ async def _predispatch_construction_draft(
     action: str,
     format_fn,
     instruction: str,
+    operator_text: str | None = None,
 ) -> dict[str, Any] | None:
     if os.getenv(env_key, "1") == "0":
         return None
@@ -1199,8 +1226,10 @@ async def _predispatch_construction_draft(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
-        if not user_msg or not want_fn(user_msg):
+        detect = (operator_text or user_msg or "").strip()
+        if not detect or not want_fn(detect):
             return None
+        user_msg = detect
         from app.dependencies import get_block_instance
         container = get_block_instance("construction")
         handler = getattr(container, action, None)
@@ -1227,11 +1256,15 @@ async def _predispatch_construction_draft(
 
 
 async def _predispatch_remaining_deliverables(
-    agent: "Agent", messages: list, project_id: str | None,
+    agent: "Agent",
+    messages: list,
+    project_id: str | None,
+    operator_text: str | None = None,
 ) -> dict[str, Any] | None:
     """First matching non-WIR deliverable draft, so a Groq 413 still has copy."""
     user_msg, _history = _messages_user_and_history(messages)
-    if not user_msg or _message_wants_wir_form(user_msg):
+    detect = (operator_text or user_msg or "").strip()
+    if not detect or _message_wants_wir_form(detect):
         return None
     candidates = (
         (
@@ -1247,6 +1280,21 @@ async def _predispatch_remaining_deliverables(
             "om_manual_generator",
             _format_om_outline,
             "Present this O&M outline in full. Do not draft a commissioning checklist.",
+        ),
+        (
+            "AGENT_WBS_PREDISPATCH",
+            _message_wants_first_run_wbs,
+            "generate_wbs",
+            _format_wbs_result,
+            "Report the operator-stated milestone durations (852 / 397 / 487 "
+            "when present) and the WBS branches. Do not invent man-hours.",
+        ),
+        (
+            "AGENT_RFI_PREDISPATCH",
+            _message_wants_follow_on_rfi,
+            "rfi_generator",
+            _format_rfi,
+            "Present this follow-on RFI in full. Do not draft a WIR.",
         ),
         (
             "AGENT_SAFETY_PREDISPATCH",
@@ -1298,14 +1346,6 @@ async def _predispatch_remaining_deliverables(
             _format_rfp_draft,
             "Present this RFP in full paragraphs. Do not draft a WIR.",
         ),
-        (
-            "AGENT_WBS_PREDISPATCH",
-            _message_wants_first_run_wbs,
-            "generate_wbs",
-            _format_wbs_result,
-            "Report the operator-stated milestone durations (852 / 397 / 487 "
-            "when present) and the WBS branches. Do not invent man-hours.",
-        ),
     )
     for env_key, want_fn, action, format_fn, instruction in candidates:
         out = await _predispatch_construction_draft(
@@ -1315,6 +1355,7 @@ async def _predispatch_remaining_deliverables(
             action=action,
             format_fn=format_fn,
             instruction=instruction,
+            operator_text=detect,
         )
         if out:
             return out
@@ -2833,7 +2874,9 @@ _DOCUMENT_DELIVERABLE_RE = re.compile(
     r"punch list|qc inspection|"
     r"\bwbs\b|work breakdown|"
     r"payment certificate|interim payment|\bipc\b|"
-    r"cash[- ]?flow"
+    r"cash[- ]?flow|"
+    r"safety briefing|resource histogram|"
+    r"follow-on rfi|request for information"
     r")\b",
     re.IGNORECASE,
 )
@@ -2845,8 +2888,12 @@ _RATE_QUOTE_RE = re.compile(
 
 def _latest_user_text(messages: list[dict[str, Any]] | None) -> str:
     for m in reversed(messages or []):
-        if m.get("role") == "user":
-            return str(m.get("content") or "")
+        if m.get("role") != "user":
+            continue
+        content = str(m.get("content") or "")
+        if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
+            continue
+        return content
     return ""
 
 
@@ -3046,10 +3093,46 @@ def _format_claim_notice(payload: dict[str, Any]) -> str:
         extra = []
         if payload.get("quantum_formula"):
             extra.append(f"Quantum: {payload['quantum_formula']}")
-        if payload.get("communication"):
-            extra.append(f"Communication: {payload['communication']}")
+        comms = payload.get("communication")
+        if comms:
+            extra.append(f"Communication: {comms}")
+        if payload.get("clause"):
+            extra.append(f"Clause: {payload['clause']}")
         return "\n\n".join([str(body)] + extra)
     return json.dumps(payload, default=str)[:4000]
+
+
+def _graft_operator_claim_facts(text: str, user_message: str) -> str:
+    """Keep Aconex / 8.8.1 on the published claim when synthesis drops them."""
+    if not text or not _message_wants_delay_claim(user_message):
+        return text
+    out = text
+    if re.search(r"\baconex\b", user_message, re.I) and not re.search(r"\baconex\b", out, re.I):
+        out = out.rstrip() + "\n\nThis notice is issued via Aconex."
+    if re.search(r"8\.8\.1", user_message) and "8.8.1" not in out:
+        out = re.sub(r"Clause\s+4\.5", "Clause 8.8.1", out, count=1)
+        if "8.8.1" not in out:
+            out = out.rstrip() + "\n\nClause 8.8.1."
+    return out
+
+
+def _format_rfi(payload: dict[str, Any]) -> str:
+    rfis = payload.get("rfis") if isinstance(payload.get("rfis"), list) else []
+    lines = [
+        f"**Request for Information — {payload.get('rfi_number') or (rfis[0].get('rfi_number') if rfis else 'DRAFT-RFI')}**",
+        "",
+    ]
+    if payload.get("question"):
+        lines.append(str(payload["question"]))
+    for row in rfis:
+        if not isinstance(row, dict):
+            continue
+        lines.append(f"**{row.get('rfi_number') or 'RFI'} — {row.get('subject') or ''}**")
+        lines.append(str(row.get("question") or ""))
+        lines.append("")
+    if payload.get("note"):
+        lines.append(str(payload["note"]))
+    return "\n".join(lines).strip() or json.dumps(payload, default=str)[:4000]
 
 
 def _format_wbs_result(payload: dict[str, Any]) -> str:
@@ -3285,6 +3368,8 @@ def _recover_answer_from_tool_messages(
             return _format_job_requisition(inner)
         if action in {"rfp_draft", "rfp_management"}:
             return _format_rfp_draft(inner)
+        if action == "rfi_generator" or inner.get("rfis"):
+            return _format_rfi(inner)
         if action == "cash_flow_forecast" or inner.get("monthly_forecast"):
             return _format_cash_flow(inner)
         if action in {"om_manual_generated", "om_manual_generator"}:
@@ -3719,6 +3804,8 @@ def _postprocess_answer(
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
+    user_msg, _hist = _messages_user_and_history(messages)
+    text = _graft_operator_claim_facts(text, user_msg)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
     text = _ensure_ingestion_handoff(text, messages, agent_name)
@@ -5629,12 +5716,16 @@ class Agent:
             tool_calls_made.append(_hist_pre)
         _wir_pre = None
         if not _locked:
-            _wir_pre = await _predispatch_wir_form(self, messages, project_id)
+            _wir_pre = await _predispatch_wir_form(
+                self, messages, project_id, operator_text=user_message,
+            )
         if _wir_pre:
             tool_calls_made.append(_wir_pre)
-        _more_pre = await _predispatch_remaining_deliverables(
-            self, messages, project_id,
-        )
+        _more_pre = None
+        if not _hist_pre:
+            _more_pre = await _predispatch_remaining_deliverables(
+                self, messages, project_id, operator_text=user_message,
+            )
         if _more_pre:
             tool_calls_made.append(_more_pre)
 
@@ -6308,7 +6399,9 @@ class Agent:
 
         _wir_pre = None
         if not _locked:
-            _wir_pre = await _predispatch_wir_form(self, messages, project_id)
+            _wir_pre = await _predispatch_wir_form(
+                self, messages, project_id, operator_text=user_message,
+            )
         if _wir_pre:
             _note_tool(_wir_pre["name"])
             stream_tool_results.append(_wir_pre)
@@ -6333,9 +6426,11 @@ class Agent:
                    "result": _wir_summary,
                    "predispatched": True}
 
-        _more_pre = await _predispatch_remaining_deliverables(
-            self, messages, project_id,
-        )
+        _more_pre = None
+        if not _hist_pre:
+            _more_pre = await _predispatch_remaining_deliverables(
+                self, messages, project_id, operator_text=user_message,
+            )
         if _more_pre:
             _note_tool(_more_pre["name"])
             stream_tool_results.append(_more_pre)

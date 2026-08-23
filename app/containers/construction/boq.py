@@ -23,6 +23,42 @@ _CCY = r"(?:sar|aed|usd|qar|omr|bhd|kwd|\$)"
 _MONEY_SUFFIX = {"m": 1e6, "mn": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9}
 
 
+def _follow_on_rfi_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """Draft one follow-on RFI from the operator ask (live M10)."""
+    t = text or ""
+    if not re.search(
+        r"follow-on rfi|\bdraft a(?:n)? (?:follow[- ]on )?rfi\b|"
+        r"request for information",
+        t,
+        re.I,
+    ):
+        return None
+    prior = re.search(r"\b(RFI\s*0*\d+)\b", t, re.I)
+    prior_s = re.sub(r"\s+", "", prior.group(1)).upper() if prior else "the prior RFI"
+    question = (
+        t.strip()
+        or f"Please confirm the Engineer response to {prior_s}."
+    )
+    return {
+        "status": "success",
+        "action": "rfi_generator",
+        "rfi_number": "DRAFT-RFI",
+        "question": question,
+        "rfis": [{
+            "rfi_number": "DRAFT-RFI",
+            "subject": f"Follow-on to {prior_s}",
+            "question": question,
+            "status": "Open",
+            "priority": "high",
+        }],
+        "total_rfis": 1,
+        "note": (
+            "Draft follow-on RFI from operator facts — not a submitted RFI. "
+            "Do not rewrite this as a Work Inspection Request."
+        ),
+    }
+
+
 def _cashflow_figures_from_message(text: str) -> Dict[str, float]:
     """Parse contract value + duration out of a cash-flow request.
 
@@ -972,6 +1008,24 @@ class ConstructionBoqMixin:
         """Generate Request for Information (RFI) documents from drawing or spec issues."""
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
+        joined = " ".join(
+            str(x)
+            for x in (
+                p.get("text"),
+                p.get("user_message"),
+                p.get("message"),
+                data.get("text"),
+                data.get("user_message"),
+                data.get("message"),
+                input_data if isinstance(input_data, str) else "",
+            )
+            if x
+        )
+        drafted = _follow_on_rfi_from_text(joined)
+        if drafted and not (
+            p.get("issues") or data.get("issues") or data.get("auto_risks")
+        ):
+            return drafted
 
         issues = (
             p.get("issues")

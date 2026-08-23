@@ -23,9 +23,11 @@ from app.agents.runtime import (
     _format_om_outline,
     _format_payment_certificate,
     _format_rfp_draft,
+    _format_rfi,
     _format_safety_briefing,
     _format_wbs_result,
     _format_wir_form,
+    _graft_operator_claim_facts,
     _infer_commissioning_systems,
     _inject_predispatch,
     _message_wants_as_built_note,
@@ -33,6 +35,7 @@ from app.agents.runtime import (
     _message_wants_commissioning,
     _message_wants_delay_claim,
     _message_wants_first_run_wbs,
+    _message_wants_follow_on_rfi,
     _message_wants_ipc_draft,
     _message_wants_job_requisition,
     _message_wants_locked_deliverable,
@@ -109,6 +112,12 @@ M16 = (
     "Produce a live-haul-road and public-interface safety briefing for the "
     "Green Village diversion: required signage, speed control, and pedestrian "
     "crossing controls."
+)
+M10 = (
+    "Draft a follow-on RFI to RFI002 (24 stormwater manholes on one road "
+    "bend). Ask the Engineer to confirm whether a custom-radius GRP or closed "
+    "concrete channel is accepted, and how that change affects the Week 53 "
+    "collar pours of 11 manholes totalling 28 m3 of C-35 SRC."
 )
 
 
@@ -718,6 +727,10 @@ def test_wir_yields_to_job_req_and_remaining_intents():
     assert _message_wants_cash_flow(M2)
     assert _message_wants_om_manual(M13)
     assert _message_wants_safety_briefing(M16)
+    assert not _message_wants_safety_briefing(M1)
+    assert _message_wants_follow_on_rfi(M10)
+    assert not _message_wants_wir_form(M10)
+    assert _message_wants_locked_deliverable(M10)
     assert not _message_wants_commissioning(M13)
     assert _message_wants_locked_deliverable(M2)
     assert _message_wants_locked_deliverable(M13)
@@ -735,6 +748,13 @@ def test_conflicting_tools_lock_steal_surfaces():
         "cash_flow_forecast"
     )
     assert "wir_form" in _conflicting_tools_after_predispatch("rfp_draft")
+    assert "wir_form" in _conflicting_tools_after_predispatch("rfi_generator")
+    assert "safety_briefing" in _conflicting_tools_after_predispatch(
+        "generate_wbs"
+    )
+    assert "safety_briefing" in _conflicting_tools_after_predispatch(
+        "resource_histogram"
+    )
     assert "commissioning_checklist" in _conflicting_tools_after_predispatch(
         "om_manual_generator"
     )
@@ -832,3 +852,79 @@ async def test_cash_flow_parses_six_month_word_and_aca():
     assert params.get("contract_value") == 1_754_504_456.25
     months = out.get("monthly_forecast") or out.get("s_curve_data") or []
     assert len(months) == 6
+
+
+def test_graft_keeps_aconex_and_clause_on_rewritten_claim():
+    rewritten = (
+        "**DELAY CLAIM NOTICE**\n*Clause 4.5 – Notice of Delay*\n"
+        "Access was given 28 calendar days late. Rate 0.015%."
+    )
+    grafted = _graft_operator_claim_facts(rewritten, M9)
+    assert "Aconex" in grafted
+    assert "8.8.1" in grafted
+
+
+@pytest.mark.asyncio
+async def test_wir_refuses_follow_on_rfi_when_model_said_inspection():
+    from app.containers.construction import ConstructionContainer
+
+    out = await ConstructionContainer().wir_form(
+        {"text": "inspection request for Week 53 collars", "scope": "pour"},
+        {"user_message": M10},
+    )
+    assert out["status"] == "error"
+    err = (out.get("error") or "").lower()
+    assert "non-wir" in err or "rfi" in err
+
+
+@pytest.mark.asyncio
+async def test_rfi_generator_drafts_follow_on_from_operator_text():
+    from app.containers.construction import ConstructionContainer
+
+    out = await ConstructionContainer().rfi_generator(
+        {"text": M10, "user_message": M10},
+        {"user_message": M10},
+    )
+    assert out["status"] == "success"
+    assert out["rfis"]
+    rendered = _format_rfi(out)
+    assert "RFI002" in rendered or "follow-on" in rendered.lower()
+    assert "GRP" in rendered or "channel" in rendered.lower()
+    assert "28" in rendered
+
+
+@requires_construction_kit
+@pytest.mark.asyncio
+async def test_remaining_uses_operator_text_not_polluted_last_bubble():
+    class _A:
+        allowed_blocks = ["construction"]
+        name = "construction-pm"
+
+    polluted = [
+        {"role": "user", "content": M1},
+        {
+            "role": "user",
+            "content": (
+                "Access and Haul Road Site Modifications — live haul-road "
+                "and road diversion safety briefing with signage and pedestrians"
+            ),
+        },
+    ]
+    out = await _predispatch_remaining_deliverables(
+        _A(), polluted, "proj", operator_text=M1,
+    )
+    assert out is not None
+    assert out["name"] == "generate_wbs"
+
+
+@requires_construction_kit
+@pytest.mark.asyncio
+async def test_remaining_drafts_follow_on_rfi_not_wir():
+    class _A:
+        allowed_blocks = ["construction"]
+        name = "construction-pm"
+
+    msgs = [{"role": "user", "content": M10}]
+    out = await _predispatch_remaining_deliverables(_A(), msgs, "proj")
+    assert out is not None
+    assert out["name"] == "rfi_generator"
