@@ -1132,6 +1132,10 @@ def retrieve_with_filter(
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     for i, (score, chunk) in enumerate(scored):
         nm = name_by_id.get(chunk.doc_id, "")
+        # The filename itself is evidence, not just a ranking input — see
+        # Chunk.source_name. Set here because this is where the name is already
+        # resolved, so it costs nothing extra.
+        chunk.source_name = nm
         chunk.revision = _revision.revision_token(nm)
         chunk.drawing_number = _revision.drawing_number(nm)
         if _revision.is_superseded(nm):
