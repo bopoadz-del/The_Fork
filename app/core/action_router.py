@@ -176,8 +176,12 @@ ACTION_HINTS: dict[str, str] = {
         "The user is asking about practical completion / handover (PRC-404). "
         "Cover prerequisites, DLP, snag lists, and O&M without fabricating certs.",
     "inspection_request":
-        "The user wants an inspection request (PRC-405). State scope, hold/witness "
-        "points, and required evidence — do not claim an IR was issued without data.",
+        "The user wants an inspection request / WIR (PRC-405). Write the full form: "
+        "scope, mix/volume, hold and witness points, and signatories. Do not stop "
+        "at 'let me search'. Do not claim an IR was issued without data.",
+    "wir_form":
+        "The user wants a Work Inspection Request. Fill the WIR from operator facts "
+        "(location, mix, volume, hold/witness). Do not search-loop the template.",
 }
 
 
@@ -278,6 +282,8 @@ GENERATIVE_INTENTS = frozenset({
     # Contracts / Claims (real document synthesis)
     "claims_builder",
     "rfi_generator",
+    "inspection_request",
+    "wir_form",
     "value_engineering",
     "change_order_impact",
     "variation_order_manager",

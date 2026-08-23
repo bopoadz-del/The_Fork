@@ -78,6 +78,24 @@ async def test_rfi_management_delegates_to_rfi_generator():
 
 
 @pytest.mark.asyncio
+async def test_inspection_request_delegates_to_wir_form():
+    """WIR / inspection request is a drafted form, not photo qa_qc_inspection."""
+    from app.containers.construction import ConstructionContainer
+
+    result = await ConstructionContainer().route(
+        "inspection_request",
+        {"text": "WIR for Week 53 collars, 11 manholes, C-35 SRC, 28 m3"},
+        {"action": "inspection_request"},
+    )
+    assert result.get("status") == "success"
+    assert result.get("action") == "wir_form"
+    ctx = result.get("procedure_context") or {}
+    assert ctx.get("delegate_action") == "wir_form"
+    assert result.get("volume_m3") == "28"
+    assert result.get("hold_points")
+
+
+@pytest.mark.asyncio
 async def test_rfi_management_without_issues_returns_metadata_only():
     """No runnable issues → keep PRC-301 guidance; do not empty-delegate to rfi_generator."""
     from app.containers.construction import ConstructionContainer

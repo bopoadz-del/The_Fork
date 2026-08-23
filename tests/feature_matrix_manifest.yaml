@@ -284,10 +284,10 @@ features:
 
   - action: inspection_request
     class: coverage
-    handler: hint-only (PRC-405)
+    handler: container (wir_form)
     prompts:
       - text: "prepare an inspection request for the blinding concrete pour at zone B"
-        expect_route: [inspection_request, qa_qc_inspection]
+        expect_route: [inspection_request, wir_form]
 
   - action: safety_compliance_audit
     class: coverage
