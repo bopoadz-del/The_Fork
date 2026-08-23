@@ -79,11 +79,62 @@ def test_blueprint_chat_stream_timeout_covers_kimi_reasoning():
     )
 
 
-def test_blueprint_auto_deploy_stays_off():
+def test_blueprint_auto_deploy_matches_the_live_service():
+    """autoDeploy was switched ON in the dashboard on 2026-08-23.
+
+    This test previously pinned it OFF ("git-push-equals-prod is off until CI
+    is green"). That policy no longer holds, and a test that pins a policy the
+    service has abandoned does not protect anything -- it just goes red on the
+    commit that tells the truth.
+
+    What it guards now is DRIFT: render.yaml is applied onto the running
+    service, so a stale value here is an outage waiting for someone to click
+    Apply Blueprint. Four values in this file have already disagreed with
+    production (plan, upload cap, disk size, autoDeploy) and a fifth would
+    have taken retrieval down -- see the embedding-model test below.
+
+    CONSEQUENCE, recorded here because it changes how work must be done:
+    Render starts building on the push, so GitHub Actions runs ALONGSIDE the
+    deploy rather than gating it. A commit that goes red in CI is already live
+    by the time the run finishes.
+    """
     text = (REPO / "render.yaml").read_text(encoding="utf-8")
     flags = re.findall(r"^\s*autoDeploy:\s*(\S+)", text, re.MULTILINE)
     assert flags, "render.yaml declares no autoDeploy"
     for flag in flags:
-        assert flag.lower() in {"false", "no"}, (
-            f"autoDeploy is {flag!r}; git-push-equals-prod is off until CI is green."
+        assert flag.lower() in {"true", "yes"}, (
+            f"autoDeploy is {flag!r} but the live service has it ON. Applying "
+            "this blueprint would silently switch shipping off while every "
+            "push still looked like it was deploying."
         )
+
+
+# The corpus is embedded with this model and every row carries the stamp.
+# VectorStore._verify_embedding_identity refuses a namespace whose stamp
+# disagrees with the configured model, so this is not a preference -- it is
+# the identity of 172,809 existing vectors.
+LIVE_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
+
+def test_blueprint_embedding_model_matches_the_corpus():
+    """render.yaml declared minishlab/potion-base-8M while production ran
+    BAAI/bge-small-en-v1.5 and every chunk was stamped with it:
+
+        BAAI/bge-small-en-v1.5   dim 384   normalized True   172,809 chunks
+
+    Applying the blueprint would have set the wrong model, the identity guard
+    would have refused the namespace, and retrieval would have gone down
+    across the whole corpus until every chunk was re-embedded. The prose above
+    that key in render.yaml describes this mechanism exactly -- and the value
+    underneath it was still wrong, because nothing tested it.
+
+    Changing this constant is a re-embedding decision, not a config edit.
+    """
+    env = _web_env()
+    item = env.get("RAG_EMBEDDING_MODEL")
+    assert item is not None, "RAG_EMBEDDING_MODEL missing from render.yaml"
+    assert item.get("value") == LIVE_EMBEDDING_MODEL, (
+        f"render.yaml declares {item.get('value')!r} but the live corpus is "
+        f"embedded with {LIVE_EMBEDDING_MODEL!r}. Applying this blueprint "
+        "would take retrieval down for every chunk."
+    )
