@@ -56,11 +56,17 @@ services:
     plan: pro
     region: oregon
     branch: main
-    # git-push-equals-prod is off. A push to main must NOT rebuild the live
-    # client service. Deploy only after CI is green: Render Dashboard →
-    # the-fork → Manual Deploy, or Apply Blueprint. This file change does
-    # not take effect until the blueprint is applied in the dashboard.
-    autoDeploy: false
+    # GIT-PUSH-EQUALS-PROD IS ON (turned on in the dashboard 2026-08-23).
+    # This file said `false` for hours after that, which made "Apply
+    # Blueprint" a switch that would silently turn shipping back OFF — the
+    # same trap as `plan: starter` and `sizeGB: 1` below.
+    #
+    # CI IS NOT A GATE. Render starts building on the push; GitHub Actions
+    # runs alongside it, not before it. A commit that goes red in CI is
+    # already live by the time the run finishes, so correctness has to be
+    # established BEFORE pushing, not after. 3e8d1f0 is the standing example:
+    # it deployed and silently emptied every document >= 1 MB.
+    autoDeploy: true
     # Documentation-only commits must not redeploy a live client service.
     # Observed 2026-08-02: merging a markdown-only PR rebuilt the image and
     # returned 502 for ~40s. Nothing in this list can change runtime
@@ -81,10 +87,21 @@ services:
     # `/ready` both execute a real `SELECT 1`; pointing Render's continuous
     # health check at either would keep Neon's compute awake permanently.
     healthCheckPath: /livez
+    # The live disk is 50 GB and holds the uploaded-document corpus. This said
+    # `1`, which is the third value in this file that disagreed with the
+    # running service (see `plan` and `autoDeploy`).
+    #
+    # THIS DISK IS WHY DEPLOYS BOUNCE. A Render service with a persistent disk
+    # cannot deploy with zero downtime and cannot run more than one instance:
+    # the disk mounts to exactly one instance, so the old one must release it
+    # before the new one can boot. That gap is the post-deploy 502 window
+    # clients see — it is structural, not an application bug, and no health
+    # check tuning removes it. Removing it means moving the corpus off local
+    # disk (object storage), which is an architecture change, not a config one.
     disk:
       name: the-fork-data
       mountPath: /app/data
-      sizeGB: 1
+      sizeGB: 50
     envVars:
       # ── Infra config (safe to commit) ──────────────────────────────────
       - key: ENV
