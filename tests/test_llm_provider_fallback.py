@@ -382,6 +382,60 @@ async def test_kimi_content_filter_falls_back_to_groq(monkeypatch, http):
 
 
 @pytest.mark.asyncio
+async def test_groq_413_retries_compact_model(monkeypatch, http):
+    """Live hats: Kimi empty → Groq 120b 413 (TPM 8000) → gpt-oss-20b."""
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    empty = {
+        "model": "kimi-k2.6",
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {"role": "assistant", "content": ""},
+        }],
+        "usage": {"total_tokens": 10},
+    }
+    fake = http(
+        _Resp(200, empty),
+        _Resp(413, text='{"error":{"message":"TPM Limit 8000, Requested 10850"}}'),
+        _Resp(200, _ok_body("recovered on 20b")),
+    )
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert result["status"] == "success", result
+    assert result["choice"]["message"]["content"] == "recovered on 20b"
+    assert fake.urls == [KIMI_API_URL, GROQ_API_URL, GROQ_API_URL]
+    assert fake.models[2] == "openai/gpt-oss-20b"
+
+
+@pytest.mark.asyncio
+async def test_groq_hop_compacts_large_tool_payload(monkeypatch, http):
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    huge = "x" * 20000
+    messages = [
+        {"role": "user", "content": "build a WBS from the xer"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "1", "type": "function",
+             "function": {"name": "primavera_parser", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "1", "name": "primavera_parser",
+         "content": huge},
+    ]
+    fake = http(
+        _Resp(429, text="rate limited"),
+        _Resp(200, _ok_body("ok")),
+    )
+
+    result = await _agent()._call_llm(messages, "kimi-test-key")
+
+    assert result["status"] == "success", result
+    groq_msgs = fake.calls[1]["payload"]["messages"]
+    tool = next(m for m in groq_msgs if m.get("role") == "tool")
+    assert len(str(tool.get("content") or "")) < len(huge)
+
+
+@pytest.mark.asyncio
 async def test_kimi_empty_200_falls_back_to_groq(monkeypatch, http):
     """Live M9: contracts-manager HTTP 200 with empty content, no tools."""
     _kimi_primary(monkeypatch)

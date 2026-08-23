@@ -115,6 +115,18 @@ ACTION_HINTS: dict[str, str] = {
     "rfi_generator":
         "The user wants help drafting an RFI. State the issue clearly, the "
         "drawings/specs involved, and the question to designer.",
+    "job_requisition":
+        "The user wants a job requisition / prequalification pack. Draft "
+        "scope, NOC constraints, and a shortlist rubric from operator facts.",
+    "rfp_draft":
+        "The user wants an RFP / invitation to tender. Write the invitation, "
+        "scope, prequalification, evaluation method, and key dates.",
+    "rfp_management":
+        "The user wants an RFP / invitation to tender. Write the invitation, "
+        "scope, prequalification, evaluation method, and key dates.",
+    "as_built_deviation_report":
+        "The user wants an as-built deviation note. State planned vs actual "
+        "figures and the shortfall; do not invent drawing dimensions.",
     # Safety
     "safety_compliance_audit":
         "The user is doing a safety / HSE compliance check. Reference OSHA "
@@ -284,6 +296,10 @@ GENERATIVE_INTENTS = frozenset({
     "rfi_generator",
     "inspection_request",
     "wir_form",
+    "job_requisition",
+    "rfp_draft",
+    "rfp_management",
+    "as_built_deviation_report",
     "value_engineering",
     "change_order_impact",
     "variation_order_manager",

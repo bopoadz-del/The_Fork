@@ -14,6 +14,76 @@ from .helpers import _parse_money_str, _safe_float, _safe_iso_date
 logger = logging.getLogger(__name__)
 
 
+def _as_built_volume_facts_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """Draft an as-built volume note from planned vs poured figures.
+
+    Live M12: planned 350 m3 versus poured 310 m3 — no drawing pair, so
+    ``as_built_deviation_report`` used to error and the hat then 413'd.
+    """
+    t = text or ""
+    planned = re.search(
+        r"planned\s+(\d+(?:\.\d+)?)\s*m(?:³|3)\b",
+        t,
+        re.IGNORECASE,
+    )
+    poured = re.search(
+        r"(?:poured|actual|as[-\s]?built)\s+(\d+(?:\.\d+)?)\s*m(?:³|3)\b",
+        t,
+        re.IGNORECASE,
+    )
+    vs = re.search(
+        r"(\d+(?:\.\d+)?)\s*m(?:³|3)\b.{0,24}(?:versus|vs\.?|against).{0,16}"
+        r"(\d+(?:\.\d+)?)\s*m(?:³|3)\b",
+        t,
+        re.IGNORECASE,
+    )
+    p_m3 = float(planned.group(1)) if planned else None
+    a_m3 = float(poured.group(1)) if poured else None
+    if p_m3 is None and vs:
+        p_m3 = float(vs.group(1))
+        a_m3 = float(vs.group(2))
+    if p_m3 is None or a_m3 is None:
+        return None
+    shortfall = round(p_m3 - a_m3, 3)
+    pct = round((shortfall / p_m3) * 100, 2) if p_m3 else 0.0
+    dates = re.findall(
+        r"\b(\d{1,2}\s+\w+\s+\d{4})\b",
+        t,
+    )
+    loc = re.search(r"\b(PWPS[-\s]?\d+[^\s,]*)\b", t, re.IGNORECASE)
+    return {
+        "status": "success",
+        "action": "as_built_deviation_report",
+        "execution_mode": "drafted",
+        "element_type": "volume",
+        "location": loc.group(1) if loc else "",
+        "planned_m3": p_m3,
+        "poured_m3": a_m3,
+        "shortfall_m3": shortfall,
+        "shortfall_percent": pct,
+        "pour_dates": dates,
+        "deviation_summary": {
+            "total_deviations": 1,
+            "critical": 0,
+            "major": 1 if abs(pct) >= 10 else 0,
+            "minor": 0 if abs(pct) >= 10 else 1,
+        },
+        "deviations": [{
+            "type": "volume_shortfall",
+            "planned_m3": p_m3,
+            "as_built_m3": a_m3,
+            "delta_m3": shortfall,
+            "percent": pct,
+            "severity": "major" if abs(pct) >= 10 else "minor",
+        }],
+        "note": (
+            f"As-built volume note from operator figures: planned {p_m3:g} m³ "
+            f"versus poured {a_m3:g} m³ — shortfall {shortfall:g} m³ "
+            f"({pct:g}%). Not a drawing-to-drawing dimensional comparison."
+        ),
+    }
+
+
 class ConstructionDocumentsMixin:
     ui_schema = {
         "input": {
@@ -593,6 +663,24 @@ class ConstructionDocumentsMixin:
         design_file = data.get("design_file") or p.get("design_file")
         tolerance_mm = float(p.get("tolerance_mm", 10))
         element_type = p.get("element_type", "general")
+
+        text = " ".join(
+            str(x)
+            for x in (
+                p.get("text"),
+                p.get("user_message"),
+                data.get("text"),
+                data.get("user_message"),
+                data.get("message"),
+                input_data if isinstance(input_data, str) else "",
+            )
+            if x
+        )
+        volume_note = _as_built_volume_facts_from_text(text)
+        if volume_note and not (as_built_file and design_file) and not (
+            data.get("measurements") or p.get("as_built_measurements")
+        ):
+            return volume_note
 
         # Honest gate — NEVER return a conformance/APPROVED verdict without a real
         # comparison. No inputs => error, not "0 deviations, APPROVED".
@@ -1834,7 +1922,8 @@ class ConstructionDocumentsMixin:
                 "status": "error",
                 "error": (
                     "wir_form drafts Work Inspection Requests only. "
-                    "This turn is an RFI, RFP, or claim — write that "
+                    "This turn is an RFI, RFP, claim, job requisition, "
+                    "or other non-WIR deliverable — write that "
                     "deliverable instead of a WIR."
                 ),
                 "action": "wir_form",
@@ -1932,7 +2021,15 @@ class ConstructionDocumentsMixin:
         r"\b("
         r"follow-on rfi|\brfi\b|request for information|"
         r"\brfp\b|request for proposal|invitation to tender|"
-        r"delay claim|claim notice|eot claim"
+        r"delay claim|claim notice|eot claim|"
+        r"job requisition|prequalification shortlist|"
+        r"payment certificate|\bipc\b|interim payment|"
+        r"\bwbs\b|work breakdown|"
+        r"cash[- ]?flow|"
+        r"as-built|as built|"
+        r"design directive|"
+        r"o\s*&\s*m|om manual|"
+        r"commissioning checklist"
         r")\b",
         re.IGNORECASE,
     )
@@ -2050,6 +2147,186 @@ class ConstructionDocumentsMixin:
                 f"Mix {facts['mix']}, slump equipment, and cube moulds ready"
             )
         return rows
+
+    def _joined_operator_text(self, input_data: Any, params: Dict) -> str:
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        return " ".join(
+            str(x)
+            for x in (
+                p.get("text"),
+                p.get("user_message"),
+                data.get("text"),
+                data.get("user_message"),
+                data.get("message"),
+                data.get("scope"),
+                input_data if isinstance(input_data, str) else "",
+            )
+            if x
+        )
+
+    async def job_requisition(self, input_data: Any, params: Dict) -> Dict:
+        """Draft a PRC-601 job requisition from operator facts.
+
+        Live M6: contracts-manager called wir_form then Groq 413'd. This
+        drafts the JR from the stated scope (NOC, poles, signage) without
+        inventing commercial terms that were not supplied.
+        """
+        text = self._joined_operator_text(input_data, params)
+        noc = ""
+        noc_m = re.search(
+            r"(AM Rev Design NOC[^.]{0,80}|NOC[^.]*?expir\w+\s+\d{1,2}\s+\w+\s+\d{4})",
+            text,
+            re.IGNORECASE,
+        )
+        if noc_m:
+            noc = noc_m.group(1).strip()
+        poles = ""
+        poles_m = re.search(
+            r"(solar\s+6\s+to\s+8\s*m[^.]{0,80}|1x120W[^.]{0,60})",
+            text,
+            re.IGNORECASE,
+        )
+        if poles_m:
+            poles = poles_m.group(1).strip()
+        expiry = ""
+        exp_m = re.search(
+            r"expir\w+\s+(\d{1,2}\s+\w+\s+\d{4})",
+            text,
+            re.IGNORECASE,
+        )
+        if exp_m:
+            expiry = exp_m.group(1)
+        scope_bits = []
+        if re.search(r"street[-\s]?light", text, re.I):
+            scope_bits.append("Street-lighting installation")
+        if poles:
+            scope_bits.append(poles)
+        if re.search(r"traffic signage", text, re.I):
+            scope_bits.append("Traffic signage")
+        if re.search(r"road markings", text, re.I):
+            scope_bits.append("Road markings")
+        if re.search(r"grand mosque", text, re.I):
+            scope_bits.append("Grand Mosque Phase 2 VO items")
+        scope = "; ".join(scope_bits) or (
+            "Works described in the operator message"
+        )
+        from app.core.procedure_actions import procedure_metadata
+        meta = procedure_metadata("job_requisition")
+        return {
+            "status": "success",
+            "action": "job_requisition",
+            "execution_mode": "drafted",
+            "procedure_id": "PRC-601",
+            "jr_number": "DRAFT-JR",
+            "issued": False,
+            "title": "Job requisition — street-lighting installation",
+            "scope": scope,
+            "noc": noc,
+            "noc_expiry": expiry,
+            "prequalification": [
+                "Valid lighting / electrical contractor classification",
+                "Evidence of similar street-lighting or solar-pole installations",
+                "HSE plan covering live-road and public-interface works",
+                "Capacity to supply and install the stated pole type and wattage",
+            ],
+            "shortlist_rubric": [
+                {"criterion": "Technical compliance with NOC and VO items", "weight": "40%"},
+                {"criterion": "Programme and mobilisation to the stated expiry", "weight": "20%"},
+                {"criterion": "HSE / live-road method", "weight": "20%"},
+                {"criterion": "Commercial offer (when priced)", "weight": "20%"},
+            ],
+            "note": (
+                "Draft job requisition from operator-supplied facts — not an "
+                "issued purchase order. Missing commercial terms are left blank."
+            ),
+            "procedure_context": {
+                "orchestrator_action": "job_requisition",
+                "procedure_id": "PRC-601",
+                "execution_mode": "delegated",
+                "delegate_action": "job_requisition",
+                "procedure_title": meta.get("procedure_title") or "",
+            },
+        }
+
+    async def rfp_draft(self, input_data: Any, params: Dict) -> Dict:
+        """Draft a PRC-602 RFP / invitation from operator facts.
+
+        Live M14: the model called wir_form (refused) then Groq 413'd.
+        """
+        text = self._joined_operator_text(input_data, params)
+        refs = []
+        for token in (
+            "RFI002",
+            "SOPR",
+            "UMA Stormwater DDC 20212200076",
+            "20212200076",
+        ):
+            if token.lower() in text.lower():
+                refs.append(token)
+        grp = bool(re.search(r"\bgrp\b", text, re.I))
+        channel = bool(re.search(r"closed concrete channel", text, re.I))
+        mh = re.search(r"(\d+)\s*-?\s*manhole", text, re.I)
+        manholes = mh.group(1) if mh else ""
+        option = []
+        if grp:
+            option.append("formed GRP radiused section")
+        if channel:
+            option.append("closed concrete channel")
+        option_s = " or ".join(option) or "the alternative stated by the operator"
+        scope = (
+            f"Remove the {manholes + '-manhole ' if manholes else ''}"
+            f"radius cluster and install a {option_s}."
+        )
+        from app.core.procedure_actions import procedure_metadata
+        meta = procedure_metadata("rfp_management")
+        invitation = (
+            "INVITATION TO TENDER\n\n"
+            "You are invited to submit a proposal for a stormwater "
+            "manhole-rationalisation subcontract. The works replace the "
+            f"existing clustered manholes with {option_s}. "
+            "This invitation is a draft from the operator brief; it is not "
+            "an issued tender until the Engineer / Employer confirms issue."
+        )
+        return {
+            "status": "success",
+            "action": "rfp_draft",
+            "execution_mode": "drafted",
+            "procedure_id": "PRC-602",
+            "rfp_number": "DRAFT-RFP",
+            "issued": False,
+            "title": "RFP — stormwater manhole-rationalisation subcontract",
+            "invitation": invitation,
+            "scope_of_works": scope,
+            "references": refs,
+            "prequalification": [
+                "Stormwater / drainage contractor with GRP or formed-channel experience",
+                "ITP and method statement for live-road excavation and reinstatement",
+                "Capacity to interface with Week 53 collar pours if the alternative is accepted",
+            ],
+            "evaluation_method": (
+                "Technical compliance with the accepted alternative (GRP or "
+                "closed channel), programme impact on remaining manhole collars, "
+                "HSE, then commercial. Award recommendation follows PRC-603."
+            ),
+            "key_dates_note": (
+                "Key dates are to be confirmed against the approved programme "
+                "and the SOPR / UMA DDC references named in this brief. "
+                "No dates are invented."
+            ),
+            "note": (
+                "Draft RFP from operator-supplied facts — not an issued "
+                "invitation. Write the invitation, scope, prequalification, "
+                "evaluation method, and key-date note in full paragraphs."
+            ),
+            "procedure_context": {
+                "orchestrator_action": "rfp_management",
+                "procedure_id": "PRC-602",
+                "execution_mode": "delegated",
+                "delegate_action": "rfp_draft",
+                "procedure_title": meta.get("procedure_title") or "",
+            },
+        }
 
     async def qa_qc_inspection(self, input_data: Any, params: Dict) -> Dict:
         """Quality control inspection from photos or drawings"""

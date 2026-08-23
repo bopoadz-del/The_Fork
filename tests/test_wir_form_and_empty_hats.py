@@ -135,6 +135,14 @@ async def test_wir_form_refuses_rfi_and_rfp():
     still = await c.wir_form({"text": M15}, {})
     assert still["status"] == "success"
     assert still["week"] == "53"
+    job = await c.wir_form({
+        "text": (
+            "Prepare a job requisition for street-lighting installation. "
+            "Scope is the AM Rev Design NOC for Street Lighting."
+        )
+    }, {})
+    assert job["status"] == "error"
+    assert "job requisition" in (job.get("error") or "").lower() or "RFI" in (job.get("error") or "") or "RFP" in (job.get("error") or "")
 
 
 def test_work_inspection_request_is_a_document_deliverable():
