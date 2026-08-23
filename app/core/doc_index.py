@@ -272,16 +272,41 @@ def _pdf_tables_enabled(file_path: str, readable_path: str | None = None) -> boo
     Sheets larger than ``PDF_TABLES_MAX_PAGE_PT`` on their long side (default
     1250 pt ≈ just over A3) are drawings, not table BOQs — table extraction
     is skipped for them outright.
+
+    THIRD instance of the same lesson (2026-08-23): neither gate above catches
+    a long ORDINARY document. Vol 2 Specification parts 4 and 8 are plain A4,
+    7.5 MB and 12.8 MB — under the size bar, under the page-size bar — but 738
+    and 387 pages. Measured on those two files, table extraction is essentially
+    the entire cost::
+
+        part 4 (738 pp)   tables on: 4191 MB / 173s     off: 122 MB / 10s
+        part 8 (387 pp)   tables on: 2094 MB /  93s     off: 154 MB /  6s
+
+    That is ~97% of peak memory and ~94% of wall-clock, and 4191 MB is what
+    OOM-killed a 4 GB instance outright before extraction was isolated. It
+    also explains a document that SUCCEEDED: a 36 MB / 419-page file extracted
+    in 3s because the size gate had already skipped pdfplumber for it.
+
+    Cost scales with page count at roughly 5.5 MB/page on this corpus, so the
+    default of 200 pages holds pdfplumber near 1.1 GB — inside the extraction
+    child's 1536 MB budget with room for the text layer (~150 MB) and OCR.
+    Losing table extraction on such a document costs structure, not content:
+    the cell text is already in the text layer that fitz reads. Digital table
+    BOQs, which are what this feature exists for, are tens of pages and are
+    unaffected.
     """
     try:
         max_mb = float(os.getenv("PDF_TABLES_MAX_MB", "25"))
         if (os.path.getsize(file_path) / (1024 * 1024)) > max_mb:
             return False
         max_page_pt = float(os.getenv("PDF_TABLES_MAX_PAGE_PT", "1250"))
+        max_pages = int(os.getenv("PDF_TABLES_MAX_PAGES", "200"))
         probe = readable_path or file_path
         try:
             import fitz
             with fitz.open(probe) as _doc:
+                if max_pages > 0 and _doc.page_count > max_pages:
+                    return False
                 for _page in _doc:
                     if max(_page.rect.width, _page.rect.height) > max_page_pt:
                         return False
