@@ -1829,6 +1829,16 @@ class ConstructionDocumentsMixin:
             )
             if x
         )
+        if self._wir_form_is_wrong_deliverable(text):
+            return {
+                "status": "error",
+                "error": (
+                    "wir_form drafts Work Inspection Requests only. "
+                    "This turn is an RFI, RFP, or claim — write that "
+                    "deliverable instead of a WIR."
+                ),
+                "action": "wir_form",
+            }
         facts = self._wir_facts_from_text(text)
         for key in (
             "location", "activity", "mix", "volume_m3", "week",
@@ -1912,6 +1922,32 @@ class ConstructionDocumentsMixin:
                 "procedure_title": meta.get("procedure_title") or "",
             },
         }
+
+    _WIR_INTENT_RE = re.compile(
+        r"work inspection request|\bwir\b|inspection request|"
+        r"wir form|wir template",
+        re.IGNORECASE,
+    )
+    _WIR_WRONG_DELIVERABLE_RE = re.compile(
+        r"\b("
+        r"follow-on rfi|\brfi\b|request for information|"
+        r"\brfp\b|request for proposal|invitation to tender|"
+        r"delay claim|claim notice|eot claim"
+        r")\b",
+        re.IGNORECASE,
+    )
+
+    def _wir_form_is_wrong_deliverable(self, text: str) -> bool:
+        """True when the model called wir_form on an RFI / RFP / claim.
+
+        Live M10 / M14 on 817f224: construction-pm and contracts-manager
+        picked ``wir_form`` from the allowlist and drafted a WIR instead
+        of the requested RFI / RFP. Predispatch already requires WIR
+        wording; the tool itself must refuse the same mismatch.
+        """
+        if not text or self._WIR_INTENT_RE.search(text):
+            return False
+        return bool(self._WIR_WRONG_DELIVERABLE_RE.search(text))
 
     def _wir_facts_from_text(self, text: str) -> Dict[str, Any]:
         t = text or ""

@@ -230,12 +230,12 @@ async def test_it_mirrors_call_llm_on_model_and_temperature(monkeypatch, stream)
     streamed answer and the fallback answer come from different models -- the
     user sees a different voice depending on transport."""
     _groq(monkeypatch)
-    monkeypatch.setenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
     calls = stream(_StreamResponse(_sse("x")))
 
     await _drain(_agent(model="deepseek-chat", temperature=0.3))
 
-    assert calls[0]["payload"]["model"] == "llama-3.3-70b-versatile", (
+    assert calls[0]["payload"]["model"] == "openai/gpt-oss-120b", (
         "a dead provider's model name was streamed to Groq"
     )
     assert calls[0]["payload"]["temperature"] == 0.3
