@@ -1,5 +1,27 @@
 # Render Blueprint — version-controlled deploy config for The Shovel / The Fork.
 #
+# ⚠ DO NOT "APPLY BLUEPRINT" WITHOUT RE-CHECKING THE DIFF FIRST (2026-08-23).
+#
+# This file is a RECORD of the service, and it has drifted from it four times
+# already: `plan: starter` (live pro), `MAX_DOC_UPLOAD_SIZE` 50 MB, `sizeGB: 1`
+# (live 50), `autoDeploy: false` (live yes) and — worst — an embedding model
+# that would have taken retrieval down for all 172,809 chunks. Applying
+# reconciles EVERY value here onto the running service, so a stale line is not
+# documentation debt, it is an outage waiting for someone to click a button.
+#
+# Known remaining mismatches against live, deliberately NOT reconciled here:
+#
+#   UVICORN_WORKERS   declared 2, UNSET live (so one worker). Applying would
+#                     double worker count on a 4 GB box; nobody has tested
+#                     two workers against the extraction memory profile.
+#   44 env vars       set live and absent here (R2_*, LLM keys, FORK_*,
+#                     RAG_GK_*, GDRIVE_*). Verify how apply treats undeclared
+#                     vars BEFORE applying — if it prunes them, applying is a
+#                     credential wipe.
+#
+# To compare before applying:
+#   GET /v1/services/<id>/env-vars  and diff against the `value:` lines below.
+#
 # Purpose: make the production service reproducible and the env surface
 # reviewable. Secrets are `sync: false` — they are entered once in the Render
 # dashboard and never live in this file or git. Non-secret values below are
@@ -147,8 +169,19 @@ services:
       # its whole corpus with was implicit, and a change to that constant would
       # have silently invalidated the corpus. Pinned to the value already in
       # use, so this is a no-op for existing data.
+      #
+      # THIS FILE HAD THE WRONG VALUE. It declared minishlab/potion-base-8M
+      # while the live service runs BAAI/bge-small-en-v1.5 — and every one of
+      # the 172,809 rows in chunks_v2 is stamped:
+      #
+      #     BAAI/bge-small-en-v1.5   dim 384   normalized True   172,809 chunks
+      #
+      # So applying this blueprint would have done exactly what the paragraph
+      # above warns about: _verify_embedding_identity would refuse the
+      # namespace and retrieval would go down across the whole corpus. Pinned
+      # to what the vectors actually are.
       - key: RAG_EMBEDDING_MODEL
-        value: minishlab/potion-base-8M
+        value: BAAI/bge-small-en-v1.5
       # Phase 1 pilot: route the schedule workflow through the orchestrator's
       # predefined reasoning. Non-breaking (only intercepts high-confidence
       # generate_wbs intents); remove to revert to the tool-agent path.
