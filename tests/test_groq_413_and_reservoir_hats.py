@@ -1023,3 +1023,63 @@ async def test_payment_certificate_operator_aca_beats_stored_fact():
     assert out["status"] == "success"
     val = (out.get("valuation") or {}).get("contract_value")
     assert val == 1_754_504_456.25
+
+
+# ── M16: the site cue must not require the word "road" ─────────────────────
+# The M16 constant above carries THREE independent triggers — "safety
+# briefing", "live-haul-road" and "public-interface" — so it matches however
+# narrow the site cue becomes, and cannot detect a regression in it. A live
+# safety-officer turn summarised as "Green Village diversion briefing from the
+# three named files (signage, speed, pedestrian)" has none of those three, and
+# safety_briefing never ran: only fetch_document did, and the hat answered
+# "I'm ready to help, but I need a specific question".
+#
+# This phrasing is deliberately the HARD one: a diversion named after its
+# LOCATION, no "road", no literal "safety briefing".
+M16_LOCATION_ONLY = (
+    "Prepare the Green Village diversion briefing from the three named files, "
+    "covering signage, speed limits and pedestrian routes."
+)
+
+
+def test_m16_constant_is_too_easy_to_catch_a_narrow_site_cue():
+    """Guard the guard: if this ever stops being true the assertion below is
+    the only thing standing between a narrowed cue and a silent live miss."""
+    triggers = ["safety briefing", "haul-road", "public-interface"]
+    present = [t for t in triggers if t in M16.lower()]
+    assert len(present) >= 2, (
+        f"M16 was meant to carry redundant triggers; found {present}"
+    )
+
+
+def test_location_named_diversion_still_wants_a_safety_briefing():
+    assert _message_wants_safety_briefing(M16_LOCATION_ONLY)
+    assert _message_wants_locked_deliverable(M16_LOCATION_ONLY)
+
+
+def test_briefing_needs_real_breadth_not_one_stray_topic():
+    """The briefing-only route requires two of the three public-interface
+    topics. One topic plus the bare word "briefing" is too thin to claim a
+    turn away from every other deliverable."""
+    assert not _message_wants_safety_briefing(
+        "Briefing on the speed of the works this week."
+    )
+    assert _message_wants_safety_briefing(
+        "Briefing for the crew on signage and pedestrian routes."
+    )
+
+
+@pytest.mark.parametrize("other", [M1, M2, M4, M6, M8, M10, M13])
+def test_broadened_safety_cue_steals_nothing(other):
+    """The whole point of #410/#411 was tools claiming turns that belong to
+    another deliverable. Widening this predicate must not re-open that."""
+    assert not _message_wants_safety_briefing(other)
+
+
+def test_safety_still_yields_to_an_rfp_ask():
+    rfp = (
+        "Draft an RFP for the 24-manhole rationalisation — invitation to "
+        "tender, scope of works, prequalification criteria."
+    )
+    assert _message_wants_rfp_draft(rfp)
+    assert not _message_wants_safety_briefing(rfp)
