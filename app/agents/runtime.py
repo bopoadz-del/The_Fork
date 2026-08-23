@@ -3589,7 +3589,13 @@ def _build_exports_from_audit(
 # things that differ from DeepSeek are the base URL, the env-var name, and the
 # default model id. Tool-calling payload shape is identical.
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+# Groq retired llama-3.3-70b-versatile / llama-3.1-8b-instant on 2026-08-16
+# (free/developer tier). Live M9/M10/M13 then 404'd every Groq hop.
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
+GROQ_RETIRED_MODELS = {
+    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
+}
 
 # Kimi / Moonshot native API — OpenAI-compatible chat-completions. Same payload
 # shape as Groq/DeepSeek (verified: tool-calling + streaming accepted). K2 models
@@ -3684,7 +3690,7 @@ def _llm_config() -> dict[str, Any]:
             "provider": "groq",
             "url": GROQ_API_URL,
             "env_key": "GROQ_API_KEY",
-            "default_model": os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL),
+            "default_model": _resolve_groq_model(os.getenv("GROQ_MODEL")),
         }
     if provider == "kimi":
         return {
@@ -3972,6 +3978,16 @@ class _SynthStreamError(Exception):
     one-way door away from the working behaviour."""
 
 
+def _resolve_groq_model(name: str | None) -> str:
+    """Map retired Groq ids so a stale ``GROQ_MODEL`` env still serves.
+
+    Render still pins ``GROQ_MODEL=llama-3.3-70b-versatile``. Changing only
+    ``GROQ_DEFAULT_MODEL`` would leave that override 404ing.
+    """
+    raw = (name or "").strip() or GROQ_DEFAULT_MODEL
+    return GROQ_RETIRED_MODELS.get(raw, raw)
+
+
 def _http_400_is_retryable(body: str) -> bool:
     """True for provider 400s another model CAN serve.
 
@@ -3988,6 +4004,10 @@ def _http_400_is_retryable(body: str) -> bool:
     if "must be followed by tool messages" in text:
         return True
     if "invalid request" in text and "tool_call" in text:
+        return True
+    # Live M12 on 817f224: Kimi HTTP 400 + type=content_filter / "high risk"
+    # (not HTTP 200 + finish_reason). Same class as a filtered 200.
+    if "content_filter" in text or "considered high risk" in text:
         return True
     return False
 
