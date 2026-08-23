@@ -1088,3 +1088,90 @@ def test_nonempty_indexing_does_not_emit_zero_chunk_warning(tmp_path, monkeypatc
         doc_index.index_document(pid, doc["id"])
 
     assert not any("ZERO_CHUNK" in r.message for r in caplog.records)
+
+
+# ── pdfplumber page-count gate ─────────────────────────────────────────────
+# Vol 2 Specification parts 4 and 8 are plain A4 under the 25 MB size gate and
+# under the A3 page-size gate, but 738 and 387 pages. Measured 2026-08-23 on
+# those exact files, table extraction is ~97% of peak memory:
+#
+#     part 4 (738 pp)   tables on: 4191 MB / 173s     off: 122 MB / 10s
+#     part 8 (387 pp)   tables on: 2094 MB /  93s     off: 154 MB /  6s
+#
+# 4191 MB is what OOM-killed the 4 GB instance before extraction was isolated,
+# and what still breaches the isolated child's budget today.
+
+class _FakeRect:
+    def __init__(self, w=595.0, h=842.0):  # A4 portrait, in points
+        self.width, self.height = w, h
+
+
+class _FakePage:
+    def __init__(self, w=595.0, h=842.0):
+        self.rect = _FakeRect(w, h)
+
+
+class _FakeDoc:
+    """Minimal stand-in for a fitz document used as a context manager."""
+
+    def __init__(self, pages: int, w=595.0, h=842.0):
+        self.page_count = pages
+        self._pages = [_FakePage(w, h) for _ in range(min(pages, 5))]
+
+    def __iter__(self):
+        return iter(self._pages)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _fake_pdf(monkeypatch, pages: int, size_mb: float = 8.0, w=595.0, h=842.0):
+    import fitz
+    monkeypatch.setattr("os.path.getsize", lambda p: int(size_mb * 1024 * 1024))
+    monkeypatch.setattr(fitz, "open", lambda *a, **k: _FakeDoc(pages, w, h))
+
+
+def test_tables_skipped_for_a_long_ordinary_document(monkeypatch):
+    """THE FIX: page count is a cost proxy the size and dimension gates miss."""
+    from app.core import doc_index
+    _fake_pdf(monkeypatch, pages=738, size_mb=7.5)   # Vol 2 part 4
+    assert doc_index._pdf_tables_enabled("spec_4_of_9.pdf") is False
+
+    _fake_pdf(monkeypatch, pages=387, size_mb=12.8)  # Vol 2 part 8
+    assert doc_index._pdf_tables_enabled("spec_8_of_9.pdf") is False
+
+
+def test_tables_kept_for_a_normal_length_document(monkeypatch):
+    """The control. Digital table BOQs are what this feature exists for and
+    they are tens of pages — the gate must not touch them."""
+    from app.core import doc_index
+    _fake_pdf(monkeypatch, pages=40, size_mb=2.0)
+    assert doc_index._pdf_tables_enabled("boq.pdf") is True
+
+
+def test_page_gate_is_tunable_and_disablable(monkeypatch):
+    from app.core import doc_index
+    _fake_pdf(monkeypatch, pages=300, size_mb=5.0)
+
+    monkeypatch.setenv("PDF_TABLES_MAX_PAGES", "500")
+    assert doc_index._pdf_tables_enabled("mid.pdf") is True, "raised bar allows it"
+
+    monkeypatch.setenv("PDF_TABLES_MAX_PAGES", "100")
+    assert doc_index._pdf_tables_enabled("mid.pdf") is False, "lowered bar blocks it"
+
+    monkeypatch.setenv("PDF_TABLES_MAX_PAGES", "0")
+    assert doc_index._pdf_tables_enabled("mid.pdf") is True, "0 disables the gate"
+
+
+def test_existing_gates_still_win(monkeypatch):
+    """The page gate is additional, not a replacement: an oversized file and an
+    A1 drawing sheet must still be rejected even at a modest page count."""
+    from app.core import doc_index
+    _fake_pdf(monkeypatch, pages=10, size_mb=60.0)
+    assert doc_index._pdf_tables_enabled("big.pdf") is False, "size gate"
+
+    _fake_pdf(monkeypatch, pages=10, size_mb=5.0, w=2384.0, h=1684.0)  # A1
+    assert doc_index._pdf_tables_enabled("drawing.pdf") is False, "page-size gate"
