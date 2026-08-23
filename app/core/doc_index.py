@@ -317,6 +317,53 @@ def _pdf_tables_markdown(plumber_page) -> str:
     return "\n".join(rows)
 
 
+_OOM_MARKERS = (
+    "out of memory",
+    "cannot allocate",
+    "bad_alloc",
+    "insufficient memory",
+)
+_OOM_ALLOC_RE = re.compile(r"\b(?:c|m|re)alloc\b[^:]*fail", re.IGNORECASE)
+
+
+def _is_memory_exhaustion(exc: BaseException) -> bool:
+    """True when ``exc`` -- or anything it wraps -- is an out-of-memory failure.
+
+    ``RLIMIT_AS`` does NOT reliably surface as :class:`MemoryError`. Only
+    allocations made through CPython's allocator raise it; native extractors
+    call their own C allocators and raise their own types. Observed live on
+    2026-08-23, inside the extraction child, on one document::
+
+        RuntimeError: code=2: calloc (4104 x 1 bytes) failed   <- PyMuPDF
+        MemoryError                                            <- pdfminer
+        pdfplumber.utils.exceptions.PdfminerException          <- the wrapper
+
+    Only the middle one is a ``MemoryError``, and it was re-raised inside a
+    ``close()`` during cleanup, so the exception that actually reached the
+    handler was a plain ``RuntimeError``. ``except MemoryError: raise`` never
+    matched, ``except Exception: return "", {}`` did, and a document that had
+    already yielded hundreds of good pages was reported as a *successful empty
+    file* -- which then indexed as ZERO_CHUNK.
+
+    Walking ``__cause__``/``__context__`` catches the wrapped case; the text
+    markers catch the native case, where there is no ``MemoryError`` anywhere
+    in the chain to find.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, MemoryError):
+            return True
+        text = f"{type(cur).__name__}: {cur}"
+        if _OOM_ALLOC_RE.search(text):
+            return True
+        if any(marker in text.lower() for marker in _OOM_MARKERS):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
     """Per-page PDF extraction.
 
@@ -408,7 +455,34 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
         # ZERO_CHUNK with no error logged anywhere. Let it propagate so the
         # caller can say what actually happened.
         raise
-    except Exception:
+    except Exception as exc:
+        if _is_memory_exhaustion(exc):
+            # The child hit its ceiling. Everything already in `parts` was
+            # extracted successfully -- discarding it turns a document that is
+            # 90% readable into a ZERO_CHUNK failure, which is how a 738-page
+            # spec indexed as empty while its first 40 pages sat in memory.
+            #
+            # Keep the pages we have and SAY the tail is missing. Callers can
+            # tell a partial document from a complete one; nothing downstream
+            # gets to mistake this for a genuinely empty file.
+            if parts:
+                logger.warning(
+                    "PDF extraction ran out of memory after %d pages (%d chars) "
+                    "— keeping the partial text: %s",
+                    len(parts), chars, exc,
+                )
+                partial_meta: dict[str, Any] = {
+                    "extract_oom_partial": True,
+                    "extract_chars": chars,
+                    "extract_parts": len(parts),
+                }
+                if ocr_pages > 0:
+                    partial_meta["ocr_low_quality"] = True
+                return "\n".join(parts), partial_meta
+            # Nothing salvageable. Surface it as the memory failure it is
+            # rather than as an empty document -- the ambiguity that hid this
+            # bug for two days.
+            raise MemoryError(f"PDF extraction exhausted memory: {exc}") from exc
         return "", {}
     meta: dict[str, Any] = {}
     if ocr_pages > 0:
@@ -956,7 +1030,13 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> tuple[str, dict[st
         # See _extract_pdf: a memory failure must never masquerade as an empty
         # document, or the caller indexes ZERO_CHUNK and reports nothing wrong.
         raise
-    except Exception:
+    except Exception as exc:
+        # Same rule for extractors that allocate through their own C libraries
+        # and raise something other than MemoryError (PyMuPDF's RuntimeError
+        # was the one that reached production). Promote it so the isolation
+        # layer reports "ran out of memory" instead of "this file is empty".
+        if _is_memory_exhaustion(exc):
+            raise MemoryError(f"extraction exhausted memory: {exc}") from exc
         return "", {}
 
     return "", {}
