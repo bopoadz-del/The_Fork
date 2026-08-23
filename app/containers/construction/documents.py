@@ -2171,7 +2171,8 @@ class ConstructionDocumentsMixin:
         if re.search(
             r"\b(rfp|request for proposal|job requisition|delay claim|"
             r"claim notice|cash[- ]flow|build a wbs|o\s*&\s*m|"
-            r"follow-on rfi|\brfi\b|request for information)\b",
+            r"follow-on rfi|\brfi\b|request for information|"
+            r"punch list|design directive)\b",
             text,
             re.I,
         ):

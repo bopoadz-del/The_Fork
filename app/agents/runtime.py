@@ -992,9 +992,11 @@ def _message_wants_wir_form(text: str) -> bool:
         or _message_wants_om_manual(low)
         or _message_wants_safety_briefing(low)
         or _message_wants_first_run_wbs(low)
-        or         _message_wants_as_built_note(low)
+        or _message_wants_as_built_note(low)
         or _message_wants_ipc_draft(low)
         or _message_wants_follow_on_rfi(low)
+        or _message_wants_qc_punch(low)
+        or _message_wants_design_directive(low)
     ):
         return False
     return bool(_WIR_FORM_RE.search(low))
@@ -1110,6 +1112,22 @@ def _message_wants_follow_on_rfi(text: str) -> bool:
     ))
 
 
+def _message_wants_qc_punch(text: str) -> bool:
+    return bool(re.search(
+        r"qc punch|punch list|hold-point sign-off|hold point sign-off",
+        text or "",
+        re.I,
+    ))
+
+
+def _message_wants_design_directive(text: str) -> bool:
+    return bool(re.search(
+        r"design directive|underpass length|rfi016|rfi 016",
+        text or "",
+        re.I,
+    ))
+
+
 def _message_wants_safety_briefing(text: str) -> bool:
     raw = text or ""
     if (
@@ -1117,6 +1135,10 @@ def _message_wants_safety_briefing(text: str) -> bool:
         or _message_wants_cash_flow(raw)
         or _message_wants_follow_on_rfi(raw)
         or _message_wants_delay_claim(raw)
+        or _message_wants_job_requisition(raw)
+        or _message_wants_qc_punch(raw)
+        or _message_wants_design_directive(raw)
+        or _message_wants_ipc_draft(raw)
     ):
         return False
     if re.search(r"safety briefing", raw, re.I):
@@ -1155,6 +1177,8 @@ def _message_wants_locked_deliverable(text: str) -> bool:
             _message_wants_om_manual,
             _message_wants_safety_briefing,
             _message_wants_follow_on_rfi,
+            _message_wants_qc_punch,
+            _message_wants_design_directive,
             _message_wants_first_run_wbs,
             _message_wants_as_built_note,
             _message_wants_ipc_draft,
@@ -1235,9 +1259,14 @@ async def _predispatch_construction_draft(
         handler = getattr(container, action, None)
         if handler is None:
             return None
+        params = {"user_message": user_msg, "brief": user_msg, "message": user_msg}
+        if action == "commissioning_checklist":
+            inferred = _infer_commissioning_systems(user_msg)
+            if inferred:
+                params["systems"] = inferred
         result = await handler(
             {"text": user_msg, "message": user_msg, "user_message": user_msg},
-            {"user_message": user_msg, "brief": user_msg},
+            params,
         )
         if not isinstance(result, dict) or result.get("status") != "success":
             return None
@@ -1297,6 +1326,13 @@ async def _predispatch_remaining_deliverables(
             "Present this follow-on RFI in full. Do not draft a WIR.",
         ),
         (
+            "AGENT_JOB_REQ_PREDISPATCH",
+            _message_wants_job_requisition,
+            "job_requisition",
+            _format_job_requisition,
+            "Present this job requisition in full. Do not draft a WIR.",
+        ),
+        (
             "AGENT_SAFETY_PREDISPATCH",
             _message_wants_safety_briefing,
             "safety_briefing",
@@ -1331,13 +1367,6 @@ async def _predispatch_remaining_deliverables(
             "as_built_deviation_report",
             _format_as_built_note,
             "Present this as-built volume note in full.",
-        ),
-        (
-            "AGENT_JOB_REQ_PREDISPATCH",
-            _message_wants_job_requisition,
-            "job_requisition",
-            _format_job_requisition,
-            "Present this job requisition in full. Do not draft a WIR.",
         ),
         (
             "AGENT_RFP_PREDISPATCH",

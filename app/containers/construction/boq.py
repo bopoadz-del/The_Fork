@@ -504,11 +504,30 @@ class ConstructionBoqMixin:
         # explicit params/data (predefined dispatch sends the envelope with
         # empty params, so the numbers often live in `message` alone).
         fig = _payment_figures_from_message(
-            data.get("message") or (input_data if isinstance(input_data, str) else "")
+            " ".join(
+                str(x)
+                for x in (
+                    data.get("message"),
+                    data.get("user_message"),
+                    data.get("text"),
+                    p.get("message"),
+                    p.get("user_message"),
+                    p.get("brief"),
+                    input_data if isinstance(input_data, str) else "",
+                )
+                if x
+            )
         )
 
-        contract_value = float(p.get("contract_value") or data.get("contract_value", 0)
-                               or fig.get("contract_value", 0))
+        # Operator-stated Accepted Contract Amount wins over a stored
+        # project fact (live M7 used 1,463 from memory instead of
+        # SAR 1,754,504,456.25 from the brief).
+        if fig.get("contract_value"):
+            contract_value = float(fig["contract_value"])
+        else:
+            contract_value = float(
+                p.get("contract_value") or data.get("contract_value", 0) or 0
+            )
         work_done_pct = float(p.get("work_done_percent") or data.get("work_done_percent", 0)
                               or fig.get("work_done_percent", 0)) / 100.0
         previous_certified = float(p.get("previous_certified") or data.get("previous_certified", 0)
