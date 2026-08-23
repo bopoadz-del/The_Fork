@@ -1066,8 +1066,11 @@ def _message_wants_first_run_wbs(text: str) -> bool:
         from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
         if message_wants_wbs_duration_rerun(raw, []):
             return False
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — import/shape miss must not steal first-run WBS
+        _LOG.warning(
+            "swallowed %s in _message_wants_first_run_wbs() — treating as first-run",
+            "Exception", exc_info=True,
+        )
     return True
 
 
