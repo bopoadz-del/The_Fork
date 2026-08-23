@@ -223,6 +223,55 @@ _INITIALIZED_NAMESPACES: Set[Tuple[str, str]] = set()
 _INIT_LOCK = Lock()
 
 
+# pgvector 0.8 keeps scanning the index until enough rows survive the query's
+# WHERE clause, instead of stopping after the first ef_search candidates.
+# ``relaxed_order`` is the right mode for retrieval: results may come back
+# slightly out of distance order, and the retriever re-ranks by score anyway.
+_ITERATIVE_SCAN_MODE = os.getenv("RAG_HNSW_ITERATIVE_SCAN", "relaxed_order").strip()
+
+# One-shot latch. The setting does not exist before pgvector 0.8, and retrying
+# a statement that will always fail once per search is pure latency.
+_ITERATIVE_SCAN_SUPPORTED: Optional[bool] = None
+
+
+def _enable_iterative_scan(session) -> None:
+    """Make filtered HNSW search return rows instead of silently returning few.
+
+    Without this, ``ORDER BY embedding <=> :q ... WHERE project_id = :p`` is a
+    post-filter: HNSW picks its nearest candidates across the WHOLE table and
+    Postgres then discards the ones from other projects. On a multi-tenant
+    table that can leave nothing at all -- measured on live, a project with
+    13,922 of 172,809 chunks returned 0 rows with "Rows Removed by Filter: 39".
+
+    Best-effort by design. On pgvector < 0.8 the GUC does not exist; the search
+    still works, just with the old recall, so a failure here must never break
+    retrieval. It is latched rather than swallowed silently: logged once, then
+    skipped.
+    """
+    global _ITERATIVE_SCAN_SUPPORTED
+    if _ITERATIVE_SCAN_SUPPORTED is False or not _ITERATIVE_SCAN_MODE:
+        return
+    if _ITERATIVE_SCAN_MODE not in ("relaxed_order", "strict_order", "off"):
+        logger.warning(
+            "invalid RAG_HNSW_ITERATIVE_SCAN=%r; expected relaxed_order / "
+            "strict_order / off — leaving the default in place",
+            _ITERATIVE_SCAN_MODE,
+        )
+        _ITERATIVE_SCAN_SUPPORTED = False
+        return
+    try:
+        session.execute(text(f"SET LOCAL hnsw.iterative_scan = {_ITERATIVE_SCAN_MODE}"))
+        _ITERATIVE_SCAN_SUPPORTED = True
+    except Exception as exc:  # noqa: BLE001 — recall optimisation, not a gate
+        if _ITERATIVE_SCAN_SUPPORTED is None:
+            logger.warning(
+                "hnsw.iterative_scan unavailable (%s); filtered vector search "
+                "keeps pgvector's post-filter recall — upgrade to pgvector 0.8+",
+                exc,
+            )
+        _ITERATIVE_SCAN_SUPPORTED = False
+
+
 def _rag_vector_namespace() -> str:
     """Active RAG vector namespace. Legacy ``chunks`` table = empty string."""
     return os.getenv("RAG_VECTOR_NAMESPACE", "v2").strip()
@@ -1009,6 +1058,27 @@ class VectorStore:
     def _search_pgvector(
         self, project_id: str, query_vec: np.ndarray, k: int
     ) -> List[Chunk]:
+        """Nearest chunks for ONE project, via the HNSW index.
+
+        The project filter is the whole problem here. HNSW searches the entire
+        table and Postgres applies ``WHERE project_id = ...`` to whatever the
+        index hands back, so a project's rows can be filtered out to nothing
+        even when it has thousands of chunks. Measured on live 2026-08-23,
+        project 184921da (13,922 chunks of a 172,809-chunk table)::
+
+            Index Scan using chunks_v2_embedding_hnsw  (actual rows=0)
+              Filter: ((project_id)::text = '184921da'::text)
+              Rows Removed by Filter: 39
+
+        Zero rows returned. The same query with the index disabled returns 10.
+        And it is not binary -- 'effective date of the agreement' returned 3 of
+        10, so recall degrades silently on ordinary queries, which is worse
+        than failing outright because nothing looks wrong.
+
+        ``_enable_iterative_scan`` is what fixes it: pgvector keeps scanning
+        until enough rows survive the filter instead of giving up after the
+        first ef_search candidates.
+        """
         q_list = query_vec.tolist()
         # EmbeddingVector is a TypeDecorator; cast to Vector for pgvector ops.
         vec_col = cast(self._rag_chunk_cls.embedding, Vector(self.dim))
@@ -1031,6 +1101,7 @@ class VectorStore:
         )
         with self._lock:
             with self._session_factory()() as session:
+                _enable_iterative_scan(session)
                 rows = session.execute(stmt).all()
         return [
             Chunk(
