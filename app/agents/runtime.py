@@ -319,12 +319,45 @@ _TOOL_FORMAT_RETRY_NUDGE = (
     "in this thread. Do not emit JSON tool arguments or search payloads."
 )
 
+# Live M15: the hat ended on "let me search / I'll pull the WIR" after the
+# search-tool cap, which the UI rendered as an incomplete / empty generation.
+_SEARCH_PREAMBLE_RE = re.compile(
+    r"^\s*(?:okay[,.]?\s+|sure[,.]?\s+|thanks[,.]?\s+)?"
+    r"(?:let me |i(?:'ll| will) )?"
+    r"(?:search|pull|look(?:\s+it)?\s+up|check the (?:project )?documents|"
+    r"find the (?:template|form|spec))",
+    re.IGNORECASE,
+)
+_SEARCH_PREAMBLE_RETRY_NUDGE = (
+    "Do not search again. Write the complete deliverable now in plain text "
+    "using the operator facts and any tool results already in this thread. "
+    "A WIR / inspection request, claim notice, or as-built note must include "
+    "scope, the stated numbers, hold/witness or variance, and signatories."
+)
 
-def _final_text_needs_forced_retry(text: str) -> bool:
+
+def _looks_like_search_preamble(text: str) -> bool:
+    """True when the model stopped on a search promise instead of writing."""
+    t = (text or "").strip()
+    if not t or len(t) > 500 or t.count("\n") > 6:
+        return False
+    return bool(_SEARCH_PREAMBLE_RE.search(t))
+
+
+def _final_text_needs_forced_retry(
+    text: str, *, user_message: str | None = None,
+) -> bool:
     """True when sanitization left no usable user-facing answer."""
     if not (text or "").strip():
         return True
-    return text == _TOOL_FORMAT_FALLBACK
+    if text == _TOOL_FORMAT_FALLBACK:
+        return True
+    if _looks_like_search_preamble(text) and (
+        _is_document_deliverable_request(user_message)
+        or _is_generative_request(user_message or "")
+    ):
+        return True
+    return False
 
 # Keys that strongly indicate an internal search tool argument payload.
 _SEARCH_TOOL_ARG_KEYS = {
@@ -920,6 +953,77 @@ async def _predispatch_resource_histogram(
         }
     except Exception:  # noqa: BLE001
         _LOG.warning("histogram pre-dispatch failed; continuing normally",
+                     exc_info=True)
+        return None
+
+
+_WIR_FORM_RE = re.compile(
+    r"\b("
+    r"work inspection request|\bwir\b|inspection request|"
+    r"wir form|wir template"
+    r")\b",
+    re.IGNORECASE,
+)
+_WIR_QA_RE = re.compile(
+    r"\b(what is|what's|whats|explain|define)\b",
+    re.IGNORECASE,
+)
+
+
+def _message_wants_wir_form(text: str) -> bool:
+    """True when the turn is a WIR / inspection-request deliverable.
+
+    Live M15: pinned construction-pm searched the named WIR template and
+    returned empty. Predispatch writes the form from operator facts.
+    """
+    low = (text or "").strip()
+    if not low or _WIR_QA_RE.search(low):
+        return False
+    return bool(_WIR_FORM_RE.search(low))
+
+
+async def _predispatch_wir_form(
+    agent: "Agent", messages: list, project_id: str | None,
+) -> dict[str, Any] | None:
+    """Run ``wir_form`` before the model can search-loop a WIR template.
+
+    Pinned ``construction-pm`` skips predefined intercept (F24). Kill-switch:
+    ``AGENT_WIR_PREDISPATCH=0``.
+    """
+    if os.getenv("AGENT_WIR_PREDISPATCH", "1") == "0":
+        return None
+    if "construction" not in getattr(agent, "allowed_blocks", ()):
+        return None
+    try:
+        user_msg, _history = _messages_user_and_history(messages)
+        if not user_msg or not _message_wants_wir_form(user_msg):
+            return None
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+        result = await container.wir_form(
+            {"text": user_msg}, {"user_message": user_msg},
+        )
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        rendered = _format_wir_form(result)
+        messages.append({
+            "role": "user",
+            "content": (
+                "PLATFORM PRE-DISPATCH: wir_form has ALREADY been run from "
+                "the operator facts in this turn. Authoritative draft:\n"
+                f"{rendered}\n"
+                "Present this WIR in full. Do not search again for the "
+                "template. Do not claim the inspection was issued."
+            ),
+        })
+        return {
+            "name": "wir_form",
+            "ok": True,
+            "predispatched": True,
+            "result": result,
+        }
+    except Exception:  # noqa: BLE001
+        _LOG.warning("WIR pre-dispatch failed; continuing normally",
                      exc_info=True)
         return None
 
@@ -2428,7 +2532,9 @@ _DOCUMENT_DELIVERABLE_RE = re.compile(
     r"job requisition|prequalification shortlist|"
     r"design directive|"
     r"commissioning checklist|"
-    r"inspection request|\bwir\b|"
+    r"inspection request|work inspection request|\bwir\b|"
+    r"delay claim|claim notice|eot claim|"
+    r"as-built deviation|as built deviation|"
     r"o\s*&\s*m(?:\s+manual)?|\bom manual\b|"
     r"\bncr\b|non[-\s]?conformance|"
     r"punch list|qc inspection"
@@ -2505,6 +2611,73 @@ def _format_commissioning_tool(payload: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def _format_wir_form(payload: dict[str, Any]) -> str:
+    """User-facing WIR from a successful ``wir_form`` tool / predispatch."""
+    lines = [
+        f"**Work Inspection Request — {payload.get('wir_number') or 'DRAFT-WIR'}**",
+        f"**Location:** {payload.get('location') or '—'}",
+        f"**Activity:** {payload.get('activity') or '—'}",
+        "",
+        f"### 1. Scope",
+        str(payload.get("scope") or "As stated by the operator."),
+        "",
+    ]
+    mix = payload.get("mix") or ""
+    vol = payload.get("volume_m3")
+    week = payload.get("week")
+    supplier = payload.get("supplier") or ""
+    facts = []
+    if week:
+        facts.append(f"Week {week}")
+    if mix:
+        facts.append(mix)
+    if vol not in (None, ""):
+        facts.append(f"{vol} m³")
+    if payload.get("manhole_range"):
+        facts.append(str(payload["manhole_range"]))
+    elif payload.get("manhole_count"):
+        facts.append(f"{payload['manhole_count']} manholes")
+    if supplier:
+        facts.append(f"supplier {supplier}")
+    if facts:
+        lines.append("**Stated facts:** " + "; ".join(facts))
+        lines.append("")
+    tmpl = payload.get("template") or ""
+    if tmpl:
+        lines.append(f"**Template:** {tmpl}")
+        lines.append("")
+    lines.append("### 2. Pre-pour checklist")
+    for row in payload.get("checklist") or []:
+        if isinstance(row, dict):
+            lines.append(f"- [ ] {row.get('item') or row}")
+        else:
+            lines.append(f"- [ ] {row}")
+    lines.append("")
+    lines.append("### 3. Hold points")
+    for h in payload.get("hold_points") or []:
+        lines.append(f"- {h}")
+    lines.append("")
+    lines.append("### 4. Witness points")
+    for w in payload.get("witness_points") or []:
+        lines.append(f"- {w}")
+    lines.append("")
+    lines.append("### 5. Sign-off")
+    lines.append("| Party | Status |")
+    lines.append("|-------|--------|")
+    for s in payload.get("signatories") or []:
+        if isinstance(s, dict):
+            lines.append(
+                f"| {s.get('party') or '—'} | {s.get('status') or 'pending'} |"
+            )
+    lines.append("")
+    if payload.get("notice"):
+        lines.append(str(payload["notice"]))
+        lines.append("")
+    if payload.get("note"):
+        lines.append(str(payload["note"]))
+    return "\n".join(lines).strip()
+
+
 def _recover_answer_from_tool_messages(
     text: str,
     messages: list[dict[str, Any]] | None,
@@ -2514,6 +2687,15 @@ def _recover_answer_from_tool_messages(
     if (text or "").strip() != _EMPTY_RESPONSE_FALLBACK:
         return text
     for m in reversed(messages or []):
+        if m.get("role") == "user":
+            raw_user = str(m.get("content") or "")
+            if "PLATFORM PRE-DISPATCH: wir_form" in raw_user[:80]:
+                draft = raw_user.split("Authoritative draft:", 1)
+                if len(draft) == 2:
+                    body = draft[1].split("\nPresent this WIR", 1)[0].strip()
+                    if body:
+                        return body
+            continue
         if m.get("role") != "tool":
             continue
         raw = m.get("content") or ""
@@ -2526,6 +2708,8 @@ def _recover_answer_from_tool_messages(
         action = payload.get("action")
         if action == "commissioning_checklist_generated":
             return _format_commissioning_tool(payload)
+        if action == "wir_form":
+            return _format_wir_form(payload)
         if action == "resource_histogram_generated":
             kind = payload.get("histogram_kind") or "labor"
             periods = payload.get("periods") or []
@@ -3808,6 +3992,26 @@ def _http_400_is_retryable(body: str) -> bool:
     return False
 
 
+def _llm_choice_is_empty_or_filtered(choice: Any) -> bool:
+    """True when the provider accepted the request but produced no usable turn.
+
+    Live M12: Kimi HTTP 200 + ``finish_reason=content_filter`` + empty
+    content on construction-pm. Live M9: contracts-manager HTTP 200 with
+    empty content and no tool_calls. Both used to be treated as a
+    successful empty answer. Another provider on the ladder can still
+    serve the turn.
+    """
+    if not isinstance(choice, dict):
+        return True
+    reason = str(choice.get("finish_reason") or "").lower().replace("-", "_")
+    if reason in {"content_filter", "safety"}:
+        return True
+    msg = choice.get("message") or {}
+    if msg.get("tool_calls"):
+        return False
+    return not (msg.get("content") or "").strip()
+
+
 def _normalize_tool_call_ids(tool_calls: list[Any]) -> list[Any]:
     """Give every tool_call a stable id. Kimi infers ``name:index`` when ``id``
     is missing; our tool results must use the same string or the next call 400s.
@@ -4753,10 +4957,13 @@ class Agent:
         )
         if _hist_pre:
             tool_calls_made.append(_hist_pre)
+        _wir_pre = await _predispatch_wir_form(self, messages, project_id)
+        if _wir_pre:
+            tool_calls_made.append(_wir_pre)
 
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and not _hist_pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -4839,9 +5046,11 @@ class Agent:
                     # If sanitization left nothing usable (empty or raw tool JSON
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
-                    if _final_text_needs_forced_retry(final_text):
+                    if _final_text_needs_forced_retry(final_text, user_message=user_message):
                         if final_text == _TOOL_FORMAT_FALLBACK:
                             messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
+                        elif _looks_like_search_preamble(final_text):
+                            messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if forced_resp.get("status") == "error":
                             final_text = _EMPTY_RESPONSE_FALLBACK
@@ -4851,7 +5060,7 @@ class Agent:
                                 forced_msg.get("content") or "",
                                 messages=messages, tool_results=tool_calls_made,
                             )
-                            if _final_text_needs_forced_retry(final_text):
+                            if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
@@ -4959,7 +5168,7 @@ class Agent:
             forced_msg.get("content") or "",
             messages=messages, tool_results=tool_calls_made,
         )
-        if _final_text_needs_forced_retry(final_text):
+        if _final_text_needs_forced_retry(final_text, user_message=user_message):
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
         final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
@@ -5379,9 +5588,34 @@ class Agent:
                    "result": _hist_summary,
                    "predispatched": True}
 
+        _wir_pre = await _predispatch_wir_form(self, messages, project_id)
+        if _wir_pre:
+            _note_tool(_wir_pre["name"])
+            stream_tool_results.append(_wir_pre)
+            _wir_summary = _summarize_result(_wir_pre.get("result"))
+            yield {"type": "tool_call",
+                   "tool": _wir_pre["name"],
+                   "name": _wir_pre["name"],
+                   "args_preview": json.dumps({
+                       "action": "wir_form",
+                       "wir_number": (
+                           (_wir_pre.get("result") or {}).get("wir_number")
+                           if isinstance(_wir_pre.get("result"), dict)
+                           else None
+                       ),
+                   }, default=str)[:200],
+                   "predispatched": True}
+            yield {"type": "tool_result",
+                   "tool": _wir_pre["name"],
+                   "name": _wir_pre["name"],
+                   "ok": True,
+                   "summary": _wir_summary[:400],
+                   "result": _wir_summary,
+                   "predispatched": True}
+
         # Fast path: exact reference miss with no RAG context. Skip when a
         # named project file was already fetched/extracted from disk.
-        if not _pre and not _wbs_pre and not _hist_pre and _should_short_circuit_rag_miss(
+        if not _pre and not _wbs_pre and not _hist_pre and not _wir_pre and _should_short_circuit_rag_miss(
             _rag_audit, _rag_sys_msg, user_message
         ):
             answer = _build_missing_reference_answer(project_id, user_id)
@@ -5609,13 +5843,15 @@ class Agent:
                     # If sanitization left nothing usable (empty or raw tool JSON
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
-                    if _final_text_needs_forced_retry(final_text):
+                    if _final_text_needs_forced_retry(final_text, user_message=user_message):
                         _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
                         if _timing:
                             _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
                                          len(raw_content), time.monotonic() - _turn_t0)
                         if final_text == _TOOL_FORMAT_FALLBACK:
                             messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
+                        elif _looks_like_search_preamble(final_text):
+                            messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
                         _fr_t0 = time.monotonic()
                         forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
                         if _timing:
@@ -5630,7 +5866,7 @@ class Agent:
                                 forced_msg.get("content") or "",
                                 messages=messages, tool_results=stream_tool_results,
                             )
-                            if _final_text_needs_forced_retry(final_text):
+                            if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
@@ -5768,7 +6004,7 @@ class Agent:
             forced_msg.get("content") or "",
             messages=messages, tool_results=stream_tool_results,
         )
-        if _final_text_needs_forced_retry(final_text):
+        if _final_text_needs_forced_retry(final_text, user_message=user_message):
             # Forced retry returned empty or raw tool JSON — substitute the
             # user-safe fallback so the UI never renders an empty bubble.
             _LOG.warning("chat_stream: forced final unusable, using fallback")
@@ -6156,6 +6392,25 @@ class Agent:
                             self.name, a_cfg.get("provider"),
                             data.get("model") or a_model, len(msg.get("content") or ""),
                         )
+                if _llm_choice_is_empty_or_filtered(choice) and not is_last:
+                    skip_providers.add(str(a_cfg.get("provider") or ""))
+                    nxt_provider = next(
+                        (c[0].get("provider") for c in attempts[attempt_idx + 1:]
+                         if c[0].get("provider") not in skip_providers),
+                        attempts[attempt_idx + 1][0]["provider"],
+                    )
+                    last_error = {
+                        "status": "error",
+                        "error": (
+                            f"{a_cfg['provider']} empty or content-filtered "
+                            "completion"
+                        ),
+                    }
+                    _LOG.warning(
+                        "llm: %s empty/content-filter — falling back to %s",
+                        a_cfg["provider"], nxt_provider,
+                    )
+                    continue
                 return {"status": "success", "choice": choice, "raw": data}
             except Exception as e:  # noqa: BLE001 — response parse / rewrite
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} response error: {e}"}

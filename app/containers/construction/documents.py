@@ -1806,6 +1806,215 @@ class ConstructionDocumentsMixin:
             "chat_context": "\n".join(chat_context_parts),
             "raw_doc_result": doc_result,
         }
+
+    async def wir_form(self, input_data: Any, params: Dict) -> Dict:
+        """Draft a Work Inspection Request from operator facts (PRC-405).
+
+        Live M15: a named WIR template plus pour facts used to search-loop
+        and return an empty bubble because ``inspection_request`` delegated
+        to photo ``qa_qc_inspection``. This action writes the form from the
+        user message. It does not invent an issued WIR number and does not
+        require an inspection photograph.
+        """
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        text = " ".join(
+            str(x)
+            for x in (
+                p.get("text"),
+                p.get("user_message"),
+                data.get("text"),
+                data.get("user_message"),
+                data.get("scope"),
+            )
+            if x
+        )
+        facts = self._wir_facts_from_text(text)
+        for key in (
+            "location", "activity", "mix", "volume_m3", "week",
+            "manhole_count", "manhole_range", "supplier", "template",
+            "wir_number",
+        ):
+            if p.get(key) not in (None, "") and not facts.get(key):
+                facts[key] = p[key]
+            elif data.get(key) not in (None, "") and not facts.get(key):
+                facts[key] = data[key]
+
+        hold_points = self._wir_hold_points(text, facts)
+        witness_points = self._wir_witness_points(text, facts)
+        checklist = self._wir_pre_pour_checklist(facts)
+        template = facts.get("template") or ""
+        wir_number = facts.get("wir_number") or "DRAFT-WIR"
+        location = facts.get("location") or "as stated by the operator"
+        activity = facts.get("activity") or "Works described in the operator message"
+        mix = facts.get("mix") or ""
+        volume = facts.get("volume_m3")
+        volume_s = f"{volume} m³" if volume not in (None, "") else ""
+        week = facts.get("week")
+        mh = facts.get("manhole_range") or (
+            f"{facts['manhole_count']} manholes" if facts.get("manhole_count") else ""
+        )
+        supplier = facts.get("supplier") or ""
+
+        scope_bits = [activity]
+        if week:
+            scope_bits.append(f"Week {week}")
+        if mh:
+            scope_bits.append(mh)
+        if mix:
+            scope_bits.append(mix)
+        if volume_s:
+            scope_bits.append(volume_s)
+        if supplier:
+            scope_bits.append(f"supplier {supplier}")
+        scope = " — ".join(scope_bits)
+
+        from app.core.procedure_actions import procedure_metadata
+        meta = procedure_metadata("inspection_request")
+
+        return {
+            "status": "success",
+            "action": "wir_form",
+            "execution_mode": "drafted",
+            "procedure_id": "PRC-405",
+            "wir_number": wir_number,
+            "issued": False,
+            "template": template,
+            "location": location,
+            "activity": activity,
+            "mix": mix,
+            "volume_m3": volume,
+            "week": week,
+            "manhole_count": facts.get("manhole_count"),
+            "manhole_range": facts.get("manhole_range"),
+            "supplier": supplier,
+            "scope": scope,
+            "hold_points": hold_points,
+            "witness_points": witness_points,
+            "checklist": checklist,
+            "signatories": [
+                {"party": "Contractor QC", "status": "pending"},
+                {"party": "Engineer / Inspector", "status": "pending"},
+            ],
+            "notice": (
+                "24-hour minimum notice to the Engineer / Inspector before pour. "
+                "No concrete shall be placed until this inspection request is signed off."
+            ),
+            "note": (
+                "Draft WIR from operator-supplied facts — not an issued inspection. "
+                "Missing fields are left blank rather than invented."
+            ),
+            "procedure_context": {
+                "orchestrator_action": "inspection_request",
+                "procedure_id": "PRC-405",
+                "execution_mode": "delegated",
+                "delegate_action": "wir_form",
+                "procedure_title": meta.get("procedure_title") or "",
+            },
+        }
+
+    def _wir_facts_from_text(self, text: str) -> Dict[str, Any]:
+        t = text or ""
+        facts: Dict[str, Any] = {}
+        week = re.search(r"\bweek\s*[- ]?\s*(\d+)\b", t, re.IGNORECASE)
+        if week:
+            facts["week"] = week.group(1)
+        vol = re.search(r"(\d+(?:\.\d+)?)\s*m(?:³|3)\b", t, re.IGNORECASE)
+        if vol:
+            facts["volume_m3"] = vol.group(1)
+        mix = re.search(
+            r"\b(C[-\s]?\d{2}(?:\s*[-/]?\s*(?:SRC|OPC|PPC))?)\b",
+            t,
+            re.IGNORECASE,
+        )
+        if mix:
+            facts["mix"] = re.sub(r"\s+", " ", mix.group(1)).replace(" ", "").upper()
+            facts["mix"] = re.sub(r"C-?", "C-", facts["mix"], count=1)
+            if facts["mix"].endswith("SRC") and "-" not in facts["mix"][3:]:
+                facts["mix"] = re.sub(r"(C-\d{2})SRC", r"\1 SRC", facts["mix"])
+        mh_n = re.search(r"(\d+)\s+manholes?\b", t, re.IGNORECASE)
+        if mh_n:
+            facts["manhole_count"] = int(mh_n.group(1))
+        mh_rng = re.search(
+            r"\b(MH[-\s]?\d+(?:[-\s]?\d+)*)\s+(?:to|through|–|-)\s+"
+            r"(MH[-\s]?\d+(?:[-\s]?\d+)*)",
+            t,
+            re.IGNORECASE,
+        )
+        if mh_rng:
+            facts["manhole_range"] = (
+                f"{mh_rng.group(1).replace(' ', '')} to "
+                f"{mh_rng.group(2).replace(' ', '')}"
+            )
+        supplier = re.search(r"\bsupplier\s+([A-Za-z0-9][A-Za-z0-9._-]*)", t, re.I)
+        if supplier:
+            facts["supplier"] = supplier.group(1).rstrip(".,;:")
+        loc = re.search(
+            r"\b(Boulevard [^,.;]+|Zone [A-Za-z0-9]+|PWPS[-\s]?\d+)\b",
+            t,
+            re.IGNORECASE,
+        )
+        if loc:
+            facts["location"] = loc.group(1).strip()
+        if re.search(r"\b(collar|collars|blinding|pour)\b", t, re.I):
+            if re.search(r"\bcollar", t, re.I):
+                facts["activity"] = "Stormwater manhole collar concrete pour"
+            elif re.search(r"\bblinding\b", t, re.I):
+                facts["activity"] = "Blinding concrete pour"
+            else:
+                facts["activity"] = "Concrete pour"
+        for token in re.findall(r"\S+\.(?:docx|doc|xlsx)", t, re.IGNORECASE):
+            if "wir" in token.lower():
+                facts["template"] = token.strip(".,;:()")
+                break
+        num = re.search(r"\b((?:WIR|IR)[-_/][A-Za-z0-9][\w./-]*)\b", t, re.IGNORECASE)
+        if num and not re.search(r"\.(docx|doc|xlsx)$", num.group(1), re.I):
+            facts["wir_number"] = num.group(1)
+        return facts
+
+    def _wir_hold_points(self, text: str, facts: Dict[str, Any]) -> List[str]:
+        holds = [
+            "Formation / setting-out accepted against approved drawings",
+            "Formwork / collar dimensions and alignment checked",
+            "Reinforcement fixed; cover spacers in place (hold before pour)",
+            "Concrete mix design and delivery tickets available for the stated class",
+            "24-hour notice given to the Engineer / Inspector; no pour until sign-off",
+        ]
+        if facts.get("mix"):
+            holds[3] = (
+                f"Concrete mix design and delivery tickets available for {facts['mix']}"
+            )
+        return holds
+
+    def _wir_witness_points(self, text: str, facts: Dict[str, Any]) -> List[str]:
+        low = (text or "").lower()
+        points = []
+        if "slump" in low or facts.get("mix"):
+            points.append("Slump test at discharge (witness)")
+        if "cube" in low or facts.get("mix"):
+            points.append("Cube sampling and identification (witness)")
+        if "cover" in low or facts.get("mix"):
+            points.append("Cover to reinforcement immediately before pour (witness)")
+        if not points:
+            points = [
+                "Hold / witness attendance as required by the ITP for this activity",
+            ]
+        return points
+
+    def _wir_pre_pour_checklist(self, facts: Dict[str, Any]) -> List[Dict[str, str]]:
+        rows = [
+            {"item": "Subgrade / formation clean, levels checked", "status": ""},
+            {"item": "Lines, levels, and collar / edge formwork", "status": ""},
+            {"item": "Reinforcement type, laps, and cover", "status": ""},
+            {"item": "Mix class, slump, and cube moulds ready", "status": ""},
+            {"item": "Safe access, curing, and weather protection", "status": ""},
+        ]
+        if facts.get("mix"):
+            rows[3]["item"] = (
+                f"Mix {facts['mix']}, slump equipment, and cube moulds ready"
+            )
+        return rows
+
     async def qa_qc_inspection(self, input_data: Any, params: Dict) -> Dict:
         """Quality control inspection from photos or drawings"""
         data = input_data if isinstance(input_data, dict) else {}

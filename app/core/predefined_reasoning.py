@@ -54,6 +54,8 @@ SCOPED_DISPATCH_ALLOWLIST = frozenset({
     "esg_sustainability_report",
     "carbon_footprint_calculator",
     "safety_compliance_audit",
+    "wir_form",
+    "inspection_request",
     "tender_bid_analysis",
     "daily_site_report",
     "forensic_delay_analysis",

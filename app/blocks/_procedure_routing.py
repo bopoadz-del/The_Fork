@@ -116,6 +116,8 @@ PROCEDURE_ROUTING_ADDITIONS = [
             "contractor inspection", "material inspection",
             "witness inspection", "hold point release",
             "inspection result", "inspection rejection",
+            "WIR", "work inspection request", "work inspection",
+            "WIR form", "WIR template",
         ]
     ),
     (

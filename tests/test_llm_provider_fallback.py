@@ -294,6 +294,50 @@ async def test_kimi_tool_pairing_400_falls_back_to_groq(monkeypatch, http):
 
 
 @pytest.mark.asyncio
+async def test_kimi_content_filter_falls_back_to_groq(monkeypatch, http):
+    """Live M12: HTTP 200 + finish_reason=content_filter used to end empty."""
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    filtered = {
+        "model": "kimi-k2.6",
+        "choices": [{
+            "finish_reason": "content_filter",
+            "message": {"role": "assistant", "content": ""},
+        }],
+        "usage": {"total_tokens": 10},
+    }
+    fake = http(_Resp(200, filtered), _Resp(200, _ok_body("recovered")))
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert len(fake.calls) == 2, fake.urls
+    assert result["status"] == "success", result
+    assert result["choice"]["message"]["content"] == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_kimi_empty_200_falls_back_to_groq(monkeypatch, http):
+    """Live M9: contracts-manager HTTP 200 with empty content, no tools."""
+    _kimi_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    empty = {
+        "model": "kimi-k2.6",
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {"role": "assistant", "content": ""},
+        }],
+        "usage": {"total_tokens": 10},
+    }
+    fake = http(_Resp(200, empty), _Resp(200, _ok_body("claim notice")))
+
+    result = await _agent()._call_llm(list(USER), "kimi-test-key")
+
+    assert len(fake.calls) == 2, fake.urls
+    assert result["status"] == "success", result
+    assert result["choice"]["message"]["content"] == "claim notice"
+
+
+@pytest.mark.asyncio
 async def test_kimi_tokenization_400_falls_back_to_groq(monkeypatch, http):
     _kimi_primary(monkeypatch)
     _groq_fallback(monkeypatch)
