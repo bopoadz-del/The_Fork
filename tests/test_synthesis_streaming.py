@@ -28,6 +28,16 @@ _GROQ_CFG = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _disable_commissioning_remaining(monkeypatch):
+    """These tests need the model to emit the commissioning tool_call.
+
+    Remaining predispatch would draft the checklist first and lock
+    synthesis before iter-0, so _call_llm would never see a tool hop.
+    """
+    monkeypatch.setenv("AGENT_COMMISSIONING_PREDISPATCH", "0")
+
+
 @pytest.fixture
 def groq_streaming(monkeypatch):
     """Enable the streaming path deterministically: groq provider, flag on,

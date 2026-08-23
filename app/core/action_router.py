@@ -128,6 +128,10 @@ ACTION_HINTS: dict[str, str] = {
         "The user wants an as-built deviation note. State planned vs actual "
         "figures and the shortfall; do not invent drawing dimensions.",
     # Safety
+    "safety_briefing":
+        "The user wants a live-haul-road / public-interface safety briefing. "
+        "Cover required signage, speed control, and pedestrian crossings "
+        "from the named diversion drawings. Do not invent an approved TMP.",
     "safety_compliance_audit":
         "The user is doing a safety / HSE compliance check. Reference OSHA "
         "or local regs where applicable; focus on hazards and PPE.",
@@ -300,6 +304,7 @@ GENERATIVE_INTENTS = frozenset({
     "rfp_draft",
     "rfp_management",
     "as_built_deviation_report",
+    "safety_briefing",
     "value_engineering",
     "change_order_impact",
     "variation_order_manager",

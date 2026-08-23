@@ -13,6 +13,7 @@ from unittest.mock import patch, AsyncMock
 import pytest
 
 from app.agents.runtime import Agent
+from tests.conftest import requires_construction_kit
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +32,10 @@ def _stub_llm_key(monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "kimi")
     monkeypatch.setenv("KIMI_API_KEY", "test-key-not-real")
+    # Remaining commissioning predispatch would draft the checklist before
+    # iter-0 and force synthesis immediately. These tests pin the older
+    # "model calls the tool, THEN we lock" path.
+    monkeypatch.setenv("AGENT_COMMISSIONING_PREDISPATCH", "0")
 
 
 def _pa_agent():
@@ -137,3 +142,29 @@ def test_force_synthesis_env_disable(monkeypatch):
             history=[], project_id=None, conversation_id=None, user_id=None,
         ))
     assert seen == [True, True], seen  # kill-switch keeps tools on both calls
+
+
+@requires_construction_kit
+def test_remaining_commissioning_locks_synthesis_immediately(monkeypatch):
+    """Live M3: remaining already drafted the checklist — do not offer tools."""
+    monkeypatch.delenv("AGENT_COMMISSIONING_PREDISPATCH", raising=False)
+    agent = _pa_agent()
+    seen: list = []
+
+    async def fake(_self, messages, api_key, **kwargs):
+        seen.append(kwargs.get("with_tools", True))
+        return {"status": "success", "choice": {"message": {
+            "role": "assistant",
+            "content": "Here is the commissioning checklist.",
+        }}}
+
+    with patch.object(Agent, "_call_llm", fake):
+        events = _drain(agent.chat_stream(
+            user_message=(
+                "Generate a commissioning checklist for the PWPS-02 "
+                "reservoir before the first wet test."
+            ),
+            history=[], project_id=None, conversation_id=None, user_id=None,
+        ))
+    assert seen == [False], seen
+    assert any(e.get("type") == "token" for e in events)
