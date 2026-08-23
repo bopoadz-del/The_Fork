@@ -2,6 +2,7 @@
 
 import logging
 import math
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,6 +11,133 @@ from typing import Any, Dict, List, Optional, Tuple
 from .helpers import _safe_float, _safe_iso_date
 
 logger = logging.getLogger(__name__)
+
+
+def _delay_claim_facts_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """Pull a delay-claim notice from operator-stated days / rate / clause."""
+    t = text or ""
+    days_m = re.search(
+        r"(\d+(?:\.\d+)?)\s+calendar\s+days?",
+        t,
+        re.IGNORECASE,
+    )
+    if not days_m:
+        days_m = re.search(
+            r"access was given\s+(\d+(?:\.\d+)?)\s+calendar\s+days?",
+            t,
+            re.IGNORECASE,
+        )
+    rate_m = re.search(
+        r"(\d+(?:\.\d+)?)\s*%\s+of\s+(?:the\s+)?(?:contract\s+price|contract\s+sum)",
+        t,
+        re.IGNORECASE,
+    )
+    clause_m = re.search(
+        r"clause\s+(\d+(?:\.\d+)*)",
+        t,
+        re.IGNORECASE,
+    )
+    if not days_m:
+        return None
+    milestone = ""
+    ms = re.search(
+        r"(Milestone\s+\d+\s*\([^)]+\))",
+        t,
+        re.IGNORECASE,
+    )
+    if ms:
+        milestone = ms.group(1)
+    comms = "Aconex" if re.search(r"\baconex\b", t, re.I) else ""
+    return {
+        "delay_days": float(days_m.group(1)),
+        "rate_percent_per_day": float(rate_m.group(1)) if rate_m else None,
+        "clause": clause_m.group(1) if clause_m else "",
+        "milestone": milestone,
+        "communication": comms,
+        "source_text": t,
+    }
+
+
+def _operator_milestones_from_text(text: str) -> Dict[str, Any]:
+    """Extract Time for Completion / Milestone N (name, days) from a brief."""
+    t = text or ""
+    out: Dict[str, Any] = {}
+    tfc = re.search(
+        r"time\s+for\s+completion[^\d]{0,40}(\d+)\s*days?",
+        t,
+        re.IGNORECASE,
+    )
+    if tfc:
+        out["time_for_completion_days"] = int(tfc.group(1))
+    milestones = []
+    for m in re.finditer(
+        r"milestone\s+(\d+)\s*\(([^,]+),\s*(\d+)\s*days?\)",
+        t,
+        re.IGNORECASE,
+    ):
+        milestones.append({
+            "id": int(m.group(1)),
+            "name": m.group(2).strip(),
+            "days": int(m.group(3)),
+        })
+    if milestones:
+        out["milestones"] = milestones
+    return out
+
+
+def _draft_delay_claim_notice(
+    facts: Dict[str, Any],
+    notification_date: str,
+) -> Dict[str, Any]:
+    days = facts.get("delay_days")
+    rate = facts.get("rate_percent_per_day")
+    clause = facts.get("clause") or "8.8"
+    milestone = facts.get("milestone") or "the stated milestone"
+    comms = facts.get("communication") or "the approved communication method"
+    rate_s = f"{rate:g}% of the Contract Price per calendar day" if rate else (
+        "the delay-damages rate stated in Contract Data"
+    )
+    quantum = None
+    if rate is not None and days is not None:
+        quantum = (
+            f"{rate:g}% × Contract Price × {days:g} calendar days. "
+            "Contract Price is not restated in this turn — apply the "
+            "Accepted Contract Amount from Contract Data."
+        )
+    notice = (
+        f"DELAY CLAIM NOTICE — Clause {clause}\n\n"
+        f"The Contractor gives notice of delay to {milestone}. "
+        f"Access was given {days:g} calendar days after the Engineer "
+        f"instructed date. Delay damages for this milestone are {rate_s}.\n\n"
+        f"This notice is issued via {comms}. "
+        "It is a draft from operator-supplied facts — not a submitted claim."
+    )
+    return {
+        "status": "success",
+        "action": "claim_generated",
+        "claim_type": "delay_notice",
+        "claim_number": "DRAFT-CLAIM",
+        "issued": False,
+        "notification_date": notification_date,
+        "clause": clause,
+        "milestone": milestone,
+        "delay_days": days,
+        "rate_percent_per_day": rate,
+        "communication": comms,
+        "quantum_formula": quantum,
+        "claim_narrative": {
+            "executive_summary": notice,
+            "full_narrative": notice,
+        },
+        "delay_summary": {
+            "total_delay_days": days,
+            "delay_events_count": 1,
+        },
+        "note": (
+            "Draft delay-claim notice from operator facts. "
+            "No events were invented."
+        ),
+    }
 
 
 class ConstructionScheduleMixin:
@@ -545,6 +673,8 @@ class ConstructionScheduleMixin:
                 checklists["building_envelope"] = self._generate_facade_commissioning()
             elif system in ("waterproofing", "waterproof", "membrane"):
                 checklists["waterproofing"] = self._generate_waterproofing_commissioning()
+            elif system in ("reservoir", "pwps", "wet_test", "hydraulic", "concrete"):
+                checklists["reservoir"] = self._generate_reservoir_commissioning()
             elif system in ("bms", "automation"):
                 checklists["bms"] = self._generate_bms_commissioning()
     
@@ -855,7 +985,22 @@ class ConstructionScheduleMixin:
         baseline_file = data.get("baseline_file") or p.get("baseline_file")
         notification_date = p.get("notification_date", datetime.now(timezone.utc).isoformat())
         claim_type = p.get("claim_type", "eot")
-    
+        text = " ".join(
+            str(x)
+            for x in (
+                p.get("text"),
+                p.get("user_message"),
+                data.get("text"),
+                data.get("user_message"),
+                data.get("message"),
+                input_data if isinstance(input_data, str) else "",
+            )
+            if x
+        )
+        notice_facts = _delay_claim_facts_from_text(text)
+        if notice_facts and not delay_events and not (schedule_file and baseline_file):
+            return _draft_delay_claim_notice(notice_facts, notification_date)
+
         if not delay_events and not (schedule_file and baseline_file):
             # Honest gate — NEVER fabricate delay events. A claim built on invented
             # events produces a $-quantified EOT/quantum figure with no basis.
@@ -2172,6 +2317,7 @@ class ConstructionScheduleMixin:
             activities, start_date
         )
 
+        operator_ms = _operator_milestones_from_text(brief)
         result: Dict[str, Any] = {
             "status": "success",
             "wbs_id": f"wbs-{uuid.uuid4().hex[:8]}",
@@ -2184,13 +2330,26 @@ class ConstructionScheduleMixin:
             "wbs_tree": wbs_tree,
             "summary": summary,
             "procurement_injected": procurement_injected,
-            "target_milestones": target_milestones,
+            "target_milestones": target_milestones or [
+                {
+                    "id": m.get("id"),
+                    "name": m.get("name"),
+                    "duration_days": m.get("days"),
+                }
+                for m in (operator_ms.get("milestones") or [])
+            ],
             "assumptions": [
                 "Rule-of-thumb activity durations; replace with project-specific data when available.",
                 "FS-only predecessors; no SS/FF/SF; zero lag.",
                 "Zone-multiplier scales repeatable activities to reach target_count.",
             ],
         }
+        if operator_ms:
+            result["operator_milestones"] = operator_ms
+            result["assumptions"].append(
+                "Operator-stated milestone durations (calendar days) are "
+                "shown as separate branches and were not invented."
+            )
         if applied_overrides:
             result["duration_overrides_applied"] = applied_overrides
             bits = [

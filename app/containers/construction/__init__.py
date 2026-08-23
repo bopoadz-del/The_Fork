@@ -1361,6 +1361,18 @@ class ConstructionContainer(
             {"test": "Protection board before backfill", "standard": "Project spec", "witness_required": True, "hold_point": True, "acceptance_criteria": "Protection in place; no plant tracking on bare membrane"},
             {"test": "Backfill release", "standard": "ITP hold point", "witness_required": True, "hold_point": True, "acceptance_criteria": "Engineer / QC sign-off recorded before backfill"},
         ]
+
+    def _generate_reservoir_commissioning(self) -> List[Dict]:
+        """First wet-test checks for a PWPS / reservoir — not a membrane holiday test."""
+        return [
+            {"test": "Pre-fill cleanliness", "standard": "Project spec / PWPS method statement", "witness_required": True, "hold_point": True, "acceptance_criteria": "Debris, laitance and construction residue removed; outlets clear"},
+            {"test": "Concrete strength — C21-OPC cubes", "standard": "Cast in-situ concrete spec", "witness_required": True, "hold_point": True, "acceptance_criteria": "Cubes meet C21-OPC; mix and pour volumes recorded (planned vs actual)"},
+            {"test": "Blinding extent and volume", "standard": "Pour record / IFC", "witness_required": True, "acceptance_criteria": "Blinding as poured; shortfall vs planned volume noted before fill"},
+            {"test": "Inlet and outlet isolation", "standard": "PWPS O&M / method statement", "witness_required": True, "hold_point": True, "acceptance_criteria": "Valves isolated; no backflow into live mains during first wet test"},
+            {"test": "First wet test / watertightness", "standard": "BS 8007 / project spec", "witness_required": True, "hold_point": True, "acceptance_criteria": "No visible leakage during hold; seepage within spec"},
+            {"test": "Fill and drawdown cycle", "standard": "Project commissioning plan", "witness_required": True, "acceptance_criteria": "Controlled fill; drawdown rate and residual volume recorded"},
+            {"test": "Level gauges and instrumentation", "standard": "Manufacturer / PWPS spec", "witness_required": False, "acceptance_criteria": "Gauges reading; alarms proved if installed"},
+        ]
     def _generate_bms_commissioning(self) -> List[Dict]:
         return [
             {"test": "Point-to-Point Checkout", "standard": "ASHRAE Guideline 13", "witness_required": False, "acceptance_criteria": "100% points verified"},
@@ -2248,7 +2260,11 @@ class ConstructionContainer(
             "mosque", "clinic", "storey", "story building",
         )):
             return "building"
-        if any(k in text for k in ("road", "bridge", "highway", "rail", "tunnel", "utility corridor")):
+        if any(k in text for k in (
+            "road", "bridge", "highway", "rail", "tunnel", "utility corridor",
+            "community", "gated", "boulevard", "reservoir", "access-gated",
+            "milestone 1", "pwps",
+        )):
             return "infrastructure"
         # Unrecognised brief: the GENERIC building template, never the
         # data-center one (that default stamped hyperscale WBS items onto
@@ -2292,6 +2308,9 @@ class ConstructionContainer(
             "qa_qc_inspection": self.qa_qc_inspection,
             "wir_form": self.wir_form,
             "inspection_request": self.wir_form,
+            "job_requisition": self.job_requisition,
+            "rfp_draft": self.rfp_draft,
+            "rfp_management": self.rfp_draft,
             "extract_quantities": self.extract_quantities,
             "estimate_costs": self.estimate_costs,
             "progress_tracker": self.progress_tracker,
@@ -2404,6 +2423,9 @@ class ConstructionContainer(
             "qa_qc_inspection": self.qa_qc_inspection,
             "wir_form": self.wir_form,
             "inspection_request": self.wir_form,
+            "job_requisition": self.job_requisition,
+            "rfp_draft": self.rfp_draft,
+            "rfp_management": self.rfp_draft,
             "extract_quantities": self.extract_quantities,
             "estimate_costs": self.estimate_costs,
             "progress_tracker": self.progress_tracker,

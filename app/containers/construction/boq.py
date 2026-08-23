@@ -121,10 +121,14 @@ def _payment_figures_from_message(text: str) -> Dict[str, float]:
          # phrasing the live Q12 battery prompt uses (verified failing
          # 2026-08-02: the certificate refused for lack of a valuation).
          or _amount(rf"work\s+valued\s+at{_FIG_GAP}{_FIG_NUM}")
-         or _amount(rf"value\s+of\s+(?:the\s+)?work(?:\s+done)?{_FIG_GAP}{_FIG_NUM}"))
+         or _amount(rf"value\s+of\s+(?:the\s+)?work(?:\s+done)?{_FIG_GAP}{_FIG_NUM}")
+         or _amount(rf"(?:this\s+period\s+)?certified\s+work{_FIG_GAP}{_FIG_NUM}"))
     if v:
         out["gross_valuation"] = v
-    v = _amount(rf"contract\s+(?:value|sum|price)(?:\s+of)?{_FIG_GAP}{_FIG_NUM}")
+    v = (
+        _amount(rf"(?:accepted\s+)?contract\s+(?:amount|value|sum|price)(?:\s+of)?{_FIG_GAP}{_FIG_NUM}")
+        or _amount(rf"accepted\s+contract\s+amount{_FIG_GAP}{_FIG_NUM}")
+    )
     if v:
         out["contract_value"] = v
     v = (_percent(rf"{_FIG_PCT}\s*(?:of\s+)?(?:work\s+done|complete|completed|progress)")
@@ -136,13 +140,23 @@ def _payment_figures_from_message(text: str) -> Dict[str, float]:
          or _percent(rf"{_FIG_PCT}\s+retention"))
     if v:
         out["retention_percent"] = v
-    v = _percent(rf"advance(?:\s+payment)?\s+recover\w*{_FIG_GAP}{_FIG_PCT}")
+    v = (
+        _percent(rf"advance(?:\s+payment)?\s+recover\w*{_FIG_GAP}{_FIG_PCT}")
+        or _percent(rf"amortis[ae]tion{_FIG_GAP}{_FIG_PCT}")
+        or _percent(rf"{_FIG_PCT}\s+amortis")
+    )
     if v is not None:
         out["advance_recovery_percent"] = v
     else:
         v = _amount(rf"advance(?:\s+payment)?(?:\s+recover\w*)?{_FIG_GAP}{_FIG_NUM}")
         if v:
             out["advance_payment"] = v
+    v = (
+        _percent(rf"advance(?:\s+payment)?{_FIG_GAP}{_FIG_PCT}")
+        or _percent(rf"{_FIG_PCT}\s+advance(?:\s+payment)?")
+    )
+    if v is not None:
+        out["advance_percent"] = v
     v = _amount(rf"previous\s+certif\w*(?:\s+total)?{_FIG_GAP}{_FIG_NUM}")
     if v:
         out["previous_certified"] = v
@@ -458,6 +472,14 @@ class ConstructionBoqMixin:
                                     p.get("retention_rate", fig.get("retention_percent", 10)))) / 100.0
         advance_payment = float(p.get("advance_payment") or data.get("advance_paid", 0)
                                 or data.get("advance_payment", 0) or fig.get("advance_payment", 0))
+        advance_pct = float(
+            p.get("advance_percent")
+            or data.get("advance_percent")
+            or fig.get("advance_percent")
+            or 0
+        )
+        if advance_payment <= 0 and advance_pct > 0 and contract_value > 0:
+            advance_payment = round(contract_value * (advance_pct / 100.0), 2)
         advance_recovery_pct = float(p.get("advance_recovery_percent",
                                            fig.get("advance_recovery_percent", 20))) / 100.0
         payment_period = p.get("payment_period", "Current Period")
@@ -479,6 +501,11 @@ class ConstructionBoqMixin:
                         "or 'gross_valuation' to issue a payment certificate"
                     ),
                 }
+        elif direct_gross > 0:
+            # Operator stated this-period certified work / gross. Do not
+            # wipe it with contract_value × 0% when work_done_percent is
+            # absent (live M7: ACA + SAR 42,800,000 this period).
+            gross_valuation = round(direct_gross, 2)
         else:
             gross_valuation = round(contract_value * work_done_pct, 2)
         retention_held = round(gross_valuation * retention_pct, 2)
