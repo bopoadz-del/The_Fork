@@ -6277,8 +6277,17 @@ class Agent:
                             raw, messages=messages, tool_results=stream_tool_results,
                         ))
                     )
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                    # Recover-from-tools lives in _postprocess_answer. Do not
+                    # run it before the empty-stream check — a successful
+                    # commissioning/WIR/IPC tool (or predispatch draft) would
+                    # fill the blank and skip the forced non-streaming retry
+                    # that test_empty_stream_triggers_forced_retry pins.
                     if xml_leak and final_text.strip():
+                        final_text = _postprocess_answer(
+                            final_text, _rag_sys_msg, messages,
+                            fallback_used=bool(_rag_audit.get("fallback_used")),
+                            agent_name=self.name,
+                        )
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     elif not final_text.strip():
@@ -6303,6 +6312,12 @@ class Agent:
                         final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
+                    else:
+                        final_text = _postprocess_answer(
+                            final_text, _rag_sys_msg, messages,
+                            fallback_used=bool(_rag_audit.get("fallback_used")),
+                            agent_name=self.name,
+                        )
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMED-SYNTH iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
