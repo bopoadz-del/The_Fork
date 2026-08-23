@@ -1159,12 +1159,30 @@ def _message_wants_safety_briefing(text: str) -> bool:
         or _message_wants_ipc_draft(raw)
     ):
         return False
-    if re.search(r"safety briefing", raw, re.I):
+    if re.search(r"safety briefing|toolbox talk", raw, re.I):
         return True
-    return bool(
-        re.search(r"haul[- ]road|road diversion|public-interface", raw, re.I)
-        and re.search(r"signage|pedestrian|speed", raw, re.I)
+    # Live M16 (safety-officer): "Green Village diversion briefing ... from the
+    # three named files, covering signage, speed and pedestrian" matched
+    # NOTHING here, because the site cue demanded the literal word ROAD
+    # ("road diversion"). safety_briefing never ran, only fetch_document did,
+    # and the hat answered "I'm ready to help, but I need a specific
+    # question". A diversion named after its LOCATION rather than its road is
+    # the same public-interface ask, so the cue no longer requires "road".
+    site = re.search(
+        r"haul[- ]road|\bdiversion\b|public-interface|traffic management",
+        raw, re.I,
     )
+    # Distinct topics, not total hits: "speed ... speed" is one topic, and the
+    # briefing-only route below needs genuine breadth to fire.
+    topics = {m.group(0).lower()
+              for m in re.finditer(r"signage|pedestrian|speed", raw, re.I)}
+    if site and topics:
+        return True
+    # No site cue at all, but the turn asks for a briefing and names at least
+    # two of the three public-interface topics. Two is deliberate: one topic
+    # plus the bare word "briefing" is too thin to claim the turn, and this
+    # predicate already yields to every other deliverable above.
+    return bool(re.search(r"\bbriefing\b", raw, re.I) and len(topics) >= 2)
 
 
 def _message_wants_first_run_wbs(text: str) -> bool:
