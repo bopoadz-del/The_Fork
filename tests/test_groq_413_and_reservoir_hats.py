@@ -12,16 +12,26 @@ import pytest
 
 from app.agents.runtime import (
     _EMPTY_RESPONSE_FALLBACK,
+    _approx_message_chars,
     _compact_messages_for_tpm,
     _format_as_built_note,
     _format_claim_notice,
+    _format_commissioning_tool,
     _format_job_requisition,
     _format_payment_certificate,
     _format_rfp_draft,
     _format_wbs_result,
+    _format_wir_form,
     _infer_commissioning_systems,
+    _inject_predispatch,
+    _message_wants_as_built_note,
+    _message_wants_commissioning,
+    _message_wants_delay_claim,
     _message_wants_first_run_wbs,
+    _message_wants_ipc_draft,
     _message_wants_job_requisition,
+    _message_wants_rfp_draft,
+    _predispatch_construction_draft,
     _predispatch_remaining_deliverables,
     _recover_answer_from_tool_messages,
     _text_needs_tool_recovery,
@@ -142,7 +152,370 @@ def test_message_wants_job_req_and_first_run_wbs():
     assert not _message_wants_first_run_wbs("what is a WBS?")
 
 
-@requires_construction_kit
+def test_message_wants_remaining_deliverables():
+    assert _message_wants_commissioning(M3)
+    assert not _message_wants_commissioning(M6)
+    assert _message_wants_ipc_draft(M7)
+    assert not _message_wants_ipc_draft("issue a payment certificate")
+    assert _message_wants_delay_claim(M9)
+    assert _message_wants_as_built_note(M12)
+    assert _message_wants_rfp_draft(M14)
+    assert not _message_wants_rfp_draft(
+        "Prepare a WIR for the RFP manhole collar pour"
+    )
+
+
+def test_first_run_wbs_skips_duration_rerun():
+    rerun = "build a WBS. use 12 days for excavation and re-run"
+    assert _message_wants_first_run_wbs(M1)
+    assert not _message_wants_first_run_wbs(rerun)
+
+
+def test_first_run_wbs_swallows_override_import_miss(monkeypatch):
+    def _boom(*_a, **_k):
+        raise RuntimeError("shape miss")
+
+    monkeypatch.setattr(
+        "app.lib.wbs_duration_overrides.message_wants_wbs_duration_rerun",
+        _boom,
+    )
+    assert _message_wants_first_run_wbs(M1) is True
+
+
+def test_infer_commissioning_mixed_wet_test_stays_reservoir():
+    assert _infer_commissioning_systems(M3) == ["reservoir"]
+    assert _infer_commissioning_systems(
+        "torch-applied SBS membrane holiday test before backfill"
+    ) == ["waterproofing"]
+    assert _infer_commissioning_systems(
+        "PWPS-02 reservoir first wet test after membrane protection"
+    ) == ["reservoir"]
+    assert _infer_commissioning_systems(
+        "reservoir membrane protection board only"
+    ) == ["waterproofing"]
+    assert _infer_commissioning_systems("ordinary concrete cubes") is None
+
+
+def test_formatters_and_recovery_cover_each_deliverable():
+    ipc = {
+        "action": "payment_certificate",
+        "certificate": {"period": "IPC 4", "contractor": "Al-Ayuni"},
+        "valuation": {
+            "contract_value": 1_754_504_456.25,
+            "gross_valuation": 42_800_000,
+        },
+        "deductions": {
+            "retention_percent": 10,
+            "retention_held": 4_280_000,
+            "advance_recovery": 4_280_000,
+        },
+        "payment": {
+            "net_due_this_period": 34_240_000,
+            "cumulative_certified": 34_240_000,
+        },
+        "certificate_summary": "IPC 4 draft",
+    }
+    assert "42,800,000" in _format_payment_certificate(ipc) or "42800000" in (
+        _format_payment_certificate(ipc).replace(",", "")
+    )
+
+    note = {
+        "action": "as_built_deviation_report",
+        "planned_m3": 350,
+        "poured_m3": 310,
+        "shortfall_m3": 40,
+        "shortfall_percent": 11.43,
+        "location": "PWPS-02",
+    }
+    assert "40" in _format_as_built_note(note)
+    assert "11.43" in _format_as_built_note(note)
+    assert "stated" in _format_as_built_note({"note": "stated shortfall"})
+
+    claim = {
+        "action": "claim_generated",
+        "claim_narrative": {"full_narrative": "DELAY CLAIM NOTICE — Clause 8.8.1"},
+        "quantum_formula": "0.015% × Contract Price × 28",
+        "communication": "Aconex",
+    }
+    rendered_claim = _format_claim_notice(claim)
+    assert "8.8.1" in rendered_claim
+    assert "Aconex" in rendered_claim
+    dumped = _format_claim_notice({"status": "success"})
+    assert "success" in dumped
+
+    wbs = {
+        "action": "generate_wbs",
+        "wbs_id": "w1",
+        "project_type": "infrastructure",
+        "actual_count": 20,
+        "operator_milestones": {
+            "time_for_completion_days": 852,
+            "milestones": [
+                {"id": 1, "name": "Media", "days": 397},
+                {"id": 3, "name": "Boulevard SW", "days": 487},
+            ],
+        },
+        "summary": {"activity_count": 20},
+        "assumptions": ["Operator-stated milestone durations"],
+    }
+    rendered_wbs = _format_wbs_result(wbs)
+    assert "852" in rendered_wbs and "397" in rendered_wbs
+    fallback_wbs = _format_wbs_result({
+        "target_milestones": [{"name": "Earthworks", "duration_days": 30}],
+        "summary": {},
+    })
+    assert "Earthworks" in fallback_wbs
+
+    jr = {
+        "action": "job_requisition",
+        "jr_number": "DRAFT-JR",
+        "title": "Street lighting",
+        "scope": "Street-lighting installation",
+        "noc": "AM Rev Design NOC",
+        "noc_expiry": "17 July 2025",
+        "prequalification": ["HSE plan"],
+        "shortlist_rubric": [
+            {"criterion": "Technical", "weight": "40%"},
+            "commercial",
+        ],
+        "note": "Draft JR",
+    }
+    rendered_jr = _format_job_requisition(jr)
+    assert "17 July 2025" in rendered_jr
+    assert "Technical" in rendered_jr
+
+    rfp = {
+        "action": "rfp_draft",
+        "title": "RFP",
+        "rfp_number": "DRAFT-RFP",
+        "invitation": "INVITATION TO TENDER",
+        "scope_of_works": "GRP radiused section",
+        "prequalification": ["ITP"],
+        "evaluation_method": "technical",
+        "key_dates_note": "TBD",
+        "references": ["RFI002", "SOPR"],
+    }
+    rendered_rfp = _format_rfp_draft(rfp)
+    assert "INVITATION" in rendered_rfp
+    assert "RFI002" in rendered_rfp
+
+    wir = _format_wir_form({
+        "wir_number": "DRAFT-WIR",
+        "location": "H-1",
+        "activity": "collars",
+        "week": 53,
+        "mix": "C-35",
+        "volume_m3": 28,
+        "manhole_range": "W-1–W-7",
+        "supplier": "UBCC",
+        "template": "ITP",
+        "checklist": [{"item": "formwork"}, "cubes"],
+        "hold_points": ["pre-pour"],
+        "witness_points": ["cubes"],
+        "signatories": [{"party": "Engineer", "status": "pending"}],
+        "notice": "draft",
+        "note": "operator facts",
+    })
+    assert "DRAFT-WIR" in wir and "Week 53" in wir
+
+    comm = _format_commissioning_tool({
+        "summary": {"systems_covered": 1, "total_tests": 1, "pending": 1},
+        "checklists_by_system": {
+            "reservoir": [
+                {"test": "First wet test", "standard": "BS 8007",
+                 "acceptance_criteria": "No leak", "witness_required": True,
+                 "hold_point": True},
+                "skip-me",
+            ],
+            "other": "not-a-list",
+        },
+    })
+    assert "First wet test" in comm
+    assert _format_commissioning_tool({"checklists_by_system": "x"}).startswith(
+        "Commissioning checklist"
+    )
+
+    empty_recover = _recover_answer_from_tool_messages(
+        "unable to generate a response",
+        [{"role": "tool", "content": json.dumps(ipc)}],
+    )
+    assert "IPC 4" in empty_recover
+    assert "Aconex" in _recover_answer_from_tool_messages(
+        "HTTP 413 TPM", [{"role": "tool", "content": json.dumps(claim)}]
+    )
+    assert "DRAFT-JR" in _recover_answer_from_tool_messages(
+        "", [{"role": "tool", "content": json.dumps(jr)}]
+    )
+    assert "INVITATION" in _recover_answer_from_tool_messages(
+        _EMPTY_RESPONSE_FALLBACK, [{"role": "tool", "content": json.dumps(rfp)}]
+    )
+    assert "852" in _recover_answer_from_tool_messages(
+        "groq HTTP 413", [{"role": "tool", "content": json.dumps(wbs)}]
+    )
+    assert "40" in _recover_answer_from_tool_messages(
+        "TPM", [{"role": "tool", "content": json.dumps(note)}]
+    )
+    hist = _recover_answer_from_tool_messages(
+        "HTTP 413",
+        [{
+            "role": "tool",
+            "content": json.dumps({
+                "action": "resource_histogram_generated",
+                "histogram_kind": "activity_count",
+                "note": "first 16 weeks",
+                "periods": [{"label": "W1", "total": 12}, "skip"],
+            }),
+        }],
+    )
+    assert "W1" in hist
+    truncated = _recover_answer_from_tool_messages(
+        "HTTP 413",
+        [{
+            "role": "tool",
+            "content": json.dumps({
+                "truncated": True,
+                "preview": json.dumps(ipc),
+            }),
+        }],
+    )
+    assert "IPC 4" in truncated
+    msgs = []
+    _inject_predispatch(msgs, "claims_builder", rendered_claim, "Present this.")
+    assert "PLATFORM PRE-DISPATCH" in msgs[0]["content"]
+    from_pre = _recover_answer_from_tool_messages(
+        "HTTP 413", msgs,
+    )
+    assert "8.8.1" in from_pre
+
+
+def test_compact_messages_truncates_roles_and_drops_middle():
+    assert _approx_message_chars([{"role": "user", "content": "ab"}, "x"]) == 2
+    messages = [
+        {"role": "system", "content": "S" * 4000},
+        *[{"role": "user", "content": f"mid-{i}"} for i in range(20)],
+        {"role": "user", "content": "U" * 7000},
+        "not-a-dict",
+        {"role": "assistant", "content": ["not-a-string"]},
+        {"role": "tool", "content": "T" * 2000, "tool_call_id": "1"},
+        {"role": "user", "content": "tail"},
+    ]
+    out = _compact_messages_for_tpm(messages, budget=500)
+    assert any(
+        isinstance(m, dict) and m.get("role") == "system"
+        and "[truncated for TPM]" in str(m.get("content"))
+        for m in out
+    )
+    assert any(
+        isinstance(m, dict) and m.get("role") == "user"
+        and "[truncated for TPM]" in str(m.get("content"))
+        for m in out
+    )
+    tool = next(
+        m for m in out
+        if isinstance(m, dict) and m.get("role") == "tool"
+    )
+    assert "truncated" in str(tool.get("content")).lower()
+    assert "not-a-dict" in out
+    assert any(
+        isinstance(m, dict) and m.get("content") == "tail" for m in out
+    )
+
+
+@pytest.mark.asyncio
+async def test_predispatch_skips_wir_killswitch_and_non_construction():
+    class _A:
+        allowed_blocks = ["search"]
+        name = "contracts-manager"
+
+    wir_msgs = [{"role": "user", "content": "Prepare a WIR for Week 53 collars"}]
+    assert await _predispatch_remaining_deliverables(_A(), wir_msgs, "p") is None
+
+    class _C:
+        allowed_blocks = ["construction"]
+        name = "contracts-manager"
+
+    no_match = [{"role": "user", "content": "hello there"}]
+    assert await _predispatch_remaining_deliverables(_C(), no_match, "p") is None
+
+    off = await _predispatch_construction_draft(
+        _C(), [{"role": "user", "content": M9}],
+        env_key="AGENT_CLAIM_PREDISPATCH",
+        want_fn=_message_wants_delay_claim,
+        action="claims_builder",
+        format_fn=_format_claim_notice,
+        instruction="x",
+    )
+    # kill-switch is read from env; default on. Force off:
+    import os
+    old = os.environ.get("AGENT_CLAIM_PREDISPATCH")
+    os.environ["AGENT_CLAIM_PREDISPATCH"] = "0"
+    try:
+        off = await _predispatch_construction_draft(
+            _C(), [{"role": "user", "content": M9}],
+            env_key="AGENT_CLAIM_PREDISPATCH",
+            want_fn=_message_wants_delay_claim,
+            action="claims_builder",
+            format_fn=_format_claim_notice,
+            instruction="x",
+        )
+        assert off is None
+    finally:
+        if old is None:
+            os.environ.pop("AGENT_CLAIM_PREDISPATCH", None)
+        else:
+            os.environ["AGENT_CLAIM_PREDISPATCH"] = old
+
+    assert await _predispatch_construction_draft(
+        _A(), [{"role": "user", "content": M9}],
+        env_key="AGENT_CLAIM_PREDISPATCH",
+        want_fn=_message_wants_delay_claim,
+        action="claims_builder",
+        format_fn=_format_claim_notice,
+        instruction="x",
+    ) is None
+
+
+def test_as_built_and_claim_helpers_parse_operator_facts():
+    from app.containers.construction.documents import (
+        _as_built_volume_facts_from_text,
+    )
+    from app.containers.construction.schedule import (
+        _delay_claim_facts_from_text,
+        _draft_delay_claim_notice,
+        _operator_milestones_from_text,
+    )
+
+    vs = _as_built_volume_facts_from_text(
+        "PWPS-02 blinding 350 m3 versus 310 m3 on 7 January 2025"
+    )
+    assert vs["planned_m3"] == 350
+    assert vs["poured_m3"] == 310
+    assert vs["shortfall_m3"] == 40
+    assert vs["shortfall_percent"] == 11.43
+    assert vs["location"].startswith("PWPS")
+    assert _as_built_volume_facts_from_text("no volumes here") is None
+
+    facts = _delay_claim_facts_from_text(M9)
+    assert facts["delay_days"] == 28
+    assert facts["rate_percent_per_day"] == 0.015
+    assert facts["clause"] == "8.8.1"
+    assert "Milestone 1" in facts["milestone"]
+    assert facts["communication"] == "Aconex"
+    assert _delay_claim_facts_from_text("no delay days") is None
+
+    notice = _draft_delay_claim_notice(facts, "2026-08-23")
+    assert notice["status"] == "success"
+    assert notice["delay_days"] == 28
+    assert "Aconex" in notice["claim_narrative"]["full_narrative"]
+    assert "0.015" in (notice.get("quantum_formula") or "")
+
+    op = _operator_milestones_from_text(M1)
+    assert op["time_for_completion_days"] == 852
+    ids = {m["id"]: m["days"] for m in op["milestones"]}
+    assert ids[1] == 397
+    assert ids[3] == 487
+
+
 @pytest.mark.asyncio
 async def test_reservoir_checklist_has_no_holiday_spark():
     from app.containers.construction import ConstructionContainer
@@ -161,7 +534,6 @@ async def test_reservoir_checklist_has_no_holiday_spark():
     assert "d4787" not in blob
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_waterproofing_still_has_holiday_spark():
     from app.containers.construction import ConstructionContainer
@@ -173,7 +545,6 @@ async def test_waterproofing_still_has_holiday_spark():
     assert "Holiday / spark test" in names
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_job_requisition_drafts_m6():
     from app.containers.construction import ConstructionContainer
@@ -188,7 +559,6 @@ async def test_job_requisition_drafts_m6():
     assert "17 July 2025" in rendered or "NOC" in rendered
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_rfp_drafts_m14():
     from app.containers.construction import ConstructionContainer
@@ -201,7 +571,6 @@ async def test_rfp_drafts_m14():
     assert "RFI002" in rendered or "SOPR" in rendered
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_as_built_volume_note_m12():
     from app.containers.construction import ConstructionContainer
@@ -217,7 +586,6 @@ async def test_as_built_volume_note_m12():
     assert "40" in _format_as_built_note(out)
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_delay_claim_notice_m9():
     from app.containers.construction import ConstructionContainer
@@ -234,7 +602,6 @@ async def test_delay_claim_notice_m9():
     assert "Aconex" in rendered
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_ipc_parses_accepted_contract_amount_m7():
     from app.containers.construction import ConstructionContainer
@@ -253,7 +620,6 @@ async def test_ipc_parses_accepted_contract_amount_m7():
     assert "42800000" in rendered.replace(",", "") or "42,800,000" in rendered
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_wbs_keeps_operator_milestones_m1():
     from app.containers.construction import ConstructionContainer
@@ -293,7 +659,6 @@ async def test_predispatch_claim_and_ipc(monkeypatch):
     assert out["name"] == "payment_certificate"
 
 
-@requires_construction_kit
 @pytest.mark.asyncio
 async def test_infer_then_container_reservoir_for_m3():
     assert _infer_commissioning_systems(M3) == ["reservoir"]
