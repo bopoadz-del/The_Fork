@@ -108,3 +108,13 @@ review_pack/**/*.log
 # Evaluation photographs: fetched by scripts/fetch_eval_photos.py, never committed.
 # Only tests/fixtures/photo_eval_manifest.json is tracked.
 tests/fixtures/photos/
+
+# Local agent dumps (screenshots, Drive pulls, answer JSON). Stay on the
+# workstation only — Render deploys the git tree, so these must never be
+# committed. Tiny fixtures under uploads/_synthetic/{contracts,drawings,
+# photos,schedules}/ remain tracked.
+/uploads/_synthetic/artifacts/
+/uploads/_synthetic/dg2_infra_pack_1/
+/uploads/_synthetic/dg2_pack_17_questions.json
+/uploads/_synthetic/SCREENSHOTS.md
+/uploads/_synthetic/READ_ANSWERS_M3_M11.md
