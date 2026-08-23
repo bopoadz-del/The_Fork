@@ -46,6 +46,7 @@ from app.agents.runtime import (
     _message_wants_safety_briefing,
     _message_wants_wir_form,
     _messages_user_and_history,
+    _operator_user_text,
     _predispatch_construction_draft,
     _predispatch_remaining_deliverables,
     _recover_answer_from_tool_messages,
@@ -878,6 +879,25 @@ def test_graft_keeps_aconex_and_clause_on_rewritten_claim():
     grafted = _graft_operator_claim_facts(rewritten, M9)
     assert "Aconex" in grafted
     assert "8.8.1" in grafted
+    polluted = [
+        {"role": "user", "content": M9},
+        {"role": "user", "content": "haul-road safety briefing signage"},
+        {"role": "user", "content": "PLATFORM PRE-DISPATCH: claims_builder ran"},
+    ]
+    blob = _operator_user_text(polluted)
+    assert "Aconex" in blob
+    assert "8.8.1" in blob
+    last, _ = _messages_user_and_history(polluted)
+    assert "Aconex" not in last
+    assert "Aconex" in _graft_operator_claim_facts(rewritten, blob)
+
+
+def test_format_rfi_tolerates_non_dict_rows():
+    rendered = _format_rfi({
+        "rfis": ["not-a-dict", {"rfi_number": "DRAFT-RFI", "question": "GRP?"}],
+    })
+    assert "DRAFT-RFI" in rendered
+    assert "GRP?" in rendered
 
 
 @pytest.mark.asyncio
@@ -891,6 +911,12 @@ async def test_wir_refuses_follow_on_rfi_when_model_said_inspection():
     assert out["status"] == "error"
     err = (out.get("error") or "").lower()
     assert "non-wir" in err or "rfi" in err
+
+    numbered = await ConstructionContainer().wir_form(
+        {"text": "inspection request for Week 53 collars", "scope": "pour"},
+        {"user_message": "Raise an inspection request for the RFI002 manhole cluster"},
+    )
+    assert numbered["status"] == "error"
 
 
 @pytest.mark.asyncio

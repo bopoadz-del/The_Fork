@@ -823,6 +823,24 @@ def _messages_user_and_history(messages: list) -> tuple[str, list]:
     return user_msg, history
 
 
+def _operator_user_text(messages: list) -> str:
+    """All non-predispatch user bubbles, oldest first.
+
+    Live M9 graft must see the original claim ask even when a later user
+    bubble is a haul-road file extract (the #410 last-bubble failure mode).
+    """
+    parts: list[str] = []
+    for m in messages or []:
+        if m.get("role") != "user":
+            continue
+        content = str(m.get("content") or "")
+        if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
+            continue
+        if content.strip():
+            parts.append(content)
+    return "\n".join(parts)
+
+
 async def _predispatch_wbs_duration_override(
     agent: "Agent", messages: list,
 ) -> dict[str, Any] | None:
@@ -3147,8 +3165,14 @@ def _graft_operator_claim_facts(text: str, user_message: str) -> str:
 
 def _format_rfi(payload: dict[str, Any]) -> str:
     rfis = payload.get("rfis") if isinstance(payload.get("rfis"), list) else []
+    first = next((row for row in rfis if isinstance(row, dict)), None)
+    number = (
+        payload.get("rfi_number")
+        or (first.get("rfi_number") if first else None)
+        or "DRAFT-RFI"
+    )
     lines = [
-        f"**Request for Information — {payload.get('rfi_number') or (rfis[0].get('rfi_number') if rfis else 'DRAFT-RFI')}**",
+        f"**Request for Information — {number}**",
         "",
     ]
     if payload.get("question"):
@@ -3833,8 +3857,7 @@ def _postprocess_answer(
     because the project is empty/thin), a one-line disclosure banner is
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
-    user_msg, _hist = _messages_user_and_history(messages)
-    text = _graft_operator_claim_facts(text, user_msg)
+    text = _graft_operator_claim_facts(text, _operator_user_text(messages))
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
     text = _ensure_ingestion_handoff(text, messages, agent_name)
