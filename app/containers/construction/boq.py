@@ -46,6 +46,15 @@ def _cashflow_figures_from_message(text: str) -> Dict[str, float]:
     d = re.search(r"\b([0-9]{1,3})\s*[- ]\s*month", t)
     if d:
         out["duration_months"] = float(d.group(1))
+    else:
+        _word_months = {
+            "three": 3, "six": 6, "nine": 9, "twelve": 12,
+            "eighteen": 18, "twenty-four": 24, "twenty four": 24,
+        }
+        for word, months in _word_months.items():
+            if re.search(rf"\b{re.escape(word)}[- ]months?\b", t):
+                out["duration_months"] = float(months)
+                break
     return out
 
 
@@ -1633,7 +1642,18 @@ class ConstructionBoqMixin:
         # figures ("SAR 60M, 18-month project") then live only in `message`.
         # Parsed values fill gaps ONLY; explicit params/data always win.
         fig = _cashflow_figures_from_message(
-            data.get("message") or (input_data if isinstance(input_data, str) else "")
+            " ".join(
+                str(x)
+                for x in (
+                    data.get("message"),
+                    data.get("text"),
+                    data.get("user_message"),
+                    p.get("user_message"),
+                    p.get("brief"),
+                    input_data if isinstance(input_data, str) else "",
+                )
+                if x
+            )
         )
         contract_value = (data.get("contract_value") or p.get("contract_value", 0)
                           or fig.get("contract_value", 0))

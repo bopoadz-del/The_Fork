@@ -683,11 +683,7 @@ async def _predispatch_file_tool(
     if os.getenv("AGENT_FILE_PREDISPATCH", "1") == "0" or not project_id:
         return None
     try:
-        user_msg = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                user_msg = str(m.get("content", ""))
-                break
+        user_msg, _history = _messages_user_and_history(messages)
         if not user_msg:
             return None
         # A self-contained L×W×D volume ask must not steal drawing_qto just
@@ -805,7 +801,12 @@ async def _predispatch_file_tool(
 
 
 def _messages_user_and_history(messages: list) -> tuple[str, list]:
-    """Latest user text plus prior turns (for duration-override inference)."""
+    """Latest operator text plus prior turns (for duration-override inference).
+
+    Skip ``PLATFORM PRE-DISPATCH:`` user bubbles — live M1/M2/M9 on 69b12ff
+    let a file/QTO inject become the "user" message, so remaining-deliverable
+    detectors never saw the original WBS / cash-flow / claim ask.
+    """
     user_msg = ""
     prior: list = []
     for m in messages or []:
@@ -814,7 +815,10 @@ def _messages_user_and_history(messages: list) -> tuple[str, list]:
             continue
         prior.append(m)
         if role == "user":
-            user_msg = str(m.get("content") or "")
+            content = str(m.get("content") or "")
+            if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
+                continue
+            user_msg = content
     history = prior[:-1] if prior else []
     return user_msg, history
 
@@ -975,9 +979,22 @@ def _message_wants_wir_form(text: str) -> bool:
 
     Live M15: pinned construction-pm searched the named WIR template and
     returned empty. Predispatch writes the form from operator facts.
+    Job requisition / claim / cash-flow / WBS / O&M / safety / IPC / as-built
+    take priority even when the brief also says "inspection request".
     """
     low = (text or "").strip()
     if not low or _WIR_QA_RE.search(low):
+        return False
+    if (
+        _message_wants_job_requisition(low)
+        or _message_wants_delay_claim(low)
+        or _message_wants_cash_flow(low)
+        or _message_wants_om_manual(low)
+        or _message_wants_safety_briefing(low)
+        or _message_wants_first_run_wbs(low)
+        or _message_wants_as_built_note(low)
+        or _message_wants_ipc_draft(low)
+    ):
         return False
     return bool(_WIR_FORM_RE.search(low))
 
@@ -1029,7 +1046,10 @@ async def _predispatch_wir_form(
 
 
 def _message_wants_commissioning(text: str) -> bool:
-    return bool(re.search(r"commissioning checklist", text or "", re.I))
+    raw = text or ""
+    if _message_wants_om_manual(raw):
+        return False
+    return bool(re.search(r"commissioning checklist", raw, re.I))
 
 
 def _message_wants_ipc_draft(text: str) -> bool:
@@ -1058,6 +1078,30 @@ def _message_wants_rfp_draft(text: str) -> bool:
     return bool(re.search(r"\brfp\b|request for proposal|invitation to tender", raw, re.I))
 
 
+def _message_wants_cash_flow(text: str) -> bool:
+    return bool(re.search(
+        r"cash[- ]flow|s-curve|s curve|spend curve|drawdown",
+        text or "",
+        re.I,
+    ))
+
+
+def _message_wants_om_manual(text: str) -> bool:
+    return bool(re.search(
+        r"operations and maintenance|o\s*&\s*m\b|o and m|maintenance manual",
+        text or "",
+        re.I,
+    ))
+
+
+def _message_wants_safety_briefing(text: str) -> bool:
+    return bool(re.search(
+        r"safety briefing|haul[- ]road|public-interface|road diversion",
+        text or "",
+        re.I,
+    ))
+
+
 def _message_wants_first_run_wbs(text: str) -> bool:
     raw = text or ""
     if not re.search(r"\b(build a wbs|work breakdown|\bwbs\b for)\b", raw, re.I):
@@ -1072,6 +1116,52 @@ def _message_wants_first_run_wbs(text: str) -> bool:
             "Exception", exc_info=True,
         )
     return True
+
+
+def _message_wants_locked_deliverable(text: str) -> bool:
+    """True when this turn already has a remaining/WIR-priority draft to lock."""
+    return any(
+        fn(text)
+        for fn in (
+            _message_wants_job_requisition,
+            _message_wants_rfp_draft,
+            _message_wants_delay_claim,
+            _message_wants_cash_flow,
+            _message_wants_om_manual,
+            _message_wants_safety_briefing,
+            _message_wants_first_run_wbs,
+            _message_wants_as_built_note,
+            _message_wants_ipc_draft,
+            _message_wants_commissioning,
+        )
+    )
+
+
+def _conflicting_tools_after_predispatch(name: str) -> set[str]:
+    """Tools that stole the live Infra Pack answers after a correct draft."""
+    steal = {
+        "generate_wbs": {
+            "payment_certificate", "drawing_qto", "wir_form",
+            "primavera_parser", "interim_certificate_generator",
+        },
+        "cash_flow_forecast": {
+            "drawing_qto", "payment_certificate", "wir_form",
+            "interim_certificate_generator",
+        },
+        "om_manual_generator": {"commissioning_checklist", "wir_form"},
+        "safety_briefing": {"wir_form", "commissioning_checklist"},
+        "claims_builder": {
+            "payment_certificate", "wir_form", "interim_certificate_generator",
+        },
+        "job_requisition": {"wir_form"},
+        "rfp_draft": {"wir_form"},
+        "as_built_deviation_report": {"wir_form", "commissioning_checklist"},
+        "payment_certificate": {"wir_form", "claims_builder"},
+        "commissioning_checklist": {"wir_form", "om_manual_generator"},
+        "wir_form": {"payment_certificate", "job_requisition", "rfp_draft"},
+        "resource_histogram": {"primavera_parser"},
+    }
+    return set(steal.get(name) or ())
 
 
 def _inject_predispatch(
@@ -1142,6 +1232,27 @@ async def _predispatch_remaining_deliverables(
     if not user_msg or _message_wants_wir_form(user_msg):
         return None
     candidates = (
+        (
+            "AGENT_CASH_FLOW_PREDISPATCH",
+            _message_wants_cash_flow,
+            "cash_flow_forecast",
+            _format_cash_flow,
+            "Present this cash-flow S-curve in full. Do not run drawing_qto.",
+        ),
+        (
+            "AGENT_OM_PREDISPATCH",
+            _message_wants_om_manual,
+            "om_manual_generator",
+            _format_om_outline,
+            "Present this O&M outline in full. Do not draft a commissioning checklist.",
+        ),
+        (
+            "AGENT_SAFETY_PREDISPATCH",
+            _message_wants_safety_briefing,
+            "safety_briefing",
+            _format_safety_briefing,
+            "Present this live-haul-road safety briefing in full.",
+        ),
         (
             "AGENT_COMMISSIONING_PREDISPATCH",
             _message_wants_commissioning,
@@ -3005,6 +3116,75 @@ def _format_job_requisition(payload: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def _format_cash_flow(payload: dict[str, Any]) -> str:
+    rows = (
+        payload.get("monthly_forecast")
+        or payload.get("s_curve_data")
+        or []
+    )
+    params = payload.get("project_parameters") if isinstance(payload.get("project_parameters"), dict) else {}
+    contract = params.get("contract_value") or payload.get("contract_value") or ""
+    lines = [
+        "**Cash-flow S-curve**",
+        f"Contract value: {contract}",
+        "",
+        "| Month | Progress % | Monthly | Cumulative | Advance recovery | Retention | Net |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                f"| {row.get('month') or row.get('period')} | "
+                f"{row.get('planned_progress_percent')} | "
+                f"{row.get('monthly_value')} | "
+                f"{row.get('cumulative_value')} | "
+                f"{row.get('advance_recovery')} | "
+                f"{row.get('retention_deduction')} | "
+                f"{row.get('net_cash_in')} |"
+            )
+    return "\n".join(lines).strip()
+
+
+def _format_om_outline(payload: dict[str, Any]) -> str:
+    if payload.get("note") and payload.get("sections"):
+        lines = [
+            f"**{payload.get('title') or 'Operations and Maintenance manual outline'}**",
+            "",
+        ]
+        for sec in payload.get("sections") or []:
+            if isinstance(sec, dict):
+                lines.append(f"### {sec.get('section') or sec.get('title') or 'Section'}")
+                lines.append(str(sec.get("content") or sec.get("body") or ""))
+                lines.append("")
+            else:
+                lines.append(f"- {sec}")
+        lines.append(str(payload.get("note") or ""))
+        return "\n".join(lines).strip()
+    return json.dumps(payload, default=str)[:4000]
+
+
+def _format_safety_briefing(payload: dict[str, Any]) -> str:
+    if payload.get("briefing"):
+        return str(payload["briefing"])
+    lines = [
+        f"**{payload.get('title') or 'Live-haul-road safety briefing'}**",
+        "",
+        str(payload.get("note") or ""),
+        "",
+        "### Signage",
+        str(payload.get("signage") or "As shown on the diversion / haul-road drawings."),
+        "",
+        "### Speed control",
+        str(payload.get("speed") or "Enforce the posted site speed and the diversion speed limit."),
+        "",
+        "### Pedestrian crossing",
+        str(payload.get("pedestrian") or "Keep public crossings signed and marshalled at the interface."),
+    ]
+    return "\n".join(lines).strip()
+
+
 def _format_rfp_draft(payload: dict[str, Any]) -> str:
     lines = [
         f"**{payload.get('title') or 'Request for Proposal'} — {payload.get('rfp_number') or 'DRAFT-RFP'}**",
@@ -3103,6 +3283,12 @@ def _recover_answer_from_tool_messages(
             return _format_job_requisition(inner)
         if action in {"rfp_draft", "rfp_management"}:
             return _format_rfp_draft(inner)
+        if action == "cash_flow_forecast" or inner.get("monthly_forecast"):
+            return _format_cash_flow(inner)
+        if action in {"om_manual_generated", "om_manual_generator"}:
+            return _format_om_outline(inner)
+        if action == "safety_briefing" or inner.get("briefing"):
+            return _format_safety_briefing(inner)
         if action == "resource_histogram_generated":
             kind = inner.get("histogram_kind") or "labor"
             periods = inner.get("periods") or []
@@ -5425,7 +5611,10 @@ class Agent:
         # canned "could not confirm this reference" used to fire in ~1s
         # without ever fetching bytes from disk.
         tool_calls_made: list[dict[str, Any]] = []
-        _pre = await _predispatch_file_tool(self, messages, project_id)
+        _locked = _message_wants_locked_deliverable(user_message)
+        _pre = None
+        if not _locked:
+            _pre = await _predispatch_file_tool(self, messages, project_id)
         if _pre:
             tool_calls_made.append(_pre)
         _wbs_pre = await _predispatch_wbs_duration_override(self, messages)
@@ -5436,7 +5625,9 @@ class Agent:
         )
         if _hist_pre:
             tool_calls_made.append(_hist_pre)
-        _wir_pre = await _predispatch_wir_form(self, messages, project_id)
+        _wir_pre = None
+        if not _locked:
+            _wir_pre = await _predispatch_wir_form(self, messages, project_id)
         if _wir_pre:
             tool_calls_made.append(_wir_pre)
         _more_pre = await _predispatch_remaining_deliverables(
@@ -5472,7 +5663,15 @@ class Agent:
         # Once a deliverable (non-search) tool returns, force a tool-free
         # synthesis call — see the streaming loop for the full rationale (stops
         # the tool-loop and the Groq large-context tool_use_failed/429 hang).
-        force_synthesis = False
+        # Live M1/M2/M6/M9/M13/M14: remaining already drafted the artifact,
+        # but force_synthesis stayed False so payment_certificate /
+        # drawing_qto / wir_form / commissioning_checklist overwrote it.
+        force_synthesis = bool(_wbs_pre or _hist_pre or _wir_pre or _more_pre)
+        for _hit in (_wbs_pre, _hist_pre, _wir_pre, _more_pre):
+            if _hit:
+                excluded_tools |= _conflicting_tools_after_predispatch(
+                    str(_hit.get("name") or "")
+                )
         error_nudges = 0
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
 
@@ -6013,7 +6212,10 @@ class Agent:
         stream_tool_results: list[dict[str, Any]] = []
         # Deterministic file pre-dispatch BEFORE the RAG-miss short-circuit
         # (leftover L1 timestamped .docx looks like an identifier).
-        _pre = await _predispatch_file_tool(self, messages, project_id)
+        _locked = _message_wants_locked_deliverable(user_message)
+        _pre = None
+        if not _locked:
+            _pre = await _predispatch_file_tool(self, messages, project_id)
         if _pre:
             _note_tool(_pre["name"])
             # SSE contract: the browser reads "tool" + "args_preview" on a
@@ -6102,7 +6304,9 @@ class Agent:
                    "result": _hist_summary,
                    "predispatched": True}
 
-        _wir_pre = await _predispatch_wir_form(self, messages, project_id)
+        _wir_pre = None
+        if not _locked:
+            _wir_pre = await _predispatch_wir_form(self, messages, project_id)
         if _wir_pre:
             _note_tool(_wir_pre["name"])
             stream_tool_results.append(_wir_pre)
@@ -6179,7 +6383,14 @@ class Agent:
         # (HTTP 400 tool_use_failed) or blow the free-tier TPM (429) — each then
         # falls back to slow gpt-oss and the turn appears to hang for minutes.
         # Force a tool-free synthesis instead. Env-disable: AGENT_FORCE_SYNTHESIS=0.
-        force_synthesis = False
+        # Live M1/M2/M6/M9/M13/M14: remaining already drafted the artifact,
+        # but force_synthesis stayed False so a later steal tool overwrote it.
+        force_synthesis = bool(_wbs_pre or _hist_pre or _wir_pre or _more_pre)
+        for _hit in (_wbs_pre, _hist_pre, _wir_pre, _more_pre):
+            if _hit:
+                excluded_tools |= _conflicting_tools_after_predispatch(
+                    str(_hit.get("name") or "")
+                )
         error_nudges = 0
         _force_synth_enabled = os.getenv("AGENT_FORCE_SYNTHESIS", "1") != "0"
         # True token streaming for the FINAL synthesis call only. Gated to:
@@ -7497,7 +7708,8 @@ class Agent:
                 params["duration_months"] = dm
             try:
                 result = await container.cash_flow_forecast(
-                    {"message": args.get("message") or ""}, params,
+                    {"message": args.get("message") or user_message or ""},
+                    params,
                 )
             except Exception as e:
                 return {
@@ -7762,6 +7974,27 @@ class Agent:
                 block_input = _resolve_block_file_input(project_id, block_input)
             if isinstance(block_params, dict):
                 block_params = _resolve_block_file_input(project_id, block_params)
+        if name == "construction" and user_message:
+            # Live M14: the model rewrote wir_form scope to "blinding pour"
+            # so refuse missed the operator RFP / job-req / claim.
+            action = ""
+            if isinstance(block_params, dict):
+                action = str(block_params.get("action") or "")
+            if action in {
+                "wir_form", "inspection_request", "job_requisition",
+                "rfp_draft", "rfp_management", "claims_builder",
+            }:
+                if isinstance(block_params, dict):
+                    block_params = dict(block_params)
+                    block_params.setdefault("user_message", user_message)
+                else:
+                    block_params = {"user_message": user_message, "action": action}
+                if isinstance(block_input, dict):
+                    block_input = dict(block_input)
+                    block_input.setdefault("user_message", user_message)
+                    block_input.setdefault("text", user_message)
+                elif not block_input:
+                    block_input = {"user_message": user_message, "text": user_message}
         try:
             result = await instance.execute(block_input, block_params)
             envelope = {"name": name, "ok": True, "result": result}
