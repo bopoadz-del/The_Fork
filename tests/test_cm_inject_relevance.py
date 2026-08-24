@@ -212,3 +212,46 @@ def test_source_domains_are_declared_for_every_keyword():
             f"{kw} lists its own source domain as implicated — that was the "
             f"workaround for having no source field"
         )
+
+
+class TestWordBoundaryMatching:
+    """Single-token keywords/triggers match words (with inflections), never
+    substrings. Regression net for: 'ncr' in 'concrete', 'eot' in
+    'geotechnical', 'late' in 'calculated', 'vo' in 'invoice', 'lti' in
+    'multi' — the last two introduced by the site-language pass itself."""
+
+    def test_invoice_does_not_publish_variation_template(self):
+        from app.core.cross_domain_reasoner import CrossDomainReasoner
+        r = CrossDomainReasoner()
+        assert r.analyze_turn("please process this invoice for the consultant")[
+            "matched_template"
+        ] is None
+
+    def test_multi_does_not_publish_safety_template(self):
+        from app.core.cross_domain_reasoner import CrossDomainReasoner
+        r = CrossDomainReasoner()
+        assert r.analyze_turn("planning the multi-storey car park works")[
+            "matched_template"
+        ] is None
+
+    def test_concrete_geotechnical_calculated_do_not_route_domains(self):
+        from app.core.cross_domain_reasoner import CrossDomainIntentDetector
+        from app.core.dependency_graph import Domain
+        d = CrossDomainIntentDetector()
+        assert Domain.QUALITY not in d.detect_domains("pour the level 3 concrete")[0]
+        assert d.detect_domains("geotechnical report for the basement")[0] == set()
+        assert Domain.SCHEDULE not in d.detect_domains("the calculated bearing capacity")[0]
+
+    def test_inflections_and_real_terms_still_fire(self):
+        from app.core.cross_domain_reasoner import (
+            CrossDomainIntentDetector,
+            CrossDomainReasoner,
+        )
+        from app.core.dependency_graph import Domain
+        d = CrossDomainIntentDetector()
+        r = CrossDomainReasoner()
+        assert Domain.SCHEDULE in d.detect_domains("we are delayed by 2 weeks")[0]
+        assert Domain.QUALITY in d.detect_domains("we received an ncr on the slab")[0]
+        assert r.analyze_turn("raise a VO for the facade change")[
+            "matched_template"
+        ] == "change_order_impact"

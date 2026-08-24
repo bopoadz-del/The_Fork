@@ -217,6 +217,29 @@ _CROSS_DOMAIN_KEYWORDS: Dict[str, List[Domain]] = {
     kw: list(targets) for kw, (_src, targets) in _KEYWORD_ROUTES.items()
 }
 
+# Single-token keywords and triggers match on WORD BOUNDARIES with common
+# inflections (delays, delayed, claiming, snags) — never as raw substrings.
+# Substring matching is how "ncr" fired inside "concrete", "eot" inside
+# "geotechnical", "late" inside "calculated", and — after the site-language
+# pass added them — "vo" inside "invoice" and "lti" inside "multi", which
+# published the variation-order and safety-incident templates on turns that
+# contain neither. Multi-word phrases keep substring semantics: they are
+# specific enough that a containing sentence genuinely says them.
+def _word_pattern(token: str) -> "re.Pattern[str]":
+    return re.compile(r"\b" + re.escape(token) + r"(?:s|es|ed|ing)?\b")
+
+
+_ROUTE_PATTERNS: Dict[str, "re.Pattern[str]"] = {
+    kw: _word_pattern(kw) for kw in _KEYWORD_ROUTES if " " not in kw
+}
+
+_TRIGGER_PATTERNS: Dict[str, "re.Pattern[str]"] = {
+    t: _word_pattern(t)
+    for triggers in _TEMPLATE_TRIGGERS.values()
+    for t in triggers
+    if " " not in t
+}
+
 # ── Post-tool cross-domain triggers ───────────────────────────────────────
 # After a specific tool runs, these domains may be relevant next.
 _POST_TOOL_DOMAIN_TRIGGERS: Dict[str, List[Domain]] = {
@@ -272,7 +295,11 @@ class TemplateMatcher:
         for template_id, triggers in _TEMPLATE_TRIGGERS.items():
             weight = 0.0
             for t in triggers:
-                if t in text or all(w in words for w in t.split()):
+                if " " in t:
+                    hit = t in text or all(w in words for w in t.split())
+                else:
+                    hit = bool(_TRIGGER_PATTERNS[t].search(text))
+                if hit:
                     if " " in t:
                         weight += 1.0
                     elif t in _GENERIC_TRIGGERS:
@@ -322,7 +349,11 @@ class CrossDomainIntentDetector:
         sources: Set[Domain] = set()
         targets: Set[Domain] = set()
         for keyword, (source, implicated) in _KEYWORD_ROUTES.items():
-            if keyword in text:
+            if " " in keyword:
+                hit = keyword in text
+            else:
+                hit = bool(_ROUTE_PATTERNS[keyword].search(text))
+            if hit:
                 sources.add(source)
                 targets.update(implicated)
         return sources, targets
