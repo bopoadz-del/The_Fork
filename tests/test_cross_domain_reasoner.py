@@ -11,6 +11,7 @@ from app.core.cross_domain_reasoner import (
     SystemPromptInjector,
     TemplateMatcher,
     _CROSS_DOMAIN_KEYWORDS,
+    _KEYWORD_ROUTES,
     _POST_TOOL_DOMAIN_TRIGGERS,
     _TEMPLATE_TRIGGERS,
 )
@@ -35,9 +36,19 @@ class TestTemplateTriggers:
 
 class TestCrossDomainKeywords:
     def test_keywords_cover_all_relevant_domains(self):
+        """Coverage is over the FULL route — the domain a keyword is about plus
+        the domains it implicates.
+
+        Asserting over implicated domains alone used to hide a modelling error:
+        PROCUREMENT was listed as its own target on "material shortage" and
+        "lead time", which is how a table with no source field expressed "this
+        keyword is about procurement". Now the source is explicit, so coverage
+        has to be measured over both halves or a whole domain looks missing.
+        """
         all_domains = set()
-        for domains in _CROSS_DOMAIN_KEYWORDS.values():
-            all_domains.update(domains)
+        for source, targets in _KEYWORD_ROUTES.values():
+            all_domains.add(source)
+            all_domains.update(targets)
         assert Domain.SCHEDULE in all_domains
         assert Domain.COST in all_domains
         assert Domain.QUALITY in all_domains
