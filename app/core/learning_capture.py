@@ -107,3 +107,54 @@ def capture_schedule_durations(result: Dict[str, Any], project_id: str = "") -> 
     except Exception:  # noqa: BLE001
         logger.warning("learning_capture: schedule duration capture failed", exc_info=True)
         return 0
+
+
+# Action name -> capture function. Only actions whose result shape a capture
+# function actually understands appear here; anything else is a no-op, so
+# adding a container action never silently starts writing malformed learning
+# data.
+_CAPTURE_BY_ACTION = {
+    "qa_qc_inspection": capture_qa_defects,
+    "wir_form": capture_qa_defects,
+    "inspection_request": capture_qa_defects,
+    "parse_primavera_schedule": capture_schedule_durations,
+    "primavera_parse": capture_schedule_durations,
+    "progress_tracker": capture_schedule_durations,
+    "track_progress": capture_schedule_durations,
+}
+
+
+def capture_from_action(action: str, result: Any, params: Any = None) -> int:
+    """Capture learning signals from one completed container action.
+
+    This is the WRITE side of the learning loop and it is deliberately the only
+    thing wired: recording actuals is invisible to users and changes no answer,
+    so it can run from day one and accumulate the dataset. The READ side —
+    schedule work consulting calibrated durations, procurement consulting
+    learned lead times — is NOT connected, and when it is, it must state its
+    provenance in the answer ("calibrated from 14 actuals on this project;
+    default was 21 days") rather than silently shifting numbers.
+
+    Best-effort by construction: returns 0 and never raises, so a learning
+    failure cannot affect the action's own result. Off unless
+    ``FORK_LEARNING_CAPTURE`` is set.
+    """
+    if not enabled():
+        return 0
+    try:
+        fn = _CAPTURE_BY_ACTION.get(action)
+        if fn is None or not isinstance(result, dict):
+            return 0
+        if result.get("status") == "error":
+            return 0
+        project_id = ""
+        if isinstance(params, dict):
+            project_id = str(params.get("project_id") or "")
+        if not project_id:
+            project_id = str(result.get("project_id") or "")
+        return fn(result, project_id)
+    except Exception:  # noqa: BLE001 — must never break the action
+        logger.warning(
+            "learning_capture: capture_from_action(%s) failed", action, exc_info=True
+        )
+        return 0

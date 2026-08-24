@@ -2416,7 +2416,26 @@ class ConstructionContainer(
                 "known_actions": sorted(handlers.keys()),
             }
 
-        return await handler(input_data, params)
+        result = await handler(input_data, params)
+
+        # WRITE side of the construction learning loop (W6). Every container
+        # action passes through here, so this is the one place that sees a
+        # completed action together with its name and result.
+        #
+        # `learning_capture` described itself as "the wiring" but had no call
+        # site, so FORK_LEARNING_CAPTURE=1 recorded nothing. Capturing actuals
+        # is invisible to users and changes no answer, so it can run from day
+        # one and accumulate the dataset; the READ side stays disconnected
+        # until it can state its provenance in the answer.
+        try:
+            from app.core import learning_capture
+
+            learning_capture.capture_from_action(action, result, params)
+        except Exception:  # noqa: BLE001 — learning must never break an action
+            logger.warning("learning capture failed for %s", action, exc_info=True)
+
+        return result
+
     def get_actions(self) -> Dict[str, Any]:
         return {
             "chat": self.chat,
