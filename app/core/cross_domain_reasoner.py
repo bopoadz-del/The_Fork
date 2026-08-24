@@ -18,8 +18,30 @@ from app.core.workflow_templates import WorkflowTemplateLibrary
 from app.schemas.construction_activity import ActivityType
 
 
+# The confidence a template match must reach before anything acts on it. Lives
+# here, applied inside `analyze_turn`, so every consumer inherits it — a gate
+# that each caller has to remember is a gate that some caller will forget.
+TEMPLATE_MATCH_FLOOR = 0.15
+
+# Single-word triggers that are ordinary business English rather than
+# construction terms of art. On their own they are not enough to commit to a
+# multi-domain workflow — "dashboard" is a request to look at something, not a
+# statement that a monthly progress cycle is under way. Terms of art
+# ("variation", "snag", "prolongation") are NOT listed here: in this domain
+# they are unambiguous, and demoting them is what made site language invisible.
+_GENERIC_TRIGGERS = frozenset({"dashboard", "turnover", "omission"})
+
 # ── Template keyword patterns ─────────────────────────────────────────────
 # Each template's trigger phrases — matched against the lowercased user message.
+#
+# VOCABULARY NOTE: these must carry the words site teams actually use, not only
+# the canonical textbook phrasing. Measured 2026-08-24 before the site-language
+# pass below: of five realistic turns, three matched no template at all
+# ("the chiller delivery has slipped four weeks", "lost-time injury on level 3",
+# "claiming 45 days for the late foundation release") and one matched the wrong
+# template ("snagging list ... 200 open items" -> commissioning_to_handover
+# rather than qa_defect_closeout). Misses here are SILENT — the turn simply
+# gets no cross-domain help — so they do not show up as errors.
 _TEMPLATE_TRIGGERS: Dict[str, List[str]] = {
     "new_project_setup": [
         "new project", "project setup", "start project", "initialize project",
@@ -33,14 +55,32 @@ _TEMPLATE_TRIGGERS: Dict[str, List[str]] = {
     "change_order_impact": [
         "change order", "variation order", "vo impact", "change impact",
         "variation impact", "scope change", "change request", "extra work",
+        # A variation is called a "variation" on site. The bare term was
+        # missing, so "client issued a variation for the facade" only matched
+        # when the word "impact" also happened to appear somewhere in the
+        # sentence — the matcher accepts non-adjacent word sets, which made the
+        # gap look like intermittent success rather than a missing trigger.
+        "variation", "variations", "vo", "site instruction",
+        "field instruction", "additional works", "omission",
     ],
     "delay_to_claim": [
         "delay claim", "extension of time", "eot claim", "prolongation",
         "time impact", "delay analysis", "schedule delay claim", "claim for delay",
+        # How a delay is actually reported: someone is claiming days, or an
+        # activity slipped. Neither phrasing existed here.
+        "claiming days", "days delay", "days of delay", "slipped",
+        "slippage", "pushed out", "behind programme", "behind program",
+        "disruption claim", "acceleration cost", "late release",
     ],
     "qa_defect_closeout": [
         "defect tracking", "defect closeout", "ncr tracking", "quality defect",
         "defect register", "rectification", "close out defect", "defect report",
+        # "Snagging"/"punch list" IS defect close-out. Before this it matched
+        # commissioning_to_handover instead, purely because "handover" appeared
+        # in the sentence — a vocabulary gap reading as a reasoning error.
+        "snag", "snagging", "snag list", "snagging list", "de-snag",
+        "punch list", "punchlist", "punch item", "open items",
+        "make good", "remedial works",
     ],
     "submittal_to_install": [
         "submittal log", "material submittal", "approval tracking",
@@ -49,6 +89,11 @@ _TEMPLATE_TRIGGERS: Dict[str, List[str]] = {
     "safety_incident_response": [
         "safety incident", "incident report", "accident report",
         "stop work", "incident response", "safety investigation", "root cause",
+        # Site language. "LTI" is the standard term on every project that
+        # reports safety statistics and matched nothing before this.
+        "lost time injury", "lost-time injury", "lti", "near miss",
+        "first aid case", "injury", "fatality", "dangerous occurrence",
+        "man down", "hse incident",
     ],
     "commissioning_to_handover": [
         "commissioning", "practical completion", "handover",
@@ -69,60 +114,107 @@ _TEMPLATE_TRIGGERS: Dict[str, List[str]] = {
 
 # ── Cross-domain intent keywords ──────────────────────────────────────────
 # When these keywords appear in a user message, additional domains are relevant.
+_KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
+    # keyword -> (domain the keyword is ABOUT, domains it implicates)
+    #
+    # The source domain is what makes relevance ranking possible: a dependency
+    # rule is relevant when it FIRES FROM what the user is discussing, not
+    # merely when it happens to point at an implicated domain. Without it the
+    # inject could only rank by target and fell back to declaration order.
+
+    # ── Schedule ──
+    "delay": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "behind schedule": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "behind programme": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "schedule slip": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "slipped": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "slippage": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "pushed out": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "late": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "overdue": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "milestone missed": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "critical path": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE)),
+    "float": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE)),
+    "compress": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE)),
+    "crash": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE)),
+    "fast track": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE, Domain.QUALITY)),
+    "acceleration": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE)),
+
+    # ── Cost ──
+    "over budget": (Domain.COST, (Domain.SCHEDULE, Domain.RISK)),
+    "cost overrun": (Domain.COST, (Domain.SCHEDULE, Domain.RISK)),
+    "budget variance": (Domain.COST, (Domain.SCHEDULE, Domain.RISK)),
+    "cost impact": (Domain.COST, (Domain.SCHEDULE, Domain.RISK)),
+
+    # ── Contract ──
+    # A variation is a CONTRACT instrument. It sat under the cost section
+    # before, which sent the ranking looking for cost-sourced rules.
+    "change order": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
+    "variation": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
+    "variation order": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
+    "claim": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
+    "claiming": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
+    "dispute": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
+    "eot": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST)),
+    "extension of time": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST)),
+    "liquidated damages": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST)),
+    "prolongation": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST)),
+    "fidic": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
+
+    # ── Quality ──
+    "defect": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
+    "snag": (Domain.QUALITY, (Domain.SCHEDULE, Domain.HANDOVER)),
+    "snagging": (Domain.QUALITY, (Domain.SCHEDULE, Domain.HANDOVER)),
+    "punch list": (Domain.QUALITY, (Domain.SCHEDULE, Domain.HANDOVER)),
+    "punchlist": (Domain.QUALITY, (Domain.SCHEDULE, Domain.HANDOVER)),
+    "inspection failed": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
+    "ncr": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
+    "non conformance": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
+    "rework": (Domain.QUALITY, (Domain.SCHEDULE, Domain.COST)),
+    "remedial works": (Domain.QUALITY, (Domain.SCHEDULE, Domain.COST)),
+
+    # ── Safety ──
+    "incident": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY)),
+    "accident": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY)),
+    "lost time injury": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY, Domain.RISK)),
+    "lost-time injury": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY, Domain.RISK)),
+    "lti": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY, Domain.RISK)),
+    "near miss": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY)),
+    "injury": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY, Domain.RISK)),
+    "fatality": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY, Domain.RISK)),
+    "stop work": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY)),
+    "safety violation": (Domain.SAFETY, (Domain.SCHEDULE, Domain.QUALITY)),
+
+    # ── Procurement ──
+    "delivery delayed": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.COST)),
+    "delivery slipped": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.COST)),
+    "long lead": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.RISK)),
+    "procurement": (Domain.PROCUREMENT, (Domain.SCHEDULE,)),
+    "purchase order": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.QUALITY)),
+    "material shortage": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.COST)),
+    "lead time": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.COST)),
+    "expediting": (Domain.PROCUREMENT, (Domain.SCHEDULE,)),
+    "shipment": (Domain.PROCUREMENT, (Domain.SCHEDULE,)),
+
+    # ── Commissioning / handover ──
+    "testing": (Domain.COMMISSIONING, (Domain.HANDOVER, Domain.QUALITY)),
+    "performance test": (Domain.COMMISSIONING, (Domain.HANDOVER, Domain.QUALITY)),
+    "handover": (Domain.HANDOVER, (Domain.QUALITY, Domain.COMMISSIONING)),
+
+    # ── BIM ──
+    "clash": (Domain.BIM, (Domain.SCHEDULE, Domain.DOCUMENT)),
+    "quantity takeoff": (Domain.BIM, (Domain.COST,)),
+    "qto": (Domain.BIM, (Domain.COST,)),
+
+    # ── Risk ──
+    "risk register": (Domain.RISK, (Domain.SCHEDULE, Domain.COST)),
+    "mitigation": (Domain.RISK, (Domain.SCHEDULE, Domain.COST)),
+}
+
+# Back-compat view: keyword -> implicated domains. Derived, never edited by
+# hand, so the two can never drift apart.
 _CROSS_DOMAIN_KEYWORDS: Dict[str, List[Domain]] = {
-    # Schedule-related keywords that should also check cost/contract
-    "delay": [Domain.COST, Domain.CONTRACT],
-    "behind schedule": [Domain.COST, Domain.CONTRACT],
-    "schedule slip": [Domain.COST, Domain.CONTRACT],
-    "late": [Domain.COST, Domain.CONTRACT],
-    "overdue": [Domain.COST, Domain.CONTRACT],
-    "milestone missed": [Domain.COST, Domain.CONTRACT],
-    "critical path": [Domain.COST, Domain.RESOURCE],
-    "float": [Domain.COST, Domain.RESOURCE],
-    "compress": [Domain.COST, Domain.RESOURCE],
-    "crash": [Domain.COST, Domain.RESOURCE],
-    "fast track": [Domain.COST, Domain.RESOURCE, Domain.QUALITY],
-    # Cost-related keywords that should also check schedule/risk
-    "over budget": [Domain.SCHEDULE, Domain.RISK],
-    "cost overrun": [Domain.SCHEDULE, Domain.RISK],
-    "budget variance": [Domain.SCHEDULE, Domain.RISK],
-    "change order": [Domain.SCHEDULE, Domain.RISK],
-    "variation": [Domain.SCHEDULE, Domain.RISK],
-    # Quality-related keywords that should also check schedule/safety
-    "defect": [Domain.SCHEDULE, Domain.SAFETY],
-    "inspection failed": [Domain.SCHEDULE, Domain.SAFETY],
-    "ncr": [Domain.SCHEDULE, Domain.SAFETY],
-    "non conformance": [Domain.SCHEDULE, Domain.SAFETY],
-    "rework": [Domain.SCHEDULE, Domain.COST],
-    # Safety-related keywords that should also check schedule/quality
-    "incident": [Domain.SCHEDULE, Domain.QUALITY],
-    "accident": [Domain.SCHEDULE, Domain.QUALITY],
-    "stop work": [Domain.SCHEDULE, Domain.QUALITY],
-    "safety violation": [Domain.SCHEDULE, Domain.QUALITY],
-    # Procurement-related keywords that should also check schedule/quality
-    "delivery delayed": [Domain.SCHEDULE, Domain.QUALITY],
-    "long lead": [Domain.SCHEDULE, Domain.RISK],
-    "procurement": [Domain.SCHEDULE],
-    "purchase order": [Domain.SCHEDULE, Domain.QUALITY],
-    "material shortage": [Domain.PROCUREMENT, Domain.SCHEDULE],
-    "lead time": [Domain.PROCUREMENT, Domain.SCHEDULE],
-    # Contract-related keywords that should also check schedule/cost/risk
-    "claim": [Domain.SCHEDULE, Domain.COST, Domain.RISK],
-    "dispute": [Domain.SCHEDULE, Domain.COST, Domain.RISK],
-    "eot": [Domain.SCHEDULE, Domain.COST],
-    "extension of time": [Domain.SCHEDULE, Domain.COST],
-    "liquidated damages": [Domain.SCHEDULE, Domain.COST],
-    "fidic": [Domain.SCHEDULE, Domain.COST, Domain.RISK],
-    # Commissioning keywords
-    "testing": [Domain.COMMISSIONING, Domain.HANDOVER],
-    "performance test": [Domain.COMMISSIONING, Domain.HANDOVER],
-    # BIM keywords
-    "clash": [Domain.BIM, Domain.SCHEDULE],
-    "quantity takeoff": [Domain.BIM, Domain.COST],
-    "qto": [Domain.BIM, Domain.COST],
-    # Risk keywords
-    "risk register": [Domain.SCHEDULE, Domain.COST],
-    "mitigation": [Domain.SCHEDULE, Domain.COST],
+    kw: list(targets) for kw, (_src, targets) in _KEYWORD_ROUTES.items()
 }
 
 # ── Post-tool cross-domain triggers ───────────────────────────────────────
@@ -153,32 +245,59 @@ class TemplateMatcher:
     def match(self, user_message: str) -> List[Tuple[str, float]]:
         """Return template IDs sorted by match score (highest first).
 
-        Scoring: +1.0 per trigger phrase found in the message.
-        Normalized by number of trigger phrases for the template.
+        Scoring is deliberately INDEPENDENT of how many trigger phrases a
+        template happens to list. The previous ``hits / len(triggers)`` divided
+        by the list length, which meant every synonym added to a template
+        lowered the score of every phrase already in it — so enriching the
+        vocabulary (the whole point of the trigger table) pushed real matches
+        below TEMPLATE_MATCH_FLOOR. A template with 7 triggers scored 0.143 on
+        a single hit and a template with 20 scored 0.05, for identical evidence.
+
+        Instead each matched trigger contributes weight by SPECIFICITY: a
+        multi-word phrase ("lost time injury") is strong evidence, a single
+        construction term of art ("snag", "variation") is weaker but still
+        clears the floor, and a single word that is ordinary business English
+        (_GENERIC_TRIGGERS) does not clear it alone. Two units of evidence
+        saturate the score.
+
+        That last tier is what the old length division was doing by accident:
+        "dashboard" scored 1/11 because monthly_progress happens to list eleven
+        triggers, which kept a bare one-word turn from publishing a five-domain
+        workflow plan. That guard is real and worth keeping — it just needed
+        saying out loud instead of depending on how long a list is.
         """
         text = user_message.lower()
         words = set(re.findall(r"[a-z0-9']+", text))
         scores: List[Tuple[str, float]] = []
         for template_id, triggers in _TEMPLATE_TRIGGERS.items():
-            hits = sum(
-                1
-                for t in triggers
-                if t in text or all(w in words for w in t.split())
-            )
-            if hits > 0:
-                score = hits / len(triggers)  # normalize
-                scores.append((template_id, score))
-        scores.sort(key=lambda x: -x[1])
+            weight = 0.0
+            for t in triggers:
+                if t in text or all(w in words for w in t.split()):
+                    if " " in t:
+                        weight += 1.0
+                    elif t in _GENERIC_TRIGGERS:
+                        weight += 0.25
+                    else:
+                        weight += 0.5
+            if weight > 0:
+                scores.append((template_id, min(1.0, weight / 2.0)))
+        # Ties are broken by template id so the ranking is stable across runs
+        # rather than dependent on dict insertion order.
+        scores.sort(key=lambda x: (-x[1], x[0]))
         return scores
 
-    def best_match(self, user_message: str, threshold: float = 0.15) -> Optional[str]:
+    def best_match(
+        self, user_message: str, threshold: float = TEMPLATE_MATCH_FLOOR
+    ) -> Optional[str]:
         """Return the best matching template ID, or None if below threshold."""
         matches = self.match(user_message)
         if matches and matches[0][1] >= threshold:
             return matches[0][0]
         return None
 
-    def get_matched_template(self, user_message: str, threshold: float = 0.15):
+    def get_matched_template(
+        self, user_message: str, threshold: float = TEMPLATE_MATCH_FLOOR
+    ):
         """Return the actual WorkflowTemplate object for the best match."""
         template_id = self.best_match(user_message, threshold)
         if template_id:
@@ -192,41 +311,85 @@ class CrossDomainIntentDetector:
     def __init__(self, dependency_graph: Optional[DependencyGraph] = None) -> None:
         self._graph = dependency_graph or DependencyGraph()
 
+    def detect_domains(self, user_message: str) -> Tuple[Set[Domain], Set[Domain]]:
+        """Return (source domains, implicated domains) for a message.
+
+        The source set is what the message is ABOUT; the implicated set is what
+        may be affected. Only the second is exposed to callers as
+        ``detect_additional_domains``, but ranking needs both.
+        """
+        text = user_message.lower()
+        sources: Set[Domain] = set()
+        targets: Set[Domain] = set()
+        for keyword, (source, implicated) in _KEYWORD_ROUTES.items():
+            if keyword in text:
+                sources.add(source)
+                targets.update(implicated)
+        return sources, targets
+
     def detect_additional_domains(self, user_message: str) -> Set[Domain]:
         """Find domains that are implicitly relevant based on message keywords."""
-        text = user_message.lower()
-        additional: Set[Domain] = set()
-        for keyword, domains in _CROSS_DOMAIN_KEYWORDS.items():
-            if keyword in text:
-                additional.update(domains)
-        return additional
+        return self.detect_domains(user_message)[1]
+
+    def _rank_rules(
+        self, sources: Set[Domain], targets: Set[Domain]
+    ) -> List[Any]:
+        """Dependency rules ordered by relevance to this message.
+
+        This used to be ``get_rules_for_target(domain)[:3]`` — the first three
+        rules DECLARED for each implicated domain, which is an artefact of the
+        order somebody typed DEFAULT_RULES in, not a statement about the query.
+        A variation-order question was told "Critical safety incident triggers
+        stop-work order in affected zone" as a relevant linkage, because R003
+        happens to be an early rule targeting SCHEDULE. Wrong, and stated with
+        the same confidence as a right answer, inside the system prompt.
+
+        A rule earns its place by firing FROM something the message is about
+        (weight 3), or from something the message implicates (weight 1, the
+        downstream chain), plus one per implicated domain it points at. The
+        floor of 3 means a rule with no connection to the source — however many
+        targets it happens to share — does not appear at all.
+        """
+        detected = sources | targets
+        scored: List[Tuple[int, str, Any]] = []
+        for rule in self._graph.rules:
+            if rule.source_domain in sources:
+                score = 3
+            elif rule.source_domain in targets:
+                score = 1
+            else:
+                continue
+            score += sum(1 for d in rule.target_domains if d in detected)
+            if score >= 3:
+                # rule_id breaks ties deterministically
+                scored.append((score, rule.rule_id, rule))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        return [r for _score, _rid, r in scored]
 
     def get_cross_domain_context(self, user_message: str) -> str:
         """Generate a context string for the system prompt about cross-domain relevance.
 
-        Returns empty string when no cross-domain intent is detected.
+        Returns empty string when no cross-domain intent is detected, and also
+        when intent is detected but no dependency rule is genuinely relevant to
+        it. Silence is the correct output there: this text enters the system
+        prompt of the construction agents as assertive domain guidance, so a
+        plausible-but-wrong linkage is worse than none.
         """
-        domains = self.detect_additional_domains(user_message)
-        if not domains:
+        sources, targets = self.detect_domains(user_message)
+        if not targets:
             return ""
 
-        domain_names = [d.value for d in domains]
-        # Find dependency rules that connect to these domains
-        relevant_rules = []
-        for domain in domains:
-            rules = self._graph.get_rules_for_target(domain)
-            for rule in rules[:3]:  # cap to avoid bloat
-                relevant_rules.append(rule.description)
+        rules = self._rank_rules(sources, targets)
+        if not rules:
+            return ""
 
-        if not relevant_rules:
-            return f""
-
+        domain_names = sorted(d.value for d in targets)
         context_lines = [
             f"Cross-domain relevance detected: {', '.join(domain_names)} may be affected.",
             "Relevant construction management linkages:",
         ]
-        for i, desc in enumerate(relevant_rules[:5], 1):
-            context_lines.append(f"  {i}. {desc}")
+        for i, rule in enumerate(rules[:5], 1):
+            context_lines.append(f"  {i}. {rule.description}")
         return "\n".join(context_lines)
 
     def suggest_follow_up_tools(
@@ -447,17 +610,32 @@ class CrossDomainReasoner:
         """Analyze a single turn and return cross-domain reasoning results.
 
         Returns:
-            - matched_template: best matching template (or None)
-            - matched_template_score: match confidence
+            - matched_template: best matching template above TEMPLATE_MATCH_FLOOR,
+              else None
+            - matched_template_score: match confidence, reported even when it is
+              below the floor so callers can log or tune against it
             - additional_domains: implicitly relevant domains
             - cross_domain_context: prompt-ready context string
             - suggested_tools: tools to consider based on cross-domain links
+
+        The floor is applied HERE rather than left to each caller. It previously
+        returned whatever ranked first — a 0.125 match was reported as
+        `matched_template` with no indication it was below the documented
+        threshold — and the one consumer that existed re-checked the score
+        itself. That works exactly until a second consumer trusts the field.
+        The gate belongs in the funnel, not in whichever caller remembers it.
         """
         template_scores = self.template_matcher.match(user_message)
-        best_template = template_scores[0][0] if template_scores else None
         best_score = template_scores[0][1] if template_scores else 0.0
+        best_template = (
+            template_scores[0][0]
+            if template_scores and best_score >= TEMPLATE_MATCH_FLOOR
+            else None
+        )
 
-        additional_domains = self.intent_detector.detect_additional_domains(user_message)
+        source_domains, additional_domains = self.intent_detector.detect_domains(
+            user_message
+        )
         cross_domain_context = self.intent_detector.get_cross_domain_context(user_message)
 
         # Build suggested tools from additional domains
@@ -475,8 +653,14 @@ class CrossDomainReasoner:
             Domain.DOCUMENT: ["search_project_documents"],
             Domain.RESOURCE: ["resource_histogram"],
         }
+        # Tools for the domain the message is ABOUT come first, then tools for
+        # the domains it implicates. Drawing only from the implicated set meant
+        # a procurement question never suggested the procurement tool — the
+        # source domain is the one most likely to have the right tool.
         suggested_tools: List[str] = []
-        for domain in additional_domains:
+        for domain in sorted(source_domains, key=lambda d: d.value):
+            suggested_tools.extend(domain_tools.get(domain, []))
+        for domain in sorted(additional_domains, key=lambda d: d.value):
             suggested_tools.extend(domain_tools.get(domain, []))
         suggested_tools = list(dict.fromkeys(suggested_tools))[:6]
 
