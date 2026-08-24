@@ -6569,7 +6569,10 @@ class Agent:
         # back to the untouched non-streaming path below.
         _synth_stream_enabled = (
             os.getenv("SYNTHESIS_STREAMING") == "1"
-            and cfg["provider"] == "groq"
+            # Kimi is the production primary; gating on Groq alone made
+            # SYNTHESIS_STREAMING=1 a dead switch in prod. Keep this list in
+            # step with the allowlist in _stream_synthesis.
+            and cfg["provider"] in ("groq", "kimi")
             # rag_debug needs the whole final text to run its with/without-RAG
             # A/B in the non-streaming branch; don't stream those turns.
             and not rag_debug
@@ -7441,9 +7444,11 @@ class Agent:
         """
         cfg = _llm_config()
         native_ollama = _is_native_ollama(cfg)
-        if cfg["provider"] not in ("groq", "openai") and not native_ollama:
-            # Only Groq, OpenAI, and native Ollama streaming are verified.
-            raise _SynthStreamError("streaming synthesis only verified for groq/openai/native-ollama")
+        if cfg["provider"] not in ("groq", "openai", "kimi") and not native_ollama:
+            # Only Groq, OpenAI, Kimi, and native Ollama streaming are verified.
+            raise _SynthStreamError(
+                "streaming synthesis only verified for groq/openai/kimi/native-ollama"
+            )
         # Soft daily cap: mirror _call_llm. Over cap -> fall back so the
         # non-streaming path emits the structured cap error the UI expects.
         if user_id:
@@ -7471,6 +7476,9 @@ class Agent:
             else {"Content-Type": "application/json"}
         )
         usage: dict[str, Any] | None = None
+        # Reasoning-phase deltas seen but deliberately not yielded (see below).
+        reasoning_deltas = 0
+        content_deltas = 0
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(_llm_http_timeout(), read=_llm_http_timeout())) as client:
                 if native_ollama:
@@ -7531,8 +7539,21 @@ class Agent:
                                 continue
                             choices = evt.get("choices") or []
                             if choices:
-                                delta = (choices[0].get("delta") or {}).get("content")
+                                _delta_obj = choices[0].get("delta") or {}
+                                # Reasoning models (Kimi K2 thinking) stream a
+                                # THINKING phase as ``reasoning_content`` before
+                                # any ``content`` arrives. It is not the answer:
+                                # it contains discarded intermediate claims that
+                                # would read as authoritative in the UI, and it
+                                # is not what gets persisted. Count it so the
+                                # caller can tell "model is working" apart from
+                                # "provider returned nothing", but never yield
+                                # it as answer text.
+                                if _delta_obj.get("reasoning_content"):
+                                    reasoning_deltas += 1
+                                delta = _delta_obj.get("content")
                                 if delta:
+                                    content_deltas += 1
                                     yield delta
                             if evt.get("usage"):
                                 usage = evt["usage"]
@@ -7540,6 +7561,15 @@ class Agent:
             raise
         except Exception as e:  # noqa: BLE001 — network/transport/parse
             raise _SynthStreamError(f"{cfg['provider']} stream error: {e}")
+        if reasoning_deltas and not content_deltas:
+            # HTTP 200 with a full thinking phase and no answer. The caller sees
+            # zero tokens and falls back to non-streaming, which is correct but
+            # looks identical to a dead provider in the logs. Say which it was.
+            _LOG.warning(
+                "%s streamed %d reasoning deltas and no content; "
+                "falling back to non-streaming synthesis",
+                cfg["provider"], reasoning_deltas,
+            )
         # Best-effort cost tracking — never let it sink the turn.
         if usage is not None:
             try:

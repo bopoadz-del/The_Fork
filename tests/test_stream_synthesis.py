@@ -65,6 +65,21 @@ def _sse(*deltas, usage=None, done=True):
     return lines
 
 
+def _reasoning_sse(thinking=(), answer=(), done=True):
+    """A reasoning model's SSE sequence: the thinking phase streams first as
+    `reasoning_content`, then the answer streams as `content`. Shape taken from
+    a live kimi-k2.6 stream, not invented."""
+    lines = ["data: " + json.dumps({"choices": [{"delta": {"role": "assistant"}}]})]
+    for t in thinking:
+        lines.append("data: " + json.dumps(
+            {"choices": [{"delta": {"reasoning_content": t}}]}))
+    for a in answer:
+        lines.append("data: " + json.dumps({"choices": [{"delta": {"content": a}}]}))
+    if done:
+        lines.append("data: [DONE]")
+    return lines
+
+
 def _native(*deltas, done=True):
     """Ollama's native /api/chat line sequence -- bare JSON, no `data:`."""
     lines = [json.dumps({"message": {"content": d}}) for d in deltas]
@@ -145,6 +160,11 @@ def _groq(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "groq-test-key")
 
 
+def _kimi(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
+
+
 async def _drain(agent, **kw):
     return [chunk async for chunk in agent._stream_synthesis(
         [{"role": "user", "content": "summarise the findings"}],
@@ -154,22 +174,85 @@ async def _drain(agent, **kw):
 # ── the provider gate ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_kimi_the_production_primary_does_not_stream(monkeypatch, stream):
-    """Deliberate and worth stating: streaming is verified only on Groq,
-    OpenAI and native Ollama, and Kimi is the configured primary. So in the
-    live cloud configuration this path always raises and the caller always
-    uses the non-streaming fallback.
+async def test_kimi_the_production_primary_streams(monkeypatch, stream):
+    """Kimi is the configured production primary, so gating streaming on Groq
+    alone made SYNTHESIS_STREAMING=1 a switch that did nothing: every live turn
+    silently took the non-streaming fallback.
 
-    Pinned so that "streaming does nothing in production" stays a decision
-    someone made rather than a bug someone introduces.
+    The inverse of this test used to pin "Kimi does not stream" as a deliberate
+    decision. It was, until Kimi streaming was verified against the live
+    Moonshot API (2026-08-24). Kept as the positive assertion so the gate can't
+    quietly close again.
     """
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
-    monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
+    _kimi(monkeypatch)
+    stream(_StreamResponse(_sse("28 ", "days.")))
+
+    assert await _drain(_agent(), api_key="kimi-test-key") == ["28 ", "days."]
+
+
+@pytest.mark.asyncio
+async def test_an_unverified_provider_is_refused_before_the_call(monkeypatch, stream):
+    """The allowlist is what keeps an unverified provider's stream shape from
+    reaching the user as answer text. It must fire before any network call.
+
+    Ollama behind an OpenAI-shaped URL is the real remaining unverified path:
+    `_llm_config` resolves any UNRECOGNISED provider name to Kimi, so a made-up
+    name would not exercise this gate at all.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_URL", "http://test-ollama:11434/v1/chat/completions")
     calls = stream(_StreamResponse(_sse("never")))
 
     with pytest.raises(_SynthStreamError, match="only verified"):
-        await _drain(_agent(), api_key="kimi-test-key")
+        await _drain(_agent(), api_key="some-key")
     assert calls == [], "an unverified provider was called before the gate fired"
+
+
+# ── reasoning models: the thinking phase is not the answer ───────────────
+
+@pytest.mark.asyncio
+async def test_reasoning_deltas_are_never_yielded_as_answer_text(monkeypatch, stream):
+    """Measured against the live Moonshot API on 2026-08-24: kimi-k2.6 emits
+    181 `reasoning_content` deltas starting at 1.62s, then 66 `content` deltas
+    starting at 6.0s. Both arrive on the same `delta` object.
+
+    `reasoning_content` is discarded intermediate work — it contains claims the
+    model went on to reject. Yielding it would put that text in front of the
+    user as though it were the answer, and it is not what gets persisted, so
+    the streamed and stored answers would disagree.
+    """
+    _kimi(monkeypatch)
+    stream(_StreamResponse(_reasoning_sse(
+        thinking=["The user asks about retention. ", "Maybe 20%? No, that is wrong. "],
+        answer=["Retention is ", "typically 5% to 10%."],
+    )))
+
+    assert await _drain(_agent(), api_key="kimi-test-key") == [
+        "Retention is ", "typically 5% to 10%.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_thinking_only_response_yields_nothing_and_says_why(
+    monkeypatch, stream, caplog,
+):
+    """A reasoning model can spend its whole shared token budget on thinking and
+    return HTTP 200 with no content at all — that is the documented failure the
+    `reasoning_min_tokens` floor exists to prevent, and the floor can be
+    defeated by a low agent budget.
+
+    Yielding nothing is correct: the caller falls back to non-streaming. But in
+    the logs it is indistinguishable from a dead provider, so it has to be
+    named.
+    """
+    _kimi(monkeypatch)
+    stream(_StreamResponse(_reasoning_sse(thinking=["thinking ", "hard "], answer=[])))
+
+    with caplog.at_level("WARNING"):
+        assert await _drain(_agent(), api_key="kimi-test-key") == []
+    assert any(
+        "reasoning deltas and no content" in r.getMessage() for r in caplog.records
+    ), "a thinking-only response was indistinguishable from a dead provider"
 
 
 # ── the happy path ───────────────────────────────────────────────────────
