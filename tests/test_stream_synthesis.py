@@ -25,10 +25,12 @@ whose object exposes `status_code`, `aread()` and `aiter_lines()`.
 from __future__ import annotations
 
 import json
+from unittest import mock
 
 import httpx
 import pytest
 
+from app.agents import runtime
 from app.agents.runtime import Agent, _SynthStreamError
 
 _LLM_ENV = (
@@ -234,7 +236,7 @@ async def test_reasoning_deltas_are_never_yielded_as_answer_text(monkeypatch, st
 
 @pytest.mark.asyncio
 async def test_a_thinking_only_response_yields_nothing_and_says_why(
-    monkeypatch, stream, caplog,
+    monkeypatch, stream,
 ):
     """A reasoning model can spend its whole shared token budget on thinking and
     return HTTP 200 with no content at all — that is the documented failure the
@@ -244,15 +246,23 @@ async def test_a_thinking_only_response_yields_nothing_and_says_why(
     Yielding nothing is correct: the caller falls back to non-streaming. But in
     the logs it is indistinguishable from a dead provider, so it has to be
     named.
+
+    Asserted against the logger itself rather than `caplog`: the full suite
+    reconfigures this logger, so a caplog assertion passes alone and fails in
+    CI depending on what ran before it.
     """
     _kimi(monkeypatch)
     stream(_StreamResponse(_reasoning_sse(thinking=["thinking ", "hard "], answer=[])))
 
-    with caplog.at_level("WARNING"):
+    with mock.patch.object(runtime._LOG, "warning") as warn:
         assert await _drain(_agent(), api_key="kimi-test-key") == []
-    assert any(
-        "reasoning deltas and no content" in r.getMessage() for r in caplog.records
-    ), "a thinking-only response was indistinguishable from a dead provider"
+    logged = " ".join(str(c.args[0]) for c in warn.call_args_list if c.args)
+    assert "reasoning deltas and no content" in logged, (
+        "a thinking-only response was indistinguishable from a dead provider"
+    )
+    # The count is the diagnostic — "some reasoning" and "181 reasoning" are
+    # different problems.
+    assert 2 in warn.call_args_list[0].args, warn.call_args_list
 
 
 # ── the happy path ───────────────────────────────────────────────────────
