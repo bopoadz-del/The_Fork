@@ -202,7 +202,9 @@ def test_flag_off_never_streams(monkeypatch):
     assert "NON-STREAMED fallback answer." in _tokens(events)
 
 
-def test_non_groq_provider_never_streams(monkeypatch):
+def test_an_unlisted_provider_never_streams(monkeypatch):
+    """The outer gate carries its own provider list. OAI-shaped Ollama is not
+    on it, and must not reach _stream_synthesis at all."""
     ollama_cfg = {"provider": "ollama", "url": "http://x/v1/chat/completions",
                   "env_key": "", "default_model": "glm-5.2:cloud"}
     monkeypatch.setattr("app.agents.runtime._llm_config", lambda: dict(ollama_cfg))
@@ -210,7 +212,7 @@ def test_non_groq_provider_never_streams(monkeypatch):
     call_llm = _tool_then_final()
 
     async def _boom_stream(self, *a, **k):
-        raise AssertionError("must not stream on non-groq provider")
+        raise AssertionError("must not stream on an unlisted provider")
         yield ""  # pragma: no cover
 
     with patch.object(Agent, "_call_llm", call_llm), \
@@ -218,6 +220,35 @@ def test_non_groq_provider_never_streams(monkeypatch):
          patch.object(Agent, "_stream_synthesis", _boom_stream):
         events = _run_turn(_pa_agent())
     assert call_llm.state["n"] == 2
+
+
+def test_kimi_the_production_primary_reaches_the_streaming_path(monkeypatch):
+    """The gate that matters in production. SYNTHESIS_STREAMING=1 and
+    LLM_PROVIDER=kimi are both set on the live service, so gating this on Groq
+    alone meant the flag was on and did nothing — every live turn silently took
+    the non-streaming fallback.
+
+    Asserted at the OUTER gate specifically: `_stream_synthesis` having a Kimi
+    allowlist entry is not enough if this gate never calls it.
+    """
+    monkeypatch.setattr("app.agents.runtime._llm_config", lambda: {
+        "provider": "kimi",
+        "url": "https://api.moonshot.ai/v1/chat/completions",
+        "env_key": "KIMI_API_KEY",
+        "default_model": "kimi-k2.6",
+        "fixed_temperature": 1,
+    })
+    monkeypatch.setenv("KIMI_API_KEY", "test-key")
+    monkeypatch.setenv("SYNTHESIS_STREAMING", "1")
+    call_llm = _tool_then_final()
+
+    with patch.object(Agent, "_call_llm", call_llm), \
+         patch.object(Agent, "_run_tool_call", _tool_ok), \
+         patch.object(Agent, "_stream_synthesis", _mk_stream(["Isolate ", "the panel."])):
+        events = _run_turn(_pa_agent())
+
+    assert call_llm.state["n"] == 1, "synthesis went through _call_llm, not the stream"
+    assert "Isolate the panel." in _tokens(events)
 
 
 def test_streamed_xml_tool_leak_is_not_flushed(groq_streaming):
