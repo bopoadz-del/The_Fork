@@ -98,3 +98,17 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
 - `README.md` and `.claude/skills/run-the-fork/SKILL.md` claim the React frontend
   was deleted and only `app/static/index.html` is served. That is outdated: the
   Vite React app in `frontend/` is the real UI (served from `frontend/dist`).
+
+### Before creating a module
+
+Grep this repo's `main` **and** sibling repos (CerebrumDev.ai, Cerebrum-Blocks)
+before adding a new Python module. Consume the existing module, or dual-register
+it with a drift test. Never re-implement a module that already exists under
+another name.
+
+### Stage evidence never ships inside feature PRs
+
+Do not commit Factory `build/stages/*.json` (or reread twins) in a feature PR.
+Stage evidence is regenerable; emit it in a later single run at final HEAD after
+the code merge. Canonical Factory S4 evidence is `S4_ship_kernel.json`
+(`S4_kernel.json` is not a reader input).
