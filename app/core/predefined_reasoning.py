@@ -103,7 +103,14 @@ def lookup_question_hijack(message: str, confidence: float) -> bool:
     contract note) never ran. The allowlist's contract is explicit: Q&A stays
     on the RAG-grounded path. High-confidence routes and deliverable-verbed
     messages ("generate...", "calculate...") are untouched.
+
+    Contract Data TfC / milestone lookups are always hijacks, even at high
+    keyword confidence — "milestone" matching parse_primavera_schedule at
+    0.4 must not run generate_wbs.
     """
+    from app.core.contract_lookup_intent import message_is_contract_data_lookup
+    if message_is_contract_data_lookup(message):
+        return True
     if confidence >= 0.5:
         return False
     msg = (message or "").strip()

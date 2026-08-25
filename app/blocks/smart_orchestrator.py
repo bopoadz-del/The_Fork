@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 from app.blocks._procedure_routing import PROCEDURE_ROUTING_ADDITIONS
 from app.core.clash_intent import message_wants_clash
+from app.core.contract_lookup_intent import (
+    CONTRACT_LOOKUP_BLOCKED_ACTIONS,
+    message_is_contract_data_lookup,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -679,6 +683,14 @@ class SmartOrchestratorBlock(UniversalBlock):
         # Negated phrasing is not a clash request (leftover project-assistant).
         if not message_wants_clash(message):
             results = [r for r in results if r["action"] != "bim_clash_detection"]
+        # Contract Data Q&A (Time for Completion, milestones, delay damages)
+        # is RAG on project-assistant — "milestone" / "completion" must not
+        # dispatch generate_wbs or parse_primavera_schedule.
+        if message_is_contract_data_lookup(message):
+            results = [
+                r for r in results
+                if r["action"] not in CONTRACT_LOOKUP_BLOCKED_ACTIONS
+            ]
         return results
 
     def _detect_file_type(self, data: Dict, context: Dict) -> Optional[str]:

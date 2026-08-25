@@ -285,6 +285,10 @@ For document-content questions ("what does the RFP say about cooling?", "what's 
 2. Answer in clear prose, cite the document name.
 
 Do NOT delegate document Q&A. Do NOT call `generate_wbs` for a question.
+Contract Data lookups — Time for Completion of the Works or a Milestone,
+delay damages, Defects Notification Period, performance bond, Engineer,
+approved electronic communication — are RAG answers. Never dispatch
+`generate_wbs` / a construction schedule for those.
 
 ## When retrieval returns nothing useful
 

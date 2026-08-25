@@ -30,6 +30,7 @@ import httpx
 
 from app.blocks import BLOCK_REGISTRY
 from app.core.clash_intent import message_wants_clash
+from app.core.contract_lookup_intent import message_is_contract_data_lookup
 from app.core.rag.inject import rag_inject
 from app.core.rag.retriever import project_is_rag_ready
 from app.dependencies import _create_block_instance, block_instances
@@ -2458,7 +2459,10 @@ def _user_intent_requires_tool(messages: list[dict[str, Any]]) -> bool:
         # Iter > 0: assistant + tool turns have been appended; let the
         # model decide how to proceed (will be summary, not another tool).
         return False
-    text = (tail.get("content") or "").lower()
+    raw = tail.get("content") or ""
+    if message_is_contract_data_lookup(raw):
+        return False
+    text = raw.lower()
     return any(p in text for p in _DELIVERABLE_PHRASES)
 
 
@@ -2631,6 +2635,16 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
         return None
     text = tail.get("content") or ""
     low = text.lower()
+    # Contract Data TfC / milestone Q&A must not force primavera_parser or
+    # generate_wbs — those questions belong to RAG.
+    if message_is_contract_data_lookup(text):
+        try:
+            from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
+            user_msg, history = _messages_user_and_history(messages)
+            if not message_wants_wbs_duration_rerun(user_msg or text, history):
+                return None
+        except Exception:  # noqa: BLE001
+            return None
     # Duration override + re-run must force generate_wbs, not a calculator.
     if "generate_wbs" in available:
         try:
@@ -7800,6 +7814,20 @@ class Agent:
         # giving the model a typed call: brief, target_count, project_type,
         # start_date. Maps straight to ConstructionContainer.generate_wbs().
         if name == "generate_wbs":
+            if message_is_contract_data_lookup(user_message or ""):
+                return {
+                    "name": name,
+                    "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": (
+                            "This is a Contract Data lookup (Time for "
+                            "Completion / milestones / similar). Do not "
+                            "generate a WBS. Answer from retrieved contract "
+                            "context."
+                        ),
+                    },
+                }
             if "construction" not in self.allowed_blocks:
                 return {
                     "name": name,
@@ -8533,6 +8561,7 @@ async def select_agent_for_message(
       * The kill-switch ``SMART_ORCH_ROUTING_DISABLED`` is set.
       * smart_orchestrator isn't registered (no construction kit loaded).
       * Message is empty / whitespace.
+      * Message is a Contract Data lookup (Time for Completion / milestones).
       * Top action confidence is below the routing threshold.
       * Top action is not in ``GENERATIVE_INTENTS`` (i.e. small talk / Q&A).
       * The requested agent is already ``heavy-reasoning``.
@@ -8556,6 +8585,10 @@ async def select_agent_for_message(
 
     if not user_message or not user_message.strip():
         info["reason"] = "empty_message"
+        return requested_agent, info
+
+    if message_is_contract_data_lookup(user_message):
+        info["reason"] = "contract_data_lookup"
         return requested_agent, info
 
     block = _get_smart_orchestrator_block()
