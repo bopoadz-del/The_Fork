@@ -20,16 +20,22 @@ def _cases() -> dict[str, dict[str, Any]]:
     return data["cases"]
 
 
+def _message_text(msg: dict[str, Any]) -> str:
+    content = msg.get("content") or ""
+    if isinstance(content, list):
+        content = " ".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    return str(content)
+
+
 def _last_user_text(messages: list[dict[str, Any]]) -> str:
     for msg in reversed(messages or []):
         if msg.get("role") == "user":
-            content = msg.get("content") or ""
-            if isinstance(content, list):
-                content = " ".join(
-                    part.get("text", "") if isinstance(part, dict) else str(part)
-                    for part in content
-                )
-            return str(content)
+            text = _message_text(msg).strip()
+            if text:
+                return text
     return ""
 
 
@@ -60,6 +66,24 @@ def _answer_for(user_text: str) -> str | None:
     return None
 
 
+def _answer_from_messages(messages: list[dict[str, Any]]) -> str | None:
+    """Match the most recent user turn that contains a catalog ask.
+
+    chat_stream may append a nudge as the last user message (tool-format
+    retry, empty-final retry). Walk backwards so those don't miss.
+    """
+    hit = _answer_for(_last_user_text(messages))
+    if hit:
+        return hit
+    for msg in reversed(messages or []):
+        if msg.get("role") != "user":
+            continue
+        hit = _answer_for(_message_text(msg))
+        if hit:
+            return hit
+    return None
+
+
 def install_stub() -> None:
     if os.getenv("CEREBRUM_UI_PHYS_STUB", "").strip() not in {"1", "true", "yes"}:
         return
@@ -68,7 +92,7 @@ def install_stub() -> None:
 
     async def _stub(self, messages, api_key, project_id=None, with_tools=True,
                     user_id=None, exclude_tools=None):
-        canned = _answer_for(_last_user_text(messages))
+        canned = _answer_from_messages(messages)
         if canned:
             # chat_stream reads resp["choice"]["message"] — a bare
             # {"content": ...} raises KeyError and the UI shows a 500 bubble.
@@ -87,6 +111,15 @@ def install_stub() -> None:
         # Unknown prompt: do not invent. A missing-key error is honest.
         # The nightly sets a dummy GROQ_API_KEY to pass the env-key gate;
         # still refuse unknown asks so we never dial a real provider.
+        users = [
+            _message_text(m)[:240]
+            for m in (messages or [])
+            if isinstance(m, dict) and m.get("role") == "user"
+        ]
+        Path("/tmp/ui_phys_stub_miss.log").write_text(
+            "\n---\n".join(users) or "<no user messages>",
+            encoding="utf-8",
+        )
         return {
             "status": "error",
             "error": "UI-PHYS stub has no canned answer for this prompt.",
