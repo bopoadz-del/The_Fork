@@ -1277,6 +1277,58 @@ def chunk_markdown(
     return chunks
 
 
+def _chunk_prose_segment(text: str, chunker: str) -> list[str]:
+    if not text or not text.strip():
+        return []
+    if chunker == "markdown":
+        return chunk_markdown(text, target_chars=500, overlap=50)
+    if chunker == "finer":
+        return chunk_text_with_overlap(text, target_chars=500, overlap=50)
+    return chunk_text(text)
+
+
+def chunk_extracted_document(
+    text: str,
+    chunker: str = "default",
+    filename: str = "",
+) -> list[str]:
+    """Chunk extracted document text, keeping Contract Data rows intact.
+
+    Prose (or the whole document when no Contract Data section is found)
+    uses the requested ``chunker``. Contract Data / Appendix-to-Tender /
+    Contract Particulars sections are *replaced* by row-preserving
+    particulars chunks so the default 500-word splitter cannot cut a
+    filled-in amount mid-row. Those particulars chunks are the only copy
+    of that section in the index.
+    """
+    if not text or not text.strip():
+        return []
+    from app.core.contract_data_chunks import (
+        contract_data_particulars_chunks,
+        contract_data_spans,
+    )
+
+    spans = contract_data_spans(text, filename)
+    if not spans:
+        return _chunk_prose_segment(text, chunker)
+    chunks: list[str] = []
+    prev = 0
+    for start, end in spans:
+        if start > prev:
+            chunks.extend(_chunk_prose_segment(text[prev:start], chunker))
+        cd_chunks = contract_data_particulars_chunks(text[start:end], filename)
+        if cd_chunks:
+            chunks.extend(cd_chunks)
+        else:
+            chunks.extend(_chunk_prose_segment(text[start:end], chunker))
+        prev = end
+    if prev < len(text):
+        chunks.extend(_chunk_prose_segment(text[prev:], chunker))
+    if not chunks:
+        return _chunk_prose_segment(text, chunker)
+    return chunks
+
+
 # ── index persistence ─────────────────────────────────────────────────────────
 
 def _index_from_row(row: DocIndex | None) -> dict[str, Any] | None:
@@ -1588,7 +1640,7 @@ def index_project(project_id: str) -> dict[str, Any]:
 
         file_path = doc.get("file_path") or ""
         text, meta = _extract_with_meta(file_path, filename)
-        chunks = chunk_text(text)
+        chunks = chunk_extracted_document(text, chunker="default", filename=filename)
         # BOQ → RAG: mirror index_document so the package total + line items
         # are retrievable regardless of which indexing path ran.
         boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
@@ -2133,12 +2185,7 @@ def index_document(
     else:
         file_path = doc.get("file_path") or ""
         text, meta = _extract_with_meta(file_path, filename)
-        if chunker == "markdown":
-            chunks = chunk_markdown(text, target_chars=500, overlap=50)
-        elif chunker == "finer":
-            chunks = chunk_text_with_overlap(text, target_chars=500, overlap=50)
-        else:
-            chunks = chunk_text(text)
+        chunks = chunk_extracted_document(text, chunker=chunker, filename=filename)
         # BOQ → RAG: append the computed total + line items so the package
         # value is answerable from the corpus (the raw text never holds the sum).
         boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
