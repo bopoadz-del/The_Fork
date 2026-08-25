@@ -60,7 +60,7 @@ _TEMPLATE_TRIGGERS: Dict[str, List[str]] = {
         # when the word "impact" also happened to appear somewhere in the
         # sentence — the matcher accepts non-adjacent word sets, which made the
         # gap look like intermittent success rather than a missing trigger.
-        "variation", "variations", "vo", "site instruction",
+        "variation", "vo", "site instruction",
         "field instruction", "additional works", "omission",
     ],
     "delay_to_claim": [
@@ -68,7 +68,7 @@ _TEMPLATE_TRIGGERS: Dict[str, List[str]] = {
         "time impact", "delay analysis", "schedule delay claim", "claim for delay",
         # How a delay is actually reported: someone is claiming days, or an
         # activity slipped. Neither phrasing existed here.
-        "claiming days", "days delay", "days of delay", "slipped",
+        "claiming days", "days delay", "days of delay", "slip",
         "slippage", "pushed out", "behind programme", "behind program",
         "disruption claim", "acceleration cost", "late release",
     ],
@@ -78,7 +78,7 @@ _TEMPLATE_TRIGGERS: Dict[str, List[str]] = {
         # "Snagging"/"punch list" IS defect close-out. Before this it matched
         # commissioning_to_handover instead, purely because "handover" appeared
         # in the sentence — a vocabulary gap reading as a reasoning error.
-        "snag", "snagging", "snag list", "snagging list", "de-snag",
+        "snag", "snag list", "snagging list",
         "punch list", "punchlist", "punch item", "open items",
         "make good", "remedial works",
     ],
@@ -127,7 +127,7 @@ _KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
     "behind schedule": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
     "behind programme": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
     "schedule slip": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "slipped": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    "slip": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
     "slippage": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
     "pushed out": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
     "late": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
@@ -153,7 +153,6 @@ _KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
     "variation": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
     "variation order": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
     "claim": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
-    "claiming": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
     "dispute": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
     "eot": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST)),
     "extension of time": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST)),
@@ -164,7 +163,6 @@ _KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
     # ── Quality ──
     "defect": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
     "snag": (Domain.QUALITY, (Domain.SCHEDULE, Domain.HANDOVER)),
-    "snagging": (Domain.QUALITY, (Domain.SCHEDULE, Domain.HANDOVER)),
     "punch list": (Domain.QUALITY, (Domain.SCHEDULE, Domain.HANDOVER)),
     "punchlist": (Domain.QUALITY, (Domain.SCHEDULE, Domain.HANDOVER)),
     "inspection failed": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
@@ -225,8 +223,29 @@ _CROSS_DOMAIN_KEYWORDS: Dict[str, List[Domain]] = {
 # published the variation-order and safety-incident templates on turns that
 # contain neither. Multi-word phrases keep substring semantics: they are
 # specific enough that a containing sentence genuinely says them.
+_DOUBLES_FINAL_CONSONANT = re.compile(r"[aeiou][bdglmnprt]$")
+
+
 def _word_pattern(token: str) -> "re.Pattern[str]":
-    return re.compile(r"\b" + re.escape(token) + r"(?:s|es|ed|ing)?\b")
+    """Match ``token`` as a whole word, allowing common inflections.
+
+    Tokens ending consonant-after-vowel also accept the doubled-consonant
+    forms, so "snag" reaches "snagging"/"snagged" and "de-snag" reaches
+    "de-snagging". Without it those turns matched only the exact stem, which is
+    the one spelling site teams do not use.
+
+    The test over-accepts on multi-syllable tokens — it generates alternatives
+    like "variationned" for words English does not double. That is deliberate:
+    such strings never occur in text, so they cost a little regex and can
+    produce no false positive, whereas hand-maintaining a list of which words
+    double is a table that goes stale the first time someone adds a keyword.
+    """
+    stem = re.escape(token)
+    suffixes = ["s", "es", "ed", "ing"]
+    if _DOUBLES_FINAL_CONSONANT.search(token):
+        doubled = re.escape(token[-1])
+        suffixes += [doubled + "ed", doubled + "ing"]
+    return re.compile(r"\b" + stem + r"(?:" + "|".join(suffixes) + r")?\b")
 
 
 _ROUTE_PATTERNS: Dict[str, "re.Pattern[str]"] = {
