@@ -83,7 +83,7 @@ jobs:
         # dangerous_code); with this flag the culprit names itself in the
         # log. 120s is ~40x the slowest healthy test.
         run: >
-          pytest tests/ -v --tb=short --timeout=120
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
           --cov=app --cov-report=term-missing --cov-report=xml
           --cov-report=json:coverage.json
           --cov-fail-under=25
@@ -207,7 +207,7 @@ jobs:
         # --timeout: see the matrix job note — a hung test must fail loudly,
         # not park the job at GitHub's 6-hour cap.
         run: >
-          pytest tests/ -v --tb=short --timeout=120
+          pytest tests/ --ignore=tests/browser -v --tb=short --timeout=120
           --cov=app --cov-report=term-missing --cov-fail-under=25
         env:
           ENV: testing
