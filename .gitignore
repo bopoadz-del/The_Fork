@@ -109,6 +109,12 @@ review_pack/**/*.log
 # Only tests/fixtures/photo_eval_manifest.json is tracked.
 tests/fixtures/photos/
 
+# Playwright nightly (local + Actions artifact workspace)
+/test-results/
+/playwright-report/
+/blob-report/
+
+
 # Local agent dumps that must not be in git (contract Drive pulls, raw
 # webp, answer JSON). Screenshots for `git pull` live in
 # uploads/_synthetic/screenshots/ and ARE tracked. Docker already
