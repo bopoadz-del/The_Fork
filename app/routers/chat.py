@@ -890,8 +890,14 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
         # 1) Predefined reasoning for a known workflow (flagged; dynamic UNDERSTAND).
         if _predefined_enabled():
             try:
-                intent = await understand_intent(
-                    prompt, has_documents=bool(document_ids))
+                from app.core.contract_lookup_intent import (
+                    message_is_contract_data_lookup,
+                )
+                if message_is_contract_data_lookup(prompt):
+                    intent = {"action": None}
+                else:
+                    intent = await understand_intent(
+                        prompt, has_documents=bool(document_ids))
             except Exception:  # noqa: BLE001
                 intent = {"action": None}
             if intent.get("action") in _predefined_workflows():

@@ -32,6 +32,13 @@ class TestLookupQuestionHijack:
         # "generate" is an explicit ask for the artifact — predefined may run.
         assert lookup_question_hijack("can you generate a WBS for this project?", 0.2) is False
 
+    def test_contract_tfc_lookup_is_hijack_even_at_high_confidence(self):
+        q = "What is the Time for Completion for the whole of the Works?"
+        assert lookup_question_hijack(q, 0.9) is True
+        assert lookup_question_hijack(
+            "Milestone 5 Time for Completion", 0.8,
+        ) is True
+
     def test_question_mark_alone_is_question_shaped(self):
         assert lookup_question_hijack("the notice period for EOT claims?", 0.1) is True
 

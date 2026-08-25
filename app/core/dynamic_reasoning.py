@@ -30,8 +30,9 @@ _SYSTEM = (
     "user's message and return ONLY a JSON object, no prose:\n"
     '{"workflow": "<schedule|none>", "mode": "<produce|question>", "params": {}}\n'
     "- workflow \"schedule\": the user wants a construction schedule / WBS / "
-    "programme BUILT, or asks a question ABOUT one.\n"
-    "- workflow \"none\": anything else.\n"
+    "programme BUILT (generate, create, L2 schedule, N activities).\n"
+    "- workflow \"none\": anything else, including Contract Data lookups "
+    "(Time for Completion, milestones, delay damages).\n"
     "- mode \"produce\": wants a deliverable created/exported (produce, generate, "
     "create, build, export, make, prepare, draft a schedule).\n"
     "- mode \"question\": is ASKING about a schedule (how long, what, when, which, "
@@ -43,7 +44,10 @@ _SYSTEM = (
     '{"workflow":"schedule","mode":"produce","params":{"target_count":300,"project_type":"data_center"}}\n'
     '"how long is procurement on the schedule?" -> '
     '{"workflow":"schedule","mode":"question","params":{}}\n'
+    '"what is the Time for Completion for the whole of the Works?" -> '
+    '{"workflow":"none","mode":"question","params":{}}\n'
     '"what is the tallest building" -> {"workflow":"none","mode":"question","params":{}}'
+
 )
 
 
@@ -76,6 +80,9 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
     'none' (action None) when it is not a known workflow. Never raises."""
     empty = {"workflow": "none", "action": None, "mode": "question", "params": {}}
     if not message or not message.strip():
+        return empty
+    from app.core.contract_lookup_intent import message_is_contract_data_lookup
+    if message_is_contract_data_lookup(message):
         return empty
     user = message.strip()
     if has_documents:
