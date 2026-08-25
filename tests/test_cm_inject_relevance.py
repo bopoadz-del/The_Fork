@@ -255,3 +255,66 @@ class TestWordBoundaryMatching:
         assert r.analyze_turn("raise a VO for the facade change")[
             "matched_template"
         ] == "change_order_impact"
+
+    def test_inflected_forms_of_site_verbs_are_reachable(self):
+        """Tokens are stored as STEMS so every inflection reaches them. The
+        gap this closes: "de-snag" and "snag" matched only their exact
+        spelling, because the suffix group did not cover the doubled
+        consonant — so "de-snagging" and "snagged", the spellings people
+        actually type, matched nothing."""
+        from app.core.cross_domain_reasoner import _word_pattern
+
+        for stem, forms in [
+            ("snag", ["snag", "snags", "snagged", "snagging"]),
+            ("de-snag", ["de-snag", "de-snagged", "de-snagging"]),
+            ("slip", ["slip", "slips", "slipped", "slipping"]),
+            ("delay", ["delay", "delays", "delayed", "delaying"]),
+            ("claim", ["claim", "claims", "claimed", "claiming"]),
+        ]:
+            pattern = _word_pattern(stem)
+            for form in forms:
+                assert pattern.search(form), f"{stem!r} does not reach {form!r}"
+
+    def test_doubling_never_reopens_the_substring_hole(self):
+        """The doubled-consonant suffixes must not weaken word boundaries."""
+        from app.core.cross_domain_reasoner import _word_pattern
+
+        for token, containing in [
+            ("vo", "invoice"), ("lti", "multi-storey"), ("ncr", "concrete"),
+            ("eot", "geotechnical"), ("late", "calculated"),
+            ("float", "floatation"), ("slip", "slipstream"),
+        ]:
+            assert not _word_pattern(token).search(containing), (
+                f"{token!r} still matches inside {containing!r}"
+            )
+
+    def test_no_token_is_covered_by_another_tokens_inflections(self):
+        """A word that matches two tokens contributes two units of evidence
+        from one occurrence, which inflates the score toward saturation.
+
+        "snagging" used to match both `snag` and `snagging`; "variations" both
+        `variation` and `variations`. Storing stems and letting inflection do
+        the work keeps one word worth one word.
+        """
+        from app.core.cross_domain_reasoner import (
+            _KEYWORD_ROUTES,
+            _TEMPLATE_TRIGGERS,
+            _word_pattern,
+        )
+
+        tokens = sorted(
+            {k for k in _KEYWORD_ROUTES if " " not in k}
+            | {t for v in _TEMPLATE_TRIGGERS.values() for t in v if " " not in t}
+        )
+        overlaps = [
+            (shorter, longer)
+            for shorter in tokens
+            for longer in tokens
+            if shorter != longer
+            and len(longer) > len(shorter)
+            and _word_pattern(shorter).search(longer)
+        ]
+        assert not overlaps, (
+            "these tokens are already reached by another token's inflections, "
+            f"so they double-count: {overlaps}"
+        )
