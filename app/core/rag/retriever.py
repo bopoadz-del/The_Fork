@@ -608,6 +608,106 @@ def _dual_query_enabled() -> bool:
     )
 
 
+# Contract Data particulars vs defined-term glossary (live S1 Q&A).
+# Asking for a filled-in amount/duration/percentage must prefer the
+# Contract Data / Appendix-to-Tender / Contract Particulars row over the
+# GC glossary ("X means the amount accepted…"). Below IDENTIFIER_BONUS_MAX
+# so exact reference codes still win. Kill-switch: RAG_CD_PARTICULARS_BOOST=0.
+_DEFINITION_QUESTION_RE = re.compile(
+    r"(?i)\b(?:what\s+does\b.+\bmean|defin(?:e|ition\s+of)|meaning\s+of)\b",
+)
+_PARTICULARS_FIELD_RE = re.compile(
+    r"(?i)(?:excluding\s+vat|including\s+vat|accepted\s+contract\s+amount|"
+    r"delay\s+damages|liquidated\s+damages|time\s+for\s+completion|"
+    r"defects\s+notification|performance\s+(?:bond|security|guarantee)|"
+    r"contract\s+data|appendix\s+to\s+(?:the\s+)?tender|"
+    r"contract\s+particulars)",
+)
+_FILLED_IN_ASK_RE = re.compile(
+    r"(?i)(?:how\s+many\s+days|what\s+is\s+the\s+(?:amount|rate|percentage|"
+    r"duration|figure)|per\s+(?:calendar\s+)?day|calendar\s+days|"
+    r"\bpercentage\b|\bamount\b)",
+)
+_CD_PARTICULARS_PREFIX_RE = re.compile(
+    r"contract\s+data\s+particulars", re.IGNORECASE,
+)
+_CD_HEADING_IN_CHUNK_RE = re.compile(
+    r"(?:contract\s+data|appendix\s+to\s+(?:the\s+)?tender|"
+    r"contract\s+particulars)",
+    re.IGNORECASE,
+)
+_CD_MEANS_RE = re.compile(
+    r"\bmeans\s+the\b|\bshall\s+mean\b|\bis\s+defined\s+as\b", re.IGNORECASE,
+)
+_CD_FILLED_VALUE_RE = re.compile(
+    r"(?i)(?:\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b|"
+    r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|"
+    r"\d[\d,]*\.\d{2}|"
+    r"\d+(?:\.\d+)?\s*%|"
+    r"\d+\s+(?:calendar\s+|working\s+)?days?)",
+)
+_CD_PARTICULARS_PREFIX_BONUS = 0.85
+_CD_PARTICULARS_HEADING_BONUS = 0.40
+_CD_DEFINITION_PENALTY = 0.40
+
+
+def _cd_particulars_boost_enabled() -> bool:
+    return (os.getenv("RAG_CD_PARTICULARS_BOOST") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_for_contract_particulars(query: str) -> bool:
+    """True when the question wants a filled-in Contract Data figure.
+
+    Definition questions ("what does Accepted Contract Amount mean") stay
+    on the glossary path. Arithmetic unit-rate questions are not this.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if _PARTICULARS_FIELD_RE.search(q):
+        return True
+    return bool(_FILLED_IN_ASK_RE.search(q) and _CD_HEADING_IN_CHUNK_RE.search(q))
+
+
+def contract_data_particulars_delta(text: str) -> float:
+    """Score delta for a chunk when the query is particulars-shaped.
+
+    Dedicated ``CONTRACT DATA particulars`` chunks (index-time prefix) get
+    the strongest lift. Other chunks that still carry a Contract Data
+    heading plus a filled value get a smaller lift. Glossary "means the"
+    chunks with no filled figure are demoted so they cannot bury the row.
+    """
+    t = text or ""
+    if _CD_PARTICULARS_PREFIX_RE.search(t) and _CD_FILLED_VALUE_RE.search(t):
+        return _CD_PARTICULARS_PREFIX_BONUS
+    if (
+        _CD_HEADING_IN_CHUNK_RE.search(t)
+        and _CD_FILLED_VALUE_RE.search(t)
+        and not _CD_MEANS_RE.search(t)
+    ):
+        return _CD_PARTICULARS_HEADING_BONUS
+    if _CD_MEANS_RE.search(t) and not _CD_FILLED_VALUE_RE.search(t):
+        return -_CD_DEFINITION_PENALTY
+    return 0.0
+
+
+def _apply_contract_data_particulars_boost(query: str, scored: List[Tuple[float, Chunk]]) -> None:
+    """In-place re-score when the query asks for a filled-in particular."""
+    if not _cd_particulars_boost_enabled():
+        return
+    if not query_asks_for_contract_particulars(query):
+        return
+    for i, (score, chunk) in enumerate(scored):
+        delta = contract_data_particulars_delta(chunk.text or "")
+        if not delta:
+            continue
+        boosted = score + delta
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
 def _dual_search(
     store, project_id: str, query_vec, query: str,
     alt_vec, alt_query: Optional[str], *, k: int,
@@ -682,6 +782,30 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
                 candidates.append(chunk)
         except Exception as exc:  # noqa: BLE001 — GK never breaks the primary leg
             logger.warning("lexical GK retrieval for %s failed: %s", gk_pid, exc)
+
+    if (
+        _cd_particulars_boost_enabled()
+        and query_asks_for_contract_particulars(query)
+    ):
+        particulars_q = (
+            f"{query.strip()} Contract Data particulars filled-in amount "
+            "duration percentage"
+        )
+        try:
+            extra = store.bm25_search(project_id, particulars_q, over_fetch)
+            seen = {c.chunk_id for c in candidates}
+            for chunk in extra:
+                if chunk.chunk_id not in seen:
+                    candidates.append(chunk)
+                    seen.add(chunk.chunk_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "lexical contract-data particulars retrieval failed: %s", exc,
+            )
+        for chunk in candidates:
+            delta = contract_data_particulars_delta(chunk.text or "")
+            if delta:
+                chunk.score = round((chunk.score or 0.0) + delta, 6)
 
     # Stable sort keeps the active project ahead of GK on equal scores.
     candidates.sort(key=lambda c: -(c.score or 0.0))
@@ -795,6 +919,37 @@ def retrieve_with_filter(
     raw_active = _dual_search(
         store, project_id, query_vec, query, alt_vec, alt_query, k=over_fetch,
     )
+
+    # Particulars-shaped questions: a third search whose wording matches the
+    # index-time "CONTRACT DATA particulars" prefix. Additive to F18 dual-query
+    # (that transform stays the alt_query above). Failures never break primary.
+    if (
+        _cd_particulars_boost_enabled()
+        and query_asks_for_contract_particulars(query)
+    ):
+        particulars_q = (
+            f"{query.strip()} Contract Data particulars filled-in amount "
+            "duration percentage"
+        )
+        try:
+            pvec = embedder.encode_queries([particulars_q])[0]
+            p_hits = store.search(
+                project_id, pvec, k=over_fetch, query_text=particulars_q,
+            )
+            by_id = {c.chunk_id: c for c in raw_active}
+            for c in p_hits:
+                prev = by_id.get(c.chunk_id)
+                if prev is None or (c.score or 0.0) > (prev.score or 0.0):
+                    by_id[c.chunk_id] = c
+            raw_active = sorted(
+                by_id.values(), key=lambda c: -(c.score or 0.0),
+            )
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning(
+                "contract-data particulars retrieval for %s failed: %s; "
+                "primary results stand",
+                project_id, exc,
+            )
 
     # STEP 0b — empty/thin detection for the labeled Master-Corpus fallback.
     # "Thin" reuses RAG_CONFIDENCE_THRESHOLD (the same bar rag_inject applies):
@@ -1065,6 +1220,8 @@ def retrieve_with_filter(
             final_score *= GK_BACKGROUND_FACTOR
         chunk.score = round(final_score, 6)
         scored.append((final_score, chunk))
+
+    _apply_contract_data_particulars_boost(query, scored)
 
     # GK contamination knobs — see the docstring. Each is None (OFF) unless
     # its env var is set AND the intent is lookup-shaped; when all are None
