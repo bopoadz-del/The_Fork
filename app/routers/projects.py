@@ -338,6 +338,10 @@ async def get_project(project_id: str, auth: dict = Depends(require_user)):
             chunk_counts = chunk_store.count_by_doc(resolved_id)
             for doc in proj.get("documents", []) or []:
                 doc["chunk_count"] = chunk_counts.get(doc.get("id"), 0)
+                doc["searchable"] = bool(doc["chunk_count"])
+                _idx_meta = (doc.get("metadata") or {}).get("indexing")
+                if _idx_meta:
+                    doc["indexing_status"] = _idx_meta
     except Exception:
         # Enrichment is best-effort — never break the project load on it.
         logger.warning(

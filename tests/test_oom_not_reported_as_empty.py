@@ -200,7 +200,9 @@ def test_impl_promotes_a_native_oom_so_isolation_can_report_it(monkeypatch, tmp_
 
 def test_impl_still_absorbs_ordinary_extractor_failures(monkeypatch, tmp_path):
     """The control for the test above: a normal extractor error must NOT be
-    promoted, or every corrupt .docx starts aborting ingest runs."""
+    promoted to MemoryError, or every corrupt .docx starts aborting ingest
+    runs. The failure is still named in meta so ZERO_CHUNK is not silent.
+    """
     docx_file = tmp_path / "broken.docx"
     docx_file.write_bytes(b"PK not really a docx")
 
@@ -208,4 +210,7 @@ def test_impl_still_absorbs_ordinary_extractor_failures(monkeypatch, tmp_path):
     monkeypatch.setattr(_docx, "Document", lambda *a, **k: (_ for _ in ()).throw(
         ValueError("file is not a zip file")))
 
-    assert doc_index._extract_with_meta_impl(str(docx_file), "broken.docx") == ("", {})
+    text, meta = doc_index._extract_with_meta_impl(str(docx_file), "broken.docx")
+    assert text == ""
+    assert meta["extract_failed"] == "ValueError"
+    assert "file is not a zip file" in meta["extract_failed_detail"]

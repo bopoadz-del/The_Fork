@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -98,3 +99,90 @@ def test_admin_project_reindex_returns_422_when_all_docs_zero_chunk(
     text = resp.text
     assert "ZERO_CHUNK" in text
     assert "0 chunks" in text
+
+
+def test_extract_exception_is_named_not_swallowed(tmp_path, monkeypatch):
+    """An extractor exception must land in meta, not come back as empty {}."""
+    from app.core import doc_index
+
+    def boom(*_a, **_k):
+        raise ValueError("bad xref")
+
+    monkeypatch.setattr(doc_index, "_extract_pdf", boom)
+    pdf = tmp_path / "broken.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    text, meta = doc_index._extract_with_meta_impl(str(pdf), "broken.pdf")
+
+    assert text == ""
+    assert meta["extract_failed"] == "ValueError"
+    assert "bad xref" in meta["extract_failed_detail"]
+
+
+def test_zero_chunk_names_the_cause(fresh_db, tmp_path, monkeypatch):
+    """ZERO_CHUNK must carry the extractor exception, not just the marker."""
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index, projects as projects_mod
+
+    importlib.reload(doc_index)
+
+    def boom(*_a, **_k):
+        raise ValueError("bad xref")
+
+    monkeypatch.setattr(doc_index, "_extract_pdf", boom)
+
+    proj = projects_mod.create_project("Zero Cause Project")
+    pdf = tmp_path / "broken.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    doc = projects_mod.add_document(
+        proj["id"], "broken.pdf", file_path=str(pdf), size=pdf.stat().st_size
+    )
+
+    result = doc_index.index_document(proj["id"], doc["id"])
+
+    assert result["status"] == "error"
+    assert result["error"] == "ZERO_CHUNK"
+    assert "ValueError: bad xref" in result["extract_error"]
+
+
+def test_maybe_eager_index_persists_indexing_status(fresh_db, tmp_path, monkeypatch):
+    """Background indexing must write status onto the document row."""
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("INDEX_ON_UPLOAD", "true")
+    from app.core import doc_index, projects as projects_mod
+
+    importlib.reload(doc_index)
+
+    def boom(*_a, **_k):
+        raise ValueError("bad xref")
+
+    monkeypatch.setattr(doc_index, "_extract_pdf", boom)
+
+    proj = projects_mod.create_project("Index Persist Project")
+    pdf = tmp_path / "broken.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    bad = projects_mod.add_document(
+        proj["id"], "broken.pdf", file_path=str(pdf), size=pdf.stat().st_size
+    )
+
+    err_result = doc_index.maybe_eager_index(proj["id"], bad["id"])
+    assert err_result["error"] == "ZERO_CHUNK"
+    stored_bad = projects_mod.get_document(bad["id"])
+    idx_bad = (stored_bad.get("metadata") or {}).get("indexing")
+    assert idx_bad["status"] == "error"
+    assert idx_bad["error"] == "ZERO_CHUNK"
+    assert idx_bad["chunks"] == 0
+    assert "ValueError: bad xref" in (idx_bad.get("detail") or "")
+
+    monkeypatch.setattr(doc_index, "_extract_pdf", lambda *_a, **_k: ("ok page", {}))
+    good_path = _write_txt(tmp_path, "ok.txt", b"hello world " * 80)
+    good = projects_mod.add_document(
+        proj["id"], "ok.txt", file_path=good_path, size=os.path.getsize(good_path)
+    )
+    ok_result = doc_index.maybe_eager_index(proj["id"], good["id"])
+    assert ok_result["status"] == "ok"
+    assert ok_result["total_chunks"] > 0
+    stored_ok = projects_mod.get_document(good["id"])
+    idx_ok = (stored_ok.get("metadata") or {}).get("indexing")
+    assert idx_ok["status"] == "ok"
+    assert idx_ok["chunks"] > 0
