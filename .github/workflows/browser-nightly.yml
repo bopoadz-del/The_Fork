@@ -60,6 +60,7 @@ jobs:
           pytest tests/browser/ -v --tb=short --timeout=240
           -m browser
         env:
+          UI_PHYS_FORBIDDEN: ${{ secrets.UI_PHYS_FORBIDDEN }}
           ENV: development
           RAG_EMBEDDING_MODEL: fake
           CEREBRUM_VIRGIN: "false"

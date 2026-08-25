@@ -14,25 +14,7 @@
     "S5": "S5_batch_plant_letter.md",
     "S6": "S6_priced_boq.md"
   },
-  "forbidden_substrings": [
-    "1,754,504,456.25",
-    "1754504456",
-    "2,017,680,124.69",
-    "2017680124.69",
-    "Diriyah",
-    "DG2",
-    "DGII",
-    "DD-2023-118",
-    "186,328",
-    "29,439,824",
-    "340,904",
-    "10,568,024",
-    "JACOBS",
-    "CH2M",
-    "DGJONES",
-    "IP-INF-053-0000-JCB-BOQ-CA-000007",
-    "PWPS-02"
-  ],
+  "forbidden_substrings": [],
   "cases": {
     "A1": {
       "agent": "project-assistant",
@@ -277,5 +259,6 @@
       "must_any": ["8,640,000.00"],
       "footer_must_not": ["localhost", "127.0.0.1"]
     }
-  }
+  },
+  "forbidden_substrings_note": "Loaded from env UI_PHYS_FORBIDDEN (newline-separated CI secret). Never commit client strings here — the canary list is itself a secret."
 }

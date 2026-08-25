@@ -59,8 +59,33 @@ def test_source_files_exist(catalog):
         assert path.stat().st_size > 40
 
 
+def _forbidden_terms(catalog):
+    """Canary terms come from the UI_PHYS_FORBIDDEN env secret, never the repo.
+
+    The canary list is itself confidential: committing live client strings
+    to name what must not leak IS the leak (the #330 class). CI injects the
+    secret; locally the check skips LOUDLY so an unconfigured run is never
+    mistaken for a clean one.
+    """
+    import os
+
+    env_terms = [
+        t.strip()
+        for t in os.getenv("UI_PHYS_FORBIDDEN", "").splitlines()
+        if t.strip()
+    ]
+    return env_terms + list(catalog.get("forbidden_substrings") or [])
+
+
 def test_no_live_client_figures_in_the_fixture_tree(catalog):
-    # The deny-list itself lives in questions.json — scan bodies + asks only.
+    import pytest
+
+    terms = _forbidden_terms(catalog)
+    if not terms:
+        pytest.skip(
+            "UI_PHYS_FORBIDDEN not configured — client-string leak check NOT RUN. "
+            "Set the CI secret (newline-separated terms) to enforce."
+        )
     blob = ""
     for path in FIXTURE_DIR.glob("*.md"):
         blob += path.read_text(encoding="utf-8")
@@ -69,7 +94,7 @@ def test_no_live_client_figures_in_the_fixture_tree(catalog):
         blob += " " + " ".join(case.get("must") or [])
         blob += " " + " ".join(case.get("must_any") or [])
         blob += " " + " ".join(case.get("cite_any") or [])
-    hits = [term for term in catalog["forbidden_substrings"] if term in blob]
+    hits = [term for term in terms if term in blob]
     assert hits == [], f"live client strings leaked into the sanitized fixture: {hits}"
 
 
