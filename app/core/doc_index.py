@@ -1062,7 +1062,10 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> tuple[str, dict[st
         # layer reports "ran out of memory" instead of "this file is empty".
         if _is_memory_exhaustion(exc):
             raise MemoryError(f"extraction exhausted memory: {exc}") from exc
-        return "", {}
+        return "", {
+            "extract_failed": type(exc).__name__,
+            "extract_failed_detail": str(exc)[:300],
+        }
 
     return "", {}
 
@@ -2155,13 +2158,18 @@ def index_document(
             # whole projects sat in that state for weeks before the 2026-06
             # audit noticed. WARNING (not error) because empty-but-valid files
             # exist; the marker makes the condition grep-able in Render logs.
+            extract_error = None
+            if meta.get("extract_failed"):
+                detail = meta.get("extract_failed_detail") or ""
+                extract_error = f"{meta['extract_failed']}: {detail}".rstrip(": ")
             import logging as _logging
             _logging.getLogger(__name__).warning(
                 "ZERO_CHUNK project=%s doc=%s file=%s ext=%s — supported type "
-                "extracted no chunks (empty file, failed OCR, or extractor bug)",
+                "extracted no chunks (empty file, failed OCR, or extractor bug)%s",
                 project_id, document_id, filename, ext,
+                f" extract_error={extract_error}" if extract_error else "",
             )
-            return {
+            result = {
                 "status": "error",
                 "error": "ZERO_CHUNK",
                 "banner": (
@@ -2174,6 +2182,9 @@ def index_document(
                 "skipped_unsupported": 0,
                 "total_chunks": 0,
             }
+            if extract_error:
+                result["extract_error"] = extract_error
+            return result
         entry = {
             "document_id": document_id,
             "filename": filename,
@@ -2496,14 +2507,31 @@ async def search_project_documents(
 
 # ── eager (background) indexing ───────────────────────────────────────────────
 
-def maybe_eager_index(project_id: str, document_id: str) -> None:
+def maybe_eager_index(project_id: str, document_id: str) -> dict[str, Any] | None:
     """Index a single document if eager indexing is enabled (default: on).
 
     Checks INDEX_ON_UPLOAD env var at call time — "1", "true", or "yes"
     (case-insensitive) enables; anything else disables. Intended to be
     scheduled via FastAPI BackgroundTasks so it runs after the response
     is sent without blocking the upload.
+
+    BackgroundTasks discard the return value, so indexing status is also
+    persisted onto the document row (``metadata.indexing``) for listing.
     """
-    if os.getenv("INDEX_ON_UPLOAD", "true").strip().lower() in ("1", "true", "yes"):
-        return index_document(project_id, document_id)
-    return None
+    if os.getenv("INDEX_ON_UPLOAD", "true").strip().lower() not in ("1", "true", "yes"):
+        return None
+    result = index_document(project_id, document_id)
+    try:
+        indexing = {
+            "status": result.get("status") or ("error" if result.get("error") else "ok"),
+            "error": result.get("error"),
+            "chunks": result.get("total_chunks", 0),
+            "detail": result.get("extract_error") or result.get("banner") or result.get("rag_error"),
+        }
+        _projects.update_document_metadata(document_id, {"indexing": indexing})
+    except Exception:
+        logger.warning(
+            "failed to persist indexing status for %s/%s",
+            project_id, document_id, exc_info=True,
+        )
+    return result
