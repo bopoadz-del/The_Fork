@@ -62,6 +62,9 @@ def test_tfc_and_milestone_questions_are_contract_data_lookups(message):
         "extract the key milestones from the project programme with their dates",
         "give me a milestone report - what are the major completion dates?",
         "parse the xer for milestones",
+        "Draft a claim for delay damages on Milestone 1",
+        "Run a forensic delay analysis for the delay damages exposure",
+        "Prepare an EOT claim for the 30-day delay to Milestone 1",
     ],
 )
 def test_real_schedule_asks_are_not_contract_data_lookups(message):

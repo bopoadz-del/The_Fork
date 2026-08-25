@@ -32,6 +32,17 @@ _P6_FILE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Drafting a claim / EOT / delay-analysis is work, not a Contract Data lookup.
+# Must sit after the P6-file check and before lookup cues so "delay damages"
+# inside a claim-prep ask does not steal the turn onto RAG.
+_CLAIM_WORK_RE = re.compile(
+    r"\b(?:draft|prepare|build|write|raise|submit|assemble|compile|create|"
+    r"run|perform|do|start)\b.{0,60}\b"
+    r"(?:claims?|eot|extension\s+of\s+time|delay\s+analysis|"
+    r"window\s+analysis|time\s+impact\s+analysis|notice\s+of\s+claim)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
 # FIDIC / Contract Data fact lookups. Bare "milestone" is too broad
 # (P6 "extract the key milestones from the programme").
 _LOOKUP_CUES = (
@@ -89,5 +100,7 @@ def message_is_contract_data_lookup(text: str) -> bool:
     if _WBS_GENERATE_RE.search(raw) or _EXPLICIT_WBS_RE.search(raw):
         return False
     if _P6_FILE_RE.search(raw):
+        return False
+    if _CLAIM_WORK_RE.search(raw):
         return False
     return any(cue.search(raw) for cue in _LOOKUP_CUES)
