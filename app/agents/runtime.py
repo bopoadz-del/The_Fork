@@ -3755,6 +3755,135 @@ def _cost_grounding_gate(
         return text
 
 
+# ── Numeric provenance guard (A2) ─────────────────────────────────────────────
+# Cost grounding uses float tolerance + arithmetic closure, which can miss a
+# near-miss hallucination (e.g. model invents 1,274… when chunks only have
+# 1,234…). This guard requires the cited currency/large amount's *normalized
+# digits* to appear in retrieved chunk text (or tool/user authoritative text).
+# Kill-switch: NUMERIC_PROVENANCE_GUARD (default on).
+_NP_REFUSAL = (
+    "I can't confirm that figure from the project documents on file. "
+    "The amount cited does not appear in the retrieved contract text — "
+    "please check the Contract Data / particulars, or re-ask with the "
+    "clause reference."
+)
+
+
+def _numeric_provenance_enabled() -> bool:
+    return os.getenv("NUMERIC_PROVENANCE_GUARD", "1") not in (
+        "0", "false", "False", "",
+    )
+
+
+def _np_normalize_digit_text(text: str) -> str:
+    """Drop thousand-separators/spaces; keep digits and decimal points.
+
+    ``SAR 1,234,567.89`` and ``1234567.89`` share the run ``1234567.89``.
+    Non-numeric characters become spaces so adjacent figures do not fuse.
+    """
+    out: list[str] = []
+    for ch in text or "":
+        if ch.isdigit() or ch == ".":
+            out.append(ch)
+        elif ch in ", \t\u00a0":
+            continue
+        else:
+            out.append(" ")
+    return "".join(out)
+
+
+def _np_figure_digit_keys(frag: str, value: float) -> list[str]:
+    """Candidate normalized digit keys for one money figure.
+
+    Prefers the digits as written in the answer (catches 1,274 vs 1,234);
+    also includes the folded float form so ``SAR 1.25 million`` can match a
+    chunk that stores ``1,250,000``.
+    """
+    keys: list[str] = []
+    m = re.search(r"\d[\d,]*(?:\.\d+)?", frag or "")
+    if m:
+        raw = m.group(0).replace(",", "").strip()
+        if raw and raw != ".":
+            keys.append(raw)
+    try:
+        folded = f"{float(value):.2f}".rstrip("0").rstrip(".")
+        if folded and folded not in keys:
+            keys.append(folded)
+        # Compact no-decimal form of a whole number (1250000).
+        as_int = f"{int(round(float(value)))}"
+        if abs(float(value) - int(round(float(value)))) < 1e-9 and as_int not in keys:
+            keys.append(as_int)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    # Drop tiny keys (clause nums / percentages) — currency figs from
+    # _cg_money_values are usually larger; keep >= 3 digit chars.
+    out: list[str] = []
+    for k in keys:
+        digit_len = sum(1 for c in k if c.isdigit())
+        if digit_len >= 3 and k not in out:
+            out.append(k)
+    return out
+
+
+def _np_authoritative_texts(
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]],
+) -> str:
+    parts: list[str] = []
+    if rag_sys_msg and isinstance(rag_sys_msg.get("content"), str):
+        parts.append(rag_sys_msg["content"])
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") in ("tool", "user") and isinstance(msg.get("content"), str):
+            parts.append(msg["content"])
+    return "\n".join(parts)
+
+
+def _numeric_provenance_gate(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]],
+) -> str:
+    """Refuse answers whose currency/large amounts are not digit-verbatim in
+    retrieved chunks (or tool/user authoritative text). Never raises."""
+    try:
+        if not _numeric_provenance_enabled():
+            return text
+        figs = _cg_money_values(text)
+        if not figs:
+            return text
+        if _is_document_deliverable_request(_latest_user_text(messages)):
+            return text
+        corpus = _np_authoritative_texts(rag_sys_msg, messages)
+        if not corpus.strip():
+            # No retrieval/tool/user evidence at all — same honesty as cost gate:
+            # do not let a fabricated money figure stand.
+            _LOG.warning(
+                "numeric_provenance_gate: refused figure(s) with empty corpus %s",
+                [f for f, _ in figs],
+            )
+            return _NP_REFUSAL
+        corpus_norm = _np_normalize_digit_text(corpus)
+        bad: list[str] = []
+        for frag, value in figs:
+            keys = _np_figure_digit_keys(frag, value)
+            if not keys:
+                continue
+            if not any(k in corpus_norm for k in keys):
+                bad.append(frag)
+        if not bad:
+            return text
+        _LOG.warning(
+            "numeric_provenance_gate: refused unprovenanced figure(s) %s",
+            bad,
+        )
+        return _NP_REFUSAL
+    except Exception:
+        _LOG.exception("numeric_provenance_gate failed; passing answer through")
+        return text
+
+
 def format_excerpts_as_rag_context(
     excerpts: list[dict[str, Any]] | None,
 ) -> str:
@@ -3817,7 +3946,8 @@ def gate_cost_answer(
         for t in authoritative_texts or []:
             if t:
                 messages.append({"role": "tool", "content": str(t)})
-        return _cost_grounding_gate(text, rag_sys_msg, messages)
+        text = _cost_grounding_gate(text, rag_sys_msg, messages)
+        return _numeric_provenance_gate(text, rag_sys_msg, messages)
     except Exception:  # noqa: BLE001 — a gate must never break an answer
         _LOG.exception("gate_cost_answer failed; passing answer through")
         return text
@@ -3881,7 +4011,8 @@ def _postprocess_answer(
     agent_name: str | None = None,
 ) -> str:
     """Final-answer post-processing: cost-grounding gate (may refuse an
-    ungrounded cost claim) then the standards advisory (appends a non-blocking
+    ungrounded cost claim), numeric-provenance guard (verbatim digit match
+    in retrieved chunks), then the standards advisory (appends a non-blocking
     deviation note). Order matters — don't annotate a refusal for cost figures
     it no longer contains.
 
@@ -3891,6 +4022,7 @@ def _postprocess_answer(
     text = _recover_answer_from_tool_messages(text, messages)
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
+    text = _numeric_provenance_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
     text = _ensure_ingestion_handoff(text, messages, agent_name)
     # Confidentiality stopgap: scrub known project/client names from the final

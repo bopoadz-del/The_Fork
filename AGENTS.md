@@ -62,6 +62,9 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
 - Chat turn idle watchdog: `CHAT_TURN_IDLE_TIMEOUT_SEC` (default 120; `0` off)
   ends a stalled SSE turn when no progress event arrives — heartbeats do not
   count. Wall-clock `CHAT_STREAM_TIMEOUT_SECONDS` remains the hard cap.
+- Numeric provenance guard: `NUMERIC_PROVENANCE_GUARD` (default on) refuses
+  assistant currency/large amounts whose normalized digits are not verbatim in
+  retrieved chunk text (or tool/user authoritative text).
 - Leftover L1 named-file fetch: `_predispatch_file_tool` runs `fetch_document`
   for `.txt`/`.md`/`.docx`/`.doc` when the user names the file (full name or a
   ≥12-char stem, so `khor_waterproofing_spec` matches a timestamped upload).
