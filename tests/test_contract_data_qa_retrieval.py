@@ -373,3 +373,35 @@ def test_contract_data_qa_is_not_stolen_to_calculator_or_wbs():
     for q in questions:
         assert not _looks_like_self_contained_calculation(q), q
         assert not _message_wants_named_calculator(q), q
+
+
+def test_whole_works_ask_demotes_milestone_rows_a3():
+    """Live A3: whole-Works TfC must beat the milestone table, and vice versa."""
+    from app.core.rag.retriever import _apply_contract_data_particulars_boost
+
+    class _C:
+        def __init__(self, text):
+            self.text = text
+
+    whole = _C(
+        "CONTRACT DATA particulars — filled-in amount / duration / percentage.\n"
+        "Contract Data\n"
+        "1.1.75 Time for Completion for the whole of the Works: 640 days"
+    )
+    mile = _C(
+        "CONTRACT DATA particulars — filled-in amount / duration / percentage.\n"
+        "Contract Data\n"
+        "1.1.75 Time for Completion — Milestone 1: 240 days; Milestone 2: 300 days"
+    )
+
+    q_whole = "What is the Time for Completion for the whole of the Works?"
+    scored = [(0.50, mile), (0.48, whole)]
+    _apply_contract_data_particulars_boost(q_whole, scored)
+    ranked = sorted(scored, key=lambda p: p[0], reverse=True)
+    assert ranked[0][1] is whole, "whole-works ask must rank the whole-works row first"
+
+    q_mile = "What is the Time for Completion for Milestone 2?"
+    scored2 = [(0.50, whole), (0.48, mile)]
+    _apply_contract_data_particulars_boost(q_mile, scored2)
+    ranked2 = sorted(scored2, key=lambda p: p[0], reverse=True)
+    assert ranked2[0][1] is mile, "milestone ask must rank the milestone row first"
