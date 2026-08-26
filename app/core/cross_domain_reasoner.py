@@ -10,18 +10,113 @@ Purely deterministic — no LLM calls. Runs cheaply on every turn.
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from app.core.dependency_graph import DependencyGraph, Domain, TriggerCondition, _status_to_trigger
+from app.core.dependency_graph import (
+    DependencyGraph,
+    Domain,
+    TriggerCondition,
+    _status_to_trigger,
+)
 from app.core.workflow_templates import WorkflowTemplateLibrary
 from app.schemas.construction_activity import ActivityType
-
 
 # The confidence a template match must reach before anything acts on it. Lives
 # here, applied inside `analyze_turn`, so every consumer inherits it — a gate
 # that each caller has to remember is a gate that some caller will forget.
 TEMPLATE_MATCH_FLOOR = 0.15
+
+logger = logging.getLogger(__name__)
+
+# ── Miss telemetry (issue #419) ───────────────────────────────────────────
+# Keyword matching is literal. It will keep missing phrasings nobody thought
+# to add, and every miss is SILENT: the turn simply gets no cross-domain help,
+# nothing fails and nothing logs. That makes it impossible to say whether this
+# layer helps on 5% of construction turns or 60%, which is exactly the number
+# needed to justify (or drop) the move to embedding similarity.
+#
+# Counted only when cross-domain intent WAS detected. A miss on "hello" is not
+# a miss — it is the layer correctly declining, and counting it would bury the
+# signal under conversational turns.
+_MATCH_OUTCOMES = ("matched", "below_floor", "no_candidate")
+_MATCH_STATS: Dict[str, int] = {k: 0 for k in _MATCH_OUTCOMES}
+_PROM_TEMPLATE_MATCH = None
+
+
+def _bump_template_match(outcome: str, score: float, message: str) -> None:
+    """Record one construction-shaped turn's template-match outcome.
+
+    Never raises: telemetry must not be able to break a turn.
+    """
+    try:
+        _MATCH_STATS[outcome] = _MATCH_STATS.get(outcome, 0) + 1
+
+        global _PROM_TEMPLATE_MATCH
+        if _PROM_TEMPLATE_MATCH is None:
+            try:
+                from prometheus_client import Counter
+                _PROM_TEMPLATE_MATCH = Counter(
+                    "the_fork_cm_template_match_total",
+                    "Cross-domain template match outcomes on turns with detected intent",
+                    ["outcome"],
+                )
+            # Absent library must not break a turn.
+            except Exception:  # noqa: BLE001
+                _PROM_TEMPLATE_MATCH = False  # library absent; in-process stats only
+        if _PROM_TEMPLATE_MATCH:
+            _PROM_TEMPLATE_MATCH.labels(outcome=outcome).inc()
+
+        if outcome == "matched":
+            return
+
+        # The miss itself is the useful record; the phrasing that caused it is
+        # the training signal for the embedding work. Raw user text is only
+        # emitted when explicitly switched on, since these are customer
+        # messages and the default log sink is not the place for them.
+        if os.getenv("CM_LOG_TEMPLATE_MISSES") == "1":
+            logger.info(
+                "cm_template_miss outcome=%s score=%.3f message=%r",
+                outcome, score, message[:200],
+            )
+        else:
+            logger.debug("cm_template_miss outcome=%s score=%.3f", outcome, score)
+    # Telemetry must never break the turn it measures.
+    except Exception:
+        logger.debug("cm_template_miss telemetry failed", exc_info=True)
+
+
+def get_template_match_stats() -> Dict[str, int]:
+    """Snapshot of match outcomes since process start (construction turns only).
+
+    `below_floor` + `no_candidate` over the total is the miss rate that issue
+    #419 exists to measure.
+
+    Read it as "of the turns this layer recognised as construction, how many
+    did it fail to help" — NOT "how many construction turns went unhelped".
+    A turn that fails keyword intent detection as well never reaches the
+    counter at all: "the client is unhappy about the concrete finish on the
+    podium" is plainly construction, matches no domain keyword, and is
+    invisible here. So this is a LOWER BOUND on the true miss rate, and the
+    gap between the two cannot be closed by the same keyword tables that
+    create it. Treat a bad number as conclusive and a good one as partial.
+    """
+    stats = dict(_MATCH_STATS)
+    total = sum(stats.values())
+    stats["total"] = total
+    stats["miss_rate"] = (
+        round((stats["below_floor"] + stats["no_candidate"]) / total, 4) if total else 0.0
+    )
+    return stats
+
+
+def reset_template_match_stats() -> None:
+    """Zero the counters. For tests and for bounding a measurement window."""
+    for k in _MATCH_OUTCOMES:
+        _MATCH_STATS[k] = 0
+
 
 # Single-word triggers that are ordinary business English rather than
 # construction terms of art. On their own they are not enough to commit to a
@@ -687,6 +782,20 @@ class CrossDomainReasoner:
             user_message
         )
         cross_domain_context = self.intent_detector.get_cross_domain_context(user_message)
+
+        # Record the outcome only for turns this layer considers its own — ones
+        # where construction intent was actually detected. Without this the
+        # miss rate is invisible: an unmatched turn produces no error, no log
+        # and no user-visible difference, so nobody finds out the vocabulary
+        # has a hole until someone reads a transcript by hand.
+        if source_domains or additional_domains:
+            if best_template is not None:
+                outcome = "matched"
+            elif template_scores:
+                outcome = "below_floor"
+            else:
+                outcome = "no_candidate"
+            _bump_template_match(outcome, best_score, user_message)
 
         # Build suggested tools from additional domains
         domain_tools = {
