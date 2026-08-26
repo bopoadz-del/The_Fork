@@ -59,6 +59,9 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   warnings are allowed). Context files (`AuthContext`, `ThemeContext`) keep a
   file-level `react-refresh/only-export-components` disable because the hook
   lives next to the provider.
+- Chat turn idle watchdog: `CHAT_TURN_IDLE_TIMEOUT_SEC` (default 120; `0` off)
+  ends a stalled SSE turn when no progress event arrives — heartbeats do not
+  count. Wall-clock `CHAT_STREAM_TIMEOUT_SECONDS` remains the hard cap.
 - Leftover L1 named-file fetch: `_predispatch_file_tool` runs `fetch_document`
   for `.txt`/`.md`/`.docx`/`.doc` when the user names the file (full name or a
   ≥12-char stem, so `khor_waterproofing_spec` matches a timestamped upload).

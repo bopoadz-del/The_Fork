@@ -79,6 +79,18 @@ def test_blueprint_chat_stream_timeout_covers_kimi_reasoning():
     )
 
 
+def test_blueprint_chat_turn_idle_timeout_present():
+    """A7 idle-between-progress watchdog must be declared on the web service."""
+    env = _web_env()
+    item = env.get("CHAT_TURN_IDLE_TIMEOUT_SEC")
+    assert item is not None, "CHAT_TURN_IDLE_TIMEOUT_SEC missing from render.yaml"
+    seconds = float(item["value"])
+    assert seconds > 0, "idle timeout should be on in prod-like blueprint"
+    assert seconds < float(env["CHAT_STREAM_TIMEOUT_SECONDS"]["value"]), (
+        "idle must be stricter than wall-clock or it never fires first"
+    )
+
+
 def test_blueprint_auto_deploy_matches_the_live_service():
     """autoDeploy was switched ON in the dashboard on 2026-08-23.
 

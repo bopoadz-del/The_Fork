@@ -1,4 +1,4 @@
-"""``chat_stream`` wall-clock timeout + heartbeat (FOLLOW-UP #92).
+"""``chat_stream`` wall-clock timeout + heartbeat + idle watchdog.
 
 The hang scenario: the LLM provider drops the response mid-flight (Cloudflare
 tunnel ephemeral, Ollama OOM, DeepSeek 503), ``httpx.post`` blocks past its own
@@ -13,8 +13,13 @@ ABSOLUTE deadline of ``CHAT_STREAM_TIMEOUT_SECONDS`` (computed once, NOT reset
 by events). When the deadline expires before the producer finishes, a
 structured error event is emitted and the wrapper returns cleanly.
 
-All three tests use a short test-mode timeout (1-3s) so the suite still runs
-in seconds, not the production-default 240.
+A7 idle-between-progress: heartbeats alone must not keep a hung turn spinning.
+``CHAT_TURN_IDLE_TIMEOUT_SEC`` (default 120; ``0`` disables) ends the turn with
+a visible timeout error when no *progress* event (token / tool_call / …)
+arrives — heartbeats do not reset that clock.
+
+Tests use short timeouts (1-3s) so the suite still runs in seconds, not the
+production-default 240 / 120.
 """
 from __future__ import annotations
 
@@ -147,3 +152,96 @@ def test_fast_llm_completes_cleanly_with_no_heartbeats(monkeypatch):
         f"fast LLM produced heartbeats it shouldn't have: {types}"
     )
     assert "error" not in types, f"fast LLM erroneously errored: {types}"
+
+
+# ── test 4: heartbeat-only hang → idle watchdog fires before wall-clock ───────
+
+
+def test_idle_watchdog_fires_when_only_heartbeats(monkeypatch):
+    """A hung LLM that only emits heartbeats must surface a visible timeout
+    error via the idle-between-progress watchdog — not an indefinite spinner.
+
+    Wall-clock is deliberately generous so idle (not wall) is what fires.
+    """
+    _setup_provider(monkeypatch)
+    monkeypatch.setenv("CHAT_STREAM_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("CHAT_STREAM_HEARTBEAT_SECONDS", "0.4")
+    monkeypatch.setenv("CHAT_TURN_IDLE_TIMEOUT_SEC", "1.5")
+
+    a = _agent()
+
+    async def _hang(*_args, **_kwargs):
+        await asyncio.Future()
+
+    with patch.object(a, "_call_llm", _hang):
+        events = _collect(a.chat_stream(user_message="hello"))
+
+    types = [e["type"] for e in events]
+    assert "error" in types, f"idle stall did not surface as error: {types}"
+    err = next(e for e in events if e["type"] == "error")
+    assert "timeout" in err["message"].lower(), err["message"]
+    assert "idle" in err["message"].lower() or "progress" in err["message"].lower(), (
+        f"expected idle/progress wording: {err['message']!r}"
+    )
+    assert any(e["type"] == "heartbeat" for e in events), (
+        f"expected heartbeats during idle hang: {types}"
+    )
+    # Must not have waited for the 30s wall-clock.
+    assert "wall-clock" not in err["message"].lower(), err["message"]
+
+
+# ── test 5: progress events reset idle — slow-but-alive stream completes ─────
+
+
+def test_progress_events_reset_idle_watchdog(monkeypatch):
+    """Tool/progress events must reset the idle clock so a healthy multi-step
+    turn spanning longer than the idle window still completes."""
+    _setup_provider(monkeypatch)
+    monkeypatch.setenv("CHAT_STREAM_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("CHAT_STREAM_HEARTBEAT_SECONDS", "10")
+    monkeypatch.setenv("CHAT_TURN_IDLE_TIMEOUT_SEC", "1.0")
+
+    a = _agent()
+
+    async def _progressing_impl(**_kwargs):
+        # Total wall ~2.4s exceeds idle 1.0s; progress every 0.7s resets idle.
+        yield {"type": "start", "agent": "timeout-test"}
+        await asyncio.sleep(0.7)
+        yield {"type": "tool_call", "tool": "search_project_documents",
+               "args_preview": "{}"}
+        await asyncio.sleep(0.7)
+        yield {"type": "tool_result", "tool": "search_project_documents",
+               "ok": True}
+        await asyncio.sleep(0.7)
+        yield {"type": "token", "content": "grounded answer"}
+        yield {"type": "end", "iterations": 1, "sources": [], "tools": [
+            "search_project_documents",
+        ]}
+
+    with patch.object(a, "_chat_stream_impl", _progressing_impl):
+        events = _collect(a.chat_stream(user_message="hello"))
+
+    types = [e["type"] for e in events]
+    assert "end" in types, f"healthy progressing stream did not complete: {types}"
+    assert "error" not in types, f"progressing stream wrongly errored: {types}"
+    assert any(e.get("content") == "grounded answer" for e in events
+               if e.get("type") == "token")
+
+
+def test_idle_watchdog_disabled_by_zero(monkeypatch):
+    """CHAT_TURN_IDLE_TIMEOUT_SEC=0 disables idle; only wall-clock applies."""
+    _setup_provider(monkeypatch)
+    monkeypatch.setenv("CHAT_STREAM_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("CHAT_STREAM_HEARTBEAT_SECONDS", "0.4")
+    monkeypatch.setenv("CHAT_TURN_IDLE_TIMEOUT_SEC", "0")
+
+    a = _agent()
+
+    async def _hang(*_args, **_kwargs):
+        await asyncio.Future()
+
+    with patch.object(a, "_call_llm", _hang):
+        events = _collect(a.chat_stream(user_message="hello"))
+
+    err = next(e for e in events if e["type"] == "error")
+    assert "wall-clock" in err["message"].lower(), err["message"]

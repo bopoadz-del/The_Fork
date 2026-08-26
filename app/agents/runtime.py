@@ -6109,6 +6109,14 @@ class Agent:
         of ``CHAT_STREAM_TIMEOUT_SECONDS`` (computed once, NOT reset by events),
         and emits a structured timeout error when the deadline expires before
         the producer finishes.
+
+        **Idle-between-progress watchdog (A7):** heartbeats alone must not keep
+        a hung turn spinning forever. ``CHAT_TURN_IDLE_TIMEOUT_SEC`` (default
+        120; ``0`` disables) caps silence between *progress* events
+        (token / tool_call / tool_result / start / end / error / …). Heartbeats
+        do not reset the idle clock. Healthy long RAG turns that keep emitting
+        tool/progress events are unaffected; optional hard wall-clock still
+        applies as an absolute backstop.
         """
         agent_name = self.name
         token_emitted = False
@@ -6127,14 +6135,30 @@ class Agent:
             heartbeat_s = float(os.getenv("CHAT_STREAM_HEARTBEAT_SECONDS") or "15")
         except ValueError:
             heartbeat_s = 15.0
+        try:
+            idle_s = float(os.getenv("CHAT_TURN_IDLE_TIMEOUT_SEC") or "120")
+        except ValueError:
+            idle_s = 120.0
+        # Explicit 0 / negative disables the idle watchdog (wall-clock remains).
+        if idle_s < 0:
+            idle_s = 0.0
+
+        # Events that prove the turn is still doing work. Heartbeat is
+        # intentionally excluded — it only proves the SSE tunnel is open.
+        _PROGRESS_TYPES = frozenset({
+            "start", "token", "tool_call", "tool_result", "final",
+            "iteration", "route", "status", "end", "error",
+        })
 
         _SENTINEL = object()
 
         async def _inner():
             nonlocal token_emitted, terminal_emitted
             _LOG.info(
-                "chat_stream: start agent=%s conv=%s project=%s timeout=%.1fs heartbeat=%.1fs",
-                agent_name, conversation_id, project_id, timeout_s, heartbeat_s,
+                "chat_stream: start agent=%s conv=%s project=%s "
+                "timeout=%.1fs heartbeat=%.1fs idle=%.1fs",
+                agent_name, conversation_id, project_id,
+                timeout_s, heartbeat_s, idle_s,
             )
 
             queue: asyncio.Queue = asyncio.Queue()
@@ -6171,14 +6195,30 @@ class Agent:
             # hung, so a per-get() timeout would never trigger. The fixed
             # deadline is the only correct semantic for a wall-clock cap.
             deadline = time.monotonic() + timeout_s
+            # Idle deadline resets only on progress events (not heartbeats).
+            idle_deadline = (
+                time.monotonic() + idle_s if idle_s > 0 else None
+            )
+
+            def _emit_timeout_error(kind: str, seconds: float) -> dict[str, Any]:
+                if kind == "idle":
+                    msg = (
+                        f"Response timeout — no progress for "
+                        f"{seconds:.0f}s (turn idle). The assistant stalled; "
+                        f"please try again."
+                    )
+                else:
+                    msg = (
+                        f"Response timeout — stream exceeded "
+                        f"the wall-clock timeout ({seconds:.0f}s)."
+                    )
+                return {"type": "error", "message": msg}
 
             try:
                 while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        # Wall-clock cap exceeded. Emit a structured timeout
-                        # error so the frontend's friendlyErrorMessage maps
-                        # it (substring "timeout") to a clean banner.
+                    now = time.monotonic()
+                    remaining_wall = deadline - now
+                    if remaining_wall <= 0:
                         _LOG.warning(
                             "chat_stream: wall-clock deadline exceeded after %.1fs",
                             timeout_s,
@@ -6186,20 +6226,36 @@ class Agent:
                         if not token_emitted:
                             yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
                             token_emitted = True
-                        yield {
-                            "type": "error",
-                            "message": (
-                                f"Response timeout — stream exceeded "
-                                f"the wall-clock timeout ({timeout_s:.0f}s)."
-                            ),
-                        }
+                        yield _emit_timeout_error("wall", timeout_s)
                         terminal_emitted = True
                         return
 
+                    if idle_deadline is not None and now >= idle_deadline:
+                        _LOG.warning(
+                            "chat_stream: idle-between-progress exceeded after %.1fs",
+                            idle_s,
+                        )
+                        if not token_emitted:
+                            yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
+                            token_emitted = True
+                        yield _emit_timeout_error("idle", idle_s)
+                        terminal_emitted = True
+                        return
+
+                    remaining_idle = (
+                        (idle_deadline - now)
+                        if idle_deadline is not None
+                        else remaining_wall
+                    )
+                    remaining = min(remaining_wall, remaining_idle)
+                    # Guard against a tiny negative race between the checks
+                    # above and wait_for; a zero timeout raises immediately.
+                    wait_s = max(remaining, 0.05)
+
                     try:
-                        item = await asyncio.wait_for(queue.get(), timeout=remaining)
+                        item = await asyncio.wait_for(queue.get(), timeout=wait_s)
                     except asyncio.TimeoutError:
-                        # Loop top will see remaining <= 0 and emit the error.
+                        # Loop top re-checks wall/idle and emits the error.
                         continue
 
                     if item is _SENTINEL:
@@ -6211,14 +6267,22 @@ class Agent:
                         return
 
                     event = item
-                    if event.get("type") == "token":
+                    evt_type = event.get("type")
+                    if evt_type == "token":
                         token_emitted = True
-                    if event.get("type") == "tool_call":
+                    if evt_type == "tool_call":
                         _tn = event.get("tool") or event.get("name")
                         if _tn and _tn not in tools_seen:
                             tools_seen.append(_tn)
-                    if event.get("type") in ("end", "error"):
+                    if evt_type in ("end", "error"):
                         terminal_emitted = True
+                    # Progress (not heartbeat) resets the idle watchdog so a
+                    # long RAG/tool turn that keeps emitting stays alive.
+                    if (
+                        idle_deadline is not None
+                        and evt_type in _PROGRESS_TYPES
+                    ):
+                        idle_deadline = time.monotonic() + idle_s
                     yield event
             finally:
                 # Cancel-then-gather so both tasks fully unwind even when the

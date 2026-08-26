@@ -249,7 +249,14 @@ function friendlyErrorMessage(raw: string): string {
   ) {
     return 'The assistant is temporarily unavailable. Please try again in a moment.'
   }
-  if (r.includes('timeout') || r.includes('timed out') || r.includes('etimedout')) {
+  if (
+    r.includes('timeout') ||
+    r.includes('timed out') ||
+    r.includes('etimedout') ||
+    r.includes('turn idle') ||
+    r.includes('no progress') ||
+    r.includes('stalled')
+  ) {
     return 'The assistant took too long to respond. Please try again.'
   }
   if (r.includes('429') || r.includes('rate limit')) {

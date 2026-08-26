@@ -197,6 +197,10 @@ services:
       # is the live value that cleared the deadline (PLATFORM_HEALTH_REPORT).
       - key: CHAT_STREAM_TIMEOUT_SECONDS
         value: "240"
+      # Idle-between-progress (A7): kill heartbeat-only hangs with a visible
+      # error. Heartbeats do not reset this; tool/token events do. 0 disables.
+      - key: CHAT_TURN_IDLE_TIMEOUT_SEC
+        value: "120"
       # Client-facing origin for export footers and email-verify links.
       # RENDER_EXTERNAL_URL is the onrender slug; without this override,
       # generated files stamp the-fork-jn3t.onrender.com instead of the
