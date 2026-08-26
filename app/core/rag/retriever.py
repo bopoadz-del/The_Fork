@@ -649,6 +649,17 @@ _CD_FILLED_VALUE_RE = re.compile(
 _CD_PARTICULARS_PREFIX_BONUS = 0.85
 _CD_PARTICULARS_HEADING_BONUS = 0.40
 _CD_DEFINITION_PENALTY = 0.40
+# Scope disambiguation inside the particulars family (live A3 finding:
+# "Time for Completion for the whole of the Works" answered with the
+# milestone table — every particulars row got the same lift, and
+# milestones win on bulk). When the query names one scope, rows of the
+# other scope lose the family bonus.
+_CD_WHOLE_WORKS_QUERY_RE = re.compile(
+    r"(?i)\bwhole\s+of\s+the\s+works\b|\bwhole\s+works\b|\bworks\s+as\s+a\s+whole\b",
+)
+_CD_MILESTONE_QUERY_RE = re.compile(r"(?i)\bmilestones?\b")
+_CD_MILESTONE_CHUNK_RE = re.compile(r"(?i)\bmilestones?\b")
+_CD_SCOPE_MISMATCH_PENALTY = 1.10
 
 
 def _cd_particulars_boost_enabled() -> bool:
@@ -699,10 +710,23 @@ def _apply_contract_data_particulars_boost(query: str, scored: List[Tuple[float,
         return
     if not query_asks_for_contract_particulars(query):
         return
+    wants_whole = bool(_CD_WHOLE_WORKS_QUERY_RE.search(query))
+    wants_milestone = bool(_CD_MILESTONE_QUERY_RE.search(query))
     for i, (score, chunk) in enumerate(scored):
-        delta = contract_data_particulars_delta(chunk.text or "")
+        text = chunk.text or ""
+        delta = contract_data_particulars_delta(text)
         if not delta:
             continue
+        if delta > 0:
+            chunk_is_milestone = bool(_CD_MILESTONE_CHUNK_RE.search(text))
+            if wants_whole and not wants_milestone and chunk_is_milestone:
+                # Whole-works ask: milestone rows lose the family bonus and
+                # take a penalty so the 1.1.75 whole-works row can surface.
+                delta = -_CD_SCOPE_MISMATCH_PENALTY
+            elif wants_milestone and not wants_whole and not chunk_is_milestone:
+                # Milestone ask: non-milestone particulars keep their score
+                # but get no family lift over the milestone rows.
+                delta = 0.0
         boosted = score + delta
         chunk.score = round(boosted, 6)
         scored[i] = (boosted, chunk)
