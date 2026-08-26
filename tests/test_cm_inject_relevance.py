@@ -318,3 +318,107 @@ class TestWordBoundaryMatching:
             "these tokens are already reached by another token's inflections, "
             f"so they double-count: {overlaps}"
         )
+
+
+# ── Miss telemetry (issue #419) ───────────────────────────────────────────
+# The counter exists to answer one question: how often does a construction
+# turn get no cross-domain help? These tests pin the parts that make that
+# number trustworthy rather than merely present.
+
+
+def _stats_after(messages):
+    from app.core import cross_domain_reasoner as cdr
+
+    cdr.reset_template_match_stats()
+    reasoner = cdr.CrossDomainReasoner()
+    for m in messages:
+        reasoner.analyze_turn(m)
+    return cdr.get_template_match_stats()
+
+
+def test_conversational_turns_are_not_counted_as_misses():
+    """A miss on "hello" is the layer declining correctly, not a failure.
+
+    Counting it would bury the real signal: chat is mostly conversation, so
+    every genuine vocabulary hole would sit under a pile of greetings and the
+    miss rate would asymptote to "almost everything", telling nobody anything.
+    """
+    stats = _stats_after(["hello", "thanks", "how are you today", "ok"])
+    assert stats["total"] == 0, stats
+    assert stats["miss_rate"] == 0.0
+
+
+def test_a_matched_construction_turn_counts_as_matched():
+    stats = _stats_after(["we had a lost-time injury on level 3"])
+    assert stats["matched"] == 1, stats
+    assert stats["total"] == 1
+    assert stats["miss_rate"] == 0.0
+
+
+def test_construction_intent_with_no_template_is_counted_as_a_miss():
+    """Intent detected, no template — precisely the silent case #419 is about."""
+    from app.core import cross_domain_reasoner as cdr
+
+    cdr.reset_template_match_stats()
+    reasoner = cdr.CrossDomainReasoner()
+    result = reasoner.analyze_turn("the procurement lead time is a worry")
+    stats = cdr.get_template_match_stats()
+
+    assert result["additional_domains"], "precondition: intent must be detected"
+    assert result["matched_template"] is None, "precondition: no template above floor"
+    assert stats["below_floor"] + stats["no_candidate"] == 1, stats
+    assert stats["miss_rate"] == 1.0
+
+
+def test_below_floor_and_no_candidate_are_distinguished():
+    """A near-miss and a total blank need different fixes.
+
+    below_floor says the vocabulary is close and the floor may be wrong;
+    no_candidate says the phrasing is absent from the tables entirely. Folding
+    them into one number would hide which of the two is actually happening.
+    """
+    from app.core import cross_domain_reasoner as cdr
+
+    assert set(cdr._MATCH_OUTCOMES) == {"matched", "below_floor", "no_candidate"}
+    stats = _stats_after(["hello"])
+    assert "below_floor" in stats and "no_candidate" in stats
+
+
+def test_miss_rate_is_the_share_of_construction_turns_left_unhelped():
+    stats = _stats_after([
+        "we had a lost-time injury on level 3",   # matches
+        "snagging list has 200 open items",       # matches
+        "the procurement lead time is a worry",   # miss
+    ])
+    assert stats["total"] == 3, stats
+    assert stats["matched"] == 2, stats
+    assert stats["miss_rate"] == round(1 / 3, 4), stats
+
+
+def test_raw_user_messages_are_not_logged_by_default(monkeypatch, caplog):
+    """Misses are customer text. Opt in before it reaches the default sink."""
+    import logging
+
+    from app.core import cross_domain_reasoner as cdr
+
+    monkeypatch.delenv("CM_LOG_TEMPLATE_MISSES", raising=False)
+    cdr.reset_template_match_stats()
+    secret = "the procurement lead time on the Al Maktoum job is a worry"
+    with caplog.at_level(logging.INFO, logger=cdr.__name__):
+        cdr.CrossDomainReasoner().analyze_turn(secret)
+    assert secret not in caplog.text
+
+    caplog.clear()
+    monkeypatch.setenv("CM_LOG_TEMPLATE_MISSES", "1")
+    with caplog.at_level(logging.INFO, logger=cdr.__name__):
+        cdr.CrossDomainReasoner().analyze_turn(secret)
+    assert secret in caplog.text
+
+
+def test_telemetry_failure_cannot_break_a_turn(monkeypatch):
+    """Instrumentation must never be able to take down the thing it measures."""
+    from app.core import cross_domain_reasoner as cdr
+
+    monkeypatch.setattr(cdr, "_MATCH_STATS", None)  # force an internal error
+    result = cdr.CrossDomainReasoner().analyze_turn("we had a lost-time injury on level 3")
+    assert result["matched_template"] == "safety_incident_response"

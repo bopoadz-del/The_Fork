@@ -19,11 +19,24 @@ def prometheus_metrics() -> Response:
     """Prometheus text-format exposition (PR #98).
 
     Intentionally unauthenticated — Prometheus scrapers typically don't
-    auth, and the counters exposed here are non-sensitive request/
-    response totals (method + status label set). Sensitive operational
-    data stays behind /v1/metrics (admin-gated). When prometheus-client
-    isn't installed, returns an empty 503 so the dev environment doesn't
-    refuse to import this router.
+    auth, and the counters exposed here are non-sensitive aggregates:
+
+      the_fork_requests_total              (method, status)
+      the_fork_cm_template_match_total     (outcome)
+
+    Both are counts with a fixed, low-cardinality label set. No user text,
+    project identifier or document reference is exposed. Anything carrying
+    those — including the raw phrasings behind a template miss, which are
+    customer messages — stays out of here; the miss text is gated behind
+    CM_LOG_TEMPLATE_MISSES and goes to logs, never to this endpoint.
+
+    Keep this list current. It is the standing argument for why this route
+    can stay open, so a counter added without updating it silently widens
+    what an unauthenticated endpoint serves.
+
+    Sensitive operational data stays behind /v1/metrics (admin-gated). When
+    prometheus-client isn't installed, returns an empty 503 so the dev
+    environment doesn't refuse to import this router.
     """
     try:
         from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
