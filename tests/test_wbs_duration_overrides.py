@@ -7,6 +7,7 @@ import json
 import pytest
 
 from app.lib.wbs_duration_overrides import (
+    activity_matches_override,
     apply_duration_overrides,
     collect_overrides,
     message_wants_wbs_duration_rerun,
@@ -24,6 +25,11 @@ from app.agents import runtime as runtime_module
         ("6 days per slab", "slab", 6),
         ("change slab duration to 6 days", "slab", 6),
         ("Regenerate the WBS using 6 days for each slab.", "slab", 6),
+        (
+            "Use 45 days for the tree-removal activity and re-run.",
+            "tree removal",
+            45,
+        ),
     ],
 )
 def test_parse_explicit_duration_override(text, match, days):
@@ -77,6 +83,48 @@ def test_apply_overrides_only_matching_names():
     assert out[1]["duration_days"] == 21
     assert applied[0]["activities_updated"] == 1
     assert unmatched == []
+
+
+def test_tree_removal_override_hits_remove_trees_and_site_clearance():
+    """UI-PHYS F2 / D4: override parsed as 'tree removal' must not 0-update.
+
+    Live WBS rows were named 'Site clearance — Hall A/B'. A BOQ-shaped
+    name 'Remove trees from sidewalks' also failed because 'removal' is
+    not a substring of 'remove'. Neither is state loss nor a fuzzy floor.
+    """
+    assert parse_duration_overrides(
+        "Use 45 days for the tree-removal activity and re-run."
+    )[0]["match"] == "tree removal"
+
+    assert activity_matches_override(
+        "Remove trees from sidewalks", "tree removal"
+    )
+    assert activity_matches_override(
+        "D290.1 Tree removal", "tree removal"
+    )
+    assert activity_matches_override(
+        "Site clearance — Hall A", "tree removal"
+    )
+    assert activity_matches_override(
+        "Site clearance — Hall B", "tree removal"
+    )
+    assert not activity_matches_override(
+        "Steel column erection", "tree removal"
+    )
+
+    acts = [
+        {"id": "A", "name": "Site clearance — Hall A", "duration_days": 10},
+        {"id": "B", "name": "Site clearance — Hall B", "duration_days": 10},
+        {"id": "C", "name": "Steel column erection", "duration_days": 21},
+    ]
+    out, applied, unmatched = apply_duration_overrides(
+        acts, [{"match": "tree removal", "days": 45}]
+    )
+    assert unmatched == []
+    assert applied[0]["activities_updated"] == 2
+    assert out[0]["duration_days"] == 45
+    assert out[1]["duration_days"] == 45
+    assert out[2]["duration_days"] == 21
 
 
 @pytest.mark.asyncio
