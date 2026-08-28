@@ -114,7 +114,13 @@ ACTION_HINTS: dict[str, str] = {
         "in contract, loss/expense quantum, and time entitlement.",
     "rfi_generator":
         "The user wants help drafting an RFI. State the issue clearly, the "
-        "drawings/specs involved, and the question to designer.",
+        "drawings/specs involved, and the question to designer. Do not treat "
+        "the chat bubble as the RFI register — Aconex / the CDE is the system "
+        "of record.",
+    "cde_post_rfi":
+        "The user wants the drafted RFI posted to Aconex / the CDE. Post the "
+        "draft via the CDE connector. Do not allocate a Fork RFI number and "
+        "do not keep a local RFI log.",
     "job_requisition":
         "The user wants a job requisition / prequalification pack. Draft "
         "scope, NOC constraints, and a shortlist rubric from operator facts.",
@@ -298,6 +304,7 @@ GENERATIVE_INTENTS = frozenset({
     # Contracts / Claims (real document synthesis)
     "claims_builder",
     "rfi_generator",
+    "cde_post_rfi",
     "inspection_request",
     "wir_form",
     "job_requisition",

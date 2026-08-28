@@ -1,10 +1,10 @@
-"""Smart Orchestrator Block - 54-action keyword router for construction workflows.
+"""Smart Orchestrator Block - 55-action keyword router for construction workflows.
 
 The runtime action list is built by prepending PROCEDURE_ROUTING_ADDITIONS
 (17 procedure-specific actions, PRC-301..PRC-606) to the in-file ACTION_PATTERNS
-list (41 entries). Six action names appear in both lists; their keyword
+list (43 entries). Six action names appear in both lists; their keyword
 lists are MERGED at scoring time so neither source loses coverage.
-Net unique actions: 17 + (42 - 6) + 1 (construction_calc) = 54.
+Net unique actions: 17 + (43 - 6) + 1 (cde_post_rfi) = 55.
 """
 
 import re
@@ -141,6 +141,12 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("variation_order_manager", ["variation order", "variation management", "change log"]),
     ("claims_builder",        ["claim", "dispute", "loss and expense", "damages", "extension of time"]),
     ("rfi_generator",         ["rfi", "request for information", "query", "clarification", "design query"]),
+    ("cde_post_rfi",          [
+        "post this rfi to aconex", "post the rfi to aconex", "post rfi to aconex",
+        "send this rfi to aconex", "send the rfi to aconex", "send rfi to aconex",
+        "post this draft to aconex", "post the draft to aconex",
+        "post this rfi to the cde", "send this rfi to the cde",
+    ]),
     # Safety
     ("safety_compliance_audit", ["safety", "hse", "osha", "risk assessment", "hazard", "ppe", "toolbox",
                                   "hse compliance audit", "working at height", "work at height", "fall protection",
@@ -207,7 +213,7 @@ class SmartOrchestratorBlock(UniversalBlock):
     auto_validate = False
     name = "smart_orchestrator"
     version = "1.1.0"
-    description = "54-action construction keyword router: maps user messages to action queues with parallel execution hints"
+    description = "55-action construction keyword router: maps user messages to action queues with parallel execution hints"
     layer = 2
     tags = ["infrastructure", "construction", "orchestration", "routing", "nlp"]
     requires = []

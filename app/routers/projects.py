@@ -135,10 +135,6 @@ class CreateProjectFromDriveRequest(BaseModel):
     role: str = "other"
 
 
-class ConnectorRequest(BaseModel):
-    connected: bool = True
-
-
 class ProgressRequest(BaseModel):
     planned_percent: float = 0
     actual_percent: float = 0
@@ -700,52 +696,6 @@ async def list_project_conversations(
             })
     conversations.sort(key=lambda c: str(c.get("updated_at") or ""), reverse=True)
     return {"conversations": conversations[:50]}
-
-
-@router.post("/v1/projects/{project_id}/connectors/aconex")
-async def connect_aconex(
-    project_id: str, req: ConnectorRequest, auth: dict = Depends(require_user)
-):
-    """Set the Aconex connection flag for a project.
-
-    Stub for the full Oracle Aconex connector (Roadmap V2 cross-cutting item).
-    Until the real OAuth/import client lands, this lets the readiness gate be
-    satisfied explicitly.
-    """
-    _owned_or_404(project_id, auth["user_id"])
-    if not store.set_aconex(project_id, req.connected):
-        raise HTTPException(404, f"Project '{project_id}' not found")
-    audit.record("connector.aconex", project_id=project_id,
-                 connected=req.connected, user_id=auth["user_id"])
-    return {
-        "status": "ok",
-        "project_id": project_id,
-        "aconex_connected": req.connected,
-        "readiness": store.compute_readiness(project_id),
-    }
-
-
-@router.get("/v1/projects/{project_id}/connectors")
-async def list_connectors(project_id: str, auth: dict = Depends(require_user)):
-    """Connector status for a project.
-
-    Aconex is currently a connection *flag* — the full Oracle Aconex OAuth
-    client is pending API credentials (Roadmap V2 open question). Setting the
-    flag lets the readiness gate be satisfied for projects whose live Aconex
-    feed is managed outside the platform.
-    """
-    proj = _owned_or_404(project_id, auth["user_id"])
-    return {
-        "project_id": project_id,
-        "connectors": [
-            {
-                "name": "aconex",
-                "connected": proj["aconex_connected"],
-                "mode": "flag",
-                "note": "Full OAuth client pending Aconex API credentials.",
-            }
-        ],
-    }
 
 
 # ── documents — store only, no analysis (Roadmap V2 · 0.3) ──────────────────

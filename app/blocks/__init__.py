@@ -46,6 +46,7 @@ _GENERIC_BLOCK_SPECS: List[Tuple[str, str, str]] = [
     ("google_drive",     "app.blocks.google_drive",    "GoogleDriveBlock"),
     ("onedrive",         "app.blocks.onedrive",        "OneDriveBlock"),
     ("sandbox",          "app.blocks.sandbox",         "SandboxBlock"),
+    ("aconex",           "app.blocks.aconex",          "AconexBlock"),
 ]
 
 # Extended platform blocks — loaded when CEREBRUM_VIRGIN=false (legacy production).
