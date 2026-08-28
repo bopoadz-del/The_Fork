@@ -405,3 +405,100 @@ def test_whole_works_ask_demotes_milestone_rows_a3():
     _apply_contract_data_particulars_boost(q_mile, scored2)
     ranked2 = sorted(scored2, key=lambda p: p[0], reverse=True)
     assert ranked2[0][1] is mile, "milestone ask must rank the milestone row first"
+
+
+# ── Label-awareness inside the particulars family (UI-PHYS A5/E1) ─────────
+# The family bonus is flat, so on the live index the top-5 particulars chunks
+# scored within 0.003 of each other and the answer-bearing row sat at rank 21
+# (A5) / 29 (E1). These pin the properties that make discrimination work.
+
+
+class _C:
+    def __init__(self, text):
+        self.text = text
+
+
+_HEADER = (
+    "CONTRACT DATA particulars — filled-in amount / duration / percentage "
+    "[VolumeTitle_Part_1_of_3]\n"
+)
+
+
+def _particulars(body):
+    return _C(_HEADER + "Contract Data\n" + body)
+
+
+def _rank(query, chunks, scores=None):
+    from app.core.rag.retriever import _apply_contract_data_particulars_boost
+
+    scored = list(zip(scores or [0.50] * len(chunks), chunks))
+    _apply_contract_data_particulars_boost(query, scored)
+    return sorted(scored, key=lambda p: p[0], reverse=True)
+
+
+def test_named_label_wins_against_the_rest_of_the_family():
+    """The row the question names must beat siblings that share its bonus."""
+    wanted = _particulars("8.8.1 Delay Damages for the Works: 0.2% per day")
+    others = [
+        _particulars("1.1.27 Defects Notification Period: 365 days"),
+        _particulars("4.3.3 Performance Bond value: 10%"),
+        _particulars("1.1.75 Time for Completion: 420 days"),
+    ]
+    ranked = _rank(
+        "What are the Delay Damages for the whole of the Works?",
+        others + [wanted],
+        # the decoys start AHEAD on raw similarity, as they do live
+        scores=[0.52, 0.52, 0.52, 0.48],
+    )
+    assert ranked[0][1] is wanted
+
+
+def test_label_bonus_outweighs_the_family_tie_not_merely_breaks_it():
+    """Live spread inside the family was 0.003, and a bigger candidate pool
+    supplies more near-ties. A nudge would be swamped; the separation has to
+    survive a decoy that leads on raw score."""
+    wanted = _particulars("8.8.1 Delay Damages for the Works: 0.2% per day")
+    decoy = _particulars("1.1.27 Defects Notification Period: 365 days")
+    ranked = _rank(
+        "What are the Delay Damages for the whole of the Works?",
+        [decoy, wanted],
+        scores=[0.90, 0.50],           # decoy leads by 0.40
+    )
+    assert ranked[0][1] is wanted
+
+
+def test_mutation_probe_header_terms_must_not_count():
+    """MUTATION PROBE. Every particulars chunk carries the same ~138-char
+    header, so counting terms found there gives every candidate identical
+    credit and destroys discrimination exactly where it is needed.
+
+    Calibrated so the mutation actually wins: the decoy carries EVERY
+    significant query term in its header and none in its body, while the real
+    row carries only two in its body. Body-only rule -> real row leads by 0.70.
+    Header counted -> decoy leads by 0.70 and this test fails, which is the
+    whole point of it existing.
+    """
+    body_hit = _particulars("8.8.1 Delay Damages: 0.2% per day")
+    header_only = _C(
+        "CONTRACT DATA particulars — Delay Damages whole Works "
+        "[VolumeTitle_Part_1_of_3]\n"
+        "Contract Data\n"
+        "1.1.27 Defects Notification Period: 365 days"
+    )
+    ranked = _rank(
+        "What are the Delay Damages for the whole of the Works?",
+        [header_only, body_hit],
+        scores=[0.50, 0.50],
+    )
+    assert ranked[0][1] is body_hit, "header terms leaked into the overlap count"
+
+
+def test_unnamed_query_leaves_family_order_untouched():
+    """A question naming no particular must not be reordered by this rule."""
+    from app.core.rag.retriever import _apply_contract_data_particulars_boost
+
+    a = _particulars("8.8.1 Delay Damages for the Works: 0.2% per day")
+    b = _particulars("1.1.27 Defects Notification Period: 365 days")
+    scored = [(0.60, a), (0.50, b)]
+    _apply_contract_data_particulars_boost("Show me the contract particulars", scored)
+    assert scored[0][0] > scored[1][0], "relative order flipped with no label named"
