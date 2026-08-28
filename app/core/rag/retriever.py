@@ -661,6 +661,50 @@ _CD_MILESTONE_QUERY_RE = re.compile(r"(?i)\bmilestones?\b")
 _CD_MILESTONE_CHUNK_RE = re.compile(r"(?i)\bmilestones?\b")
 _CD_SCOPE_MISMATCH_PENALTY = 1.10
 
+# Label-awareness inside the particulars family (UI-PHYS A5/E1/A6/A2).
+#
+# The family bonus is flat: every "CONTRACT DATA particulars" chunk with a
+# filled value gets the same +0.85. Within the family nothing distinguishes the
+# row the question is about from the 200+ that are not, so ordering falls back
+# to raw cosine — and these chunks are near-identical to the embedder. Measured
+# on the live index: top-5 scores spanning 0.003, with the answer-bearing row at
+# rank 21 (A5) and 29 (E1); A2 and A6 survived only because a small candidate
+# pool happened not to supply enough competitors.
+#
+# The scope rule above was the first instance of this, solved for one axis
+# (whole-of-Works vs milestone). This generalises it: reward the row whose LABEL
+# the question actually names.
+#
+# Two things make it work where a small nudge would not:
+#   * the bonus must dominate the family tie, not break it — competitors sit
+#     within 0.003 of each other, and a larger candidate pool supplies more of
+#     them, so the separation has to be decisive
+#   * overlap is computed on the chunk BODY, never the header. Every particulars
+#     chunk opens with an identical ~138-char header carrying the document
+#     title; terms matching there are the same for every candidate and would
+#     add noise in exactly the place discrimination is needed.
+_CD_LABEL_TERM_BONUS = 0.35
+_CD_LABEL_BONUS_CAP = 1.40
+
+
+def _cd_chunk_body(text: str) -> str:
+    """Chunk text minus the identical particulars header line."""
+    t = text or ""
+    nl = t.find("\n")
+    return t[nl + 1:] if nl != -1 else t
+
+
+def _cd_label_bonus(query_terms: frozenset, text: str) -> float:
+    """Reward a particulars row for containing the label the query names."""
+    if not query_terms:
+        return 0.0
+    body = _cd_chunk_body(text).lower()
+    if not body:
+        return 0.0
+    overlap = sum(1 for t in query_terms if t in body)
+    return min(overlap * _CD_LABEL_TERM_BONUS, _CD_LABEL_BONUS_CAP)
+
+
 
 def _cd_particulars_boost_enabled() -> bool:
     return (os.getenv("RAG_CD_PARTICULARS_BOOST") or "").strip().lower() not in (
@@ -712,6 +756,7 @@ def _apply_contract_data_particulars_boost(query: str, scored: List[Tuple[float,
         return
     wants_whole = bool(_CD_WHOLE_WORKS_QUERY_RE.search(query))
     wants_milestone = bool(_CD_MILESTONE_QUERY_RE.search(query))
+    query_terms = _significant_terms(query)
     for i, (score, chunk) in enumerate(scored):
         text = chunk.text or ""
         delta = contract_data_particulars_delta(text)
@@ -727,6 +772,10 @@ def _apply_contract_data_particulars_boost(query: str, scored: List[Tuple[float,
                 # Milestone ask: non-milestone particulars keep their score
                 # but get no family lift over the milestone rows.
                 delta = 0.0
+            if delta > 0:
+                # Still inside the family: separate the row the question names
+                # from the rest of it.
+                delta += _cd_label_bonus(query_terms, text)
         boosted = score + delta
         chunk.score = round(boosted, 6)
         scored[i] = (boosted, chunk)
