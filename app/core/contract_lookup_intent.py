@@ -93,6 +93,7 @@ CONTRACT_LOOKUP_BLOCKED_ACTIONS = frozenset({
     "claims_builder",
     "forensic_delay_analysis",
     "progress_tracker",
+    "drawing_qto",
 })
 
 

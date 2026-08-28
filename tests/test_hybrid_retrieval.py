@@ -13,11 +13,13 @@ drive_archive probe:
 - A PRC-501 chunk for the Q3 regression check (must still rank top-2).
 - Generic construction noise.
 
-All tests use a real embedder (model2vec is the production default) and
-a temp SQLAlchemy SQLite DB that's torn down per test. If no real
-embedder backend is installed in this venv the fixture skips — the
-hash-based fake embedder is too noisy to validate hybrid-beats-semantic
-assertions.
+Corpus tests honor ``RAG_EMBEDDING_MODEL``. CI pins ``fake`` so a fresh
+runner never downloads ``minishlab/potion-base-8M`` from HuggingFace
+(test.yml; run 33207362472 died on nine Hub 429 ERRORs after this
+module deleted that env). BM25 / signature tests are valid on the fake
+hash embedder. Hybrid-beats-semantic ranking tests skip when the
+configured model is ``fake`` — the hash embedder ranks ~randomly and
+cannot distinguish a manhole-spacing chunk from MEP rough-in.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-from app.core.rag.embeddings import Embedder, get_embedder  # noqa: E402
+from app.core.rag.embeddings import get_embedder, reset_embedder_cache  # noqa: E402
 from app.core.rag.vector_store import (  # noqa: E402
     Chunk,
     VectorStore,
@@ -151,30 +153,34 @@ CORPUS = [
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
+# Ranking assertions need a real model. Do not undo CI's
+# RAG_EMBEDDING_MODEL=fake — that download is what Hub-429'd the virgin job.
+_SKIP_FAKE_EMBEDDER = pytest.mark.skipif(
+    (os.getenv("RAG_EMBEDDING_MODEL") or "").strip().lower() == "fake",
+    reason=(
+        "hybrid-vs-semantic ranking needs a real embedder; "
+        "CI sets RAG_EMBEDDING_MODEL=fake to avoid HuggingFace downloads"
+    ),
+)
+
+
 @pytest.fixture
-def store_with_corpus(monkeypatch):
+def store_with_corpus():
     """Build a VectorStore against a temp SQLite DB seeded with CORPUS.
 
-    Uses the REAL embedder (model2vec/potion-base-8M is in baseline
-    requirements). The fake hash-embedder ranks ~randomly and corrupts
-    the test signal — it cannot semantically distinguish a
-    manhole-spacing chunk from a MEP rough-in chunk. Real embeddings
-    are required for these assertions to mean anything.
+    Honors ``RAG_EMBEDDING_MODEL`` (CI: ``fake``). Never deletes that env
+    to force a Hub download. Ranking tests that need a real model are
+    skipif-gated separately.
 
     Returns (store, embedder, db_path). Teardown removes the DB file.
     """
-    # Make sure no earlier test left the fake embedder cached.
-    monkeypatch.delenv("RAG_EMBEDDING_MODEL", raising=False)
-    import app.core.rag.embeddings as _emb_mod
-    _emb_mod._EMBEDDER_CACHE = None
-
-    if not Embedder.available():
+    reset_embedder_cache()
+    try:
+        embedder = get_embedder()
+    except Exception as exc:  # noqa: BLE001 — Hub 429 / missing snapshot
         pytest.skip(
-            "No real embedding backend installed "
-            "(need model2vec or sentence-transformers)"
+            f"Embedder unavailable ({type(exc).__name__}: {exc})"
         )
-
-    embedder = get_embedder()
     tmpdir = tempfile.mkdtemp(prefix="hybrid_test_")
     db_path = os.path.join(tmpdir, f"vectors_{uuid.uuid4().hex}.db")
 
@@ -271,6 +277,7 @@ def test_sanitize_fts5_query_handles_none():
 # ── Hybrid vs semantic on the seeded corpus ──────────────────────────────
 
 
+@_SKIP_FAKE_EMBEDDER
 def test_hybrid_beats_semantic_q5_manhole_spacing(store_with_corpus, monkeypatch):
     """Q5: manhole spacing — semantic clusters on the repeated-token
     Vol3 legends. The TL chunk should land top-5 with hybrid
@@ -293,6 +300,7 @@ def test_hybrid_beats_semantic_q5_manhole_spacing(store_with_corpus, monkeypatch
         f"hybrid should surface TL chunk top-5; got = {_ids(hyb)}"
 
 
+@_SKIP_FAKE_EMBEDDER
 def test_hybrid_beats_semantic_q4_trench_width(store_with_corpus, monkeypatch):
     """Q4: trench width — BM25 catches 'Payable trench width' on exact
     tokens, semantic disperses across noise."""
@@ -305,6 +313,7 @@ def test_hybrid_beats_semantic_q4_trench_width(store_with_corpus, monkeypatch):
         f"hybrid should land trench-width chunk top-5; got = {_ids(hyb)}"
 
 
+@_SKIP_FAKE_EMBEDDER
 def test_hybrid_beats_semantic_q2_sectional_elevation(store_with_corpus, monkeypatch):
     """Q2: SECTIONAL ELEVATION exact-token match should pull the TL
     chunk into the top of the hybrid ranking."""
@@ -317,6 +326,7 @@ def test_hybrid_beats_semantic_q2_sectional_elevation(store_with_corpus, monkeyp
         f"hybrid should surface TL chunk by SECTIONAL ELEVATION; got = {_ids(hyb)}"
 
 
+@_SKIP_FAKE_EMBEDDER
 def test_hybrid_preserves_q3_prc501(store_with_corpus, monkeypatch):
     """Q3 regression: PRC-501 query must still hit the PRC-501 chunk
     top-1 or top-2 under hybrid (semantic was already good; hybrid

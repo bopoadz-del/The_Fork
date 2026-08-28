@@ -691,6 +691,11 @@ async def _predispatch_file_tool(
         # because the project happens to have a PDF (leftover L6).
         if _looks_like_self_contained_calculation(user_msg):
             return None
+        # Contract Data Q&A (delay damages, TfC, Schedule N, …) must not
+        # steal to drawing_qto just because a DXF/PDF stem collides with
+        # ordinary English in the question (UI-PHYS A5 / diagnostic D2:
+        # "the whole of the Works.dxf" ⊂ "…for the whole of the Works?").
+        contract_lookup = message_is_contract_data_lookup(user_msg)
         low = user_msg.lower()
         from app.core import projects as _projects
         docs = _projects.list_documents(project_id) or []
@@ -707,8 +712,15 @@ async def _predispatch_file_tool(
                     tool is None
                     and ext == ".pdf"
                     and _PDF_QTO_HINT.search(user_msg)
+                    and not contract_lookup
                 ):
                     tool = "drawing_qto"
+                if (
+                    tool
+                    and contract_lookup
+                    and tool in ("drawing_qto", "bim_extractor")
+                ):
+                    tool = None
                 if tool and tool in agent.allowed_blocks:
                     target = (name, tool)
                     break
