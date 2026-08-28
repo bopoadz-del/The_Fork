@@ -31,6 +31,15 @@ MILESTONE_5_TFC = (
     "for Milestone 5?"
 )
 MILESTONE_5_BARE = "Milestone 5 Time for Completion"
+SCHEDULE_10 = "What does Schedule 10 of the contract contain?"
+SCHEDULE_10_BARE = "What is Schedule 10?"
+SCHEDULE_9_VOLUMES = "What does Schedule 9 of the contract volumes cover?"
+
+CONTRACT_LOOKUP_ASKS = [
+    TFC_WHOLE_WORKS, MILESTONE_5_TFC, MILESTONE_5_BARE,
+    SCHEDULE_10, SCHEDULE_10_BARE, SCHEDULE_9_VOLUMES,
+]
+
 
 
 def _run(coro):
@@ -48,7 +57,7 @@ def _make_agent(name: str) -> Agent:
 
 @pytest.mark.parametrize(
     "message",
-    [TFC_WHOLE_WORKS, MILESTONE_5_TFC, MILESTONE_5_BARE],
+    CONTRACT_LOOKUP_ASKS,
 )
 def test_tfc_and_milestone_questions_are_contract_data_lookups(message):
     assert message_is_contract_data_lookup(message) is True
@@ -71,7 +80,7 @@ def test_real_schedule_asks_are_not_contract_data_lookups(message):
     assert message_is_contract_data_lookup(message) is False
 
 
-@pytest.mark.parametrize("message", [TFC_WHOLE_WORKS, MILESTONE_5_TFC, MILESTONE_5_BARE])
+@pytest.mark.parametrize("message", CONTRACT_LOOKUP_ASKS)
 def test_tfc_does_not_force_wbs_or_primavera_tool(message):
     msgs = [{"role": "user", "content": message}]
     available = {"generate_wbs", "primavera_parser", "construction_calc"}
@@ -79,14 +88,14 @@ def test_tfc_does_not_force_wbs_or_primavera_tool(message):
     assert _user_intent_requires_tool(msgs) is False
 
 
-@pytest.mark.parametrize("message", [TFC_WHOLE_WORKS, MILESTONE_5_TFC, MILESTONE_5_BARE])
+@pytest.mark.parametrize("message", CONTRACT_LOOKUP_ASKS)
 def test_lookup_hijack_blocks_predefined_even_at_high_confidence(message):
     assert lookup_question_hijack(message, 0.9) is True
     assert lookup_question_hijack(message, 0.2) is True
 
 
 @requires_construction_kit
-@pytest.mark.parametrize("message", [TFC_WHOLE_WORKS, MILESTONE_5_TFC, MILESTONE_5_BARE])
+@pytest.mark.parametrize("message", CONTRACT_LOOKUP_ASKS)
 def test_orchestrator_does_not_classify_tfc_as_generate_wbs(message):
     block = SmartOrchestratorBlock()
     result = _run(block.process({"user_message": message}))
@@ -95,13 +104,16 @@ def test_orchestrator_does_not_classify_tfc_as_generate_wbs(message):
     assert "generate_wbs" not in actions, (
         f"generate_wbs must not match Contract Data Q&A {message!r}; got {matched}"
     )
+    assert "parse_primavera_schedule" not in actions, (
+        f"parse_primavera_schedule must not match {message!r}; got {matched}"
+    )
     action, confidence = best_action(result)
-    assert action != "generate_wbs"
+    assert action not in ("generate_wbs", "parse_primavera_schedule")
     assert needs_planning(action, confidence) is False
 
 
 @requires_construction_kit
-@pytest.mark.parametrize("message", [TFC_WHOLE_WORKS, MILESTONE_5_TFC])
+@pytest.mark.parametrize("message", [TFC_WHOLE_WORKS, MILESTONE_5_TFC, SCHEDULE_10])
 def test_select_agent_keeps_tfc_on_project_assistant(message, monkeypatch):
     pa = _make_agent("project-assistant")
     heavy = _make_agent("heavy-reasoning")

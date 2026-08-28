@@ -73,6 +73,17 @@ _LOOKUP_CUES = (
     ),
 )
 
+# Numbered contract-volume Schedules ("Schedule 10: Not Used"), not a P6
+# programme. UI-PHYS G1 / diagnostic D5: "What does Schedule 10 of the
+# contract contain?" missed every cue below, so the keyword router stole
+# the turn to parse_primavera_schedule / generate_wbs at conf 0.2.
+_CONTRACT_SCHEDULE_N_RE = re.compile(
+    r"\b(?:what\s+(?:does|is)|which)\s+schedule\s+\d+\b"
+    r"|\bschedule\s+\d+\s+of\s+the\s+(?:contract|agreement|tender|volume|conditions?)"
+    r"|\bschedule\s+\d+\b.{0,80}\b(?:contain|cover|include|used)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
 # Schedule/WBS generative actions the keyword router must not dispatch
 # for a Contract Data lookup.
 CONTRACT_LOOKUP_BLOCKED_ACTIONS = frozenset({
@@ -89,7 +100,8 @@ def message_is_contract_data_lookup(text: str) -> bool:
     """True when the turn is a Contract Data fact lookup, not a WBS generate.
 
     Positive: Time for Completion / Milestone N TfC / delay damages / DNP /
-    performance bond / Engineer / Aconex / Accepted Contract Amount.
+    performance bond / Engineer / Aconex / Accepted Contract Amount /
+    numbered contract Schedule N contents.
 
     Negative: "create an L2 schedule", "generate a WBS", "extract milestones
     from the XER / programme".
@@ -103,4 +115,6 @@ def message_is_contract_data_lookup(text: str) -> bool:
         return False
     if _CLAIM_WORK_RE.search(raw):
         return False
+    if _CONTRACT_SCHEDULE_N_RE.search(raw):
+        return True
     return any(cue.search(raw) for cue in _LOOKUP_CUES)
