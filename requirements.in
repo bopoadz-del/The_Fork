@@ -52,7 +52,7 @@ scikit-learn>=1.4.0
 model2vec>=0.4.0
 
 # Reasoning Engine
-RestrictedPython>=7.0
+RestrictedPython>=8.3a1.dev0
 
 # Encryption & JWT
 cryptography>=50.0.0
