@@ -502,3 +502,31 @@ def test_unnamed_query_leaves_family_order_untouched():
     scored = [(0.60, a), (0.50, b)]
     _apply_contract_data_particulars_boost("Show me the contract particulars", scored)
     assert scored[0][0] > scored[1][0], "relative order flipped with no label named"
+
+
+def test_label_bonus_still_wins_when_sixty_family_siblings_enter_the_pool():
+    """Parked pool-stability change: production k=5 now over-fetches 60.
+
+    A5/E1 sat at ranks 21/29. A pool of 20 dropped them. A pool of 60
+    lets them in, but also supplies ~40 extra particulars competitors
+    that used to break A2/A6 before #430. This is the shape the floor
+    raise has to survive: wanted starts at rank 29, decoys lead on raw
+    cosine, label bonus still puts the named row first of the top-5.
+    """
+    wanted = _particulars("8.8.1 Delay Damages for the Works: 0.2% per day")
+    decoys = [
+        _particulars(f"1.9.{i} Spare particulars field {i}: Not used")
+        for i in range(1, 60)
+    ]
+    # Rank 29 in a 60-pool: 28 decoys ahead on raw score, then wanted.
+    chunks = decoys[:28] + [wanted] + decoys[28:]
+    assert len(chunks) == 60
+    scores = [0.51] * 28 + [0.48] + [0.50] * 31
+    ranked = _rank(
+        "What are the Delay Damages for the whole of the Works?",
+        chunks,
+        scores=scores,
+    )
+    top5 = [c for _, c in ranked[:5]]
+    assert wanted in top5
+    assert ranked[0][1] is wanted
