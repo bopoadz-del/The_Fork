@@ -23,6 +23,8 @@ ACTIVITY_FAMILIES: Tuple[str, ...] = (
     "floor slab",
     "slab pour",
     "slab curing",
+    "tree removal",
+    "site clearance",
     "pile cap",
     "wall panel",
     "composite deck",
@@ -60,6 +62,24 @@ _STOP = frozenset({
     "programme", "program", "template", "activity", "activities", "time",
     "duration", "cycle", "ones", "one", "them", "those", "these",
 })
+
+# Inflection / CESMM aliases so "tree removal" hits "Remove trees …" and
+# WBS rows that folded tree work into "Site clearance — Hall A/B"
+# (UI-PHYS F2 / diagnostic D4). Not a fuzzy score floor — exact stems
+# and an explicit family alias.
+_TOKEN_STEMS = {
+    "removal": "remove",
+    "removing": "remove",
+    "removed": "remove",
+    "trees": "tree",
+    "clearance": "clear",
+    "clearing": "clear",
+    "cleared": "clear",
+}
+_MATCH_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "tree removal": ("site clearance", "remove tree"),
+    "remove tree": ("tree removal", "site clearance"),
+}
 
 _RERUN_RE = re.compile(
     r"\b(re-?run|re-?generat\w*|re-?calculat\w*|re-?comput\w*|"
@@ -309,17 +329,53 @@ def _dedupe_overrides(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return merge_duration_overrides(rows)
 
 
+def _stem_token(token: str) -> str:
+    t = (token or "").lower()
+    return _TOKEN_STEMS.get(t, t)
+
+
+def _match_phrases(match: str) -> Tuple[str, ...]:
+    """Return the match plus any explicit family aliases."""
+    m = (match or "").strip().lower()
+    if not m:
+        return ()
+    aliases = _MATCH_ALIASES.get(m) or _MATCH_ALIASES.get(_normalize_match(m) or "")
+    if aliases:
+        return (m,) + tuple(a for a in aliases if a != m)
+    return (m,)
+
+
 def activity_matches_override(name: str, match: str) -> bool:
     n = (name or "").lower()
-    m = (match or "").strip().lower()
-    if not n or not m:
+    if not n:
         return False
-    if m in n:
+    for phrase in _match_phrases(match):
+        if _phrase_hits_activity(n, phrase):
+            return True
+    return False
+
+
+def _phrase_hits_activity(name_low: str, match: str) -> bool:
+    m = (match or "").strip().lower()
+    if not m:
+        return False
+    if m in name_low:
         return True
-    tokens = [t for t in re.split(r"[\s\-]+", m) if t and t not in _STOP]
+    tokens = [
+        _stem_token(t)
+        for t in re.split(r"[\s\-]+", m)
+        if t and t not in _STOP
+    ]
     if not tokens:
         return False
-    return all(t in n for t in tokens)
+    if all(t in name_low for t in tokens):
+        return True
+    name_stems = {
+        _stem_token(t)
+        for t in re.split(r"[\s\-—–/]+", name_low)
+        if t and t not in _STOP
+    }
+    return all(t in name_stems for t in tokens)
 
 
 def apply_duration_overrides(

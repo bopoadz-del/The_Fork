@@ -1665,6 +1665,30 @@ def _persist_failed_turn(conversation_id: str | None) -> None:
         _LOG.warning("could not persist failed-turn marker", exc_info=True)
 
 
+# An export request asks for a FILE, not for a passage inside a document.
+# UI-PHYS H1: the export turn was refused by the RAG-miss short-circuit below
+# in ~0.6s having dispatched ZERO tools, so the export action never ran and the
+# router's refusal was displayed as though it were the answer. Same shape as
+# the unit-rate case already excluded there — a request that merely mentions a
+# document is not a request to look something up inside one.
+#
+# Requires BOTH an action verb and a format/target word, so "what does the
+# Specification document say about 003113" keeps the fast refusal while
+# "export the BOQ to Excel" does not.
+_EXPORT_ACTION_RE = re.compile(
+    r"\b(export|download|save|send\s+me|give\s+me)\b[^.?!]{0,40}?"
+    r"\b(word|docx|doc|pdf|excel|xlsx|csv|file|copy|version|attachment)\b"
+    r"|\b(word|docx|pdf|excel|xlsx|csv)\b[^.?!]{0,25}?"
+    r"\b(export|download|copy|version)\b",
+    re.IGNORECASE,
+)
+
+
+def _asks_for_export(text: str) -> bool:
+    """True when the turn wants a file produced, not a reference resolved."""
+    return bool(_EXPORT_ACTION_RE.search(text or ""))
+
+
 _MISSING_REFERENCE_ANSWER = (
     "I could not confirm this reference in the indexed project sources"
 )
@@ -1698,6 +1722,7 @@ def _should_short_circuit_rag_miss(
     if user_message and (
         _asks_self_coding(user_message)
         or _looks_like_self_contained_calculation(user_message)
+        or _asks_for_export(user_message)
     ):
         return False
     identifiers = audit_rec.get("extracted_identifiers") or []

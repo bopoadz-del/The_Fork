@@ -807,6 +807,34 @@ def _dual_search(
     return sorted(best.values(), key=lambda c: -(c.score or 0.0))
 
 
+# Production chat retrieval is k=5 (runtime search_project_documents,
+# rag inject). UI-PHYS A5/E1 particulars rows sat at ranks 21 and 29 on
+# the live index — the old floor of 20 dropped them before #430's
+# label-awareness could promote them. Floor 60 is the parked
+# pool-stability change that must land *after* #430: raising it first
+# flooded A2/A6 with family competitors and they failed. The SHA
+# 7efeadb was never pushed; this reconstructs that change from the
+# #430 evidence (k=5, candidate pool 60).
+_OVERFETCH_MULTIPLIER = 4
+_OVERFETCH_FLOOR = 60
+
+
+def candidate_overfetch(k: int) -> int:
+    """How many raw candidates to pull before ranking down to ``k``.
+
+    Production callers pass k=5, which yields 60. Do not lower the floor:
+    a particulars row sitting at rank ~21–29 never enters a pool of 20,
+    so the label bonus has nothing to promote.
+    """
+    try:
+        n = int(k)
+    except (TypeError, ValueError):
+        n = 5
+    if n < 1:
+        n = 1
+    return max(n * _OVERFETCH_MULTIPLIER, _OVERFETCH_FLOOR)
+
+
 def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     """BM25-only retrieval for when no embedder can be loaded.
 
@@ -838,7 +866,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         logger.warning("lexical-only retrieval unavailable: %s", exc)
         return [], 0
 
-    over_fetch = max(k * 4, 20)
+    over_fetch = candidate_overfetch(k)
     candidates: List[Chunk] = []
     try:
         candidates.extend(store.bm25_search(project_id, query, over_fetch))
@@ -904,7 +932,8 @@ def retrieve_with_filter(
 ) -> tuple:
     """Returns ``(chunks, noise_filtered_count)``.
 
-    Pulls ``max(k*4, 20)`` raw candidates from the active project's
+    Pulls ``candidate_overfetch(k)`` raw candidates (floor 60, so
+    production k=5 yields a pool of 60) from the active project's
     vector store, then ALSO pulls the same over-fetch from each
     general-knowledge project (``training_material`` by default — see
     ``_general_knowledge_project_ids``). The two candidate sets are
@@ -981,7 +1010,7 @@ def retrieve_with_filter(
     alt_query = _strip_question_wrapper(query) if _dual_query_enabled() else None
     alt_vec = embedder.encode_queries([alt_query])[0] if alt_query else None
     store = get_store(dim=embedder.dim)
-    over_fetch = max(k * 4, 20)
+    over_fetch = candidate_overfetch(k)
     # The GK corpus is small and curated (units / CESMM / FIDIC / procedures), so
     # over-fetch it generously: a lexically-relevant reference chunk must enter
     # the candidate pool even when its semantic score for a broad query is low
@@ -1169,7 +1198,7 @@ def retrieve_with_filter(
     # doing one of them leaves the other broken:
     #
     #  (a) IN-POOL. The chunk carrying the query's terms WAS fetched, but sits
-    #      deep in the over-fetch (rank ~15 of 20) on cosine alone and never
+    #      deep in the over-fetch (rank ~15 of the pool) on cosine alone and never
     #      reaches the top-5 the user sees. Bonusing it in place is what lifts
     #      it. An earlier version of this fix gated the whole rescue on "is a
     #      term-carrying chunk anywhere in the candidate pool" — which this case
