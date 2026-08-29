@@ -4223,6 +4223,47 @@ def _build_sources_from_audit(
         except Exception:
             return ""
 
+    # A3: a named contract/doc id must not appear beside another year's
+    # DD contract in Sources. Fail closed when nothing remaining matches.
+    from app.core.rag.retriever import (
+        extract_contract_doc_ids,
+        filename_matches_named_contracts,
+    )
+    named_contracts = list((audit_rec or {}).get("extracted_contract_ids") or [])
+    if not named_contracts:
+        named_contracts = extract_contract_doc_ids(
+            (audit_rec or {}).get("user_message_preview") or ""
+        )
+    if named_contracts:
+        scoped = [
+            c for c in chunks
+            if filename_matches_named_contracts(
+                _doc_name(c.get("doc_id") or ""),
+                named_contracts,
+            )
+        ]
+        if not scoped:
+            return []
+        chunks = scoped
+
+    def _sources_one_contract(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Unnamed contract answers may cite one PREFIX-YEAR-SEQ, not two years."""
+        if named_contracts or not sources:
+            return sources
+        winning: str | None = None
+        out: list[dict[str, Any]] = []
+        for s in sources:
+            cids = extract_contract_doc_ids(s.get("doc_name") or "")
+            if not cids:
+                out.append(s)
+                continue
+            if winning is None:
+                winning = cids[0]
+                out.append(s)
+            elif winning in cids:
+                out.append(s)
+        return out
+
     # STEP 0b — human-readable layer labels for the sources panel so a
     # Master-Corpus fallback (and disclosed general-knowledge context) is
     # visible per-source, not just in the answer banner.
@@ -4308,7 +4349,7 @@ def _build_sources_from_audit(
                 seen.add(key)
                 matched.append(_format(c, _doc_name(doc_id)))
         if matched:
-            return matched
+            return _sources_one_contract(matched)
 
     # 2) Filename-mention fallback: the model may have named a source in
     #    prose without a formal citation marker. If any injected filename
@@ -4326,11 +4367,13 @@ def _build_sources_from_audit(
                 seen_mentions.add(doc_id)
                 mention_hits.append(_format(c, name))
         if mention_hits:
-            return mention_hits[:3]
+            return _sources_one_contract(mention_hits[:3])
 
     # 3) Final fallback: top-3 retrieved chunks by score.
     by_score = sorted(chunks, key=lambda c: -(c.get("score") or 0))[:3]
-    return [_format(c, _doc_name(c["doc_id"])) for c in by_score]
+    return _sources_one_contract(
+        [_format(c, _doc_name(c["doc_id"])) for c in by_score]
+    )
 
 
 # File extensions whose BOQs are safe to turn into a cost workbook on click.
