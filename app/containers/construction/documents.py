@@ -1544,6 +1544,57 @@ class ConstructionDocumentsMixin:
             ),
         }
 
+    async def cde_poll_events(self, input_data: Any, params: Dict) -> Dict:
+        """Poll CDE mail+register and run the CM overlay on live rows."""
+        from app.core.cde import (
+            CdeError,
+            CdeNotConfiguredError,
+            default_cde_project_id,
+            process_cde_events,
+        )
+
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        payload = {**data, **p}
+        cde_project_id = str(
+            payload.get("cde_project_id") or default_cde_project_id() or ""
+        ).strip()
+        if not cde_project_id:
+            return {
+                "status": "error",
+                "action": "cde_poll_events",
+                "error": (
+                    "cde_project_id is required to poll the CDE. "
+                    "The Fork does not keep a local RFI register."
+                ),
+            }
+        raw_events = payload.get("events")
+        if raw_events is not None and not isinstance(raw_events, list):
+            return {
+                "status": "error",
+                "action": "cde_poll_events",
+                "error": "events must be a list of CDE-shaped rows with live ids",
+            }
+        try:
+            result = await process_cde_events(
+                cde_project_id,
+                payloads=raw_events if isinstance(raw_events, list) else None,
+                fork_project_id=str(payload.get("project_id") or "").strip() or None,
+                ingest_documents=bool(payload.get("ingest_documents")),
+                mailbox=str(payload.get("mailbox") or "inbox"),
+            )
+        except CdeNotConfiguredError as exc:
+            return {
+                "status": "error",
+                "action": "cde_poll_events",
+                "error": str(exc),
+                "not_configured": True,
+            }
+        except CdeError as exc:
+            return {"status": "error", "action": "cde_poll_events", "error": str(exc)}
+        result["action"] = "cde_poll_events"
+        return result
+
     async def _analyse_text_only(self, text: str, doc_type_hint: str = "auto") -> Dict:
         """Classify and extract structured data from raw text without a file."""
         t = text.lower()
