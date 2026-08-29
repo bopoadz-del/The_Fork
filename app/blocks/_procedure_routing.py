@@ -86,6 +86,8 @@ PROCEDURE_ROUTING_ADDITIONS = [
         [
             "PRC-402", "NCR", "non-conformance", "non conformance",
             "nonconformance", "NCR-", "disposition",
+            "issue ncr", "issue an ncr", "raise an ncr", "raise ncr",
+            "issue a ncr",
             "use as is", "reject and replace", "concession request",
             "corrective action", "ncr closure", "close ncr",
             "ncr register", "open ncr", "physical ncr", "documentary ncr",

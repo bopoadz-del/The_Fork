@@ -150,6 +150,7 @@ def test_issue_ncr_does_not_run_qa_qc_inspection():
     msg = "Issue an NCR for out-of-tolerance column verticality on level 3."
     assert message_issues_ncr(msg)
     matched = _matched(msg)
+    assert "ncr_management" in matched
     assert "qa_qc_inspection" not in matched
     meta = procedure_metadata("ncr_management")
     assert meta["execution_mode"] == "metadata_only"

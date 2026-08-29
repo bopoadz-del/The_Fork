@@ -61,8 +61,8 @@ class TestCrossDomainKeywords:
         """Generic delay is schedule + cost. CONTRACT needs explicit claim/EOT."""
         assert Domain.COST in _CROSS_DOMAIN_KEYWORDS["delay"]
         assert Domain.CONTRACT not in _CROSS_DOMAIN_KEYWORDS["delay"]
-        assert Domain.CONTRACT in _CROSS_DOMAIN_KEYWORDS["claim"]
-        assert Domain.CONTRACT in _CROSS_DOMAIN_KEYWORDS["extension of time"]
+        assert _KEYWORD_ROUTES["claim"][0] == Domain.CONTRACT
+        assert _KEYWORD_ROUTES["extension of time"][0] == Domain.CONTRACT
 
     def test_claim_triggers_schedule_cost_and_risk(self):
         domains = _CROSS_DOMAIN_KEYWORDS["claim"]
