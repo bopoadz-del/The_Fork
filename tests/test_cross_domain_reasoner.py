@@ -57,9 +57,12 @@ class TestCrossDomainKeywords:
         assert Domain.CONTRACT in all_domains
         assert Domain.RISK in all_domains
 
-    def test_delay_triggers_cost_and_contract(self):
+    def test_delay_triggers_cost_not_contract(self):
+        """Generic delay is schedule + cost. CONTRACT needs explicit claim/EOT."""
         assert Domain.COST in _CROSS_DOMAIN_KEYWORDS["delay"]
-        assert Domain.CONTRACT in _CROSS_DOMAIN_KEYWORDS["delay"]
+        assert Domain.CONTRACT not in _CROSS_DOMAIN_KEYWORDS["delay"]
+        assert Domain.CONTRACT in _CROSS_DOMAIN_KEYWORDS["claim"]
+        assert Domain.CONTRACT in _CROSS_DOMAIN_KEYWORDS["extension of time"]
 
     def test_claim_triggers_schedule_cost_and_risk(self):
         domains = _CROSS_DOMAIN_KEYWORDS["claim"]
@@ -134,7 +137,7 @@ class TestCrossDomainIntentDetector:
         detector = CrossDomainIntentDetector()
         domains = detector.detect_additional_domains("we are delayed by 2 weeks on the foundation")
         assert Domain.COST in domains
-        assert Domain.CONTRACT in domains
+        assert Domain.CONTRACT not in domains
 
     def test_detect_claim_domains(self):
         detector = CrossDomainIntentDetector()
