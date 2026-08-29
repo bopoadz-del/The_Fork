@@ -15,10 +15,12 @@ from app.core import audit, projects as store
 from app.core.cde import (
     CdeError,
     CdeNotConfiguredError,
+    CdePayloadError,
     connector_mode,
     connector_note,
     default_cde_project_id,
     post_rfi_draft,
+    process_cde_events,
     sync_cde_documents,
 )
 from app.core.deployment_profile import forbid_onprem
@@ -46,6 +48,19 @@ class CdeRfiPostRequest(BaseModel):
     mail_type_id: Optional[str] = None
 
 
+class CdeEventsRequest(BaseModel):
+    """Poll the CDE and/or accept CDE-shaped rows (subscribe).
+
+    ``events`` must already carry a live CDE id. This endpoint does not
+    allocate a Fork RFI number and does not persist a register.
+    """
+
+    cde_project_id: Optional[str] = None
+    events: Optional[list[Dict[str, Any]]] = None
+    ingest_documents: bool = False
+    mailbox: str = "inbox"
+
+
 def _resolve_cde_project_id(explicit: Optional[str]) -> str:
     cid = (explicit or default_cde_project_id()).strip()
     if not cid:
@@ -60,6 +75,8 @@ def _resolve_cde_project_id(explicit: Optional[str]) -> str:
 def _cde_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, CdeNotConfiguredError):
         return HTTPException(409, str(exc))
+    if isinstance(exc, CdePayloadError):
+        return HTTPException(400, str(exc))
     if isinstance(exc, CdeError):
         return HTTPException(502, str(exc))
     return HTTPException(502, f"CDE request failed: {exc}")
@@ -201,3 +218,48 @@ async def post_aconex_rfi(
             "and does not keep an RFI register."
         ),
     }
+
+
+@router.post(
+    "/v1/projects/{project_id}/connectors/aconex/events",
+    dependencies=[Depends(forbid_onprem("Aconex / CDE"))],
+)
+async def poll_aconex_events(
+    project_id: str,
+    req: CdeEventsRequest,
+    background_tasks: BackgroundTasks,
+    auth: dict = Depends(require_user),
+):
+    """Poll or accept CDE mail+register events and run the CM overlay.
+
+    Inject cites live CDE rows or stays silent. No Fork-owned register.
+    """
+    _owned_or_404(project_id, auth["user_id"])
+    cde_project_id = _resolve_cde_project_id(req.cde_project_id)
+    try:
+        result = await process_cde_events(
+            cde_project_id,
+            payloads=req.events,
+            fork_project_id=project_id if req.ingest_documents else None,
+            ingest_documents=req.ingest_documents,
+            mailbox=req.mailbox or "inbox",
+        )
+    except (CdeNotConfiguredError, CdeError) as exc:
+        raise _cde_http_error(exc) from exc
+    ingest = result.get("ingest") or {}
+    for doc in ingest.get("documents") or []:
+        doc_id = doc.get("id")
+        if doc_id:
+            from app.core import doc_index
+
+            background_tasks.add_task(doc_index.maybe_eager_index, project_id, doc_id)
+    audit.record(
+        "connector.aconex.events",
+        project_id=project_id,
+        cde_project_id=cde_project_id,
+        listed=result.get("listed"),
+        relevant=result.get("relevant"),
+        user_id=auth["user_id"],
+    )
+    result["project_id"] = project_id
+    return result

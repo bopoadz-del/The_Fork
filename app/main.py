@@ -213,6 +213,8 @@ async def lifespan(app: FastAPI):
     logger.info("Loaded %d runtime agents: %s", len(loaded), ", ".join(sorted(loaded.keys())))
     from app.core import hydration_scheduler
     hydration_scheduler.start()
+    from app.core.cde.poll import start_event_poller
+    start_event_poller()
 
     # Model warm-up runs AFTER the port is listening — see _warm_models.
     warm_task = None
@@ -260,6 +262,8 @@ async def lifespan(app: FastAPI):
                 # shutdown steps (scheduler stop, redis close) below.
                 logger.exception("model warm-up task failed during shutdown")
         await hydration_scheduler.stop()
+        from app.core.cde.poll import stop_event_poller
+        await stop_event_poller()
         await _redis_client.close_redis_client()
 
 
