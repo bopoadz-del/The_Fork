@@ -42,6 +42,7 @@ SCOPED_DISPATCH_ALLOWLIST = frozenset({
     "procurement_optimizer",
     "commissioning_checklist",
     "rfi_generator",
+    "cde_post_rfi",
     "submittal_log_generator",
     "payment_certificate",
     "change_order_impact",

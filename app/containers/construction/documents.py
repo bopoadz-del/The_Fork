@@ -1497,6 +1497,53 @@ class ConstructionDocumentsMixin:
             chain.append({"action": "process_document", "params": {}})
     
         return chain
+
+    async def cde_post_rfi(self, input_data: Any, params: Dict) -> Dict:
+        """Post an RFI draft to the CDE. Chat is not the register; CDE numbers it."""
+        from app.core.cde import (
+            CdeError,
+            CdeNotConfiguredError,
+            default_cde_project_id,
+            post_rfi_draft,
+        )
+
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        payload = {**data, **p}
+        cde_project_id = str(
+            payload.get("cde_project_id") or default_cde_project_id() or ""
+        ).strip()
+        if not cde_project_id:
+            return {
+                "status": "error",
+                "action": "cde_post_rfi",
+                "error": (
+                    "cde_project_id is required to post an RFI to the CDE. "
+                    "The Fork does not allocate a local RFI number."
+                ),
+            }
+        try:
+            posted = await post_rfi_draft(cde_project_id, payload)
+        except CdeNotConfiguredError as exc:
+            return {
+                "status": "error",
+                "action": "cde_post_rfi",
+                "error": str(exc),
+                "not_configured": True,
+            }
+        except CdeError as exc:
+            return {"status": "error", "action": "cde_post_rfi", "error": str(exc)}
+        return {
+            "status": "success",
+            "action": "cde_post_rfi",
+            "source_of_truth": "cde",
+            "post": posted.as_dict(),
+            "note": (
+                "Posted to the CDE. Any draft label in chat is not the "
+                "register number."
+            ),
+        }
+
     async def _analyse_text_only(self, text: str, doc_type_hint: str = "auto") -> Dict:
         """Classify and extract structured data from raw text without a file."""
         t = text.lower()
