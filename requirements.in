@@ -52,7 +52,9 @@ scikit-learn>=1.4.0
 model2vec>=0.4.0
 
 # Reasoning Engine
-RestrictedPython>=7.0
+# CVE-2026-55830 (sandbox escape via positional-only args) is fixed in 8.3.
+# Pin the stable line, not 8.3a1.dev0 (Dependabot #437). PyPI latest stable: 8.5.
+RestrictedPython>=8.3
 
 # Encryption & JWT
 cryptography>=50.0.0

@@ -35,6 +35,33 @@ def _require_admin(auth: Dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail="Admin access required")
 
 
+def _execute_recovering(conn, statement, params=None):
+    """Execute ``statement``; ROLLBACK on failure so the connection stays usable.
+
+    PostgreSQL aborts the open transaction on ``UndefinedTable`` (a missing
+    ``chunks_*`` relation). Callers that swallow that error must roll back
+    before the next statement, or ``SELECT COUNT(*) FROM documents`` raises
+    ``InFailedSqlTransaction``.
+    """
+    try:
+        return conn.execute(statement, params or {})
+    except Exception:
+        logger.warning(
+            "swallowed %s after statement; rolling back so the txn stays usable",
+            "Exception",
+            exc_info=True,
+        )
+        try:
+            conn.rollback()
+        except Exception:
+            logger.warning(
+                "swallowed %s while rolling back a failed statement",
+                "Exception",
+                exc_info=True,
+            )
+        return None
+
+
 @router.get("/v1/admin/debug/doc-extract")
 def admin_doc_extract(
     project_id: str = Query(...),
@@ -821,12 +848,12 @@ def admin_pilot_preflight(auth: dict = Depends(require_api_key)):
             for table in tables:
                 # rag_chunk_table_name validates the identifier, so the
                 # interpolation below cannot carry a hostile namespace.
-                try:
-                    counts[table] = conn.execute(
-                        text(f"SELECT COUNT(*) FROM {table}")
-                    ).scalar()
-                except Exception:  # noqa: BLE001 — table may not exist yet
-                    counts[table] = None
+                # Missing tables (fresh namespace) must not abort the
+                # Postgres transaction — see _execute_recovering.
+                counted = _execute_recovering(
+                    conn, text(f"SELECT COUNT(*) FROM {table}")
+                )
+                counts[table] = counted.scalar() if counted is not None else None
 
             # Dim agreement is only assertable when the embedder is already
             # warm: `loaded_embedder_identity` never triggers the slow cold
@@ -1008,33 +1035,28 @@ def admin_corpus_collections(
                 status_code=500,
                 detail=f"Corpus query failed: {type(exc).__name__}: {exc}",
             )
-        try:
-            project_ids.update(
-                row[0]
-                for row in conn.execute(
-                    text(f"SELECT DISTINCT project_id FROM {chunks_table}")
-                )
-            )
-        except Exception:  # noqa: BLE001
-            # The namespaced chunk table may not exist yet in a fresh SQLite
-            # dev DB — the documents side already covers approved projects.
-            logger.warning(
-                "swallowed %s in admin_corpus_collections() — continuing",
-                "Exception", exc_info=True,
-            )
+        # The namespaced chunk table may not exist yet in a fresh DB —
+        # the documents side already covers approved projects. Must
+        # ROLLBACK on UndefinedTable (Postgres) before the next query.
+        chunk_projects = _execute_recovering(
+            conn, text(f"SELECT DISTINCT project_id FROM {chunks_table}")
+        )
+        if chunk_projects is not None:
+            project_ids.update(row[0] for row in chunk_projects)
 
         for pid in sorted(project_ids):
             doc_count = conn.execute(
                 text("SELECT COUNT(*) FROM documents WHERE project_id = :pid"),
                 {"pid": pid},
             ).scalar() or 0
-            try:
-                chunk_count = conn.execute(
-                    text(f"SELECT COUNT(*) FROM {chunks_table} WHERE project_id = :pid"),
-                    {"pid": pid},
-                ).scalar() or 0
-            except Exception:  # noqa: BLE001
-                chunk_count = 0
+            chunk_rows = _execute_recovering(
+                conn,
+                text(f"SELECT COUNT(*) FROM {chunks_table} WHERE project_id = :pid"),
+                {"pid": pid},
+            )
+            chunk_count = 0
+            if chunk_rows is not None:
+                chunk_count = chunk_rows.scalar() or 0
 
             entry: Dict[str, Any] = {
                 "project_id": pid,
