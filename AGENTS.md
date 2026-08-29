@@ -90,7 +90,7 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   (`pip install ruff==0.16.1`).
 
 ### Production Render (non-obvious)
-- Live service is `the-fork` (`srv-d9s6l67avr4c73aiujsg`) at `https://theshovel.ai`. `autoDeploy` is **false** (see `CONTRIBUTING.md`). A Render API deploy **without** `commitId` ships whatever is currently on `main`, not the feature-branch SHA. Pass the pushed commit explicitly.
+- Live service is `the-fork` (`srv-d9s6l67avr4c73aiujsg`) at `https://theshovel.ai`. Auto-deploy is **After CI Checks Pass** (`autoDeployTrigger: checksPass` in `render.yaml`). A red required GitHub check skips the auto-deploy. This blueprint value does not change the running service until Dashboard Auto-Deploy is flipped (prefer that one toggle; Apply Blueprint is still dangerous — see `render.yaml` header). A Render API deploy **without** `commitId` ships whatever is currently on `main`, not the feature-branch SHA. Pass the pushed commit explicitly.
 - `/v1/agents/*/chat` and `/v1/chat/stream` conversation ids must be `ws-{projectId}-{unix_ms}` only. Extra path segments 404.
 - Kimi HTTP 400 on orphaned `tool_call_id`s ("must be followed by tool messages") or `tokenization failed` is retryable: skip any remaining Moonshot hop and take `LLM_FALLBACK_PROVIDER` (Groq). Generic 400/401/403/404 still do not fall back. User nudges wait until every tool in the assistant batch has a result so the pairing 400 is not generated in the first place.
 

@@ -64,11 +64,22 @@ Test the override in `tests/test_chain_text_output_field.py` and the legacy glob
 
 By default, all changes land via PRs. The repo owner has opted into allowing direct pushes to `main` in personal Claude Code sessions (see `.claude/settings.local.json`), but the team norm is still PR-first — direct pushes bypass CI, CodeQL, and any review.
 
-`main` does **not** auto-deploy (`render.yaml`: `autoDeploy: false`). Deploy only after CI is green — Render Dashboard manual deploy, or Apply Blueprint.
+`main` auto-deploys only after GitHub CI checks pass (`render.yaml`:
+`autoDeployTrigger: checksPass` — Render "After CI Checks Pass"). A red
+required check (`test-postgres`, `pip-audit`, `test (virgin)`,
+`test (production-like)`, `integrity`, `eslint`, `ruff`,
+`compose up (fresh clone) + health`) skips the deploy. Manual Dashboard
+or API deploys still bypass the gate.
+
+This blueprint field does **not** take effect from a git push alone.
+Until the live `the-fork` service Auto-Deploy is set to
+**After CI Checks Pass** (Dashboard → Settings — one toggle; do **not**
+Apply Blueprint just to flip this), a red main SHA can still go live.
 
 ## Pre-deploy smoke
 
-`main` does not auto-deploy. After CI is green, trigger a Render manual deploy for any change that touches `app/agents/runtime.py`, the `app/agents/` chat routes, or the frontend chat path (`frontend/src/pages/ProjectWorkspace.tsx`). The chat/deliverable path has a failure mode that unit tests don't catch: a contaminated message replayed to the provider 400s on every *tool-calling* turn, which the browser renders as a silent hang (see the reasoning-field bug, commits `d3cb9fc`/`dc2c2d1`). The tripwire for that whole class of bug is a live smoke run.
+`main` auto-deploys after CI is green. After that deploy (or after a
+manual deploy), run smoke for any change that touches `app/agents/runtime.py`, the `app/agents/` chat routes, or the frontend chat path (`frontend/src/pages/ProjectWorkspace.tsx`). The chat/deliverable path has a failure mode that unit tests don't catch: a contaminated message replayed to the provider 400s on every *tool-calling* turn, which the browser renders as a silent hang (see the reasoning-field bug, commits `d3cb9fc`/`dc2c2d1`). The tripwire for that whole class of bug is a live smoke run.
 
 **Run the smoke before AND after any deploy that touches `app/agents/runtime.py`, the `app/agents/` chat routes, or the frontend chat path (`frontend/src/pages/ProjectWorkspace.tsx`).**
 
