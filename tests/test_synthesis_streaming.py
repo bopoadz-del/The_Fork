@@ -276,6 +276,29 @@ def test_streamed_xml_tool_leak_is_not_flushed(groq_streaming):
     assert events[-1]["type"] == "end"
 
 
+def test_streamed_json_tool_leak_is_not_flushed(groq_streaming):
+    """UI-PHYS A5: SYNTHESIS_STREAMING must not flush raw tool-call JSON."""
+    import json
+    from app.agents.runtime import _TOOL_FORMAT_FALLBACK
+
+    call_llm = _tool_then_final()
+    leaked = json.dumps({
+        "name": "search_project_documents",
+        "arguments": {"query": "Delay Damages Contract Data"},
+    })
+    deltas = [leaked[i : i + 20] for i in range(0, len(leaked), 20)]
+    with patch.object(Agent, "_call_llm", call_llm), \
+         patch.object(Agent, "_run_tool_call", _tool_ok), \
+         patch.object(Agent, "_stream_synthesis", _mk_stream(deltas)):
+        events = _run_turn(_pa_agent())
+    text = _tokens(events)
+    assert leaked not in text
+    assert "search_project_documents" not in text
+    assert _TOOL_FORMAT_FALLBACK[:40] in text
+    assert events[-1]["type"] == "end"
+    assert leaked not in (events[-1].get("content") or "")
+
+
 # ── _stream_synthesis unit: SSE parse + sanitiser chokepoint ──────────────────
 
 class _FakeStreamResponse:

@@ -228,7 +228,9 @@ from app.agents.runtime import _is_search_tool_args_obj
 def test_is_search_tool_args_obj_detects_plain_search_payload():
     assert _is_search_tool_args_obj({"query": "x", "top_k": 5}) is True
     assert _is_search_tool_args_obj({"query": "x", "project_id": "p"}) is True
-    assert _is_search_tool_args_obj({"query": "x"}) is False  # ambiguous
+    # UI-PHYS A5: bare {"query": "..."} is the live Scout/Kimi leak shape.
+    assert _is_search_tool_args_obj({"query": "x"}) is True
+    assert _is_search_tool_args_obj({"query": "x", "answer": "y"}) is False
 
 
 def test_is_search_tool_args_obj_detects_tool_envelopes():
@@ -379,3 +381,175 @@ async def test_chat_preserves_user_requested_json(monkeypatch):
     result = await agent.chat("Return a BOQ JSON example.")
     assert result["status"] == "success"
     assert user_json in result["answer"]
+
+
+# ── UI-PHYS A5: Delay Damages tool-call envelope must never reach the user ────
+
+
+def test_looks_like_internal_tool_json_detects_delay_damages_envelope():
+    """Exact production leak from Master Corpus Delay Damages smoke."""
+    raw = json.dumps({
+        "name": "search_project_documents",
+        "arguments": {"query": "Delay Damages Contract Data"},
+    })
+    assert _looks_like_internal_tool_json(raw) is True
+    assert _sanitize_final_text(raw) == _TOOL_FORMAT_FALLBACK
+
+
+def test_looks_like_internal_tool_json_detects_bare_query_leak():
+    bare = json.dumps({"query": "Delay Damages Contract Data"})
+    assert _looks_like_internal_tool_json(bare) is True
+    assert _sanitize_final_text(bare) == _TOOL_FORMAT_FALLBACK
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_never_emits_search_tool_envelope(monkeypatch):
+    """UI-PHYS A5 regression: leaked search envelope is executed / synthesised,
+    never streamed as the assistant bubble body."""
+    from app.agents import runtime as runtime_module
+
+    monkeypatch.setenv("AGENT_SEARCH_TOOL_CAP", "2")
+    monkeypatch.setattr(
+        runtime_module, "rag_inject",
+        lambda **kw: (None, {"chunks": [], "fallback_used": False}),
+    )
+    monkeypatch.setattr(runtime_module, "project_is_rag_ready", lambda pid: True)
+
+    agent = Agent(
+        name="project-assistant",
+        description="test",
+        system_prompt="You are a test assistant. Be concise.",
+        allowed_blocks=[],
+    )
+
+    leaked = json.dumps({
+        "name": "search_project_documents",
+        "arguments": {"query": "Delay Damages Contract Data"},
+    })
+    calls = {"n": 0}
+    tool_runs = {"n": 0}
+
+    async def fake_call_llm(
+        messages, api_key, *, project_id=None, user_id=None,
+        with_tools=True, exclude_tools=None, **kwargs,
+    ):
+        calls["n"] += 1
+        if with_tools:
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {
+                        "role": "assistant",
+                        "content": leaked,
+                        "tool_calls": [],
+                    },
+                    "finish_reason": "stop",
+                },
+            }
+        return {
+            "status": "success",
+            "choice": {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        "Delay Damages for the whole of the Works are "
+                        "0.1% of the Contract Price per calendar day."
+                    ),
+                    "tool_calls": [],
+                },
+                "finish_reason": "stop",
+            },
+        }
+
+    async def fake_run(tc, **kw):
+        tool_runs["n"] += 1
+        return {
+            "name": "search_project_documents",
+            "ok": True,
+            "result": {"hits": [{"text": "0.1% of the Contract Price"}]},
+        }
+
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+    monkeypatch.setattr(agent, "_run_tool_call", fake_run)
+
+    prompt = (
+        "Answer only from the client project documents. "
+        "What are the Delay Damages for the whole of the Works?"
+    )
+    events = []
+    async for event in agent.chat_stream(prompt):
+        events.append(event)
+
+    token_text = "".join(e.get("content", "") for e in events if e["type"] == "token")
+    assert leaked not in token_text
+    assert '"name": "search_project_documents"' not in token_text
+    assert '{"name":"search_project_documents"' not in token_text
+    assert "0.1%" in token_text
+    assert tool_runs["n"] >= 1
+    # Cap stops the 12-iteration search spin; synthesis happens promptly.
+    assert tool_runs["n"] <= 2
+    assert calls["n"] >= 2
+    end_events = [e for e in events if e["type"] == "end"]
+    assert len(end_events) == 1
+    assert end_events[0].get("content")
+    assert leaked not in (end_events[0].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_blocks_bare_query_leak(monkeypatch):
+    """Bare {"query": "..."} without top_k must not reach the user."""
+    from app.agents import runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_recover_tool_calls_from_content", lambda text: [])
+
+    agent = Agent(
+        name="test-agent",
+        description="test",
+        system_prompt="You are a test assistant. Be concise.",
+        allowed_blocks=[],
+    )
+
+    bare = json.dumps({"query": "Delay Damages Contract Data"})
+    calls = {"n": 0}
+
+    async def fake_call_llm(
+        messages, api_key, *, project_id=None, user_id=None,
+        with_tools=True, exclude_tools=None, **kwargs,
+    ):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "status": "success",
+                "choice": {
+                    "message": {
+                        "role": "assistant",
+                        "content": bare,
+                        "tool_calls": [],
+                    },
+                    "finish_reason": "stop",
+                },
+            }
+        return {
+            "status": "success",
+            "choice": {
+                "message": {
+                    "role": "assistant",
+                    "content": "Delay Damages are 0.1% per calendar day.",
+                    "tool_calls": [],
+                },
+                "finish_reason": "stop",
+            },
+        }
+
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+
+    events = []
+    async for event in agent.chat_stream(
+        "What are the Delay Damages for the whole of the Works?"
+    ):
+        events.append(event)
+
+    token_text = "".join(e.get("content", "") for e in events if e["type"] == "token")
+    assert bare not in token_text
+    assert "0.1%" in token_text
+    assert calls["n"] == 2
