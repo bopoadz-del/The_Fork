@@ -25,6 +25,37 @@ _LOG = logging.getLogger(__name__)
 _MAX_SOURCE_NAME_CHARS = 60
 
 
+def _truncate_source_name(name: str) -> str:
+    """Fit ``name`` into the per-excerpt src= budget.
+
+    The tail is kept (expiry dates / revision letters live there). When
+    the filename also carries a PREFIX-YEAR-SEQ contract id, that id is
+    preserved at the front so a contract answer can name the cited
+    contract — tail-only truncation used to drop ``DD-2023-118`` from
+    long Infrastructure Package filenames.
+    """
+    if not name:
+        return ""
+    if len(name) <= _MAX_SOURCE_NAME_CHARS:
+        return name
+    from app.core.rag.retriever import extract_contract_doc_ids
+    ids = extract_contract_doc_ids(name)
+    if not ids:
+        return "…" + name[-(_MAX_SOURCE_NAME_CHARS - 1):]
+    name_l = name.lower()
+    prefix_parts: List[str] = []
+    for cid in ids:
+        idx = name_l.find(cid)
+        if idx >= 0:
+            prefix_parts.append(name[idx:idx + len(cid)])
+    prefix = " ".join(prefix_parts) if prefix_parts else ids[0]
+    ellip = "…"
+    budget = _MAX_SOURCE_NAME_CHARS - len(prefix) - len(ellip)
+    if budget < 8:
+        return prefix[:_MAX_SOURCE_NAME_CHARS]
+    return prefix + ellip + name[-budget:]
+
+
 def _estimate_tokens(text: str) -> int:
     """Cheap proxy: 4 chars per token. Good enough for the cap; not
     used for billing or model context sizing."""
@@ -117,6 +148,22 @@ def format_chunks_as_system_message(
             "current revision; do not present it as the latest.\n"
         )
 
+    from app.core.rag.retriever import extract_contract_doc_ids
+    cited_contract_ids: List[str] = []
+    seen_cids = set()
+    for c in chunks:
+        for cid in extract_contract_doc_ids(getattr(c, "source_name", "") or ""):
+            if cid not in seen_cids:
+                seen_cids.add(cid)
+                cited_contract_ids.append(cid)
+    if cited_contract_ids:
+        named = ", ".join(cid.upper() for cid in cited_contract_ids)
+        header += (
+            "CONTRACT ATTRIBUTION — these excerpts are from "
+            f"{named}. Name that contract/doc id in the answer. Do not cite "
+            "a different year's or different contract's documents.\n"
+        )
+
     def _marker(c) -> str:
         rev = getattr(c, "revision", "") or ""
         rev_s = f" rev={rev}" if rev else ""
@@ -136,9 +183,7 @@ def format_chunks_as_system_message(
         # engineering filenames would otherwise crowd the token budget. The
         # tail is kept rather than the head: that is where revision letters and
         # parenthesised dates sit.
-        name = (getattr(c, "source_name", "") or "").strip()
-        if len(name) > _MAX_SOURCE_NAME_CHARS:
-            name = "…" + name[-(_MAX_SOURCE_NAME_CHARS - 1):]
+        name = _truncate_source_name((getattr(c, "source_name", "") or "").strip())
         src_s = f" src={name}" if name else ""
         return (f"[doc_id={c.doc_id} chunk={c.chunk_index} "
                 f"score={(c.score or 0):.3f}{rev_s}{sup_s}{src_s}] {c.text}")
@@ -147,7 +192,12 @@ def format_chunks_as_system_message(
     return {"role": "system", "content": header + "\n" + "\n\n".join(body_parts)}
 
 
-from app.core.rag.retriever import retrieve_with_filter, extract_query_identifiers
+from app.core.rag.retriever import (
+    extract_contract_doc_ids,
+    extract_query_identifiers,
+    filename_matches_named_contracts,
+    retrieve_with_filter,
+)
 from app.core.rag import audit as _audit
 from app.core.rag import budget as _budget
 
@@ -339,6 +389,32 @@ def rag_inject(
         ):
             identifier_miss = True
 
+    # A3: a named contract/doc id is scoped to that id's files. Token-soup
+    # identifier matching can accept a DD-2022 chunk for a DD-2023 query
+    # (prefix + a year in a date + a clause number). Filename is authority.
+    named_contracts = extract_contract_doc_ids(user_message or "")
+    if named_contracts and chunks:
+        from app.core.rag.retriever import _doc_name_for_id
+
+        def _chunk_filename(c) -> str:
+            return (getattr(c, "source_name", "") or "") or _doc_name_for_id(
+                getattr(c, "doc_id", "") or ""
+            )
+
+        scoped = [
+            c for c in chunks
+            if filename_matches_named_contracts(
+                _chunk_filename(c),
+                named_contracts,
+                chunk_text=c.text or "",
+            )
+        ]
+        if not scoped:
+            identifier_miss = True
+        else:
+            chunks = scoped
+            top_score = max(c.score or 0 for c in chunks)
+
     # STEP 0b — did the answer fall back to the Master Corpus because this
     # project has no usable documents of its own? Any chunk tagged
     # ``master_corpus`` by the retriever means yes; the runtime discloses it.
@@ -362,6 +438,7 @@ def rag_inject(
         "budget_remaining": budget_state["remaining"],
         "budget_degraded": budget_state["degraded"],
         "fallback_used": fallback_used,
+        "extracted_contract_ids": named_contracts,
     }
 
     if not chunks or top_score < threshold or identifier_miss:

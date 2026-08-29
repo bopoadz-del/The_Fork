@@ -243,6 +243,87 @@ def extract_query_identifiers(query: str) -> List[str]:
     return result
 
 
+# Tender / executed-contract numbers: PREFIX-YEAR-SEQ (DD-2023-118, FX-2044-001).
+# Drawing codes (IP-INF-054-...) and quantities do not match this shape.
+# Underscore-glued filenames ("DD-2023-118_Vol 1.pdf") must still match, so
+# this is not a \b word-boundary pattern (_ is a word character).
+_CONTRACT_DOC_ID_RE = re.compile(
+    r"(?<![A-Za-z0-9])([A-Za-z]{2,}-\d{4}-\d+)(?![A-Za-z0-9])"
+)
+
+
+def extract_contract_doc_ids(text: str) -> List[str]:
+    """Return lowercase PREFIX-YEAR-SEQ contract/doc ids in ``text``.
+
+    Used to scope a named-contract question to that contract's files so a
+    DD-2023 question cannot surface DD-2022 chunks. Empty when the text
+    names no such id.
+    """
+    if not text:
+        return []
+    found: List[str] = []
+    seen: Set[str] = set()
+    for m in _CONTRACT_DOC_ID_RE.finditer(text):
+        tok = m.group(1).lower()
+        if tok not in seen:
+            seen.add(tok)
+            found.append(tok)
+    return found
+
+
+def filename_matches_named_contracts(
+    filename: str,
+    named_ids: List[str],
+    *,
+    chunk_text: str = "",
+) -> bool:
+    """True when this document belongs to a contract the query named.
+
+    The upload filename is the authority — live corpus contract numbers
+    live there. An unresolved filename falls back to a *contiguous* id in
+    chunk text. Token-soup matching ('dd' + '2023' + '118' scattered) is
+    rejected: a DD-2022 Conditions of Contract chunk can contain those
+    tokens as a prefix, a date, and a clause number.
+    """
+    if not named_ids:
+        return True
+    name_l = (filename or "").lower()
+    if name_l:
+        return any(cid in name_l for cid in named_ids)
+    text_l = (chunk_text or "").lower()
+    return any(cid in text_l for cid in named_ids)
+
+
+class _ContractScope:
+    """Drop wrong-contract chunks before top-K selection.
+
+    Named query (DD-2023-118 in the question): keep only that id's files;
+    if none remain the result is empty (fail closed — do not fill with
+    another year's DD contract).
+
+    Unnamed query: the first kept chunk that carries a contract id wins
+    the result set; later chunks from a different PREFIX-YEAR-SEQ are
+    dropped so one answer cannot mix years.
+    """
+
+    def __init__(self, query: str) -> None:
+        self.named = extract_contract_doc_ids(query or "")
+        self.winning: Optional[str] = None
+
+    def allow(self, filename: str, chunk_text: str = "") -> bool:
+        if self.named:
+            return filename_matches_named_contracts(
+                filename, self.named, chunk_text=chunk_text,
+            )
+        ids = extract_contract_doc_ids(filename or "")
+        if not ids:
+            return True
+        if self.winning is None:
+            self.winning = ids[0]
+            return True
+        return self.winning in ids
+
+
 def _noise_regex():
     """Compile the active noise regex. Re-reads env every call so
     tests / operators can flip RAG_NOISE_FILENAME_REGEX live."""
@@ -913,10 +994,15 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
 
     kept: List[Chunk] = []
     noise_filtered = 0
+    scope = _ContractScope(query)
     for chunk in candidates:
-        if _is_noise_filename(_doc_name_for_id(chunk.doc_id)):
+        name = _doc_name_for_id(chunk.doc_id)
+        if _is_noise_filename(name):
             noise_filtered += 1
             continue
+        if not scope.allow(name, chunk.text or ""):
+            continue
+        chunk.source_name = name
         kept.append(chunk)
         if len(kept) >= k:
             break
@@ -1457,10 +1543,16 @@ def retrieve_with_filter(
     noise_dropped = 0
     revision_suppressed = 0
     gk_kept = 0
+    scope = _ContractScope(query)
     for _, c in scored:
         name = name_by_id.get(c.doc_id, "")
         if _is_noise_filename(name):
             noise_dropped += 1
+            continue
+        # A3: named-contract questions stay on that contract/doc id. Wrong
+        # year (DD-2023 query / DD-2022 chunk) is dropped here, not ranked
+        # through. Empty kept after this loop is fail-closed.
+        if not scope.allow(name, c.text or ""):
             continue
         # Prefer the highest revision of a given drawing: skip this chunk when a
         # strictly-higher, same-kind revision of the SAME drawing number is also
