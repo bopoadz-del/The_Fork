@@ -97,6 +97,9 @@ interface ChatMessage {
     page_or_section: string
     score: number
     confidence: 'High' | 'Medium' | 'Low'
+    project_id?: string
+    layer?: string
+    layer_label?: string
   }>
   /** Data-backed download offers from the SSE 'end' event (e.g. cost BOQ). */
   exports?: Array<{
@@ -770,6 +773,7 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
   //   driveModalOpen — DrivePanel rendered as a modal (opened from + popover)
   const [rightExpanded, setRightExpanded] = useState(false)
   const [driveModalOpen, setDriveModalOpen] = useState(false)
+  const [previewRequest, setPreviewRequest] = useState<{ docId: string; nonce: number } | null>(null)
 
   // ── / agent-picker: available agents + the user's pinned choice ───────────
   // A pinned agent is sent as `agent` on /v1/chat/stream and runs directly
@@ -1328,6 +1332,16 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
     }
     return out
   })()
+  const citedPreviewDocs = (() => {
+    const seen = new Set<string>()
+    const out: { id: string; original_name: string }[] = []
+    for (const s of latestSources) {
+      if (!s.doc_id || seen.has(s.doc_id)) continue
+      seen.add(s.doc_id)
+      out.push({ id: s.doc_id, original_name: s.doc_name || s.doc_id })
+    }
+    return out
+  })()
   void mode  // mode used inside left panel via DocumentsPanel/onClear hooks below
 
   // PR #104: DocumentsPanel is back, rendered as a slot inside LeftPanel
@@ -1516,10 +1530,17 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
             original_name: d.original_name,
             doc_type: d.doc_type,
           }))}
+          citedDocuments={citedPreviewDocs}
+          previewRequest={previewRequest}
           sources={
             <SourcesList
               sources={latestSources}
               streaming={latestAssistant?.streaming}
+              activeDocId={previewRequest?.docId}
+              onOpenSource={(s) => {
+                if (!s.doc_id) return
+                setPreviewRequest({ docId: s.doc_id, nonce: Date.now() })
+              }}
             />
           }
           graph={

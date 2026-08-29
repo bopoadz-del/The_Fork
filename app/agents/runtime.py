@@ -2867,6 +2867,14 @@ _CITATION_INLINE_BRACKET_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Injection-marker copy: the model repeats ``src=filename`` from the RAG
+# header. Filenames may contain spaces; the value ends at the closing
+# bracket or end of line.
+_CITATION_SRC_RE = re.compile(
+    r"\bsrc\s*=\s*(.+?)(?:\s*\]|$)",
+    re.IGNORECASE,
+)
+
 
 def _normalise_filename(s: str) -> str:
     """Normalize source filenames for cite-vs-chunk matching.
@@ -4173,6 +4181,11 @@ def _extract_cited_chunk_indexes(text: str) -> list[tuple[str, int]]:
         for num in re.findall(r"\d+", m.group(2)):
             out.append((fname, int(num)))
 
+    for m in _CITATION_SRC_RE.finditer(text):
+        fname = _strip_source_quotes(m.group(1).strip().rstrip(".,;)]"))
+        if fname:
+            out.append((fname, -1))
+
     return out
 
 
@@ -4234,6 +4247,11 @@ def _build_sources_from_audit(
         named_contracts = extract_contract_doc_ids(
             (audit_rec or {}).get("user_message_preview") or ""
         )
+    # Question-named ids stay authoritative (A3 / #443). When the question
+    # did not name a contract but the answer did, scope Sources to that id
+    # so the panel cannot list DD-2022 next to prose that cites DD-2023.
+    if not named_contracts:
+        named_contracts = extract_contract_doc_ids(final_text or "")
     if named_contracts:
         scoped = [
             c for c in chunks
@@ -4299,7 +4317,12 @@ def _build_sources_from_audit(
             "page_or_section": f"chunk #{chunk_meta['chunk_index']}",
             "chunk_index": chunk_meta.get("chunk_index"),
             "chunk_id": chunk_meta.get("chunk_id"),
-            "project_id": (audit_rec or {}).get("project_id"),
+            # Owning project of the cited file (Master Corpus / GK), not
+            # only the workspace the chat ran in — preview uses this.
+            "project_id": (
+                chunk_meta.get("project_id")
+                or (audit_rec or {}).get("project_id")
+            ),
             "score": float(score),
             "confidence": conf,
             "layer": layer,
@@ -4334,10 +4357,21 @@ def _build_sources_from_audit(
                 elif cited_idx == -1:
                     # Filename-keyed cite with NO chunk number to disambiguate
                     # — require a filename suffix-match (normalized) so a model
-                    # that rewrote the dash style still resolves.
+                    # that rewrote the dash style still resolves. A PREFIX-
+                    # YEAR-SEQ in the cite also matches that contract's file.
                     name = _doc_name(doc_id)
                     name_n = _normalise_filename(name)
-                    if cited_token_n and name_n and cited_token_n not in name_n and name_n not in cited_token_n:
+                    token_cids = extract_contract_doc_ids(cited_token)
+                    if token_cids and filename_matches_named_contracts(
+                        name, token_cids,
+                    ):
+                        pass
+                    elif (
+                        cited_token_n
+                        and name_n
+                        and cited_token_n not in name_n
+                        and name_n not in cited_token_n
+                    ):
                         continue
                 # else: the cite carried a chunk number that already matched
                 # above (cited_idx != -1, cidx == cited_idx). That index
@@ -4363,7 +4397,11 @@ def _build_sources_from_audit(
             doc_id = c.get("doc_id")
             name = _doc_name(doc_id)
             name_n = _normalise_filename(name)
-            if name_n and name_n in text_n and doc_id not in seen_mentions:
+            name_cids = extract_contract_doc_ids(name)
+            mentioned = bool(name_n and name_n in text_n)
+            if not mentioned and name_cids:
+                mentioned = any(cid in text_n for cid in name_cids)
+            if mentioned and doc_id not in seen_mentions:
                 seen_mentions.add(doc_id)
                 mention_hits.append(_format(c, name))
         if mention_hits:
