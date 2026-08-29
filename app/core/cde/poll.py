@@ -173,14 +173,18 @@ def start_event_poller() -> None:
 
 
 async def stop_event_poller() -> None:
+    import asyncio
+
     global _task
     if _task is None:
         return
     _task.cancel()
     try:
         await _task
-    except Exception:  # noqa: BLE001 — cancel is shutdown
-        pass
+    except asyncio.CancelledError:
+        # Expected: we cancelled the loop one line above because lifespan
+        # is shutting down. Not re-raised so remaining teardown still runs.
+        logger.debug("CDE event poller cancelled at shutdown")
     _task = None
 
 
