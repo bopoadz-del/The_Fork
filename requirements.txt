@@ -349,7 +349,7 @@ requests==2.34.2
     # via
     #   -r requirements.in
     #   gtts
-restrictedpython==8.2
+restrictedpython==8.5
     # via -r requirements.in
 rich==15.0.0
     # via typer
