@@ -27,15 +27,17 @@ interface Props {
   document: DocRef | null
   /** Functional empty-state copy shown when no document is selected. */
   emptyLabel?: string
+  /** Called with repaired size after a successful preview hydrate. */
+  onHydrated?: (docId: string, size: number) => void
 }
 
 type PreviewData =
-  | { kind: 'table'; sheets: Array<{ name: string; rows: string[][] }>; truncated?: boolean }
-  | { kind: 'pdf' }
-  | { kind: 'text'; text: string; truncated?: boolean }
-  | { kind: 'unsupported'; ext: string }
+  | { kind: 'table'; sheets: Array<{ name: string; rows: string[][] }>; truncated?: boolean; size?: number; has_file?: boolean }
+  | { kind: 'pdf'; size?: number; has_file?: boolean }
+  | { kind: 'text'; text: string; truncated?: boolean; size?: number; has_file?: boolean }
+  | { kind: 'unsupported'; ext: string; size?: number; has_file?: boolean }
 
-export default function DocumentPreview({ projectId, document: doc, emptyLabel }: Props) {
+export default function DocumentPreview({ projectId, document: doc, emptyLabel, onHydrated }: Props) {
   if (!doc || !projectId) {
     return (
       <div className="doc-preview doc-preview--empty">
@@ -43,10 +45,19 @@ export default function DocumentPreview({ projectId, document: doc, emptyLabel }
       </div>
     )
   }
-  return <DocumentPreviewLoaded key={doc.id} projectId={projectId} document={doc} />
+  return (
+    <DocumentPreviewLoaded
+      key={doc.id}
+      projectId={projectId}
+      document={doc}
+      onHydrated={onHydrated}
+    />
+  )
 }
 
-function DocumentPreviewLoaded({ projectId, document: doc }: { projectId: string; document: DocRef }) {
+function DocumentPreviewLoaded({
+  projectId, document: doc, onHydrated,
+}: { projectId: string; document: DocRef; onHydrated?: (docId: string, size: number) => void }) {
   const [data, setData] = useState<PreviewData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -59,7 +70,11 @@ function DocumentPreviewLoaded({ projectId, document: doc }: { projectId: string
         const resp = await apiGet<PreviewData>(
           `/v1/projects/${projectId}/documents/${doc.id}/preview`,
         )
-        if (!cancelled) setData(resp)
+        if (cancelled) return
+        setData(resp)
+        if (typeof resp.size === 'number' && resp.size > 0) {
+          onHydrated?.(doc.id, resp.size)
+        }
       } catch (err) {
         if (cancelled) return
         const msg =
@@ -74,7 +89,7 @@ function DocumentPreviewLoaded({ projectId, document: doc }: { projectId: string
       }
     })()
     return () => { cancelled = true }
-  }, [projectId, doc.id])
+  }, [projectId, doc.id, onHydrated])
 
   if (loading) {
     return (

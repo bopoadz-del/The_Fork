@@ -474,9 +474,15 @@ def _resolve_preview_document(
                 404,
                 "Document file is empty (0 bytes) and cannot be previewed",
             )
-        raise HTTPException(404, "Document file is not available for preview")
+        if blob_state == "missing":
+            raise HTTPException(404, "Document file is not available for preview")
+        raise HTTPException(
+            404,
+            f"Document file is not available for preview ({blob_state})",
+        )
     _, ext = os.path.splitext((doc.get("original_name") or "").lower())
-    return doc, ext, fp
+    refreshed = store.get_document(document_id) or doc
+    return refreshed, ext, fp
 
 
 def _table_preview(file_path: str, ext: str) -> Dict[str, Any]:
@@ -572,18 +578,22 @@ async def preview_document(
 
     A malformed / unreadable file returns 422 (never 500).
     """
-    _doc, ext, fp = _resolve_preview_document(
+    doc, ext, fp = _resolve_preview_document(
         project_id, document_id, auth["user_id"],
         role=auth.get("role") or "user",
     )
     try:
         if ext in _TABLE_EXTS:
-            return _table_preview(fp, ext)
-        if ext == ".pdf":
-            return {"kind": "pdf"}
-        if ext in _TEXT_EXTS:
-            return _text_preview(fp, ext)
-        return {"kind": "unsupported", "ext": ext}
+            payload: Dict[str, Any] = _table_preview(fp, ext)
+        elif ext == ".pdf":
+            payload = {"kind": "pdf"}
+        elif ext in _TEXT_EXTS:
+            payload = _text_preview(fp, ext)
+        else:
+            payload = {"kind": "unsupported", "ext": ext}
+        payload["size"] = int(doc.get("size") or 0)
+        payload["has_file"] = True
+        return payload
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 — bad file must 422, never 500.

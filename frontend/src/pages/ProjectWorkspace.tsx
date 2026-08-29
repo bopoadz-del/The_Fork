@@ -35,6 +35,9 @@ interface DocumentRecord {
   doc_type?: string
   doc_role?: string
   size?: number
+  /** True when bytes exist locally or R2/Drive can supply them. */
+  has_file?: boolean
+  has_remote_source?: boolean
   uploaded_at?: string
   /** Number of chunks the indexer stored for this doc. 0 = extraction failed. */
   chunk_count?: number
@@ -166,8 +169,8 @@ function fileTypeBadge(filename: string): { label: string; kind: 'pdf' | 'docx' 
   return null
 }
 
-function formatSize(bytes: number): string {
-  if (!bytes || bytes <= 0) return 'no file'
+function formatSize(bytes: number, hasFile?: boolean): string {
+  if (!bytes || bytes <= 0) return hasFile ? 'stored remotely' : 'no file'
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -375,7 +378,9 @@ function DocumentsPanel({
                 </div>
                 <div className="doc-row__data">
                   {doc.size != null && (
-                    <span className="mono doc-row__size">{formatSize(doc.size)}</span>
+                    <span className="mono doc-row__size">
+                      {formatSize(doc.size ?? 0, doc.has_file || doc.has_remote_source)}
+                    </span>
                   )}
                   {doc.uploaded_at && (
                     <span
@@ -909,6 +914,15 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
   // PR #104: DocumentsPanel is back in the LeftPanel — handler used again.
   const handleDocumentRemoved = useCallback((docId: string) => {
     setDocuments((prev) => prev.filter((d) => d.id !== docId))
+  }, [])
+
+  const handlePreviewHydrated = useCallback((docId: string, size: number) => {
+    if (!docId || size <= 0) return
+    setDocuments((prev) =>
+      prev.map((d) =>
+        d.id === docId ? { ...d, size, has_file: true } : d,
+      ),
+    )
   }, [])
 
   // Cleanup on unmount
@@ -1533,6 +1547,7 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
           }))}
           citedDocuments={citedPreviewDocs}
           previewRequest={previewRequest}
+          onPreviewHydrated={handlePreviewHydrated}
           sources={
             <SourcesList
               sources={latestSources}

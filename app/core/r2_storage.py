@@ -62,6 +62,40 @@ def _object_key(project_id: str, drive_file_id: str, original_name: str) -> str:
     return f"projects/{project_id}/drive/{drive_file_id}/{name_hash}{safe_suffix}"
 
 
+def object_key_for(project_id: str, drive_file_id: str, original_name: str) -> str:
+    """Public wrapper for the P1B archive key layout.
+
+    Preview reconstructs this when the row has ``drive_file_id`` but no
+    stored ``r2_object_key`` (rag_render bulk ingest / failed archive).
+    """
+    return _object_key(project_id, drive_file_id, original_name)
+
+
+def r2_configured() -> bool:
+    """True when the process can actually GET an object (client + bucket)."""
+    return bool(_client() and _bucket_name())
+
+
+def fetch_failure_reason(
+    object_key: str, *, bucket: Optional[str] = None,
+) -> str:
+    """Why ``fetch_object_bytes`` returned ``None`` — never a secret.
+
+    #445 collapsed "R2 env missing", "wrong bucket", and "NoSuchKey" into
+    the same silent None, so preview 404ed as "not available" with no
+    operator signal. Call this only after a failed fetch.
+    """
+    key = (object_key or "").strip()
+    if not key:
+        return "R2 object key is empty"
+    if _client() is None:
+        return "R2 is not configured on this service"
+    resolved = (bucket or _bucket_name() or "").strip()
+    if not resolved:
+        return "R2 bucket is not configured on this service"
+    return "R2 object missing or fetch failed"
+
+
 def archive_document(
     project_id: str,
     drive_file_id: str,
@@ -125,23 +159,29 @@ def archive_document(
         }
 
 
-def fetch_object_bytes(object_key: str) -> Optional[bytes]:
+def fetch_object_bytes(
+    object_key: str, bucket: Optional[str] = None,
+) -> Optional[bytes]:
     """Download one archived object. ``None`` if R2 is off or the key is missing.
 
     P1B Drive ingest archives the raw bytes here and then deletes the local
     copy (``delete_local_archive``). Preview / download must follow this key
     — a document row with chunks but no disk file is the normal corpus shape,
     not a missing document.
+
+    ``bucket`` overrides ``R2_BUCKET_NAME`` so a row that recorded
+    ``metadata.r2_bucket`` at ingest time still resolves if the process
+    default is unset or differs.
     """
     key = (object_key or "").strip()
     if not key:
         return None
-    bucket = _bucket_name()
+    resolved_bucket = (bucket or _bucket_name() or "").strip()
     s3 = _client()
-    if not s3 or not bucket:
+    if not s3 or not resolved_bucket:
         return None
     try:
-        resp = s3.get_object(Bucket=bucket, Key=key)
+        resp = s3.get_object(Bucket=resolved_bucket, Key=key)
         body = resp["Body"].read()
         return body if body is not None else b""
     except Exception:
