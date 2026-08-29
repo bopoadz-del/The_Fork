@@ -40,6 +40,8 @@ interface Props {
   citedDocuments?: PreviewDocument[]
   /** Click-to-preview from Sources — nonce lets the same doc reopen. */
   previewRequest?: { docId: string; nonce: number } | null
+  /** After a successful hydrate, persist repaired size into the left nav. */
+  onPreviewHydrated?: (docId: string, size: number) => void
   /** Title slot kept for backwards compat — not rendered alongside tabs. */
   title?: string
   expanded?: boolean
@@ -72,7 +74,7 @@ const PREVIEW_EMPTY: Record<'sheet' | 'schedule' | 'chart', string> = {
 
 export default function RightPanel({
   sources, graph, projectId, documents = [], citedDocuments = [],
-  previewRequest = null, expanded = false, onToggleExpand,
+  previewRequest = null, onPreviewHydrated, expanded = false, onToggleExpand,
 }: Props) {
   const [tab, setTab] = useState<TabKey>('sources')
   const [pickedDocId, setPickedDocId] = useState<string | null>(null)
@@ -139,6 +141,7 @@ export default function RightPanel({
               projectId={projectId ?? ''}
               document={selectedDoc}
               emptyLabel={PREVIEW_EMPTY[kind]}
+              onHydrated={onPreviewHydrated}
             />
           </>
         )}
