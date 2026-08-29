@@ -997,6 +997,44 @@ def _local_plaintext_size(path: str) -> int:
         return 0
 
 
+def _resolve_drive_id_by_filename(doc: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """Fill a missing drive_file_id from an exact Drive filename match.
+
+    Live Master Corpus cites (e.g. ``ocr1exec``) were inserted by
+    ``rag_render_bulk_ingest`` with ``drive_file_id: null`` and a stale
+    Windows ``file_path``. The PDF still exists on Drive under
+    ``original_name``. Persist the id on success so later hydrates skip
+    the lookup.
+    """
+    name = str(doc.get("original_name") or "").strip()
+    if not name:
+        return None, "document has no original_name"
+    try:
+        from app.core import gdrive_service
+
+        file_id, err = gdrive_service.find_file_id_by_exact_name(name)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+    if not file_id:
+        return None, err or f"no Drive file named {name}"
+    doc_id = str(doc.get("id") or "")
+    if doc_id:
+        try:
+            update_document_metadata(doc_id, {
+                "drive_file_id": file_id,
+                "drive_resolved_from": "original_name",
+            })
+        except Exception:
+            logger.info(
+                "could not persist resolved drive_file_id for doc %s",
+                doc_id, exc_info=True,
+            )
+    logger.info(
+        "resolved drive_file_id for doc %s from filename %r", doc_id, name,
+    )
+    return file_id, None
+
+
 def _reconstruct_r2_key(doc: Dict[str, Any], drive_id: str) -> str:
     """P1B key layout when the row recorded Drive id but not the object key."""
     if not drive_id:
@@ -1030,6 +1068,16 @@ def _fetch_remote_document_bytes(
     keys_to_try: List[str] = []
     if key:
         keys_to_try.append(key)
+    if not drive_id:
+        # rag_backfill_client_clean_all stubs: size=0, G:\ path, null
+        # drive_file_id, no r2_object_key. Resolve the live Drive file by
+        # exact original_name and persist the id so the next preview is cheap.
+        resolved_id, resolve_err = _resolve_drive_id_by_filename(doc)
+        if resolved_id:
+            drive_id = resolved_id
+        elif resolve_err:
+            drive_error = resolve_err
+
     reconstructed = _reconstruct_r2_key(doc, drive_id)
     if reconstructed and reconstructed not in keys_to_try:
         keys_to_try.append(reconstructed)
@@ -1065,8 +1113,11 @@ def _fetch_remote_document_bytes(
                 "Drive fallback skipped for doc %s: %s", doc.get("id"), drive_error,
             )
 
-    if not key and not drive_id and not reconstructed:
-        return None, None, "no R2 object key or Drive file id on this document"
+    if not key and not drive_id:
+        extra = f"; {drive_error}" if drive_error else ""
+        return None, None, (
+            "no R2 object key or Drive file id on this document" + extra
+        )
     parts = [p for p in (r2_error, drive_error) if p]
     if parts:
         return None, None, "; ".join(parts)
@@ -1130,7 +1181,9 @@ def update_document_metadata(doc_id: str, metadata: Dict[str, Any]) -> Optional[
             document = session.get(Document, doc_id)
             if document is None:
                 return None
-            current = coerce_document_metadata(document.metadata_)
+            # Copy — SQLAlchemy JSON does not flag in-place mutation of the
+            # same dict object, so a stub row would keep drive_file_id=null.
+            current = dict(coerce_document_metadata(document.metadata_))
             current.update(metadata)
             document.metadata_ = current
             session.commit()

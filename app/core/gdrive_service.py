@@ -303,6 +303,67 @@ def walk_folder(
     return files, errors
 
 
+def _escape_drive_query_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def find_file_id_by_exact_name(filename: str) -> Tuple[Optional[str], Optional[str]]:
+    """Look up a Drive file id by exact ``name`` (not trash).
+
+    Master Corpus rag-backfill rows are RAG-citable stubs: size=0, a stale
+    ``G:\\My Drive\\...`` path, ``drive_file_id`` null, no ``r2_object_key``.
+    Preview cannot follow a pointer that was never written. The live file
+    still lives on Drive under the same filename — this query is the
+    durable link. Returns ``(file_id, None)`` or ``(None, reason)``.
+    """
+    name = (filename or "").strip()
+    if not name:
+        return None, "document has no original_name"
+    token = _mint_access_token()
+    if not token:
+        return None, "service account unavailable"
+    try:
+        import httpx
+    except ImportError:
+        return None, "httpx not available"
+
+    escaped = _escape_drive_query_value(name)
+    q = f"name = '{escaped}' and trashed = false"
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.get(
+                f"{_DRIVE_API}/files",
+                headers={"Authorization": f"Bearer {token}"},
+                params={
+                    "q": q,
+                    "pageSize": 10,
+                    "fields": "files(id, name, mimeType, size)",
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
+                },
+            )
+            if resp.status_code != 200:
+                return None, f"Drive name lookup returned {resp.status_code}: {resp.text[:200]}"
+            files = [
+                f for f in (resp.json().get("files") or [])
+                if (f.get("name") or "") == name and f.get("id")
+            ]
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+
+    if not files:
+        return None, f"no Drive file named {name}"
+    if len(files) > 1:
+        pdfs = [f for f in files if (f.get("mimeType") or "") == "application/pdf"]
+        chosen = (pdfs or files)[0]
+        logger.info(
+            "Drive name lookup matched %s files for %r; using %s",
+            len(files), name, chosen.get("id"),
+        )
+        return str(chosen["id"]), None
+    return str(files[0]["id"]), None
+
+
 def download_file_bytes(file_id: str) -> Tuple[Optional[bytes], Optional[str]]:
     """Download a single Drive file's raw bytes.
 

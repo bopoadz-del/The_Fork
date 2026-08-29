@@ -560,3 +560,114 @@ def test_list_documents_has_file_for_remote_pointer(client, tmp_path):
     assert listed["size"] == 0
     assert listed["has_remote_source"] is True
     assert listed["has_file"] is True
+
+
+def test_preview_rag_backfill_stub_resolves_drive_by_filename(
+    client, monkeypatch, tmp_path,
+):
+    """Live ocr1exec shape: size=0, G:\\ path, source=rag_backfill_client_clean_all,
+    drive_file_id null, no r2_object_key. Filename lookup + download must
+    200 and persist the Drive id."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    workspace = _new_project(client, "Preview Workspace")
+    corpus = _new_project(client, "Citeable Corpus")
+    name = "DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf"
+    drive_id = "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
+    pdf = b"%PDF-1.4 from Drive filename resolve\n"
+    doc = store.add_document(
+        project_id=corpus["id"],
+        original_name=name,
+        file_path=(
+            r"G:\My Drive\Master Folder\the client project\Contract Docs"
+            r"\Contractor\Contract docs SIGNED\\" + name
+        ),
+        size=0,
+        metadata={
+            "source": "rag_backfill_client_clean_all",
+            "drive_file_id": None,
+            "source_path": (
+                r"G:\My Drive\Master Folder\the client project\Contract Docs"
+                r"\Contractor\Contract docs SIGNED\\" + name
+            ),
+            "ext": ".pdf",
+        },
+    )
+    assert doc.get("has_remote_source") is False
+    monkeypatch.setattr(
+        "app.routers.projects._preview_citeable_owner_ids",
+        lambda pid: {pid, corpus["id"]},
+    )
+    lookups: list[str] = []
+
+    def _lookup(filename: str):
+        lookups.append(filename)
+        return (drive_id, None) if filename == name else (None, "nope")
+
+    monkeypatch.setattr(
+        "app.core.gdrive_service.find_file_id_by_exact_name", _lookup,
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (pdf, None) if fid == drive_id else (None, "wrong id"),
+    )
+
+    r = client.get(
+        f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
+        headers=H,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "pdf"
+    assert lookups == [name]
+
+    refreshed = store.get_document(doc["id"])
+    assert refreshed is not None
+    assert (refreshed.get("metadata") or {}).get("drive_file_id") == drive_id
+    assert refreshed["size"] == len(pdf)
+
+
+def test_preview_rag_backfill_stub_unresolved_clear_404(
+    client, monkeypatch, tmp_path,
+):
+    """Unlinkable stub stays an honest 404 — no invented bytes."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    proj = _new_project(client)
+    name = "DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf"
+    doc = store.add_document(
+        project_id=proj["id"],
+        original_name=name,
+        file_path=r"G:\My Drive\Master Folder\\" + name,
+        size=0,
+        metadata={
+            "source": "rag_backfill_client_clean_all",
+            "drive_file_id": None,
+        },
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.find_file_id_by_exact_name",
+        lambda filename: (None, f"no Drive file named {filename}"),
+    )
+    r = client.get(
+        f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
+    )
+    assert r.status_code == 404
+    assert r.status_code != 500
+    detail = r.json()["detail"]
+    assert "not available" in detail.lower()
+    assert "no R2 object key or Drive file id" in detail
+    assert name in detail
+
+
+def test_preview_user_upload_local_path_still_200(client):
+    """A real on-disk upload must not go through Drive filename resolve."""
+    proj = _new_project(client)
+    doc = _upload(client, proj["id"], "site-note.txt", b"hello from disk", "text/plain")
+    r = client.get(
+        f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "text"
+    assert "hello from disk" in r.json()["text"]
