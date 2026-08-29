@@ -4,8 +4,8 @@
 #
 # This file is a RECORD of the service, and it has drifted from it four times
 # already: `plan: starter` (live pro), `MAX_DOC_UPLOAD_SIZE` 50 MB, `sizeGB: 1`
-# (live 50), `autoDeploy: false` (live yes) and — worst — an embedding model
-# that would have taken retrieval down for all 172,809 chunks. Applying
+# (live 50), `autoDeploy: false` (live on-commit) and — worst — an embedding
+# model that would have taken retrieval down for all 172,809 chunks. Applying
 # reconciles EVERY value here onto the running service, so a stale line is not
 # documentation debt, it is an outage waiting for someone to click a button.
 #
@@ -78,17 +78,35 @@ services:
     plan: pro
     region: oregon
     branch: main
-    # GIT-PUSH-EQUALS-PROD IS ON (turned on in the dashboard 2026-08-23).
-    # This file said `false` for hours after that, which made "Apply
-    # Blueprint" a switch that would silently turn shipping back OFF — the
-    # same trap as `plan: starter` and `sizeGB: 1` below.
+    # CI IS THE AUTO-DEPLOY GATE.
     #
-    # CI IS NOT A GATE. Render starts building on the push; GitHub Actions
-    # runs alongside it, not before it. A commit that goes red in CI is
-    # already live by the time the run finishes, so correctness has to be
-    # established BEFORE pushing, not after. 3e8d1f0 is the standing example:
-    # it deployed and silently emptied every document >= 1 MB.
-    autoDeploy: true
+    # `autoDeployTrigger: checksPass` is Render's native "After CI Checks
+    # Pass" setting (replaces the deprecated `autoDeploy: true/false`).
+    # On a push to `main`, Render waits for this commit's GitHub check runs
+    # and deploys only when every conclusion is success / neutral / skipped.
+    # A single failure — or zero checks detected — skips the deploy. Manual
+    # Dashboard / API deploys still bypass the gate.
+    #
+    # Standing hole this closes: 612a2d89 (#436) went red on required checks
+    # `pip-audit` and `test-postgres` while auto-deploy was still on-commit,
+    # so a red SHA could already be live. Required checks on `main` (ruleset)
+    # are: test (virgin), test (production-like), test-postgres, integrity,
+    # eslint, ruff, pip-audit, compose up (fresh clone) + health. Render
+    # waits for ALL check runs on the SHA, not only the required set — that
+    # is stricter, not weaker.
+    #
+    # THIS LINE DOES NOT TAKE EFFECT FROM A GIT PUSH ALONE. Like
+    # `buildFilter` below, the live service keeps its current Auto-Deploy
+    # value until someone changes Dashboard → Settings → Auto-Deploy to
+    # "After CI Checks Pass", or Applies this Blueprint. Prefer the one
+    # dashboard toggle. Apply Blueprint still reconciles every other field
+    # (plan, disk, env) and remains dangerous — see the header.
+    #
+    # No GitHub deploy job: the-fork is a Git-linked Docker build (not a
+    # prebuilt image), so `checksPass` is valid. A workflow `needs:` deploy
+    # would require RENDER_API_KEY and would not stop on-commit auto-deploy
+    # until the dashboard is flipped anyway.
+    autoDeployTrigger: checksPass
     # Documentation-only commits must not redeploy a live client service.
     # Observed 2026-08-02: merging a markdown-only PR rebuilt the image and
     # returned 502 for ~40s. Nothing in this list can change runtime
@@ -111,7 +129,7 @@ services:
     healthCheckPath: /livez
     # The live disk is 50 GB and holds the uploaded-document corpus. This said
     # `1`, which is the third value in this file that disagreed with the
-    # running service (see `plan` and `autoDeploy`).
+    # running service (see `plan` and `autoDeployTrigger`).
     #
     # THIS DISK IS WHY DEPLOYS BOUNCE. A Render service with a persistent disk
     # cannot deploy with zero downtime and cannot run more than one instance:

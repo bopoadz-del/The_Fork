@@ -79,34 +79,53 @@ def test_blueprint_chat_stream_timeout_covers_kimi_reasoning():
     )
 
 
-def test_blueprint_auto_deploy_matches_the_live_service():
-    """autoDeploy was switched ON in the dashboard on 2026-08-23.
+def test_blueprint_auto_deploy_waits_for_ci_checks():
+    """Auto-deploy on the-fork must wait for GitHub CI, not fire on commit.
 
-    This test previously pinned it OFF ("git-push-equals-prod is off until CI
-    is green"). That policy no longer holds, and a test that pins a policy the
-    service has abandoned does not protect anything -- it just goes red on the
-    commit that tells the truth.
+    612a2d89 (#436) is the standing hole: required checks `pip-audit` and
+    `test-postgres` went red on main while Render auto-deploy was still
+    on-commit, so a red SHA could already be live.
 
-    What it guards now is DRIFT: render.yaml is applied onto the running
-    service, so a stale value here is an outage waiting for someone to click
-    Apply Blueprint. Four values in this file have already disagreed with
-    production (plan, upload cap, disk size, autoDeploy) and a fifth would
-    have taken retrieval down -- see the embedding-model test below.
+    The gate is Render's native `autoDeployTrigger: checksPass` ("After CI
+    Checks Pass"). Render waits for this SHA's GitHub check runs and skips
+    the deploy if any conclusion is a failure or if zero checks are
+    detected. success / neutral / skipped all count as passed.
 
-    CONSEQUENCE, recorded here because it changes how work must be done:
-    Render starts building on the push, so GitHub Actions runs ALONGSIDE the
-    deploy rather than gating it. A commit that goes red in CI is already live
-    by the time the run finishes.
+    Deprecated `autoDeploy: true` is equivalent to `commit` (no CI gate).
+    If both keys are present, `autoDeployTrigger` wins — so a leftover
+    `autoDeploy: true` next to `checksPass` is harmless, but a lone
+    `autoDeploy: true` (or `autoDeployTrigger: commit`) re-opens the hole.
+    Pin the trigger and reject the on-commit forms.
+
+    This file does not change the running service until Dashboard
+    Auto-Deploy is set to "After CI Checks Pass" (prefer that one toggle)
+    or the blueprint is applied. The test pins the intended live value so
+    Apply Blueprint cannot silently revert to on-commit.
     """
-    text = (REPO / "render.yaml").read_text(encoding="utf-8")
-    flags = re.findall(r"^\s*autoDeploy:\s*(\S+)", text, re.MULTILINE)
-    assert flags, "render.yaml declares no autoDeploy"
-    for flag in flags:
-        assert flag.lower() in {"true", "yes"}, (
-            f"autoDeploy is {flag!r} but the live service has it ON. Applying "
-            "this blueprint would silently switch shipping off while every "
-            "push still looked like it was deploying."
+    blueprint = yaml.safe_load((REPO / "render.yaml").read_text(encoding="utf-8"))
+    web = next(s for s in blueprint["services"] if s.get("name") == "the-fork")
+    trigger = web.get("autoDeployTrigger")
+    assert trigger == "checksPass", (
+        f"the-fork autoDeployTrigger is {trigger!r}; expected 'checksPass' "
+        "so a red required GitHub check cannot auto-deploy. Dashboard "
+        "equivalent: Auto-Deploy → After CI Checks Pass."
+    )
+    deprecated = web.get("autoDeploy")
+    if deprecated is not None:
+        assert str(deprecated).lower() not in {"true", "yes"}, (
+            "autoDeploy: true is on-commit (no CI gate). Remove it or set "
+            "autoDeployTrigger: checksPass, which takes precedence."
         )
+    text = (REPO / "render.yaml").read_text(encoding="utf-8")
+    commit_triggers = re.findall(
+        r"^\s*autoDeployTrigger:\s*['\"]?(commit)['\"]?",
+        text,
+        re.MULTILINE,
+    )
+    assert not commit_triggers, (
+        "autoDeployTrigger: commit is on-commit auto-deploy; that ships a "
+        "red main SHA. Use checksPass."
+    )
 
 
 # The corpus is embedded with this model and every row carries the stamp.
