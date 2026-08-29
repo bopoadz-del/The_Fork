@@ -17,8 +17,10 @@ PROCEDURE_ACTION_MAP: Dict[str, Tuple[str, Optional[str]]] = {
     "rfi_management": ("PRC-301", "rfi_generator"),
     "work_package_control": ("PRC-303", None),
     "qa_audit": ("PRC-401", "qa_qc_inspection"),
-    "ncr_management": ("PRC-402", "qa_qc_inspection"),
-    "handover_management": ("PRC-404", "commissioning_checklist"),
+    # NCR and PC cert are CDE / operator writes — metadata only. Do not
+    # collapse onto qa_qc_inspection / commissioning_checklist templates.
+    "ncr_management": ("PRC-402", None),
+    "handover_management": ("PRC-404", None),
     "inspection_request": ("PRC-405", "wir_form"),
     "job_requisition": ("PRC-601", "job_requisition"),
     "rfp_management": ("PRC-602", "rfp_draft"),

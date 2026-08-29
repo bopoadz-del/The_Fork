@@ -104,9 +104,12 @@ DEFAULT_RULES: List[DependencyRule] = [
         suggested_actions=[
             SuggestedAction.UPDATE_SCHEDULE,
             SuggestedAction.GENERATE_RECOVERY_OPTIONS,
-            SuggestedAction.CALCULATE_PROLONGATION_COST,
         ],
-        description="Equipment/material delivery delay pushes dependent schedule activities.",
+        description=(
+            "Equipment/material delivery delay pushes dependent schedule "
+            "activities. Update the programme and recovery options — do not "
+            "assume prolongation or a claim."
+        ),
     ),
     # Quality → Schedule
     DependencyRule(
@@ -135,16 +138,19 @@ DEFAULT_RULES: List[DependencyRule] = [
     ),
     # Schedule → Contract
     DependencyRule(
-        rule_id="R004", name="Schedule delay triggers claim check",
+        rule_id="R004", name="Schedule delay needs entitlement split",
         source_domain=Domain.SCHEDULE, trigger=TriggerCondition.DELAYED,
         target_domains=[Domain.CONTRACT, Domain.COST, Domain.RISK],
         suggested_actions=[
-            SuggestedAction.CHECK_EOT_ENTITLEMENT,
-            SuggestedAction.CALCULATE_PROLONGATION_COST,
-            SuggestedAction.CREATE_CLAIM,
+            SuggestedAction.UPDATE_SCHEDULE,
             SuggestedAction.UPDATE_RISK_REGISTER,
         ],
-        description="Critical path delay exceeds threshold — check EOT entitlement and claim eligibility.",
+        description=(
+            "Schedule delay noted — do not assume EOT or cost entitlement. "
+            "Split into EOT-only / cost-only / concurrent / culpable, or ask "
+            "when ownership of the risk is unclear. Do not recommend a claim "
+            "by default."
+        ),
     ),
     # Contract → Cost
     DependencyRule(
@@ -177,7 +183,11 @@ DEFAULT_RULES: List[DependencyRule] = [
             SuggestedAction.GENERATE_RFI,
             SuggestedAction.UPDATE_SCHEDULE,
         ],
-        description="MEP clash detected in BIM model — RFI needed from designer.",
+        description=(
+            "MEP clash detected in BIM model — draft and post an RFI to the "
+            "CDE (Aconex) and assess time and cost impact. Do not allocate a "
+            "local Fork RFI number; the CDE is the register."
+        ),
     ),
     # RFI → Design → Submittal
     DependencyRule(

@@ -45,6 +45,10 @@ class TestDefaultRules:
         rules = [r for r in DEFAULT_RULES if r.source_domain == Domain.SCHEDULE and r.trigger == TriggerCondition.DELAYED]
         assert len(rules) >= 1
         assert any(Domain.CONTRACT in r.target_domains for r in rules)
+        r004 = next(r for r in rules if r.rule_id == "R004")
+        assert SuggestedAction.CREATE_CLAIM not in r004.suggested_actions
+        assert SuggestedAction.CALCULATE_PROLONGATION_COST not in r004.suggested_actions
+        assert "do not recommend a claim" in r004.description.lower()
 
     def test_bim_clash_rfi_rule_exists(self):
         rules = [r for r in DEFAULT_RULES if r.source_domain == Domain.BIM and r.trigger == TriggerCondition.DETECTED]

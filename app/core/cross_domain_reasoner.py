@@ -155,16 +155,15 @@ _TEMPLATE_TRIGGERS: Dict[str, List[str]] = {
         # when the word "impact" also happened to appear somewhere in the
         # sentence — the matcher accepts non-adjacent word sets, which made the
         # gap look like intermittent success rather than a missing trigger.
-        "variation", "vo", "site instruction",
+        "variation", "vo",
         "field instruction", "additional works", "omission",
     ],
     "delay_to_claim": [
-        "delay claim", "extension of time", "eot claim", "prolongation",
+        # Explicit claim language only. A reported slip ("delivery has
+        # slipped") is not entitlement — classify_delay stays on ASK.
+        "delay claim", "eot claim", "prolongation",
         "time impact", "delay analysis", "schedule delay claim", "claim for delay",
-        # How a delay is actually reported: someone is claiming days, or an
-        # activity slipped. Neither phrasing existed here.
-        "claiming days", "days delay", "days of delay", "slip",
-        "slippage", "pushed out", "behind programme", "behind program",
+        "claiming days", "days delay", "days of delay",
         "disruption claim", "acceleration cost", "late release",
     ],
     "qa_defect_closeout": [
@@ -218,16 +217,18 @@ _KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
     # inject could only rank by target and fell back to declaration order.
 
     # ── Schedule ──
-    "delay": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "behind schedule": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "behind programme": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "schedule slip": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "slip": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "slippage": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "pushed out": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "late": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "overdue": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
-    "milestone missed": (Domain.SCHEDULE, (Domain.COST, Domain.CONTRACT)),
+    # Generic delay/slip is schedule + cost only. CONTRACT (and therefore
+    # claims_builder) requires explicit EOT / claim / prolongation language.
+    "delay": (Domain.SCHEDULE, (Domain.COST,)),
+    "behind schedule": (Domain.SCHEDULE, (Domain.COST,)),
+    "behind programme": (Domain.SCHEDULE, (Domain.COST,)),
+    "schedule slip": (Domain.SCHEDULE, (Domain.COST,)),
+    "slip": (Domain.SCHEDULE, (Domain.COST,)),
+    "slippage": (Domain.SCHEDULE, (Domain.COST,)),
+    "pushed out": (Domain.SCHEDULE, (Domain.COST,)),
+    "late": (Domain.SCHEDULE, (Domain.COST,)),
+    "overdue": (Domain.SCHEDULE, (Domain.COST,)),
+    "milestone missed": (Domain.SCHEDULE, (Domain.COST,)),
     "critical path": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE)),
     "float": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE)),
     "compress": (Domain.SCHEDULE, (Domain.COST, Domain.RESOURCE)),
@@ -247,6 +248,8 @@ _KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
     "change order": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
     "variation": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
     "variation order": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
+    # SI is a design/site instrument, not a VO. Do not implicate COST as a VO.
+    "site instruction": (Domain.DOCUMENT, (Domain.SCHEDULE, Domain.QUALITY)),
     "claim": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
     "dispute": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST, Domain.RISK)),
     "eot": (Domain.CONTRACT, (Domain.SCHEDULE, Domain.COST)),
@@ -263,6 +266,9 @@ _KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
     "inspection failed": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
     "ncr": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
     "non conformance": (Domain.QUALITY, (Domain.SCHEDULE, Domain.SAFETY)),
+    "hold point": (Domain.QUALITY, (Domain.SCHEDULE,)),
+    "wir": (Domain.QUALITY, (Domain.SCHEDULE,)),
+    "work inspection request": (Domain.QUALITY, (Domain.SCHEDULE,)),
     "rework": (Domain.QUALITY, (Domain.SCHEDULE, Domain.COST)),
     "remedial works": (Domain.QUALITY, (Domain.SCHEDULE, Domain.COST)),
 
@@ -281,6 +287,8 @@ _KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
     # ── Procurement ──
     "delivery delayed": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.COST)),
     "delivery slipped": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.COST)),
+    "nominated sub": (Domain.PROCUREMENT, (Domain.CONTRACT, Domain.SCHEDULE)),
+    "nominated subcontractor": (Domain.PROCUREMENT, (Domain.CONTRACT, Domain.SCHEDULE)),
     "long lead": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.RISK)),
     "procurement": (Domain.PROCUREMENT, (Domain.SCHEDULE,)),
     "purchase order": (Domain.PROCUREMENT, (Domain.SCHEDULE, Domain.QUALITY)),
@@ -298,6 +306,10 @@ _KEYWORD_ROUTES: Dict[str, Tuple[Domain, Tuple[Domain, ...]]] = {
     "clash": (Domain.BIM, (Domain.SCHEDULE, Domain.DOCUMENT)),
     "quantity takeoff": (Domain.BIM, (Domain.COST,)),
     "qto": (Domain.BIM, (Domain.COST,)),
+    # Issued For Construction drawings — drawings, not a BIM filename.
+    "ifc drawings": (Domain.DOCUMENT, (Domain.QUALITY,)),
+    "ifc drawing": (Domain.DOCUMENT, (Domain.QUALITY,)),
+    "issued for construction": (Domain.DOCUMENT, (Domain.QUALITY,)),
 
     # ── Risk ──
     "risk register": (Domain.RISK, (Domain.SCHEDULE, Domain.COST)),
@@ -367,6 +379,7 @@ _POST_TOOL_DOMAIN_TRIGGERS: Dict[str, List[Domain]] = {
     "claims_builder": [Domain.SCHEDULE, Domain.COST],
     "commissioning_checklist": [Domain.HANDOVER],
     "bim_analysis": [Domain.SCHEDULE, Domain.COST],
+    "bim_clash_detection": [Domain.DOCUMENT, Domain.SCHEDULE, Domain.COST],
     "cash_flow_forecast": [Domain.CONTRACT],
     "payment_certificate": [Domain.COST],
     "esg_sustainability_report": [Domain.COST, Domain.PROCUREMENT],
@@ -533,8 +546,21 @@ class CrossDomainIntentDetector:
             f"Cross-domain relevance detected: {', '.join(domain_names)} may be affected.",
             "Relevant construction management linkages:",
         ]
-        for i, rule in enumerate(rules[:5], 1):
-            context_lines.append(f"  {i}. {rule.description}")
+        from app.core.delay_advice import rewrite_r004_description
+
+        listed = 0
+        for rule in rules:
+            if listed >= 5:
+                break
+            description = rule.description
+            if rule.rule_id == "R004":
+                description = rewrite_r004_description(user_message, description)
+            if not description:
+                continue
+            listed += 1
+            context_lines.append(f"  {listed}. {description}")
+        if listed == 0:
+            return ""
         return "\n".join(context_lines)
 
     def suggest_follow_up_tools(
@@ -555,18 +581,22 @@ class CrossDomainIntentDetector:
             Domain.QUALITY: ["qa_qc_inspection"],
             Domain.SAFETY: ["safety_compliance_audit"],
             Domain.PROCUREMENT: ["procurement_list_generator"],
-            Domain.CONTRACT: ["claims_builder", "contract_clause"],
+            Domain.CONTRACT: ["process_contract", "claims_builder"],
+            Domain.DOCUMENT: ["cde_post_rfi", "search_project_documents"],
             Domain.RISK: ["risk_register"],
             Domain.COMMISSIONING: ["commissioning_checklist"],
             Domain.HANDOVER: ["handover_checklist"],
             Domain.BIM: ["bim_analysis"],
-            Domain.DOCUMENT: ["search_project_documents"],
             Domain.RESOURCE: ["resource_histogram"],
         }
 
         suggestions: List[str] = []
         for domain in triggered_domains:
             suggestions.extend(domain_tools.get(domain, []))
+        from app.core.delay_advice import claims_builder_permitted
+
+        if not claims_builder_permitted(user_message):
+            suggestions = [t for t in suggestions if t != "claims_builder"]
         return suggestions[:5]  # cap suggestions
 
 
@@ -605,13 +635,24 @@ class MultiDomainPlanBuilder:
             # Caller-handled delivery/render: keep step_type visible, do not
             # invent a block/action that would silently succeed (e.g. health_check).
             if not is_auto_dispatch(target):
+                from app.core.cm_step_aliases import is_plan_only
+
+                plan_only = is_plan_only(step.type)
                 steps.append({
                     "block": None,
                     "description": step.description,
                     "params": {**step.args, "action": None},
                     "step_type": step.type,
                     "dispatch": False,
-                    "needs_caller_render": True,
+                    "needs_caller_render": not plan_only,
+                    "needs_operator": plan_only,
+                    "plan_note": (
+                        "Formal instrument — plan or ask. Do not pretend "
+                        "an analysis template executed this step. CDE is "
+                        "the register."
+                        if plan_only
+                        else None
+                    ),
                 })
                 continue
             block_name, canonical_action = target
@@ -770,6 +811,8 @@ class CrossDomainReasoner:
         itself. That works exactly until a second consumer trusts the field.
         The gate belongs in the funnel, not in whichever caller remembers it.
         """
+        from app.core.delay_advice import DelayKind, classify_delay, claims_builder_permitted
+
         template_scores = self.template_matcher.match(user_message)
         best_score = template_scores[0][1] if template_scores else 0.0
         best_template = (
@@ -777,6 +820,10 @@ class CrossDomainReasoner:
             if template_scores and best_score >= TEMPLATE_MATCH_FLOOR
             else None
         )
+        kind = classify_delay(user_message)
+        # A reported slip is not a delay-to-claim workflow.
+        if best_template == "delay_to_claim" and kind != DelayKind.CLAIM:
+            best_template = None
 
         source_domains, additional_domains = self.intent_detector.detect_domains(
             user_message
@@ -804,12 +851,12 @@ class CrossDomainReasoner:
             Domain.QUALITY: ["qa_qc_inspection"],
             Domain.SAFETY: ["safety_compliance_audit"],
             Domain.PROCUREMENT: ["procurement_list_generator"],
-            Domain.CONTRACT: ["claims_builder"],
+            Domain.CONTRACT: ["process_contract", "claims_builder"],
             Domain.RISK: ["risk_register"],
             Domain.BIM: ["bim_analysis"],
             Domain.COMMISSIONING: ["commissioning_checklist"],
             Domain.HANDOVER: ["handover_checklist"],
-            Domain.DOCUMENT: ["search_project_documents"],
+            Domain.DOCUMENT: ["cde_post_rfi", "search_project_documents"],
             Domain.RESOURCE: ["resource_histogram"],
         }
         # Tools for the domain the message is ABOUT come first, then tools for
@@ -822,6 +869,8 @@ class CrossDomainReasoner:
         for domain in sorted(additional_domains, key=lambda d: d.value):
             suggested_tools.extend(domain_tools.get(domain, []))
         suggested_tools = list(dict.fromkeys(suggested_tools))[:6]
+        if not claims_builder_permitted(user_message):
+            suggested_tools = [t for t in suggested_tools if t != "claims_builder"]
 
         return {
             "matched_template": best_template,

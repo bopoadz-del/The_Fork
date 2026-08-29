@@ -7,9 +7,11 @@ import pytest
 from app.core.cm_step_aliases import (
     ACTION_ALIASES,
     NO_AUTO_DISPATCH,
+    PLAN_ONLY_STEPS,
     STEP_TO_TARGET,
     all_template_step_types,
     is_auto_dispatch,
+    is_plan_only,
     resolve_action,
     resolve_step,
     unmapped_step_types,
@@ -53,7 +55,7 @@ _KNOWN_BLOCKS = {
     "spec_analyzer",
 }
 
-_CALLER_HANDLED_STEPS = {"render_artifact", "deliver"}
+_CALLER_HANDLED_STEPS = {"render_artifact", "deliver"} | set(PLAN_ONLY_STEPS)
 
 
 class TestStepAliasCoverage:
@@ -63,7 +65,7 @@ class TestStepAliasCoverage:
 
     def test_all_targets_use_known_blocks(self):
         for step, (block, action) in STEP_TO_TARGET.items():
-            if step in _CALLER_HANDLED_STEPS:
+            if step in _CALLER_HANDLED_STEPS or step in PLAN_ONLY_STEPS:
                 assert (block, action) == NO_AUTO_DISPATCH
                 continue
             assert block in _KNOWN_BLOCKS, f"{step} → unknown block {block}"
@@ -97,6 +99,14 @@ class TestStepAliasCoverage:
         assert resolve_step("extract_boq") == ("boq_processor", None)
         assert resolve_step("nope") is None
 
+    def test_formal_instruments_do_not_auto_dispatch(self):
+        for step in ("ncr_issue", "stop_work_order", "pc_cert"):
+            assert resolve_step(step) == NO_AUTO_DISPATCH
+            assert not is_auto_dispatch(resolve_step(step))
+            assert is_plan_only(step)
+            assert resolve_action(step) == step
+            assert step not in ACTION_ALIASES
+
 
 class TestTemplatePlansResolve:
     def test_every_template_step_resolves(self):
@@ -110,8 +120,12 @@ class TestTemplatePlansResolve:
                 if step.get("dispatch") is False:
                     assert step["block"] is None
                     assert step["params"].get("action") is None
-                    assert step.get("needs_caller_render") is True
                     assert step["step_type"] in _CALLER_HANDLED_STEPS
+                    if is_plan_only(step["step_type"]):
+                        assert step.get("needs_operator") is True
+                        assert step.get("needs_caller_render") is False
+                    else:
+                        assert step.get("needs_caller_render") is True
                     continue
                 assert step["block"] in _KNOWN_BLOCKS
                 action = step["params"].get("action")
