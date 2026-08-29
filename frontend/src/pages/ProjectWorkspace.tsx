@@ -16,6 +16,7 @@ import RightPanel from '../layout/RightPanel'
 import ChatList from '../chat/ChatList'
 import ChatComposer, { type AgentOption } from '../chat/ChatComposer'
 import SourcesList from '../chat/SourcesList'
+import { sanitizeAssistantContent } from '../chat/toolJsonGuard'
 import DocumentGraph from '../documents/DocumentGraph'
 import './pages.css'
 import './workspace.css'
@@ -836,11 +837,16 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
           if (cancelled) return
           if (hist.messages.length > 0 && messagesRef.current.length === 0) {
             setMessages(
-              hist.messages.map((m) => ({
-                id: msgId(),
-                role: (m.role === 'user' ? 'user' : 'assistant') as MessageRole,
-                content: m.content,
-              }))
+              hist.messages.map((m) => {
+                const role = (m.role === 'user' ? 'user' : 'assistant') as MessageRole
+                return {
+                  id: msgId(),
+                  role,
+                  content: role === 'assistant'
+                    ? sanitizeAssistantContent(m.content)
+                    : m.content,
+                }
+              })
             )
           }
         } catch {
@@ -1100,7 +1106,7 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
               if (!firstTokenReceived) {
                 firstTokenReceived = true
                 accumulatedContent += token
-                const snap = accumulatedContent
+                const snap = sanitizeAssistantContent(accumulatedContent)
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantMsgId
@@ -1110,7 +1116,7 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
                 )
               } else {
                 accumulatedContent += token
-                const snap = accumulatedContent
+                const snap = sanitizeAssistantContent(accumulatedContent)
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantMsgId
@@ -1121,7 +1127,14 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
               }
             } else if (evtType === 'end') {
               streamEnded = true
-              const finalContent = accumulatedContent
+              // Prefer the server's authoritative sanitized content when present
+              // (covers SYNTHESIS_STREAMING races where raw tool JSON was flushed
+              // into accumulated tokens before sanitize).
+              const serverContent =
+                typeof evt['content'] === 'string' ? evt['content'] : ''
+              const finalContent = sanitizeAssistantContent(
+                serverContent || accumulatedContent,
+              )
               const rawSources = Array.isArray(evt['sources']) ? (evt['sources'] as ChatMessage['sources']) : []
               const rawExports = Array.isArray(evt['exports']) ? (evt['exports'] as ChatMessage['exports']) : []
               setMessages((prev) =>

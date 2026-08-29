@@ -87,3 +87,36 @@ def test_recovery_from_markdown_json_block():
 def test_empty_input():
     assert _recover_tool_calls_from_content("") == []
     assert _recover_tool_calls_from_content(None) == []  # type: ignore[arg-type]
+
+
+def test_recovery_bare_query_args():
+    """UI-PHYS A5: bare {"query": "..."} without top_k is recovered as search."""
+    text = json.dumps({"query": "Delay Damages Contract Data"})
+    recovered = _recover_tool_calls_from_content(text)
+    assert len(recovered) == 1
+    assert recovered[0]["function"]["name"] == "search_project_documents"
+    args = json.loads(recovered[0]["function"]["arguments"])
+    assert args["query"] == "Delay Damages Contract Data"
+
+
+def test_recovery_envelope_with_string_arguments():
+    """Arguments encoded as a JSON string are still recovered."""
+    text = json.dumps({
+        "name": "search_project_documents",
+        "arguments": json.dumps({"query": "Delay Damages Contract Data"}),
+    })
+    recovered = _recover_tool_calls_from_content(text)
+    assert len(recovered) == 1
+    args = json.loads(recovered[0]["function"]["arguments"])
+    assert args["query"] == "Delay Damages Contract Data"
+
+
+def test_recovery_markdown_fenced_envelope():
+    inner = json.dumps({
+        "name": "search_project_documents",
+        "arguments": {"query": "Delay Damages Contract Data"},
+    })
+    text = f"```json\n{inner}\n```"
+    recovered = _recover_tool_calls_from_content(text)
+    assert len(recovered) == 1
+    assert recovered[0]["function"]["name"] == "search_project_documents"
