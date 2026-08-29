@@ -66,6 +66,7 @@ from app.routers import (
     monitoring,
     project,
     projects,
+    connectors as connectors_router,
     rag as rag_router,
     redline,
     schedule as schedule_router,
@@ -702,6 +703,7 @@ app.include_router(auth.router)
 app.include_router(memory.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
+app.include_router(connectors_router.router)
 from app.routers import exports as exports_router  # noqa: E402 — late import to keep diff small
 app.include_router(exports_router.router)
 from app.routers import schedule as schedule_router_module  # noqa: E402

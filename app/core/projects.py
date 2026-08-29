@@ -713,7 +713,7 @@ def purge_archived_project(project_id: str) -> str:
 
 
 def set_aconex(project_id: str, connected: bool) -> bool:
-    """Set the Aconex connection flag. Stub for the full connector (Roadmap V2)."""
+    """Mark whether this project has a CDE feed (live OAuth or managed outside)."""
     _ensure_db()
     with _lock:
         with SessionLocal() as session:

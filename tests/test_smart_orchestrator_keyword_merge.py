@@ -52,23 +52,23 @@ def test_version_is_1_1_0():
     assert SmartOrchestratorBlock.version == "1.1.0"
 
 
-def test_description_says_54_actions():
-    # construction_calc (leftover L6) is the 43rd smart_orch action,
-    # taking the net unique count 53 -> 54; the label must track it.
-    assert "54-action" in SmartOrchestratorBlock.description
+def test_description_says_55_actions():
+    # cde_post_rfi is the 55th unique action; the label must track it.
+    assert "55-action" in SmartOrchestratorBlock.description
+    assert "54-action" not in SmartOrchestratorBlock.description
     assert "53-action" not in SmartOrchestratorBlock.description
     assert "52-action" not in SmartOrchestratorBlock.description
     assert "39-action" not in SmartOrchestratorBlock.description
 
 
-def test_unique_action_count_is_54():
+def test_unique_action_count_is_55():
     """Net unique action names in ACTION_PATTERNS (PROCEDURE + smart_orch lists
-    combined) must equal 54: 17 PROCEDURE + 43 smart_orch − 6 collisions.
-    (construction_calc was added so leftover L6 bank-volume routes.)"""
+    combined) must equal 55: 17 PROCEDURE + 44 smart_orch − 6 collisions.
+    (cde_post_rfi posts a drafted RFI to the CDE, not a Fork register.)"""
     seen = set()
     for action, _ in ACTION_PATTERNS:
         seen.add(action)
-    assert len(seen) == 54, f"expected 54 unique actions, got {len(seen)}"
+    assert len(seen) == 55, f"expected 55 unique actions, got {len(seen)}"
 
 
 # ── Regression guards: previously-dropped keywords must now route ───────────
