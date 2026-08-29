@@ -116,3 +116,42 @@ def test_preview_missing_document_404(client):
         f"/v1/projects/{proj['id']}/documents/nope1234/preview", headers=H
     )
     assert r.status_code == 404
+
+
+def test_preview_cited_corpus_doc_from_workspace(client, monkeypatch):
+    """Opening a Sources cite fetches preview via the *workspace* project
+    id plus the cited doc id. That doc often lives on Master Corpus / GK,
+    not on the workspace — the fetch must still succeed."""
+    workspace = _new_project(client, "Preview Workspace")
+    corpus = _new_project(client, "Citeable Corpus")
+    doc = _upload(
+        client, corpus["id"], "cited_spec.txt",
+        b"Clause 8.7 Delay Damages are 0.1 percent per day.",
+        "text/plain",
+    )
+    monkeypatch.setattr(
+        "app.routers.projects._preview_citeable_owner_ids",
+        lambda pid: {pid, corpus["id"]},
+    )
+    r = client.get(
+        f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
+        headers=H,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["kind"] == "text"
+    assert "Delay Damages" in body["text"]
+
+
+def test_preview_foreign_private_doc_still_404(client):
+    """A document the workspace cannot cite stays 404 — no cross-project leak."""
+    workspace = _new_project(client, "Preview Workspace")
+    other = _new_project(client, "Private Other")
+    doc = _upload(
+        client, other["id"], "secret.txt", b"not a cited source", "text/plain",
+    )
+    r = client.get(
+        f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
+        headers=H,
+    )
+    assert r.status_code == 404

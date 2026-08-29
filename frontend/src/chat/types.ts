@@ -9,6 +9,10 @@ export interface CitedSource {
   page_or_section: string
   score: number
   confidence: 'High' | 'Medium' | 'Low'
+  /** Owning project of the cited file (workspace, Master Corpus, or GK). */
+  project_id?: string
+  layer?: string
+  layer_label?: string
 }
 
 /** A data-backed download offer the platform attaches to an answer that cites

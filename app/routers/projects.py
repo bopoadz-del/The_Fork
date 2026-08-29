@@ -405,8 +405,39 @@ def _cell_str(value: Any) -> str:
     return str(value)
 
 
+def _preview_citeable_owner_ids(workspace_project_id: str) -> set[str]:
+    """Project ids whose documents chat may cite — and therefore preview.
+
+    Opening a Sources cite always hits
+    ``/v1/projects/{workspace}/documents/{cited_doc}/preview``. The cited
+    file is often Master Corpus or general-knowledge, not a row owned by
+    the workspace. Restricting preview to the URL project's own rows 404s
+    that fetch even though RAG already exposed the document.
+    """
+    owners: set[str] = set()
+    if workspace_project_id:
+        owners.add(workspace_project_id)
+        alias_src = store._master_corpus_source(workspace_project_id)
+        if alias_src:
+            owners.add(alias_src)
+    mc_alias = getattr(store, "MASTER_CORPUS_PROJECT_ID", None)
+    if mc_alias:
+        owners.add(mc_alias)
+    mc_src = (getattr(store, "MASTER_CORPUS_SOURCE_PROJECT_ID", None) or "").strip()
+    if mc_src:
+        owners.add(mc_src)
+    try:
+        from app.core.rag.retriever import _general_knowledge_project_ids
+        owners.update(_general_knowledge_project_ids())
+    except Exception:
+        logger.debug(
+            "preview citeable-owner lookup skipped GK ids", exc_info=True,
+        )
+    return {pid for pid in owners if pid}
+
+
 def _resolve_preview_document(
-    project_id: str, document_id: str, user_id: str,
+    project_id: str, document_id: str, user_id: str, *, role: str = "user",
 ) -> Tuple[Dict[str, Any], str, str]:
     """Access-check and resolve a document for preview.
 
@@ -416,11 +447,18 @@ def _resolve_preview_document(
     serialized — critical for the ~2,700-doc master corpus). The master-corpus
     alias resolves to its backing source id before the ownership match, because
     ``get_document`` returns the SOURCE project_id, not the alias.
+
+    A document cited from Master Corpus / GK is previewable from the
+    workspace that cited it. A private project the caller does not have
+    open stays 404.
     """
-    _owned_or_404(project_id, user_id, read_only=True, doc_limit=0)
-    resolved_id = store._master_corpus_source(project_id) or project_id
+    _owned_or_404(
+        project_id, user_id, read_only=True, role=role, doc_limit=0,
+    )
     doc = store.get_document(document_id)
-    if not doc or doc.get("project_id") != resolved_id:
+    owner = (doc or {}).get("project_id")
+    allowed = _preview_citeable_owner_ids(project_id)
+    if not doc or owner not in allowed:
         raise HTTPException(
             404, f"Document '{document_id}' not found in project '{project_id}'"
         )
@@ -524,7 +562,10 @@ async def preview_document(
 
     A malformed / unreadable file returns 422 (never 500).
     """
-    _doc, ext, fp = _resolve_preview_document(project_id, document_id, auth["user_id"])
+    _doc, ext, fp = _resolve_preview_document(
+        project_id, document_id, auth["user_id"],
+        role=auth.get("role") or "user",
+    )
     try:
         if ext in _TABLE_EXTS:
             return _table_preview(fp, ext)
@@ -552,7 +593,10 @@ async def preview_document_raw(
     Starlette can stream it, which fails whenever encryption-at-rest is on). The
     upload size cap keeps buffering the whole file in memory safe for v1.
     """
-    _doc, ext, fp = _resolve_preview_document(project_id, document_id, auth["user_id"])
+    _doc, ext, fp = _resolve_preview_document(
+        project_id, document_id, auth["user_id"],
+        role=auth.get("role") or "user",
+    )
     if ext != ".pdf":
         raise HTTPException(400, "Raw preview is available only for PDF documents")
     try:
