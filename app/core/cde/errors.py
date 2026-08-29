@@ -7,6 +7,10 @@ class CdeError(Exception):
     """A CDE operation failed. The CDE remains the system of record."""
 
 
+class CdePayloadError(CdeError):
+    """Caller sent a CDE-shaped row that cannot be accepted (no live id)."""
+
+
 class CdeNotConfiguredError(CdeError):
     """Real CDE client is not configured. Do not fall back to a Fork register."""
 

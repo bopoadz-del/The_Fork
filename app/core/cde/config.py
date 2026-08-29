@@ -74,6 +74,11 @@ def oauth_client_ready() -> bool:
     return aconex_enabled() and has_oauth_credentials()
 
 
+def event_poll_enabled() -> bool:
+    """Optional CDE mail+register poll loop. Default off — fail closed."""
+    return _truthy("CDE_EVENT_POLL_ENABLED")
+
+
 def connector_mode(aconex_connected: bool) -> str:
     """Honest GET /connectors mode: flag vs oauth vs not_configured.
 

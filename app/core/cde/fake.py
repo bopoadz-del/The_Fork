@@ -50,6 +50,26 @@ class FakeCdeClient(CdeClient):
                 reference="TRN-300",
                 mailbox="inbox",
             ),
+            CdeMail(
+                id="mail-400",
+                subject="Notice — chiller delivery has slipped four weeks",
+                body="Supplier advised the chiller delivery has slipped four weeks.",
+                mail_type="General",
+                correspondence_type="General",
+                status="open",
+                reference="MAIL-400",
+                mailbox="inbox",
+            ),
+            CdeMail(
+                id="mail-500",
+                subject="Clash — duct vs beam at grid B2",
+                body="Clash detected between supply duct and structural beam at grid B2.",
+                mail_type="General",
+                correspondence_type="General",
+                status="open",
+                reference="MAIL-500",
+                mailbox="inbox",
+            ),
         ]
         self.documents: list[CdeDocument] = [
             CdeDocument(
@@ -60,9 +80,21 @@ class FakeCdeClient(CdeClient):
                 doc_type="Specification",
                 status="current",
             ),
+            CdeDocument(
+                id="cde-doc-clash",
+                title="Clash report — MEP vs structure L03",
+                filename="cde_clash_report.txt",
+                revision="A",
+                doc_type="Clash report",
+                status="current",
+            ),
         ]
         self.files: dict[str, bytes] = {
             "cde-doc-1": _DEFAULT_SPEC.encode("utf-8"),
+            "cde-doc-clash": (
+                "Clash report cache — supply duct vs beam at grid B2. "
+                "Aconex remains the system of record."
+            ).encode("utf-8"),
         }
         self.posted: list[CdePostResult] = []
         self._post_seq = 0
