@@ -18,7 +18,7 @@
  * stripped per operator brief — post-pilot complexity, not needed for
  * the the client pilot. Tabs + expand stay.
  */
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowUpRight, X } from 'lucide-react'
 import DocumentPreview from '../documents/DocumentPreview'
 import './RightPanel.css'
@@ -36,6 +36,10 @@ interface Props {
   projectId?: string
   /** Documents available to preview (newest first — index 0 is the default). */
   documents?: PreviewDocument[]
+  /** Documents the latest answer cited, including Master Corpus / GK. */
+  citedDocuments?: PreviewDocument[]
+  /** Click-to-preview from Sources — nonce lets the same doc reopen. */
+  previewRequest?: { docId: string; nonce: number } | null
   /** Title slot kept for backwards compat — not rendered alongside tabs. */
   title?: string
   expanded?: boolean
@@ -67,28 +71,48 @@ const PREVIEW_EMPTY: Record<'sheet' | 'schedule' | 'chart', string> = {
 }
 
 export default function RightPanel({
-  sources, graph, projectId, documents = [], expanded = false, onToggleExpand,
+  sources, graph, projectId, documents = [], citedDocuments = [],
+  previewRequest = null, expanded = false, onToggleExpand,
 }: Props) {
   const [tab, setTab] = useState<TabKey>('sources')
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
+
+  // Cited files first so opening a chat source previews THAT document,
+  // not the newest upload sitting in the project list.
+  const previewable = useMemo(() => {
+    const seen = new Set<string>()
+    const out: PreviewDocument[] = []
+    for (const d of [...citedDocuments, ...documents]) {
+      if (!d.id || seen.has(d.id)) continue
+      seen.add(d.id)
+      out.push(d)
+    }
+    return out
+  }, [citedDocuments, documents])
+
+  useEffect(() => {
+    if (!previewRequest?.docId) return
+    setSelectedDocId(previewRequest.docId)
+    setTab('sheet')
+  }, [previewRequest])
 
   // Derive a valid picker id during render. Storing a stale id after
   // delete/upload is fine — the resolved value follows the list without
   // a synchronizing effect.
   const resolvedDocId =
-    selectedDocId && documents.some((d) => d.id === selectedDocId)
+    selectedDocId && previewable.some((d) => d.id === selectedDocId)
       ? selectedDocId
-      : (documents[0]?.id ?? null)
+      : (previewable[0]?.id ?? null)
 
   const selectedDoc = useMemo(
-    () => documents.find((d) => d.id === resolvedDocId) ?? null,
-    [documents, resolvedDocId],
+    () => previewable.find((d) => d.id === resolvedDocId) ?? null,
+    [previewable, resolvedDocId],
   )
 
   function renderPreviewTab(kind: 'sheet' | 'schedule' | 'chart') {
     return (
       <div className="right-panel__section">
-        {documents.length === 0 ? (
+        {previewable.length === 0 ? (
           <div className="right-panel__placeholder">{PREVIEW_EMPTY[kind]}</div>
         ) : (
           <>
@@ -100,7 +124,7 @@ export default function RightPanel({
                 onChange={(e) => setSelectedDocId(e.target.value)}
                 aria-label="Select a document to preview"
               >
-                {documents.map((d) => (
+                {previewable.map((d) => (
                   <option key={d.id} value={d.id}>{d.original_name}</option>
                 ))}
               </select>

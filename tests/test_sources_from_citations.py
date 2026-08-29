@@ -396,3 +396,93 @@ def test_build_sources_cleans_raw_doc_name(monkeypatch):
     assert out[0]["project_id"] == "proj_x"
     assert out[0]["chunk_index"] == 4
     assert out[0]["chunk_id"] == "proj_x:d1:4"
+
+
+# ── R4: Sources must match the answer; preview needs the owning project ──
+
+DD23 = (
+    "DD-2023-118_the client project II Infrastructure Package 1_"
+    "Vol 1 - Conditions of Contract.pdf"
+)
+DD22 = "DD-2022-175 - Volume 1 - Conditions of Contract.pdf"
+
+
+def _patch_doc_names(monkeypatch, mapping: dict[str, str]) -> None:
+    def lookup(did):
+        return {"original_name": mapping.get(did, "unknown.pdf")}
+
+    monkeypatch.setattr("app.core.projects.get_document", lookup, raising=False)
+    import app.core.projects as projects_mod
+    monkeypatch.setattr(projects_mod, "get_document", lookup)
+
+
+def test_extract_src_equals_citation():
+    txt = (
+        "Delay Damages are 0.1% per day "
+        "[doc_id=ab12cd34 chunk=12 score=0.88 src=DD-2023-118_Vol 1.pdf]."
+    )
+    out = _extract_cited_chunk_indexes(txt)
+    assert any("DD-2023-118" in fname for fname, _ in out), out
+
+
+def test_build_sources_stamps_chunk_owner_project_id(monkeypatch):
+    """Preview fetch uses the cited file's owner, not only the workspace."""
+    _patch_doc_names(monkeypatch, {"d1": "cited_spec.pdf"})
+    audit = {
+        "project_id": "workspace",
+        "chunks": [{
+            "doc_id": "d1", "chunk_index": 1, "chunk_id": "c1",
+            "project_id": "projects_folder", "score": 0.82,
+            "layer": "master_corpus",
+        }],
+    }
+    out = _build_sources_from_audit(
+        audit, "Per the spec [source: cited_spec.pdf, chunk 1].",
+    )
+    assert len(out) == 1
+    assert out[0]["doc_id"] == "d1"
+    assert out[0]["project_id"] == "projects_folder"
+    assert out[0]["layer"] == "master_corpus"
+
+
+def test_sources_follow_contract_named_in_answer(monkeypatch):
+    """Answer cites DD-2023-118 in prose; panel must not list DD-2022."""
+    _patch_doc_names(monkeypatch, {"d23": DD23, "d22": DD22})
+    audit = {
+        "project_id": "proj_a",
+        "user_message_preview": "What is the Time for Completion?",
+        "identifier_miss": False,
+        "threshold_fired": False,
+        "chunks": [
+            {"doc_id": "d22", "chunk_index": 4, "chunk_id": "c22",
+             "project_id": "proj_a", "score": 0.91, "layer": "own"},
+            {"doc_id": "d23", "chunk_index": 12, "chunk_id": "c23",
+             "project_id": "proj_a", "score": 0.80, "layer": "own"},
+        ],
+    }
+    text = "Per DD-2023-118, Time for Completion is 365 calendar days."
+    out = _build_sources_from_audit(audit, text)
+    names = [s["doc_name"] for s in out]
+    assert names, "prose named DD-2023-118 — Sources must not be empty"
+    assert all("DD-2023-118" in n for n in names), names
+    assert not any("DD-2022" in n for n in names), names
+
+
+def test_sources_match_src_marker_to_injected_chunk(monkeypatch):
+    _patch_doc_names(monkeypatch, {"d23": DD23, "d22": DD22})
+    audit = {
+        "project_id": "proj_a",
+        "chunks": [
+            {"doc_id": "d22", "chunk_index": 4, "score": 0.9, "layer": "own"},
+            {"doc_id": "d23", "chunk_index": 12, "score": 0.7, "layer": "own"},
+        ],
+    }
+    text = (
+        "Time for Completion is 365 days "
+        "(src=DD-2023-118_the client project II Infrastructure Package 1_"
+        "Vol 1 - Conditions of Contract.pdf)."
+    )
+    out = _build_sources_from_audit(audit, text)
+    assert len(out) == 1, out
+    assert out[0]["doc_id"] == "d23"
+    assert out[0]["page_or_section"] == "chunk #12"

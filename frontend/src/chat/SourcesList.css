@@ -43,9 +43,40 @@
 .sources-list__item {
   display: flex;
   gap: var(--space-2);
-  padding: 6px 8px;
+  padding: 0;
   border-radius: var(--radius-input);
   background: var(--bg-panel);
+}
+
+.sources-list__open {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sources-list__open:hover {
+  background: var(--bg-surface-alt);
+}
+
+.sources-list__open--active {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.sources-list__static {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px 8px;
 }
 
 .sources-list__chip {
