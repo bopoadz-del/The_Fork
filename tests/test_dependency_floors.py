@@ -31,6 +31,7 @@ FLOORS = {
     "cryptography": ((50, 0, 0), "CVE-2026-69247 (HIGH, Bleichenbacher oracle in PKCS#7 decrypt)"),
     "pytest": ((9, 0, 3), "PYSEC-2026-1845"),
     "h2": ((4, 4, 1), "GHSA h2 < 4.4.1 (2026-08-08, both requirements files)"),
+    "restrictedpython": ((8, 3), "CVE-2026-55830 (sandbox escape via positional-only args; 8.3+ stable on PyPI)"),
 }
 
 REQUIREMENT_FILES = ["requirements.txt", "requirements-ml.txt"]
@@ -70,6 +71,21 @@ def test_no_requirement_file_pins_below_a_security_floor():
                     f"{'.'.join(map(str, floor))} — reintroduces {advisory}"
                 )
     assert not violations, "\n".join(violations)
+
+
+def test_restrictedpython_pin_is_stable_not_prerelease():
+    """CVE-2026-55830 is fixed in RestrictedPython 8.3. Dependabot #437
+    proposed 8.3a1.dev0 — an alpha must never satisfy the floor."""
+    pins = _pins(REPO / "requirements.txt")
+    ver = pins.get("restrictedpython")
+    assert ver is not None, "restrictedpython must stay pinned in requirements.txt"
+    assert re.fullmatch(r"\d+\.\d+(\.\d+)?", ver), (
+        f"restrictedpython=={ver} is not a stable X.Y / X.Y.Z pin "
+        "(refuse a/b/rc/dev — wait for a stable release)"
+    )
+    assert _parse_version(ver) >= (8, 3), (
+        f"restrictedpython=={ver} is below the CVE-2026-55830 floor 8.3"
+    )
 
 
 def test_floors_cover_the_packages_they_claim():
