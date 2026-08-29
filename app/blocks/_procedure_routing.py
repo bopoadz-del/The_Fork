@@ -33,6 +33,8 @@ PROCEDURE_ROUTING_ADDITIONS = [
             "design directive", "DD-", "PRC-502", "TEM-510",
             "design instruction", "design change instruction",
             "employer instruction", "design order",
+            "site instruction", "site instructions",
+            "si vs vo", "si versus vo",
         ]
     ),
 
@@ -84,6 +86,8 @@ PROCEDURE_ROUTING_ADDITIONS = [
         [
             "PRC-402", "NCR", "non-conformance", "non conformance",
             "nonconformance", "NCR-", "disposition",
+            "issue ncr", "issue an ncr", "raise an ncr", "raise ncr",
+            "issue a ncr",
             "use as is", "reject and replace", "concession request",
             "corrective action", "ncr closure", "close ncr",
             "ncr register", "open ncr", "physical ncr", "documentary ncr",
@@ -94,7 +98,6 @@ PROCEDURE_ROUTING_ADDITIONS = [
         [
             "PRC-403", "testing commissioning", "test and commission",
             "T&C", "ITP", "inspection test plan",
-            "hold point", "witness point", "review point",
             "commissioning result", "punch list", "pre-commissioning",
             "rides scope", "mep commissioning", "building commissioning",
         ]
@@ -118,13 +121,15 @@ PROCEDURE_ROUTING_ADDITIONS = [
             "inspection result", "inspection rejection",
             "WIR", "work inspection request", "work inspection",
             "WIR form", "WIR template",
+            "hold point", "hold points", "witness point", "review point",
+            "prepare a wir", "raise a wir", "issue a wir",
         ]
     ),
     (
         "safety_compliance_audit",
         [
             "PRC-406", "hse audit", "hse inspection",
-            "stop work", "stop work order", "near miss",
+            "near miss",
             "fatality risk", "serious injury", "environmental incident",
             "toolbox talk", "ppe compliance", "hse finding",
             "work resumption", "hse register",

@@ -26,6 +26,15 @@ StepTarget = Tuple[str, Optional[str]]
 # Never map these to health_check — that falsely reports delivery success.
 NO_AUTO_DISPATCH: StepTarget = ("", None)
 
+# Formal instruments (NCR, stop-work, PC cert) are CDE / operator writes.
+# They must not collapse onto analysis templates (qa_qc_inspection,
+# safety_compliance_audit, commissioning_checklist). Plan or ask.
+PLAN_ONLY_STEPS = frozenset({
+    "ncr_issue",
+    "stop_work_order",
+    "pc_cert",
+})
+
 # Every STEP_* constant in workflow_templates.py must appear here.
 STEP_TO_TARGET: Dict[str, StepTarget] = {
     # Document
@@ -60,13 +69,13 @@ STEP_TO_TARGET: Dict[str, StepTarget] = {
     "incoming_inspection": ("construction", "qa_qc_inspection"),
     "test_results": ("construction", "commissioning_checklist"),
     "deficiency_tracking": ("construction", "commissioning_checklist"),
-    "ncr_issue": ("construction", "qa_qc_inspection"),
+    "ncr_issue": NO_AUTO_DISPATCH,
     "rectification_track": ("construction", "qa_qc_inspection"),
     "close_out": ("construction", "commissioning_checklist"),
     # Safety
     "incident_report": ("construction", "safety_compliance_audit"),
     "root_cause": ("construction", "safety_compliance_audit"),
-    "stop_work_order": ("construction", "safety_compliance_audit"),
+    "stop_work_order": NO_AUTO_DISPATCH,
     "safety_summary": ("construction", "safety_compliance_audit"),
     "incident_summary": ("construction", "safety_compliance_audit"),
     # Procurement
@@ -92,7 +101,7 @@ STEP_TO_TARGET: Dict[str, StepTarget] = {
     "cash_flow_update": ("construction", "cash_flow_forecast"),
     "generate_pay_app": ("construction", "payment_certificate"),
     # Commissioning / handover
-    "pc_cert": ("construction", "commissioning_checklist"),
+    "pc_cert": NO_AUTO_DISPATCH,
     "om_manual": ("construction", "om_manual_generator"),
     "training_plan": ("construction", "om_manual_generator"),
     "warranty_register": ("construction", "warranty_maintenance_schedule"),
@@ -135,6 +144,11 @@ ACTION_ALIASES: Dict[str, str] = {
 def is_auto_dispatch(target: Optional[StepTarget]) -> bool:
     """True when resolve_step yielded a block that /v1/execute can run."""
     return bool(target and target[0])
+
+
+def is_plan_only(step_type: str) -> bool:
+    """True when the step is a formal instrument — plan or ask, do not run."""
+    return step_type in PLAN_ONLY_STEPS
 
 
 def resolve_step(step_type: str) -> Optional[StepTarget]:

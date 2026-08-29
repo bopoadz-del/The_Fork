@@ -113,11 +113,13 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("spec_analyze",          ["spec", "specification", "material spec", "grade requirement", "astm", "aci", "saso", "standard", "compliance check", "specification requirements", "material specs", "material specifications", "concrete specification", "specs"]),
     ("process_specification_full", ["full specification", "spec section", "csi division", "masterformat"]),
     # Drawings
-    ("drawing_qto",           ["drawing", "dxf", "dwg", "floor plan", "blueprint", "autocad", "measure drawing", "drawings", "quantity takeoff", "takeoff", "take-off"]),
+    ("drawing_qto",           ["drawing", "dxf", "dwg", "floor plan", "blueprint", "autocad", "measure drawing", "drawings", "quantity takeoff", "takeoff", "take-off",
+                                "ifc drawing", "ifc drawings", "issued for construction"]),
     # Schedule
     ("parse_primavera_schedule", ["primavera", "xer", "p6", "schedule", "gantt", "programme", "baseline", "milestones", "milestone", "key milestones", "milestone report", "completion dates", "major completion dates"]),
     ("progress_tracker",      ["progress", "completion", "percent complete", "actual vs planned", "delay",
-                                "progress tracking", "tracking against planned", "slipping", "behind schedule", "schedule slippage"]),
+                                "progress tracking", "tracking against planned", "slipping", "behind schedule", "schedule slippage",
+                                "delivery has slipped", "delivery slipped", "has slipped"]),
     ("resource_histogram",    ["resource", "manpower", "histogram", "crew", "labor loading", "workforce"]),
     ("forensic_delay_analysis", ["delay analysis", "eot", "extension of time", "delay claim", "forensic"]),
     # BIM / IFC
@@ -129,17 +131,20 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("bim_extract",           ["extract bim", "ifc quantities", "bim quantities", "model quantities"]),
     ("digital_twin_sync",     ["digital twin", "asset data", "sync model", "as-built bim"]),
     # QA/QC
-    ("qa_qc_inspection",      ["qa", "qc", "quality", "inspection", "test report", "ncr", "non-conformance", "punch list"]),
+    ("qa_qc_inspection",      ["qa", "qc", "quality", "inspection", "test report", "punch list"]),
     ("commissioning_checklist", ["commissioning", "handover", "pre-commissioning", "startup checklist", "commissioning checklist", "commissioning steps", "t&c steps", "energising", "energisation", "energizing", "energization"]),
     # Contracts / Claims
-    ("process_contract",      ["contract", "subcontract", "agreement", "terms", "clause", "fidic", "nec"]),
+    ("process_contract",      ["contract", "subcontract", "agreement", "terms", "clause", "fidic", "nec",
+                                "nominated sub", "nominated subcontractor", "nominated subcontract"]),
     # Note: 2-char abbreviations "co" / "vo" removed — they were substrings of
     # "concrete", "construction", "cost", "compliance", "voltage", so every
     # construction message used to route here. The multi-word forms cover
     # the same intent without false positives.
     ("change_order_impact",   ["change order", "variation", "scope change", "amendment"]),
     ("variation_order_manager", ["variation order", "variation management", "change log"]),
-    ("claims_builder",        ["claim", "dispute", "loss and expense", "damages", "extension of time"]),
+    # "extension of time" is EOT-only (forensic_delay_analysis). Do not
+    # auto-route a time request onto claims_builder.
+    ("claims_builder",        ["claim", "dispute", "loss and expense", "damages", "delay claim", "eot claim"]),
     ("rfi_generator",         ["rfi", "request for information", "query", "clarification", "design query"]),
     ("cde_post_rfi",          [
         "post this rfi to aconex", "post the rfi to aconex", "post rfi to aconex",
@@ -697,6 +702,49 @@ class SmartOrchestratorBlock(UniversalBlock):
                 r for r in results
                 if r["action"] not in CONTRACT_LOOKUP_BLOCKED_ACTIONS
             ]
+        return self._apply_correctness_filters(message, results)
+
+    def _apply_correctness_filters(
+        self, message: str, results: List[Dict]
+    ) -> List[Dict]:
+        """Chat-path guards: no default claim, no alias collapse, site vocab."""
+        from app.core.delay_advice import claims_builder_permitted
+        from app.core.site_vocab import (
+            message_is_site_instruction_not_vo,
+            message_issues_ncr,
+            message_issues_pc_cert,
+            message_issues_stop_work,
+            message_reports_slipped_delivery,
+            message_wants_clash_cde_rfi,
+            message_wants_ifc_drawings,
+        )
+
+        if not claims_builder_permitted(message) or message_reports_slipped_delivery(message):
+            results = [r for r in results if r["action"] != "claims_builder"]
+        if message_issues_ncr(message):
+            results = [r for r in results if r["action"] != "qa_qc_inspection"]
+        if message_issues_stop_work(message):
+            results = [r for r in results if r["action"] != "safety_compliance_audit"]
+        if message_issues_pc_cert(message):
+            results = [
+                r for r in results
+                if r["action"] not in {"commissioning_checklist", "payment_certificate"}
+            ]
+        if message_wants_ifc_drawings(message):
+            results = [r for r in results if r["action"] != "bim_analysis"]
+        if message_is_site_instruction_not_vo(message):
+            results = [
+                r for r in results
+                if r["action"] not in {"change_order_impact", "variation_order_manager"}
+            ]
+        if message_wants_clash(message) and message_wants_clash_cde_rfi(message):
+            results = [r for r in results if r["action"] != "rfi_generator"]
+            if not any(r["action"] == "cde_post_rfi" for r in results):
+                results.append({
+                    "action": "cde_post_rfi",
+                    "confidence": 0.4,
+                    "keywords_matched": ["clash rfi"],
+                })
         return results
 
     def _detect_file_type(self, data: Dict, context: Dict) -> Optional[str]:
