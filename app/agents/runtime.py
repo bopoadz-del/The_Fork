@@ -1768,25 +1768,70 @@ def _build_missing_reference_answer(
     )
 
 
+def _normalize_tool_json_text(text: str) -> str:
+    """Strip BOM / zero-width chars and unwrap a sole markdown JSON fence."""
+    if not text:
+        return ""
+    cleaned = (
+        text.replace("\ufeff", "")
+        .replace("\u200b", "")
+        .replace("\u200c", "")
+        .replace("\u200d", "")
+        .strip()
+    )
+    md = re.match(
+        r"^```(?:json)?\s*([\s\S]*?)\s*```$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if md:
+        return md.group(1).strip()
+    return cleaned
+
+
 def _is_search_tool_args_obj(obj: Any) -> bool:
     """True when ``obj`` looks like a search tool argument payload.
 
     Detects shapes such as:
       {"query": "...", "top_k": 5, "project_id": "..."}
+      {"query": "..."}   # bare Scout/Kimi leak (UI-PHYS A5)
       {"tool": "search_project_documents", "arguments": {...}}
       {"name": "search_project_documents", "arguments": {...}}
+      {"name": "search_project_documents", "parameters": {...}}
     """
     if not isinstance(obj, dict):
         return False
     keys = set(obj.keys())
-    # Explicit tool-call envelope shapes.
-    if "arguments" in keys and ("name" in keys or "tool" in keys or "function" in keys):
+    # Explicit tool-call envelope shapes (arguments or parameters).
+    if ("arguments" in keys or "parameters" in keys) and (
+        "name" in keys or "tool" in keys or "function" in keys
+    ):
         return True
     # Search argument shape: has "query" plus other search params, and no
     # obvious answer/data keys that would make it user-facing JSON.
     if "query" in keys and not (keys & _ANSWER_DATA_KEYS):
-        if keys & {"top_k", "project_id", "corpus", "filters", "source", "tool", "function"}:
+        if isinstance(obj.get("query"), str) and keys <= {
+            "query", "top_k", "project_id", "corpus", "filters",
+            "source", "tool", "function",
+        }:
+            # Bare {"query": "..."} is the live Scout/Kimi leak shape — treat
+            # it as internal search args when it is not mixed with answer keys.
             return True
+    return False
+
+
+def _is_tool_call_obj(obj: Any) -> bool:
+    """True when a parsed JSON object is an internal tool-call / search payload."""
+    if not isinstance(obj, dict):
+        return False
+    if _INTERNAL_TOOL_KEYS.issubset(obj.keys()):
+        return True
+    if {"name", "parameters"}.issubset(obj.keys()):
+        return True
+    if obj.get("type") == "function" and "function" in obj:
+        return True
+    if _is_search_tool_args_obj(obj):
+        return True
     return False
 
 
@@ -1795,18 +1840,7 @@ def _looks_like_internal_tool_json(text: str) -> bool:
     if not text:
         return False
 
-    def _is_tool_obj(obj) -> bool:
-        if not isinstance(obj, dict):
-            return False
-        if _INTERNAL_TOOL_KEYS.issubset(obj.keys()):
-            return True
-        if obj.get("type") == "function" and "function" in obj:
-            return True
-        if _is_search_tool_args_obj(obj):
-            return True
-        return False
-
-    stripped = text.strip()
+    stripped = _normalize_tool_json_text(text)
     # Whole-string JSON.
     if stripped.startswith(("{", "[")):
         try:
@@ -1818,28 +1852,30 @@ def _looks_like_internal_tool_json(text: str) -> bool:
             )
         else:
             if isinstance(obj, dict):
-                if _is_tool_obj(obj):
+                if _is_tool_call_obj(obj):
                     return True
             if isinstance(obj, list):
-                if all(_is_tool_obj(item) for item in obj):
+                if obj and all(_is_tool_call_obj(item) for item in obj):
                     return True
 
     # Embedded JSON objects/lists (common when the model leaks a tool call
     # inside prose / after a formatting preamble).  Handles nested braces.
+    scan = stripped or text
+
     def _candidates(open_ch: str, close_ch: str):
         i = 0
-        while i < len(text):
-            if text[i] == open_ch:
+        while i < len(scan):
+            if scan[i] == open_ch:
                 depth = 1
                 j = i + 1
-                while j < len(text) and depth > 0:
-                    if text[j] == open_ch:
+                while j < len(scan) and depth > 0:
+                    if scan[j] == open_ch:
                         depth += 1
-                    elif text[j] == close_ch:
+                    elif scan[j] == close_ch:
                         depth -= 1
                     j += 1
                 if depth == 0:
-                    yield text[i:j]
+                    yield scan[i:j]
                     i = j
                     continue
             i += 1
@@ -1849,16 +1885,81 @@ def _looks_like_internal_tool_json(text: str) -> bool:
             obj = json.loads(candidate)
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, dict) and _is_tool_obj(obj):
+        if isinstance(obj, dict) and _is_tool_call_obj(obj):
             return True
     for candidate in _candidates("[", "]"):
         try:
             obj = json.loads(candidate)
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, list) and all(_is_tool_obj(item) for item in obj):
+        if isinstance(obj, list) and obj and all(_is_tool_call_obj(item) for item in obj):
             return True
     return False
+
+
+def _coerce_tool_arguments(raw: Any) -> dict[str, Any] | None:
+    """Normalize tool ``arguments`` / ``parameters`` to a dict when possible."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _tool_calls_from_json_obj(obj: Any) -> list[dict]:
+    """Build OpenAI-style tool_calls from a parsed JSON object or list."""
+    items = obj if isinstance(obj, list) else [obj]
+    out: list[dict] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        # OpenAI nested: {"type":"function","function":{"name":...,"arguments":...}}
+        nested = item.get("function")
+        if item.get("type") == "function" and isinstance(nested, dict):
+            name = nested.get("name")
+            args = _coerce_tool_arguments(
+                nested.get("arguments", nested.get("parameters"))
+            )
+            if name and args is not None:
+                out.append({
+                    "id": f"recovered_{i+1}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(args)},
+                })
+                continue
+        name = item.get("name") or item.get("tool")
+        if isinstance(item.get("function"), str) and not name:
+            name = item.get("function")
+        args = _coerce_tool_arguments(
+            item.get("arguments", item.get("parameters"))
+        )
+        if name and args is not None:
+            out.append({
+                "id": f"recovered_{i+1}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            })
+            continue
+        # Raw search_project_documents args without an envelope.
+        if _is_search_tool_args_obj(item) and "query" in item:
+            out.append({
+                "id": f"recovered_search_{i+1}",
+                "type": "function",
+                "function": {
+                    "name": "search_project_documents",
+                    "arguments": json.dumps({
+                        k: item[k]
+                        for k in ("query", "top_k", "project_id", "corpus", "filters")
+                        if k in item
+                    }),
+                },
+            })
+    return out
 
 
 _XML_INVOKE_RE = re.compile(
@@ -2033,17 +2134,12 @@ def _sanitize_final_text(
         cleaned = _strip_dsml(text).strip()
 
     if cleaned:
-        # Markdown code block that contains only a tool/search argument payload.
-        md_code = re.match(
-            r"^```(?:json)?\s*([\s\S]*?)\s*```$",
-            cleaned,
-            re.IGNORECASE,
-        )
-        if md_code:
-            inner = md_code.group(1).strip()
-            if _looks_like_internal_tool_json(inner):
-                _LOG.warning("raw tool args inside markdown code block; replacing with fallback")
-                cleaned = _TOOL_FORMAT_FALLBACK
+        # Unwrap a sole markdown fence / BOM before the tool-JSON detector so
+        # ```json {"name":"search_project_documents",...} ``` cannot bypass.
+        normalized = _normalize_tool_json_text(cleaned)
+        if normalized != cleaned and _looks_like_internal_tool_json(normalized):
+            _LOG.warning("raw tool args inside markdown code block; replacing with fallback")
+            cleaned = _TOOL_FORMAT_FALLBACK
 
         if cleaned != _TOOL_FORMAT_FALLBACK and _looks_like_xml_tool_leak(cleaned):
             _LOG.warning("xml tool-call leak in final answer; replacing with fallback")
@@ -2105,42 +2201,38 @@ def _recover_tool_calls_from_content(text: str) -> list[dict]:
     xml_calls = _recover_xml_tool_calls(text)
     if xml_calls:
         return xml_calls
-    stripped = text.strip()
-    if not stripped.startswith(("{", "[")):
-        return []
-    try:
-        obj = json.loads(stripped)
-    except json.JSONDecodeError:
-        return []
-    items = obj if isinstance(obj, list) else [obj]
-    out: list[dict] = []
-    for i, item in enumerate(items):
-        if not isinstance(item, dict):
-            continue
-        name = item.get("name") or item.get("tool") or item.get("function")
-        args = item.get("arguments")
-        if name and isinstance(args, dict):
-            out.append({
-                "id": f"recovered_{i+1}",
-                "type": "function",
-                "function": {"name": name, "arguments": json.dumps(args)},
-            })
-            continue
-        # Raw search_project_documents args without an envelope.
-        if _is_search_tool_args_obj(item) and "query" in item:
-            out.append({
-                "id": f"recovered_search_{i+1}",
-                "type": "function",
-                "function": {
-                    "name": "search_project_documents",
-                    "arguments": json.dumps({
-                        k: item[k]
-                        for k in ("query", "top_k", "project_id", "corpus", "filters")
-                        if k in item
-                    }),
-                },
-            })
-    return out
+    stripped = _normalize_tool_json_text(text)
+    if stripped.startswith(("{", "[")):
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            obj = None
+        if obj is not None:
+            recovered = _tool_calls_from_json_obj(obj)
+            if recovered:
+                return recovered
+    # Embedded whole-object leak after a short prose preamble ("Let me search.").
+    if _looks_like_internal_tool_json(stripped):
+        for m in re.finditer(r"\{", stripped):
+            try:
+                obj, _end = json.JSONDecoder().raw_decode(stripped[m.start():])
+            except json.JSONDecodeError:
+                continue
+            recovered = _tool_calls_from_json_obj(obj)
+            if recovered:
+                return recovered
+    return []
+
+
+def _recovered_calls_are_search_only(tool_calls: list[dict]) -> bool:
+    """True when every recovered call is ``search_project_documents``."""
+    if not tool_calls:
+        return False
+    for tc in tool_calls:
+        name = ((tc.get("function") or {}).get("name") or "")
+        if name != "search_project_documents":
+            return False
+    return True
 
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
@@ -2437,13 +2529,25 @@ def _scrub_history(turns: list[dict[str, str]]) -> list[dict[str, str]]:
     placeholder so the model can't pattern-match to a prior (often
     hallucinated) table when it should be calling the tool.
 
+    Also strips assistant turns that are raw tool-call JSON (UI-PHYS A5) so a
+    previously leaked envelope cannot re-seed the model or the UI history.
+
     Heuristic only: markdown tables with WBS/BOQ-like headers and >=5 rows.
     Legitimate operator-pasted tables in user turns are NOT touched.
     Returns a new list; the caller's history is left intact.
     """
     out: list[dict[str, str]] = []
     for t in turns:
-        if t.get("role") == "assistant" and _HALLUC_TABLE_RE.search(t.get("content") or ""):
+        content = t.get("content") or ""
+        if t.get("role") == "assistant" and _looks_like_internal_tool_json(content):
+            out.append({
+                **t,
+                "content": (
+                    "[Previous turn emitted internal tool JSON; ignored. "
+                    "Answer in plain text from project documents.]"
+                ),
+            })
+        elif t.get("role") == "assistant" and _HALLUC_TABLE_RE.search(content):
             out.append({**t, "content": "[Previous schedule/BOQ output omitted — call the tool to re-derive.]"})
         else:
             out.append(t)
@@ -5949,6 +6053,17 @@ class Agent:
                 if force_synthesis and (dsml_tool_calls or recovered_tool_calls):
                     dsml_tool_calls = []
                     recovered_tool_calls = []
+                # UI-PHYS A5: once search is capped, do not re-execute the same
+                # leaked search envelope for 12 iterations — synthesize instead.
+                if (
+                    recovered_tool_calls
+                    and _recovered_calls_are_search_only(recovered_tool_calls)
+                    and (
+                        "search_project_documents" in excluded_tools
+                        or search_calls >= SEARCH_TOOL_CAP
+                    )
+                ):
+                    recovered_tool_calls = []
                 if dsml_tool_calls:
                     # Treat this turn as a tool-calling turn.
                     tool_calls = dsml_tool_calls
@@ -6660,7 +6775,7 @@ class Agent:
             if force_synthesis and _synth_stream_enabled:
                 streamed_any = False
                 fell_back = False
-                xml_leak = False
+                tool_leak = False
                 acc: list[str] = []
                 pending = ""
                 try:
@@ -6671,10 +6786,14 @@ class Agent:
                         acc.append(_delta)
                         pending += _delta
                         raw_so_far = "".join(acc)
-                        # Leftover L4 class: Groq SYNTHESIS_STREAMING must not
-                        # flush <function_calls> XML to the client.
-                        if _looks_like_xml_tool_leak(raw_so_far):
-                            xml_leak = True
+                        # Leftover L4 / UI-PHYS A5: SYNTHESIS_STREAMING must not
+                        # flush XML tool markup or raw tool-call JSON to the client
+                        # before sanitization (frontend keeps accumulated tokens).
+                        if (
+                            _looks_like_xml_tool_leak(raw_so_far)
+                            or _looks_like_internal_tool_json(raw_so_far)
+                        ):
+                            tool_leak = True
                             pending = ""
                             continue
                         if len(raw_so_far) < 60 and "\n" not in raw_so_far:
@@ -6683,7 +6802,7 @@ class Agent:
                         if nl >= 0:
                             seg, pending = pending[: nl + 1], pending[nl + 1:]
                             seg = _sanitize_inline_paths(_sanitize_citation_labels(seg))
-                            if seg:
+                            if seg and not _looks_like_internal_tool_json(seg):
                                 yield {"type": "token", "content": seg}
                 except _SynthStreamError as _se:
                     if streamed_any:
@@ -6693,13 +6812,16 @@ class Agent:
                         fell_back = True
                 if not fell_back:
                     raw = "".join(acc)
-                    if _looks_like_xml_tool_leak(raw):
-                        xml_leak = True
-                    # Do not flush a held XML tail — leftover L4 Groq streaming
-                    # used to emit <function_calls> here before sanitize/graft.
-                    if pending and not xml_leak:
+                    if (
+                        _looks_like_xml_tool_leak(raw)
+                        or _looks_like_internal_tool_json(raw)
+                    ):
+                        tool_leak = True
+                    # Do not flush a held tool-leak tail — leftover L4 / A5
+                    # streaming used to emit tool JSON/XML here before sanitize.
+                    if pending and not tool_leak:
                         seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
-                        if seg:
+                        if seg and not _looks_like_internal_tool_json(seg):
                             yield {"type": "token", "content": seg}
                     # Fully-sanitised accumulated text: what we persist + feed
                     # sources/exports (must match the non-streaming path, not a
@@ -6714,7 +6836,7 @@ class Agent:
                     # commissioning/WIR/IPC tool (or predispatch draft) would
                     # fill the blank and skip the forced non-streaming retry
                     # that test_empty_stream_triggers_forced_retry pins.
-                    if xml_leak and final_text.strip():
+                    if tool_leak and final_text.strip():
                         final_text = _postprocess_answer(
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
@@ -6758,6 +6880,7 @@ class Agent:
                         agent_memory.append_message(conversation_id, "assistant", final_text)
                     yield {
                         "type": "end",
+                        "content": final_text,
                         "iterations": iteration + 1,
                         "model": served_model,
                         "tools": list(tools_invoked),
@@ -6801,6 +6924,7 @@ class Agent:
                         )
                     yield {
                         "type": "end",
+                        "content": final_text,
                         "iterations": iteration + 1,
                         "model": served_model,
                         "tools": list(tools_invoked),
@@ -6834,6 +6958,17 @@ class Agent:
                 # answer to sanitize/graft, not another tool round.
                 if force_synthesis and (dsml_tool_calls or recovered_tool_calls):
                     dsml_tool_calls = []
+                    recovered_tool_calls = []
+                # UI-PHYS A5: once search is capped, do not re-execute the same
+                # leaked search envelope — fall through to sanitize + synthesis.
+                if (
+                    recovered_tool_calls
+                    and _recovered_calls_are_search_only(recovered_tool_calls)
+                    and (
+                        "search_project_documents" in excluded_tools
+                        or search_calls >= SEARCH_TOOL_CAP
+                    )
+                ):
                     recovered_tool_calls = []
                 if dsml_tool_calls:
                     # Treat as a tool-calling turn — do NOT stream the markup.
@@ -6914,6 +7049,7 @@ class Agent:
                             off_response = f"[rag_debug off-run failed: {_e}]"
                         yield {
                             "type": "end",
+                            "content": final_text,
                             "iterations": iteration + 1,
                             "tools": list(tools_invoked),
                             "rag_debug": {
@@ -6925,6 +7061,7 @@ class Agent:
                         return
                     yield {
                         "type": "end",
+                        "content": final_text,
                         "iterations": iteration + 1,
                         "model": served_model,
                         "tools": list(tools_invoked),
@@ -7036,6 +7173,7 @@ class Agent:
         _LOG.info("chat_stream: end (forced_final) chars=%d", len(final_text))
         yield {
             "type": "end",
+            "content": final_text,
             "iterations": MAX_TOOL_ITERATIONS,
             "forced_final": True,
             "model": served_model,
