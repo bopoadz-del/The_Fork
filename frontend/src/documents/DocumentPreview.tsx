@@ -228,7 +228,18 @@ function PdfPreview({ projectId, docId, name }: PdfPreviewProps) {
           `${API_BASE}/v1/projects/${projectId}/documents/${docId}/preview/raw`,
           { headers: token ? { Authorization: `Bearer ${token}` } : {} },
         )
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        if (!res.ok) {
+          let detail = `Could not load the PDF (HTTP ${res.status}).`
+          try {
+            const body = (await res.json()) as { detail?: string }
+            if (typeof body.detail === 'string' && body.detail.trim()) {
+              detail = body.detail
+            }
+          } catch {
+            // keep the HTTP status fallback
+          }
+          throw new Error(detail)
+        }
         const blob = await res.blob()
         if (cancelled) return
         objectUrl = URL.createObjectURL(blob)
