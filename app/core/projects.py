@@ -865,6 +865,122 @@ def create_ingestion_job(project_id: str, document_id: str):
         db.close()
 
 
+def set_document_size_if_zero(doc_id: str, size: int) -> None:
+    """Record ``size`` only when the row still claims 0 bytes.
+
+    Master Corpus / P1B rows often land as ``size=0`` after the local file is
+    deleted (or never existed). Once preview hydrates real bytes we know the
+    length — write it so the UI stops rendering "0 B" / "no file".
+    """
+    if int(size or 0) <= 0 or not doc_id:
+        return
+    _ensure_db()
+    with _lock:
+        with SessionLocal() as session:
+            document = session.get(Document, doc_id)
+            if document is None or int(document.size or 0) > 0:
+                return
+            document.size = int(size)
+            session.commit()
+
+
+def _preview_cache_path(doc: Dict[str, Any]) -> str:
+    data_dir = os.getenv("DATA_DIR", "./data")
+    cache_dir = os.path.join(data_dir, "preview_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    ext = os.path.splitext((doc.get("original_name") or "").lower())[1][:20]
+    raw_id = "".join(
+        c for c in str(doc.get("id") or "unknown") if c.isalnum() or c in "-_"
+    )[:32] or "unknown"
+    return os.path.join(cache_dir, f"{raw_id}{ext}")
+
+
+def _local_plaintext_size(path: str) -> int:
+    if not path or not os.path.exists(path):
+        return 0
+    try:
+        from app.core import file_crypto
+
+        return int(file_crypto.plaintext_size(path) or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _fetch_remote_document_bytes(doc: Dict[str, Any]) -> Tuple[Optional[bytes], Optional[str]]:
+    """R2 first (P1B source of truth), then Drive if a file id is recorded."""
+    from app.core import r2_storage
+
+    meta = doc.get("metadata") or {}
+    key = (
+        doc.get("r2_object_key")
+        or meta.get("r2_object_key")
+        or ""
+    )
+    if isinstance(key, str) and key.strip():
+        blob = r2_storage.fetch_object_bytes(key.strip())
+        if blob:
+            return blob, "r2"
+    drive_id = meta.get("drive_file_id") or ""
+    if isinstance(drive_id, str) and drive_id.strip():
+        try:
+            from app.core import gdrive_service
+
+            blob, err = gdrive_service.download_file_bytes(drive_id.strip())
+            if blob:
+                return blob, "drive"
+            if err:
+                logger.info(
+                    "Drive fallback failed for doc %s: %s", doc.get("id"), err,
+                )
+        except Exception:
+            logger.debug(
+                "Drive fallback skipped for doc %s", doc.get("id"), exc_info=True,
+            )
+    return None, None
+
+
+def materialize_document_file(doc: Dict[str, Any]) -> Tuple[Optional[str], str]:
+    """Resolve bytes for a document row onto a readable local path.
+
+    Master Corpus / P1B ingest archives to R2 and deletes the local file, so
+    ``file_path`` is often a stale path and ``size`` is 0 even though the
+    object exists. Order:
+
+    1. Existing local ``file_path`` with plaintext length > 0
+    2. On-demand preview cache from a prior hydrate
+    3. R2 ``r2_object_key`` (row or metadata)
+    4. Drive ``drive_file_id`` (R2 miss / archive failed but local was deleted)
+
+    Returns ``(path, "ok")`` or ``(None, "empty"|"missing")``. Never raises
+    on a 0-byte or absent blob — the caller maps that to a clear 404.
+    """
+    from app.core import file_crypto
+
+    fp = doc.get("file_path") or ""
+    if _local_plaintext_size(fp) > 0:
+        return fp, "ok"
+
+    cache = _preview_cache_path(doc)
+    if _local_plaintext_size(cache) > 0:
+        return cache, "ok"
+
+    raw, source = _fetch_remote_document_bytes(doc)
+    if raw is None:
+        return None, "empty" if _local_plaintext_size(fp) == 0 and fp and os.path.exists(fp) else "missing"
+    if len(raw) == 0:
+        return None, "empty"
+
+    os.makedirs(os.path.dirname(cache), exist_ok=True)
+    file_crypto.write_document(cache, raw)
+    logger.info(
+        "hydrated document %s from %s (%s bytes) for preview",
+        doc.get("id"), source, len(raw),
+    )
+    if int(doc.get("size") or 0) <= 0:
+        set_document_size_if_zero(str(doc.get("id") or ""), len(raw))
+    return cache, "ok"
+
+
 def update_document_metadata(doc_id: str, metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Merge ``metadata`` into the document's existing metadata_ column.
 

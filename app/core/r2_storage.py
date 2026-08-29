@@ -125,6 +125,30 @@ def archive_document(
         }
 
 
+def fetch_object_bytes(object_key: str) -> Optional[bytes]:
+    """Download one archived object. ``None`` if R2 is off or the key is missing.
+
+    P1B Drive ingest archives the raw bytes here and then deletes the local
+    copy (``delete_local_archive``). Preview / download must follow this key
+    — a document row with chunks but no disk file is the normal corpus shape,
+    not a missing document.
+    """
+    key = (object_key or "").strip()
+    if not key:
+        return None
+    bucket = _bucket_name()
+    s3 = _client()
+    if not s3 or not bucket:
+        return None
+    try:
+        resp = s3.get_object(Bucket=bucket, Key=key)
+        body = resp["Body"].read()
+        return body if body is not None else b""
+    except Exception:
+        logger.warning("R2 get_object failed for %s", key, exc_info=True)
+        return None
+
+
 def delete_local_archive(path: str) -> None:
     """Remove the local temp copy after successful R2 upload + indexing."""
     try:

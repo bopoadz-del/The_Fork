@@ -451,6 +451,11 @@ def _resolve_preview_document(
     A document cited from Master Corpus / GK is previewable from the
     workspace that cited it. A private project the caller does not have
     open stays 404.
+
+    File bytes: P1B / Master Corpus rows often have a stale ``file_path``
+    (local copy deleted after R2 archive) and ``size=0``. After the
+    ownership check, hydrate from R2 / Drive rather than 404-ing on disk.
+    A truly missing or 0-byte blob stays a clear 404 — never a 500.
     """
     _owned_or_404(
         project_id, user_id, read_only=True, role=role, doc_limit=0,
@@ -462,8 +467,13 @@ def _resolve_preview_document(
         raise HTTPException(
             404, f"Document '{document_id}' not found in project '{project_id}'"
         )
-    fp = doc.get("file_path")
-    if not fp or not os.path.exists(fp):
+    fp, blob_state = store.materialize_document_file(doc)
+    if not fp:
+        if blob_state == "empty":
+            raise HTTPException(
+                404,
+                "Document file is empty (0 bytes) and cannot be previewed",
+            )
         raise HTTPException(404, "Document file is not available for preview")
     _, ext = os.path.splitext((doc.get("original_name") or "").lower())
     return doc, ext, fp
