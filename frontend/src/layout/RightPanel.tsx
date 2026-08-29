@@ -18,7 +18,7 @@
  * stripped per operator brief — post-pilot complexity, not needed for
  * the the client pilot. Tabs + expand stay.
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { ArrowUpRight, X } from 'lucide-react'
 import DocumentPreview from '../documents/DocumentPreview'
 import './RightPanel.css'
@@ -75,7 +75,8 @@ export default function RightPanel({
   previewRequest = null, expanded = false, onToggleExpand,
 }: Props) {
   const [tab, setTab] = useState<TabKey>('sources')
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
+  const [pickedDocId, setPickedDocId] = useState<string | null>(null)
+  const [appliedNonce, setAppliedNonce] = useState<number | null>(null)
 
   // Cited files first so opening a chat source previews THAT document,
   // not the newest upload sitting in the project list.
@@ -90,18 +91,20 @@ export default function RightPanel({
     return out
   }, [citedDocuments, documents])
 
-  useEffect(() => {
-    if (!previewRequest?.docId) return
-    setSelectedDocId(previewRequest.docId)
-    setTab('sheet')
-  }, [previewRequest])
+  // A new Sources click is derived (no effect): show Sheet + that doc
+  // until the operator picks another tab or file.
+  const citePending = Boolean(
+    previewRequest?.docId && previewRequest.nonce !== appliedNonce,
+  )
+  const activeTab = citePending ? 'sheet' : tab
+  const preferredId = citePending && previewRequest ? previewRequest.docId : pickedDocId
 
   // Derive a valid picker id during render. Storing a stale id after
   // delete/upload is fine — the resolved value follows the list without
   // a synchronizing effect.
   const resolvedDocId =
-    selectedDocId && previewable.some((d) => d.id === selectedDocId)
-      ? selectedDocId
+    preferredId && previewable.some((d) => d.id === preferredId)
+      ? preferredId
       : (previewable[0]?.id ?? null)
 
   const selectedDoc = useMemo(
@@ -121,7 +124,10 @@ export default function RightPanel({
               <select
                 className="right-panel__picker-select"
                 value={resolvedDocId ?? ''}
-                onChange={(e) => setSelectedDocId(e.target.value)}
+                onChange={(e) => {
+                  if (previewRequest) setAppliedNonce(previewRequest.nonce)
+                  setPickedDocId(e.target.value)
+                }}
                 aria-label="Select a document to preview"
               >
                 {previewable.map((d) => (
@@ -141,7 +147,7 @@ export default function RightPanel({
   }
 
   function renderBody() {
-    switch (tab) {
+    switch (activeTab) {
       case 'sources':  return <div className="right-panel__section">{sources}</div>
       case 'graph':    return <div className="right-panel__section">{graph}</div>
       case 'sheet':    return renderPreviewTab('sheet')
@@ -159,12 +165,15 @@ export default function RightPanel({
               key={t.key}
               type="button"
               role="tab"
-              aria-selected={tab === t.key}
+              aria-selected={activeTab === t.key}
               className={
                 'right-panel__tab' +
-                (tab === t.key ? ' right-panel__tab--active' : '')
+                (activeTab === t.key ? ' right-panel__tab--active' : '')
               }
-              onClick={() => setTab(t.key)}
+              onClick={() => {
+                if (previewRequest) setAppliedNonce(previewRequest.nonce)
+                setTab(t.key)
+              }}
             >
               {t.label}
             </button>
