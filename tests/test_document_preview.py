@@ -7,6 +7,7 @@ malformed spreadsheet returns 422 (never 500).
 """
 
 import io
+import json
 import os
 
 import openpyxl
@@ -210,6 +211,8 @@ def test_preview_r2_backed_corpus_doc_missing_local_file(
     refreshed = store.get_document(doc["id"])
     assert refreshed is not None
     assert refreshed["size"] == len(pdf)
+    assert r.json()["has_file"] is True
+    assert r.json()["size"] == len(pdf)
 
 
 def test_preview_foreign_private_doc_does_not_fetch_r2(
@@ -318,3 +321,242 @@ def test_preview_drive_fallback_when_r2_missing(
     assert r.status_code == 200, r.text
     assert r.json()["kind"] == "text"
     assert "Drive original" in r.json()["text"]
+
+
+def _p1b_meta(**extra):
+    """Exact keys ``scripts/p1b_ingest_drive_server.py`` writes to metadata."""
+    meta = {
+        "drive_file_id": "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI",
+        "drive_path": (
+            "Master Folder/the client project/Contract Docs/Contractor/"
+            "Contract docs SIGNED/DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf"
+        ),
+        "source": "p1b_server_drive_reingestion",
+        "ingestion_run_id": "run-test",
+        "mimeType": "application/pdf",
+        "content_sha256": "abc123",
+        "r2_object_key": "projects/corpus/drive/11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI/deadbeef.pdf",
+        "r2_bucket": "theshovel-raw-docs",
+        "r2_endpoint": "https://example.r2.cloudflarestorage.com",
+        "r2_account_id": "acct",
+    }
+    meta.update(extra)
+    return meta
+
+
+def test_extract_p1b_keys_including_string_and_aliases():
+    """#445 assumed a dict with r2_object_key. Live audit already parses
+    string JSON and driveFileId — preview must do the same."""
+    from app.core.projects import extract_document_source_pointers
+
+    p1b = extract_document_source_pointers({"metadata": _p1b_meta()})
+    assert p1b["r2_object_key"].endswith("deadbeef.pdf")
+    assert p1b["drive_file_id"] == "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
+    assert p1b["r2_bucket"] == "theshovel-raw-docs"
+
+    as_string = extract_document_source_pointers(
+        {"metadata": json.dumps(_p1b_meta())},
+    )
+    assert as_string["r2_object_key"] == p1b["r2_object_key"]
+    assert as_string["drive_file_id"] == p1b["drive_file_id"]
+
+    camel = extract_document_source_pointers(
+        {"metadata": {"driveFileId": "drive-camel", "r2ObjectKey": "proj/k.pdf"}},
+    )
+    assert camel["drive_file_id"] == "drive-camel"
+    assert camel["r2_object_key"] == "proj/k.pdf"
+
+    nested = extract_document_source_pointers(
+        {"metadata": {"r2_archive": {"r2_object_key": "nested/key.pdf"}}},
+    )
+    assert nested["r2_object_key"] == "nested/key.pdf"
+
+
+def test_preview_p1b_string_metadata_r2_hydrate(
+    client, monkeypatch, tmp_path,
+):
+    """JSONB-as-string metadata (the audit script already special-cases this)
+    must still find r2_object_key and return 200."""
+    from app.core import projects as store
+    from app.core.db import SessionLocal
+    from app.core.models import Document
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    workspace = _new_project(client, "Preview Workspace")
+    corpus = _new_project(client, "Citeable Corpus")
+    pdf = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
+    doc = store.add_document(
+        project_id=corpus["id"],
+        original_name="DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf",
+        file_path=str(tmp_path / "gone-after-r2-archive.pdf"),
+        size=0,
+        metadata=_p1b_meta(),
+    )
+    with SessionLocal() as session:
+        row = session.get(Document, doc["id"])
+        assert row is not None
+        row.metadata_ = json.dumps(_p1b_meta())
+        session.commit()
+
+    monkeypatch.setattr(
+        "app.routers.projects._preview_citeable_owner_ids",
+        lambda pid: {pid, corpus["id"]},
+    )
+    monkeypatch.setattr(
+        "app.core.r2_storage.fetch_object_bytes",
+        lambda key, bucket=None: pdf if key.endswith("deadbeef.pdf") else None,
+    )
+
+    r = client.get(
+        f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
+        headers=H,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["kind"] == "pdf"
+    assert body["has_file"] is True
+    assert body["size"] == len(pdf)
+
+    listing = client.get(
+        f"/v1/projects/{corpus['id']}/documents", headers=H,
+    )
+    assert listing.status_code == 200, listing.text
+    listed = next(d for d in listing.json()["documents"] if d["id"] == doc["id"])
+    assert listed["has_file"] is True
+    assert listed["has_remote_source"] is True
+    assert listed["size"] == len(pdf)
+
+
+def test_preview_reconstructed_p1b_r2_key_when_metadata_omits_it(
+    client, monkeypatch, tmp_path,
+):
+    """rag_render bulk ingest stores drive_file_id + size=0 and no
+    r2_object_key. Reconstruct the deterministic P1B key before Drive."""
+    from app.core import projects as store
+    from app.core import r2_storage
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    workspace = _new_project(client, "Preview Workspace")
+    corpus = _new_project(client, "Citeable Corpus")
+    drive_id = "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
+    name = "DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf"
+    expected = r2_storage.object_key_for(corpus["id"], drive_id, name)
+    pdf = b"%PDF-1.4 reconstructed\n"
+    doc = store.add_document(
+        project_id=corpus["id"],
+        original_name=name,
+        file_path=str(tmp_path / "stale-windows-path.pdf"),
+        size=0,
+        metadata={
+            "drive_file_id": drive_id,
+            "source_path": "G:\\\\My Drive\\\\Master Folder\\\\" + name,
+            "source": "rag_backfill_client_clean_all",
+        },
+    )
+    monkeypatch.setattr(
+        "app.routers.projects._preview_citeable_owner_ids",
+        lambda pid: {pid, corpus["id"]},
+    )
+    seen: list[str] = []
+
+    def _fake_fetch(key: str, bucket=None):
+        seen.append(key)
+        return pdf if key == expected else None
+
+    monkeypatch.setattr("app.core.r2_storage.fetch_object_bytes", _fake_fetch)
+
+    r = client.get(
+        f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
+        headers=H,
+    )
+    assert r.status_code == 200, r.text
+    assert expected in seen
+    assert r.json()["kind"] == "pdf"
+
+
+def test_preview_r2_not_configured_clear_404(
+    client, monkeypatch, tmp_path,
+):
+    """R2 env missing must not look like a missing document."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    proj = _new_project(client)
+    doc = store.add_document(
+        project_id=proj["id"],
+        original_name="DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf",
+        file_path=str(tmp_path / "deleted-local.pdf"),
+        size=0,
+        metadata=_p1b_meta(),
+    )
+    monkeypatch.setattr("app.core.r2_storage.fetch_object_bytes", lambda key, bucket=None: None)
+    monkeypatch.setattr(
+        "app.core.r2_storage.fetch_failure_reason",
+        lambda key, bucket=None: "R2 is not configured on this service",
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (None, "service account unavailable"),
+    )
+    r = client.get(
+        f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
+    )
+    assert r.status_code == 404
+    assert r.status_code != 500
+    detail = r.json()["detail"].lower()
+    assert "not available" in detail
+    assert "r2 is not configured" in detail
+    assert "service account unavailable" in detail
+
+
+def test_preview_r2_fetch_failed_clear_404(
+    client, monkeypatch, tmp_path,
+):
+    """Key present, GET failed — say so, do not hide behind generic missing."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    proj = _new_project(client)
+    doc = store.add_document(
+        project_id=proj["id"],
+        original_name="cited.pdf",
+        file_path=str(tmp_path / "gone.pdf"),
+        size=0,
+        metadata=_p1b_meta(),
+    )
+    monkeypatch.setattr("app.core.r2_storage.fetch_object_bytes", lambda key, bucket=None: None)
+    monkeypatch.setattr(
+        "app.core.r2_storage.fetch_failure_reason",
+        lambda key, bucket=None: "R2 object missing or fetch failed",
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (None, "Drive download returned 404"),
+    )
+    r = client.get(
+        f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
+    )
+    assert r.status_code == 404
+    detail = r.json()["detail"]
+    assert "not available" in detail.lower()
+    assert "R2 object missing" in detail or "fetch failed" in detail.lower()
+
+
+def test_list_documents_has_file_for_remote_pointer(client, tmp_path):
+    """Nav must not treat size=0 + R2/Drive pointer as 'no file' forever."""
+    from app.core import projects as store
+
+    proj = _new_project(client)
+    doc = store.add_document(
+        project_id=proj["id"],
+        original_name="DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf",
+        file_path=str(tmp_path / "stale.pdf"),
+        size=0,
+        metadata=_p1b_meta(),
+    )
+    r = client.get(f"/v1/projects/{proj['id']}/documents", headers=H)
+    assert r.status_code == 200, r.text
+    listed = next(d for d in r.json()["documents"] if d["id"] == doc["id"])
+    assert listed["size"] == 0
+    assert listed["has_remote_source"] is True
+    assert listed["has_file"] is True

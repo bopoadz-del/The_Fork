@@ -12,6 +12,7 @@ SQLAlchemy-backed via app.core.db — unified The Fork schema.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import threading
 import uuid
@@ -94,6 +95,90 @@ def _project_as_dict(project: Project) -> Dict[str, Any]:
     }
 
 
+# Pointer aliases actually written by P1B / rag_render / Drive OAuth / audit.
+# #445 only read ``r2_object_key`` + ``drive_file_id`` on a dict. Live rows
+# also use camelCase, a JSON *string* in the JSONB column, and rag_render
+# keys (drive_file_id without an R2 key).
+_R2_KEY_ALIASES = (
+    "r2_object_key", "r2_key", "object_key", "r2ObjectKey", "r2Key",
+)
+_DRIVE_ID_ALIASES = (
+    "drive_file_id", "driveFileId", "drive_id", "driveId",
+)
+_R2_NEST_KEYS = ("r2_archive", "archive", "r2")
+
+
+def coerce_document_metadata(meta: Any) -> Dict[str, Any]:
+    """Return metadata as a dict. Live JSONB sometimes stores a JSON string."""
+    if meta is None:
+        return {}
+    if isinstance(meta, dict):
+        return meta
+    if isinstance(meta, str):
+        try:
+            parsed = json.loads(meta)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+        # Double-encoded JSONB string (audit rows, CAST-as-text inserts).
+        if isinstance(parsed, str):
+            try:
+                parsed = json.loads(parsed)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+    return {}
+
+
+def _first_nonempty_str(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def extract_document_source_pointers(doc: Dict[str, Any]) -> Dict[str, str]:
+    """Resolve R2 / Drive pointers from a document row.
+
+    Reads the same keys P1B Drive ingest writes
+    (``scripts/p1b_ingest_drive_server.py`` ``common_meta``):
+    ``drive_file_id``, ``r2_object_key``, ``r2_bucket``, ``r2_endpoint``.
+    Also accepts rag_render / audit aliases so a RAG-citable row without
+    the exact #445 names still hydrates.
+    """
+    meta = coerce_document_metadata(doc.get("metadata"))
+    nested: Dict[str, Any] = {}
+    for nest_key in _R2_NEST_KEYS:
+        raw = meta.get(nest_key)
+        if isinstance(raw, dict):
+            nested.update(raw)
+
+    r2_key = _first_nonempty_str(
+        doc.get("r2_object_key"),
+        *[meta.get(alias) for alias in _R2_KEY_ALIASES],
+        *[nested.get(alias) for alias in _R2_KEY_ALIASES],
+    )
+    drive_id = _first_nonempty_str(
+        doc.get("drive_file_id"),
+        *[meta.get(alias) for alias in _DRIVE_ID_ALIASES],
+        *[nested.get(alias) for alias in _DRIVE_ID_ALIASES],
+    )
+    r2_bucket = _first_nonempty_str(
+        doc.get("r2_bucket"), meta.get("r2_bucket"), nested.get("r2_bucket"),
+    )
+    return {
+        "r2_object_key": r2_key,
+        "drive_file_id": drive_id,
+        "r2_bucket": r2_bucket,
+    }
+
+
+def _path_looks_present(path: str) -> bool:
+    return bool(path) and os.path.isfile(path) and os.path.getsize(path) > 0
+
+
 def _document_as_dict(document: Document) -> Dict[str, Any]:
     out = {
         "id": document.id,
@@ -107,9 +192,15 @@ def _document_as_dict(document: Document) -> Dict[str, Any]:
         "uploaded_at": document.uploaded_at,
         "content_sha256": document.content_sha256,
     }
-    meta = getattr(document, "metadata_", None)
-    if meta is not None:
+    meta = coerce_document_metadata(getattr(document, "metadata_", None))
+    if getattr(document, "metadata_", None) is not None:
         out["metadata"] = meta
+    pointers = extract_document_source_pointers(out)
+    local = _path_looks_present(out.get("file_path") or "")
+    out["has_remote_source"] = bool(
+        pointers["r2_object_key"] or pointers["drive_file_id"]
+    )
+    out["has_file"] = local or out["has_remote_source"]
     return out
 
 
@@ -906,37 +997,82 @@ def _local_plaintext_size(path: str) -> int:
         return 0
 
 
-def _fetch_remote_document_bytes(doc: Dict[str, Any]) -> Tuple[Optional[bytes], Optional[str]]:
-    """R2 first (P1B source of truth), then Drive if a file id is recorded."""
+def _reconstruct_r2_key(doc: Dict[str, Any], drive_id: str) -> str:
+    """P1B key layout when the row recorded Drive id but not the object key."""
+    if not drive_id:
+        return ""
     from app.core import r2_storage
 
-    meta = doc.get("metadata") or {}
-    key = (
-        doc.get("r2_object_key")
-        or meta.get("r2_object_key")
-        or ""
-    )
-    if isinstance(key, str) and key.strip():
-        blob = r2_storage.fetch_object_bytes(key.strip())
+    project_id = str(doc.get("project_id") or "").strip()
+    name = str(doc.get("original_name") or "").strip()
+    if not project_id or not name:
+        return ""
+    return r2_storage.object_key_for(project_id, drive_id, name)
+
+
+def _fetch_remote_document_bytes(
+    doc: Dict[str, Any],
+) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
+    """R2 first (P1B source of truth), then Drive if a file id is recorded.
+
+    Returns ``(bytes, source, error)``. ``error`` is a logging-safe reason
+    when bytes are missing — never a secret.
+    """
+    from app.core import r2_storage
+
+    pointers = extract_document_source_pointers(doc)
+    key = pointers["r2_object_key"]
+    drive_id = pointers["drive_file_id"]
+    bucket = pointers["r2_bucket"] or None
+    r2_error: Optional[str] = None
+    drive_error: Optional[str] = None
+
+    keys_to_try: List[str] = []
+    if key:
+        keys_to_try.append(key)
+    reconstructed = _reconstruct_r2_key(doc, drive_id)
+    if reconstructed and reconstructed not in keys_to_try:
+        keys_to_try.append(reconstructed)
+
+    for candidate in keys_to_try:
+        try:
+            blob = r2_storage.fetch_object_bytes(candidate, bucket=bucket)
+        except TypeError:
+            # Tests / older mocks only accept the key.
+            blob = r2_storage.fetch_object_bytes(candidate)
         if blob:
-            return blob, "r2"
-    drive_id = meta.get("drive_file_id") or ""
-    if isinstance(drive_id, str) and drive_id.strip():
+            return blob, "r2", None
+        r2_error = r2_storage.fetch_failure_reason(candidate, bucket=bucket)
+        logger.info(
+            "R2 hydrate miss for doc %s key_tail=%s reason=%s",
+            doc.get("id"), candidate.rsplit("/", 1)[-1], r2_error,
+        )
+
+    if drive_id:
         try:
             from app.core import gdrive_service
 
-            blob, err = gdrive_service.download_file_bytes(drive_id.strip())
+            blob, err = gdrive_service.download_file_bytes(drive_id)
             if blob:
-                return blob, "drive"
-            if err:
-                logger.info(
-                    "Drive fallback failed for doc %s: %s", doc.get("id"), err,
-                )
-        except Exception:
-            logger.debug(
-                "Drive fallback skipped for doc %s", doc.get("id"), exc_info=True,
+                return blob, "drive", None
+            drive_error = err or "Drive download returned no bytes"
+            logger.info(
+                "Drive fallback failed for doc %s: %s", doc.get("id"), drive_error,
             )
-    return None, None
+        except Exception as exc:  # noqa: BLE001
+            drive_error = f"{type(exc).__name__}: {exc}"
+            logger.info(
+                "Drive fallback skipped for doc %s: %s", doc.get("id"), drive_error,
+            )
+
+    if not key and not drive_id and not reconstructed:
+        return None, None, "no R2 object key or Drive file id on this document"
+    parts = [p for p in (r2_error, drive_error) if p]
+    if parts:
+        return None, None, "; ".join(parts)
+    if drive_id:
+        return None, None, "Drive fallback failed"
+    return None, None, "R2 object missing or fetch failed"
 
 
 def materialize_document_file(doc: Dict[str, Any]) -> Tuple[Optional[str], str]:
@@ -948,11 +1084,11 @@ def materialize_document_file(doc: Dict[str, Any]) -> Tuple[Optional[str], str]:
 
     1. Existing local ``file_path`` with plaintext length > 0
     2. On-demand preview cache from a prior hydrate
-    3. R2 ``r2_object_key`` (row or metadata)
-    4. Drive ``drive_file_id`` (R2 miss / archive failed but local was deleted)
+    3. R2 key (row, metadata aliases, or reconstructed P1B layout)
+    4. Drive ``drive_file_id`` / ``driveFileId`` (R2 miss / archive failed)
 
-    Returns ``(path, "ok")`` or ``(None, "empty"|"missing")``. Never raises
-    on a 0-byte or absent blob — the caller maps that to a clear 404.
+    Returns ``(path, "ok")`` or ``(None, "empty"|reason)``. Reason is a
+    logging-safe phrase the router appends to the 404 — never a 500.
     """
     from app.core import file_crypto
 
@@ -964,9 +1100,11 @@ def materialize_document_file(doc: Dict[str, Any]) -> Tuple[Optional[str], str]:
     if _local_plaintext_size(cache) > 0:
         return cache, "ok"
 
-    raw, source = _fetch_remote_document_bytes(doc)
+    raw, source, fetch_error = _fetch_remote_document_bytes(doc)
     if raw is None:
-        return None, "empty" if _local_plaintext_size(fp) == 0 and fp and os.path.exists(fp) else "missing"
+        if _local_plaintext_size(fp) == 0 and fp and os.path.exists(fp):
+            return None, "empty"
+        return None, fetch_error or "missing"
     if len(raw) == 0:
         return None, "empty"
 
@@ -992,7 +1130,7 @@ def update_document_metadata(doc_id: str, metadata: Dict[str, Any]) -> Optional[
             document = session.get(Document, doc_id)
             if document is None:
                 return None
-            current = document.metadata_ or {}
+            current = coerce_document_metadata(document.metadata_)
             current.update(metadata)
             document.metadata_ = current
             session.commit()

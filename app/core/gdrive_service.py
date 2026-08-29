@@ -323,7 +323,8 @@ def download_file_bytes(file_id: str) -> Tuple[Optional[bytes], Optional[str]]:
             resp = client.get(
                 f"{_DRIVE_API}/files/{file_id}",
                 headers={"Authorization": f"Bearer {token}"},
-                params={"alt": "media"},
+                # Shared-drive corpus files 404 without supportsAllDrives.
+                params={"alt": "media", "supportsAllDrives": "true"},
             )
             if resp.status_code != 200:
                 return None, f"Drive download returned {resp.status_code}: {resp.text[:200]}"
