@@ -27,6 +27,7 @@ services:
     restart: unless-stopped
 
   cerebrum-blocks:
+    image: cerebrum-blocks:local
     build: .
     container_name: cerebrum-blocks
     ports:
@@ -64,6 +65,7 @@ services:
       start_period: 40s
 
   worker:
+    image: cerebrum-blocks:local
     build: .
     container_name: thefork-worker
     command: ["python", "-m", "app.worker.run_worker"]

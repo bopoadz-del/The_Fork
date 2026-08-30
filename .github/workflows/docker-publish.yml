@@ -106,7 +106,12 @@ jobs:
     # path a stranger takes. That is how the `.env` defect was found — compose
     # used to bind-mount `./.env`, which is gitignored, so Docker created a
     # DIRECTORY at that path and the app tried to read a directory as a file.
+    #
+    # Wait for `build` so the GHA layer cache (including prefetch_embedder)
+    # is populated. A parallel cold `compose --build` re-hits huggingface.co
+    # and 429s the required check (PR #451 job 99261131077).
     name: compose up (fresh clone) + health
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -118,11 +123,24 @@ jobs:
           test ! -f .env || { echo "::error::.env exists in a clean checkout"; exit 1; }
           echo "no .env present — this is the stranger's starting state"
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build app image with GHA cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: cerebrum-blocks:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
       - name: docker compose up
+        # Image is already loaded as cerebrum-blocks:local (shared by app +
+        # worker). --no-build keeps this step off a second Hub prefetch.
         # --wait blocks until every service with a healthcheck reports healthy
         # and fails the step if any container exits or goes unhealthy first.
-        # Both services define one, so this is the real assertion.
-        run: docker compose up -d --build --wait --wait-timeout 600
+        run: docker compose up -d --no-build --wait --wait-timeout 600
 
       - name: Health endpoint returns 200
         run: |

@@ -397,8 +397,20 @@ def _pdf_tables_enabled(file_path: str, readable_path: str | None = None) -> boo
     unaffected.
     """
     try:
-        max_mb = float(os.getenv("PDF_TABLES_MAX_MB", "25"))
-        if (os.path.getsize(file_path) / (1024 * 1024)) > max_mb:
+        # Default matches the 32 MB OCR plaintext gate so a 26.9 MB priced
+        # BOQ is not skipped on size alone. Measure plaintext — Fernet
+        # ciphertext is ~33% larger (same class as #449). An explicit
+        # PDF_TABLES_MAX_MB still wins (ops OOM knob). The page-count
+        # gate below still skips a 368-page scan.
+        raw = (os.getenv("PDF_TABLES_MAX_MB") or "").strip()
+        if raw:
+            try:
+                max_mb = float(raw)
+            except ValueError:
+                max_mb = _DEFAULT_PDF_OCR_MAX_SIZE_MB
+        else:
+            max_mb = max(pdf_ocr_max_size_mb(), _DEFAULT_PDF_OCR_MAX_SIZE_MB)
+        if max_mb > 0 and _document_size_mb(file_path) > max_mb:
             return False
         max_page_pt = float(os.getenv("PDF_TABLES_MAX_PAGE_PT", "1250"))
         max_pages = int(os.getenv("PDF_TABLES_MAX_PAGES", "200"))

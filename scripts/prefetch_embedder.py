@@ -29,6 +29,29 @@ from __future__ import annotations
 
 import os
 import sys
+import time
+
+
+# Hub 429s on anonymous CI (compose --build has no GHA layer cache). The
+# huggingface_hub client already retries each HEAD 5× with 1–8s gaps; a
+# burst still exhausts that and fails the image. An outer loop waits longer
+# between full load attempts so a rate-limit window can clear.
+_RETRY_DELAYS_S = (20, 40, 80)
+
+
+def _retryable_prefetch_error(exc: BaseException) -> bool:
+    """True for Hub rate-limit / connect storms — not missing-model errors."""
+    blob = f"{exc}".lower()
+    return any(
+        marker in blob
+        for marker in (
+            "429",
+            "too many requests",
+            "rate limit",
+            "couldn't connect to 'https://huggingface.co'",
+            "could not connect to huggingface",
+        )
+    )
 
 
 def _load(model_name: str):
@@ -40,6 +63,28 @@ def _load(model_name: str):
 
         return StaticModel.from_pretrained(model_name), "model2vec"
     return SentenceTransformer(model_name), "sentence_transformers"
+
+
+def _load_with_retry(model_name: str, load=_load):
+    """Call ``load``; retry Hub 429 / connect failures with long backoff."""
+    attempts = len(_RETRY_DELAYS_S) + 1
+    last: BaseException | None = None
+    for attempt in range(attempts):
+        try:
+            return load(model_name)
+        except Exception as exc:  # noqa: BLE001 — classified below
+            last = exc
+            if attempt >= attempts - 1 or not _retryable_prefetch_error(exc):
+                raise
+            wait = _RETRY_DELAYS_S[attempt]
+            print(
+                f"prefetch_embedder: retryable Hub error "
+                f"({type(exc).__name__}: {exc}); sleeping {wait}s "
+                f"[{attempt + 1}/{attempts}]",
+                flush=True,
+            )
+            time.sleep(wait)
+    raise last  # pragma: no cover — loop always raises or returns
 
 
 def main(argv: list[str]) -> int:
@@ -58,7 +103,7 @@ def main(argv: list[str]) -> int:
         f"prefetch_embedder: fetching {model_name!r} into HF_HOME={home}",
         flush=True,
     )
-    model, backend = _load(model_name)
+    model, backend = _load_with_retry(model_name)
     print(f"prefetch_embedder: fetched via {backend}", flush=True)
 
     # Prove the cache is complete by re-loading with the Hub switched OFF —
