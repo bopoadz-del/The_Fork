@@ -162,7 +162,15 @@ def test_search_preamble_forces_retry_on_wir():
         "Let me search the project documents for the WIR.",
         user_message=M15,
     )
-    assert not _final_text_needs_forced_retry(
+    # REVERSED 2026-08-31. This used to assert that a plain factual question
+    # may keep a dangling promise as its answer. Live WAVE-2 re-smoke on
+    # e6c250e proved that wrong: D1 ("Let me search more precisely for the
+    # Engineer's Representative...") and E1 ("I'm searching the executed
+    # contract volume...") both shipped the promise to the user as the final
+    # answer, because neither question was a deliverable or generative
+    # request. A promise to search is not an answer to ANY question, so the
+    # retry is now forced regardless of request type.
+    assert _final_text_needs_forced_retry(
         "Let me search the project documents for the WIR.",
         user_message="what is the notice period?",
     )
