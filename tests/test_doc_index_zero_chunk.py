@@ -186,3 +186,90 @@ def test_maybe_eager_index_persists_indexing_status(fresh_db, tmp_path, monkeypa
     idx_ok = (stored_ok.get("metadata") or {}).get("indexing")
     assert idx_ok["status"] == "ok"
     assert idx_ok["chunks"] > 0
+
+
+def test_admin_doc_reindex_does_not_ok_a_scan_without_ocr(
+    client, fresh_db, tmp_path, monkeypatch
+):
+    """POST /doc-reindex must not return status=ok for a cover-only scan."""
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index, projects as projects_mod
+    from app.routers import admin as admin_mod
+
+    importlib.reload(doc_index)
+    monkeypatch.setattr(admin_mod, "_pdf_needs_async_ocr", lambda *a, **k: False)
+    monkeypatch.setattr(
+        doc_index,
+        "_extract_with_meta",
+        lambda *a, **k: (
+            "Cover page only. VERIFIED-TOTAL GUARD.",
+            {
+                "ocr_required": True,
+                "empty_text_pages": 8,
+                "ocr_pages": 0,
+                "ocr_skipped_too_large": True,
+            },
+        ),
+    )
+    monkeypatch.setattr(doc_index, "_boq_chunks_for_document", lambda *a, **k: [])
+    monkeypatch.setattr(doc_index, "_drawing_chunks_for_document", lambda *a, **k: [])
+    monkeypatch.setattr(doc_index, "_ifc_chunks_for_document", lambda *a, **k: [])
+
+    proj = projects_mod.create_project("Admin Scan Reindex")
+    path = _write_txt(tmp_path, "Priced BOQ.pdf", b"%PDF-1.4 cover")
+    doc = projects_mod.add_document(
+        proj["id"], "Bill of Quantities (Priced).pdf", file_path=path, size=20
+    )
+
+    r = client.post(
+        "/v1/admin/debug/doc-reindex",
+        params={
+            "project_id": proj["id"],
+            "document_id": doc["id"],
+            "chunker": "finer",
+            "force_ocr": "false",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] != "ok", body
+    assert body["error"] == "OCR_REQUIRED"
+
+
+def test_admin_doc_reindex_queues_long_scan(client, fresh_db, tmp_path, monkeypatch):
+    """A 370-page scan must not pretend to finish in one sync 15s POST."""
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import projects as projects_mod
+    from app.routers import admin as admin_mod
+
+    monkeypatch.setattr(admin_mod, "_pdf_needs_async_ocr", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "app.core.doc_index._pdf_page_count", lambda *_a, **_k: 370
+    )
+    monkeypatch.setattr(
+        "app.core.doc_index.index_document",
+        lambda *a, **k: {
+            "status": "ok",
+            "indexed": 1,
+            "ocr_pages": 40,
+            "total_chunks": 80,
+        },
+    )
+
+    proj = projects_mod.create_project("Async OCR Reindex")
+    path = _write_txt(tmp_path, "Priced BOQ.pdf", b"%PDF-1.4 cover")
+    doc = projects_mod.add_document(
+        proj["id"], "Bill of Quantities (Priced).pdf", file_path=path, size=20
+    )
+
+    r = client.post(
+        "/v1/admin/debug/doc-reindex",
+        params={"project_id": proj["id"], "document_id": doc["id"]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "ocr_started", body
+    assert body["page_count"] == 370
+    assert body.get("job_id")
+    poll = client.get(f"/v1/admin/debug/doc-reindex/job/{body['job_id']}")
+    assert poll.status_code == 200, poll.text
