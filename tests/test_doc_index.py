@@ -184,6 +184,10 @@ def test_pdf_ocr_limits_read_at_call_time(monkeypatch):
     ) == 160
     monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "25")
     assert doc_index.pdf_ocr_max_size_mb() == 25
+    # A leftover dashboard 25 must not re-skip priced BOQs.
+    assert doc_index.pdf_ocr_max_size_mb(
+        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+    ) == 100
 
 
 def test_extract_pdf_ocrs_priced_boq_sized_scan(tmp_path, monkeypatch):
@@ -370,6 +374,247 @@ def test_chunker_for_boq_filename_is_finer():
     assert _chunker_for_document(priced) == "finer"
     assert _chunker_for_document("specification_part8.pdf") == "default"
     assert _chunker_for_document(priced, "markdown") == "markdown"
+
+
+def test_ocr_size_gate_uses_plaintext_not_ciphertext(tmp_path, monkeypatch):
+    """Fernet on-disk size must not skip OCR of a 28 MB plaintext scan.
+
+    Live 20ac033d is 28,180,707 plaintext bytes. Encrypted at rest that is
+    ~36 MB on disk — above the 32 MB gate — so #448 still skipped OCR and
+    a 15s reindex recast the cover layer as 6 chunks.
+    """
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "32")
+    doc_path = str(tmp_path / "priced_boq.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 dummy")
+
+    class FakePage:
+        def get_text(self):
+            return ""
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([FakePage()])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    monkeypatch.setattr(doc_index.file_crypto, "plaintext_size", lambda p: 28 * 1024 * 1024)
+    real_getsize = os.path.getsize
+
+    def _getsize(path):
+        if os.path.abspath(path) == os.path.abspath(doc_path):
+            return 38 * 1024 * 1024
+        return real_getsize(path)
+
+    monkeypatch.setattr(os.path, "getsize", _getsize)
+    monkeypatch.setattr(
+        doc_index, "_ocr_pdf_page",
+        lambda page: "D599.5 Breaking out existing carriageway 340904 m2 31.00",
+    )
+    monkeypatch.setattr(doc_index, "_pdf_tables_enabled", lambda *a, **k: False)
+
+    text, meta = doc_index._extract_pdf(
+        doc_path,
+        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+    )
+    assert "D599.5" in text, "ciphertext size must not skip OCR of a 28 MB scan"
+    assert meta.get("ocr_skipped_too_large") is not True
+    assert meta.get("ocr_pages", 0) >= 1
+    assert meta.get("ocr_required") is not True
+
+
+def test_digital_pdf_with_one_blank_page_is_not_ocr_required(tmp_path, monkeypatch):
+    """A text-layer PDF with a blank divider page must still index.
+
+    OCR is attempted on the blank page; that is not the cover-only skip.
+    """
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    doc_path = str(tmp_path / "spec.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 text")
+
+    class FakePage:
+        def __init__(self, txt):
+            self._t = txt
+
+        def get_text(self):
+            return self._t
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([
+                FakePage("Clause 1.1 Time for Completion is 730 days."),
+                FakePage(""),
+            ])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    monkeypatch.setattr(doc_index, "_ocr_pdf_page", lambda page: "")
+    monkeypatch.setattr(doc_index, "_pdf_tables_enabled", lambda *a, **k: False)
+
+    text, meta = doc_index._extract_pdf(doc_path, "specification_part8.pdf")
+    assert "Time for Completion" in text
+    assert meta.get("ocr_attempts", 0) >= 1
+    assert meta.get("ocr_required") is not True
+    assert not doc_index._scanned_pdf_missing_ocr(".pdf", meta)
+
+
+def test_index_document_scanned_boq_without_ocr_is_not_ok(
+    fresh_db, tmp_path, monkeypatch
+):
+    """Regression: a scanned BOQ with empty body pages must not report
+    status=ok just because the finer chunker split the cover + guard.
+
+    This is the live 20ac033d failure mode: 6 chunks, 15s, D599.5 absent.
+    """
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
+
+    proj = projects_mod.create_project("Scanned BOQ No OCR")
+    pid = proj["id"]
+    doc_path = _write_txt_doc(tmp_path, "Priced BOQ.pdf", b"%PDF-1.4 cover")
+    doc = projects_mod.add_document(
+        pid, "Bill of Quantities (Priced).pdf", file_path=doc_path, size=100
+    )
+
+    cover = (
+        "VERIFIED-TOTAL GUARD for 'Bill of Quantities (Priced).pdf': "
+        "this is a Bill of Quantities, but NO verified total could be "
+        "computed from it — it appears to be a scanned/image PDF."
+    )
+    monkeypatch.setattr(
+        doc_index,
+        "_extract_with_meta",
+        lambda *a, **k: (
+            cover,
+            {
+                "empty_text_pages": 368,
+                "ocr_pages": 0,
+                "ocr_attempts": 0,
+                "ocr_required": True,
+                "ocr_skipped_too_large": True,
+            },
+        ),
+    )
+    monkeypatch.setattr(doc_index, "_boq_chunks_for_document", lambda *a, **k: [])
+    monkeypatch.setattr(doc_index, "_drawing_chunks_for_document", lambda *a, **k: [])
+    monkeypatch.setattr(doc_index, "_ifc_chunks_for_document", lambda *a, **k: [])
+
+    result = doc_index.index_document(pid, doc["id"], chunker="finer")
+    assert result["status"] != "ok", result
+    assert result["error"] == "OCR_REQUIRED", result
+    assert result.get("ocr_pages", 0) == 0
+    assert result.get("indexed") == 0
+
+
+def test_index_document_scanned_boq_with_ocr_indexes_item_codes(
+    fresh_db, tmp_path, monkeypatch
+):
+    """When OCR actually ran, D599.5 / D549.2 must land in searchable chunks."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    from app.core.rag import vector_store as _vs
+    _vs.reset_store_cache()
+
+    proj = projects_mod.create_project("Scanned BOQ OCR")
+    pid = proj["id"]
+    doc_path = _write_txt_doc(tmp_path, "Priced BOQ.pdf", b"%PDF-1.4 cover")
+    doc = projects_mod.add_document(
+        pid, "Bill of Quantities (Priced).pdf", file_path=doc_path, size=100
+    )
+
+    body = (
+        "D549.2 Removal of existing chain link fence 3504 m 80.00 280320\n"
+        "D599.5 Breaking out existing carriageway 340904 m2 31.00 10568024\n"
+    )
+    monkeypatch.setattr(
+        doc_index,
+        "_extract_with_meta",
+        lambda *a, **k: (
+            body,
+            {"ocr_pages": 12, "empty_text_pages": 12, "ocr_attempts": 12},
+        ),
+    )
+    monkeypatch.setattr(doc_index, "_boq_chunks_for_document", lambda *a, **k: [])
+    monkeypatch.setattr(doc_index, "_drawing_chunks_for_document", lambda *a, **k: [])
+    monkeypatch.setattr(doc_index, "_ifc_chunks_for_document", lambda *a, **k: [])
+
+    result = doc_index.index_document(pid, doc["id"], chunker="finer")
+    assert result["status"] == "ok", result
+    assert result.get("ocr_pages") == 12
+    saved = doc_index._load_index(pid)
+    blob = "\n".join(saved["documents"][0]["chunks"])
+    assert "D599.5" in blob and "D549.2" in blob
+    assert "340904" in blob or "340,904" in blob
+    assert "31.00" in blob
+
+
+def test_force_ocr_runs_when_size_gate_would_skip(tmp_path, monkeypatch):
+    """Admin reindex force_ocr=true OCRs a file above PDF_OCR_MAX_SIZE_MB."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "25")
+    monkeypatch.setenv("PDF_OCR_BOQ_MAX_SIZE_MB", "25")
+    doc_path = str(tmp_path / "priced_boq.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 dummy")
+
+    class FakePage:
+        def get_text(self):
+            return ""
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([FakePage()])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    real_getsize = os.path.getsize
+
+    def _getsize(path):
+        if os.path.abspath(path) == os.path.abspath(doc_path):
+            return 28 * 1024 * 1024
+        return real_getsize(path)
+
+    monkeypatch.setattr(os.path, "getsize", _getsize)
+    monkeypatch.setattr(doc_index.file_crypto, "plaintext_size", lambda p: 28 * 1024 * 1024)
+    monkeypatch.setattr(
+        doc_index, "_ocr_pdf_page",
+        lambda page: "D549.2 Removal of existing chain link fence 3504 m 80.00",
+    )
+    monkeypatch.setattr(doc_index, "_pdf_tables_enabled", lambda *a, **k: False)
+
+    text, meta = doc_index._extract_pdf(
+        doc_path,
+        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+        force_ocr=True,
+    )
+    assert "D549.2" in text
+    assert meta.get("ocr_pages", 0) >= 1
+    assert meta.get("ocr_skipped_too_large") is not True
 
 
 def test_finer_chunk_keeps_priced_boq_item_codes():

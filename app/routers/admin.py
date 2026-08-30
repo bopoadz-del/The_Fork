@@ -196,11 +196,69 @@ def admin_document_download(
     return Response(content=raw, media_type=media_type, headers=headers)
 
 
+# In-memory OCR/reindex job registry. Process-local — a worker restart
+# drops the job and the next poll 404s (kick it off again). Same pattern
+# as the training-scenario generator: a 370-page scan cannot finish inside
+# the Render gateway window, so POST returns immediately and the caller
+# polls GET /v1/admin/debug/doc-reindex/job/{job_id}.
+_REINDEX_JOBS: Dict[str, Dict[str, Any]] = {}
+
+
+def _pdf_needs_async_ocr(file_path: str, filename: str) -> bool:
+    """True when admin reindex would exceed the HTTP gateway budget.
+
+    A 370-page scan at 150 dpi is tens of minutes. Sync POST used to return
+    in ~15s with cover-page chunks and call that success.
+    """
+    from app.core import doc_index as _doc_index
+
+    pages = _doc_index._pdf_page_count(file_path)  # noqa: SLF001
+    if pages > 40:
+        return True
+    return _doc_index._pdf_should_batch(file_path)  # noqa: SLF001
+
+
+async def _doc_reindex_job(
+    job_id: str,
+    project_id: str,
+    document_id: str,
+    chunker: str,
+    force_ocr: bool,
+) -> None:
+    import time as _time
+
+    job = _REINDEX_JOBS[job_id]
+    try:
+        from app.core import doc_index as _doc_index
+
+        result = await run_in_threadpool(
+            _doc_index.index_document,
+            project_id,
+            document_id,
+            chunker,
+            force_ocr=force_ocr,
+        )
+        job.update(result)
+        job["status"] = result.get("status") or "error"
+        job["finished_at"] = _time.time()
+    except Exception as exc:  # noqa: BLE001 — last-line safety
+        job["status"] = "failed"
+        job["error"] = f"{type(exc).__name__}: {exc}"
+        job["finished_at"] = _time.time()
+
+
 @router.post("/v1/admin/debug/doc-reindex")
-def admin_doc_reindex(
+async def admin_doc_reindex(
     project_id: str = Query(...),
     document_id: str = Query(...),
     chunker: str = Query("default", pattern="^(default|finer)$"),
+    force_ocr: bool = Query(
+        True,
+        description=(
+            "OCR empty-text pages even when a leftover size gate would skip "
+            "them. Required for scanned priced BOQs (20ac033d)."
+        ),
+    ),
     auth: dict = Depends(require_api_key),
 ):
     """Re-run extraction + chunking + RAG indexing for a single document.
@@ -208,10 +266,87 @@ def admin_doc_reindex(
     ``chunker=finer`` uses the BOQ-aware char-level chunker (500-char target,
     50-char overlap, BOQ row boundaries preferred). Use it for BOQ / tender
     PDFs where the default 500-word chunker produces too-coarse chunks.
+
+    ``force_ocr=true`` (the default) is the trigger that actually OCRs a
+    scanned PDF whose text layer is cover-only. A 370-page scan is queued
+    in-process and this endpoint returns ``status=ocr_started`` immediately
+    — poll ``GET /v1/admin/debug/doc-reindex/job/{job_id}``. Success
+    requires body OCR (``ocr_pages > 0``), not just a non-zero chunk count.
     """
     _require_admin(auth)
+    import asyncio
+    import time as _time
+    import uuid as _uuid
+
     from app.core import doc_index as _doc_index
-    return _doc_index.index_document(project_id, document_id, chunker=chunker)
+    from app.core import projects as _projects
+
+    doc = _projects.get_document(document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    if doc.get("project_id") != project_id:
+        raise HTTPException(status_code=400, detail="document does not belong to project")
+
+    filename = doc.get("original_name") or ""
+    file_path = doc.get("file_path") or ""
+    ext = os.path.splitext(filename.lower())[1] if filename else ""
+
+    if (
+        force_ocr
+        and ext == ".pdf"
+        and file_path
+        and os.path.exists(file_path)
+        and _pdf_needs_async_ocr(file_path, filename)
+    ):
+        job_id = _uuid.uuid4().hex[:12]
+        _REINDEX_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "ocr_started",
+            "project_id": project_id,
+            "document_id": document_id,
+            "filename": filename,
+            "chunker": chunker,
+            "force_ocr": True,
+            "started_at": _time.time(),
+            "finished_at": None,
+            "error": None,
+        }
+        asyncio.create_task(
+            _doc_reindex_job(job_id, project_id, document_id, chunker, True)
+        )
+        return {
+            "status": "ocr_started",
+            "job_id": job_id,
+            "status_url": f"/v1/admin/debug/doc-reindex/job/{job_id}",
+            "project_id": project_id,
+            "document_id": document_id,
+            "page_count": _doc_index._pdf_page_count(file_path),  # noqa: SLF001
+            "message": (
+                "Scanned PDF queued for OCR. Poll status_url until status "
+                "is ok (ocr_pages > 0) or error. A 15s ok with cover-only "
+                "chunks is a failure — that path no longer reports success."
+            ),
+        }
+
+    return await run_in_threadpool(
+        _doc_index.index_document,
+        project_id,
+        document_id,
+        chunker,
+        force_ocr=force_ocr,
+    )
+
+
+@router.get("/v1/admin/debug/doc-reindex/job/{job_id}")
+def admin_doc_reindex_job(job_id: str, auth: dict = Depends(require_api_key)):
+    """Poll status of an async scanned-PDF reindex / OCR job."""
+    _require_admin(auth)
+    job = _REINDEX_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(
+            404, f"job '{job_id}' not found (worker may have restarted)"
+        )
+    return job
 
 
 @router.post("/v1/admin/projects/{project_id}/approve")
