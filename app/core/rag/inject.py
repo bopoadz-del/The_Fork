@@ -196,6 +196,7 @@ from app.core.rag.retriever import (
     extract_contract_doc_ids,
     extract_query_identifiers,
     filename_matches_named_contracts,
+    identifier_present_in_text,
     retrieve_with_filter,
 )
 from app.core.rag import audit as _audit
@@ -370,20 +371,11 @@ def rag_inject(
     # lookup answer from semantically-similar but irrelevant boilerplate.
     identifiers = extract_query_identifiers(user_message or "")
 
-    def _identifier_present_in_text(ident: str, text: str) -> bool:
-        """A reference is present if every token of the identifier appears
-        in the chunk text. This tolerates intervening label words such as
-        "Ref" / "No" / "#" (e.g. "VO 99" matches "VO Ref: 99").
-        """
-        text_tokens = set(re.split(r"[^a-z0-9]+", text.lower())) - {"", "ref", "no", "#"}
-        ident_tokens = [t for t in re.split(r"[^a-z0-9]+", ident.lower()) if t]
-        return bool(ident_tokens) and all(t in text_tokens for t in ident_tokens)
-
     identifier_miss = False
     if identifiers and chunks:
         id_lower = [i.lower() for i in identifiers]
         if not any(
-            _identifier_present_in_text(ident, c.text or "")
+            identifier_present_in_text(ident, c.text or "")
             for c in chunks
             for ident in id_lower
         ):

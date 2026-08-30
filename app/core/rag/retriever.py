@@ -254,6 +254,22 @@ def extract_query_identifiers(query: str) -> List[str]:
     return result
 
 
+def identifier_present_in_text(ident: str, text: str) -> bool:
+    """True when every token of ``ident`` appears in ``text``.
+
+    CESMM OCR spacing is collapsed first so query ``D549.2`` matches
+    stored ``D 549.2`` (WAVE 2 B5 live miss: the inject gate split the
+    stored code into ``d``+``549`` and the query into ``d549``+``2``,
+    then AND-failed and short-circuited chat). Label words (Ref / No /
+    #) are ignored so ``VO 99`` still matches ``VO Ref: 99``.
+    """
+    blob = normalize_cesmm_item_codes(text or "")
+    ident_norm = normalize_cesmm_item_codes(ident or "")
+    text_tokens = set(re.split(r"[^a-z0-9]+", blob.lower())) - {"", "ref", "no", "#"}
+    ident_tokens = [t for t in re.split(r"[^a-z0-9]+", ident_norm.lower()) if t]
+    return bool(ident_tokens) and all(t in text_tokens for t in ident_tokens)
+
+
 def _identifier_context_terms(query: str, identifiers: List[str]) -> List[str]:
     """Distinctive query terms excluding the identifier tokens themselves.
 
