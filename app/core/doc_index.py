@@ -93,6 +93,9 @@ _DEFAULT_PDF_OCR_MAX_SIZE_MB = 32.0
 # higher cap via PDF_OCR_BOQ_PAGE_CAP.
 _DEFAULT_PDF_OCR_PAGE_CAP = 80
 _DEFAULT_PDF_OCR_BOQ_PAGE_CAP = 160
+# Admin / force-OCR budget. The live priced BOQ (20ac033d) is 370 pages;
+# 160 left later CESMM rows (D599.5 / D549.2) unindexed even when OCR ran.
+_DEFAULT_PDF_OCR_FORCE_PAGE_CAP = 400
 # Isolated page-batch size for large scans. A timeout/OOM on pages 41-60
 # then keeps pages 1-40 instead of ZERO_CHUNK'ing the whole document.
 _DEFAULT_PDF_OCR_BATCH_PAGES = 20
@@ -135,8 +138,17 @@ def pdf_max_size_mb() -> float:
     return _env_float("PDF_MAX_SIZE_MB", _DEFAULT_PDF_MAX_SIZE_MB)
 
 
-def pdf_ocr_max_size_mb() -> float:
-    """Above this, OCR is skipped (text layer only). Call-time env read."""
+def pdf_ocr_max_size_mb(filename: str = "") -> float:
+    """Above this, OCR is skipped (text layer only). Call-time env read.
+
+    BOQ-named files use ``PDF_OCR_BOQ_MAX_SIZE_MB`` (default: the whole-PDF
+    ceiling). A leftover dashboard ``PDF_OCR_MAX_SIZE_MB=25`` must not
+    re-skip the live priced bill, and Fernet ciphertext (~33% larger than
+    the recorded plaintext size) must not be compared against this gate —
+    callers must pass ``_document_size_mb``.
+    """
+    if filename and _BOQ_NAME_RE.search(filename):
+        return _env_float("PDF_OCR_BOQ_MAX_SIZE_MB", pdf_max_size_mb())
     return _env_float("PDF_OCR_MAX_SIZE_MB", _DEFAULT_PDF_OCR_MAX_SIZE_MB)
 
 
@@ -150,6 +162,29 @@ def pdf_ocr_page_cap(filename: str = "") -> int:
     if filename and _BOQ_NAME_RE.search(filename):
         return _env_int("PDF_OCR_BOQ_PAGE_CAP", _DEFAULT_PDF_OCR_BOQ_PAGE_CAP)
     return _env_int("PDF_OCR_PAGE_CAP", _DEFAULT_PDF_OCR_PAGE_CAP)
+
+
+def pdf_ocr_force_page_cap() -> int:
+    """Admin reindex budget so a 370-page scanned BOQ is not capped at 160."""
+    return _env_int("PDF_OCR_FORCE_PAGE_CAP", _DEFAULT_PDF_OCR_FORCE_PAGE_CAP)
+
+
+def _document_size_mb(file_path: str) -> float:
+    """Plaintext megabytes. ``os.path.getsize`` is ciphertext when encryption
+    is on (Fernet base64 inflates ~33%) and is the wrong input to the OCR
+    skip — 26.9 MB recorded / ~36 MB on disk sat above the 32 MB gate.
+    """
+    try:
+        return file_crypto.plaintext_size(file_path) / (1024 * 1024)
+    except Exception:
+        logger.warning(
+            "plaintext_size failed for %s; falling back to on-disk size",
+            file_path, exc_info=True,
+        )
+        try:
+            return os.path.getsize(file_path) / (1024 * 1024)
+        except OSError:
+            return 0.0
 
 
 def pdf_ocr_batch_pages() -> int:
@@ -462,6 +497,7 @@ def _extract_pdf(
     start_page: int = 0,
     end_page: int | None = None,
     ocr_budget: int | None = None,
+    force_ocr: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Per-page PDF extraction.
 
@@ -477,11 +513,17 @@ def _extract_pdf(
     ``start_page`` / ``end_page`` / ``ocr_budget`` are the isolated page-batch
     contract: a parent can OCR pages 20-40 with a remaining budget without
     re-applying the whole-file size gate (the parent already decided).
+
+    ``force_ocr`` (admin reindex) ignores the OCR size skip whenever the
+    plaintext file is under the whole-PDF ceiling, and uses the force page
+    budget so a 370-page scanned BOQ is not capped at 160.
     """
     import fitz
 
     parts: list[str] = []
     ocr_pages = 0
+    ocr_attempts = 0
+    empty_text_pages = 0
     truncated = False
     chars = 0
     text_truncated = False
@@ -489,12 +531,17 @@ def _extract_pdf(
     try:
         if ocr_budget is None:
             page_cap = pdf_ocr_page_cap(filename)
-            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            size_mb = _document_size_mb(file_path)
             max_mb = pdf_max_size_mb()
             if max_mb > 0 and size_mb > max_mb:
                 return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
-            # Large scans: disable OCR entirely, rely on text layer only.
-            ocr_max = pdf_ocr_max_size_mb()
+            # Large scans: disable OCR entirely, rely on text layer only —
+            # unless admin reindex asked to OCR anyway (plaintext still under
+            # the hard ceiling).
+            ocr_max = pdf_ocr_max_size_mb(filename)
+            if force_ocr:
+                ocr_max = max(ocr_max, max_mb if max_mb > 0 else ocr_max)
+                page_cap = max(page_cap, pdf_ocr_force_page_cap())
             if ocr_max > 0 and size_mb > ocr_max:
                 page_cap = 0
                 ocr_skipped = True
@@ -533,14 +580,16 @@ def _extract_pdf(
                     # A page whose text layer is too thin is image-only (or
                     # near-empty) — OCR it, bounded by the page cap so a long
                     # scan can't OOM the box.
-                    if page_cap > 0 and len(page_text) < _PDF_OCR_THRESHOLD:
-                        if ocr_pages < page_cap:
+                    if len(page_text) < _PDF_OCR_THRESHOLD:
+                        empty_text_pages += 1
+                        if page_cap > 0 and ocr_attempts < page_cap:
+                            ocr_attempts += 1
                             ocr_text = _ocr_pdf_page(page)
                             if ocr_text.strip():
                                 parts.append(ocr_text)
                                 chars += len(ocr_text)
                                 ocr_pages += 1
-                        else:
+                        elif page_cap > 0:
                             truncated = True
                     if plumber is not None and i < len(plumber.pages):
                         table_md = _pdf_tables_markdown(plumber.pages[i])
@@ -592,6 +641,12 @@ def _extract_pdf(
                 if ocr_pages > 0:
                     partial_meta["ocr_low_quality"] = True
                     partial_meta["ocr_pages"] = ocr_pages
+                if ocr_attempts:
+                    partial_meta["ocr_attempts"] = ocr_attempts
+                if empty_text_pages:
+                    partial_meta["empty_text_pages"] = empty_text_pages
+                if empty_text_pages > 0 and ocr_pages == 0:
+                    partial_meta["ocr_required"] = True
                 return "\n".join(parts), partial_meta
             # Nothing salvageable. Surface it as the memory failure it is
             # rather than as an empty document -- the ambiguity that hid this
@@ -603,6 +658,14 @@ def _extract_pdf(
         # The doc relied on OCR for some pages — flag for lower confidence.
         meta["ocr_low_quality"] = True
         meta["ocr_pages"] = ocr_pages
+    if ocr_attempts:
+        meta["ocr_attempts"] = ocr_attempts
+    if empty_text_pages:
+        meta["empty_text_pages"] = empty_text_pages
+    if empty_text_pages > 0 and ocr_pages == 0:
+        # Cover-only extract: finer chunker can still emit 6 chunks and look
+        # like success. Callers must not report that as an indexed body.
+        meta["ocr_required"] = True
     if truncated:
         meta["ocr_truncated"] = True
     if text_truncated:
@@ -621,10 +684,7 @@ def _pdf_should_batch(file_path: str) -> bool:
     ``PDF_OCR_BATCH_PAGES`` so a timeout/OOM on a later range does not
     ZERO_CHUNK pages already read.
     """
-    try:
-        size_mb = os.path.getsize(file_path) / (1024 * 1024)
-    except OSError:
-        return False
+    size_mb = _document_size_mb(file_path)
     return size_mb > pdf_batch_min_mb()
 
 
@@ -664,7 +724,7 @@ def _extract_pdf_range_job(
 
 
 def _extract_pdf_batched(
-    file_path: str, filename: str
+    file_path: str, filename: str, *, force_ocr: bool = False
 ) -> tuple[str, dict[str, Any]]:
     """Extract a large PDF as isolated page batches, keeping prior text.
 
@@ -675,10 +735,7 @@ def _extract_pdf_batched(
     """
     from app.core.extract_isolated import run_isolated
 
-    try:
-        size_mb = os.path.getsize(file_path) / (1024 * 1024)
-    except OSError:
-        size_mb = 0.0
+    size_mb = _document_size_mb(file_path)
     max_mb = pdf_max_size_mb()
     if max_mb > 0 and size_mb > max_mb:
         return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
@@ -695,17 +752,26 @@ def _extract_pdf_batched(
             meta = {**(meta or {}), **diag}
         return text or "", meta or {}
 
-    ocr_max = pdf_ocr_max_size_mb()
+    ocr_max = pdf_ocr_max_size_mb(filename)
+    if force_ocr:
+        ocr_max = max(ocr_max, max_mb if max_mb > 0 else ocr_max)
     ocr_skipped = ocr_max > 0 and size_mb > ocr_max
-    budget = 0 if ocr_skipped else pdf_ocr_page_cap(filename)
+    if ocr_skipped:
+        budget = 0
+    elif force_ocr:
+        budget = max(pdf_ocr_page_cap(filename), pdf_ocr_force_page_cap(), n_pages)
+    else:
+        budget = pdf_ocr_page_cap(filename)
     batch = pdf_ocr_batch_pages()
 
     parts: list[str] = []
     meta: dict[str, Any] = {}
     ocr_used = 0
+    ocr_attempts = 0
+    empty_text_pages = 0
     for start in range(0, n_pages, batch):
         end = min(start + batch, n_pages)
-        remaining = max(0, budget - ocr_used)
+        remaining = max(0, budget - ocr_attempts)
         (text, bmeta), diag = run_isolated(
             _extract_pdf_range_job,
             (file_path, filename, start, end, remaining),
@@ -715,6 +781,8 @@ def _extract_pdf_batched(
         if text:
             parts.append(text)
         ocr_used += int((bmeta or {}).get("ocr_pages") or 0)
+        ocr_attempts += int((bmeta or {}).get("ocr_attempts") or 0)
+        empty_text_pages += int((bmeta or {}).get("empty_text_pages") or 0)
         for key in (
             "ocr_low_quality",
             "ocr_truncated",
@@ -736,6 +804,12 @@ def _extract_pdf_batched(
     if ocr_used:
         meta["ocr_pages"] = ocr_used
         meta["ocr_low_quality"] = True
+    if ocr_attempts:
+        meta["ocr_attempts"] = ocr_attempts
+    if empty_text_pages:
+        meta["empty_text_pages"] = empty_text_pages
+    if empty_text_pages > 0 and ocr_used == 0:
+        meta["ocr_required"] = True
     return "\n".join(parts), meta
 
 
@@ -1123,7 +1197,9 @@ def _legacy_index_dir() -> str:
 
 # ── text extraction ───────────────────────────────────────────────────────────
 
-def _extract_with_meta(file_path: str, filename: str) -> tuple[str, dict[str, Any]]:
+def _extract_with_meta(
+    file_path: str, filename: str, force_ocr: bool = False
+) -> tuple[str, dict[str, Any]]:
     """Extract plaintext from a document, plus a small metadata dict.
 
     Returns ``(text, meta)`` where ``meta`` carries ``{"ocr_low_quality": True}``
@@ -1153,7 +1229,7 @@ def _extract_with_meta(file_path: str, filename: str) -> tuple[str, dict[str, An
         # extraction's side effects observable: a forked child returns only
         # (text, meta), so counters, caches and spies mutated during
         # extraction are lost with it.
-        text, meta = _extract_with_meta_impl(file_path, filename)
+        text, meta = _extract_with_meta_impl(file_path, filename, force_ocr)
         if "\x00" in text:
             text = text.replace("\x00", "")
         return text, meta
@@ -1162,14 +1238,16 @@ def _extract_with_meta(file_path: str, filename: str) -> tuple[str, dict[str, An
     if ext == ".pdf" and _pdf_should_batch(file_path):
         # Large scans (the 20-32 MB priced-BOQ band): isolated page batches
         # so a later-range timeout keeps earlier OCR instead of ZERO_CHUNK.
-        text, meta = _extract_pdf_batched(file_path, filename)
+        text, meta = _extract_pdf_batched(
+            file_path, filename, force_ocr=force_ocr
+        )
         if "\x00" in text:
             text = text.replace("\x00", "")
         return text, meta
 
     (text, meta), diag = run_isolated(
         _extract_with_meta_impl,
-        (file_path, filename),
+        (file_path, filename, force_ocr),
         fallback=("", {}),
         label=f"extraction of {filename}",
     )
@@ -1182,7 +1260,9 @@ def _extract_with_meta(file_path: str, filename: str) -> tuple[str, dict[str, An
     return text, meta
 
 
-def _extract_with_meta_impl(file_path: str, filename: str) -> tuple[str, dict[str, Any]]:
+def _extract_with_meta_impl(
+    file_path: str, filename: str, force_ocr: bool = False
+) -> tuple[str, dict[str, Any]]:
     """Format dispatch for ``_extract_with_meta``. May return NUL bytes."""
     try:
         _, ext = os.path.splitext((filename or "").lower())
@@ -1212,7 +1292,7 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> tuple[str, dict[st
         # table rows. Fixes the cover-page bug (a digital cover page no longer
         # suppresses OCR of image-only body pages). Memory-bounded.
         if ext == ".pdf":
-            return _extract_pdf(file_path, filename)
+            return _extract_pdf(file_path, filename, force_ocr=force_ocr)
 
         # ── DOC / DOCX ───────────────────────────────────────────────────────
         if ext == ".doc":
@@ -2387,10 +2467,32 @@ def _ifc_chunks_for_document(
     return _ifc_step_census_chunk(file_path, filename)
 
 
+def _scanned_pdf_missing_ocr(ext: str, meta: dict[str, Any]) -> bool:
+    """True when a PDF had empty body pages and OCR never produced text.
+
+    Live reindex of 20ac033d returned status=ok with 6 cover-page chunks
+    because the finer chunker recast the text layer + VERIFIED-TOTAL GUARD
+    as success. Item codes D599.5 / D549.2 were never in the extract.
+    """
+    if (ext or "").lower() != ".pdf":
+        return False
+    if int(meta.get("ocr_pages") or 0) > 0:
+        return False
+    if meta.get("ocr_required"):
+        return True
+    if meta.get("ocr_skipped_too_large"):
+        return True
+    if int(meta.get("empty_text_pages") or 0) > 0:
+        return True
+    return False
+
+
 def index_document(
     project_id: str,
     document_id: str,
     chunker: str = "default",
+    *,
+    force_ocr: bool = False,
 ) -> dict[str, Any]:
     """Incrementally index a single document into the project's index.
 
@@ -2407,6 +2509,10 @@ def index_document(
       for the the client BOQ symptom: coarse word-windows produced 8 chunks
       averaging 2800 chars each, so single line items were buried inside
       a wall of unrelated text).
+
+    ``force_ocr`` (admin reindex) OCRs empty-text pages even when a leftover
+    size gate would skip them, and uses the 400-page force budget so a
+    370-page scanned BOQ can land item codes.
     """
     doc = _projects.get_document(document_id)
     if doc is None:
@@ -2430,7 +2536,9 @@ def index_document(
         }
     else:
         file_path = doc.get("file_path") or ""
-        text, meta = _extract_with_meta(file_path, filename)
+        text, meta = _extract_with_meta(
+            file_path, filename, force_ocr=force_ocr
+        )
         chunks = chunk_extracted_document(
             text,
             chunker=_chunker_for_document(filename, chunker),
@@ -2449,6 +2557,38 @@ def index_document(
         ifc_chunks = _ifc_chunks_for_document(file_path, filename, ext, project_id)
         if ifc_chunks:
             chunks = chunks + ifc_chunks
+        if _scanned_pdf_missing_ocr(ext, meta):
+            # Cover-page text + VERIFIED-TOTAL GUARD still produce chunks.
+            # That must not look like a successful body index.
+            import logging as _logging
+            _logging.getLogger(__name__).error(
+                "OCR_REQUIRED project=%s doc=%s file=%s empty_text_pages=%s "
+                "ocr_pages=%s ocr_skipped=%s — scanned PDF indexed without "
+                "body OCR; item codes will not be searchable",
+                project_id, document_id, filename,
+                meta.get("empty_text_pages", 0),
+                meta.get("ocr_pages", 0),
+                bool(meta.get("ocr_skipped_too_large")),
+            )
+            return {
+                "status": "error",
+                "error": "OCR_REQUIRED",
+                "banner": (
+                    "ERROR: scanned PDF produced cover-page chunks without "
+                    "OCR — body item codes are missing. Reindex with "
+                    "force_ocr=true (POST /v1/admin/debug/doc-reindex)."
+                ),
+                "project_id": project_id,
+                "document_id": document_id,
+                "filename": filename,
+                "indexed": 0,
+                "skipped_unsupported": 0,
+                "total_chunks": len(chunks),
+                "ocr_pages": int(meta.get("ocr_pages") or 0),
+                "ocr_attempts": int(meta.get("ocr_attempts") or 0),
+                "empty_text_pages": int(meta.get("empty_text_pages") or 0),
+                "ocr_skipped_too_large": bool(meta.get("ocr_skipped_too_large")),
+            }
         if not chunks:
             # A supported file that produced zero chunks is a SILENT indexing
             # failure: the document "exists" but can never be retrieved. Three
@@ -2581,6 +2721,9 @@ def index_document(
         "skipped_unsupported": 0,
         "total_chunks": len(chunks),
         "rag_indexed": rag_indexed,
+        "ocr_pages": int(meta.get("ocr_pages") or 0),
+        "ocr_attempts": int(meta.get("ocr_attempts") or 0),
+        "empty_text_pages": int(meta.get("empty_text_pages") or 0),
     }
     if rag_error:
         # Surfaced to the CALLER, not just the log. The upload path reports
