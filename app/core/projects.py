@@ -1017,22 +1017,31 @@ def _resolve_drive_id_by_filename(doc: Dict[str, Any]) -> Tuple[Optional[str], O
         return None, f"{type(exc).__name__}: {exc}"
     if not file_id:
         return None, err or f"no Drive file named {name}"
-    doc_id = str(doc.get("id") or "")
-    if doc_id:
-        try:
-            update_document_metadata(doc_id, {
-                "drive_file_id": file_id,
-                "drive_resolved_from": "original_name",
-            })
-        except Exception:
-            logger.info(
-                "could not persist resolved drive_file_id for doc %s",
-                doc_id, exc_info=True,
-            )
+    _persist_resolved_drive_id(doc, file_id, "original_name")
     logger.info(
-        "resolved drive_file_id for doc %s from filename %r", doc_id, name,
+        "resolved drive_file_id for doc %s from filename %r",
+        doc.get("id"), name,
     )
     return file_id, None
+
+
+def _persist_resolved_drive_id(
+    doc: Dict[str, Any], file_id: str, source: str,
+) -> None:
+    """Write ``drive_file_id`` onto the row after a successful resolve."""
+    doc_id = str(doc.get("id") or "")
+    if not doc_id or not file_id:
+        return
+    try:
+        update_document_metadata(doc_id, {
+            "drive_file_id": file_id,
+            "drive_resolved_from": source,
+        })
+    except Exception:
+        logger.info(
+            "could not persist resolved drive_file_id for doc %s",
+            doc_id, exc_info=True,
+        )
 
 
 def _reconstruct_r2_key(doc: Dict[str, Any], drive_id: str) -> str:
@@ -1100,6 +1109,13 @@ def _fetch_remote_document_bytes(
         try:
             from app.core import gdrive_service
 
+            # files.get (supportsAllDrives) confirms the id before media.
+            # Name-search cannot see anyone-with-link files; files.get can.
+            _meta, meta_err = gdrive_service.get_file_metadata(drive_id)
+            if meta_err:
+                logger.info(
+                    "Drive files.get miss for doc %s: %s", doc.get("id"), meta_err,
+                )
             blob, err = gdrive_service.download_file_bytes(drive_id)
             if blob:
                 return blob, "drive", None
@@ -1107,6 +1123,19 @@ def _fetch_remote_document_bytes(
             logger.info(
                 "Drive fallback failed for doc %s: %s", doc.get("id"), drive_error,
             )
+            # SA media failed (or SA is blind). Anyone-with-link files are
+            # still fetchable at the public uc/download URL. Private files
+            # fail closed — the helper never uses the SA token.
+            pub, pub_err = gdrive_service.download_public_file_bytes(drive_id)
+            if pub:
+                _persist_resolved_drive_id(doc, drive_id, "public_download")
+                return pub, "drive_public", None
+            if pub_err:
+                drive_error = f"{drive_error}; {pub_err}"
+                logger.info(
+                    "public Drive download failed for doc %s: %s",
+                    doc.get("id"), pub_err,
+                )
         except Exception as exc:  # noqa: BLE001
             drive_error = f"{type(exc).__name__}: {exc}"
             logger.info(
@@ -1137,6 +1166,7 @@ def materialize_document_file(doc: Dict[str, Any]) -> Tuple[Optional[str], str]:
     2. On-demand preview cache from a prior hydrate
     3. R2 key (row, metadata aliases, or reconstructed P1B layout)
     4. Drive ``drive_file_id`` / ``driveFileId`` (R2 miss / archive failed)
+    5. Public Drive uc/download when the id is anyone-with-link and SA media fails
 
     Returns ``(path, "ok")`` or ``(None, "empty"|reason)``. Reason is a
     logging-safe phrase the router appends to the 404 — never a 500.
