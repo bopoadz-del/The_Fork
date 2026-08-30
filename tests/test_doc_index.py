@@ -430,6 +430,47 @@ def test_ocr_size_gate_uses_plaintext_not_ciphertext(tmp_path, monkeypatch):
     assert meta.get("ocr_required") is not True
 
 
+def test_digital_pdf_with_one_blank_page_is_not_ocr_required(tmp_path, monkeypatch):
+    """A text-layer PDF with a blank divider page must still index.
+
+    OCR is attempted on the blank page; that is not the cover-only skip.
+    """
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    doc_path = str(tmp_path / "spec.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 text")
+
+    class FakePage:
+        def __init__(self, txt):
+            self._t = txt
+
+        def get_text(self):
+            return self._t
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([
+                FakePage("Clause 1.1 Time for Completion is 730 days."),
+                FakePage(""),
+            ])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    monkeypatch.setattr(doc_index, "_ocr_pdf_page", lambda page: "")
+    monkeypatch.setattr(doc_index, "_pdf_tables_enabled", lambda *a, **k: False)
+
+    text, meta = doc_index._extract_pdf(doc_path, "specification_part8.pdf")
+    assert "Time for Completion" in text
+    assert meta.get("ocr_attempts", 0) >= 1
+    assert meta.get("ocr_required") is not True
+    assert not doc_index._scanned_pdf_missing_ocr(".pdf", meta)
+
+
 def test_index_document_scanned_boq_without_ocr_is_not_ok(
     fresh_db, tmp_path, monkeypatch
 ):

@@ -645,7 +645,7 @@ def _extract_pdf(
                     partial_meta["ocr_attempts"] = ocr_attempts
                 if empty_text_pages:
                     partial_meta["empty_text_pages"] = empty_text_pages
-                if empty_text_pages > 0 and ocr_pages == 0:
+                if empty_text_pages > 0 and ocr_attempts == 0:
                     partial_meta["ocr_required"] = True
                 return "\n".join(parts), partial_meta
             # Nothing salvageable. Surface it as the memory failure it is
@@ -662,9 +662,11 @@ def _extract_pdf(
         meta["ocr_attempts"] = ocr_attempts
     if empty_text_pages:
         meta["empty_text_pages"] = empty_text_pages
-    if empty_text_pages > 0 and ocr_pages == 0:
+    if empty_text_pages > 0 and ocr_attempts == 0:
         # Cover-only extract: finer chunker can still emit 6 chunks and look
         # like success. Callers must not report that as an indexed body.
+        # A single blank digital page that we *did* OCR (attempted, empty
+        # result) is not this failure — that is a real blank, not a skip.
         meta["ocr_required"] = True
     if truncated:
         meta["ocr_truncated"] = True
@@ -808,7 +810,7 @@ def _extract_pdf_batched(
         meta["ocr_attempts"] = ocr_attempts
     if empty_text_pages:
         meta["empty_text_pages"] = empty_text_pages
-    if empty_text_pages > 0 and ocr_used == 0:
+    if empty_text_pages > 0 and ocr_attempts == 0:
         meta["ocr_required"] = True
     return "\n".join(parts), meta
 
@@ -2468,15 +2470,20 @@ def _ifc_chunks_for_document(
 
 
 def _scanned_pdf_missing_ocr(ext: str, meta: dict[str, Any]) -> bool:
-    """True when a PDF had empty body pages and OCR never produced text.
+    """True when a PDF had empty body pages and OCR was never invoked.
 
     Live reindex of 20ac033d returned status=ok with 6 cover-page chunks
     because the finer chunker recast the text layer + VERIFIED-TOTAL GUARD
     as success. Item codes D599.5 / D549.2 were never in the extract.
+
+    OCR that ran and returned empty (a genuinely blank digital page) is
+    not this failure — ``ocr_attempts > 0`` means the trigger fired.
     """
     if (ext or "").lower() != ".pdf":
         return False
     if int(meta.get("ocr_pages") or 0) > 0:
+        return False
+    if int(meta.get("ocr_attempts") or 0) > 0:
         return False
     if meta.get("ocr_required"):
         return True
