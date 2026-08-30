@@ -322,18 +322,39 @@ _TOOL_FORMAT_RETRY_NUDGE = (
 
 # Live M15: the hat ended on "let me search / I'll pull the WIR" after the
 # search-tool cap, which the UI rendered as an incomplete / empty generation.
+# Two shapes, because live failures came in both:
+#  * OPENER - the whole turn is a promise ("Let me search...", "I'm searching
+#    the executed contract volume...").
+#  * TAIL - the turn reasons briefly and then ENDS on the promise ("...absent
+#    from the retrieved excerpts, I am running a targeted search ... to pull
+#    the clause details."), which is the same dead end for the reader.
+# Both require a FIRST-PERSON promise. A bare leading verb ("Search results
+# show three specs...") is a real answer and must not match.
 _SEARCH_PREAMBLE_RE = re.compile(
-    r"^\s*(?:okay[,.]?\s+|sure[,.]?\s+|thanks[,.]?\s+)?"
-    r"(?:let me |i(?:'ll| will) )?"
-    r"(?:search|pull|look(?:\s+it)?\s+up|check the (?:project )?documents|"
-    r"find the (?:template|form|spec))",
+    r"^\s*(?:okay[,.]?\s+|sure[,.]?\s+|thanks[,.]?\s+|right[,.]?\s+)?"
+    r"(?:let me\b|i'?ll\b|i\s+will\b|i'?m\b|i\s+am\b|i\s+need\s+to\b|"
+    r"give me a moment|one moment|hold on)"
+    r"[^.!?]{0,120}?"
+    r"\b(?:search|searching|look(?:ing)?\s+up|pull(?:ing)?|check(?:ing)?|"
+    r"run(?:ning)?|re-?run|fetch(?:ing)?|retriev(?:e|ing))\b",
+    re.IGNORECASE,
+)
+_SEARCH_PROMISE_TAIL_RE = re.compile(
+    r"(?:^|[.!?]\s+)(?:[^.!?]{0,160}?)"
+    r"\b(?:i\s+am|i'?m|i\s+will|i'?ll|let me|i\s+need\s+to)\b"
+    r"[^.!?]{0,160}?"
+    r"\b(?:search|searching|run(?:ning)?|pull(?:ing)?|look(?:ing)?\s+up|"
+    r"fetch(?:ing)?|retriev(?:e|ing)|check(?:ing)?)\b[^.!?]{0,160}[.!?]?\s*$",
     re.IGNORECASE,
 )
 _SEARCH_PREAMBLE_RETRY_NUDGE = (
-    "Do not search again. Write the complete deliverable now in plain text "
-    "using the operator facts and any tool results already in this thread. "
-    "A WIR / inspection request, claim notice, or as-built note must include "
-    "scope, the stated numbers, hold/witness or variance, and signatories."
+    "Do not search again. Answer now in plain text using the operator facts "
+    "and any tool results already in this thread. If the answer is a lookup, "
+    "state the value with its source; if the thread does not contain it, say "
+    "so plainly and name what is missing. A deliverable (WIR / inspection "
+    "request, claim notice, as-built note) must include scope, the stated "
+    "numbers, hold/witness or variance, and signatories. Never reply with an "
+    "intention to search."
 )
 
 
@@ -342,7 +363,7 @@ def _looks_like_search_preamble(text: str) -> bool:
     t = (text or "").strip()
     if not t or len(t) > 500 or t.count("\n") > 6:
         return False
-    return bool(_SEARCH_PREAMBLE_RE.search(t))
+    return bool(_SEARCH_PREAMBLE_RE.search(t) or _SEARCH_PROMISE_TAIL_RE.search(t))
 
 
 def _final_text_needs_forced_retry(
@@ -353,10 +374,13 @@ def _final_text_needs_forced_retry(
         return True
     if text == _TOOL_FORMAT_FALLBACK:
         return True
-    if _looks_like_search_preamble(text) and (
-        _is_document_deliverable_request(user_message)
-        or _is_generative_request(user_message or "")
-    ):
+    # A promise to search is never a usable answer to ANY question. This was
+    # gated on deliverable/generative requests, so plain factual lookups fell
+    # straight through and the user was shown "Let me search more precisely
+    # for the Engineer's Representative..." as the final answer (live WAVE-2
+    # D1 and E1, plus three earlier turns in the same session). The request
+    # type does not change whether a dangling promise is an answer.
+    if _looks_like_search_preamble(text):
         return True
     return False
 
