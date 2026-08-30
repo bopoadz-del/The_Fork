@@ -1611,6 +1611,14 @@ def _chunk_prose_segment(text: str, chunker: str) -> list[str]:
     return chunk_text(text)
 
 
+def _normalize_cesmm_in_chunks(chunks: list[str]) -> list[str]:
+    """Collapse OCR-spaced CESMM codes (``D 549.2`` → ``D549.2``) in chunks."""
+    if not chunks:
+        return chunks
+    from app.core.rag.vector_store import normalize_cesmm_item_codes
+    return [normalize_cesmm_item_codes(c) for c in chunks]
+
+
 def chunk_extracted_document(
     text: str,
     chunker: str = "default",
@@ -1624,9 +1632,14 @@ def chunk_extracted_document(
     particulars chunks so the default 500-word splitter cannot cut a
     filled-in amount mid-row. Those particulars chunks are the only copy
     of that section in the index.
+
+    CESMM item codes are space-collapsed before chunking so ``D 549.2``
+    and ``D549.2`` share a token and a row stays adjacent to its figures.
     """
     if not text or not text.strip():
         return []
+    from app.core.rag.vector_store import normalize_cesmm_item_codes
+    text = normalize_cesmm_item_codes(text)
     from app.core.contract_data_chunks import (
         contract_data_particulars_chunks,
         contract_data_spans,
@@ -1983,6 +1996,7 @@ def index_project(project_id: str) -> dict[str, Any]:
         ifc_chunks = _ifc_chunks_for_document(file_path, filename, ext, project_id)
         if ifc_chunks:
             chunks = chunks + ifc_chunks
+        chunks = _normalize_cesmm_in_chunks(chunks)
 
         fingerprint = f"{doc['uploaded_at']}:{doc['size']}"
         entry: dict[str, Any] = {
@@ -2564,6 +2578,7 @@ def index_document(
         ifc_chunks = _ifc_chunks_for_document(file_path, filename, ext, project_id)
         if ifc_chunks:
             chunks = chunks + ifc_chunks
+        chunks = _normalize_cesmm_in_chunks(chunks)
         if _scanned_pdf_missing_ocr(ext, meta):
             # Cover-page text + VERIFIED-TOTAL GUARD still produce chunks.
             # That must not look like a successful body index.
