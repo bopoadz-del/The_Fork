@@ -556,7 +556,10 @@ def _public_download_once(
                 if str(name).startswith("download_warning") and value:
                     extra.setdefault("confirm", str(value))
         except Exception:  # noqa: BLE001
-            pass
+            logger.info(
+                "could not read Drive download_warning cookie",
+                exc_info=True,
+            )
     if extra.get("confirm"):
         return None, "public Drive download requires confirm token", extra
     return None, "public Drive download is not world-readable", None
