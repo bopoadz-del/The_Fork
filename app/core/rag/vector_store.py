@@ -63,7 +63,7 @@ _FTS5_SAFE_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 # identifiers share one token shape. Only a single Latin letter is
 # consumed — drawing codes (IP-INF-054) and contract ids (DD-2023-118)
 # are unchanged.
-_CESMM_OCR_SPACE_RE = re.compile(r"\b([A-Za-z])[ \t]+(\d)")
+_CESMM_OCR_SPACE_RE = re.compile(r"\b([A-Za-z])[ \t]+(\d+\.\d+)\b")
 _CESMM_COMPACT_TOKEN_RE = re.compile(r"^[a-z]\d+$")
 
 
