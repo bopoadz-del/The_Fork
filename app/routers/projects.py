@@ -144,6 +144,18 @@ class ProgressRequest(BaseModel):
     photos: List[str] = []
 
 
+class UpdateDocumentRequest(BaseModel):
+    """Seed a Drive file id on an existing document without re-uploading.
+
+    Master Corpus rag_backfill stubs have ``drive_file_id: null``. The
+    service-account name-search cannot see anyone-with-link files, so an
+    owner/admin PATCH is how we attach the live id (e.g. ocr1exec →
+    ``11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI``). Preview then hydrates via
+    ``files.get`` / public download.
+    """
+    drive_file_id: str
+
+
 # ── projects ────────────────────────────────────────────────────────────────
 
 @router.post("/v1/projects", status_code=201)
@@ -997,6 +1009,59 @@ async def delete_memory(
 
 
 # ── data governance (Roadmap V2 · Epic 6) ───────────────────────────────────
+
+@router.patch("/v1/projects/{project_id}/documents/{document_id}")
+async def update_document(
+    project_id: str,
+    document_id: str,
+    req: UpdateDocumentRequest,
+    auth: dict = Depends(require_user),
+):
+    """Set ``drive_file_id`` on an existing document. Owner or admin only.
+
+    Does not re-upload or re-index. Preview hydrate uses the id on the
+    next cite-click (SA ``files.get`` + media, then public download).
+    """
+    from app.core.gdrive_service import is_valid_drive_file_id
+
+    is_admin = auth.get("role") == "admin"
+    proj = store.get_project(
+        project_id,
+        user_id=None if is_admin else auth["user_id"],
+        include_admin_approved=True,
+    )
+    if not proj:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    if proj.get("user_id") != auth["user_id"] and not is_admin:
+        raise HTTPException(403, "Admin or project owner required")
+
+    drive_file_id = (req.drive_file_id or "").strip()
+    if not is_valid_drive_file_id(drive_file_id):
+        raise HTTPException(422, "drive_file_id is not a valid Drive file id")
+
+    resolved_id = store.storage_project_id(project_id)
+    doc = store.get_document(document_id)
+    if not doc or doc.get("project_id") not in {project_id, resolved_id}:
+        raise HTTPException(
+            404, f"Document '{document_id}' not found in project '{project_id}'"
+        )
+
+    updated = store.update_document_metadata(document_id, {
+        "drive_file_id": drive_file_id,
+        "drive_resolved_from": "patch",
+    })
+    if updated is None:
+        raise HTTPException(
+            404, f"Document '{document_id}' not found in project '{project_id}'"
+        )
+    audit.record(
+        "document.drive_file_id_set",
+        project_id=resolved_id,
+        document_id=document_id,
+        user_id=auth["user_id"],
+    )
+    return updated
+
 
 @router.delete("/v1/projects/{project_id}/documents/{document_id}")
 async def delete_document(

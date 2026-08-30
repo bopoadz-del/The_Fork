@@ -498,6 +498,14 @@ def test_preview_r2_not_configured_clear_404(
         "app.core.gdrive_service.download_file_bytes",
         lambda fid: (None, "service account unavailable"),
     )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.get_file_metadata",
+        lambda fid: (None, "service account unavailable"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_public_file_bytes",
+        lambda fid: (None, "public Drive download is not world-readable"),
+    )
     r = client.get(
         f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
     )
@@ -532,6 +540,14 @@ def test_preview_r2_fetch_failed_clear_404(
     monkeypatch.setattr(
         "app.core.gdrive_service.download_file_bytes",
         lambda fid: (None, "Drive download returned 404"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.get_file_metadata",
+        lambda fid: (None, "Drive files.get returned 404"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_public_file_bytes",
+        lambda fid: (None, "public Drive download returned 404"),
     )
     r = client.get(
         f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
@@ -671,3 +687,411 @@ def test_preview_user_upload_local_path_still_200(client):
     assert r.status_code == 200, r.text
     assert r.json()["kind"] == "text"
     assert "hello from disk" in r.json()["text"]
+
+
+OCR1EXEC_NAME = "DD-2023-118 - Infrastructure Package 1- vol 1-Executed.pdf"
+OCR1EXEC_DRIVE_ID = "11oD5bJW8tdTtwqyf4fYAVxYhbYwYATiI"
+
+
+def _rag_backfill_stub(store, project_id, tmp_path, *, drive_file_id=None):
+    return store.add_document(
+        project_id=project_id,
+        original_name=OCR1EXEC_NAME,
+        file_path=(
+            r"G:\My Drive\Master Folder\the client project\Contract Docs"
+            r"\Contractor\Contract docs SIGNED\\" + OCR1EXEC_NAME
+        ),
+        size=0,
+        metadata={
+            "source": "rag_backfill_client_clean_all",
+            "drive_file_id": drive_file_id,
+            "source_path": (
+                r"G:\My Drive\Master Folder\the client project\Contract Docs"
+                r"\Contractor\Contract docs SIGNED\\" + OCR1EXEC_NAME
+            ),
+            "ext": ".pdf",
+        },
+    )
+
+
+def test_preview_drive_id_public_download_when_sa_list_and_media_fail(
+    client, monkeypatch, tmp_path,
+):
+    """ocr1exec after PATCH: name-search still blind, SA media fails,
+    public anyone-with-link download hydrates and persists the id + size."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    workspace = _new_project(client, "Preview Workspace")
+    corpus = _new_project(client, "Citeable Corpus")
+    pdf = b"%PDF-1.4 public anyone-with-link\n"
+    doc = _rag_backfill_stub(
+        store, corpus["id"], tmp_path, drive_file_id=OCR1EXEC_DRIVE_ID,
+    )
+    monkeypatch.setattr(
+        "app.routers.projects._preview_citeable_owner_ids",
+        lambda pid: {pid, corpus["id"]},
+    )
+    lookups: list[str] = []
+    monkeypatch.setattr(
+        "app.core.gdrive_service.find_file_id_by_exact_name",
+        lambda filename: lookups.append(filename) or (None, f"no Drive file named {filename}"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.get_file_metadata",
+        lambda fid: (
+            ({"id": fid, "name": OCR1EXEC_NAME, "mimeType": "application/pdf"}, None)
+            if fid == OCR1EXEC_DRIVE_ID
+            else (None, "Drive files.get returned 404")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (None, "Drive download returned 403"),
+    )
+    public_hits: list[str] = []
+
+    def _public(fid: str):
+        public_hits.append(fid)
+        return (pdf, None) if fid == OCR1EXEC_DRIVE_ID else (None, "wrong id")
+
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_public_file_bytes", _public,
+    )
+
+    r = client.get(
+        f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
+        headers=H,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "pdf"
+    assert r.json()["has_file"] is True
+    assert r.json()["size"] == len(pdf)
+    assert lookups == []  # id already on the row — skip name-search
+    assert public_hits == [OCR1EXEC_DRIVE_ID]
+
+    refreshed = store.get_document(doc["id"])
+    assert refreshed is not None
+    assert (refreshed.get("metadata") or {}).get("drive_file_id") == OCR1EXEC_DRIVE_ID
+    assert refreshed["size"] == len(pdf)
+
+
+def test_preview_name_search_miss_files_get_media_hit(
+    client, monkeypatch, tmp_path,
+):
+    """SA cannot list-by-name, but files.get + media works once id is set."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    workspace = _new_project(client, "Preview Workspace")
+    corpus = _new_project(client, "Citeable Corpus")
+    pdf = b"%PDF-1.4 from files.get media\n"
+    doc = _rag_backfill_stub(
+        store, corpus["id"], tmp_path, drive_file_id=OCR1EXEC_DRIVE_ID,
+    )
+    monkeypatch.setattr(
+        "app.routers.projects._preview_citeable_owner_ids",
+        lambda pid: {pid, corpus["id"]},
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.find_file_id_by_exact_name",
+        lambda filename: (None, f"no Drive file named {filename}"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.get_file_metadata",
+        lambda fid: ({"id": fid, "name": OCR1EXEC_NAME}, None),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (pdf, None) if fid == OCR1EXEC_DRIVE_ID else (None, "wrong id"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_public_file_bytes",
+        lambda fid: (_ for _ in ()).throw(AssertionError("public download must not run")),
+    )
+    r = client.get(
+        f"/v1/projects/{workspace['id']}/documents/{doc['id']}/preview",
+        headers=H,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "pdf"
+
+
+def test_preview_private_drive_file_still_404(
+    client, monkeypatch, tmp_path,
+):
+    """A Drive id that is not anyone-with-link must not leak bytes."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    proj = _new_project(client)
+    private_id = "1PrivateFileIdNotSharedXXXXXX"
+    doc = _rag_backfill_stub(
+        store, proj["id"], tmp_path, drive_file_id=private_id,
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.find_file_id_by_exact_name",
+        lambda filename: (None, f"no Drive file named {filename}"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.get_file_metadata",
+        lambda fid: (None, "Drive files.get returned 404"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (None, "Drive download returned 404"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_public_file_bytes",
+        lambda fid: (None, "public Drive download is not world-readable"),
+    )
+    r = client.get(
+        f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
+    )
+    assert r.status_code == 404
+    assert r.status_code != 500
+    detail = r.json()["detail"].lower()
+    assert "not available" in detail
+    assert "not world-readable" in detail
+
+
+def test_patch_drive_file_id_owner_then_preview_hydrates(
+    client, monkeypatch, tmp_path,
+):
+    """Owner PATCH seeds the id; name-search miss + public download 200."""
+    from app.core import projects as store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    proj = _new_project(client)
+    pdf = b"%PDF-1.4 after owner patch\n"
+    doc = _rag_backfill_stub(store, proj["id"], tmp_path, drive_file_id=None)
+    assert (doc.get("metadata") or {}).get("drive_file_id") in (None, "")
+
+    patched = client.patch(
+        f"/v1/projects/{proj['id']}/documents/{doc['id']}",
+        json={"drive_file_id": OCR1EXEC_DRIVE_ID},
+        headers=H,
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert (body.get("metadata") or {}).get("drive_file_id") == OCR1EXEC_DRIVE_ID
+    assert body["has_remote_source"] is True
+
+    monkeypatch.setattr(
+        "app.core.gdrive_service.find_file_id_by_exact_name",
+        lambda filename: (None, f"no Drive file named {filename}"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.get_file_metadata",
+        lambda fid: (None, "service account unavailable"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_file_bytes",
+        lambda fid: (None, "service account unavailable"),
+    )
+    monkeypatch.setattr(
+        "app.core.gdrive_service.download_public_file_bytes",
+        lambda fid: (pdf, None) if fid == OCR1EXEC_DRIVE_ID else (None, "wrong id"),
+    )
+    r = client.get(
+        f"/v1/projects/{proj['id']}/documents/{doc['id']}/preview", headers=H,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "pdf"
+    refreshed = store.get_document(doc["id"])
+    assert (refreshed.get("metadata") or {}).get("drive_file_id") == OCR1EXEC_DRIVE_ID
+    assert refreshed["size"] == len(pdf)
+
+
+def _register(client, email):
+    r = client.post("/v1/users/register", json={"email": email, "password": "pw123456"})
+    assert r.status_code in (201, 409), r.text
+    r = client.post("/v1/users/login", json={"email": email, "password": "pw123456"})
+    assert r.status_code == 200, r.text
+    return {"token": r.json()["token"], "id": r.json()["user"]["id"]}
+
+
+def _promote_admin(uid):
+    from app.core.db import SessionLocal
+    from app.core.models import User
+
+    with SessionLocal() as db:
+        db.get(User, uid).role = "admin"
+        db.commit()
+
+
+def test_patch_drive_file_id_stranger_unauthorized(client, tmp_path):
+    """Stranger cannot seed a Drive id — 404 on private, 403 on shared."""
+    from app.core import projects as store
+    from app.core.db import SessionLocal
+    from app.core.models import Project
+
+    owner = _register(client, "patch-owner@example.com")
+    stranger = _register(client, "patch-stranger@example.com")
+    owner_h = {"Authorization": f"Bearer {owner['token']}"}
+    stranger_h = {"Authorization": f"Bearer {stranger['token']}"}
+
+    private = client.post(
+        "/v1/projects", json={"name": "Owner private"}, headers=owner_h,
+    )
+    assert private.status_code == 201, private.text
+    private_pid = private.json()["id"]
+    private_doc = _rag_backfill_stub(store, private_pid, tmp_path)
+
+    denied_private = client.patch(
+        f"/v1/projects/{private_pid}/documents/{private_doc['id']}",
+        json={"drive_file_id": OCR1EXEC_DRIVE_ID},
+        headers=stranger_h,
+    )
+    assert denied_private.status_code in (403, 404), denied_private.text
+    assert (store.get_document(private_doc["id"]).get("metadata") or {}).get(
+        "drive_file_id"
+    ) in (None, "")
+
+    shared = client.post(
+        "/v1/projects", json={"name": "Owner shared"}, headers=owner_h,
+    )
+    assert shared.status_code == 201, shared.text
+    shared_pid = shared.json()["id"]
+    with SessionLocal() as db:
+        row = db.get(Project, shared_pid)
+        row.origin = "admin_drive_approved"
+        row.is_approved = True
+        db.commit()
+    shared_doc = _rag_backfill_stub(store, shared_pid, tmp_path)
+    # Stranger can open the shared project but must not mutate the pointer.
+    opened = client.get(f"/v1/projects/{shared_pid}", headers=stranger_h)
+    assert opened.status_code == 200, opened.text
+    denied_shared = client.patch(
+        f"/v1/projects/{shared_pid}/documents/{shared_doc['id']}",
+        json={"drive_file_id": OCR1EXEC_DRIVE_ID},
+        headers=stranger_h,
+    )
+    assert denied_shared.status_code == 403, denied_shared.text
+    assert "owner" in denied_shared.json()["detail"].lower()
+    assert (store.get_document(shared_doc["id"]).get("metadata") or {}).get(
+        "drive_file_id"
+    ) in (None, "")
+
+
+def test_patch_drive_file_id_admin_ok(client, tmp_path):
+    """Admin can seed drive_file_id on a project they do not own."""
+    from app.core import projects as store
+
+    owner = _register(client, "patch-admin-owner@example.com")
+    admin = _register(client, "patch-admin@example.com")
+    _promote_admin(admin["id"])
+    owner_h = {"Authorization": f"Bearer {owner['token']}"}
+    admin_h = {"Authorization": f"Bearer {admin['token']}"}
+
+    proj = client.post(
+        "/v1/projects", json={"name": "Admin seed target"}, headers=owner_h,
+    )
+    assert proj.status_code == 201, proj.text
+    pid = proj.json()["id"]
+    doc = _rag_backfill_stub(store, pid, tmp_path)
+    r = client.patch(
+        f"/v1/projects/{pid}/documents/{doc['id']}",
+        json={"drive_file_id": OCR1EXEC_DRIVE_ID},
+        headers=admin_h,
+    )
+    assert r.status_code == 200, r.text
+    assert (r.json().get("metadata") or {}).get("drive_file_id") == OCR1EXEC_DRIVE_ID
+
+
+def test_patch_drive_file_id_rejects_url(client, tmp_path):
+    from app.core import projects as store
+
+    proj = _new_project(client)
+    doc = _rag_backfill_stub(store, proj["id"], tmp_path)
+    r = client.patch(
+        f"/v1/projects/{proj['id']}/documents/{doc['id']}",
+        json={"drive_file_id": "https://drive.google.com/file/d/abc/view"},
+        headers=H,
+    )
+    assert r.status_code == 422
+
+
+def test_download_public_file_bytes_handles_confirm_token(monkeypatch):
+    """Google's virus-scan HTML must be retried with confirm= before failing."""
+    from app.core import gdrive_service
+
+    pdf = b"%PDF-1.4 after confirm\n"
+    html = (
+        '<form action="https://drive.usercontent.google.com/download">'
+        '<input type="hidden" name="confirm" value="t">'
+        '<input type="hidden" name="uuid" value="11111111-1111-1111-1111-111111111111">'
+        "</form>"
+    )
+
+    class _Resp:
+        def __init__(self, status_code, content, content_type, url="https://drive.google.com/uc"):
+            self.status_code = status_code
+            self.content = content
+            self.headers = {"content-type": content_type}
+            self.url = url
+            self.cookies = {}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, params=None):
+            self.calls.append((url, dict(params or {})))
+            if (params or {}).get("confirm") == "t":
+                return _Resp(200, pdf, "application/pdf")
+            return _Resp(200, html.encode(), "text/html")
+
+    fake = _Client()
+    monkeypatch.setattr(
+        "httpx.Client", lambda *a, **k: fake,
+    )
+    blob, err = gdrive_service.download_public_file_bytes(OCR1EXEC_DRIVE_ID)
+    assert err is None
+    assert blob == pdf
+    assert any(c[1].get("confirm") == "t" for c in fake.calls)
+
+
+def test_download_public_file_bytes_private_html_fails_closed(monkeypatch):
+    from app.core import gdrive_service
+
+    class _Resp:
+        status_code = 200
+        content = b"<html>You need access. Request access from the owner.</html>"
+        headers = {"content-type": "text/html"}
+        url = "https://drive.google.com/file/d/1PrivateFileIdNotSharedXXXXXX/view"
+        cookies = {}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, params=None):
+            return _Resp()
+
+    monkeypatch.setattr("httpx.Client", lambda *a, **k: _Client())
+    blob, err = gdrive_service.download_public_file_bytes("1PrivateFileIdNotSharedXXXXXX")
+    assert blob is None
+    assert err == "public Drive download is not world-readable"
+
+
+def test_is_valid_drive_file_id():
+    from app.core.gdrive_service import is_valid_drive_file_id
+
+    assert is_valid_drive_file_id(OCR1EXEC_DRIVE_ID)
+    assert not is_valid_drive_file_id("")
+    assert not is_valid_drive_file_id("short")
+    assert not is_valid_drive_file_id("https://drive.google.com/file/d/abc/view")
+    assert not is_valid_drive_file_id("../../etc/passwd")

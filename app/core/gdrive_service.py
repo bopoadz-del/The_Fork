@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -38,6 +39,20 @@ logger = logging.getLogger(__name__)
 
 
 _DRIVE_API = "https://www.googleapis.com/drive/v3"
+_DRIVE_UC_DOWNLOAD = "https://drive.google.com/uc"
+_DRIVE_USERCONTENT_DOWNLOAD = "https://drive.usercontent.google.com/download"
+# Drive file ids are opaque tokens (typically 28–44 chars). Reject URLs /
+# paths so a PATCH or public-download fallback cannot be pointed at an
+# arbitrary host.
+_DRIVE_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,128}$")
+_CONFIRM_TOKEN_RE = re.compile(
+    r"(?:confirm=|name=[\"']confirm[\"']\s+value=[\"'])([0-9A-Za-z_-]+)",
+    re.IGNORECASE,
+)
+_UUID_TOKEN_RE = re.compile(
+    r"(?:[?&]uuid=|name=[\"']uuid[\"']\s+value=[\"'])([0-9A-Fa-f-]+)",
+    re.IGNORECASE,
+)
 _SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 # Drive metadata MIME types we cannot blob-download. The export path (for
@@ -364,6 +379,192 @@ def find_file_id_by_exact_name(filename: str) -> Tuple[Optional[str], Optional[s
     return str(files[0]["id"]), None
 
 
+def is_valid_drive_file_id(file_id: str) -> bool:
+    """True iff ``file_id`` looks like a Drive file id, not a URL or path."""
+    return bool(_DRIVE_FILE_ID_RE.fullmatch((file_id or "").strip()))
+
+
+def get_file_metadata(file_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Drive ``files.get`` (supportsAllDrives) without ``alt=media``.
+
+    Name-search (``files.list``) cannot see anyone-with-link files the SA
+    was never shared on. ``files.get`` by id still works once the id is
+    known (PATCH / prior resolve). Returns ``(meta, None)`` or
+    ``(None, reason)``.
+    """
+    fid = (file_id or "").strip()
+    if not is_valid_drive_file_id(fid):
+        return None, "invalid drive file id"
+    token = _mint_access_token()
+    if not token:
+        return None, "service account unavailable"
+    try:
+        import httpx
+    except ImportError:
+        return None, "httpx not available"
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.get(
+                f"{_DRIVE_API}/files/{fid}",
+                headers={"Authorization": f"Bearer {token}"},
+                params={
+                    "fields": "id,name,mimeType,size",
+                    "supportsAllDrives": "true",
+                },
+            )
+            if resp.status_code != 200:
+                return None, (
+                    f"Drive files.get returned {resp.status_code}: {resp.text[:200]}"
+                )
+            payload = resp.json() if resp.content else {}
+            if not isinstance(payload, dict) or not payload.get("id"):
+                return None, "Drive files.get returned no file id"
+            return payload, None
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+
+
+def _response_looks_like_file(content: bytes, content_type: str, content_disposition: str) -> bool:
+    """True when the HTTP body is file bytes, not a Google HTML interstitial."""
+    if not content:
+        return False
+    if content.startswith(b"%PDF") or content[:4] == b"PK\x03\x04":
+        return True
+    ctype = (content_type or "").split(";")[0].strip().lower()
+    if ctype in {"text/html", "application/xhtml+xml", "text/plain"}:
+        # text/plain can be a real .txt; accept only with a filename header.
+        disp = (content_disposition or "").lower()
+        return ctype == "text/plain" and (
+            "filename=" in disp or "attachment" in disp
+        )
+    disp = (content_disposition or "").lower()
+    if "filename=" in disp or "attachment" in disp:
+        return True
+    return ctype.startswith("application/") or ctype.startswith("image/")
+
+
+def _extract_confirm_params(html: str) -> Dict[str, str]:
+    """Pull confirm / uuid tokens out of Google's virus-scan HTML page."""
+    out: Dict[str, str] = {}
+    confirm = _CONFIRM_TOKEN_RE.search(html or "")
+    if confirm:
+        out["confirm"] = confirm.group(1)
+    uuid_m = _UUID_TOKEN_RE.search(html or "")
+    if uuid_m:
+        out["uuid"] = uuid_m.group(1)
+    return out
+
+
+def _html_is_access_denied(html: str, final_url: str) -> bool:
+    url = (final_url or "").lower()
+    if "accounts.google.com" in url:
+        return True
+    lowered = (html or "").lower()
+    return (
+        "you need access" in lowered
+        or "request access" in lowered
+        or "sign in to continue" in lowered
+        or "unable to access" in lowered
+    )
+
+
+def download_public_file_bytes(file_id: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Download a Drive file that is already anyone-with-link / world-readable.
+
+    Used when the service account can ``files.get`` by id (or we already
+    have the id from PATCH) but cannot ``files.list`` by name, and SA
+    media download fails. Does **not** use the service-account token —
+    private files fail closed (403 / HTML access wall). Handles the
+    confirm-token interstitial Google serves instead of the PDF.
+    """
+    fid = (file_id or "").strip()
+    if not is_valid_drive_file_id(fid):
+        return None, "invalid drive file id"
+    try:
+        import httpx
+    except ImportError:
+        return None, "httpx not available"
+
+    attempts = [
+        {"url": _DRIVE_UC_DOWNLOAD, "params": {"export": "download", "id": fid}},
+        {
+            "url": _DRIVE_USERCONTENT_DOWNLOAD,
+            "params": {"id": fid, "export": "download"},
+        },
+    ]
+    last_err = "public Drive download returned no bytes"
+    try:
+        with httpx.Client(timeout=120, follow_redirects=True) as client:
+            for attempt in attempts:
+                blob, err, retry_params = _public_download_once(
+                    client, attempt["url"], attempt["params"],
+                )
+                if blob:
+                    return blob, None
+                if retry_params:
+                    merged = dict(attempt["params"])
+                    merged.update(retry_params)
+                    blob, err, _ = _public_download_once(
+                        client, attempt["url"], merged,
+                    )
+                    if blob:
+                        return blob, None
+                last_err = err or last_err
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+    return None, last_err
+
+
+def _public_download_once(
+    client: Any, url: str, params: Dict[str, str],
+) -> Tuple[Optional[bytes], Optional[str], Optional[Dict[str, str]]]:
+    """One GET. Returns ``(bytes, err, confirm_params_if_html_interstitial)``."""
+    resp = client.get(url, params=params)
+    status = int(getattr(resp, "status_code", 0) or 0)
+    if status in {401, 403, 404}:
+        return None, f"public Drive download returned {status}", None
+    if status != 200:
+        return None, f"public Drive download returned {status}", None
+
+    content = resp.content or b""
+    headers = getattr(resp, "headers", {}) or {}
+    ctype = headers.get("content-type") or headers.get("Content-Type") or ""
+    disp = (
+        headers.get("content-disposition")
+        or headers.get("Content-Disposition")
+        or ""
+    )
+    if _response_looks_like_file(content, ctype, disp):
+        return content, None, None
+
+    html = ""
+    try:
+        html = content.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return None, "public Drive download is not world-readable", None
+
+    final_url = str(getattr(resp, "url", "") or "")
+    if _html_is_access_denied(html, final_url):
+        return None, "public Drive download is not world-readable", None
+
+    extra = _extract_confirm_params(html)
+    cookies = getattr(resp, "cookies", None)
+    if cookies is not None:
+        try:
+            items = cookies.items() if hasattr(cookies, "items") else []
+            for name, value in items:
+                if str(name).startswith("download_warning") and value:
+                    extra.setdefault("confirm", str(value))
+        except Exception:  # noqa: BLE001
+            logger.info(
+                "could not read Drive download_warning cookie",
+                exc_info=True,
+            )
+    if extra.get("confirm"):
+        return None, "public Drive download requires confirm token", extra
+    return None, "public Drive download is not world-readable", None
+
+
 def download_file_bytes(file_id: str) -> Tuple[Optional[bytes], Optional[str]]:
     """Download a single Drive file's raw bytes.
 
@@ -371,6 +572,9 @@ def download_file_bytes(file_id: str) -> Tuple[Optional[bytes], Optional[str]]:
     Streams the response so a large file doesn't have to fit in one socket
     buffer; the hydration block enforces a separate size cap before calling.
     """
+    fid = (file_id or "").strip()
+    if not is_valid_drive_file_id(fid):
+        return None, "invalid drive file id"
     token = _mint_access_token()
     if not token:
         return None, "service account unavailable"
@@ -382,7 +586,7 @@ def download_file_bytes(file_id: str) -> Tuple[Optional[bytes], Optional[str]]:
     try:
         with httpx.Client(timeout=120) as client:
             resp = client.get(
-                f"{_DRIVE_API}/files/{file_id}",
+                f"{_DRIVE_API}/files/{fid}",
                 headers={"Authorization": f"Bearer {token}"},
                 # Shared-drive corpus files 404 without supportsAllDrives.
                 params={"alt": "media", "supportsAllDrives": "true"},
