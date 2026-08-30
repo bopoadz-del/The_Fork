@@ -81,10 +81,24 @@ _PDF_OCR_THRESHOLD = 30
 
 # Skip PDFs above this size entirely. Multi-hundred-MB scanned drawing sets
 # (e.g. 450 MB) OOM the 2 GB Render worker during fitz load / OCR.
-_PDF_MAX_SIZE_MB = float(os.getenv("PDF_MAX_SIZE_MB", "100"))
+_DEFAULT_PDF_MAX_SIZE_MB = 100.0
 # For PDFs above this size, do NOT run OCR — only extract any existing text
-# layer. OCR'ing large scanned PDFs is the ingestion timeout/OOM path.
-_PDF_OCR_MAX_SIZE_MB = float(os.getenv("PDF_OCR_MAX_SIZE_MB", "25"))
+# layer. 25 MB was too tight: the live priced BOQ (doc 20ac033d,
+# IP-INF-053-…-BOQ-… (Priced).pdf) is ~28 MB and is a scan, so item codes
+# (D599.5, D549.2) never entered the search index. 32 MB covers that file
+# with headroom; page-at-a-time OCR + isolated children still bound memory.
+_DEFAULT_PDF_OCR_MAX_SIZE_MB = 32.0
+# Default OCR page budget. 40 left later demolition items unindexed
+# ("PARTIAL searchable"). 80 covers a typical bill; BOQ-named files get a
+# higher cap via PDF_OCR_BOQ_PAGE_CAP.
+_DEFAULT_PDF_OCR_PAGE_CAP = 80
+_DEFAULT_PDF_OCR_BOQ_PAGE_CAP = 160
+# Isolated page-batch size for large scans. A timeout/OOM on pages 41-60
+# then keeps pages 1-40 instead of ZERO_CHUNK'ing the whole document.
+_DEFAULT_PDF_OCR_BATCH_PAGES = 20
+# Files above this size extract in isolated page batches (the old 20 MB
+# BOQ parser / OCR-skip cliff).
+_DEFAULT_PDF_BATCH_MIN_MB = 20.0
 
 # Ceiling on the TEXT a single document may accumulate. The size guards above
 # bound the input; nothing bounded the output, so a long text-layer PDF grew
@@ -92,6 +106,58 @@ _PDF_OCR_MAX_SIZE_MB = float(os.getenv("PDF_OCR_MAX_SIZE_MB", "25"))
 # Set well above anything real in this corpus (the largest Vol 2 specification
 # extracts ~2.2M chars) so it only catches runaway documents.
 _MAX_EXTRACT_CHARS = int(os.getenv("DOC_MAX_EXTRACT_CHARS", "12000000"))
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def pdf_max_size_mb() -> float:
+    """Skip-the-whole-PDF ceiling. Read at call time so env changes apply."""
+    return _env_float("PDF_MAX_SIZE_MB", _DEFAULT_PDF_MAX_SIZE_MB)
+
+
+def pdf_ocr_max_size_mb() -> float:
+    """Above this, OCR is skipped (text layer only). Call-time env read."""
+    return _env_float("PDF_OCR_MAX_SIZE_MB", _DEFAULT_PDF_OCR_MAX_SIZE_MB)
+
+
+def pdf_ocr_page_cap(filename: str = "") -> int:
+    """OCR page budget for this PDF.
+
+    BOQ-named files (priced bills, demolition BOQs) use a higher default so
+    later item codes are not dropped by the generic cap. Read at call time
+    so a dashboard env change takes effect without re-importing this module.
+    """
+    if filename and _BOQ_NAME_RE.search(filename):
+        return _env_int("PDF_OCR_BOQ_PAGE_CAP", _DEFAULT_PDF_OCR_BOQ_PAGE_CAP)
+    return _env_int("PDF_OCR_PAGE_CAP", _DEFAULT_PDF_OCR_PAGE_CAP)
+
+
+def pdf_ocr_batch_pages() -> int:
+    return max(1, _env_int("PDF_OCR_BATCH_PAGES", _DEFAULT_PDF_OCR_BATCH_PAGES))
+
+
+def pdf_batch_min_mb() -> float:
+    return _env_float("PDF_BATCH_MIN_MB", _DEFAULT_PDF_BATCH_MIN_MB)
 
 # In-process guard around index writes. Cross-process safety comes from the
 # SQLite BEGIN IMMEDIATE transaction in _update_index; this lock just avoids
@@ -389,7 +455,14 @@ def _is_memory_exhaustion(exc: BaseException) -> bool:
     return False
 
 
-def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
+def _extract_pdf(
+    file_path: str,
+    filename: str = "",
+    *,
+    start_page: int = 0,
+    end_page: int | None = None,
+    ocr_budget: int | None = None,
+) -> tuple[str, dict[str, Any]]:
     """Per-page PDF extraction.
 
     For each page: keep its text layer when present, else OCR THAT page. Also
@@ -397,25 +470,36 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
     cover page (> ``_PDF_OCR_THRESHOLD`` chars) made the WHOLE PDF skip OCR even
     though the body pages were image-only.
 
-    MEMORY-BOUNDED for the 2 GB box: OCR at most ``PDF_OCR_PAGE_CAP`` pages
+    MEMORY-BOUNDED for the 2 GB box: OCR at most ``pdf_ocr_page_cap`` pages
     (sets ``ocr_truncated``), freeing each pixmap + temp file per page. Never
     raises — returns ``("", {})`` on any error.
+
+    ``start_page`` / ``end_page`` / ``ocr_budget`` are the isolated page-batch
+    contract: a parent can OCR pages 20-40 with a remaining budget without
+    re-applying the whole-file size gate (the parent already decided).
     """
     import fitz
 
-    page_cap = int(os.getenv("PDF_OCR_PAGE_CAP", "40"))
     parts: list[str] = []
     ocr_pages = 0
     truncated = False
     chars = 0
     text_truncated = False
+    ocr_skipped = False
     try:
-        size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        if _PDF_MAX_SIZE_MB > 0 and size_mb > _PDF_MAX_SIZE_MB:
-            return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
-        # Large scans: disable OCR entirely, rely on text layer only.
-        if _PDF_OCR_MAX_SIZE_MB > 0 and size_mb > _PDF_OCR_MAX_SIZE_MB:
-            page_cap = 0
+        if ocr_budget is None:
+            page_cap = pdf_ocr_page_cap(filename)
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            max_mb = pdf_max_size_mb()
+            if max_mb > 0 and size_mb > max_mb:
+                return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
+            # Large scans: disable OCR entirely, rely on text layer only.
+            ocr_max = pdf_ocr_max_size_mb()
+            if ocr_max > 0 and size_mb > ocr_max:
+                page_cap = 0
+                ocr_skipped = True
+        else:
+            page_cap = max(0, int(ocr_budget))
         with file_crypto.open_plaintext(file_path) as readable_path:
             plumber = None
             # Skip pdfplumber on large scans — it loads the whole PDF and is
@@ -429,6 +513,10 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
             doc = fitz.open(readable_path)
             try:
                 for i, page in enumerate(doc):
+                    if i < start_page:
+                        continue
+                    if end_page is not None and i >= end_page:
+                        break
                     # Stop accumulating past the text ceiling. Breaking keeps
                     # what was read rather than discarding the document, and
                     # the flag below tells the caller the tail is missing
@@ -503,6 +591,7 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
                 }
                 if ocr_pages > 0:
                     partial_meta["ocr_low_quality"] = True
+                    partial_meta["ocr_pages"] = ocr_pages
                 return "\n".join(parts), partial_meta
             # Nothing salvageable. Surface it as the memory failure it is
             # rather than as an empty document -- the ambiguity that hid this
@@ -513,11 +602,140 @@ def _extract_pdf(file_path: str) -> tuple[str, dict[str, Any]]:
     if ocr_pages > 0:
         # The doc relied on OCR for some pages — flag for lower confidence.
         meta["ocr_low_quality"] = True
+        meta["ocr_pages"] = ocr_pages
     if truncated:
         meta["ocr_truncated"] = True
     if text_truncated:
         meta["text_truncated"] = True
         meta["extract_chars"] = chars
+    if ocr_skipped:
+        meta["ocr_skipped_too_large"] = True
+    return "\n".join(parts), meta
+
+
+def _pdf_should_batch(file_path: str) -> bool:
+    """True when this PDF should extract in isolated page batches.
+
+    The old 20 MB cliff (BOQ parser refuse + OCR skip at 25 MB) is exactly
+    the live priced-BOQ size band. Batching keeps each isolated child to
+    ``PDF_OCR_BATCH_PAGES`` so a timeout/OOM on a later range does not
+    ZERO_CHUNK pages already read.
+    """
+    try:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    except OSError:
+        return False
+    return size_mb > pdf_batch_min_mb()
+
+
+def _pdf_page_count(file_path: str) -> int:
+    """Page count for batching. 0 when the file cannot be opened."""
+    try:
+        import fitz
+
+        with file_crypto.open_plaintext(file_path) as readable_path:
+            doc = fitz.open(readable_path)
+            try:
+                return int(doc.page_count)
+            finally:
+                doc.close()
+    except Exception:
+        logger.warning(
+            "could not read PDF page count for %s", file_path, exc_info=True
+        )
+        return 0
+
+
+def _extract_pdf_range_job(
+    file_path: str,
+    filename: str,
+    start: int,
+    end: int,
+    ocr_budget: int,
+) -> tuple[str, dict[str, Any]]:
+    """Picklable entry point for an isolated page-range extraction."""
+    return _extract_pdf(
+        file_path,
+        filename,
+        start_page=start,
+        end_page=end,
+        ocr_budget=ocr_budget,
+    )
+
+
+def _extract_pdf_batched(
+    file_path: str, filename: str
+) -> tuple[str, dict[str, Any]]:
+    """Extract a large PDF as isolated page batches, keeping prior text.
+
+    Each batch runs in its own RLIMIT_AS child. A timeout or memory failure
+    on batch N keeps batches 1..N-1 and flags ``extract_partial`` instead of
+    returning an empty document (the isolation fallback that used to wipe a
+    28 MB scan that had already OCR'd its first pages).
+    """
+    from app.core.extract_isolated import run_isolated
+
+    try:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    except OSError:
+        size_mb = 0.0
+    max_mb = pdf_max_size_mb()
+    if max_mb > 0 and size_mb > max_mb:
+        return "", {"skipped_too_large": True, "size_mb": round(size_mb, 1)}
+
+    n_pages = _pdf_page_count(file_path)
+    if n_pages <= 0:
+        (text, meta), diag = run_isolated(
+            _extract_pdf,
+            (file_path, filename),
+            fallback=("", {}),
+            label=f"extraction of {filename}",
+        )
+        if diag:
+            meta = {**(meta or {}), **diag}
+        return text or "", meta or {}
+
+    ocr_max = pdf_ocr_max_size_mb()
+    ocr_skipped = ocr_max > 0 and size_mb > ocr_max
+    budget = 0 if ocr_skipped else pdf_ocr_page_cap(filename)
+    batch = pdf_ocr_batch_pages()
+
+    parts: list[str] = []
+    meta: dict[str, Any] = {}
+    ocr_used = 0
+    for start in range(0, n_pages, batch):
+        end = min(start + batch, n_pages)
+        remaining = max(0, budget - ocr_used)
+        (text, bmeta), diag = run_isolated(
+            _extract_pdf_range_job,
+            (file_path, filename, start, end, remaining),
+            fallback=("", {}),
+            label=f"extraction of {filename} pages {start + 1}-{end}",
+        )
+        if text:
+            parts.append(text)
+        ocr_used += int((bmeta or {}).get("ocr_pages") or 0)
+        for key in (
+            "ocr_low_quality",
+            "ocr_truncated",
+            "text_truncated",
+            "extract_oom_partial",
+            "extract_chars",
+            "extract_parts",
+        ):
+            if (bmeta or {}).get(key):
+                meta[key] = bmeta[key]
+        if diag:
+            meta.update(diag)
+            meta["extract_partial"] = True
+            break
+
+    if ocr_skipped:
+        meta["ocr_skipped_too_large"] = True
+        meta["size_mb"] = round(size_mb, 1)
+    if ocr_used:
+        meta["ocr_pages"] = ocr_used
+        meta["ocr_low_quality"] = True
     return "\n".join(parts), meta
 
 
@@ -940,6 +1158,15 @@ def _extract_with_meta(file_path: str, filename: str) -> tuple[str, dict[str, An
             text = text.replace("\x00", "")
         return text, meta
 
+    _, ext = os.path.splitext((filename or "").lower())
+    if ext == ".pdf" and _pdf_should_batch(file_path):
+        # Large scans (the 20-32 MB priced-BOQ band): isolated page batches
+        # so a later-range timeout keeps earlier OCR instead of ZERO_CHUNK.
+        text, meta = _extract_pdf_batched(file_path, filename)
+        if "\x00" in text:
+            text = text.replace("\x00", "")
+        return text, meta
+
     (text, meta), diag = run_isolated(
         _extract_with_meta_impl,
         (file_path, filename),
@@ -985,7 +1212,7 @@ def _extract_with_meta_impl(file_path: str, filename: str) -> tuple[str, dict[st
         # table rows. Fixes the cover-page bug (a digital cover page no longer
         # suppresses OCR of image-only body pages). Memory-bounded.
         if ext == ".pdf":
-            return _extract_pdf(file_path)
+            return _extract_pdf(file_path, filename)
 
         # ── DOC / DOCX ───────────────────────────────────────────────────────
         if ext == ".doc":
@@ -1275,6 +1502,21 @@ def chunk_markdown(
                 chunk_text_with_overlap(seg, target_chars=target_chars, overlap=overlap)
             )
     return chunks
+
+
+def _chunker_for_document(filename: str, requested: str = "default") -> str:
+    """Pick a chunker. BOQ-named files default to the finer item-code splitter.
+
+    The 500-word window buried a single rate (D599.5) inside a wall of
+    unrelated rows. Admin reindex can still pass ``chunker=finer`` explicitly;
+    this makes the product path (upload / eager index / index_project) do
+    the same for files whose names already say they are a BOQ.
+    """
+    if requested != "default":
+        return requested
+    if _BOQ_NAME_RE.search(filename or ""):
+        return "finer"
+    return "default"
 
 
 def _chunk_prose_segment(text: str, chunker: str) -> list[str]:
@@ -1640,7 +1882,11 @@ def index_project(project_id: str) -> dict[str, Any]:
 
         file_path = doc.get("file_path") or ""
         text, meta = _extract_with_meta(file_path, filename)
-        chunks = chunk_extracted_document(text, chunker="default", filename=filename)
+        chunks = chunk_extracted_document(
+            text,
+            chunker=_chunker_for_document(filename),
+            filename=filename,
+        )
         # BOQ → RAG: mirror index_document so the package total + line items
         # are retrievable regardless of which indexing path ran.
         boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)
@@ -2185,7 +2431,11 @@ def index_document(
     else:
         file_path = doc.get("file_path") or ""
         text, meta = _extract_with_meta(file_path, filename)
-        chunks = chunk_extracted_document(text, chunker=chunker, filename=filename)
+        chunks = chunk_extracted_document(
+            text,
+            chunker=_chunker_for_document(filename, chunker),
+            filename=filename,
+        )
         # BOQ → RAG: append the computed total + line items so the package
         # value is answerable from the corpus (the raw text never holds the sum).
         boq_chunks = _boq_chunks_for_document(file_path, filename, ext, project_id)

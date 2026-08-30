@@ -14,7 +14,7 @@ A single 4.4 MB PDF producing 376 chunks took the instance from 790 MB to
 3.6 GB. The extracted TEXT was ~2 MB -- the memory is inside the PDF
 libraries, not the output. ``_extract_pdf`` says as much about pdfplumber:
 "it loads the whole PDF and is the OOM hazard", but only skips it for files
-above ``_PDF_OCR_MAX_SIZE_MB``, and 4.4 MB is far below that.
+above ``pdf_ocr_max_size_mb()`` (default 32), and 4.4 MB is far below that.
 
 The kernel OOM killer sends SIGKILL. Python raises nothing, ``except`` blocks
 do not run, Sentry never fires -- so this failure is invisible in application
