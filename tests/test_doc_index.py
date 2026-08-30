@@ -644,6 +644,35 @@ def test_finer_chunk_keeps_priced_boq_item_codes():
     assert len(hit.split()) < 200
 
 
+def test_chunk_extracted_collapses_ocr_spaced_cesmm_and_keeps_qty():
+    """Index-time collapse: OCR ``D 549.2`` / ``D 599.5`` become compact
+    and the carriageway figures stay on the same chunk as the item code."""
+    from app.core.doc_index import chunk_extracted_document, _chunker_for_document
+
+    filler = " ".join(f"padding{i}" for i in range(400))
+    text = (
+        filler
+        + "\nD 549.2 Removal of existing chain link fence 3504 m 80.00 280320\n"
+        + "D 599.5 Breaking out existing carriageway 340904 m2 31.00 10568024\n"
+        + filler
+    )
+    filename = (
+        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+    )
+    chunks = chunk_extracted_document(
+        text, chunker=_chunker_for_document(filename), filename=filename,
+    )
+    blob = "\n".join(chunks)
+    assert "D549.2" in blob
+    assert "D599.5" in blob
+    hit = next(c for c in chunks if "D599.5" in c)
+    assert "340904" in hit
+    assert "31.00" in hit
+    fence = next(c for c in chunks if "D549.2" in c)
+    assert "3504" in fence
+    assert "80.00" in fence
+
+
 def test_extract_docx_mocked(tmp_path, monkeypatch):
     """DOCX extraction: monkeypatch docx.Document; assert joined paragraph text."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)

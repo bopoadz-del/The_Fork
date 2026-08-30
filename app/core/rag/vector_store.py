@@ -58,6 +58,34 @@ HYBRID_FETCH_PER_LEG = 50
 # into FTS5 tokens. The result is OR-joined so MATCH is bag-of-words.
 _FTS5_SAFE_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 
+# OCR of CESMM/BOQ item codes inserts a space after the class letter
+# (``D 549.2`` vs ``D549.2``). Collapse that gap so index text and query
+# identifiers share one token shape. Only a single Latin letter is
+# consumed — drawing codes (IP-INF-054) and contract ids (DD-2023-118)
+# are unchanged.
+_CESMM_OCR_SPACE_RE = re.compile(r"\b([A-Za-z])[ \t]+(\d)")
+_CESMM_COMPACT_TOKEN_RE = re.compile(r"^[a-z]\d+$")
+
+
+def normalize_cesmm_item_codes(text: str) -> str:
+    """Collapse ``[A-Z]\\s+\\d+`` to ``[A-Z]\\d+`` in ``text``.
+
+    Live WAVE 2 B5: Neon ``ILIKE '%D549.2%'`` was 0 hits while
+    ``ILIKE '%D 549.2%'`` was 2 — Tesseract wrote the class letter and
+    the digits as separate tokens. Callers must run this at index time
+    (chunk text) and at query time (identifiers + match text) so either
+    form retrieves the other. Empty/None input is returned unchanged.
+    """
+    if not text:
+        return text
+    return _CESMM_OCR_SPACE_RE.sub(r"\1\2", text)
+
+
+def _identifier_tokens(ident: str) -> List[str]:
+    """Alphanumeric tokens of an identifier after CESMM space-collapse."""
+    collapsed = normalize_cesmm_item_codes(ident or "").lower()
+    return [t for t in re.split(r"[^a-z0-9]+", collapsed) if t]
+
 
 def _hybrid_enabled() -> bool:
     """Read RAG_HYBRID_SEARCH live so tests / operators can flip it
@@ -976,9 +1004,11 @@ class VectorStore:
             return []
 
         # Tokenise each identifier so punctuation between tokens is ignored.
+        # CESMM codes are collapsed first so ``D549.2`` and ``D 549.2``
+        # produce the same token list (``d549``, ``2``).
         ident_tokens: List[List[str]] = []
         for ident in identifiers:
-            tokens = [t for t in re.split(r"[^a-z0-9]+", ident.lower()) if t]
+            tokens = _identifier_tokens(ident)
             if tokens:
                 ident_tokens.append(tokens)
         if not ident_tokens:
@@ -987,13 +1017,22 @@ class VectorStore:
         # Build a pre-filter: every token of an identifier must appear as a
         # substring in LOWER(text).  Tokens are alphanumeric so no LIKE
         # wildcard escaping is required.
+        #
+        # Letter+digits tokens (``d549``) also match the OCR-spaced form
+        # by stripping spaces before LIKE — otherwise ``D 549.2`` in the
+        # stored chunk fails ``ILIKE '%d549%'`` (live Neon: 0 rows).
         ident_clauses: List[str] = []
         params: Dict[str, Any] = {"project_id": project_id, "k": k}
         param_idx = 0
         for tokens in ident_tokens:
             token_clauses: List[str] = []
             for tok in tokens:
-                token_clauses.append(f"LOWER(text) LIKE :p{param_idx}")
+                if _CESMM_COMPACT_TOKEN_RE.fullmatch(tok):
+                    token_clauses.append(
+                        f"LOWER(REPLACE(text, ' ', '')) LIKE :p{param_idx}"
+                    )
+                else:
+                    token_clauses.append(f"LOWER(text) LIKE :p{param_idx}")
                 params[f"p{param_idx}"] = f"%{tok}%"
                 param_idx += 1
             ident_clauses.append("(" + " AND ".join(token_clauses) + ")")
@@ -1020,7 +1059,7 @@ class VectorStore:
             return []
 
         def _tokens(text: str) -> Set[str]:
-            return set(re.split(r"[^a-z0-9]+", (text or "").lower())) - {""}
+            return set(_identifier_tokens(text or ""))
 
         text_tokens_by_row: Dict[Any, Set[str]] = {}
         out: List[Chunk] = []
