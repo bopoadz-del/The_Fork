@@ -166,6 +166,239 @@ def test_extract_pdf_ocr_page_cap_bounds_memory(tmp_path, monkeypatch):
     assert meta.get("ocr_truncated") is True
 
 
+def test_pdf_ocr_limits_read_at_call_time(monkeypatch):
+    """Dashboard env changes must apply without re-importing doc_index.
+
+    The old import-bound ``_PDF_OCR_MAX_SIZE_MB`` silently ignored a live
+    ``PDF_OCR_MAX_SIZE_MB`` bump until the worker restarted and re-imported.
+    """
+    from app.core import doc_index
+
+    monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "32")
+    monkeypatch.setenv("PDF_OCR_PAGE_CAP", "80")
+    monkeypatch.setenv("PDF_OCR_BOQ_PAGE_CAP", "160")
+    assert doc_index.pdf_ocr_max_size_mb() == 32
+    assert doc_index.pdf_ocr_page_cap("drawing.pdf") == 80
+    assert doc_index.pdf_ocr_page_cap(
+        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+    ) == 160
+    monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "25")
+    assert doc_index.pdf_ocr_max_size_mb() == 25
+
+
+def test_extract_pdf_ocrs_priced_boq_sized_scan(tmp_path, monkeypatch):
+    """A ~28 MB image-only PDF must still OCR.
+
+    Live priced BOQ 20ac033d is ~28 MB. The old PDF_OCR_MAX_SIZE_MB=25 set
+    page_cap=0, so item codes never entered the index.
+    """
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "32")
+    doc_path = str(tmp_path / "priced_boq.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 dummy")
+
+    class FakePage:
+        def get_text(self):
+            return ""
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([FakePage()])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    real_getsize = os.path.getsize
+
+    def _getsize(path):
+        if os.path.abspath(path) == os.path.abspath(doc_path):
+            return 28 * 1024 * 1024
+        return real_getsize(path)
+
+    monkeypatch.setattr(os.path, "getsize", _getsize)
+    monkeypatch.setattr(
+        doc_index, "_ocr_pdf_page",
+        lambda page: "D599.5 Breaking out existing carriageway 1200 m2 18.00 21600",
+    )
+    monkeypatch.setattr(doc_index, "_pdf_tables_enabled", lambda *a, **k: False)
+
+    text, meta = doc_index._extract_pdf(
+        doc_path,
+        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+    )
+    assert "D599.5" in text, "priced-BOQ item codes must be OCR'd at ~28 MB"
+    assert meta.get("ocr_skipped_too_large") is not True
+    assert meta.get("ocr_pages", 0) >= 1
+
+
+def test_extract_pdf_skips_ocr_above_raised_cap(tmp_path, monkeypatch):
+    """Files above the new 32 MB OCR ceiling still skip OCR (OOM bound)."""
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("PDF_OCR_MAX_SIZE_MB", "32")
+    doc_path = str(tmp_path / "huge_scan.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 dummy")
+
+    class FakePage:
+        def get_text(self):
+            return ""
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([FakePage(), FakePage()])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    real_getsize = os.path.getsize
+
+    def _getsize(path):
+        if os.path.abspath(path) == os.path.abspath(doc_path):
+            return 40 * 1024 * 1024
+        return real_getsize(path)
+
+    monkeypatch.setattr(os.path, "getsize", _getsize)
+    calls = {"n": 0}
+
+    def _fake_ocr(page):
+        calls["n"] += 1
+        return "should not run"
+
+    monkeypatch.setattr(doc_index, "_ocr_pdf_page", _fake_ocr)
+    monkeypatch.setattr(doc_index, "_pdf_tables_enabled", lambda *a, **k: False)
+
+    text, meta = doc_index._extract_pdf(doc_path, "huge_scan.pdf")
+    assert calls["n"] == 0
+    assert meta.get("ocr_skipped_too_large") is True
+    assert "should not run" not in text
+
+
+def test_boq_filename_uses_higher_ocr_page_cap(tmp_path, monkeypatch):
+    """A BOQ-named scan uses PDF_OCR_BOQ_PAGE_CAP, not the generic cap.
+
+    Demolition was PARTIAL at 40 pages; later codes (D549.2, D599.5) sat
+    past the generic budget.
+    """
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("PDF_OCR_PAGE_CAP", "1")
+    monkeypatch.setenv("PDF_OCR_BOQ_PAGE_CAP", "3")
+    doc_path = str(tmp_path / "demolition_boq.pdf")
+    file_crypto.write_document(doc_path, b"%PDF-1.4 dummy")
+
+    class FakePage:
+        def get_text(self):
+            return ""
+
+    class FakeDoc:
+        def __iter__(self):
+            return iter([FakePage() for _ in range(5)])
+
+        def close(self):
+            pass
+
+    import fitz as real_fitz
+    monkeypatch.setattr(real_fitz, "open", lambda path: FakeDoc())
+
+    from app.core import doc_index
+    importlib.reload(doc_index)
+    calls = {"n": 0}
+
+    def _fake_ocr(page):
+        calls["n"] += 1
+        return f"ocr page {calls['n']} D549.2 D599.5"
+
+    monkeypatch.setattr(doc_index, "_ocr_pdf_page", _fake_ocr)
+    monkeypatch.setattr(doc_index, "_pdf_tables_enabled", lambda *a, **k: False)
+
+    text, meta = doc_index._extract_pdf(doc_path, "Demolition Bill of Quantities.pdf")
+    assert calls["n"] == 3, "BOQ page cap must apply, not the generic cap of 1"
+    assert "D549.2" in text and "D599.5" in text
+    assert meta.get("ocr_truncated") is True
+
+
+def test_extract_pdf_batched_keeps_prior_pages_on_timeout(tmp_path, monkeypatch):
+    """A later-range timeout must keep earlier OCR, not ZERO_CHUNK the doc."""
+    from app.core import doc_index
+    importlib.reload(doc_index)
+
+    monkeypatch.setenv("PDF_OCR_BATCH_PAGES", "20")
+    monkeypatch.setenv("PDF_OCR_BOQ_PAGE_CAP", "160")
+    ranges: list[tuple[int, int]] = []
+
+    def _fake_isolated(fn, args, fallback, label=""):
+        start, end = args[2], args[3]
+        ranges.append((start, end))
+        if start >= 20:
+            return fallback, {
+                "extract_failed": "timeout",
+                "extract_failed_detail": "extraction exceeded 600s",
+            }
+        return (
+            "pages 0-20 D549.2 Removal of existing chain link fence",
+            {"ocr_pages": 5, "ocr_low_quality": True},
+        ), {}
+
+    monkeypatch.setattr(doc_index, "_pdf_page_count", lambda p: 45)
+    monkeypatch.setattr("app.core.extract_isolated.run_isolated", _fake_isolated)
+
+    text, meta = doc_index._extract_pdf_batched(
+        str(tmp_path / "priced.pdf"),
+        "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf",
+    )
+    assert ranges[0] == (0, 20)
+    assert ranges[1] == (20, 40)
+    assert "D549.2" in text
+    assert meta.get("extract_partial") is True
+    assert meta.get("extract_failed") == "timeout"
+    assert meta.get("ocr_pages") == 5
+
+
+def test_chunker_for_boq_filename_is_finer():
+    from app.core.doc_index import _chunker_for_document
+
+    priced = "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+    assert _chunker_for_document(priced) == "finer"
+    assert _chunker_for_document("specification_part8.pdf") == "default"
+    assert _chunker_for_document(priced, "markdown") == "markdown"
+
+
+def test_finer_chunk_keeps_priced_boq_item_codes():
+    """D599.5 / D549.2 must survive extract → chunk so WAVE 2 B4/B5 can hit."""
+    from app.core.doc_index import chunk_extracted_document, _chunker_for_document
+
+    rows = [
+        "D110 General site clearance 12 ha 2500.00 30000.00",
+        "D290.1 Removal of trees in existing sidewalks 48 nr 220.00 10560.00",
+        "D549.2 Removal of existing chain link fence 80 m 15.00 1200.00",
+        "D599.5 Breaking out existing carriageway including road markings "
+        "1200 m2 18.00 21600.00",
+    ]
+    # Repeat filler so the default 500-word splitter would bury the codes
+    # if the BOQ filename failed to select the finer chunker.
+    filler = " ".join(f"padding{i}" for i in range(400))
+    text = filler + "\n" + "\n".join(rows) + "\n" + filler
+    filename = "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+    chunks = chunk_extracted_document(
+        text, chunker=_chunker_for_document(filename), filename=filename,
+    )
+    blob = "\n".join(chunks)
+    assert "D599.5" in blob
+    assert "D549.2" in blob
+    # Finer chunks keep a code on a short window, not a 500-word blob.
+    hit = next(c for c in chunks if "D599.5" in c)
+    assert len(hit.split()) < 200
+
+
 def test_extract_docx_mocked(tmp_path, monkeypatch):
     """DOCX extraction: monkeypatch docx.Document; assert joined paragraph text."""
     monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
