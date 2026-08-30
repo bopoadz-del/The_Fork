@@ -9,6 +9,33 @@ from app.lib.boq_units import reconcile_unit
 _logger = logging.getLogger(__name__)
 
 
+def _boq_pdf_max_mb(filename: str = "") -> float:
+    """Parse-refuse ceiling, aligned with the OCR plaintext gate.
+
+    The live priced BOQ (doc 20ac033d) is ~26.9 MB plaintext / ~28 MB
+    recorded — above the old hardcoded ``BOQ_PDF_MAX_MB=20`` and already
+    inside the 32 MB OCR gate. Leftover dashboard ``BOQ_PDF_MAX_MB=20``
+    or ``PDF_OCR_MAX_SIZE_MB=25`` must not re-refuse it. BOQ-named files
+    use ``PDF_OCR_BOQ_MAX_SIZE_MB`` (default ``PDF_MAX_SIZE_MB``). Ops
+    may raise the cap via those env vars; they cannot lower it below
+    the 32 MB OCR default.
+    """
+    from app.core.doc_index import (
+        _DEFAULT_PDF_OCR_MAX_SIZE_MB,
+        pdf_ocr_max_size_mb,
+    )
+
+    max_mb = max(pdf_ocr_max_size_mb(filename), _DEFAULT_PDF_OCR_MAX_SIZE_MB)
+    raw = (os.getenv("BOQ_PDF_MAX_MB") or "").strip()
+    if not raw:
+        return max_mb
+    try:
+        env_max = float(raw)
+    except ValueError:
+        return max_mb
+    return env_max if env_max > max_mb else max_mb
+
+
 def _resolve_via_project(project_id: str, raw: str) -> str:
     """Map a bare filename to the project's stored absolute file_path.
 
@@ -122,6 +149,12 @@ class BOQProcessorBlock(UniversalBlock):
             return {"status": "error", "error": f"File not found: {file_path}"}
 
         ext = os.path.splitext(file_path)[1].lower()
+        # Prefer the caller-supplied name (LLM often passes the original
+        # "…BOQ… (Priced).pdf") so the parse cap can use the BOQ OCR
+        # ceiling. After resolve, file_path may be a UUID on disk.
+        source_name = os.path.basename(
+            str(data.get("file_path") or params.get("file_path") or file_path)
+        )
         try:
             # open_plaintext transparently decrypts when DATA_ENCRYPTION_KEY is
             # set on the server (uploads go through file_crypto.write_document)
@@ -133,7 +166,9 @@ class BOQProcessorBlock(UniversalBlock):
                 elif ext in (".xlsx", ".xls"):
                     return await self._parse_excel(plain_path, params)
                 elif ext == ".pdf":
-                    return await self._parse_pdf(plain_path, params)
+                    return await self._parse_pdf(
+                        plain_path, params, source_name=source_name
+                    )
                 else:
                     return {
                         "status": "error",
@@ -192,7 +227,9 @@ class BOQProcessorBlock(UniversalBlock):
         df.columns = [str(c).strip() for c in raw.iloc[hdr].tolist()]
         return self._process_dataframe(df, params)
 
-    async def _parse_pdf(self, file_path: str, params: Dict) -> Dict:
+    async def _parse_pdf(
+        self, file_path: str, params: Dict, source_name: str = ""
+    ) -> Dict:
         """Extract tabular BOQ data from a PDF via pdfplumber.
 
         Walks every page, calls ``page.extract_tables()``, treats row 0 of each
@@ -210,16 +247,15 @@ class BOQProcessorBlock(UniversalBlock):
         # ── memory guard ────────────────────────────────────────────────
         # pdfplumber loads the entire PDF and builds every page's table grid
         # in memory; on a large priced BOQ this OOM-kills the worker and 502s
-        # EVERY concurrent user, not just this request. doc_index already caps
-        # the same operation at PDF_TABLES_MAX_MB — the BOQ tool had no such
-        # guard. Above the cap, refuse with a clear pointer to the xlsx/csv
-        # path (parsed cell-by-cell, no OCR, never OOMs) instead of crashing.
-        # See memory the-fork-boq-always-xlsx.
-        max_mb = float(os.getenv("BOQ_PDF_MAX_MB", "20"))
-        try:
-            size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        except OSError:
-            size_mb = 0.0
+        # EVERY concurrent user, not just this request. Align the refuse with
+        # the OCR plaintext gate (32 MB / PDF_OCR_BOQ_MAX_SIZE_MB for
+        # BOQ-named files) so the live 26.9 MB priced bill is not 413'd
+        # after it already OCR'd. Measure plaintext, not Fernet ciphertext
+        # (same class as #449). See memory the-fork-boq-always-xlsx.
+        from app.core.doc_index import _document_size_mb
+
+        max_mb = _boq_pdf_max_mb(source_name or os.path.basename(file_path))
+        size_mb = _document_size_mb(file_path)
         if size_mb > max_mb:
             return {
                 "status": "error",

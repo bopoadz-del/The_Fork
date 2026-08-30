@@ -124,9 +124,9 @@ def test_pdf_tables_disabled_for_large_files(monkeypatch):
     from app.core import doc_index
     importlib.reload(doc_index)
     monkeypatch.setenv("PDF_TABLES_MAX_MB", "25")
-    monkeypatch.setattr("os.path.getsize", lambda p: 60 * 1024 * 1024)  # 60 MB
+    monkeypatch.setattr(doc_index, "_document_size_mb", lambda p: 60.0)
     assert doc_index._pdf_tables_enabled("big_scan.pdf") is False
-    monkeypatch.setattr("os.path.getsize", lambda p: 2 * 1024 * 1024)   # 2 MB
+    monkeypatch.setattr(doc_index, "_document_size_mb", lambda p: 2.0)
     assert doc_index._pdf_tables_enabled("small.pdf") is True
 
 
@@ -1637,7 +1637,9 @@ class _FakeDoc:
 
 def _fake_pdf(monkeypatch, pages: int, size_mb: float = 8.0, w=595.0, h=842.0):
     import fitz
+    from app.core import doc_index
     monkeypatch.setattr("os.path.getsize", lambda p: int(size_mb * 1024 * 1024))
+    monkeypatch.setattr(doc_index, "_document_size_mb", lambda p: size_mb)
     monkeypatch.setattr(fitz, "open", lambda *a, **k: _FakeDoc(pages, w, h))
 
 
@@ -1657,6 +1659,17 @@ def test_tables_kept_for_a_normal_length_document(monkeypatch):
     from app.core import doc_index
     _fake_pdf(monkeypatch, pages=40, size_mb=2.0)
     assert doc_index._pdf_tables_enabled("boq.pdf") is True
+
+
+def test_tables_size_gate_accepts_priced_boq_band(monkeypatch):
+    """26.9 MB live priced BOQ must not be skipped at the old 25 MB tables bar.
+
+    Page cap still skips a 368-page scan; this pins the SIZE half only.
+    """
+    from app.core import doc_index
+    monkeypatch.delenv("PDF_TABLES_MAX_MB", raising=False)
+    _fake_pdf(monkeypatch, pages=40, size_mb=26.9)
+    assert doc_index._pdf_tables_enabled("priced_boq.pdf") is True
 
 
 def test_page_gate_is_tunable_and_disablable(monkeypatch):
