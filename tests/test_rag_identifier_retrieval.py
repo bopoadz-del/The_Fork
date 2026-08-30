@@ -263,3 +263,123 @@ def test_semantic_chunk_with_identifier_outranks_identifier_only_soup(
     )
     assert chunks, "expected results"
     assert "total flow rate 366" in chunks[0].text, [c.text[:60] for c in chunks]
+
+
+# ── WAVE 2 B4 / B5: CESMM OCR space + wrong-row ranking ──────────────────────
+
+
+def test_normalize_cesmm_item_codes_collapses_ocr_space():
+    from app.core.rag.vector_store import normalize_cesmm_item_codes
+
+    assert normalize_cesmm_item_codes("D 549.2") == "D549.2"
+    assert normalize_cesmm_item_codes("D549.2") == "D549.2"
+    assert normalize_cesmm_item_codes("d 599.5") == "d599.5"
+    assert normalize_cesmm_item_codes("I  112.3") == "I112.3"
+    # Drawing / contract ids must not be rewritten.
+    assert "IP-INF-054" in normalize_cesmm_item_codes(
+        "drawing IP-INF-054-0000-JCB-DWG"
+    )
+    assert "DD-2023-118" in normalize_cesmm_item_codes("see DD-2023-118 Vol 1")
+
+
+def test_extract_identifiers_collapses_ocr_spaced_cesmm():
+    from app.core.rag.retriever import extract_query_identifiers
+
+    assert "d549.2" in extract_query_identifiers("rate for D 549.2 please")
+    assert "d549.2" in extract_query_identifiers("rate for D549.2 please")
+    assert "d599.5" in extract_query_identifiers("D 599.5 carriageway breakout")
+
+
+def test_ocr_spaced_d5492_is_retrievable_as_compact(isolated_store, monkeypatch):
+    """WAVE 2 B5: stored OCR text is ``D 549.2``; query is ``D549.2``.
+
+    Live Neon: ILIKE D549.2 = 0, ILIKE 'D 549.2' = 2. Query-time match
+    must hit the unreindexed spaced row so the RAG-miss short-circuit
+    does not fire. Expected figures: 3,504 m @ SAR 80.00.
+    """
+    from app.core.rag import retriever as ret
+
+    store, e = isolated_store
+    spaced = (
+        "D 549.2 Removal of existing chain link fence 3,504 m 80.00 280,320.00"
+    )
+    assert "D549.2" not in spaced
+    store.upsert_chunks("proj_b5", "doc_fence", [spaced], e.encode([spaced]))
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "priced-boq.pdf")
+
+    hits = store.identifier_search("proj_b5", ["D549.2"], k=5)
+    assert hits, "D549.2 must match stored 'D 549.2'"
+    assert "80.00" in hits[0].text
+    assert "3,504" in hits[0].text or "3504" in hits[0].text.replace(",", "")
+
+    chunks, _ = ret.retrieve_with_filter(
+        "What is the rate for D549.2 chain link fence?",
+        "proj_b5",
+        k=3,
+    )
+    assert chunks, "compact D549.2 must retrieve the OCR-spaced row"
+    top = chunks[0].text
+    assert "80.00" in top
+    assert "3,504" in top or "3504" in top.replace(",", "")
+
+
+def test_d5995_carriageway_outranks_excluded_culvert(isolated_store, monkeypatch):
+    """WAVE 2 B4: two D599.5 rows — do not prefer the Excluded culvert.
+
+    Live hit was chunk 329: ``J |Breakout and remove existing storm water
+    culverts D599.5 | sum 1 Excluded``. Expected: 340,904 m2 @ SAR 31.00.
+    The culvert line is not the carriageway quantity.
+    """
+    from app.core.rag import retriever as ret
+
+    store, e = isolated_store
+    culvert = (
+        "J |Breakout and remove existing storm water culverts D599.5 "
+        "| sum 1 Excluded"
+    )
+    # Plant the priced row with the OCR space so B4 and B5 share one path.
+    carriageway = (
+        "D 599.5 Breaking out existing carriageway including road markings "
+        "340904 m2 31.00 10568024"
+    )
+    store.upsert_chunks("proj_b4", "doc_culvert", [culvert], e.encode([culvert]))
+    store.upsert_chunks("proj_b4", "doc_cway", [carriageway], e.encode([carriageway]))
+    monkeypatch.setattr(
+        ret,
+        "_doc_name_for_id",
+        lambda _id: (
+            "IP-INF-053-0000-JCB-BOQ-CA-000007-B_Bill of Quantities (Priced).pdf"
+        ),
+    )
+
+    real_search = store.search
+
+    def scored_search(project_id, query_vec, k=20, query_text=None):
+        out = real_search(project_id, query_vec, k=k, query_text=query_text)
+        for c in out:
+            # Live shape: the Excluded mention outranked on cosine.
+            c.score = 0.85 if "Excluded" in c.text else 0.05
+        return out
+
+    monkeypatch.setattr(store, "search", scored_search)
+
+    chunks, _ = ret.retrieve_with_filter(
+        "BOQ item D599.5 breaking out existing carriageway 340904",
+        "proj_b4",
+        k=3,
+    )
+    assert chunks, "expected identifier hits"
+    top = chunks[0].text
+    assert "340904" in top.replace(",", "")
+    assert "31.00" in top
+    assert "Excluded" not in top
+    assert "culvert" not in top.lower()
+
+
+def test_unknown_cesmm_code_still_misses(isolated_store):
+    """Do not weaken the identifier miss fence — a code not in the index
+    must still return no identifier hits."""
+    store, e = isolated_store
+    text = "D549.2 Removal of existing chain link fence 3504 m 80.00"
+    store.upsert_chunks("proj_miss", "doc_x", [text], e.encode([text]))
+    assert store.identifier_search("proj_miss", ["D888.9"], k=5) == []

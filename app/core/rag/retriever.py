@@ -12,7 +12,12 @@ import logging
 from typing import Dict, List, Optional, Set, Tuple
 
 from app.core.rag.embeddings import Embedder, get_embedder
-from app.core.rag.vector_store import Chunk, get_lexical_store, get_store
+from app.core.rag.vector_store import (
+    Chunk,
+    get_lexical_store,
+    get_store,
+    normalize_cesmm_item_codes,
+)
 from app.core.rag import layers
 from app.core.rag import revision as _revision
 from app.core.rag import reranker as _reranker
@@ -173,6 +178,12 @@ def extract_query_identifiers(query: str) -> List[str]:
     if not query:
         return []
 
+    # OCR / CESMM print ``D 549.2``; compact that before the token regexes
+    # so a spaced code extracts as ``d549.2`` (WAVE 2 B5). The original
+    # fences still apply to the collapsed string — a typo like
+    # ``specif8cation`` is unchanged.
+    query = normalize_cesmm_item_codes(query)
+
     found: Set[str] = set()
 
     # 1. Quoted phrases (preserve exact content).
@@ -241,6 +252,47 @@ def extract_query_identifiers(query: str) -> List[str]:
     # Prefer longer, more specific identifiers first.
     result.sort(key=lambda t: (-len(t), t))
     return result
+
+
+def _identifier_context_terms(query: str, identifiers: List[str]) -> List[str]:
+    """Distinctive query terms excluding the identifier tokens themselves.
+
+    WAVE 2 B4: a query for D599.5 + carriageway/340904 must prefer the
+    priced carriageway row over an Excluded culvert that only shares the
+    code. Identifier tokens (``d599``, ``5``) are dropped so the overlap
+    score measures the rest of the question.
+    """
+    ident_toks: Set[str] = set()
+    for ident in identifiers:
+        ident_toks.update(
+            t for t in re.split(
+                r"[^a-z0-9]+", normalize_cesmm_item_codes(ident).lower()
+            ) if t
+        )
+    terms: List[str] = []
+    seen: Set[str] = set()
+    for word in re.findall(r"[A-Za-z][A-Za-z0-9]{3,}", query or ""):
+        lowered = word.lower()
+        if lowered in seen or lowered in ident_toks or lowered in _STOPWORDS:
+            continue
+        seen.add(lowered)
+        terms.append(lowered)
+    compact_q = (query or "").replace(",", "")
+    for num in re.findall(r"\d{3,}(?:\.\d+)?", compact_q):
+        if num in seen or num in ident_toks:
+            continue
+        seen.add(num)
+        terms.append(num)
+    return terms
+
+
+def _identifier_context_overlap(terms: List[str], text: str) -> float:
+    """Fraction of ``terms`` that appear in CESMM-normalised chunk text."""
+    if not terms:
+        return 0.0
+    blob = normalize_cesmm_item_codes(text or "").lower().replace(",", "")
+    matched = sum(1 for term in terms if term in blob)
+    return matched / len(terms)
 
 
 # Tender / executed-contract numbers: PREFIX-YEAR-SEQ (DD-2023-118, FX-2044-001).
@@ -1235,6 +1287,11 @@ def retrieve_with_filter(
         fused[c.chunk_id] = (c, c.score or 0.0, 0.0)
 
     IDENTIFIER_BONUS_MAX = 2.0
+    # Tie-break among identifier hits. Capped equal to the identifier
+    # bonus so a full-overlap code row can beat a high-cosine Excluded
+    # mention of the same code, but a no-code semantic chunk (≤ ~1.0)
+    # still cannot outrank a bare identifier hit (2.0).
+    IDENTIFIER_CONTEXT_BOOST_MAX = 2.0
     for chunk_id, (id_chunk, id_score) in id_candidates.items():
         if chunk_id in fused:
             sem_chunk, sem_score, _ = fused[chunk_id]
@@ -1255,10 +1312,15 @@ def retrieve_with_filter(
     # spec table under zero-semantic drawing chunks.)
     if identifiers:
         # Token-wise matching, mirroring identifier_search: "VO Ref: 99" and
-        # "VO 99" both match, punctuation between tokens is ignored.
+        # "VO 99" both match, punctuation between tokens is ignored. CESMM
+        # codes are collapsed so ``d549`` is a substring of ``D 549.2``.
         ident_token_sets = []
         for ident in identifiers:
-            toks = [t for t in re.split(r"[^a-z0-9]+", ident.lower()) if t]
+            toks = [
+                t for t in re.split(
+                    r"[^a-z0-9]+", normalize_cesmm_item_codes(ident).lower()
+                ) if t
+            ]
             if toks:
                 ident_token_sets.append(toks)
         for chunk_id, entry in list(fused.items()):
@@ -1268,7 +1330,7 @@ def retrieve_with_filter(
             # semantic candidates keep eligibility even at negative cosine.
             if id_bonus > 0.0 or not ident_token_sets:
                 continue
-            text_lower = (sem_chunk.text or "").lower()
+            text_lower = normalize_cesmm_item_codes(sem_chunk.text or "").lower()
             matched = sum(
                 1 for toks in ident_token_sets
                 if all(t in text_lower for t in toks)
@@ -1277,6 +1339,26 @@ def retrieve_with_filter(
                 local_score = matched / len(ident_token_sets)
                 fused[chunk_id] = (
                     sem_chunk, sem_score, local_score * IDENTIFIER_BONUS_MAX,
+                )
+
+        # WAVE 2 B4: several BOQ rows can share a CESMM code (carriageway
+        # qty vs an Excluded culvert that mentions D599.5). Identifier
+        # bonus is flat, so the arbitrary SQL hit wins. Add a secondary
+        # boost from the rest of the query (carriageway / 340904) — only
+        # on chunks that already earned the identifier bonus, so
+        # boilerplate without the code cannot climb the fence.
+        ctx_terms = _identifier_context_terms(query, identifiers)
+        if ctx_terms:
+            for chunk_id, (chunk, sem_score, id_bonus) in list(fused.items()):
+                if id_bonus <= 0.0:
+                    continue
+                overlap = _identifier_context_overlap(ctx_terms, chunk.text)
+                if overlap <= 0.0:
+                    continue
+                fused[chunk_id] = (
+                    chunk,
+                    sem_score,
+                    id_bonus + overlap * IDENTIFIER_CONTEXT_BOOST_MAX,
                 )
 
     # ── lexical term rescue ────────────────────────────────────────────────
@@ -1613,6 +1695,7 @@ def index_chunks(
         return 0
     if not chunks:
         return 0
+    chunks = [normalize_cesmm_item_codes(c) for c in chunks]
     embedder = get_embedder()
     embeddings = embedder.encode(chunks)
     store = get_store(dim=embedder.dim)
