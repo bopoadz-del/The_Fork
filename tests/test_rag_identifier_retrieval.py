@@ -288,6 +288,10 @@ def test_extract_identifiers_collapses_ocr_spaced_cesmm():
     assert "d549.2" in extract_query_identifiers("rate for D 549.2 please")
     assert "d549.2" in extract_query_identifiers("rate for D549.2 please")
     assert "d599.5" in extract_query_identifiers("D 599.5 carriageway breakout")
+    # WAVE 2 B5 live prompt (parentheses around the compact code).
+    assert "d549.2" in extract_query_identifiers(
+        "What is the amount for removal of existing chain link fence (D549.2)?"
+    )
 
 
 def test_ocr_spaced_d5492_is_retrievable_as_compact(isolated_store, monkeypatch):
@@ -383,3 +387,107 @@ def test_unknown_cesmm_code_still_misses(isolated_store):
     text = "D549.2 Removal of existing chain link fence 3504 m 80.00"
     store.upsert_chunks("proj_miss", "doc_x", [text], e.encode([text]))
     assert store.identifier_search("proj_miss", ["D888.9"], k=5) == []
+
+
+def test_identifier_present_in_text_collapses_ocr_spaced_cesmm():
+    """Chat-path presence check (rag_inject identifier-miss gate).
+
+    Live WAVE 2 B5 2026-08-30: retrieve_with_filter already returned the
+    OCR-spaced row, but the inject gate split stored ``D 549.2`` into
+    ``d``+``549`` and query ``D549.2`` into ``d549``+``2``, then AND-missed.
+    Collapse must happen on both sides. An unknown code must still miss.
+    """
+    from app.core.rag.retriever import identifier_present_in_text
+
+    priced = (
+        "D 549.2 Removal of existing chain link fence 3,504 m 80.00 280,320.00"
+    )
+    assert identifier_present_in_text("D549.2", priced)
+    assert identifier_present_in_text("d549.2", priced)
+    assert identifier_present_in_text("D 549.2", priced)
+    assert not identifier_present_in_text("D888.9", priced)
+    # Existing VO Ref matching must keep working.
+    assert identifier_present_in_text("VO 99", "VO Ref: 99 was closed")
+
+
+def test_chat_path_retrieves_ocr_spaced_d5492_without_reindex(
+    isolated_store, monkeypatch
+):
+    """WAVE 2 B5: stored OCR ``D 549.2`` for query ``D549.2`` on the same
+    ``retrieve_with_filter`` path chat uses (``rag_inject``).
+
+    #450 covered identifier_search + retrieve_with_filter in isolation.
+    Live chat still short-circuited because rag_inject's identifier-miss
+    gate did not collapse CESMM spaces. This test drives the real
+    retrieve_with_filter (not a mock) through rag_inject, which is what
+    ``/v1/chat/stream`` calls. No compact reindex of the stored row.
+    """
+    from app.core.rag import retriever as ret
+    from app.core.rag.inject import rag_inject
+
+    store, e = isolated_store
+    spaced = (
+        "D 549.2 Removal of existing chain link fence 3,504 m @ SAR 80.00 "
+        "= SAR 280,320.00"
+    )
+    assert "D549.2" not in spaced
+    store.upsert_chunks(
+        "drive_archive", "20ac033d", [spaced], e.encode([spaced]),
+    )
+    monkeypatch.setattr(
+        ret,
+        "_doc_name_for_id",
+        lambda _id: "DGII - Infra-1 - Demolition BOQ.pdf",
+    )
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.setenv("RAG_CONFIDENCE_THRESHOLD", "0.4")
+
+    b5 = "What is the amount for removal of existing chain link fence (D549.2)?"
+
+    chunks, _ = ret.retrieve_with_filter(b5, "drive_archive", k=5)
+    assert chunks, "retrieve_with_filter must surface the OCR-spaced D 549.2 row"
+    blob = " ".join(c.text for c in chunks)
+    assert "80.00" in blob
+    assert "3,504" in blob or "3504" in blob.replace(",", "")
+
+    msg, audit = rag_inject(
+        user_message=b5,
+        project_id="drive_archive",
+        conversation_id="ws-master_corpus-1",
+        user_id="u1",
+        agent_name="project-assistant",
+    )
+    assert msg is not None, (
+        f"chat path discarded the hit: identifier_miss="
+        f"{audit.get('identifier_miss')} extracted={audit.get('extracted_identifiers')}"
+    )
+    assert audit.get("identifier_miss") is not True
+    assert "80.00" in msg["content"]
+    assert "280,320" in msg["content"] or "280320" in msg["content"].replace(",", "")
+
+
+def test_chat_path_unknown_cesmm_still_identifier_misses(
+    isolated_store, monkeypatch
+):
+    """Unknown CESMM codes must still trip the identifier-miss fence."""
+    from app.core.rag import retriever as ret
+    from app.core.rag.inject import rag_inject
+
+    store, e = isolated_store
+    text = "D 549.2 Removal of existing chain link fence 3,504 m 80.00 280,320.00"
+    store.upsert_chunks("drive_archive", "doc_x", [text], e.encode([text]))
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda _id: "priced-boq.pdf")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+
+    msg, audit = rag_inject(
+        user_message="What is the amount for D888.9?",
+        project_id="drive_archive",
+        conversation_id="ws-master_corpus-1",
+        user_id="u1",
+        agent_name="project-assistant",
+    )
+    assert msg is None
+    assert audit.get("identifier_miss") is True or audit.get("threshold_fired") is True
+    assert any("d888.9" in i for i in (audit.get("extracted_identifiers") or []))
