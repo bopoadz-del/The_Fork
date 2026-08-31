@@ -372,12 +372,65 @@ _CONTEXT_LEAK_RETRY_NUDGE = (
 )
 
 
+#: A line that narrates work in progress and states no result. On its own it
+#: is not an answer, and after a promise it is not the end of one either --
+#: it is the promise still running.
+#: Applied with .match(), which anchors at position 0 on its own -- no "^".
+_PROGRESS_NARRATION_RE = re.compile(
+    r"(?:continuing|resuming|reading|re-?reading|fetching|retrieving|"
+    r"searching|pulling|checking|loading|processing|extracting|scanning|"
+    r"analy[sz]ing|looking)\b[^.!?\n]*[.!?\u2026]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_progress_narration(text: str) -> str:
+    """Drop trailing 'Continuing BOQ extraction...' style lines.
+
+    Live on 2d221e6, the build that taught the model to read a truncated
+    result window by window. Asked for the m3 demolition quantity it
+    answered, in full:
+
+        "I'll continue reading the BOQ to find any cubic-metre items. Let me
+         pull the next window.
+
+         Continuing BOQ extraction..."
+
+    _SEARCH_PROMISE_TAIL_RE matches "Let me pull the next window." on its
+    own. It did not match here because it is anchored to the END of the text
+    and a progress line follows it, so a dangling promise shipped as the
+    answer -- the exact failure #454 and #456 exist to prevent, reached by
+    new vocabulary that the platform itself taught the model.
+
+    Narration is not an answer, so it cannot be what makes the sentence
+    before it one. Strip it, then judge what is left.
+    """
+    lines = (text or "").rstrip().split("\n")
+    while lines and (
+        not lines[-1].strip() or _PROGRESS_NARRATION_RE.match(lines[-1].strip())
+    ):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
 def _looks_like_search_preamble(text: str) -> bool:
     """True when the model stopped on a search promise instead of writing."""
     t = (text or "").strip()
     if not t or len(t) > 500 or t.count("\n") > 6:
         return False
-    return bool(_SEARCH_PREAMBLE_RE.search(t) or _SEARCH_PROMISE_TAIL_RE.search(t))
+    if _SEARCH_PREAMBLE_RE.search(t) or _SEARCH_PROMISE_TAIL_RE.search(t):
+        return True
+    stripped = _strip_progress_narration(t)
+    if not stripped:
+        # Nothing but narration. "Continuing BOQ extraction..." is a status
+        # line, not a reply to a question about quantities.
+        return True
+    if stripped == t:
+        return False
+    return bool(
+        _SEARCH_PREAMBLE_RE.search(stripped)
+        or _SEARCH_PROMISE_TAIL_RE.search(stripped)
+    )
 
 
 def _final_text_needs_forced_retry(
