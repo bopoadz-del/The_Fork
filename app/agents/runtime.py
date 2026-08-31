@@ -5185,6 +5185,78 @@ def _compacted_tool_payload(content: str, keep: int) -> str:
     )
 
 
+#: The retrieval brief's first line. A system message carrying it is the
+#: EVIDENCE for the turn, not boilerplate, and is compacted differently.
+_RETRIEVAL_BRIEF_MARKER = "AUTHORITATIVE REFERENCE CONTEXT"
+
+#: One retrieved excerpt starts here. inject.py::_marker builds these.
+_EXCERPT_SPLIT_RE = re.compile(r"(?=\[doc_id=[^\]\s]+\s+chunk=\d+\s+score=)")
+
+
+def _compact_retrieval_message(content: str, budget: int) -> str:
+    """Drop whole excerpts from the tail, and say how many.
+
+    Measured on the real thing: a 5-chunk Contract Data brief is 8072
+    characters -- 1704 of instructions and 6368 of evidence. The flat
+    ``content[:2500]`` this replaces kept every word of the instructions and
+    796 characters of evidence: ONE excerpt of five, cut mid-sentence, with
+    no indication that four were gone.
+
+    That is the worst possible trade. The header tells the model it is
+    holding authoritative context and must answer from it; the compactor
+    then removes the context and leaves the instruction. It is also why two
+    live answers reported a fact "missing from what was returned" when
+    retrieval had in fact returned it:
+
+        D1  "the specific Contract Data entry ... that names the individual
+             Engineer's Representative is missing from what was returned"
+        E1  "The retrieved excerpts do not contain the Contract Price
+             expressed in SAR"
+
+    So: never slice an excerpt. Drop whole ones from the tail -- they are
+    ordered by score, so the tail is the weakest evidence -- and state the
+    count, because the header's SCOPE OF ABSENCE rule is only honest if the
+    model knows the sample got smaller.
+    """
+    parts = _EXCERPT_SPLIT_RE.split(content)
+    header, excerpts = parts[0], [p for p in parts[1:] if p.strip()]
+    if not excerpts:
+        # Not the shape we expected. Slice, but keep the rule intact rather
+        # than leaving instructions with no caveat.
+        return content[:budget] + "\n[truncated for TPM]"
+
+    def _note(kept: int) -> str:
+        if kept == len(excerpts):
+            return ""
+        return (
+            f"\nBUDGET NOTE: {len(excerpts) - kept} of {len(excerpts)} "
+            "retrieved excerpts were dropped to fit this request, lowest "
+            "relevance first. The sample you are reading is SMALLER than "
+            "what search found, so the SCOPE OF ABSENCE rule above applies "
+            "with more force, not less: say what you found and offer to "
+            "search again by document name or section. Never report that "
+            "something is absent.\n"
+        )
+
+    for kept in range(len(excerpts), 0, -1):
+        out = header + _note(kept) + "".join(excerpts[:kept])
+        if len(out) <= budget:
+            return out
+    # Zero excerpts, returned regardless of whether the header fits. Two
+    # things are load-bearing here and neither is the size.
+    #
+    # The rules: slicing the header is the one outcome worse than being a
+    # few hundred characters long, because it removes SCOPE OF ABSENCE and
+    # the never-claim-absence line, and those are what keep the model honest
+    # precisely when the evidence is thinnest. Bounded cost -- the header is
+    # a fixed ~1700 characters, not a document -- and the caller's
+    # drop-middle-history pass finds the room elsewhere.
+    #
+    # The note: zero is a real outcome, not an edge case. Without it the
+    # model reasons about a sample it no longer has.
+    return header + _note(0)
+
+
 def _compact_messages_for_tpm(
     messages: list[dict[str, Any]],
     budget: int = _GROQ_TPM_CHAR_BUDGET,
@@ -5254,11 +5326,55 @@ def _compact_messages_for_tpm(
         if role == "tool" and idx in compact_tool:
             cm["content"] = _compacted_tool_payload(content, compact_tool[idx])
         elif role == "system" and len(content) > 2500:
-            cm["content"] = content[:2500] + "\n[truncated for TPM]"
+            # The retrieval brief is handled after this loop: it is the
+            # turn's evidence and must be the LAST thing sacrificed, not cut
+            # to 2500 alongside boilerplate. Everything else is prompt text
+            # the model can do without.
+            if _RETRIEVAL_BRIEF_MARKER not in content:
+                cm["content"] = content[:2500] + "\n[truncated for TPM]"
         elif role == "user" and len(content) > 6000:
             if "PLATFORM PRE-DISPATCH:" not in content[:80]:
                 cm["content"] = content[:6000] + "\n[truncated for TPM]"
         out.append(cm)
+
+    # Evidence last -- and that means LAST. Before the brief gives up an
+    # excerpt, the tool results give up the rest of their allowance down to
+    # the floor. Excerpts are dropped whole, so a 170-character overage would
+    # otherwise cost a 1300-character excerpt while a 6000-character tool
+    # preview sat untouched: the coarse unit must come out of the cheap
+    # budget, not the expensive one.
+    over = _approx_message_chars(out) - budget
+    if over > 0 and tool_idx:
+        for i in reversed(tool_idx):
+            if over <= 0:
+                break
+            cm = out[i]
+            if not isinstance(cm, dict) or not isinstance(cm.get("content"), str):
+                continue
+            have = compact_tool.get(i)
+            if have is None or have <= _TOOL_PREVIEW_FLOOR:
+                continue
+            new_keep = max(_TOOL_PREVIEW_FLOOR, have - over)
+            shrunk = _compacted_tool_payload(messages[i]["content"], new_keep)
+            over -= len(cm["content"]) - len(shrunk)
+            cm["content"] = shrunk
+            compact_tool[i] = new_keep
+        over = _approx_message_chars(out) - budget
+
+    if over > 0:
+        for cm in out:
+            if not isinstance(cm, dict) or cm.get("role") != "system":
+                continue
+            content = cm.get("content")
+            if not isinstance(content, str) or _RETRIEVAL_BRIEF_MARKER not in content:
+                continue
+            # Never below the header: see _compact_retrieval_message.
+            allowance = max(0, len(content) - over)
+            shrunk = _compact_retrieval_message(content, allowance)
+            over -= len(content) - len(shrunk)
+            cm["content"] = shrunk
+            if over <= 0:
+                break
     if _approx_message_chars(out) <= budget:
         return out
     # Drop middle history; keep first system + last 8 messages.
