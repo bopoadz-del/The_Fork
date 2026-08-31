@@ -1607,6 +1607,38 @@ def _should_force_synthesis(tool_result: Any) -> bool:
     return True
 
 
+def _has_unread_windows(content: str) -> bool:
+    """True when the model has been told to read more of this tool result.
+
+    Live on 1d3c98b, the build that introduced char_offset. Asked for the m3
+    demolition quantity, the model reported the truncation, said it could not
+    confirm whether an m3 item appears deeper in the bill, offered to narrow
+    the search -- and never called boq_processor again. It could not:
+    boq_processor is a deliverable tool, so force_synthesis fired on the
+    first result and the NEXT call went out with_tools=False.
+
+    So the envelope told the model to call the tool again and the platform
+    took its tools away. That is the same failure the sympy_reasoning
+    carve-out above exists for, with a different tool: an instruction the
+    system then prevents.
+
+    A result with windows left to read is not a finished deliverable. It is
+    half a document.
+    """
+    if not content or "chars_remaining" not in content:
+        return False
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    try:
+        return int(parsed.get("chars_remaining") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _empty_router_verdict(tool_result: Any) -> bool:
     """True when this tool round was smart_orchestrator returning an EMPTY
     match (matched_actions: []) -- the state in which fabricated dispatch
@@ -6738,7 +6770,19 @@ class Agent:
                 if isinstance(_inner, dict) and _inner.get("status") == "error":
                     ok = False
                     err = str(_inner.get("error") or "")[:200]
-                if _force_synth_enabled and ok and _should_force_synthesis(tool_result):
+                _tool_content = _tool_result_content(
+                    {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
+                     **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
+                    offset=_requested_char_offset(tc),
+                )
+                # Half a document is not a deliverable: locking synthesis here
+                # leaves the model holding an instruction to read the next
+                # window with tools already disarmed.
+                if (
+                    _force_synth_enabled and ok
+                    and _should_force_synthesis(tool_result)
+                    and not _has_unread_windows(_tool_content)
+                ):
                     force_synthesis = True
                 await _emit("tool_result", {
                     "name": tool_result.get("name", tc_name),
@@ -6751,11 +6795,7 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": _tool_result_content(
-                        {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
-                         **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
-                        offset=_requested_char_offset(tc),
-                    ),
+                    "content": _tool_content,
                 })
                 if _empty_router_verdict(tool_result):
                     pending_nudges.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
@@ -7850,13 +7890,23 @@ class Agent:
                     history=effective_history,
                 )
                 stream_tool_results.append(tool_result)
+                _tool_content = _tool_result_content(
+                    {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
+                     **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
+                    offset=_requested_char_offset(tc),
+                )
                 # A successful deliverable tool (anything but search) means the
                 # model now has authoritative data to synthesize from — stop
                 # offering tools so the next call is a clean, tool-free answer.
+                # Unless it does NOT have the data yet: a result with windows
+                # left to read is half a document, and disarming here leaves
+                # the model holding an instruction to read the rest with no
+                # tool to read it with.
                 if (
                     _force_synth_enabled
                     and tool_result.get("ok", True)
                     and _should_force_synthesis(tool_result)
+                    and not _has_unread_windows(_tool_content)
                 ):
                     force_synthesis = True
                 yield {
@@ -7870,11 +7920,7 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": tool_result["name"],
-                    "content": _tool_result_content(
-                        {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
-                         **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
-                        offset=_requested_char_offset(tc),
-                    ),
+                    "content": _tool_content,
                 })
                 if _empty_router_verdict(tool_result):
                     pending_nudges.append({"role": "user", "content": _EMPTY_ROUTER_NUDGE})
