@@ -1655,6 +1655,7 @@ def _tool_result_content(payload: dict[str, Any]) -> str:
         return text
 
     def _envelope(keep: int) -> str:
+        shown = min(keep, len(text))
         return json.dumps(
             {
                 "truncated": True,
@@ -1662,6 +1663,26 @@ def _tool_result_content(payload: dict[str, Any]) -> str:
                     f"Tool result exceeded {_TOOL_RESULT_MAX_CHARS} characters "
                     "and was truncated. Narrow the request (filter, or ask for "
                     "fewer items) to see the rest."
+                ),
+                # The size of the loss, and the rule about it. The note above
+                # says the result was cut but not by how much, so the model
+                # has to infer the extent from the content -- and on the live
+                # BOQ question it inferred "pages 1-6 of 16" and reported that
+                # no cubic-metre demolition item existed. The 945 m3 line was
+                # past the cut. Same reasoning as the compaction envelope in
+                # _compacted_tool_payload; both layers cut the same result, so
+                # both have to say so.
+                "chars_shown": shown,
+                "chars_dropped": max(0, len(text) - shown),
+                "chars_total": len(text),
+                "scope_of_absence": (
+                    f"You are seeing the FIRST {shown} of {len(text)} "
+                    "characters of this tool result. Anything the user asked "
+                    "about may be in the part you cannot see. Say what you "
+                    "found and that the result was truncated. NEVER state or "
+                    "imply that a value, line item, or section is absent from "
+                    "the document or the data -- you cannot see far enough to "
+                    "know that."
                 ),
                 "preview": text[:keep],
             },
