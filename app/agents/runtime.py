@@ -2108,6 +2108,72 @@ def _looks_like_internal_context_leak(text: str) -> bool:
     return bool(_RETRIEVAL_MARKER_RE.search(text))
 
 
+class _EmitLeakGuard:
+    """Last line of defence: no path may ship the platform's own context.
+
+    #457 put the context-leak check in the streamed-synthesis branch and in
+    _sanitize_final_text, and E1 came back clean. It recurred once on 87c7996
+    -- same shape, same wbs_id/brief/Drive paths -- while the next run of the
+    same question was clean. Intermittent means a path that neither guard
+    covers, and I have not found which one.
+
+    Rather than keep sampling seven-minute live turns for a path I cannot
+    name, this sits where every event the client sees passes through:
+    chat_stream wraps _chat_stream_impl, so one check here cannot be bypassed
+    by any branch inside, present or future.
+
+    It accumulates, because a marker can straddle two token events. Once the
+    accumulated text trips the detector, nothing further is emitted and the
+    turn ends on the controlled fallback.
+
+    Residual, stated rather than hidden: tokens emitted BEFORE the marker
+    appears have already gone. On the observed leak that is the opening
+    ``{"status": "success", "wbs_id": "wbs-..."`` -- bad, and roughly 90
+    characters instead of 6,170, with the brief, the excerpt telemetry and
+    the customer's Drive paths all after the cut. Buffering the first few
+    hundred characters would close that too, at the cost of changing
+    time-to-first-token for every turn; not worth doing blind, and worth
+    revisiting once the actual path is known.
+    """
+
+    __slots__ = ("_acc", "tripped")
+
+    def __init__(self) -> None:
+        self._acc: list[str] = []
+        self.tripped = False
+
+    def check(self, event: dict[str, Any]) -> dict[str, Any] | None:
+        """The event to emit, or None to drop it."""
+        if not isinstance(event, dict):
+            return event
+        kind = event.get("type")
+        if kind not in ("token", "end"):
+            return event
+        content = event.get("content")
+        if not isinstance(content, str) or not content:
+            return event
+
+        if not self.tripped:
+            if kind == "token":
+                self._acc.append(content)
+                probe = "".join(self._acc)
+            else:
+                probe = content
+            if _looks_like_internal_context_leak(probe):
+                self.tripped = True
+                _LOG.warning(
+                    "chat_stream: internal context reached the emit boundary "
+                    "on a %s event -- suppressing the rest of this turn",
+                    kind,
+                )
+
+        if not self.tripped:
+            return event
+        if kind == "token":
+            return None
+        return {**event, "content": _TOOL_FORMAT_FALLBACK}
+
+
 def _looks_like_internal_tool_json(text: str) -> bool:
     """True if ``text`` is (or contains) JSON shaped like a tool call."""
     if not text:
@@ -7064,8 +7130,12 @@ class Agent:
                     producer_task, heartbeat_task, return_exceptions=True,
                 )
 
+        _leak_guard = _EmitLeakGuard()
         try:
             async for event in _inner():
+                event = _leak_guard.check(event)
+                if event is None:
+                    continue
                 yield event
         except Exception as exc:  # noqa: BLE001 - last-line safety net
             _LOG.exception("chat_stream: generator escaped with exception")
