@@ -5107,6 +5107,63 @@ def _approx_message_chars(messages: list[dict[str, Any]] | None) -> int:
     return total
 
 
+#: Smallest useful preview of a compacted tool result. Below this the
+#: model has nothing to reason from and answers about the note instead.
+_TOOL_PREVIEW_FLOOR = 1000
+
+#: What the LAST tool result keeps. It is the one the answer is about --
+#: the BOQ that was just parsed, the schedule that was just built -- while
+#: the older ones are usually context the model has already used.
+_LAST_TOOL_PREVIEW = 6000
+
+
+def _compacted_tool_payload(content: str, keep: int) -> str:
+    """A truncated tool result that says exactly what it lost.
+
+    Live on 554e0b9: asked how many cubic metres of demolition are in the
+    BOQ, the model answered from the preview and reported "pages 1-6 of 16",
+    concluding no m3 item existed. The 945 m3 line is past the cut. It had
+    only been told "Compacted for Groq TPM 8000" -- not how much was gone --
+    so it inferred the extent from the content and inferred it wrong.
+
+    Two things fix that, and neither is a bigger budget:
+
+    * state the loss as a NUMBER, so the model does not have to guess it;
+    * forbid the absence claim outright. inject.py already applies exactly
+      this rule to retrieval excerpts (SCOPE OF ABSENCE) because a top-K
+      sample is evidence of what IS present, never of what is absent. A
+      truncated tool result is the same shape of evidence and never got the
+      same rule. On that turn the model happened to hedge correctly. The
+      same cut with different phrasing produces "the BOQ contains no
+      demolition in cubic metres" -- a false statement about the customer's
+      own contract, stated with the tool's authority behind it.
+    """
+    kept = max(0, int(keep))
+    dropped = max(0, len(content) - kept)
+    return json.dumps(
+        {
+            "truncated": True,
+            "note": "Compacted for Groq TPM 8000.",
+            "chars_shown": min(kept, len(content)),
+            "chars_dropped": dropped,
+            "chars_total": len(content),
+            "scope_of_absence": (
+                f"You are seeing the FIRST {min(kept, len(content))} of "
+                f"{len(content)} characters of this tool result; "
+                f"{dropped} characters are not shown. Anything the user "
+                "asked about may be in the part you cannot see. Say what "
+                "you found and that the result was truncated. NEVER state "
+                "or imply that a value, line item, or section is absent "
+                "from the document or the data -- you cannot see far "
+                "enough to know that. Offer to re-run narrowed to the "
+                "section, page, or code the user wants."
+            ),
+            "preview": content[:kept],
+        },
+        default=str,
+    )
+
+
 def _compact_messages_for_tpm(
     messages: list[dict[str, Any]],
     budget: int = _GROQ_TPM_CHAR_BUDGET,
@@ -5115,11 +5172,55 @@ def _compact_messages_for_tpm(
 
     Live M1/M3/M7/M9/M12/M14: Kimi empty/filter → Groq 413 on 9–12k tokens.
     Keep roles and tool-call pairing; truncate contents only.
+
+    Tool results are compacted OLDEST FIRST and only while the hop is still
+    over budget. The previous pass cut every tool result over 1200 chars to
+    the same 1000-char preview whether or not that was needed -- so a turn
+    that was 200 chars over budget lost 39k characters of a just-parsed BOQ,
+    and the result the question was actually about was cut exactly as hard
+    as a stale one from iteration 0.
     """
     if _approx_message_chars(messages) <= budget:
         return messages
+
+    # Oldest first, last excluded: the last tool result is the one the
+    # answer is about, so it is compacted last and keeps the most.
+    # Every tool message, not only the big ones: the size test belongs with
+    # the keep size, below. Filtering here on the floor would also mean a
+    # small trailing result stopped counting as "the last one", handing the
+    # larger share to an older result the question is not about.
+    tool_idx = [
+        i for i, m in enumerate(messages)
+        if isinstance(m, dict) and m.get("role") == "tool"
+        and isinstance(m.get("content"), str)
+    ]
+    keep_for = {i: _TOOL_PREVIEW_FLOOR for i in tool_idx}
+    if tool_idx:
+        keep_for[tool_idx[-1]] = _LAST_TOOL_PREVIEW
+
+    running = _approx_message_chars(messages)
+    compact_tool: dict[int, int] = {}
+    for i in tool_idx:
+        if running <= budget:
+            break
+        keep = keep_for[i]
+        if len(messages[i]["content"]) <= keep:
+            continue
+        compact_tool[i] = keep
+        running -= len(messages[i]["content"]) - keep
+    # Still over with the last one at its larger share: cut it to the floor
+    # too rather than blowing the hop.
+    if running > budget and tool_idx:
+        last = tool_idx[-1]
+        if compact_tool.get(last, _LAST_TOOL_PREVIEW) > _TOOL_PREVIEW_FLOOR:
+            running -= (
+                compact_tool.get(last, len(messages[last]["content"]))
+                - _TOOL_PREVIEW_FLOOR
+            )
+            compact_tool[last] = _TOOL_PREVIEW_FLOOR
+
     out: list[dict[str, Any]] = []
-    for m in messages:
+    for idx, m in enumerate(messages):
         if not isinstance(m, dict):
             out.append(m)
             continue
@@ -5129,15 +5230,8 @@ def _compact_messages_for_tpm(
         if not isinstance(content, str):
             out.append(cm)
             continue
-        if role == "tool" and len(content) > 1200:
-            cm["content"] = json.dumps(
-                {
-                    "truncated": True,
-                    "note": "Compacted for Groq TPM 8000.",
-                    "preview": content[:1000],
-                },
-                default=str,
-            )
+        if role == "tool" and idx in compact_tool:
+            cm["content"] = _compacted_tool_payload(content, compact_tool[idx])
         elif role == "system" and len(content) > 2500:
             cm["content"] = content[:2500] + "\n[truncated for TPM]"
         elif role == "user" and len(content) > 6000:
