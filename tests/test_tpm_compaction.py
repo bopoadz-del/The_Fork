@@ -129,8 +129,11 @@ def test_the_last_tool_result_keeps_the_larger_share():
     first = json.loads(tools[0]["content"])
     second = json.loads(tools[1]["content"])
     assert first["chars_shown"] == _TOOL_PREVIEW_FLOOR
-    assert second["chars_shown"] == _LAST_TOOL_PREVIEW
-    assert second["chars_shown"] > first["chars_shown"]
+    # A relationship, not the constant: the last result's share is capped at
+    # _LAST_TOOL_PREVIEW but is trimmed further when the hop still does not
+    # fit -- tool results yield before retrieved evidence does. Asserting
+    # the constant here would fail the moment that trimming is correct.
+    assert first["chars_shown"] < second["chars_shown"] <= _LAST_TOOL_PREVIEW
 
 
 def test_an_older_compacted_result_still_carries_data():
