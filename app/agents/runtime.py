@@ -1627,7 +1627,56 @@ def _empty_router_verdict(tool_result: Any) -> bool:
     return False
 
 
-def _tool_result_content(payload: dict[str, Any]) -> str:
+#: Arguments the model may send that select HOW a result is presented rather
+#: than what the block should do. Stripped before dispatch: the blocks are
+#: vendored third-party code and an undeclared param is their problem, not
+#: something to discover in production.
+_PRESENTATION_ARGS = frozenset({"char_offset"})
+
+
+def _strip_presentation_args(args: Any) -> Any:
+    """Remove presentation-only arguments before a block ever sees them."""
+    if not isinstance(args, dict):
+        return args
+    if not _PRESENTATION_ARGS.intersection(args):
+        return args
+    return {k: v for k, v in args.items() if k not in _PRESENTATION_ARGS}
+
+
+def _dispatch_args(raw_args: Any) -> Any:
+    """Parse a tool call's arguments for DISPATCH.
+
+    One function so the strip cannot be forgotten at a call site: anything
+    that wants arguments to send to a block gets them from here, already free
+    of presentation-only params. Raises json.JSONDecodeError for the caller
+    to turn into the invalid-args result.
+    """
+    parsed = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+    return _strip_presentation_args(parsed)
+
+
+def _requested_char_offset(tool_call: dict[str, Any] | None) -> int:
+    """The ``char_offset`` the model asked for, if any.
+
+    A presentation parameter, not a block parameter: it selects which window
+    of an over-long result comes back, and is stripped before dispatch so no
+    block ever sees an argument it does not declare.
+    """
+    fn = (tool_call or {}).get("function") or {}
+    raw = fn.get("arguments") or "{}"
+    try:
+        args = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return 0
+    if not isinstance(args, dict):
+        return 0
+    try:
+        return max(0, int(args.get("char_offset") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _tool_result_content(payload: dict[str, Any], offset: int = 0) -> str:
     """Serialize a tool result for the `tool` message, truncating SAFELY.
 
     NEVER slice serialized JSON. `json.dumps` emits ASCII with \\uXXXX
@@ -1651,19 +1700,32 @@ def _tool_result_content(payload: dict[str, Any]) -> str:
     and the payload always parses.
     """
     text = json.dumps(payload, default=str)
-    if len(text) <= _TOOL_RESULT_MAX_CHARS:
+    start = max(0, min(int(offset or 0), len(text)))
+    if len(text) <= _TOOL_RESULT_MAX_CHARS and not start:
         return text
+    window = text[start:]
 
     def _envelope(keep: int) -> str:
-        shown = min(keep, len(text))
+        shown = min(keep, len(window))
+        next_offset = start + shown
+        more = next_offset < len(text)
         return json.dumps(
             {
                 "truncated": True,
                 "note": (
                     f"Tool result exceeded {_TOOL_RESULT_MAX_CHARS} characters "
-                    "and was truncated. Narrow the request (filter, or ask for "
-                    "fewer items) to see the rest."
+                    "and was truncated. Call this tool again with the SAME "
+                    f"file_path and char_offset={next_offset} to read the next "
+                    "window, and repeat until chars_remaining is 0. Do that "
+                    "BEFORE telling the user you could not find something."
+                    if more else
+                    f"Tool result exceeded {_TOOL_RESULT_MAX_CHARS} characters "
+                    "and was truncated. This is the LAST window -- you have "
+                    "now seen the whole result."
                 ),
+                "char_offset": start,
+                "next_char_offset": next_offset if more else None,
+                "chars_remaining": max(0, len(text) - next_offset),
                 # The size of the loss, and the rule about it. The note above
                 # says the result was cut but not by how much, so the model
                 # has to infer the extent from the content -- and on the live
@@ -1673,18 +1735,23 @@ def _tool_result_content(payload: dict[str, Any]) -> str:
                 # _compacted_tool_payload; both layers cut the same result, so
                 # both have to say so.
                 "chars_shown": shown,
-                "chars_dropped": max(0, len(text) - shown),
+                "chars_dropped": max(0, len(text) - next_offset),
                 "chars_total": len(text),
                 "scope_of_absence": (
-                    f"You are seeing the FIRST {shown} of {len(text)} "
-                    "characters of this tool result. Anything the user asked "
-                    "about may be in the part you cannot see. Say what you "
-                    "found and that the result was truncated. NEVER state or "
-                    "imply that a value, line item, or section is absent from "
-                    "the document or the data -- you cannot see far enough to "
-                    "know that."
+                    f"You are seeing characters {start} to {next_offset} of "
+                    f"{len(text)}. Anything the user asked about may be in "
+                    "the part you cannot see. NEVER state or imply that a "
+                    "value, line item, or section is absent from the document "
+                    "or the data -- you cannot see far enough to know that. "
+                    + (
+                        "Read the remaining windows with char_offset before "
+                        "answering about what is or is not present."
+                        if more else
+                        "You have now read every window, so a considered "
+                        "statement about what this result contains is safe."
+                    )
                 ),
-                "preview": text[:keep],
+                "preview": window[:keep],
             },
             default=str,
         )
@@ -5761,6 +5828,144 @@ def _cm_prompt_fragment_for_turn(user_message: str) -> str:
 _INFRA_ONLY_BLOCKS = frozenset({"cache_manager"})
 
 
+# File-consuming blocks need an explicit `file_path` schema so the LLM can't
+# emit the call with empty args. Without this, the agent called e.g.
+# boq_processor with {} after search_project_documents, got "No file_path
+# provided", and deflected to the user. The runtime's
+# _resolve_block_file_input then maps the bare filename to the encrypted
+# stored path, so the agent only needs to pass the original_name string it
+# saw from search_project_documents.
+#
+# Module scope rather than a local: it is a constant, it was rebuilt on every
+# tool_definitions() call, and a schema the model depends on should be
+# reachable by a test without standing up a block registry.
+_FILE_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "boq_processor": {
+        "description": (
+            "Extract structured Bill of Quantities from an uploaded "
+            "xlsx/csv/pdf file. Returns line items with quantities, "
+            "rates, amounts, and totals. The file_path must be the "
+            "exact original_name of a document returned by "
+            "search_project_documents — never guess paths."
+        ),
+        "properties": {
+            "file_path": {
+                "type": "string",
+                "description": (
+                    "The document's original_name (e.g. "
+                    "'Infra-1 - Demolition BOQ.pdf'). MUST come "
+                    "from a prior search_project_documents call."
+                ),
+            },
+            "char_offset": {
+                "type": "integer",
+                "description": (
+                    "Optional. Read a LATER window of a result that "
+                    "came back truncated: pass the next_char_offset "
+                    "the previous call reported, and repeat until "
+                    "chars_remaining is 0. Never tell the user a "
+                    "value is absent from this document while "
+                    "chars_remaining is above 0 -- read the rest "
+                    "first."
+                ),
+            },
+        },
+        "required": ["file_path"],
+    },
+    "drawing_qto": {
+        "description": (
+            "Extract quantity takeoff from a drawing file "
+            "(DXF/DWG/PDF). Returns measured areas, lengths, counts. "
+            "The file_path must be the exact original_name returned by "
+            "search_project_documents — never guess paths."
+        ),
+        "properties": {
+            "file_path": {
+                "type": "string",
+                "description": (
+                    "The drawing's original_name (e.g. "
+                    "'tower_b_floor_plan.dxf'). MUST come from a prior "
+                    "search_project_documents call."
+                ),
+            },
+            "char_offset": {
+                "type": "integer",
+                "description": (
+                    "Optional. Read a LATER window of a result that "
+                    "came back truncated: pass the next_char_offset "
+                    "the previous call reported, and repeat until "
+                    "chars_remaining is 0. Never tell the user a "
+                    "value is absent from this document while "
+                    "chars_remaining is above 0 -- read the rest "
+                    "first."
+                ),
+            },
+        },
+        "required": ["file_path"],
+    },
+    "spec_analyzer": {
+        "description": (
+            "Extract specifications, grades, standards, and methods "
+            "from a specification document. file_path must be the "
+            "original_name from search_project_documents — never guess."
+        ),
+        "properties": {
+            "file_path": {
+                "type": "string",
+                "description": (
+                    "The spec doc's original_name. MUST come from a "
+                    "prior search_project_documents call."
+                ),
+            },
+            "char_offset": {
+                "type": "integer",
+                "description": (
+                    "Optional. Read a LATER window of a result that "
+                    "came back truncated: pass the next_char_offset "
+                    "the previous call reported, and repeat until "
+                    "chars_remaining is 0. Never tell the user a "
+                    "value is absent from this document while "
+                    "chars_remaining is above 0 -- read the rest "
+                    "first."
+                ),
+            },
+        },
+        "required": ["file_path"],
+    },
+    "primavera_parser": {
+        "description": (
+            "Parse a Primavera P6 .xer schedule file from the project. "
+            "Returns activities, milestones, WBS, schedule_data, and CPM "
+            "output. file_path must be the original_name from "
+            "search_project_documents — never guess paths."
+        ),
+        "properties": {
+            "file_path": {
+                "type": "string",
+                "description": (
+                    "The XER file's original_name (e.g. "
+                    "'Annexure 2 - Baseline Program XER.xer'). MUST come "
+                    "from a prior search_project_documents call."
+                ),
+            },
+            "char_offset": {
+                "type": "integer",
+                "description": (
+                    "Optional. Read a LATER window of a result that "
+                    "came back truncated: pass the next_char_offset "
+                    "the previous call reported, and repeat until "
+                    "chars_remaining is 0. Never tell the user a "
+                    "value is absent from this document while "
+                    "chars_remaining is above 0 -- read the rest "
+                    "first."
+                ),
+            },
+        },
+        "required": ["file_path"],
+    },
+}
+
+
 @dataclass
 class Agent:
     """Declarative agent definition."""
@@ -5808,90 +6013,6 @@ class Agent:
         - ``search_project_documents`` — only when ``project_id`` is set.
         - ``delegate_to_agent`` — only when ``self.can_delegate``.
         """
-        # File-consuming blocks need an explicit `file_path` schema so the
-        # LLM can't emit the call with empty args. Without this, the agent
-        # called e.g. boq_processor with {} after search_project_documents,
-        # got "No file_path provided", and deflected to the user. The
-        # runtime's _resolve_block_file_input then maps the bare filename
-        # to the encrypted stored path, so the agent only needs to pass
-        # the original_name string it saw from search_project_documents.
-        _FILE_TOOL_SCHEMAS = {
-            "boq_processor": {
-                "description": (
-                    "Extract structured Bill of Quantities from an uploaded "
-                    "xlsx/csv/pdf file. Returns line items with quantities, "
-                    "rates, amounts, and totals. The file_path must be the "
-                    "exact original_name of a document returned by "
-                    "search_project_documents — never guess paths."
-                ),
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": (
-                            "The document's original_name (e.g. "
-                            "'Infra-1 - Demolition BOQ.pdf'). MUST come "
-                            "from a prior search_project_documents call."
-                        ),
-                    },
-                },
-                "required": ["file_path"],
-            },
-            "drawing_qto": {
-                "description": (
-                    "Extract quantity takeoff from a drawing file "
-                    "(DXF/DWG/PDF). Returns measured areas, lengths, counts. "
-                    "The file_path must be the exact original_name returned by "
-                    "search_project_documents — never guess paths."
-                ),
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": (
-                            "The drawing's original_name (e.g. "
-                            "'tower_b_floor_plan.dxf'). MUST come from a prior "
-                            "search_project_documents call."
-                        ),
-                    },
-                },
-                "required": ["file_path"],
-            },
-            "spec_analyzer": {
-                "description": (
-                    "Extract specifications, grades, standards, and methods "
-                    "from a specification document. file_path must be the "
-                    "original_name from search_project_documents — never guess."
-                ),
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": (
-                            "The spec doc's original_name. MUST come from a "
-                            "prior search_project_documents call."
-                        ),
-                    },
-                },
-                "required": ["file_path"],
-            },
-            "primavera_parser": {
-                "description": (
-                    "Parse a Primavera P6 .xer schedule file from the project. "
-                    "Returns activities, milestones, WBS, schedule_data, and CPM "
-                    "output. file_path must be the original_name from "
-                    "search_project_documents — never guess paths."
-                ),
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": (
-                            "The XER file's original_name (e.g. "
-                            "'Annexure 2 - Baseline Program XER.xer'). MUST come "
-                            "from a prior search_project_documents call."
-                        ),
-                    },
-                },
-                "required": ["file_path"],
-            },
-        }
 
         tools = []
         for block_name in self.allowed_blocks:
@@ -6633,6 +6754,7 @@ class Agent:
                     "content": _tool_result_content(
                         {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
+                        offset=_requested_char_offset(tc),
                     ),
                 })
                 if _empty_router_verdict(tool_result):
@@ -7751,6 +7873,7 @@ class Agent:
                     "content": _tool_result_content(
                         {**(tool_result["result"] if isinstance(tool_result.get("result"), dict) else {"result": tool_result.get("result")}),
                          **({"validation": tool_result["validation"]} if "validation" in tool_result else {})},
+                        offset=_requested_char_offset(tc),
                     ),
                 })
                 if _empty_router_verdict(tool_result):
@@ -8460,7 +8583,11 @@ class Agent:
         name = fn.get("name") or ""
         raw_args = fn.get("arguments") or "{}"
         try:
-            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            # Presentation params (char_offset) are removed here, not later:
+            # they choose which window of the SERIALIZED result comes back,
+            # and the block reads the whole file either way. The window
+            # itself is read off the tool call by _requested_char_offset.
+            args = _dispatch_args(raw_args)
         except json.JSONDecodeError:
             return {
                 "name": name,
