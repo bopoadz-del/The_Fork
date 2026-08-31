@@ -4625,6 +4625,34 @@ def _llm_http_timeout() -> float:
     except ValueError:
         return 200.0
 
+
+# Floor for a single LLM attempt. Below this there is no point starting one:
+# it cannot return before the turn's wall clock cuts the stream, and the
+# attempt only burns the budget that a clean fallback answer needs.
+_MIN_LLM_ATTEMPT_SECONDS = 5.0
+
+# Head-room reserved between the LAST LLM attempt's deadline and the turn's
+# wall clock, so a call that gives up still leaves the producer time to
+# sanitize, persist and stream the fallback text. Without it the LLM deadline
+# and the stream deadline are the same instant and the fallback races the
+# cancellation it was meant to replace.
+_STREAM_DELIVERY_MARGIN_SECONDS = 10.0
+
+
+def _forced_retry_min_seconds() -> float:
+    """Wall clock the forced no-tools retry needs before it is worth starting.
+
+    The retry is a full LLM call on a reasoning model; observed primary calls
+    on this service run 100-150s. Starting one with less than this left means
+    the turn dies mid-await and the user gets a timeout banner instead of the
+    fallback text we could have delivered immediately. Override with
+    FORCED_RETRY_MIN_SECONDS.
+    """
+    try:
+        return float(os.getenv("FORCED_RETRY_MIN_SECONDS", "45"))
+    except ValueError:
+        return 45.0
+
 # OpenAI native API — standard chat-completions endpoint. Tool-calling and
 # streaming are first-class; we keep the same payload shape as Groq/DeepSeek.
 
@@ -6396,6 +6424,18 @@ class Agent:
 
             queue: asyncio.Queue = asyncio.Queue()
 
+            # Absolute deadline — computed ONCE and NOT reset by events.
+            # Heartbeats keep the queue active even when the upstream LLM is
+            # hung, so a per-get() timeout would never trigger. The fixed
+            # deadline is the only correct semantic for a wall-clock cap.
+            # Computed here, before the producer, because the producer now
+            # passes it down so LLM calls cannot outlive the turn.
+            deadline = time.monotonic() + timeout_s
+
+            # Shared, mutable: the producer writes what it is waiting on, the
+            # consumer reads it when the wall clock runs out.
+            phase: dict[str, Any] = {"name": "starting", "since": time.monotonic()}
+
             async def producer() -> None:
                 try:
                     async for event in self._chat_stream_impl(
@@ -6409,6 +6449,8 @@ class Agent:
                         rag_debug=rag_debug,
                         _depth=_depth,
                         _call_stack=_call_stack,
+                        _deadline=deadline,
+                        _phase=phase,
                     ):
                         await queue.put(event)
                 finally:
@@ -6423,12 +6465,6 @@ class Agent:
             producer_task = asyncio.create_task(producer())
             heartbeat_task = asyncio.create_task(heartbeat())
 
-            # Absolute deadline — computed ONCE and NOT reset by events.
-            # Heartbeats keep the queue active even when the upstream LLM is
-            # hung, so a per-get() timeout would never trigger. The fixed
-            # deadline is the only correct semantic for a wall-clock cap.
-            deadline = time.monotonic() + timeout_s
-
             try:
                 while True:
                     remaining = deadline - time.monotonic()
@@ -6436,9 +6472,14 @@ class Agent:
                         # Wall-clock cap exceeded. Emit a structured timeout
                         # error so the frontend's friendlyErrorMessage maps
                         # it (substring "timeout") to a clean banner.
+                        _stalled = str(phase.get("name") or "unknown")
+                        _stalled_for = time.monotonic() - float(
+                            phase.get("since") or deadline
+                        )
                         _LOG.warning(
-                            "chat_stream: wall-clock deadline exceeded after %.1fs",
-                            timeout_s,
+                            "chat_stream: wall-clock deadline exceeded after "
+                            "%.1fs — stalled in phase=%r for %.1fs",
+                            timeout_s, _stalled, _stalled_for,
                         )
                         if not token_emitted:
                             yield {"type": "token", "content": _EMPTY_RESPONSE_FALLBACK}
@@ -6447,7 +6488,9 @@ class Agent:
                             "type": "error",
                             "message": (
                                 f"Response timeout — stream exceeded "
-                                f"the wall-clock timeout ({timeout_s:.0f}s)."
+                                f"the wall-clock timeout ({timeout_s:.0f}s) "
+                                f"while waiting on {_stalled} "
+                                f"({_stalled_for:.0f}s)."
                             ),
                         }
                         terminal_emitted = True
@@ -6528,6 +6571,8 @@ class Agent:
         attached_documents: list[dict[str, Any]] | None = None,
         _depth: int = 0,
         _call_stack: list[str] | None = None,
+        _deadline: float | None = None,
+        _phase: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Internal implementation. ``chat_stream`` wraps this with an emit
         guarantee so silent / crashing exits become structured error events."""
@@ -6862,6 +6907,33 @@ class Agent:
         # Gate behind AGENT_TIMING_LOG=1 so it's off by default.
         _timing = os.getenv("AGENT_TIMING_LOG") == "1"
         _turn_t0 = time.monotonic()
+
+        # `_deadline` is the caller's wall-clock cap for the WHOLE turn (a
+        # time.monotonic() instant), or None when nothing is capping us.
+        # Every LLM call below gets it minus a delivery margin, so a call
+        # that runs out of budget fails inside the turn and we still stream
+        # something instead of being cancelled mid-await.
+        def _remaining_budget() -> float | None:
+            return None if _deadline is None else _deadline - time.monotonic()
+
+        def _llm_deadline() -> float | None:
+            if _deadline is None:
+                return None
+            # Reserve a slice of what is LEFT rather than a flat 10s, so a
+            # deliberately short CHAT_STREAM_TIMEOUT_SECONDS (the test suite
+            # runs 1-3s) does not hand every LLM call a deadline already in
+            # the past. At the 240s production default this is the full 10s.
+            left = max(0.0, _deadline - time.monotonic())
+            return _deadline - min(_STREAM_DELIVERY_MARGIN_SECONDS, left * 0.1)
+
+        # What the turn is currently waiting on, so the caller's wall-clock
+        # branch can NAME the stalled component instead of reporting a bare
+        # elapsed time. Diagnosing 43e40b3a-e8f needed the ABSENCE of a
+        # "forced-retry call=" line to infer where it hung.
+        def _set_phase(name: str) -> None:
+            if _phase is not None:
+                _phase["name"] = name
+                _phase["since"] = time.monotonic()
         # Served model string of the LAST successful LLM call this turn, surfaced
         # in the `end` event so observability (fork_cli/smoke) can tell the
         # configured provider apart from a silent fallback (e.g. Kimi K2 vs an
@@ -6952,9 +7024,11 @@ class Agent:
                     elif not final_text.strip():
                         # Nothing usable streamed (empty response) — preserve the
                         # empty-final forced-retry path (non-streamed, chunked).
+                        _set_phase("forced-retry (streamed-synth)")
                         forced_resp = await self._call_llm(
                             messages, api_key, project_id=project_id,
                             with_tools=False, user_id=user_id,
+                            deadline=_llm_deadline(),
                         )
                         if forced_resp.get("status") == "error":
                             final_text = _EMPTY_RESPONSE_FALLBACK
@@ -6994,10 +7068,12 @@ class Agent:
                     }
                     return
             _call_t0 = time.monotonic()
+            _set_phase(f"llm-call iter={iteration}")
             resp = await self._call_llm(
                 messages, api_key, project_id=project_id, user_id=user_id,
                 exclude_tools=excluded_tools or None,
                 with_tools=not force_synthesis,
+                deadline=_llm_deadline(),
             )
             if _timing:
                 _tcs = [((tc.get("function") or {}).get("name")) for tc in (resp.get("choice", {}).get("message", {}).get("tool_calls") or [])]
@@ -7100,35 +7176,65 @@ class Agent:
                     # fallback), force one no-tools call so the model must produce
                     # a plain-text answer instead of an empty bubble or leak.
                     if _final_text_needs_forced_retry(final_text, user_message=user_message):
-                        _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
-                        if _timing:
-                            _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
-                                         len(raw_content), time.monotonic() - _turn_t0)
-                        if final_text == _TOOL_FORMAT_FALLBACK:
-                            messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
-                        elif _looks_like_search_preamble(final_text):
-                            messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
-                        _fr_t0 = time.monotonic()
-                        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
-                        if _timing:
-                            _LOG.warning("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
-                                         time.monotonic() - _fr_t0, forced_resp.get("status"), time.monotonic() - _turn_t0)
-                        if forced_resp.get("status") == "error":
+                        _left = _remaining_budget()
+                        _need = _forced_retry_min_seconds()
+                        if _left is not None and _left < _need:
+                            # Not enough turn left to finish another LLM call.
+                            # Starting one anyway is exactly how 43e40b3a-e8f
+                            # spent its last 113s and still ended on a timeout
+                            # banner. Deliver the fallback NOW instead: same
+                            # text, ~2 minutes sooner, no error banner. The
+                            # unusable text itself is never streamed -- that is
+                            # the defect #454 closed and it stays closed.
+                            _LOG.warning(
+                                "chat_stream: skipping forced retry — %.1fs of "
+                                "the turn left, need %.1fs",
+                                _left, _need,
+                            )
+                            if _timing:
+                                _LOG.warning(
+                                    "TIMING chat_stream FORCED-RETRY-SKIPPED "
+                                    "raw=%dc left=%.1fs cum=%.1fs",
+                                    len(raw_content), _left,
+                                    time.monotonic() - _turn_t0,
+                                )
                             final_text = _EMPTY_RESPONSE_FALLBACK
                         else:
-                            served_model = (forced_resp.get("raw") or {}).get("model") or served_model
-                            forced_msg = forced_resp["choice"].get("message") or {}
-                            final_text = _sanitize_final_text(
-                                forced_msg.get("content") or "",
-                                messages=messages, tool_results=stream_tool_results,
+                            _LOG.info("chat_stream: unusable final_text, forcing no-tools retry")
+                            if _timing:
+                                _LOG.warning("TIMING chat_stream EMPTY-FINAL raw=%dc -> forced retry, cum=%.1fs",
+                                             len(raw_content), time.monotonic() - _turn_t0)
+                            if final_text == _TOOL_FORMAT_FALLBACK:
+                                messages.append({"role": "user", "content": _TOOL_FORMAT_RETRY_NUDGE})
+                            elif _looks_like_search_preamble(final_text):
+                                messages.append({"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE})
+                            _fr_t0 = time.monotonic()
+                            _set_phase("forced-retry")
+                            forced_resp = await self._call_llm(
+                                messages, api_key, project_id=project_id,
+                                with_tools=False, user_id=user_id,
+                                deadline=_llm_deadline(),
                             )
-                            if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                            if _timing:
+                                _LOG.warning("TIMING chat_stream forced-retry call=%.1fs status=%s cum=%.1fs",
+                                             time.monotonic() - _fr_t0, forced_resp.get("status"), time.monotonic() - _turn_t0)
+                            if forced_resp.get("status") == "error":
                                 final_text = _EMPTY_RESPONSE_FALLBACK
+                            else:
+                                served_model = (forced_resp.get("raw") or {}).get("model") or served_model
+                                forced_msg = forced_resp["choice"].get("message") or {}
+                                final_text = _sanitize_final_text(
+                                    forced_msg.get("content") or "",
+                                    messages=messages, tool_results=stream_tool_results,
+                                )
+                                if _final_text_needs_forced_retry(final_text, user_message=user_message):
+                                    final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
+                    _set_phase(f"streaming-final iter={iteration}")
                     _LOG.info("chat_stream: final_text iter=%d chars=%d", iteration, len(final_text))
                     for chunk in _chunks(final_text, 80):
                         yield {"type": "token", "content": chunk}
@@ -7146,6 +7252,7 @@ class Agent:
                             no_rag_resp = await self._call_llm(
                                 no_rag_messages, api_key,
                                 project_id=project_id, user_id=user_id,
+                                deadline=_llm_deadline(),
                             )
                             off_response = (no_rag_resp.get("choice", {})
                                             .get("message", {})
@@ -7251,7 +7358,11 @@ class Agent:
         # Hit the cap without a final answer — force one more call with tools disabled.
         _LOG.warning("chat_stream: hit MAX_TOOL_ITERATIONS=%d, forcing no-tools retry",
                      MAX_TOOL_ITERATIONS)
-        forced_resp = await self._call_llm(messages, api_key, project_id=project_id, with_tools=False, user_id=user_id)
+        _set_phase("forced-retry (iteration cap)")
+        forced_resp = await self._call_llm(
+            messages, api_key, project_id=project_id, with_tools=False,
+            user_id=user_id, deadline=_llm_deadline(),
+        )
         if forced_resp.get("status") == "error":
             _persist_failed_turn(conversation_id)
             yield {"type": "error", "message": f"Hit {MAX_TOOL_ITERATIONS}-iteration cap."}
@@ -7344,6 +7455,7 @@ class Agent:
         with_tools: bool = True,
         user_id: str | None = None,
         exclude_tools: set | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any]:
         cfg = _llm_config()
         # Soft daily cap: refuse the call when today's spend already meets
@@ -7459,10 +7571,51 @@ class Agent:
                 return "required"
             return "auto"
 
+        # Wall-clock budget. chat_stream caps the whole TURN; _call_llm walks
+        # a provider fallback ladder INSIDE that cap, so without a shared
+        # deadline the ladder can spend _llm_http_timeout() per hop (200s by
+        # default) against a 240s turn cap and return nothing at all.
+        #
+        # Live request 43e40b3a-e8f: iter=0 took 126.8s and produced a dangling
+        # search preamble, the forced no-tools retry started at cum=126.8s, and
+        # the turn deadline cancelled the producer 113s later while that retry
+        # was still awaiting -- there is no "forced-retry call=" timing line for
+        # that request because the await never returned. The user waited four
+        # minutes and got a timeout banner.
+        #
+        # `deadline` is a time.monotonic() instant, not a duration.
+        def _attempt_timeout() -> float:
+            base = _llm_http_timeout()
+            if deadline is None:
+                return base
+            return max(
+                _MIN_LLM_ATTEMPT_SECONDS,
+                min(base, deadline - time.monotonic()),
+            )
+
+        def _budget_exhausted() -> bool:
+            return (
+                deadline is not None
+                and (deadline - time.monotonic()) <= _MIN_LLM_ATTEMPT_SECONDS
+            )
+
         last_error: dict[str, Any] = {"status": "error", "error": "LLM call failed"}
         skip_providers: set[str] = set()
         for attempt_idx, (a_cfg, a_key, a_model) in enumerate(attempts):
             is_last = attempt_idx == len(attempts) - 1
+            if _budget_exhausted():
+                _LOG.warning(
+                    "llm: skipping %s attempt -- wall-clock budget exhausted",
+                    a_cfg.get("provider"),
+                )
+                return {
+                    "status": "error",
+                    "error": (
+                        "LLM call skipped -- no wall-clock budget left in "
+                        "this turn."
+                    ),
+                }
+            attempt_timeout = _attempt_timeout()
             if a_cfg.get("provider") in skip_providers:
                 if is_last:
                     return last_error
@@ -7494,7 +7647,7 @@ class Agent:
                         tools=tools if (tools and with_tools) else None,
                         stream=False,
                     )
-                    async with httpx.AsyncClient(timeout=_llm_http_timeout()) as client:
+                    async with httpx.AsyncClient(timeout=attempt_timeout) as client:
                         r = await client.post(
                             a_cfg["url"],
                             json=native_payload,
@@ -7537,7 +7690,7 @@ class Agent:
                 )
                 groq_413_retried = False
                 while True:
-                    async with httpx.AsyncClient(timeout=_llm_http_timeout()) as client:
+                    async with httpx.AsyncClient(timeout=attempt_timeout) as client:
                         r = await client.post(
                             a_cfg["url"],
                             json=payload,
@@ -7567,7 +7720,7 @@ class Agent:
                             continue
                     break
             except httpx.TimeoutException:
-                last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call timed out ({int(_llm_http_timeout())}s)."}
+                last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call timed out ({int(attempt_timeout)}s)."}
                 if not is_last:
                     _LOG.warning("llm: %s timed out — falling back to %s", a_cfg["provider"], attempts[attempt_idx + 1][0]["provider"])
                     continue
