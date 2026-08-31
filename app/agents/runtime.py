@@ -6994,20 +6994,58 @@ class Agent:
                         or _looks_like_internal_tool_json(raw)
                     ):
                         tool_leak = True
-                    # Do not flush a held tool-leak tail — leftover L4 / A5
-                    # streaming used to emit tool JSON/XML here before sanitize.
-                    if pending and not tool_leak:
-                        seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
-                        if seg and not _looks_like_internal_tool_json(seg):
-                            yield {"type": "token", "content": seg}
                     # Fully-sanitised accumulated text: what we persist + feed
                     # sources/exports (must match the non-streaming path, not a
-                    # concatenation of per-line flushes).
+                    # concatenation of per-line flushes). Computed BEFORE the
+                    # tail flush so a dangling promise can be held back rather
+                    # than shown and then contradicted.
                     final_text = _sanitize_inline_paths(
                         _sanitize_citation_labels(_sanitize_final_text(
                             raw, messages=messages, tool_results=stream_tool_results,
                         ))
                     )
+                    # #454 taught the NON-streamed branch that a first-person
+                    # promise to search is not an answer. This branch never
+                    # learned it: it retried only on an EMPTY stream, and a
+                    # promise is not empty. SYNTHESIS_STREAMING is set in
+                    # production, so this is the branch a live turn takes.
+                    #
+                    # Live on 1594b32, with #454 and #455 both deployed, a
+                    # fresh thread asking for the Engineer's Representative
+                    # ended on:
+                    #
+                    #   "I don't have the Engineer's Representative's name in
+                    #    the retrieved excerpts. Let me search the Contract
+                    #    Data and Schedules volume more specifically for that
+                    #    appointment."
+                    #
+                    # _SEARCH_PROMISE_TAIL_RE matches that string. The
+                    # non-streamed branch would have retried. This one shipped
+                    # it as the answer.
+                    #
+                    # Held rather than flushed: the loop above releases a
+                    # segment only once 60 chars AND a newline have
+                    # accumulated, so a short end-of-turn promise is still
+                    # entirely in `pending` here and the user has seen nothing.
+                    # On a long answer that ends in a promise some prefix is
+                    # already out and the retry appends to it -- uglier, and
+                    # still better than a promise as the final word.
+                    promise_hold = bool(final_text.strip()) and (
+                        _final_text_needs_forced_retry(
+                            final_text, user_message=user_message
+                        )
+                    )
+                    if promise_hold:
+                        _LOG.info(
+                            "chat_stream: streamed synthesis ended on a search "
+                            "promise -- holding it and forcing a no-tools retry"
+                        )
+                    # Do not flush a held tool-leak tail — leftover L4 / A5
+                    # streaming used to emit tool JSON/XML here before sanitize.
+                    if pending and not tool_leak and not promise_hold:
+                        seg = _sanitize_inline_paths(_sanitize_citation_labels(pending))
+                        if seg and not _looks_like_internal_tool_json(seg):
+                            yield {"type": "token", "content": seg}
                     # Recover-from-tools lives in _postprocess_answer. Do not
                     # run it before the empty-stream check — a successful
                     # commissioning/WIR/IPC tool (or predispatch draft) would
@@ -7021,9 +7059,15 @@ class Agent:
                         )
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
-                    elif not final_text.strip():
-                        # Nothing usable streamed (empty response) — preserve the
-                        # empty-final forced-retry path (non-streamed, chunked).
+                    elif not final_text.strip() or promise_hold:
+                        # Nothing usable streamed -- empty, or a promise to
+                        # search that #454 already ruled is not an answer. One
+                        # path for both, so the two branches cannot disagree
+                        # about what counts as an answer again.
+                        if promise_hold:
+                            messages.append(
+                                {"role": "user", "content": _SEARCH_PREAMBLE_RETRY_NUDGE}
+                            )
                         _set_phase("forced-retry (streamed-synth)")
                         forced_resp = await self._call_llm(
                             messages, api_key, project_id=project_id,
@@ -7039,7 +7083,9 @@ class Agent:
                                 _fm.get("content") or "",
                                 messages=messages, tool_results=stream_tool_results,
                             )
-                            if not final_text.strip():
+                            if not final_text.strip() or _final_text_needs_forced_retry(
+                                final_text, user_message=user_message
+                            ):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
                         final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
