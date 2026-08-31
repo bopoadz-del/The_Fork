@@ -29,7 +29,11 @@ import json
 
 import pytest
 
-from app.agents.runtime import _TOOL_RESULT_MAX_CHARS, _tool_result_content
+from app.agents.runtime import (
+    _TOOL_RESULT_MAX_CHARS,
+    _requested_char_offset,
+    _tool_result_content,
+)
 
 
 def _en_dash_docs(n: int) -> dict:
@@ -156,3 +160,136 @@ def test_a_small_result_carries_no_scope_note():
     out = _tool_result_content({"documents": [{"name": "a.pdf"}]})
     assert "scope_of_absence" not in out
     assert "chars_dropped" not in out
+
+
+# -- a truncated result must be resumable ---------------------------------
+#
+# Saying what was lost stopped the model claiming absence. It did not let it
+# find the answer. Live on 733ef49, after the loss numbers landed:
+#
+#     "The tool extracted text from all 16 pages, but the result was
+#      truncated -- only the first 7,116 of 22,189 characters were returned
+#      ... I cannot see whether an m3 demolition item exists later in the
+#      bill, and I therefore cannot provide a quantity or CESMM code."
+#
+# Honest, correctly scoped, and still a dead end: the model knew exactly what
+# it was missing and had no way to ask for it. char_offset is that way.
+
+
+def _big(rows: int = 400) -> dict:
+    payload = {"items": [{"code": f"D{i}", "desc": f"Breakout item {i}",
+                          "unit": "m", "qty": i} for i in range(rows)]}
+    payload["items"].append({"code": "D550.9", "desc": "Demolition, concrete",
+                             "unit": "m3", "qty": 945})
+    return payload
+
+
+def _walk(payload: dict, limit: int = 20):
+    """Every window the model would read, following next_char_offset."""
+    out, offset = [], 0
+    for _ in range(limit):
+        parsed = json.loads(_tool_result_content(payload, offset=offset))
+        out.append(parsed)
+        if not parsed["next_char_offset"]:
+            return out
+        offset = parsed["next_char_offset"]
+    raise AssertionError("windows did not terminate")
+
+
+def test_the_windows_tile_the_whole_result():
+    """No gaps and no overlap: the model reading every window has read the
+    serialized result exactly once.
+
+    Mutation killed: slicing from 0 regardless of offset, which would loop
+    forever on the first window.
+    """
+    payload = _big()
+    windows = _walk(payload)
+    assert len(windows) > 1
+    rebuilt = "".join(w["preview"] for w in windows)
+    assert rebuilt == json.dumps(payload, default=str)
+
+
+def test_chars_remaining_reaches_zero_and_stops():
+    windows = _walk(_big())
+    assert windows[-1]["chars_remaining"] == 0
+    assert windows[-1]["next_char_offset"] is None
+    assert all(w["chars_remaining"] > 0 for w in windows[:-1])
+    # Strictly decreasing, so a model following it always terminates.
+    remaining = [w["chars_remaining"] for w in windows]
+    assert remaining == sorted(remaining, reverse=True)
+    assert len(set(remaining)) == len(remaining)
+
+
+def test_the_answer_past_the_cap_is_reachable():
+    """The E4 regression as data. The 945 m3 line sits past
+    _TOOL_RESULT_MAX_CHARS, so no single window can hold it."""
+    payload = _big()
+    full = json.dumps(payload, default=str)
+    assert full.index("945") > _TOOL_RESULT_MAX_CHARS
+    windows = _walk(payload)
+    assert "945" not in windows[0]["preview"], "not reachable in one call"
+    assert any("945" in w["preview"] and "m3" in w["preview"] for w in windows)
+
+
+def test_the_instruction_changes_on_the_last_window():
+    """While there is more, the model is told to read it BEFORE answering
+    about absence. On the last window that caveat would be wrong -- it has
+    seen everything, and hedging a complete answer is its own failure."""
+    windows = _walk(_big())
+    first, last = windows[0], windows[-1]
+    assert "char_offset=" in first["note"]
+    assert "BEFORE telling the user" in first["note"]
+    assert "Read the remaining windows" in first["scope_of_absence"]
+
+    assert "LAST window" in last["note"]
+    assert "char_offset=" not in last["note"]
+    assert "read every window" in last["scope_of_absence"]
+    # The absence rule itself never goes away, on any window.
+    assert all("NEVER state" in w["scope_of_absence"] for w in windows)
+
+
+def test_every_window_is_valid_json():
+    """The original hazard: json.dumps emits \\uXXXX escapes and a raw slice
+    can cut mid-escape. An offset can now START mid-escape too -- the preview
+    is a JSON string value, so it is re-escaped and still parses."""
+    for offset in (0, 1, 500, 4001, 7999, 8000, 12345):
+        json.loads(_tool_result_content(_en_dash_docs(300), offset=offset))
+
+
+def test_an_offset_past_the_end_terminates_rather_than_looping():
+    parsed = json.loads(_tool_result_content(_big(), offset=10**9))
+    assert parsed["chars_shown"] == 0
+    assert parsed["chars_remaining"] == 0
+    assert parsed["next_char_offset"] is None
+
+
+def test_a_result_that_fits_is_still_returned_whole_at_offset_zero():
+    small = {"documents": [{"name": "a.pdf"}]}
+    assert json.loads(_tool_result_content(small)) == small
+    # ...but an explicit offset into it is honoured rather than ignored.
+    assert json.loads(_tool_result_content(small, offset=5))["char_offset"] == 5
+
+
+@pytest.mark.parametrize(
+    "args,expected",
+    [
+        ('{"file_path":"x.pdf","char_offset":7116}', 7116),
+        ('{"file_path":"x.pdf"}', 0),
+        ('{"char_offset":0}', 0),
+        ('{"char_offset":-40}', 0),
+        ('{"char_offset":"nope"}', 0),
+        ('{"char_offset":null}', 0),
+        ("not json at all", 0),
+        ('["not","a","dict"]', 0),
+    ],
+)
+def test_the_offset_is_read_defensively(args, expected):
+    """A malformed offset must degrade to the first window, never raise --
+    the model writes this argument and models mistype."""
+    assert _requested_char_offset({"function": {"arguments": args}}) == expected
+
+
+def test_no_tool_call_means_no_offset():
+    assert _requested_char_offset(None) == 0
+    assert _requested_char_offset({}) == 0
