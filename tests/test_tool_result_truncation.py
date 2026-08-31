@@ -100,3 +100,59 @@ def test_output_always_parses_across_sizes(n):
     """Sweep sizes so the cut lands at many different offsets — including
     inside an escape sequence, which is the whole hazard."""
     json.loads(_tool_result_content(_en_dash_docs(n)))
+
+
+# -- what the truncation SAYS, not just that it stays parseable ------------
+#
+# The tests above pin that an over-long result stays valid JSON. They do not
+# pin what the model is told about the cut, and that turned out to matter as
+# much. Live on 554e0b9: asked how many cubic metres of demolition are in the
+# BOQ, the model answered "(pages 1-6 of 16) ... no demolition line items
+# measured in cubic metres". The 945 m3 line is past the cut. It had been
+# told only that the result "exceeded 8000 characters and was truncated" --
+# not by how much -- so it inferred the extent from the content and inferred
+# it wrong.
+#
+# Two layers cut the same result: this one when the tool message is built,
+# and _compact_messages_for_tpm per Groq hop (tests/test_tpm_compaction.py).
+# Both now state the loss and both forbid the absence claim.
+
+
+def test_the_envelope_states_the_loss_as_a_number():
+    parsed = json.loads(_tool_result_content(_en_dash_docs(300)))
+    assert parsed["chars_total"] > parsed["chars_shown"]
+    assert parsed["chars_dropped"] == parsed["chars_total"] - parsed["chars_shown"]
+    assert parsed["chars_shown"] == len(parsed["preview"])
+
+
+def test_the_envelope_forbids_the_absence_claim():
+    """inject.py has applied SCOPE OF ABSENCE to retrieval excerpts since the
+    Saudi Building Code incident, because a partial view is evidence of what
+    IS present and never of what is absent. A truncated tool result is the
+    same shape of evidence and carries more authority, being the tool's own
+    output rather than a search hit."""
+    parsed = json.loads(_tool_result_content(_en_dash_docs(300)))
+    rule = parsed["scope_of_absence"]
+    assert "NEVER state" in rule
+    assert "absent" in rule
+    assert str(parsed["chars_shown"]) in rule
+    assert str(parsed["chars_total"]) in rule
+
+
+def test_the_numbers_survive_the_shrink_loop():
+    """keep is reduced until the ENVELOPE fits, so chars_shown must track the
+    final preview rather than the first attempt -- otherwise the model is
+    told it can see more than it can."""
+    for n in (300, 500, 900):
+        parsed = json.loads(_tool_result_content(_en_dash_docs(n)))
+        assert parsed["chars_shown"] == len(parsed["preview"])
+        assert str(parsed["chars_shown"]) in parsed["scope_of_absence"]
+
+
+def test_a_small_result_carries_no_scope_note():
+    """Nothing was lost, so there is nothing to warn about -- and a warning
+    on a complete result would teach the model to hedge answers it can
+    fully support."""
+    out = _tool_result_content({"documents": [{"name": "a.pdf"}]})
+    assert "scope_of_absence" not in out
+    assert "chars_dropped" not in out
