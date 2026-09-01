@@ -3721,6 +3721,18 @@ def _format_rfi(payload: dict[str, Any]) -> str:
 
 def _format_wbs_result(payload: dict[str, Any]) -> str:
     lines = ["**Work Breakdown Structure**", ""]
+    # The scaffold declaration goes FIRST, before any number the reader might
+    # take for a project fact (owner's ruling R3, 2026-09-01). generate_wbs is
+    # a deterministic template scheduler: it never reads the BOQ, the drawings
+    # or the contract. On the 13b2bf7 gate battery its output was read as the
+    # project's own structure, so the answer now says what it is at the top
+    # rather than leaving it to be inferred from an assumptions list nobody
+    # reaches. Rendered from the tool's own `scaffold` record -- the model does
+    # not write this line.
+    scaffold = payload.get("scaffold") if isinstance(payload.get("scaffold"), dict) else {}
+    if scaffold.get("declaration"):
+        lines.append(f"_{scaffold['declaration']}_")
+        lines.append("")
     op = payload.get("operator_milestones") if isinstance(payload.get("operator_milestones"), dict) else {}
     if op.get("time_for_completion_days"):
         lines.append(
@@ -3753,7 +3765,12 @@ def _format_wbs_result(payload: dict[str, Any]) -> str:
         lines.append("")
         for a in payload.get("assumptions") or []:
             lines.append(f"- {a}")
-    return "\n".join(lines).strip()
+    out: list[str] = []
+    for ln in lines:
+        if not ln.strip() and out and not out[-1].strip():
+            continue  # the declaration block and the summary each add a blank
+        out.append(ln)
+    return "\n".join(out).strip()
 
 
 def _format_job_requisition(payload: dict[str, Any]) -> str:
