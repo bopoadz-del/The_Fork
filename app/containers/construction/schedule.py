@@ -1982,18 +1982,19 @@ class ConstructionScheduleMixin:
             chain — without this, identical parallel paths tie and every
             activity has zero float (degenerate critical path).
         """
-        # Zone labels run A..Z then AA, AB, ... (Excel-style): capped at 26
-        # zones, the smaller templates (building) topped out at ~844
-        # activities and could never satisfy the documented 1000 clamp.
-        def _zone_letter(i: int) -> str:
-            s = ""
-            i += 1
-            while i:
-                i, rem = divmod(i - 1, 26)
-                s = chr(ord("A") + rem) + s
-            return s
-
-        zone_labels = [f"Hall {_zone_letter(i)}" for i in range(80)]
+        # Zone labels are PLACEHOLDERS and must read as placeholders.
+        #
+        # They used to be "Hall A", "Hall B", ... (Excel-style letters, capped
+        # at 80 so the smaller templates could still reach the documented 1000
+        # clamp). Two things were wrong with that. "Hall" is a data-centre word
+        # applied to every project type, so a building or infrastructure
+        # schedule grew halls it does not have; and "Hall A" reads exactly like
+        # a real, named part of the project. Gate battery F1/F2 (2026-08-31)
+        # showed the result being read as the project's own structure -- a
+        # fabrication in template clothing. Brackets and a bare ordinal keep
+        # the repetition (which is the point: N parallel work fronts) while
+        # making it unmistakable that no one has said what these zones are.
+        zone_labels = [f"[Zone {i + 1}]" for i in range(80)]
         # Decide zone multiplier: start with 1 zone, then escalate until target hit.
         # We do this by simulating activity counts cheaply.
         def _count_for_zones(n_zones: int) -> int:
@@ -2263,12 +2264,15 @@ class ConstructionScheduleMixin:
             target_count = 200
         target_count = max(20, min(1000, target_count))
 
-        project_type = (
-            p.get("project_type")
-            or data.get("project_type")
-            or self._detect_project_type_from_brief(brief)
-        )
+        stated_type = p.get("project_type") or data.get("project_type")
+        project_type = stated_type or self._detect_project_type_from_brief(brief)
+        # Whether the caller SAID the type or the brief was sniffed for it is
+        # the difference between a fact and a guess, and the answer has to say
+        # which one it is (R3). Recorded before the fallback below, because
+        # falling back to "building" is itself an inference.
+        type_inferred = not stated_type
         if project_type not in self._WBS_TEMPLATES:
+            type_inferred = True
             # F39: the unknown-type fallback was data_center -- generic
             # briefs got hyperscale WBS items. Building is the generic base.
             project_type = "building"
@@ -2342,7 +2346,29 @@ class ConstructionScheduleMixin:
                 "Rule-of-thumb activity durations; replace with project-specific data when available.",
                 "FS-only predecessors; no SS/FF/SF; zero lag.",
                 "Zone-multiplier scales repeatable activities to reach target_count.",
+                "Zone labels are placeholders ([Zone 1], [Zone 2], ...), not "
+                "named parts of this project.",
             ],
+        }
+        # Self-declaration at the glass (owner's ruling R3, 2026-09-01). A
+        # template scaffold that does not say it is one gets read as the
+        # project's own structure -- gate battery F1/F2 on 13b2bf7. The
+        # scaffold block is the EVIDENCE the answer layer renders its
+        # provenance line from; the model does not compose it.
+        result["scaffold"] = {
+            "source": "template",
+            "project_type": project_type,
+            "project_type_inferred": type_inferred,
+            "derived_from_boq": False,
+            "zone_labels": "placeholder",
+            "declaration": (
+                f"Template scaffold, project_type "
+                f"{'inferred' if type_inferred else 'as given'}: {project_type} "
+                f"— not derived from this project's BOQ, drawings or contract. "
+                f"Activity and zone names come from the standard "
+                f"{project_type} template; zone labels are placeholders, not "
+                f"named parts of this project."
+            ),
         }
         if operator_ms:
             result["operator_milestones"] = operator_ms
