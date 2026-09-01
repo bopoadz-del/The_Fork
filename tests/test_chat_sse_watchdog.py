@@ -266,3 +266,30 @@ def test_both_streaming_endpoints_are_wrapped():
     source = open(chat_mod.__file__, encoding="utf-8").read()
     assert source.count("guarantee_terminal(event_stream()") == 2
     assert source.count("StreamingResponse(") == 2
+
+
+def test_the_watchdog_never_catches_baseexception():
+    """``asyncio.CancelledError`` is a BaseException, so ``except Exception``
+    cannot swallow it and a disconnected client cancels cleanly. Widening the
+    handler to BaseException would answer an absent client AND eat the
+    cancellation -- and the propagation test above cannot see the difference
+    until it is too late.
+
+    Mutation killed: `except BaseException` in guarantee_terminal.
+    """
+    import ast
+
+    import app.routers.chat_watchdog as mod
+
+    tree = ast.parse(open(mod.__file__, encoding="utf-8").read())
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "guarantee_terminal"
+    )
+    caught = {
+        h.type.id for h in
+        [h for t in ast.walk(fn) if isinstance(t, ast.Try) for h in t.handlers]
+        if isinstance(h.type, ast.Name)
+    }
+    assert "BaseException" not in caught, caught
+    assert "Exception" in caught

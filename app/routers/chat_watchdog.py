@@ -177,9 +177,12 @@ async def guarantee_terminal(
                 if kind in TERMINAL_TYPES:
                     saw_terminal = True
             yield raw
-    except asyncio.CancelledError:
-        # The client went away. Nothing to report to nobody.
-        raise
+    # No `except asyncio.CancelledError: raise` clause here, deliberately: on
+    # Python 3.8+ CancelledError inherits from BaseException, not Exception,
+    # so the handler below CANNOT swallow it and a client that went away
+    # still cancels cleanly. Verified rather than assumed -- and fenced, so
+    # that widening this to `except BaseException` (which WOULD answer an
+    # absent client and eat the cancellation) fails a test.
     except Exception as exc:  # noqa: BLE001 - the last net must not have holes
         _LOG.exception("sse watchdog: producer escaped (request_id=%s)", request_id)
         for out in _close(
