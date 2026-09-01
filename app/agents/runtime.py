@@ -4390,6 +4390,13 @@ def _postprocess_answer(
     text = _recover_answer_from_tool_messages(text, messages)
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
+    # Citation provenance: an attribution no evidence record backs is removed
+    # and the answer flagged. Sibling of the cost gate above -- that one
+    # grounds the FIGURES, this one grounds the claim about where they came
+    # from (gate battery 13b2bf7 F2: "BOQ context: ... (DD-2022-175)" from a
+    # template scheduler that has no BOQ input at all).
+    from app.agents.citation_provenance import gate as _citation_provenance_gate
+    text = _citation_provenance_gate(text, rag_sys_msg, messages)
     text = _standards_advisory(text)
     text = _ensure_ingestion_handoff(text, messages, agent_name)
     # Confidentiality stopgap: scrub known project/client names from the final
