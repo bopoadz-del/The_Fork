@@ -125,6 +125,16 @@ def test_a_name_carrying_a_number_survives_the_floor():
     assert names_missing_input(
         "Sub-Clause 8.8.1 is not included in the retrieved excerpts."
     ) is not None
+    # The load-bearing case: a bare identifier is TWO tokens and only one of
+    # them is a word. Without the digit rescue these are refused, and they
+    # are the most searchable names an answer can give.
+    assert names_missing_input("The excerpts do not contain Schedule 10.") == (
+        "Schedule 10"
+    )
+    assert names_missing_input("The excerpts do not state Bill 03.") == "Bill 03"
+    assert names_missing_input("Clause 8.8 is not stated in the excerpts.") == (
+        "Clause 8.8"
+    )
 
 
 def test_only_the_first_named_gap_is_returned():
