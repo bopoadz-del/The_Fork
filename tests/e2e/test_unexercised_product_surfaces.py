@@ -139,21 +139,157 @@ def test_register_login_blank_project_and_drive_oauth_status(client, session):
     assert r.status_code == 200, r.text
 
 
+#: Admin surfaces that EXIST in every environment and are role-gated. The
+#: posture in force is 403 + a FORBIDDEN envelope: the route is admitted to
+#: exist and the caller is told their role is the problem.
+_ROLE_GATED_ADMIN_SURFACES = (
+    ("GET", "/v1/admin/corpus/collections", None),
+    ("GET", "/v1/admin/drive/scan", None),
+    ("POST", "/v1/admin/projects/approve-from-drive",
+     {"folder_id": "x", "name": "Nope"}),
+    ("POST", "/v1/admin/debug/project-reindex?project_id={pid}", None),
+)
+
+
+def _call(client, headers, method, path, body):
+    if method == "GET":
+        return client.get(path, headers=headers)
+    return client.post(path, json=body, headers=headers)
+
+
 def test_admin_surfaces_are_forbidden_for_a_normal_user(client, session):
+    """THE POSTURE, stated so a future reader does not have to infer it.
+
+    Every route-mounted admin surface answers a non-admin with **403 and a
+    FORBIDDEN envelope**. It admits the route exists and names the role as
+    the problem, which is what an operator debugging their own token needs.
+
+    Consistency is asserted across the whole set rather than per-route: if
+    one surface ever answers something else, this fails and NAMES it, so a
+    posture change cannot land on one endpoint and be missed on the other
+    twenty-nine.
+
+    Existence-hiding (404 for a non-admin on a route that does exist) is the
+    stricter alternative and is an open owner decision, not the posture in
+    force. It is NOT implemented here, and ``/v1/debug/env`` below is not
+    evidence for it -- see that test for what its 404 actually is.
+    """
     h, pid = session["headers"], session["pid"]
-    for method, path, json_body in (
-        ("GET", "/v1/admin/corpus/collections", None),
-        ("GET", "/v1/admin/drive/scan", None),
-        ("POST", "/v1/admin/projects/approve-from-drive",
-         {"folder_id": "x", "name": "Nope"}),
-        ("POST", "/v1/admin/debug/project-reindex?project_id=" + pid, None),
-        ("GET", "/v1/debug/env", None),
-    ):
-        if method == "GET":
-            r = client.get(path, headers=h)
-        else:
-            r = client.post(path, json=json_body, headers=h)
-        assert r.status_code == 403, f"{path} -> {r.status_code} {r.text[:200]}"
+    got = {}
+    for method, path, body in _ROLE_GATED_ADMIN_SURFACES:
+        path = path.format(pid=pid)
+        r = _call(client, h, method, path, body)
+        got[path] = (r.status_code, r.text[:200])
+
+    odd = {p: c for p, (c, _) in sorted(got.items()) if c != 403}
+    assert not odd, (
+        "admin surfaces disagree on the posture; the odd one(s) out: "
+        + "; ".join(f"{p} -> {c}" for p, c in odd.items())
+    )
+    for path, (_, text) in got.items():
+        assert "FORBIDDEN" in text, f"{path} answered 403 without the envelope: {text}"
+        # The message is the policy reaching the caller. An operator staring
+        # at a bare code cannot tell a role problem from a broken token.
+        assert "Admin access required" in text, f"{path} said only: {text}"
+
+
+def test_the_debug_router_is_not_mounted_outside_a_dev_environment(client, session):
+    """``/v1/debug/env`` 404s here because THE ROUTE DOES NOT EXIST.
+
+    Measured on this suite (ENV and ENVIRONMENT both unset, so app.main
+    resolves the environment to "production"): app.main mounts the debug
+    router only for dev/development/local/test/testing. That is stronger
+    than any per-role rule -- the endpoint is absent for an admin too -- and
+    it is a different mechanism from the 403 above.
+
+    The distinction is asserted, not just the number: a bodyless 404 is
+    Starlette finding no route, while a role-gated 404 would carry an error
+    envelope. Without this, a future change that mounted the debug router in
+    production and 404'd non-admins would satisfy a bare ``== 404`` and
+    silently put an env-dump endpoint on the internet.
+    """
+    routes = {getattr(r, "path", "") for r in app.routes}
+    assert "/v1/debug/env" not in routes
+    assert "/debug/env" not in routes
+
+    r = client.get("/v1/debug/env", headers=session["headers"])
+    assert r.status_code == 404
+    assert r.text.strip() in ("", '{"detail":"Not Found"}'), r.text[:200]
+
+
+def _debug_only_client(role: str):
+    """A client over an app carrying ONLY the debug router.
+
+    The two gates inside ``app.routers.debug`` -- the environment check and
+    the admin check -- are unreachable in this suite because app.main does
+    not mount the router at all outside dev. Unreachable is not the same as
+    correct: the day someone mounts it (a staging box with ENV=development,
+    or the mount condition widening) those two gates are the only thing
+    between a normal user and the process environment. They are exercised
+    here directly, against a mounted router, so both are proved rather than
+    assumed dead.
+    """
+    from fastapi import FastAPI
+
+    from app.dependencies import require_api_key
+    from app.routers import debug as debug_mod
+
+    probe = FastAPI()
+    probe.include_router(debug_mod.router)
+    probe.dependency_overrides[require_api_key] = lambda: {
+        "user_id": "probe", "role": role,
+    }
+    return TestClient(probe)
+
+
+def test_a_mounted_debug_endpoint_still_refuses_a_production_environment(monkeypatch):
+    """Mutation killed: turning ``_require_non_production`` into a no-op.
+
+    Even as an admin, even with the router mounted, production must not
+    answer. Both env vars are cleared as well as set, because app.routers.
+    debug resolves ENV then ENVIRONMENT then defaults to production.
+    """
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    for value in ("production", "PRODUCTION", "prod-eu"):
+        monkeypatch.setenv("ENV", value)
+        r = _debug_only_client("admin").get("/v1/debug/env")
+        assert r.status_code == 404, f"ENV={value} -> {r.status_code} {r.text[:120]}"
+        assert "data_dir" not in r.text
+
+
+def test_a_mounted_debug_endpoint_still_refuses_a_non_admin(monkeypatch):
+    """Mutation killed: dropping the role check inside the debug endpoint.
+
+    In a dev environment the environment gate is open by design, so the role
+    check is the only remaining one -- and a dev box's environment holds real
+    credentials often enough that this is not hypothetical.
+    """
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENV", "development")
+
+    admin = _debug_only_client("admin").get("/v1/debug/env")
+    assert admin.status_code == 200, admin.text[:200]
+    assert "data_dir" in admin.text
+
+    user = _debug_only_client("user").get("/v1/debug/env")
+    assert user.status_code == 403, user.text[:200]
+    assert "data_dir" not in user.text
+
+
+def test_the_unversioned_debug_path_never_leaks_the_environment(client, session):
+    """``/debug/env`` is unmatched, so the SPA catch-all answers it with the
+    frontend shell -- a 200 that is NOT the debug payload.
+
+    Asserted because the status code alone is misleading here: 200 on an
+    admin-only path looks like a hole, and the fence that matters is that
+    the body carries no environment data whatever the code.
+    """
+    r = client.get("/debug/env", headers=session["headers"])
+    body = r.text
+    assert "data_dir" not in body
+    assert "DATA_DIR" not in body
+    if r.status_code == 200:
+        assert body.lstrip().lower().startswith("<!doctype html"), body[:120]
 
 
 def test_right_panel_preview_redline_photo_and_attach(client, session):

@@ -731,9 +731,10 @@ mcp.mount_message_endpoint(app)
 app.include_router(drive.router)
 app.include_router(agents_router.router)
 app.include_router(hydration_router.router)
-# Debug routes — only in non-production environments
-env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
-if env in {"dev", "development", "local", "test", "testing"}:
+# Debug routes — only in non-production environments. The allow-list lives
+# in app.routers.debug beside the endpoint's own gate, so the mount decision
+# and the payload gate cannot drift apart again.
+if debug.is_dev_environment():
     app.include_router(debug.router)
 
 # Admin diagnostic routes — mounted in ALL environments. Endpoints are
