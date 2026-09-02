@@ -441,7 +441,8 @@ def main() -> int:
             dry_manifest.unlink()
 
     for folder_entry in folder_entries:
-        folder_id = folder_entry.get("walk_folder_id") or folder_entry.get("folder_id")
+        parent_folder_id = folder_entry.get("folder_id")
+        folder_id = folder_entry.get("walk_folder_id") or parent_folder_id
         folder_name = folder_entry.get("folder_name") or folder_entry.get("project_id")
         project_id_for_folder = folder_entry.get("project_id")
 
@@ -449,7 +450,14 @@ def main() -> int:
             print(f"[p1b-server] SKIP {folder_name}: no folder_id (needs Chadi to set)", file=sys.stderr)
             continue
 
-        print(f"[p1b-server] walking {folder_name} ({folder_id}) ...", file=sys.stderr)
+        if parent_folder_id and folder_id != parent_folder_id:
+            print(
+                f"[p1b-server] walking {folder_name} subfolder ({folder_id}) "
+                f"parent={parent_folder_id} ...",
+                file=sys.stderr,
+            )
+        else:
+            print(f"[p1b-server] walking {folder_name} ({folder_id}) ...", file=sys.stderr)
         files, walk_errors = gdrive_service.walk_folder(folder_id, max_depth=12, page_size=200)
         if walk_errors:
             for err in walk_errors:
