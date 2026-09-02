@@ -18,12 +18,15 @@ runner never downloads ``minishlab/potion-base-8M`` from HuggingFace
 (test.yml; run 33207362472 died on nine Hub 429 ERRORs after this
 module deleted that env). BM25 / signature tests are valid on the fake
 hash embedder. Hybrid-beats-semantic ranking tests skip when the
-configured model is ``fake`` — the hash embedder ranks ~randomly and
-cannot distinguish a manhole-spacing chunk from MEP rough-in.
+*built* embedder's backend is ``fake`` — the hash embedder ranks
+~randomly and cannot distinguish a manhole-spacing chunk from MEP
+rough-in. That skip is a fixture-time check, not an import-time
+``skipif`` on ``RAG_EMBEDDING_MODEL``.
 """
 
 from __future__ import annotations
 
+import ast
 import os
 import sys
 import tempfile
@@ -155,13 +158,12 @@ CORPUS = [
 
 # Ranking assertions need a real model. Do not undo CI's
 # RAG_EMBEDDING_MODEL=fake — that download is what Hub-429'd the virgin job.
-_SKIP_FAKE_EMBEDDER = pytest.mark.skipif(
-    (os.getenv("RAG_EMBEDDING_MODEL") or "").strip().lower() == "fake",
-    reason=(
-        "hybrid-vs-semantic ranking needs a real embedder; "
-        "CI sets RAG_EMBEDDING_MODEL=fake to avoid HuggingFace downloads"
-    ),
-)
+#
+# Skip is decided in ranking_corpus from the embedder that was actually
+# built. A module-level pytest.mark.skipif on RAG_EMBEDDING_MODEL is a
+# lie: eight other test modules setdefault that env to "fake" at import,
+# permanently, and store_with_corpus calls get_embedder() later. Import
+# order could (and did) run ranking assertions against the fake embedder.
 
 
 @pytest.fixture
@@ -169,8 +171,8 @@ def store_with_corpus():
     """Build a VectorStore against a temp SQLite DB seeded with CORPUS.
 
     Honors ``RAG_EMBEDDING_MODEL`` (CI: ``fake``). Never deletes that env
-    to force a Hub download. Ranking tests that need a real model are
-    skipif-gated separately.
+    to force a Hub download. Ranking tests that need a real model use
+    ``ranking_corpus``, which inspects the built embedder.
 
     Returns (store, embedder, db_path). Teardown removes the DB file.
     """
@@ -208,6 +210,23 @@ def store_with_corpus():
             os.rmdir(tmpdir)
         except OSError:
             pass
+
+
+@pytest.fixture
+def ranking_corpus(store_with_corpus):
+    """``store_with_corpus``, skipped unless the live embedder is real.
+
+    The skip is decided here — after ``get_embedder()`` has run — because
+    ``RAG_EMBEDDING_MODEL`` can be mutated by other test modules between
+    import and fixture setup. Import-time ``getenv`` is a lie.
+    """
+    store, embedder, db_path = store_with_corpus
+    if embedder.backend == "fake":
+        pytest.skip(
+            "hybrid-vs-semantic ranking needs a real embedder; "
+            "CI sets RAG_EMBEDDING_MODEL=fake to avoid HuggingFace downloads"
+        )
+    return store, embedder, db_path
 
 
 def _ids(chunks):
@@ -277,14 +296,13 @@ def test_sanitize_fts5_query_handles_none():
 # ── Hybrid vs semantic on the seeded corpus ──────────────────────────────
 
 
-@_SKIP_FAKE_EMBEDDER
-def test_hybrid_beats_semantic_q5_manhole_spacing(store_with_corpus, monkeypatch):
+def test_hybrid_beats_semantic_q5_manhole_spacing(ranking_corpus, monkeypatch):
     """Q5: manhole spacing — semantic clusters on the repeated-token
     Vol3 legends. The TL chunk should land top-5 with hybrid
     (matches the docstring; the BM25 exact-token contribution from
     "MANHOLE" + "TYPE" pulls it up even though the natural-language
     query has no "1000m"/"intervals")."""
-    store, embedder, _ = store_with_corpus
+    store, embedder, _ = ranking_corpus
     # NOTE (scrub audit 2026-08-12): the "DG2" token in this query is PINNED
     # FIXTURE DATA, not a stray client reference. Under RAG_EMBEDDING_MODEL=fake
     # the embedding is a deterministic function of the exact string, so editing
@@ -300,11 +318,10 @@ def test_hybrid_beats_semantic_q5_manhole_spacing(store_with_corpus, monkeypatch
         f"hybrid should surface TL chunk top-5; got = {_ids(hyb)}"
 
 
-@_SKIP_FAKE_EMBEDDER
-def test_hybrid_beats_semantic_q4_trench_width(store_with_corpus, monkeypatch):
+def test_hybrid_beats_semantic_q4_trench_width(ranking_corpus, monkeypatch):
     """Q4: trench width — BM25 catches 'Payable trench width' on exact
     tokens, semantic disperses across noise."""
-    store, embedder, _ = store_with_corpus
+    store, embedder, _ = ranking_corpus
     query = "What is the payable trench width on the DG2 project"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
@@ -313,11 +330,10 @@ def test_hybrid_beats_semantic_q4_trench_width(store_with_corpus, monkeypatch):
         f"hybrid should land trench-width chunk top-5; got = {_ids(hyb)}"
 
 
-@_SKIP_FAKE_EMBEDDER
-def test_hybrid_beats_semantic_q2_sectional_elevation(store_with_corpus, monkeypatch):
+def test_hybrid_beats_semantic_q2_sectional_elevation(ranking_corpus, monkeypatch):
     """Q2: SECTIONAL ELEVATION exact-token match should pull the TL
     chunk into the top of the hybrid ranking."""
-    store, embedder, _ = store_with_corpus
+    store, embedder, _ = ranking_corpus
     query = "SECTIONAL ELEVATION drawing for telecom infrastructure"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
@@ -326,12 +342,11 @@ def test_hybrid_beats_semantic_q2_sectional_elevation(store_with_corpus, monkeyp
         f"hybrid should surface TL chunk by SECTIONAL ELEVATION; got = {_ids(hyb)}"
 
 
-@_SKIP_FAKE_EMBEDDER
-def test_hybrid_preserves_q3_prc501(store_with_corpus, monkeypatch):
+def test_hybrid_preserves_q3_prc501(ranking_corpus, monkeypatch):
     """Q3 regression: PRC-501 query must still hit the PRC-501 chunk
     top-1 or top-2 under hybrid (semantic was already good; hybrid
     shouldn't break it)."""
-    store, embedder, _ = store_with_corpus
+    store, embedder, _ = ranking_corpus
     query = "PRC-501 Design Reviews and Acceptance procedure"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
@@ -423,3 +438,115 @@ def test_chunk_to_dict_drops_rrf_score():
     d = c.to_dict()
     assert "rrf_score" not in d
     assert d["score"] == 0.5
+
+
+def _is_skipif_call(node):
+    """True when ``node`` is a Call whose target ends in ``skipif``."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == "skipif"
+    while isinstance(func, ast.Attribute):
+        if func.attr == "skipif":
+            return True
+        func = func.value
+    return False
+
+
+def _condition_touches_env(call):
+    """True when a skipif *condition* (first arg) names getenv/environ."""
+    if not call.args:
+        return False
+    for child in ast.walk(call.args[0]):
+        if isinstance(child, ast.Name) and child.id in {"getenv", "environ"}:
+            return True
+        if isinstance(child, ast.Attribute) and child.attr in {"getenv", "environ"}:
+            return True
+    return False
+
+
+def _module_scope_skipifs_reading_env(source):
+    """Import-time skipif calls whose condition reads getenv/environ.
+
+    Walks module-scope nodes only: assignments, expressions, and
+    function/class *decorators*. Function bodies are run-time and ignored.
+    """
+    tree = ast.parse(source)
+    offenders = []
+    for node in tree.body:
+        candidates = []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            candidates.extend(node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        candidates.extend(item.decorator_list)
+                    else:
+                        candidates.append(item)
+        else:
+            candidates.append(node)
+        for cand in candidates:
+            for sub in ast.walk(cand):
+                if _is_skipif_call(sub) and _condition_touches_env(sub):
+                    offenders.append(ast.unparse(sub)[:160])
+    return offenders
+
+
+def test_ranking_guard_is_not_decided_at_import_time():
+    """Fence: no module-level skipif in this file may read the environment.
+
+    pytest.mark.skipif is evaluated at collection (import) time. Eight
+    other test modules setdefault RAG_EMBEDDING_MODEL=fake at *their*
+    module scope, permanently. An import-time getenv and the run-time
+    fixture disagreed; ranking assertions ran against the fake embedder.
+
+    Mutation-tested: a planted module-scope skipif is detected; a skipif
+    inside a function (run-time) and a skipif whose reason merely mentions
+    getenv are not.
+    """
+    with open(__file__, encoding="utf-8") as fh:
+        src = fh.read()
+    here = _module_scope_skipifs_reading_env(src)
+    assert not here, (
+        "a module-level skipif reads the environment; move the decision "
+        "into a fixture that inspects the built embedder instead: "
+        + "; ".join(here)
+    )
+
+    planted = (
+        "import os, pytest\n"
+        "_SKIP = pytest.mark.skipif(\n"
+        '    (os.getenv("RAG_EMBEDDING_MODEL") or "").strip().lower() == "fake",\n'
+        '    reason="x",\n'
+        ")\n"
+        '@pytest.mark.skipif(os.environ.get("X") == "1", reason="y")\n'
+        "def test_a():\n"
+        "    pass\n"
+    )
+    hits = _module_scope_skipifs_reading_env(planted)
+    assert len(hits) == 2, (
+        "fence must detect a module-scope skipif that reads getenv/environ; "
+        f"got {hits!r}"
+    )
+
+    runtime_only = (
+        "import os, pytest\n"
+        "def test_a():\n"
+        '    pytest.mark.skipif(os.getenv("X") == "1", reason="run-time")\n'
+        "    if os.environ.get(\"RAG_EMBEDDING_MODEL\") == \"fake\":\n"
+        '        pytest.skip("ok")\n'
+    )
+    assert _module_scope_skipifs_reading_env(runtime_only) == [], (
+        "a skipif inside a function is run-time and must not trip the fence"
+    )
+
+    reason_only = (
+        "import pytest\n"
+        '@pytest.mark.skipif(False, reason="does not use getenv or environ")\n'
+        "def test_a():\n"
+        "    pass\n"
+    )
+    assert _module_scope_skipifs_reading_env(reason_only) == [], (
+        "a skipif whose reason mentions getenv must not trip the fence"
+    )
