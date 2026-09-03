@@ -79,6 +79,10 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   the formula registry (`excavation_volume` for L×W×D). Extra LLM kwargs
   such as `text` are stripped. Do not send the model to `drawing_qto` when
   the user already supplied the dimensions.
+- Live UI pack E4 (raft 30×20×1.5 including documented waste): a
+  concrete/raft ask pins `concrete_volume` and the documented 5% waste
+  (900 × 1.05 = 945 m³). Unnamed earthwork L×W×D stays `excavation_volume`.
+  Kill-switch `APPLY_DOCUMENTED_WASTE=0` restores the FAIL (net 900).
 - Currency rate units (`AED/m2`, `USD/ft2`) are not document identifiers.
   Pinned self-coding conversions must not hit the RAG-miss short-circuit.
 - Contract Data Q&A (Time for Completion, milestones, delay damages, DNP,

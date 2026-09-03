@@ -4063,7 +4063,10 @@ def _construction_calc_tool_schema() -> dict[str, Any]:
                 "cost build-up, MEP, QC). Returns the computed result. For COST "
                 "build-ups, pass the project's real unit rates in `params` (from the "
                 "priced BOQ / rate schedule) when available — the built-in defaults "
-                "are indicative GCC fallbacks only. Deterministic: call once."
+                "are indicative GCC fallbacks only. For concrete/raft/slab volume, "
+                "use calculation=concrete_volume; the project's documented waste "
+                "factor (5%) is applied and volume_m3 is the with-waste figure "
+                "(30×20×1.5 m → 945 m3). Deterministic: call once."
             ),
             "parameters": {
                 "type": "object",
@@ -9375,7 +9378,16 @@ class Agent:
         # ── synthetic tool: construction_calc (deterministic formula library) ─
         if name == "construction_calc":
             from app.lib import construction_formulas as _cf
-            result = _cf.run_calculation(args.get("calculation"), args.get("params"))
+            calc_params = dict(args.get("params") or {})
+            # Live UI pack E4: the model often passes the user ask as
+            # ``text`` / ``formula`` beside (or instead of) ``params``.
+            for key in ("text", "formula"):
+                if args.get(key) and key not in calc_params:
+                    calc_params[key] = args[key]
+            result = _cf.run_calculation(
+                args.get("calculation") or args.get("name") or args.get("calculator"),
+                calc_params,
+            )
             return {
                 "name": "construction_calc",
                 "ok": isinstance(result, dict) and result.get("status") != "error",
