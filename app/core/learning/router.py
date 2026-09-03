@@ -221,6 +221,15 @@ def _runtime_data_from_patterns() -> List[TrainingRow]:
             action = parsed.get("action") or parsed.get("label")
             if not text or not action:
                 continue
+            from app.core.learning.trainable import is_independently_labeled
+
+            trainable = parsed.get("trainable")
+            if trainable is None:
+                trainable = obs.get("trainable")
+            if trainable is None:
+                trainable = is_independently_labeled(obs.get("source"), parsed)
+            if not trainable:
+                continue
             rows.append(TrainingRow(
                 text=text,
                 label=action,

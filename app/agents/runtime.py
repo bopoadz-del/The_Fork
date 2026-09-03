@@ -4441,6 +4441,9 @@ def _postprocess_answer(
     messages: list[dict[str, Any]],
     fallback_used: bool = False,
     agent_name: str | None = None,
+    project_id: str | None = None,
+    coverage: tuple[int, int] | None = None,
+    audit_rec: dict[str, Any] | None = None,
 ) -> str:
     """Final-answer post-processing: cost-grounding gate (may refuse an
     ungrounded cost claim) then the standards advisory (appends a non-blocking
@@ -4471,6 +4474,12 @@ def _postprocess_answer(
     # when the banner isn't already present (idempotent across retries).
     if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
         text = _MASTER_CORPUS_FALLBACK_NOTE + text
+    from app.core.rag.coverage_honesty import apply_coverage_honesty
+    text = apply_coverage_honesty(
+        text,
+        project_id=project_id or (audit_rec or {}).get("project_id"),
+        coverage=coverage,
+    )
     return text
 
 
@@ -4731,6 +4740,16 @@ def _build_sources_from_audit(
         if layer != "own":
             from app.core.identifier_scrub import scrub_identifiers_filename
             display_name = scrub_identifiers_filename(display_name)
+        # Consume #468's class. Prefer the tag the injector already wrote;
+        # fall back to classify() on the same inputs it uses. Do not invent
+        # a fifth class here.
+        from app.core.rag.source_class import classify, label_for
+        source_class = (chunk_meta.get("source_class") or "").strip() or classify(
+            layer,
+            chunk_meta.get("source_name") or doc_name,
+            chunk_meta.get("text") or "",
+        )
+        source_class_label = label_for(source_class)
         return {
             "doc_id": chunk_meta["doc_id"],
             "doc_name": display_name,
@@ -4747,6 +4766,8 @@ def _build_sources_from_audit(
             "confidence": conf,
             "layer": layer,
             "layer_label": label,
+            "source_class": source_class,
+            "source_class_label": source_class_label,
         }
 
     # 1) Try to extract citations from the agent's text first.
@@ -6815,6 +6836,7 @@ class Agent:
                         final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
+                        audit_rec=_rag_audit,
                     )
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
@@ -6915,7 +6937,7 @@ class Agent:
                         final_text, messages, user_message=user_message,
                         project_id=project_id, api_key=api_key, user_id=user_id,
                     )
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -7036,7 +7058,7 @@ class Agent:
             final_text, messages, user_message=user_message,
             project_id=project_id, api_key=api_key, user_id=user_id,
         )
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -7857,6 +7879,7 @@ class Agent:
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
+                            audit_rec=_rag_audit,
                         )
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
@@ -7909,7 +7932,7 @@ class Agent:
                             ):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     else:
@@ -7917,6 +7940,7 @@ class Agent:
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
+                            audit_rec=_rag_audit,
                         )
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMED-SYNTH iter=%d chars=%d cum=%.1fs",
@@ -7958,6 +7982,7 @@ class Agent:
                         final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
+                        audit_rec=_rag_audit,
                     )
                     _LOG.warning(
                         "chat_stream: iter=%d recovered deliverable after LLM error %s",
@@ -8097,7 +8122,7 @@ class Agent:
                                 if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                     final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -8253,7 +8278,7 @@ class Agent:
             _LOG.warning("chat_stream: forced final unusable, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:

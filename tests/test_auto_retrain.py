@@ -25,6 +25,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     plus module-level init flag resets."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("LEARNING_ENGINE_STORAGE", str(tmp_path / "le_state.json"))
+    monkeypatch.setenv("LEARNING_ENGINE_ENABLED", "1")
     from app.core import agent_memory as _am
     from app.core import projects as _proj
     from app.core.learning import router as _router

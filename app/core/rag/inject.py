@@ -103,6 +103,26 @@ def _source_class(chunk) -> str:
         return DEFAULT_CLASS
 
 
+def _audit_chunk(c) -> Dict[str, Any]:
+    """One injected chunk for the audit / Sources panel.
+
+    ``source_class`` is #468's tag, consumed at the glass — not retagged here.
+    ``source_name`` lets a later reader re-derive the class if an older audit
+    row is missing the field.
+    """
+    return {
+        "doc_id": c.doc_id,
+        "chunk_index": c.chunk_index,
+        "chunk_id": c.chunk_id,
+        "project_id": c.project_id,
+        "score": c.score,
+        "layer": getattr(c, "layer", "own"),
+        "knowledge_layer": getattr(c, "knowledge_layer", None),
+        "source_name": getattr(c, "source_name", "") or "",
+        "source_class": _source_class(c),
+    }
+
+
 def format_chunks_as_system_message(
     chunks: List[Chunk],
     total_candidates: int,
@@ -487,13 +507,7 @@ def rag_inject(
             "threshold_fired": True,
             "identifier_miss": identifier_miss,
             "extracted_identifiers": identifiers,
-            "chunks": [
-                {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
-                 "chunk_id": c.chunk_id, "project_id": c.project_id,
-                 "score": c.score, "layer": getattr(c, "layer", "own"),
-                 "knowledge_layer": getattr(c, "knowledge_layer", None)}
-                for c in chunks
-            ],
+            "chunks": [_audit_chunk(c) for c in chunks],
         })
         _audit.write(audit_rec)
         return None, audit_rec
@@ -511,13 +525,7 @@ def rag_inject(
         "injected_tokens": total_tokens,
         "threshold_fired": False,
         "fallback_used": kept_fallback_used,
-        "chunks": [
-            {"doc_id": c.doc_id, "chunk_index": c.chunk_index,
-             "chunk_id": c.chunk_id, "project_id": c.project_id,
-             "score": c.score, "layer": getattr(c, "layer", "own"),
-             "knowledge_layer": getattr(c, "knowledge_layer", None)}
-            for c in kept
-        ],
+        "chunks": [_audit_chunk(c) for c in kept],
     })
     _audit.write(audit_rec)
     _budget.consume(day=today, tokens=total_tokens)
