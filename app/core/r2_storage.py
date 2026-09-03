@@ -166,17 +166,14 @@ def archive_document(
             "r2_account_id": os.getenv("R2_ACCOUNT_ID"),
             "error": None,
         }
-    except Exception as exc:  # noqa: BLE001 — archive must never kill ingestion
-        try:
-            logger.warning(
-                "R2 archive failed for %s (%s: %s); ingest continues without object storage",
-                original_name,
-                type(exc).__name__,
-                exc,
-                exc_info=True,
-            )
-        except Exception:  # noqa: BLE001 — logging must not replace the return
-            pass
+    except Exception as exc:  # archive must never kill ingestion
+        logger.warning(
+            "R2 archive failed for %s (%s: %s); ingest continues without object storage",
+            original_name,
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
         return _failed_archive(
             error=f"R2_UPLOAD_FAILED: {type(exc).__name__}: {exc}",
             bucket=bucket,
