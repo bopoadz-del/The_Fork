@@ -90,6 +90,19 @@ def apply_token_cap(chunks: List[Chunk]) -> Tuple[List[Chunk], int]:
     return kept, total
 
 
+def _source_class(chunk) -> str:
+    """The excerpt's source class, never raising into the answer path."""
+    try:
+        from app.core.rag.source_class import classify_chunk
+
+        return classify_chunk(chunk)
+    except Exception:  # noqa: BLE001 - a classifier must not break retrieval
+        _LOG.warning("source_class: classification failed", exc_info=True)
+        from app.core.rag.source_class import DEFAULT_CLASS
+
+        return DEFAULT_CLASS
+
+
 def format_chunks_as_system_message(
     chunks: List[Chunk],
     total_candidates: int,
@@ -148,6 +161,35 @@ def format_chunks_as_system_message(
             "current revision; do not present it as the latest.\n"
         )
 
+    # SOURCE CLASS PRECEDENCE (owner's numbered item 2). Two battery
+    # failures had one cause: nothing in the context said which excerpt was
+    # the project's own record and which was reference material or a blank
+    # form. G1 quoted contract TEMPLATE wording as the contract's Schedule
+    # 10 (the project's own says "Not Used"); A5 reproduced the FIDIC
+    # knowledge-base note instead of the project's own 0.1% at 8.8.1.
+    #
+    # Emitted only when the excerpts are actually mixed. On a single-class
+    # set the rule cannot change any answer, and an instruction that never
+    # applies is noise that costs context and dilutes the ones that do.
+    classes = {_source_class(c) for c in chunks}
+    if len(classes) > 1:
+        header += (
+            "SOURCE CLASS — each excerpt below is tagged class=... . "
+            "project_corpus is THIS project's own record; knowledge_base is "
+            "curated cross-project reference material; template is a blank "
+            "or standard form; master_corpus is a disclosed fallback corpus "
+            "that is NOT this project.\n"
+            "PRECEDENCE — when a project_corpus excerpt and an excerpt of "
+            "any other class can both answer, the project_corpus excerpt IS "
+            "the answer. Never present knowledge_base, template or "
+            "master_corpus wording as what THIS contract, drawing or bill "
+            "says; generic or standard wording never overrides this "
+            "project's own document. If a project_corpus excerpt states that "
+            "a schedule, appendix, section or clause is Not Used, blank, or "
+            "not applicable, that IS the answer — do not describe what such "
+            "a section contains in a standard form.\n"
+        )
+
     from app.core.rag.retriever import extract_contract_doc_ids
     cited_contract_ids: List[str] = []
     seen_cids = set()
@@ -185,8 +227,13 @@ def format_chunks_as_system_message(
         # parenthesised dates sit.
         name = _truncate_source_name((getattr(c, "source_name", "") or "").strip())
         src_s = f" src={name}" if name else ""
+        # class= sits immediately AFTER score= and never between chunk= and
+        # score=: the internal-leak detector and _EXCERPT_SPLIT_RE in
+        # runtime.py both anchor on "chunk=N score=" being adjacent, and an
+        # attribute inserted there would silently switch the leak guard off.
+        cls_s = f" class={_source_class(c)}"
         return (f"[doc_id={c.doc_id} chunk={c.chunk_index} "
-                f"score={(c.score or 0):.3f}{rev_s}{sup_s}{src_s}] {c.text}")
+                f"score={(c.score or 0):.3f}{cls_s}{rev_s}{sup_s}{src_s}] {c.text}")
 
     body_parts = [_marker(c) for c in chunks]
     return {"role": "system", "content": header + "\n" + "\n\n".join(body_parts)}
