@@ -299,3 +299,39 @@ def test_title_sql_rejects_wildcard_and_short_phrases(project_store):
     assert project_store.documents_matching_title_phrase(pid, "variation%") == []
     assert project_store.documents_matching_title_phrase(pid, "") == []
     assert project_store.documents_matching_title_phrase(pid, "variation") == []
+
+
+def test_real_store_cosine_prefers_demolition_until_the_title_bonus(project_store, monkeypatch):
+    """Unmocked store: fake cosine ranks the demolition volume first.
+
+    That is the live C2 ranking. The title bonus must invert it.
+    """
+    from app.core.rag import embeddings as _emb, vector_store as _vs, retriever as ret
+
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("RAG_SPEC_TITLE_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_LAYERED", raising=False)
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+    from app.core.rag.embeddings import Embedder
+    from app.core.rag.vector_store import get_store
+
+    e = Embedder(model_name="fake")
+    store = get_store(dim=e.dim)
+    p = project_store.create_project("C2 real store")
+    pid = p["id"]
+    spec = project_store.add_document(pid, SPEC_NAME_LIVE, size=12)
+    demo = project_store.add_document(pid, DEMO_NAME, size=40)
+    store.upsert_chunks(pid, spec["id"], [SPEC_TEXT], e.encode([SPEC_TEXT]))
+    store.upsert_chunks(pid, demo["id"], [DEMO_TEXT], e.encode([DEMO_TEXT]))
+
+    monkeypatch.setenv("RAG_SPEC_TITLE_RESCUE", "0")
+    baseline, _ = ret.retrieve_with_filter(C2_ASK, pid, k=5)
+    assert baseline[0].doc_id == demo["id"], [c.doc_id for c in baseline]
+
+    monkeypatch.delenv("RAG_SPEC_TITLE_RESCUE", raising=False)
+    fixed, _ = ret.retrieve_with_filter(C2_ASK, pid, k=5)
+    assert fixed[0].doc_id == spec["id"]
+    assert "012650" in (fixed[0].source_name or "")
+    assert "Variation Procedure" in (fixed[0].source_name or "")
