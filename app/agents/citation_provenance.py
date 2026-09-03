@@ -40,13 +40,14 @@ SCOPE, stated so the edges are known rather than discovered:
 * When the turn read NO corpus — the F2 shape — every attribution in the
   answer is unbacked by construction, and ids the user did not themselves
   name are stripped wherever they appear.
-* ``source_class`` is carried on every record and enforced here, but nothing
-  populates it as anything but ``project_corpus`` yet. Class tagging
-  (project_corpus | knowledge_base | template) is the owner's numbered item
-  2; when the retrieval marker starts emitting ``class=``, this module reads
-  it with no further change, and the G1 defect — template wording quoted as
-  the contract's own — becomes strippable. Until then G1 is out of reach and
-  the tests say so rather than claiming a fix.
+* ``source_class`` is carried on every record and enforced here, and the
+  retrieval marker now emits ``class=`` (the owner's numbered item 2), so
+  the classes are live rather than a forward fence. ``project_corpus`` and
+  ``master_corpus`` may back an identifier attribution; ``knowledge_base``
+  and ``template`` may not. A reference note or a blank form is a real
+  document and may still be NAMED as a source — what it may not do is lend
+  its identifiers to a claim about this project's contract, which is the G1
+  shape.
 """
 
 from __future__ import annotations
@@ -156,7 +157,18 @@ NON_CORPUS_TOOLS: frozenset[str] = frozenset({
 })
 
 # Source classes whose material may be cited as the project's own words.
-CITABLE_CLASSES: frozenset[str] = frozenset({"project_corpus", "user"})
+#
+# ``master_corpus`` is here and ``knowledge_base``/``template`` are not, and
+# the asymmetry is deliberate. The master corpus is the DISCLOSED empty/thin
+# fallback (STEP 0b): when it is in play it is the only corpus there is, the
+# runtime already labels the answer as a fallback, and refusing its
+# identifiers would strip the attribution off every answer on that path. A
+# curated reference note or a blank form is the opposite case -- the project
+# corpus is right there, and lending a standard form's identifiers to a claim
+# about this contract is exactly the G1 defect.
+CITABLE_CLASSES: frozenset[str] = frozenset(
+    {"project_corpus", "master_corpus", "user"}
+)
 
 
 @dataclass
@@ -251,8 +263,21 @@ class Evidence:
     def boq_backed(self) -> bool:
         return any(r.carries_boq() for r in self.records)
 
-    def source_names(self) -> set[str]:
-        return {r.source_name.lower() for r in self.records if r.source_name}
+    def source_names(self, citable_only: bool = False) -> set[str]:
+        """Filenames the turn actually read.
+
+        ``citable_only`` narrows to records whose class may back a claim
+        about this project. It matters because a filename can CONTAIN a
+        contract id: ``DD-2023-118 Contract Template Vol 4.pdf`` is a
+        template, and letting its name back a bare ``Source: DD-2023-118``
+        is G1 arriving by the back door -- the id would be rescued by the
+        very document that must not lend it.
+        """
+        return {
+            r.source_name.lower()
+            for r in self.records
+            if r.source_name and (r.citable or not citable_only)
+        }
 
     def tool_names(self) -> set[str]:
         return {r.tool for r in self.records if r.kind == "tool_run" and r.tool}
@@ -431,7 +456,6 @@ def _strip_source_lines(text: str, ev: Evidence) -> tuple[str, list[str]]:
     to remove invention, not to delete correct attributions.
     """
     allowed_ids = ev.citable_ids()
-    names = ev.source_names()
     tools = ev.tool_names()
     removed: list[str] = []
 
@@ -444,6 +468,12 @@ def _strip_source_lines(text: str, ev: Evidence) -> tuple[str, list[str]]:
         # Named a document rather than an id: backed when an evidence source
         # name meets it either way round (the answer may shorten the filename,
         # or quote it in full).
+        #
+        # When the line DOES name an identifier and none of them are allowed,
+        # only a citable record's filename may rescue it. Otherwise a template
+        # or reference note whose own name carries the contract id would back
+        # the attribution the class exists to refuse.
+        names = ev.source_names(citable_only=bool(ids))
         for n in names:
             if n and (n in low or low in n):
                 return m.group(0)
@@ -453,7 +483,7 @@ def _strip_source_lines(text: str, ev: Evidence) -> tuple[str, list[str]]:
         for t in tools:
             if t and t.lower() in low:
                 return m.group(0)
-        if ev.any_corpus_read() and not names and not ids:
+        if ev.any_corpus_read() and not ev.source_names() and not ids:
             # Retrieval happened in a form carrying no source names; the gate
             # cannot judge this line, so it does not touch it.
             return m.group(0)

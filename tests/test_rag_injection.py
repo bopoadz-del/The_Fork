@@ -278,8 +278,12 @@ def test_format_chunks_emits_doc_chunk_score_header():
     assert msg["role"] == "system"
     body = msg["content"]
     assert "AUTHORITATIVE REFERENCE CONTEXT" in body
-    assert "[doc_id=d1 chunk=0 score=0.810]" in body
-    assert "[doc_id=d1 chunk=1 score=0.740]" in body
+    # doc_id / chunk / score are adjacent and in that order. The source class
+    # follows score (owner's numbered item 2); it may NOT sit between chunk=
+    # and score= because runtime.py's internal-leak guard and excerpt splitter
+    # both anchor on that pair being adjacent.
+    assert "[doc_id=d1 chunk=0 score=0.810 class=" in body
+    assert "[doc_id=d1 chunk=1 score=0.740 class=" in body
     assert "A short chunk." in body
 
 
