@@ -224,6 +224,64 @@ class MemorySnapshot:
         return " ".join(bits) if bits else "memory=unavailable"
 
 
+def cgroup_candidate_dirs(
+    *,
+    proc_root: Path = Path("/proc"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> List[Path]:
+    """Directories that may hold this process's memory counters, closest first.
+
+    ``/sys/fs/cgroup/memory.max`` only works when the container gets its own
+    cgroup NAMESPACE. Without one — this dev box, and any host where the
+    runtime does not namespace — ``/sys/fs/cgroup`` is the host ROOT cgroup,
+    which by design has no ``memory.max`` at all, so a reader that only looks
+    there reports "memory unavailable" and the OOM evidence is lost exactly
+    where it matters. ``/proc/self/cgroup`` gives the real path
+    (``0::/system.slice/pod-…``), and the ancestors are included because a
+    leaf cgroup can inherit its ceiling from one of them.
+    """
+    dirs: List[Path] = []
+    raw = _read_text(proc_root / "self" / "cgroup") or ""
+    for line in raw.splitlines():
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        controllers, rel = parts[1], parts[2].strip().lstrip("/")
+        # v2 lines have an empty controller field; v1 memory lines name it.
+        if controllers and "memory" not in controllers.split(","):
+            continue
+        base = cgroup_root if not controllers else cgroup_root / "memory"
+        node = base / rel if rel else base
+        while True:
+            if node not in dirs:
+                dirs.append(node)
+            if node == base or base not in node.parents:
+                break
+            node = node.parent
+    for fallback in (cgroup_root, cgroup_root / "memory"):
+        if fallback not in dirs:
+            dirs.append(fallback)
+    return dirs
+
+
+def _first_int(dirs: Sequence[Path], *names: str) -> Optional[int]:
+    for directory in dirs:
+        for name in names:
+            value = _read_int(directory / name)
+            if value is not None:
+                return value
+    return None
+
+
+def _first_kv(dirs: Sequence[Path], *names: str) -> Dict[str, int]:
+    for directory in dirs:
+        for name in names:
+            values = _read_kv_ints(directory / name)
+            if values:
+                return values
+    return {}
+
+
 def read_memory_snapshot(
     *,
     proc_root: Path = Path("/proc"),
@@ -241,19 +299,11 @@ def read_memory_snapshot(
     rss = _read_proc_kb(proc_root / pid / "status", "VmRSS")
     peak = _read_proc_kb(proc_root / pid / "status", "VmHWM")
 
-    current = _read_int(cgroup_root / "memory.current")
-    limit = _read_int(cgroup_root / "memory.max")
-    cg_peak = _read_int(cgroup_root / "memory.peak")
-    events = _read_kv_ints(cgroup_root / "memory.events")
-
-    if current is None:
-        current = _read_int(cgroup_root / "memory" / "memory.usage_in_bytes")
-    if limit is None:
-        limit = _read_int(cgroup_root / "memory" / "memory.limit_in_bytes")
-    if cg_peak is None:
-        cg_peak = _read_int(cgroup_root / "memory" / "memory.max_usage_in_bytes")
-    if not events:
-        events = _read_kv_ints(cgroup_root / "memory" / "memory.oom_control")
+    dirs = cgroup_candidate_dirs(proc_root=proc_root, cgroup_root=cgroup_root)
+    current = _first_int(dirs, "memory.current", "memory.usage_in_bytes")
+    limit = _first_int(dirs, "memory.max", "memory.limit_in_bytes")
+    cg_peak = _first_int(dirs, "memory.peak", "memory.max_usage_in_bytes")
+    events = _first_kv(dirs, "memory.events", "memory.oom_control")
 
     def _mb(value: Optional[int]) -> Optional[float]:
         return None if value is None else round(value / _MB, 1)

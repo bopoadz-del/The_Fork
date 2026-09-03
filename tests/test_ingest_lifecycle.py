@@ -126,6 +126,63 @@ def test_memory_snapshot_falls_back_to_cgroup_v1(tmp_path):
     assert snap.oom_kill == 2
 
 
+def test_cgroup_is_found_through_proc_self_cgroup_when_not_namespaced(tmp_path):
+    """Without a cgroup namespace, ``/sys/fs/cgroup`` is the host ROOT cgroup,
+    which has no ``memory.max`` at all — a root-only reader loses the OOM
+    evidence on exactly the boxes that need it."""
+    proc = tmp_path / "proc"
+    (proc / "self").mkdir(parents=True)
+    (proc / "self" / "status").write_text("VmRSS:\t 1024 kB\n", encoding="utf-8")
+    (proc / "self" / "cgroup").write_text(
+        "0::/system.slice/pod-abc123\n", encoding="utf-8",
+    )
+    cgroup = tmp_path / "cgroup"
+    leaf = cgroup / "system.slice" / "pod-abc123"
+    leaf.mkdir(parents=True)
+    cgroup.joinpath("cgroup.controllers").write_text("memory", encoding="utf-8")
+    (leaf / "memory.current").write_text("2478628864", encoding="utf-8")
+    (leaf / "memory.peak").write_text("3881693184", encoding="utf-8")
+    (leaf / "memory.events").write_text("oom 2\noom_kill 1\n", encoding="utf-8")
+    # The ceiling is inherited from an ancestor, as it often is.
+    (cgroup / "system.slice" / "memory.max").write_text("4294967296")
+
+    dirs = lifecycle.cgroup_candidate_dirs(proc_root=proc, cgroup_root=cgroup)
+    assert dirs[0] == leaf
+    assert cgroup / "system.slice" in dirs
+
+    snap = lifecycle.read_memory_snapshot(proc_root=proc, cgroup_root=cgroup)
+    assert snap.cgroup_current_mb == pytest.approx(2364.0, abs=1)
+    assert snap.cgroup_limit_mb == pytest.approx(4096.0, abs=1)
+    assert snap.cgroup_peak_mb == pytest.approx(3702.0, abs=1)
+    assert snap.oom_kill == 1
+
+
+def test_cgroup_v1_memory_controller_line_is_resolved(tmp_path):
+    proc = tmp_path / "proc"
+    (proc / "self").mkdir(parents=True)
+    (proc / "self" / "status").write_text("VmRSS:\t 1024 kB\n", encoding="utf-8")
+    (proc / "self" / "cgroup").write_text(
+        "5:cpu,cpuacct:/docker/abc\n4:memory:/docker/abc\n", encoding="utf-8",
+    )
+    cgroup = tmp_path / "cgroup"
+    leaf = cgroup / "memory" / "docker" / "abc"
+    leaf.mkdir(parents=True)
+    (leaf / "memory.usage_in_bytes").write_text("1048576", encoding="utf-8")
+    (leaf / "memory.limit_in_bytes").write_text("2097152", encoding="utf-8")
+
+    dirs = lifecycle.cgroup_candidate_dirs(proc_root=proc, cgroup_root=cgroup)
+    assert dirs[0] == leaf
+    snap = lifecycle.read_memory_snapshot(proc_root=proc, cgroup_root=cgroup)
+    assert snap.cgroup_current_mb == pytest.approx(1.0, abs=0.1)
+    assert snap.cgroup_limit_mb == pytest.approx(2.0, abs=0.1)
+
+
+def test_cgroup_dirs_on_this_box_include_the_real_leaf():
+    dirs = lifecycle.cgroup_candidate_dirs()
+    assert dirs, "there is always at least the mount root to try"
+    assert Path("/sys/fs/cgroup") in dirs
+
+
 def test_memory_snapshot_missing_everything_is_unknown_not_fatal(tmp_path):
     """On a box with no cgroup files the diagnostic degrades, never raises."""
     snap = lifecycle.read_memory_snapshot(
