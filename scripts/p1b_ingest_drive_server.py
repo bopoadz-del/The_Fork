@@ -50,6 +50,35 @@ _UNSUPPORTED_MIMES = {
 _UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar"}
 
 
+def future_result_or_error(
+    fut: Future,
+    file_meta: Dict[str, Any] | None = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """Drain a worker future without letting the exception escape.
+
+    #477 caught archive_document / _ingest_file, but ``fut.result()`` in the
+    main thread was still bare. A leaked botocore AccessDenied there aborts
+    the whole TIER-1 run (de6a06b7542c died at 323/1380 after 'ingest
+    continues' plus a leftover traceback).
+    """
+    rel = ""
+    if file_meta:
+        rel = file_meta.get("_drive_path") or file_meta.get("name") or ""
+    try:
+        rel_out, result = fut.result()
+        return (rel_out or rel), result
+    except Exception as exc:  # noqa: BLE001 — one file must not kill the run
+        print(
+            f"[p1b-server] worker future raised {type(exc).__name__}: {exc}; "
+            f"continuing ingest for {rel!r}",
+            file=sys.stderr,
+        )
+        return rel or "?", {
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def _is_geodatabase_internal(path: str) -> bool:
     """Esri geodatabase folders contain non-indexable internal files (gdb,
     timestamps, a00000001.gdbtable, etc.) that Drive reports as tiny
@@ -738,8 +767,8 @@ def main() -> int:
             while pending:
                 done, _ = wait(pending.keys(), return_when=FIRST_COMPLETED)
                 for fut in done:
-                    pending.pop(fut, None)
-                    rel, result = fut.result()
+                    fm = pending.pop(fut, None)
+                    rel, result = future_result_or_error(fut, fm)
                     with tally_lock:
                         done_count += 1
                         idx = done_count
