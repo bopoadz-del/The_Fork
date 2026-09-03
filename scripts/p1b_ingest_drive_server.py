@@ -19,17 +19,20 @@ Required env vars on the server:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
+import signal
 import sys
+import tempfile
 import threading
 import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterator, List, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -48,6 +51,146 @@ _UNSUPPORTED_MIMES = {
 }
 
 _UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar"}
+
+# Every stderr line carries the run id. Exactly one of the 26 lines used to
+# (the opening banner), so a Web Shell scrollback holding several runs could
+# not be split back into runs: a progress line from a dead run reads exactly
+# like one from the live worker.
+_RUN_ID = "-"
+
+
+def set_run_id(run_id: str) -> None:
+    """Bind the run id every subsequent :func:`log` line is attributed to."""
+    global _RUN_ID
+    _RUN_ID = run_id
+
+
+def current_run_id() -> str:
+    return _RUN_ID
+
+
+def log(message: str) -> None:
+    """Emit one run-attributable line on stderr."""
+    print(f"[p1b-server] run_id={_RUN_ID} {message}", file=sys.stderr)
+
+
+def resolve_evidence_dir() -> Path:
+    """Directory for durable run evidence.
+
+    ``manifests/`` lives on the container image layer, which Render throws
+    away on every deploy and restart — and a disk-backed service like
+    ``the-fork`` restarts on every deploy by construction. ``DATA_DIR`` is the
+    mounted disk (``/app/data`` in production), so evidence written there
+    outlives the process, the shell session, and the deploy.
+    """
+    raw = os.getenv("P1B_EVIDENCE_DIR") or os.getenv("DATA_DIR") or "."
+    return Path(raw)
+
+
+def atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
+    """Write ``payload`` to ``path`` via a temp file + :func:`os.replace`.
+
+    A plain ``open(path, "w")`` truncates before it writes, so a SIGKILL
+    part-way through (the documented OOM / session-close failure mode) leaves
+    unparseable JSON exactly where the reader expects either the previous
+    report or the new one. ``os.replace`` is atomic on POSIX, so a reader sees
+    one or the other and never a half-file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+class RunLockUnavailable(RuntimeError):
+    """Another live ingest run already holds this (tier, project) lock."""
+
+
+def advisory_lock_keys(tier: int, project_id: str) -> Tuple[int, int]:
+    """Deterministic signed-int32 ``(classid, objid)`` for a pg advisory lock.
+
+    Postgres' two-argument advisory-lock form takes two ``int4`` values, so
+    the sha256 digest is truncated to four bytes and mapped into the signed
+    range. sha256, not :func:`hash` — Python's string hash is per-process
+    randomized and would hand two workers different keys for the same folder.
+    """
+
+    def _int32(data: bytes) -> int:
+        value = int.from_bytes(hashlib.sha256(data).digest()[:4], "big")
+        return value - (1 << 32) if value >= (1 << 31) else value
+
+    return _int32(b"p1b_ingest_drive_server"), _int32(f"{tier}:{project_id}".encode())
+
+
+@contextlib.contextmanager
+def run_advisory_lock(tier: int, project_id: str) -> Iterator[str]:
+    """Hold a session-level Postgres advisory lock for ``(tier, project_id)``.
+
+    Two concurrent ``--tier 1 --resume`` runs each snapshot ``already_indexed``
+    at their own start time and then both call ``projects.add_document``, which
+    mints a fresh uuid with no uniqueness on ``drive_file_id`` — so the same
+    Drive file lands twice, with two sets of chunks. Nothing in the schema
+    prevents that. This lock does.
+
+    Yields ``"acquired"``, or ``"unsupported"`` on a non-Postgres dialect
+    (SQLite dev/test has no advisory locks, so the guard degrades to a logged
+    no-op instead of blocking local work). Raises :class:`RunLockUnavailable`
+    when another live session holds it.
+
+    The lock is session-scoped and released explicitly on exit. A run that is
+    SIGKILLed cannot wedge the next one either: Postgres drops the lock when
+    it notices the dead connection.
+    """
+    from sqlalchemy import text
+
+    from app.core import db as db_mod
+
+    engine = db_mod.get_engine()
+    if engine.dialect.name != "postgresql":
+        log(
+            f"WARN: run lock unavailable on dialect {engine.dialect.name!r}; "
+            "concurrent-run protection is OFF"
+        )
+        yield "unsupported"
+        return
+
+    key1, key2 = advisory_lock_keys(tier, project_id)
+    # AUTOCOMMIT so the held connection sits 'idle' rather than
+    # 'idle in transaction' for the hours this run may take.
+    conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        acquired = bool(
+            conn.execute(
+                text("SELECT pg_try_advisory_lock(:k1, :k2)"),
+                {"k1": key1, "k2": key2},
+            ).scalar()
+        )
+        if not acquired:
+            raise RunLockUnavailable(
+                f"another ingest run holds the lock for tier={tier} "
+                f"project_id={project_id} (keys {key1},{key2})"
+            )
+        log(f"run lock acquired tier={tier} project_id={project_id}")
+        try:
+            yield "acquired"
+        finally:
+            conn.execute(
+                text("SELECT pg_advisory_unlock(:k1, :k2)"),
+                {"k1": key1, "k2": key2},
+            )
+            log(f"run lock released tier={tier} project_id={project_id}")
+    finally:
+        conn.close()
 
 
 def future_result_or_error(
@@ -68,10 +211,9 @@ def future_result_or_error(
         rel_out, result = fut.result()
         return (rel_out or rel), result
     except Exception as exc:  # noqa: BLE001 — one file must not kill the run
-        print(
-            f"[p1b-server] worker future raised {type(exc).__name__}: {exc}; "
-            f"continuing ingest for {rel!r}",
-            file=sys.stderr,
+        log(
+            f"worker future raised {type(exc).__name__}: {exc}; "
+            f"continuing ingest for {rel!r}"
         )
         return rel or "?", {
             "status": "error",
@@ -185,10 +327,9 @@ def _ingest_file(
             content_sha256=content_sha,
         )
     except Exception as exc:  # noqa: BLE001 — belt-and-suspenders if archive_document leaks
-        print(
-            f"[p1b-server] R2 archive raised {type(exc).__name__}: {exc}; "
-            f"continuing ingest for {rel!r} (r2_archived=False)",
-            file=sys.stderr,
+        log(
+            f"R2 archive raised {type(exc).__name__}: {exc}; "
+            f"continuing ingest for {rel!r} (r2_archived=False)"
         )
         archive = {
             "archived": False,
@@ -224,8 +365,8 @@ def _ingest_file(
         result["reindexed_existing_doc"] = True
         r2_storage.delete_local_archive(str(dest))
         result["r2_archive"] = archive
-        print(
-            f"[p1b-server] VERIFICATION doc_id={existing_doc['id']} "
+        log(
+            f"VERIFICATION doc_id={existing_doc['id']} "
             f"drive_file_id={file_meta['id']} drive_path={rel!r} "
             f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
             f"rag_indexed={result.get('rag_indexed', 0)} "
@@ -233,8 +374,7 @@ def _ingest_file(
             f"r2_object_key={archive.get('r2_object_key')} "
             f"r2_error={archive.get('error')} "
             f"index_status={result.get('status')} "
-            f"index_error={result.get('error')}",
-            file=sys.stderr,
+            f"index_error={result.get('error')}"
         )
         return rel, result
 
@@ -250,8 +390,8 @@ def _ingest_file(
     result = doc_index.index_document(project_id, doc["id"])
     r2_storage.delete_local_archive(str(dest))
     result["r2_archive"] = archive
-    print(
-        f"[p1b-server] VERIFICATION doc_id={doc['id']} "
+    log(
+        f"VERIFICATION doc_id={doc['id']} "
         f"drive_file_id={file_meta['id']} drive_path={rel!r} "
         f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
         f"rag_indexed={result.get('rag_indexed', 0)} "
@@ -259,8 +399,7 @@ def _ingest_file(
         f"r2_object_key={archive.get('r2_object_key')} "
         f"r2_error={archive.get('error')} "
         f"index_status={result.get('status')} "
-        f"index_error={result.get('error')}",
-        file=sys.stderr,
+        f"index_error={result.get('error')}"
     )
     return rel, result
 
@@ -277,10 +416,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Path to the priority manifest")
     ap.add_argument("--tier", type=int, default=1,
                     help="Ingest only this tier (1, 2, or 3)")
-    ap.add_argument("--output", default="manifests/p1b_server_ingestion_report.json",
-                    help="Report path")
+    ap.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Report path. Defaults to <P1B_EVIDENCE_DIR|DATA_DIR>/"
+            "p1b_server_ingestion_report.json so evidence lands on the mounted "
+            "disk rather than the throwaway image layer under manifests/."
+        ),
+    )
     ap.add_argument("--resume", action="store_true",
-                    help="Skip files already indexed in the project (by drive_file_id)")
+                    help=("Accepted for compatibility. Resume is ALWAYS on for "
+                          "live runs — see the chunk-count resume check in main()."))
     ap.add_argument(
         "--folder-id",
         action="append",
@@ -393,7 +540,7 @@ def main() -> int:
             shard_index=args.shard_index,
         )
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        log(f"ERROR: {exc}")
         return 1
 
     dry_run = sharding.resolve_dry_run(args.dry_run)
@@ -403,7 +550,7 @@ def main() -> int:
     from app.core.rag import embeddings as _emb, vector_store as _vs
 
     if not gdrive_service.is_configured():
-        print("ERROR: GDRIVE_SERVICE_ACCOUNT_JSON is not set.", file=sys.stderr)
+        log("ERROR: GDRIVE_SERVICE_ACCOUNT_JSON is not set.")
         return 1
 
     if not dry_run:
@@ -418,27 +565,44 @@ def main() -> int:
     tier_key = str(args.tier)
     tier = priority_manifest.get("tiers", {}).get(tier_key)
     if not tier:
-        print(f"ERROR: tier {args.tier} not found in priority manifest.", file=sys.stderr)
+        log(f"ERROR: tier {args.tier} not found in priority manifest.")
         return 1
 
     requested_ids = parse_folder_ids(args.folder_ids)
     if args.folder_ids is not None and not requested_ids:
-        print("ERROR: --folder-id was given but no folder id was provided.", file=sys.stderr)
+        log("ERROR: --folder-id was given but no folder id was provided.")
         return 1
     try:
         folder_entries = folder_entries_for_run(
             tier["folders"], requested_ids, tier=args.tier,
         )
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        log(f"ERROR: {exc}")
         return 1
 
     run_id = uuid.uuid4().hex[:12]
-    print(
-        f"[p1b-server] run_id={run_id} tier={args.tier} folders={len(folder_entries)} "
+    set_run_id(run_id)
+    t0_global = time.monotonic()
+
+    evidence_dir = resolve_evidence_dir()
+    report_path = (
+        Path(args.output) if args.output
+        else evidence_dir / "p1b_server_ingestion_report.json"
+    )
+    # Legacy location, kept so existing tooling that reads
+    # manifests/ingest_shard_<i>_of_<n>.json keeps working. The evidence-dir
+    # copy is the durable one.
+    legacy_shard_path = sharding.shard_manifest_path(shard_index, total_shards)
+    durable_shard_path = evidence_dir / legacy_shard_path.name
+
+    log(
+        f"tier={args.tier} folders={len(folder_entries)} "
         f"shard_index={shard_index} total_shards={total_shards} dry_run={dry_run}"
-        + (f" folder_ids={requested_ids}" if requested_ids else ""),
-        file=sys.stderr,
+        + (f" folder_ids={requested_ids}" if requested_ids else "")
+    )
+    log(
+        f"evidence report={report_path} shard_manifest={durable_shard_path} "
+        f"legacy_shard_manifest={legacy_shard_path}"
     )
 
     # Track per-folder tally.
@@ -456,6 +620,40 @@ def main() -> int:
     }
     results: List[Dict[str, Any]] = []
 
+    # Explicit accounting, separate from `global_tally`.
+    #
+    # `global_tally` cannot answer "did this run finish". It mixes two
+    # universes — `skipped_unsupported` counts DISCOVERY-side files that were
+    # never assigned to anyone — so summing it yields `discovered`, a number
+    # that looks like a legitimate total and is not one. It also has no
+    # attempted/assigned pair, and `assigned` used to exist only in a stderr
+    # line that no artifact recorded.
+    #
+    # THE COMPLETION PREDICATE IS `attempted == batch`, NOTHING ELSE.
+    # In particular `already_indexed + assigned == supported` is an identity:
+    # with total_shards == 1, filter_by_shard returns its input unchanged, so
+    # that equation is forced at discovery time, before a single file is
+    # downloaded, and holds just as well for a run that dies on file 1.
+    accounting: Dict[str, int] = {
+        "discovered": 0,
+        "supported": 0,
+        "unsupported": 0,
+        "already_indexed": 0,
+        "assigned": 0,   # this shard's work set
+        "batch": 0,      # what this invocation queued, after offset/limit
+        "attempted": 0,  # completed futures accounted for in the tally
+        "outstanding": 0,
+        "walk_errors": 0,
+        "skipped_no_folder_id": 0,
+    }
+    folder_accounting: List[Dict[str, Any]] = []
+    walk_error_messages: List[str] = []
+    skipped_no_folder_id_folders: List[Dict[str, Any]] = []
+    # Advisory locks are entered per folder and released by _finalize(). A
+    # process that dies without unwinding cannot wedge the next run either:
+    # the locks are session-scoped, so Postgres drops them with the connection.
+    run_locks = contextlib.ExitStack()
+
     def _bump_folder(folder_name: str, key: str) -> None:
         folder_tallies.setdefault(folder_name, {
             "succeeded": 0, "zero_chunk": 0, "skipped_too_large": 0,
@@ -463,23 +661,164 @@ def main() -> int:
             "skipped_empty": 0, "download_failed": 0, "errors": 0,
         })[key] += 1
 
-    def _write_partial_report() -> None:
-        partial = {
+    def _sync_outstanding() -> None:
+        accounting["outstanding"] = accounting["batch"] - accounting["attempted"]
+
+    def build_report(exit_reason: str, run_complete: bool) -> Dict[str, Any]:
+        _sync_outstanding()
+        return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run_id": run_id,
             "tier": args.tier,
+            "shard_index": shard_index,
+            "total_shards": total_shards,
             "embedder": os.environ["RAG_EMBEDDING_MODEL"],
             "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
+            "exit_reason": exit_reason,
+            "run_complete": run_complete,
+            "accounting": dict(accounting),
+            "walk_error_messages": list(walk_error_messages),
+            "skipped_no_folder_id_folders": list(skipped_no_folder_id_folders),
+            "folder_accounting": [dict(entry) for entry in folder_accounting],
             "global_tally": global_tally,
             "folder_tallies": folder_tallies,
             "results": results,
         }
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as fh:
-            json.dump(partial, fh, indent=2, ensure_ascii=False)
 
-    t0_global = time.monotonic()
+    def _write_partial_report(
+        exit_reason: str = "running", run_complete: bool = False,
+    ) -> None:
+        atomic_write_json(report_path, build_report(exit_reason, run_complete))
+
+    def build_run_summary(exit_reason: str, run_complete: bool) -> Dict[str, Any]:
+        """The payload of the terminal RUNSUMMARY line.
+
+        Bounded on purpose (no `results`) so it stays one greppable line in
+        Render's log stream — which, for a background worker, is the only
+        completion authority that survives the container.
+        """
+        _sync_outstanding()
+        return {
+            "run_id": run_id,
+            "tier": args.tier,
+            "shard_index": shard_index,
+            "total_shards": total_shards,
+            "dry_run": dry_run,
+            "exit_reason": exit_reason,
+            "run_complete": run_complete,
+            "accounting": dict(accounting),
+            "global_tally": dict(global_tally),
+            "report_path": str(report_path),
+            "shard_manifest_path": str(durable_shard_path),
+            "elapsed_sec": round(time.monotonic() - t0_global, 3),
+        }
+
+    def _emit_run_summary(exit_reason: str, run_complete: bool) -> None:
+        log("RUNSUMMARY " + json.dumps(
+            build_run_summary(exit_reason, run_complete),
+            separators=(",", ":"), ensure_ascii=False, sort_keys=True,
+        ))
+
+    def build_shard_manifest(exit_reason: str) -> Dict[str, Any]:
+        return sharding.empty_shard_manifest(
+            shard_index=shard_index,
+            total_shards=total_shards,
+            extra={
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "run_id": run_id,
+                "tier": args.tier,
+                "embedder": os.environ["RAG_EMBEDDING_MODEL"],
+                "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
+                # `processed` is global_tally["succeeded"], NOT the number of
+                # files this run worked through. Kept because existing readers
+                # parse it; `attempted` is the one to compare against
+                # `assigned`. Reading `processed` as "files handled" makes a
+                # finished run look like it left the failures outstanding.
+                "processed": global_tally["succeeded"],
+                "attempted": accounting["attempted"],
+                "skipped": global_tally["skipped_too_large"] + global_tally["skipped_too_small"]
+                + global_tally["skipped_empty"],
+                "failed": global_tally["errors"] + global_tally["zero_chunk"]
+                + global_tally["download_failed"],
+                "unsupported": global_tally["skipped_unsupported"],
+                "already_indexed": global_tally["already_indexed"],
+                "exit_reason": exit_reason,
+                "run_complete": True,
+                "accounting": dict(accounting),
+                "folder_accounting": [dict(entry) for entry in folder_accounting],
+                "walk_error_messages": list(walk_error_messages),
+                "skipped_no_folder_id_folders": list(skipped_no_folder_id_folders),
+                "durations_sec": {"_total": round(time.monotonic() - t0_global, 3)},
+                "global_tally": global_tally,
+                "folder_tallies": folder_tallies,
+                "results": results,
+            },
+        )
+
+    def _finalize(exit_reason: str, *, run_complete: bool) -> None:
+        """Flush every durable artifact, then release the run lock.
+
+        Reached on every exit path, signal handlers included. The shard
+        manifest is TERMINAL evidence: it is written only when every queued
+        file is accounted for, so its presence is what separates "the folder
+        loop ran to the end" from "the process died". Writing it on an
+        aborted run would destroy the only on-disk discriminator there is.
+        """
+        _sync_outstanding()
+        if not dry_run:
+            _write_partial_report(exit_reason, run_complete)
+            if run_complete:
+                manifest = build_shard_manifest(exit_reason)
+                atomic_write_json(durable_shard_path, manifest)
+                atomic_write_json(legacy_shard_path, manifest)
+                log(f"report written to {report_path}")
+                log(f"shard manifest → {durable_shard_path} (+ {legacy_shard_path})")
+            else:
+                log(
+                    f"ABORTED report written to {report_path} "
+                    f"(exit_reason={exit_reason}, "
+                    f"attempted={accounting['attempted']}/"
+                    f"batch={accounting['batch']}); "
+                    f"terminal shard manifest NOT written"
+                )
+        _emit_run_summary(exit_reason, run_complete)
+        try:
+            run_locks.close()
+        except Exception as exc:  # noqa: BLE001 — release is best-effort
+            log(
+                f"WARN: releasing the run lock raised {type(exc).__name__}: {exc}; "
+                "the Postgres session ends with this process, which releases it"
+            )
+
+    def _on_fatal_signal(signum: int, _frame: Any) -> None:
+        name = signal.Signals(signum).name
+        log(
+            f"received {name} at attempted={accounting['attempted']}/"
+            f"batch={accounting['batch']} — flushing aborted evidence"
+        )
+        _finalize(f"aborted_signal_{name}", run_complete=False)
+        # os._exit, not sys.exit: the ThreadPoolExecutor's workers are
+        # non-daemon, so a normal unwind blocks in pool shutdown waiting on an
+        # in-flight multi-hundred-MB download. Every artifact is already on
+        # disk by this point.
+        os._exit(128 + signum)
+
+    # SIGHUP is the one that matters most in practice: a process launched from
+    # a Render Web Shell is in that pty's foreground process group, so closing
+    # the tab used to kill the run with no traceback and no tally. SIGTERM is
+    # what Render sends ahead of a deploy or restart.
+    for _signal_name in ("SIGTERM", "SIGINT", "SIGHUP"):
+        _signum = getattr(signal, _signal_name, None)
+        if _signum is None:
+            continue
+        try:
+            signal.signal(_signum, _on_fatal_signal)
+        except (ValueError, OSError) as exc:
+            log(
+                f"WARN: could not install a {_signal_name} handler ({exc}); "
+                "an abort on that signal will leave no report"
+            )
+
     if dry_run:
         # Fresh dry-run manifest each invocation (multi-folder appends below).
         dry_manifest = sharding.shard_manifest_path(shard_index, total_shards)
@@ -493,21 +832,34 @@ def main() -> int:
         project_id_for_folder = folder_entry.get("project_id")
 
         if not folder_id:
-            print(f"[p1b-server] SKIP {folder_name}: no folder_id (needs Chadi to set)", file=sys.stderr)
+            accounting["skipped_no_folder_id"] += 1
+            skipped_no_folder_id_folders.append({
+                "folder": folder_name, "project_id": project_id_for_folder,
+            })
+            log(
+                f"SKIP {folder_name}: no folder_id (needs Chadi to set) — "
+                "this folder contributes 0 to the tier tally, so run_complete "
+                "does NOT mean the tier is covered"
+            )
             continue
 
         if parent_folder_id and folder_id != parent_folder_id:
-            print(
-                f"[p1b-server] walking {folder_name} subfolder ({folder_id}) "
-                f"parent={parent_folder_id} ...",
-                file=sys.stderr,
+            log(
+                f"walking {folder_name} subfolder ({folder_id}) "
+                f"parent={parent_folder_id} ..."
             )
         else:
-            print(f"[p1b-server] walking {folder_name} ({folder_id}) ...", file=sys.stderr)
+            log(f"walking {folder_name} ({folder_id}) ...")
         files, walk_errors = gdrive_service.walk_folder(folder_id, max_depth=12, page_size=200)
         if walk_errors:
+            # A partial walk silently shrinks `discovered` and `supported`
+            # together, so the identity re-balances against a smaller
+            # denominator and the run still exits clean. Record the errors so
+            # a reader can tell a complete walk from a truncated one.
+            accounting["walk_errors"] += len(walk_errors)
             for err in walk_errors:
-                print(f"[p1b-server] WALK ERROR: {err}", file=sys.stderr)
+                walk_error_messages.append(f"{folder_name}: {err}")
+                log(f"WALK ERROR: {err}")
 
         # Ensure ONE project row for this folder BEFORE sharding / resume.
         # projects.name is not UNIQUE — parallel shard workers that each
@@ -525,25 +877,54 @@ def main() -> int:
                 origin="user_drive_import",
             )
             project_id = project["id"]
-            print(
-                f"[p1b-server] {'created' if created else 'using'} project "
+            log(
+                f"{'created' if created else 'using'} project "
                 f"{project_id} for {folder_name} "
-                f"(shard={shard_index}/{total_shards})",
-                file=sys.stderr,
+                f"(shard={shard_index}/{total_shards})"
             )
+
+            try:
+                run_locks.enter_context(run_advisory_lock(args.tier, project_id))
+            except RunLockUnavailable as exc:
+                log(f"ERROR: {exc}; refusing to start a second concurrent run")
+                _finalize("aborted_run_lock_unavailable", run_complete=False)
+                return 1
+            except Exception as exc:  # noqa: BLE001 — surfaced as a hard abort
+                # Fail closed for the same reason the resume check does. An
+                # unhandled raise here would abort with a traceback and no
+                # flushed evidence, which is the failure shape being removed.
+                log(
+                    f"ERROR: could not take the run lock "
+                    f"({type(exc).__name__}: {exc}); aborting rather than "
+                    f"ingesting without concurrent-run protection"
+                )
+                _finalize("aborted_run_lock_error", run_complete=False)
+                return 1
 
             # Resume is ALWAYS on for live runs. A document row alone is
             # NOT proof of success — skip only files whose doc actually
             # has chunks; zero-chunk docs are re-indexed in place.
-            chunk_counts: Dict[str, int] = {}
-            counts_available = True
+            #
+            # FAIL CLOSED. This used to fall back to row-presence resume on
+            # any exception, which counts ZERO_CHUNK documents as indexed: one
+            # transient Neon blip moved 40 known-broken docs from the retry
+            # cohort into `already_indexed`, shrank `assigned` to match, and
+            # the run then exited 0 with a clean tally and a shard manifest.
+            # The identity `already_indexed + assigned == supported` held the
+            # whole time. An unusable resume check must stop the run, not
+            # quietly redefine what "already indexed" means.
             try:
-                chunk_counts = _vs.get_store().count_by_doc(project_id)
-            except Exception as exc:  # noqa: BLE001 — degrade to row-only resume
-                print(f"[p1b-server] WARN: chunk-count resume check failed "
-                      f"({type(exc).__name__}: {exc}); falling back to "
-                      f"row-presence resume", file=sys.stderr)
-                counts_available = False
+                chunk_counts: Dict[str, int] = _vs.get_store().count_by_doc(project_id)
+            except Exception as exc:  # noqa: BLE001 — surfaced as a hard abort below
+                log(
+                    f"ERROR: chunk-count resume check failed for {folder_name} "
+                    f"({type(exc).__name__}: {exc}); aborting rather than "
+                    f"degrading to row-presence resume, which would count "
+                    f"zero-chunk documents as already indexed"
+                )
+                _finalize("aborted_chunk_count_unavailable", run_complete=False)
+                return 1
+
             def _doc_is_unsupported(doc: Dict[str, Any]) -> bool:
                 meta = doc.get("metadata") or {}
                 path = meta.get("drive_path") or ""
@@ -559,9 +940,7 @@ def main() -> int:
                 fid = (doc.get("metadata") or {}).get("drive_file_id")
                 if not fid:
                     continue
-                if not counts_available:
-                    already_indexed.add(fid)
-                elif chunk_counts.get(doc["id"], 0) > 0:
+                if chunk_counts.get(doc["id"], 0) > 0:
                     already_indexed.add(fid)
                 elif _doc_is_unsupported(doc):
                     # Legacy zero-chunk row for a file we now know is
@@ -621,23 +1000,45 @@ def main() -> int:
         batch_files = sharding.apply_offset_limit(
             shard_files, offset=offset, limit=limit,
         )
-        print(
-            f"[p1b-server] {folder_name}: discovered={len(files)} "
+        log(
+            f"{folder_name}: discovered={len(files)} "
             f"supported={len(supported_files)} unsupported={len(unsupported_files)} "
             f"already_indexed={skipped_already} "
             f"shard={shard_index}/{total_shards} assigned={len(shard_files)} "
             f"batch={len(batch_files)} "
-            f"({len(retry_doc_by_fid)} zero-chunk retries)",
-            file=sys.stderr,
+            f"({len(retry_doc_by_fid)} zero-chunk retries)"
         )
+        # Recorded BEFORE any file is processed, so a run that dies mid-folder
+        # still leaves the denominator behind. `assigned` used to live only in
+        # the line above, which meant a killed run left nothing to compare
+        # progress against.
+        folder_record: Dict[str, Any] = {
+            "folder": folder_name,
+            "folder_id": folder_id,
+            "parent_folder_id": parent_folder_id,
+            "project_id": project_id,
+            "discovered": len(files),
+            "supported": len(supported_files),
+            "unsupported": len(unsupported_files),
+            "already_indexed": skipped_already,
+            "assigned": len(shard_files),
+            "batch": len(batch_files),
+            "attempted": 0,
+            "zero_chunk_retries": len(retry_doc_by_fid),
+            "walk_errors": len(walk_errors),
+        }
+        folder_accounting.append(folder_record)
+        accounting["discovered"] += len(files)
+        accounting["supported"] += len(supported_files)
+        accounting["unsupported"] += len(unsupported_files)
+        accounting["already_indexed"] += skipped_already
+        accounting["assigned"] += len(shard_files)
+        accounting["batch"] += len(batch_files)
+
         global_tally["skipped_unsupported"] += len(unsupported_files)
         global_tally["already_indexed"] += skipped_already
         if skipped_already:
-            print(
-                f"[p1b-server] skipped_already_indexed={skipped_already} "
-                f"for {folder_name}",
-                file=sys.stderr,
-            )
+            log(f"skipped_already_indexed={skipped_already} for {folder_name}")
 
         if dry_run:
             report = sharding.dry_run_report(
@@ -681,10 +1082,9 @@ def main() -> int:
                 "folders": folders,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
             }
-            with open(out_path, "w", encoding="utf-8") as fh:
-                json.dump(merged, fh, indent=2, ensure_ascii=False)
+            atomic_write_json(out_path, merged)
             print(json.dumps(report, indent=2, ensure_ascii=False))
-            print(f"[p1b-server] dry-run manifest → {out_path}", file=sys.stderr)
+            log(f"dry-run manifest → {out_path}")
             continue
 
         assert project_id is not None  # set above for live runs
@@ -696,6 +1096,12 @@ def main() -> int:
 
         def _tally_result(rel: str, result: Dict[str, Any]) -> None:
             results.append({"folder": folder_name, "path": rel, "result": result})
+            # One increment per completed future, whatever the outcome. This
+            # is the number that gets compared against `batch`; the tally
+            # buckets below cannot be summed for it because
+            # `skipped_unsupported` also carries discovery-side files.
+            accounting["attempted"] += 1
+            folder_record["attempted"] += 1
             if result.get("status") == "error":
                 err = result.get("error")
                 if err == "ZERO_CHUNK":
@@ -745,10 +1151,14 @@ def main() -> int:
         # Ordering is already applied before offset/limit via P1B_LARGEST_FIRST.
         sort_label = "largest-first" if largest_first else "smallest-first"
         pool_size = max(1, int(os.getenv("P1B_PARALLELISM", "2")))
-        tally_lock = threading.Lock()
+        # RLock, not Lock: only the main thread ever takes it (workers never
+        # touch the tally), and the signal handler runs on that same thread —
+        # a plain Lock would self-deadlock if the signal landed while the
+        # main loop held it.
+        tally_lock = threading.RLock()
         done_count = 0
-        print(f"[p1b-server] parallel ingestion with {pool_size} workers "
-              f"({sort_label}, {len(filtered_files)} files)", file=sys.stderr)
+        log(f"parallel ingestion with {pool_size} workers "
+            f"({sort_label}, {len(filtered_files)} files)")
         with ThreadPoolExecutor(max_workers=pool_size) as pool:
             pending: Dict[Future, Dict[str, Any]] = {}
             file_iter = iter(filtered_files)
@@ -774,62 +1184,53 @@ def main() -> int:
                         idx = done_count
                         _tally_result(rel, result)
                         status = result.get("error") or result.get("status", "ok")
-                        print(
-                            f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} "
-                            f"[{status}] {rel}",
-                            file=sys.stderr,
+                        log(
+                            f"{folder_name} {idx}/{len(filtered_files)} "
+                            f"[{status}] {rel}"
                         )
                         if idx % 10 == 0:
                             _write_partial_report()
                     _submit_next()
 
         elapsed_folder = time.monotonic() - t0_folder
-        print(f"[p1b-server] {folder_name} done in {elapsed_folder:.1f}s", file=sys.stderr)
+        log(f"{folder_name} done in {elapsed_folder:.1f}s")
 
     elapsed_global = time.monotonic() - t0_global
-    if not dry_run:
-        _write_partial_report()
-        shard_manifest = sharding.empty_shard_manifest(
-            shard_index=shard_index,
-            total_shards=total_shards,
-            extra={
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "run_id": run_id,
-                "tier": args.tier,
-                "embedder": os.environ["RAG_EMBEDDING_MODEL"],
-                "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
-                "processed": global_tally["succeeded"],
-                "skipped": global_tally["skipped_too_large"] + global_tally["skipped_too_small"]
-                + global_tally["skipped_empty"],
-                "failed": global_tally["errors"] + global_tally["zero_chunk"]
-                + global_tally["download_failed"],
-                "unsupported": global_tally["skipped_unsupported"],
-                "already_indexed": global_tally["already_indexed"],
-                "durations_sec": {"_total": round(elapsed_global, 3)},
-                "global_tally": global_tally,
-                "folder_tallies": folder_tallies,
-                "results": results,
-            },
-        )
-        shard_out = sharding.shard_manifest_path(shard_index, total_shards)
-        shard_out.parent.mkdir(parents=True, exist_ok=True)
-        with open(shard_out, "w", encoding="utf-8") as fh:
-            json.dump(shard_manifest, fh, indent=2, ensure_ascii=False)
-        print(f"[p1b-server] report written to {args.output}", file=sys.stderr)
-        print(f"[p1b-server] shard manifest → {shard_out}", file=sys.stderr)
-    print(
-        f"[p1b-server] tier {args.tier}: {global_tally['succeeded']} succeeded, "
+    _sync_outstanding()
+    # A dry run queues nothing, so there is nothing to account for.
+    fully_accounted = dry_run or accounting["outstanding"] == 0
+    log(
+        f"tier {args.tier}: {global_tally['succeeded']} succeeded, "
         f"{global_tally['zero_chunk']} zero-chunk, "
         f"{global_tally['skipped_too_large']} too-large, "
         f"{global_tally['skipped_too_small']} too-small, "
-        f"{global_tally['skipped_unsupported']} unsupported, "
-        f"{global_tally['already_indexed']} already_indexed, "
-        f"{global_tally['errors']} errors, {elapsed_global:.1f}s "
-        f"shard={shard_index}/{total_shards} dry_run={dry_run}",
-        file=sys.stderr,
+        f"{global_tally['skipped_empty']} empty, "
+        f"{global_tally['download_failed']} download-failed, "
+        f"{global_tally['errors']} errors "
+        f"| attempted={accounting['attempted']}/batch={accounting['batch']} "
+        f"assigned={accounting['assigned']} "
+        f"already_indexed={global_tally['already_indexed']} "
+        f"unsupported={global_tally['skipped_unsupported']} "
+        f"walk_errors={accounting['walk_errors']} "
+        f"skipped_no_folder_id={accounting['skipped_no_folder_id']} "
+        f"{elapsed_global:.1f}s shard={shard_index}/{total_shards} dry_run={dry_run}"
     )
+    if not fully_accounted:
+        # Every future should have been drained by the pool's context manager,
+        # so this is a bug rather than an expected state — but it must never
+        # be papered over by writing the terminal manifest anyway.
+        log(
+            f"ERROR: {accounting['outstanding']} queued file(s) were never "
+            f"accounted for; refusing to write a terminal shard manifest"
+        )
+    _finalize(
+        "completed" if fully_accounted else "incomplete_accounting",
+        run_complete=fully_accounted,
+    )
+    if not fully_accounted:
+        return 1
     if args.keep_alive and not dry_run:
-        print("[p1b-server] pass complete; keeping container alive for log inspection.", file=sys.stderr)
+        log("pass complete; keeping container alive for log inspection.")
         while True:
             time.sleep(3600)
     return 0
