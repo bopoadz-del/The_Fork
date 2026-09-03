@@ -774,17 +774,25 @@ def filename_match_bonus(
 
     A letter-shaped name gets an extra tier so Volume 5 'Other Documents'
     that share a place-name cannot outrank the letter the question named.
-    Zero when the name shares no distinctive term.
+    Zero when the name shares no distinctive term, and zero on a weak
+    one-token collision (``contract.pdf`` vs "Conditions of Contract")
+    so ordinary Q&A ranking stays byte-identical.
     """
-    overlap = filename_query_overlap(filename, terms)
-    if overlap <= 0.0:
+    cleaned = [t for t in terms if t and len(t) >= 3]
+    overlap = filename_query_overlap(filename, cleaned)
+    if overlap <= 0.0 or not cleaned:
         return 0.0
-    if letter_query and overlap * len(terms) < _FILENAME_RESCUE_MIN_TERMS:
-        # Fewer than two term hits: a lone "plant" in a weekly report name.
-        if not filename_looks_like_letter(filename):
+    hits = overlap * len(cleaned)
+    is_letter = filename_looks_like_letter(filename)
+    if letter_query:
+        if hits < _FILENAME_RESCUE_MIN_TERMS and not is_letter:
             return 0.0
+    elif hits < _FILENAME_RESCUE_OPEN_MIN_TERMS and not (
+        is_letter and hits >= _FILENAME_RESCUE_MIN_TERMS
+    ):
+        return 0.0
     bonus = overlap * _FILENAME_OVERLAP_BONUS_MAX
-    if filename_looks_like_letter(filename):
+    if is_letter:
         bonus += _FILENAME_LETTER_BONUS
     return bonus
 

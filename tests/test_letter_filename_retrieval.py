@@ -235,6 +235,26 @@ def test_mutation_filename_bonus_is_what_lifts_the_letter(monkeypatch):
     assert chunks[0].doc_id == VOL5_DOC
 
 
+def test_a_generic_contract_filename_does_not_earn_a_bonus():
+    """Dual-query / Contract Data tests name every doc ``contract.pdf``.
+
+    One shared token must not lift those chunks — that is how D1's
+    filename bonus would have perturbed unrelated ranking.
+    """
+    from app.core.rag.retriever import (
+        extract_rescue_terms,
+        filename_match_bonus,
+    )
+
+    terms = extract_rescue_terms(PARTICULARS_QUERY)
+    assert filename_match_bonus(
+        "contract.pdf", terms, letter_query=False,
+    ) == 0.0
+    assert filename_match_bonus(
+        "contract.pdf", terms, letter_query=True,
+    ) == 0.0
+
+
 def test_particulars_query_is_not_stolen_by_a_letter_filename(monkeypatch):
     ret = _install_d1_corpus(monkeypatch, letter_in_semantic=False)
     chunks, _ = ret.retrieve_with_filter(PARTICULARS_QUERY, ACTIVE, k=5)
