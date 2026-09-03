@@ -309,7 +309,9 @@ def particulars_chunk_states_a_value(chunk: str) -> bool:
 
     A value does not have to be a figure. ``1.3.1 (b) Engineer: <firm>`` and
     ``Schedule 10: Not Used`` are both filled in, and a numeric-only test
-    cannot see either.
+    cannot see either. It does have to say SOMETHING: a dot-leader run with
+    nothing after it splits into a "value" made only of dots, which is an
+    unfilled row drawn on paper.
     """
     lines = (chunk or "").splitlines()
     # Line 0 is the label this module prepends; every candidate carries it.
@@ -321,7 +323,7 @@ def particulars_chunk_states_a_value(chunk: str) -> bool:
         if sep and key.strip() and _CD_ALNUM_RE.search(val):
             return True
         parsed = _split_key_value_line(stripped)
-        if parsed and parsed[1]:
+        if parsed and _CD_ALNUM_RE.search(parsed[1]):
             return True
     return False
 

@@ -427,6 +427,16 @@ def test_heading_versus_cross_reference_discriminator(text, is_pointer):
         assert contract_data_particulars_delta(text) > 0.0
 
 
+def test_a_chunk_with_no_contract_data_mention_is_not_a_cross_reference():
+    """"No mention" and "only a pointer" are different answers. Returning
+    True here would demote every chunk in the corpus that never names the
+    Contract Data at all."""
+    assert not contract_data_mention_is_only_a_cross_reference(
+        "Sub-Clause 4.1. The Contractor shall design the Works."
+    )
+    assert not contract_data_mention_is_only_a_cross_reference("")
+
+
 def test_a_real_contract_data_heading_still_earns_the_heading_tier():
     """The tier exists for a Contract Data section that reached retrieval
     through the plain word chunker, with no index-time prefix. A heading
@@ -532,6 +542,31 @@ def test_a_particulars_row_whose_value_is_a_name_counts_as_filled():
     )
     assert is_contract_data_particulars_row(notices_only)
     assert contract_data_particulars_delta(notices_only) > 0.0
+
+
+def test_a_row_keeps_the_documents_own_separator_when_the_parser_could_not_split():
+    """`_line_packed_chunks` is the fallback for a Contract Data section the
+    row parser could not split — it keeps the raw lines, and therefore the
+    document's own ``key | value`` or dot-leader separator. Those rows carry
+    values too, so the same predicate has to see them."""
+    pipe_rows = (
+        "CONTRACT DATA particulars — filled-in amount / duration / "
+        f"percentage [{DD23_NAME}].\n"
+        "Contract Data\n"
+        "\n"
+        "Engineer | Northwater Engineers\n"
+        "Employer's address ......... 14 Spur Road"
+    )
+    assert is_contract_data_particulars_row(pipe_rows)
+
+    keys_only = (
+        "CONTRACT DATA particulars — filled-in amount / duration / "
+        f"percentage [{DD23_NAME}].\n"
+        "Contract Data\n"
+        "Engineer |\n"
+        "Employer's address .........   "
+    )
+    assert not is_contract_data_particulars_row(keys_only)
 
 
 def test_an_empty_particulars_window_is_not_answer_bearing():
