@@ -900,6 +900,187 @@ def _rescue_filename_matched_docs(
     return names
 
 
+# ── specification-title filename rescue (live C2) ──────────────────────────
+#
+# Live Master Corpus C2 (SHA 567147a): "Which specification document covers
+# the Variation Procedure, and what is its number?" retrieved DD-2022-175
+# Demolition Specs Part 3. The governing spec is already in Neon —
+# ``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``. Term rescue treated
+# the demolition volume's in-chunk "specification" / "procedure" overlap as
+# already-grounded and skipped the out-of-pool fetch. Cosine prefers the
+# long demolition volume over the short titled spec.
+#
+# The filename is the discriminator Demolition Specs cannot fake: it
+# carries the Title-Case phrase the question used. Kill-switch:
+# RAG_SPEC_TITLE_RESCUE=0.
+_SPEC_IDENTITY_ASK_RE = re.compile(
+    r"(?i)\b(?:which|what)\s+specification\s+(?:document|section)s?\b"
+    r"|\bspecification\s+document\s+covers\b"
+    r"|\band\s+what\s+is\s+its\s+number\b"
+)
+# Two-or-more consecutive Title-Case words ("Variation Procedure").
+# Leading question words ("Which Specification") are stripped below.
+_TITLE_CASE_PHRASE_RE = re.compile(
+    r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\b"
+)
+_TITLE_PHRASE_STOP = frozenset({
+    "which", "what", "whose", "when", "where", "why",
+    "this", "that", "the", "and", "for", "its", "our",
+})
+# Equal to IDENTIFIER_BONUS_MAX so a titled filename beats a high-cosine
+# demolition volume the way an exact code beats boilerplate.
+_SPEC_TITLE_FILENAME_BONUS = 2.0
+
+
+def spec_title_rescue_enabled() -> bool:
+    """ON by default — this is a live recall defect. RAG_SPEC_TITLE_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy on a corpus."""
+    return (os.getenv("RAG_SPEC_TITLE_RESCUE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_which_specification_document(query: str) -> bool:
+    """True for a which-spec-covers-X / what-is-its-number ask (C2).
+
+    Numbered-spec questions ("Specification 003113") stay on the
+    identifier path. Contract-role and letter asks are not this class.
+    """
+    return bool(_SPEC_IDENTITY_ASK_RE.search(query or ""))
+
+
+def extract_document_title_phrases(query: str) -> List[str]:
+    """Title-Case phrases of two or more content words from ``query``.
+
+    ``Variation Procedure`` is a document title. ``Which Specification``
+    is question scaffolding and is dropped. Lowercased, deduplicated.
+    """
+    found: List[str] = []
+    seen: Set[str] = set()
+    for match in _TITLE_CASE_PHRASE_RE.finditer(query or ""):
+        words = [
+            w for w in match.group(1).split()
+            if w.lower() not in _TITLE_PHRASE_STOP
+        ]
+        if len(words) < 2:
+            continue
+        phrase = " ".join(words).lower()
+        if phrase in seen or len(phrase) < 8:
+            continue
+        seen.add(phrase)
+        found.append(phrase)
+    return found
+
+
+def spec_title_filename_bonus(filename: str, phrases: List[str]) -> float:
+    """Additive lift when the upload name carries a queried title phrase.
+
+    Zero when the name shares no title phrase, so ordinary Q&A ranking
+    stays byte-identical.
+    """
+    blob = (filename or "").lower()
+    if not blob or not phrases:
+        return 0.0
+    if any(phrase and phrase in blob for phrase in phrases):
+        return _SPEC_TITLE_FILENAME_BONUS
+    return 0.0
+
+
+def _apply_spec_title_filename_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: lift chunks whose resolved filename matches a spec title."""
+    if not spec_title_rescue_enabled():
+        return
+    if not query_asks_which_specification_document(query):
+        return
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+        add = spec_title_filename_bonus(name, phrases)
+        if add <= 0.0:
+            continue
+        boosted = score + add
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_spec_title_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> Dict[str, str]:
+    """Pull chunks from title-matched specs into ``fused``.
+
+    Returns ``{doc_id: original_name}`` so later name resolution does
+    not re-query the documents table for docs we just looked up.
+    Failures never raise — the semantic pool stands.
+    """
+    names: Dict[str, str] = {}
+    if not spec_title_rescue_enabled():
+        return names
+    if not query_asks_which_specification_document(query):
+        return names
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return names
+
+    try:
+        from app.core.projects import documents_matching_title_phrase
+    except Exception:  # noqa: BLE001
+        logger.warning("spec-title rescue: projects import failed", exc_info=True)
+        return names
+
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return names
+
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+    for pid in pids:
+        matches: List[Dict[str, str]] = []
+        for phrase in phrases:
+            try:
+                matches.extend(documents_matching_title_phrase(pid, phrase))
+            except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+                logger.warning(
+                    "spec-title rescue listing for %s (%r) failed: %s",
+                    pid, phrase, exc,
+                )
+        if not matches:
+            continue
+        seen_docs: Set[str] = set()
+        unique_matches: List[Dict[str, str]] = []
+        for doc in matches:
+            did = doc.get("id") or ""
+            if not did or did in seen_docs:
+                continue
+            seen_docs.add(did)
+            unique_matches.append(doc)
+            names[did] = doc.get("original_name") or ""
+        try:
+            hits = fetch(pid, [d["id"] for d in unique_matches])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("spec-title rescue fetch for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits:
+            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
+            if chunk.chunk_id in fused:
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            recovered += 1
+    if recovered:
+        logger.info(
+            "spec-title rescue recovered %d chunk(s) for phrases %r",
+            recovered, phrases,
+        )
+    return names
 
 
 # Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
@@ -1262,6 +1443,10 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=_general_knowledge_project_ids(),
     )
+    filename_names.update(_rescue_spec_title_docs(
+        query, project_id, fused_lex, store,
+        extra_pids=_general_knowledge_project_ids(),
+    ))
     if len(fused_lex) > len(candidates):
         seen = {c.chunk_id for c in candidates}
         for chunk, _sem, _b in fused_lex.values():
@@ -1277,6 +1462,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         if chunk.doc_id not in name_by_id:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     _apply_filename_overlap_boost(query, scored_lex, name_by_id)
+    _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
     candidates = [chunk for _s, chunk in scored_lex]
 
     # Stable sort keeps the active project ahead of GK on equal scores.
@@ -1697,13 +1883,25 @@ def retrieve_with_filter(
     # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
     # already found place-name overlap in Volume 5 — that in-pool hit is
     # what used to skip the out-of-pool fetch of the actual letter.
+    extra_rescue_pids = gk_ids + ([fb_id] if use_fallback and fb_id else [])
     filename_names = _rescue_filename_matched_docs(
         query,
         project_id,
         fused,
         store,
-        extra_pids=gk_ids + ([fb_id] if use_fallback and fb_id else []),
+        extra_pids=extra_rescue_pids,
     )
+    # Spec-title filename rescue (C2). Runs EVEN WHEN term rescue already
+    # found "specification" / "procedure" overlap in a demolition volume
+    # — that in-pool hit is what used to skip the out-of-pool fetch of
+    # the titled Variation Procedure spec.
+    filename_names.update(_rescue_spec_title_docs(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    ))
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
@@ -1821,6 +2019,7 @@ def retrieve_with_filter(
             scored[i] = (demoted, chunk)
 
     _apply_filename_overlap_boost(query, scored, name_by_id)
+    _apply_spec_title_filename_boost(query, scored, name_by_id)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
