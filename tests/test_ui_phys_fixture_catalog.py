@@ -123,3 +123,101 @@ def test_nightly_cases_name_an_agent(catalog):
     assert catalog["cases"]["A1"]["agent"] == "project-assistant"
     assert catalog["cases"]["B1"]["agent"] == "quantity-surveyor"
     assert catalog["cases"]["E4"]["agent"] == "construction-pm"
+
+
+# ── the two sources of record (owner's ruling 3, 2026-09-01) ──────────────
+#
+# GROUND_TRUTH_REVISIONS_2026-09-01.md is the standard: ground-truth changes
+# ONLY via a dated revision log, question strings never altered, old wording
+# preserved. The xlsx stays the question source; the log is the expectation
+# source. README.md in the fixture directory is the long form.
+
+README = FIXTURE_DIR / "README.md"
+
+#: SHA-256 over every sorted "<id>\t<ask>" line in the catalog.
+#:
+#: A failure here means a QUESTION MOVED. Do not update this constant to make
+#: it pass -- that is the exact thing it exists to prevent. Restore the
+#: wording. A genuinely new question gets a NEW id, and only then does this
+#: digest change, in the same commit that adds it and with the id named in
+#: the message.
+#:
+#: Frozen because F-PHRASE-1 measured the routing to be phrasing-sensitive
+#: and the sheet's phrasing to be the one that fails: E4 and C2 both PASS on
+#: a conversational paraphrase and FAIL on the instrument's own wording. A
+#: paraphrase is not evidence about the battery question.
+QUESTION_WORDING_DIGEST = (
+    "d5ad82ce90f107cf322fc19d7c451cd3c426ade24071e5e454801a319d31fe4a"
+)
+
+
+def _wording_digest(cases: dict) -> str:
+    import hashlib
+
+    pairs = sorted((cid, case.get("ask", "")) for cid, case in cases.items())
+    blob = "\n".join(f"{cid}\t{ask}" for cid, ask in pairs)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def test_no_question_string_has_been_reworded(catalog):
+    """Mutation killed: editing any ``ask`` in place.
+
+    Including the well-meant edits -- fixing a typo, adding a question mark,
+    expanding an abbreviation. Each one silently changes what the battery
+    measures, and the verdict column cannot show it.
+    """
+    got = _wording_digest(catalog["cases"])
+    assert got == QUESTION_WORDING_DIGEST, (
+        "a battery question's wording changed (digest %s != %s). Restore the "
+        "wording; a new question needs a NEW id." % (got, QUESTION_WORDING_DIGEST)
+    )
+
+
+def test_every_case_carries_a_question_or_names_an_action(catalog):
+    """The digest alone would be satisfied by emptying every ask and pinning
+    the new hash. Mutation killed: exactly that.
+
+    H1 is the honest exception and is asserted as one rather than excused: an
+    export case is driven by ``action`` (export_docx), not by a question. A
+    case with NEITHER is a case that measures nothing.
+    """
+    blank = [
+        cid for cid, case in catalog["cases"].items()
+        if not case.get("ask", "").strip() and not case.get("action", "").strip()
+    ]
+    assert blank == [], f"cases that ask nothing and do nothing: {blank}"
+
+    asks = {cid for cid, c in catalog["cases"].items() if c.get("ask", "").strip()}
+    actions = {cid for cid, c in catalog["cases"].items() if c.get("action", "").strip()}
+    assert actions == {"H1"}, f"action-driven cases changed: {sorted(actions)}"
+    assert len(asks) == len(catalog["cases"]) - 1
+
+
+def test_the_catalog_names_both_sources_of_record(catalog):
+    """Mutation killed: dropping the pointers, which is how the two sources
+    get confused again six weeks from now."""
+    assert "UI-PHYS_DG2_results.xlsx" in catalog["question_source"]
+    assert "ask exactly" in catalog["question_source"]
+    assert catalog["expectation_source"].startswith("FLEET_OPS/artifacts/")
+    assert "GROUND_TRUTH_REVISIONS_" in catalog["expectation_source"]
+    assert "frozen" in catalog["wording_policy"].lower()
+
+
+def test_the_readme_states_the_rule_rather_than_implying_it():
+    """A convention nobody wrote down is a convention that gets broken. This
+    asserts the load-bearing sentences exist, not the prose around them."""
+    text = README.read_text(encoding="utf-8")
+    assert "Question (ask exactly)" in text
+    assert "GROUND_TRUTH_REVISIONS_2026-09-01.md" in text
+    # The two rules, each in its own words.
+    assert "Never reworded" in text
+    assert "only by appending" in text
+    # And the reason, so a reader can judge the rule rather than obey it.
+    assert "F-PHRASE-1" in text
+    assert "is not evidence about the" in text
+
+
+def test_the_revision_log_named_by_the_catalog_is_the_one_the_readme_names(catalog):
+    """Two pointers to the expectation source must not drift apart."""
+    named = catalog["expectation_source"].rsplit("/", 1)[-1]
+    assert named in README.read_text(encoding="utf-8")
