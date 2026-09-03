@@ -1274,6 +1274,96 @@ def _extract_with_meta(
     return text, meta
 
 
+def _oxml_local_name(tag: object) -> str:
+    """Local name of an oxml/lxml tag (Clark notation or prefixed)."""
+    if not isinstance(tag, str):
+        return ""
+    if tag.startswith("{") and "}" in tag:
+        return tag.split("}", 1)[1]
+    if ":" in tag:
+        return tag.split(":", 1)[1]
+    return tag
+
+
+def _docx_table_row_parts(table: Any) -> list[str]:
+    """Plaintext rows from a table, including nested tables.
+
+    python-docx ``document.tables`` is top-level only, and ``cell.text`` is
+    the cell's own paragraphs — it excludes nested ``w:tbl``. Construction
+    letter signature blocks often sit in those nested tables.
+    """
+    parts: list[str] = []
+    for row in getattr(table, "rows", None) or []:
+        cells: list[str] = []
+        nested: list[str] = []
+        for cell in getattr(row, "cells", None) or []:
+            text = (getattr(cell, "text", None) or "").strip()
+            if text:
+                cells.append(text)
+            for inner in getattr(cell, "tables", None) or []:
+                nested.extend(_docx_table_row_parts(inner))
+        if cells:
+            parts.append(" | ".join(cells))
+        parts.extend(nested)
+    return parts
+
+
+# Word text-boxes (VML + DrawingML) and shape text bodies. Local names so
+# we do not depend on a prefix map; never walk binary / blip parts.
+_DOCX_DRAWING_TEXT_CONTAINERS = frozenset({"txbxContent", "txBody"})
+
+
+def _docx_drawing_plain_parts(root: Any) -> list[str]:
+    """Text from Word text-boxes and drawing shapes, not body paragraphs.
+
+    python-docx ignores ``w:txbxContent`` (VML pict and DrawingML wps) and
+    ``a:txBody`` shape text. Letter signature lines live there. Only
+    ``w:t`` / ``a:t`` character data is taken — no XML tags, no binary.
+    """
+    if root is None or not hasattr(root, "iter"):
+        return []
+    parts: list[str] = []
+    for el in root.iter():
+        if _oxml_local_name(getattr(el, "tag", "")) not in _DOCX_DRAWING_TEXT_CONTAINERS:
+            continue
+        paras: list[str] = []
+        for child in el.iter():
+            if child is el:
+                continue
+            if _oxml_local_name(getattr(child, "tag", "")) != "p":
+                continue
+            bits: list[str] = []
+            for t_el in child.iter():
+                local = _oxml_local_name(getattr(t_el, "tag", ""))
+                if local == "t" and t_el.text:
+                    bits.append(t_el.text)
+                elif local == "tab":
+                    bits.append("\t")
+            para = "".join(bits).strip()
+            if para:
+                paras.append(para)
+        if paras:
+            parts.append("\n".join(paras))
+    return parts
+
+
+def _docx_plain_text(document: Any) -> str:
+    """Body paragraphs + tables (including nested) + text-box / drawing text.
+
+    getattr-guarded so a test double without ``.tables`` / ``.element`` still
+    yields the paragraph text already collected.
+    """
+    parts = [
+        p.text
+        for p in getattr(document, "paragraphs", None) or []
+        if getattr(p, "text", "").strip()
+    ]
+    for table in getattr(document, "tables", None) or []:
+        parts.extend(_docx_table_row_parts(table))
+    parts.extend(_docx_drawing_plain_parts(getattr(document, "element", None)))
+    return "\n".join(parts)
+
+
 def _extract_with_meta_impl(
     file_path: str, filename: str, force_ocr: bool = False
 ) -> tuple[str, dict[str, Any]]:
@@ -1315,21 +1405,11 @@ def _extract_with_meta_impl(
             import docx
             with file_crypto.open_plaintext(file_path) as readable_path:
                 document = docx.Document(readable_path)
-                # python-docx `.paragraphs` EXCLUDES table cells. RFP/BOD/spec
-                # docs put requirements, schedules and specs in tables — dropping
-                # them under-extracts ~half the document (Anthropic/Kenya RFPs:
-                # 5.6k para chars + 5.3k table chars → only ~2 chunks). Include
-                # both.
-                parts = [p.text for p in document.paragraphs if p.text.strip()]
-                # getattr guard: real python-docx always exposes .tables, but a
-                # malformed/partial document (or a test double) may not — don't
-                # let a missing .tables drop the paragraph text we already have.
-                for _tbl in getattr(document, "tables", None) or []:
-                    for _row in _tbl.rows:
-                        _cells = [c.text.strip() for c in _row.cells if c.text.strip()]
-                        if _cells:
-                            parts.append(" | ".join(_cells))
-                return "\n".join(parts), {}
+                # python-docx `.paragraphs` excludes table cells; `.tables`
+                # is top-level only and ignores nested w:tbl. Text-boxes
+                # (w:txbxContent / a:txBody) are invisible to both. Letter
+                # signature blocks live in those structures — walk them.
+                return _docx_plain_text(document), {}
 
         # ── XLSX ─────────────────────────────────────────────────────────────
         if ext == ".xlsx":
