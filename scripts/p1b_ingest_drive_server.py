@@ -145,13 +145,30 @@ def _ingest_file(
 
     # Archive raw bytes to R2 before indexing. The local copy is only needed
     # for the extractors/indexers and is deleted afterwards.
-    archive = r2_storage.archive_document(
-        project_id=project_id,
-        drive_file_id=file_meta["id"],
-        original_name=Path(rel).name,
-        raw_bytes=raw_bytes,
-        content_sha256=content_sha,
-    )
+    # R2 failure (AccessDenied, timeouts, client construction) must not abort
+    # this file: the Neon document row + index still happen with r2_archived=False.
+    try:
+        archive = r2_storage.archive_document(
+            project_id=project_id,
+            drive_file_id=file_meta["id"],
+            original_name=Path(rel).name,
+            raw_bytes=raw_bytes,
+            content_sha256=content_sha,
+        )
+    except Exception as exc:  # noqa: BLE001 — belt-and-suspenders if archive_document leaks
+        print(
+            f"[p1b-server] R2 archive raised {type(exc).__name__}: {exc}; "
+            f"continuing ingest for {rel!r} (r2_archived=False)",
+            file=sys.stderr,
+        )
+        archive = {
+            "archived": False,
+            "r2_object_key": None,
+            "r2_bucket": None,
+            "r2_endpoint": None,
+            "r2_account_id": None,
+            "error": f"R2_UPLOAD_FAILED: {type(exc).__name__}: {exc}",
+        }
 
     common_meta = {
         "drive_file_id": file_meta["id"],

@@ -96,6 +96,18 @@ def fetch_failure_reason(
     return "R2 object missing or fetch failed"
 
 
+def _failed_archive(*, error: str, bucket: Optional[str] = None) -> Dict[str, Any]:
+    """Canonical 'could not archive' payload. Callers must keep ingesting."""
+    return {
+        "archived": False,
+        "r2_object_key": None,
+        "r2_bucket": bucket,
+        "r2_endpoint": os.getenv("R2_ENDPOINT_URL"),
+        "r2_account_id": os.getenv("R2_ACCOUNT_ID"),
+        "error": error,
+    }
+
+
 def archive_document(
     project_id: str,
     drive_file_id: str,
@@ -105,6 +117,9 @@ def archive_document(
 ) -> Dict[str, Any]:
     """Upload raw file bytes to R2 and return archive metadata.
 
+    Never raises. PutObject AccessDenied (and any other boto/botocore failure)
+    returns ``archived=False`` so TIER-1 ingest can still write the Neon row.
+
     Returns a dict with:
       - archived: bool
       - r2_object_key: str | None
@@ -113,20 +128,24 @@ def archive_document(
       - r2_account_id: str | None
       - error: str | None
     """
-    bucket = _bucket_name()
-    s3 = _client()
-    if not s3 or not bucket:
-        return {
-            "archived": False,
-            "r2_object_key": None,
-            "r2_bucket": None,
-            "r2_endpoint": None,
-            "r2_account_id": None,
-            "error": "R2_NOT_CONFIGURED",
-        }
-
-    key = _object_key(project_id, drive_file_id, original_name)
+    bucket: Optional[str] = None
     try:
+        bucket = _bucket_name()
+        # Client construction used to sit *outside* the try. boto3.client()
+        # rarely raises AccessDenied, but a credential/config error here used
+        # to abort the whole P1B run before the document reached Neon.
+        s3 = _client()
+        if not s3 or not bucket:
+            return {
+                "archived": False,
+                "r2_object_key": None,
+                "r2_bucket": None,
+                "r2_endpoint": None,
+                "r2_account_id": None,
+                "error": "R2_NOT_CONFIGURED",
+            }
+
+        key = _object_key(project_id, drive_file_id, original_name)
         # AWS S3/R2 expect the SHA256 checksum base64-encoded, not hex.
         checksum_b64 = base64.b64encode(bytes.fromhex(content_sha256)).decode("ascii")
         s3.put_object(
@@ -147,16 +166,18 @@ def archive_document(
             "r2_account_id": os.getenv("R2_ACCOUNT_ID"),
             "error": None,
         }
-    except Exception as exc:  # noqa: BLE001 — archive must never kill ingestion
-        logger.exception("R2 upload failed for %s", original_name)
-        return {
-            "archived": False,
-            "r2_object_key": None,
-            "r2_bucket": bucket,
-            "r2_endpoint": os.getenv("R2_ENDPOINT_URL"),
-            "r2_account_id": os.getenv("R2_ACCOUNT_ID"),
-            "error": f"R2_UPLOAD_FAILED: {type(exc).__name__}: {exc}",
-        }
+    except Exception as exc:  # archive must never kill ingestion
+        logger.warning(
+            "R2 archive failed for %s (%s: %s); ingest continues without object storage",
+            original_name,
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
+        return _failed_archive(
+            error=f"R2_UPLOAD_FAILED: {type(exc).__name__}: {exc}",
+            bucket=bucket,
+        )
 
 
 def fetch_object_bytes(
