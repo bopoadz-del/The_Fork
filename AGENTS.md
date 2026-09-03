@@ -85,9 +85,13 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   performance bond, Engineer, Aconex) stays on project-assistant + RAG.
   Do not dispatch `generate_wbs` / predefined schedule.
 - Python lint gates: `scripts/audit_stubs.py` and `scripts/scan_secrets.py` (stdlib
-  only). The ruff S110 gate uses ruff, which is **not** in `requirements.txt` — CI
-  installs `ruff==0.16.1` on demand; do the same locally if you need it
-  (`pip install ruff==0.16.1`).
+ only). `scan_secrets.py` is fail-closed on `SECRET_SCAN_PATTERNS` (env-fed
+ client-pattern denylist). If that env is unset/empty the script exits
+ non-zero and never reports clean — a missing denylist is a red gate, not a
+ skip. Do not hardcode the patterns; they are a repository secret. The ruff
+ S110 gate uses ruff, which is **not** in `requirements.txt` — CI installs
+ `ruff==0.16.1` on demand; do the same locally if you need it
+ (`pip install ruff==0.16.1`).
 
 ### Production Render (non-obvious)
 - Live service is `the-fork` (`srv-d9s6l67avr4c73aiujsg`) at `https://theshovel.ai`. Auto-deploy is **After CI Checks Pass** (`autoDeployTrigger: checksPass` in `render.yaml`). A red required GitHub check skips the auto-deploy. This blueprint value does not change the running service until Dashboard Auto-Deploy is flipped (prefer that one toggle; Apply Blueprint is still dangerous — see `render.yaml` header). A Render API deploy **without** `commitId` ships whatever is currently on `main`, not the feature-branch SHA. Pass the pushed commit explicitly.

@@ -142,12 +142,106 @@ def test_the_walk_reports_an_unmarked_secret(tmp_path, monkeypatch):
     assert "runbook.md:1" in findings[0]
 
 
-def test_the_tree_is_clean_right_now():
-    """The gate itself. If this fails, a secret was committed."""
+def test_the_tree_is_clean_right_now(monkeypatch):
+    """The gate itself. If this fails, a secret was committed.
+
+    The env-fed denylist must be present or the script refuses (fail-closed).
+    The pattern here is a structural dummy that does not match this tree;
+    live client patterns live in the repository secret, not in git.
+    """
     import subprocess
+    monkeypatch.setenv(scan_secrets.ENV_VAR, r"FORK_SCAN_DUMMY_\d{16}")
     result = subprocess.run(
         [sys.executable, "scripts/scan_secrets.py"],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True, text=True,
     )
-    assert result.returncode == 0, f"secret material in the tree:\n{result.stdout}"
+    assert result.returncode == 0, f"secret material in the tree:\n{result.stdout}\n{result.stderr}"
+
+
+# ── CI twin 2a: env-fed client-pattern denylist, fail-closed ───────────────
+#
+# Ported from The_Level's scan_client_patterns contract. Patterns arrive in
+# SECRET_SCAN_PATTERNS. A missing denylist is a red gate, not a skip. Dummy
+# tokens below are invented for this file; they are not battery strings,
+# canaries, or live client figures.
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", "\n\n", "# only a comment"])
+def test_unset_or_empty_denylist_refuses_to_report_clean(value):
+    """(1) unset / empty env → non-zero. Never conclude 'clean'."""
+    env = {} if value is None else {scan_secrets.ENV_VAR: value}
+    with pytest.raises(ValueError) as excinfo:
+        scan_secrets.load_client_patterns(env)
+    message = str(excinfo.value).lower()
+    assert "refuses" in message or "no usable patterns" in message
+    assert "clean" not in message or "refuses to report a clean" in str(excinfo.value)
+
+
+def test_unset_env_exits_nonzero_and_does_not_print_clean(monkeypatch, capsys):
+    """(1) CLI: unset SECRET_SCAN_PATTERNS → exit 2, no 'clean' on stdout."""
+    monkeypatch.delenv(scan_secrets.ENV_VAR, raising=False)
+    monkeypatch.setattr("sys.argv", ["scan_secrets.py", "--paths"])
+
+    assert scan_secrets.main() == 2
+    captured = capsys.readouterr()
+    assert "REFUSED" in captured.err
+    combined = captured.out + captured.err
+    assert "NO SECRET MATERIAL" not in combined
+    # Refusal may mention 'clean' as the conclusion it refuses to draw.
+    # The earned-clean banner must not appear.
+    assert "client-pattern scan: clean" not in combined
+
+
+def test_dummy_token_in_fixture_exits_nonzero(tmp_path, capsys, monkeypatch):
+    """(2) set env with a dummy token present in a fixture file → non-zero."""
+    # Built at runtime so this tracked test file never contains a matching
+    # literal (the tree-clean test uses the same structural pattern).
+    dummy = "FORK_SCAN_DUMMY_" + ("0" * 15) + "1"
+    fixture = tmp_path / "fixture.txt"
+    fixture.write_text(f"neutral prose containing {dummy}\n", encoding="utf-8")
+    monkeypatch.setenv(scan_secrets.ENV_VAR, r"FORK_SCAN_DUMMY_\d{16}")
+    monkeypatch.setattr(
+        "sys.argv", ["scan_secrets.py", "--paths", str(fixture)]
+    )
+
+    assert scan_secrets.main() == 1
+    err = capsys.readouterr().err
+    assert "fixture.txt:1" in err
+    assert "pattern #0" in err
+    assert dummy not in err, "the dummy token was echoed into the log"
+    assert r"FORK_SCAN_DUMMY_\d{16}" not in err, "the secret pattern was echoed"
+
+
+def test_set_env_with_no_match_exits_zero(tmp_path, capsys, monkeypatch):
+    """(3) set env with no match → zero."""
+    fixture = tmp_path / "clean.txt"
+    fixture.write_text("bicycle wheels\n", encoding="utf-8")
+    monkeypatch.setenv(scan_secrets.ENV_VAR, r"FORK_SCAN_DUMMY_\d{16}")
+    monkeypatch.setattr(
+        "sys.argv", ["scan_secrets.py", "--paths", str(fixture)]
+    )
+
+    assert scan_secrets.main() == 0
+    out = capsys.readouterr().out
+    assert "clean" in out
+    assert "1 pattern(s)" in out
+    assert "1 file(s)" in out
+
+
+def test_escaped_newlines_are_accepted_as_separators():
+    """A GitHub secret is often pasted as one line with \\n between entries."""
+    patterns = scan_secrets.load_client_patterns(
+        {scan_secrets.ENV_VAR: r"alpha\nbeta"}
+    )
+    assert len(patterns) == 2
+
+
+def test_a_broken_pattern_is_reported_without_printing_the_pattern():
+    with pytest.raises(ValueError) as excinfo:
+        scan_secrets.load_client_patterns(
+            {scan_secrets.ENV_VAR: "unclosed(group"}
+        )
+    message = str(excinfo.value)
+    assert "not a valid regex" in message
+    assert "unclosed(group" not in message, "the secret pattern was echoed"
