@@ -18,6 +18,7 @@ from app.core.dynamic_reasoning import understand_intent
 from app.dependencies import require_user
 from app.dependencies import block_instances
 from app.infra.monitoring import capture_llm_transport_failure, get_request_id
+from app.routers.chat_watchdog import guarantee_terminal
 
 logger = logging.getLogger(__name__)
 
@@ -778,8 +779,11 @@ async def chat_stream(request: ChatRequest, auth: dict = Depends(require_user)):
             # exception text (it can carry infra detail like the LLM tunnel URL).
             yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
 
+    # F-SILENT-1 (B6): the agent's own guard begins inside chat_stream, so a
+    # turn that dies in the router's frame -- past `route` -- ends with no
+    # answer, no error and HTTP 200. This wraps the whole turn instead.
     return StreamingResponse(
-        event_stream(),
+        guarantee_terminal(event_stream(), request_id=get_request_id()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -953,8 +957,9 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
             _report_sse_llm_failure(str(e), path="/v1/chat/stream")
             yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant is temporarily unavailable. Please try again.', 'request_id': rid})}\n\n"
 
+    # Same guard on the v1 path -- B6 was measured here.
     return StreamingResponse(
-        event_stream(),
+        guarantee_terminal(event_stream(), request_id=get_request_id()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
