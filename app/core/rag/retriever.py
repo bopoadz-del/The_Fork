@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional, Set, Tuple
 
+from app.core.contract_data_chunks import particulars_chunk_states_a_value
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import (
     Chunk,
@@ -362,6 +363,44 @@ def filename_matches_named_contracts(
     return any(cid in text_l for cid in named_ids)
 
 
+def elect_answer_bearing_contract(query: str, ranked_docs) -> Optional[str]:
+    """Which contract owns an UNNAMED answer, decided by evidence not by rank.
+
+    ``ranked_docs`` is ``(filename, chunk_text)`` in descending final-score
+    order. Returns the winning PREFIX-YEAR-SEQ, or None to leave the choice
+    to arrival order (today's behaviour).
+
+    WHY THIS EXISTS. The unnamed fence locks onto the first candidate that
+    carries a contract id and drops every other id, so the top-ranked chunk
+    does not merely outrank the rest — it DELETES the other contract from the
+    result set. On the live Master Corpus that is decided by whichever chunk
+    happens to sort first, and wave-1 measured both outcomes on one corpus in
+    one session: A2 and A6 passed because a DD-2023-118 Contract Data row
+    sorted first, while A5 and A9 failed because a DD-2022-175 Conditions of
+    Contract clause did — and once it had, the DD-2023-118 row holding the
+    answer could not appear at any rank.
+
+    A General Conditions clause or a defined-term glossary entry is not an
+    answer to "what is the rate" or "who is the Engineer"; it is a pointer to
+    the row that holds it. So when the question asks for a filled particular
+    and the pool contains one, the contract that owns the best-matching
+    FILLED PARTICULARS ROW wins the pool — a pointer from another contract
+    cannot take it away.
+
+    This complements the named-id fence (#443) rather than re-implementing
+    it: a question that names its contract never reaches here.
+    """
+    if not query_asks_for_contract_particulars(query):
+        return None
+    for filename, text in ranked_docs:
+        if not is_contract_data_particulars_row(text):
+            continue
+        ids = extract_contract_doc_ids(filename or "")
+        if ids:
+            return ids[0]
+    return None
+
+
 class _ContractScope:
     """Drop wrong-contract chunks before top-K selection.
 
@@ -369,14 +408,19 @@ class _ContractScope:
     if none remain the result is empty (fail closed — do not fill with
     another year's DD contract).
 
-    Unnamed query: the first kept chunk that carries a contract id wins
-    the result set; later chunks from a different PREFIX-YEAR-SEQ are
-    dropped so one answer cannot mix years.
+    Unnamed query: one contract wins the result set and chunks from a
+    different PREFIX-YEAR-SEQ are dropped, so one answer cannot mix years.
+    The winner is elected from answer-bearing evidence when the question
+    asks for a filled Contract Data particular (see
+    :func:`elect_answer_bearing_contract`); otherwise the first kept chunk
+    carrying a contract id wins, as before.
     """
 
-    def __init__(self, query: str) -> None:
+    def __init__(self, query: str, ranked_docs=None) -> None:
         self.named = extract_contract_doc_ids(query or "")
         self.winning: Optional[str] = None
+        if not self.named and ranked_docs is not None:
+            self.winning = elect_answer_bearing_contract(query, ranked_docs)
 
     def allow(self, filename: str, chunk_text: str = "") -> bool:
         if self.named:
@@ -777,6 +821,22 @@ _FILLED_IN_ASK_RE = re.compile(
     r"duration|figure)|per\s+(?:calendar\s+)?day|calendar\s+days|"
     r"\bpercentage\b|\bamount\b)",
 )
+# Not every Contract Data particular is a number. A filled row can name a
+# party (the Engineer), a method (the approved electronic communication), or
+# an address — and asking WHO the Engineer is wants that filled row, not the
+# General Conditions' "'Engineer' means the person appointed by the Employer"
+# glossary entry. Live wave-1 A9 answered from the glossary of a DIFFERENT
+# contract year because the ask was never recognised as particulars-shaped,
+# so no part of the particulars machinery ran on it.
+_CD_CONTRACT_ROLE_RE = re.compile(
+    r"(?i)\b(?:engineer(?:'s\s+representative)?|"
+    r"employer(?:'s\s+representative)?|contractor|"
+    r"dispute\s+(?:adjudication\s+)?board|adjudicator)\b",
+)
+_CD_WHO_IS_RE = re.compile(
+    r"(?i)\bwho\s+(?:is|are)\b|\bname\s+of\s+the\b|"
+    r"\bwhich\s+(?:firm|company|entity|organisation|organization)\b",
+)
 _CD_PARTICULARS_PREFIX_RE = re.compile(
     r"contract\s+data\s+particulars", re.IGNORECASE,
 )
@@ -795,6 +855,27 @@ _CD_FILLED_VALUE_RE = re.compile(
     r"\d+(?:\.\d+)?\s*%|"
     r"\d+\s+(?:calendar\s+|working\s+)?days?)",
 )
+# A Conditions-of-Contract clause that says "at the rate stated in the
+# Contract Data" is a POINTER to the answer, not the answer. It carries the
+# heading phrase and — being a clause about delay damages — repeats every
+# label word the question uses, so it used to collect the heading tier plus
+# the full label bonus and land within ~0.45 of the row that actually holds
+# the rate. Live wave-1 A5 is that chunk winning: the answer cited
+# Sub-Clause 8.8 and then reported the rate and cap as absent from its
+# excerpts, because the clause it had only refers to where they are stated.
+#
+# The discriminator is what precedes the phrase. A section heading sits at a
+# line start; a cross-reference is governed by a preposition ("in the",
+# "stated in the", "set out in the"). Only when EVERY mention in the chunk is
+# prepositional is the chunk a pointer — one genuine heading is enough to
+# keep the tier.
+_CD_XREF_LEAD_RE = re.compile(
+    r"(?i)\b(?:stated|set\s+out|specified|given|listed|described|defined|"
+    r"identified|named|shown|provided|inserted|entered|contained|"
+    r"referred\s+to|required)?\s*"
+    r"\b(?:in|within|under|per|to|of|from|into)\s+(?:the\s+)?$",
+)
+_CD_XREF_LOOKBACK = 48
 _CD_PARTICULARS_PREFIX_BONUS = 0.85
 _CD_PARTICULARS_HEADING_BONUS = 0.40
 _CD_DEFINITION_PENALTY = 0.40
@@ -854,6 +935,42 @@ def _cd_label_bonus(query_terms: frozenset, text: str) -> float:
     return min(overlap * _CD_LABEL_TERM_BONUS, _CD_LABEL_BONUS_CAP)
 
 
+def contract_data_mention_is_only_a_cross_reference(text: str) -> bool:
+    """True when every "Contract Data" mention points AT it rather than IS it.
+
+    ``... at the rate stated in the Contract Data for every calendar day ...``
+    is a clause telling the reader where to look. ``Contract Data`` on its own
+    line, followed by rows, is the thing itself. False when the chunk has no
+    mention at all — the caller has already established there is one.
+    """
+    t = text or ""
+    mentions = list(_CD_HEADING_IN_CHUNK_RE.finditer(t))
+    if not mentions:
+        return False
+    for m in mentions:
+        lead = t[max(0, m.start() - _CD_XREF_LOOKBACK):m.start()]
+        if not _CD_XREF_LEAD_RE.search(lead):
+            return False
+    return True
+
+
+def is_contract_data_particulars_row(text: str) -> bool:
+    """True for an index-time ``CONTRACT DATA particulars`` chunk that states
+    a particular — the "answer-bearing Contract Data evidence" predicate the
+    unnamed contract election runs on (:func:`elect_answer_bearing_contract`).
+
+    Deliberately stricter than the scoring tier below, which asks only "is
+    this a particulars chunk". The election decides which contract owns the
+    whole result set, so it must be satisfied by a row that carries a VALUE
+    and not by a window of unfilled keys — a clause number like ``1.1.67``
+    reads as a decimal to the numeric test, so numbers alone are not proof
+    that anything is filled in.
+    """
+    t = text or ""
+    if not _CD_PARTICULARS_PREFIX_RE.search(t):
+        return False
+    return particulars_chunk_states_a_value(t)
+
 
 def _cd_particulars_boost_enabled() -> bool:
     return (os.getenv("RAG_CD_PARTICULARS_BOOST") or "").strip().lower() not in (
@@ -862,15 +979,21 @@ def _cd_particulars_boost_enabled() -> bool:
 
 
 def query_asks_for_contract_particulars(query: str) -> bool:
-    """True when the question wants a filled-in Contract Data figure.
+    """True when the question wants a filled-in Contract Data particular.
 
     Definition questions ("what does Accepted Contract Amount mean") stay
     on the glossary path. Arithmetic unit-rate questions are not this.
+
+    A particular is not always a figure: "who is the Engineer" asks for the
+    filled row that names the party, which is why a contract-role identity
+    ask counts here too.
     """
     q = (query or "").strip()
     if not q or _DEFINITION_QUESTION_RE.search(q):
         return False
     if _PARTICULARS_FIELD_RE.search(q):
+        return True
+    if _CD_WHO_IS_RE.search(q) and _CD_CONTRACT_ROLE_RE.search(q):
         return True
     return bool(_FILLED_IN_ASK_RE.search(q) and _CD_HEADING_IN_CHUNK_RE.search(q))
 
@@ -880,16 +1003,22 @@ def contract_data_particulars_delta(text: str) -> float:
 
     Dedicated ``CONTRACT DATA particulars`` chunks (index-time prefix) get
     the strongest lift. Other chunks that still carry a Contract Data
-    heading plus a filled value get a smaller lift. Glossary "means the"
-    chunks with no filled figure are demoted so they cannot bury the row.
+    heading plus a filled value get a smaller lift — but a chunk whose only
+    mention of the Contract Data is a cross-reference to it does not, because
+    a clause that says where the rate is stated is not the row that states
+    it. Glossary "means the" chunks with no filled figure are demoted so they
+    cannot bury the row.
     """
     t = text or ""
-    if _CD_PARTICULARS_PREFIX_RE.search(t) and _CD_FILLED_VALUE_RE.search(t):
+    if _CD_PARTICULARS_PREFIX_RE.search(t) and (
+        _CD_FILLED_VALUE_RE.search(t) or particulars_chunk_states_a_value(t)
+    ):
         return _CD_PARTICULARS_PREFIX_BONUS
     if (
         _CD_HEADING_IN_CHUNK_RE.search(t)
         and _CD_FILLED_VALUE_RE.search(t)
         and not _CD_MEANS_RE.search(t)
+        and not contract_data_mention_is_only_a_cross_reference(t)
     ):
         return _CD_PARTICULARS_HEADING_BONUS
     if _CD_MEANS_RE.search(t) and not _CD_FILLED_VALUE_RE.search(t):
@@ -1062,9 +1191,22 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
 
     kept: List[Chunk] = []
     noise_filtered = 0
-    scope = _ContractScope(query)
+    name_cache: Dict[str, str] = {}
+
+    def _name(doc_id: str) -> str:
+        if doc_id not in name_cache:
+            name_cache[doc_id] = _doc_name_for_id(doc_id)
+        return name_cache[doc_id]
+
+    # Elect the unnamed contract from answer-bearing evidence. The generator
+    # is consumed lazily and short-circuits on the first filled particulars
+    # row, so a healthy query resolves only a handful of names.
+    scope = _ContractScope(
+        query,
+        ranked_docs=((_name(c.doc_id), c.text or "") for c in candidates),
+    )
     for chunk in candidates:
-        name = _doc_name_for_id(chunk.doc_id)
+        name = _name(chunk.doc_id)
         if _is_noise_filename(name):
             noise_filtered += 1
             continue
@@ -1641,7 +1783,13 @@ def retrieve_with_filter(
     noise_dropped = 0
     revision_suppressed = 0
     gk_kept = 0
-    scope = _ContractScope(query)
+    # `scored` is already in final rank order, so this election sees exactly
+    # the ranking the user would have got — and prevents a wrong-contract
+    # pointer at rank 1 from deleting the row that holds the answer.
+    scope = _ContractScope(
+        query,
+        ranked_docs=((name_by_id.get(c.doc_id, ""), c.text or "") for _, c in scored),
+    )
     for _, c in scored:
         name = name_by_id.get(c.doc_id, "")
         if _is_noise_filename(name):
