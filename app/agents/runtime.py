@@ -6141,6 +6141,17 @@ _FILE_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+_MISSING_INPUT_NUDGE = (
+    "The excerpts above were retrieved specifically because your draft "
+    "answer said it did not have %r. Read them and answer the original "
+    "question in full, using the figure(s) they contain and citing the "
+    "clause or document they came from.\n"
+    "If they still do not contain it, say so plainly and do NOT estimate, "
+    "infer, or substitute a typical value -- a wrong figure is worse than "
+    "the gap you already reported."
+)
+
+
 @dataclass
 class Agent:
     """Declarative agent definition."""
@@ -6852,6 +6863,12 @@ class Agent:
                             if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+                    # An answer that names its own missing input gets ONE
+                    # bounded retrieval for it before it is final (F-E1-2).
+                    final_text, _fetched_for = await self._fetch_named_missing_input(
+                        final_text, messages, user_message=user_message,
+                        project_id=project_id, api_key=api_key, user_id=user_id,
+                    )
                     final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
@@ -6969,6 +6986,10 @@ class Agent:
         if _final_text_needs_forced_retry(final_text, user_message=user_message):
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
+        final_text, _fetched_for = await self._fetch_named_missing_input(
+            final_text, messages, user_message=user_message,
+            project_id=project_id, api_key=api_key, user_id=user_id,
+        )
         final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
@@ -6985,6 +7006,86 @@ class Agent:
             "sources": _build_sources_from_audit(_rag_audit, final_text),
             "exports": _build_exports_from_audit(_rag_audit, final_text, tool_calls_made),
         }
+
+    async def _fetch_named_missing_input(
+        self,
+        final_text: str,
+        messages: list[dict[str, Any]],
+        *,
+        user_message: str,
+        project_id: str | None,
+        api_key: str | None,
+        user_id: str | None,
+    ) -> tuple[str, str | None]:
+        """ONE retrieval for an input the answer named as missing (item 4).
+
+        F-E1-2: E1 answered "do not state the specific monetary rate per
+        calendar day" while E2, one question later in the same session and
+        the same corpus, retrieved the Accepted Contract Amount to complete
+        its arithmetic. E1 identified its missing input and did not go and
+        get it.
+
+        Bounded means bounded: one retrieval, one re-ask, and every failure
+        path returns the ORIGINAL answer. A search always returns something,
+        so the answer is only revisited when what came back actually carries
+        the named terms -- otherwise a correct refusal would be talked out
+        of itself by whatever the index happened to rank first.
+        """
+        from app.agents.missing_input import (
+            enabled as _mi_enabled,
+            fetch_query as _mi_query,
+            fetched_context_supports as _mi_supports,
+            names_missing_input as _mi_names,
+        )
+
+        if not _mi_enabled() or not project_id or not (final_text or "").strip():
+            return final_text, None
+        missing = _mi_names(final_text)
+        if not missing:
+            return final_text, None
+        try:
+            sys_msg, _ = rag_inject(
+                user_message=_mi_query(missing, user_message),
+                project_id=project_id,
+                # No conversation_id: this is a targeted lookup, not a turn,
+                # and it must not enter the follow-up context of the next one.
+                conversation_id=None,
+                user_id=user_id,
+                agent_name=self.name,
+                history=None,
+            )
+        except Exception:  # noqa: BLE001 - a failed extra fetch is not a failed turn
+            _LOG.warning("missing-input fetch failed for %r", missing, exc_info=True)
+            return final_text, None
+
+        body = (sys_msg or {}).get("content") or ""
+        if not _mi_supports(body, missing):
+            _LOG.info(
+                "missing-input fetch for %r returned nothing carrying it; "
+                "the answer stands as written", missing,
+            )
+            return final_text, None
+
+        follow = list(messages) + [
+            {"role": "assistant", "content": final_text},
+            sys_msg,
+            {"role": "user", "content": _MISSING_INPUT_NUDGE % missing},
+        ]
+        resp = await self._call_llm(
+            follow, api_key, project_id=project_id, with_tools=False, user_id=user_id,
+        )
+        if resp.get("status") == "error":
+            return final_text, None
+        retry = _sanitize_final_text(
+            (resp["choice"].get("message") or {}).get("content") or "",
+            messages=follow, tool_results=[],
+        )
+        if not retry.strip() or _final_text_needs_forced_retry(
+            retry, user_message=user_message
+        ):
+            return final_text, None
+        _LOG.info("missing-input fetch answered %r; answer revised", missing)
+        return retry, missing
 
     async def chat_stream(
         self,
