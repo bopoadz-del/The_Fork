@@ -155,13 +155,34 @@ CORPUS = [
 
 # Ranking assertions need a real model. Do not undo CI's
 # RAG_EMBEDDING_MODEL=fake — that download is what Hub-429'd the virgin job.
-_SKIP_FAKE_EMBEDDER = pytest.mark.skipif(
-    (os.getenv("RAG_EMBEDDING_MODEL") or "").strip().lower() == "fake",
-    reason=(
-        "hybrid-vs-semantic ranking needs a real embedder; "
-        "CI sets RAG_EMBEDDING_MODEL=fake to avoid HuggingFace downloads"
-    ),
-)
+#
+# The decision is made at CALL time, from the embedder that was actually
+# built, and never at import time from RAG_EMBEDDING_MODEL. It used to be a
+# module-level ``pytest.mark.skipif`` reading that variable, and the two
+# answered different questions:
+#
+#   * Eight test modules (test_bm25_backend_parity, test_upload_contract,
+#     test_master_corpus_upload, test_fetch_document_scope, and others) call
+#     ``os.environ.setdefault("RAG_EMBEDDING_MODEL", "fake")`` at MODULE
+#     scope. That mutates the process environment permanently — there is no
+#     monkeypatch to unwind it — the moment the module is imported.
+#   * ``skipif`` is evaluated when THIS module is imported. Whether the
+#     variable is already "fake" by then is a function of collection order,
+#     not of anything this file controls.
+#   * ``store_with_corpus`` calls ``get_embedder()`` later still, at test
+#     run time, reading whatever the environment says by then.
+#
+# So the guard could answer "real model, run it" while the fixture went on to
+# build the fake one, and the ranking assertions — baselined against real
+# embeddings — failed. Reproduced deterministically:
+#
+#   pytest tests/test_hybrid_retrieval.py                 -> ranking tests skip
+#   pytest tests/test_bm25_backend_parity.py tests/test_hybrid_retrieval.py::\
+#          test_hybrid_beats_semantic_q5_manhole_spacing  -> FAILS
+#
+# Asking the built embedder what it is removes the question of ordering
+# entirely: there is now one source of truth, consulted once, at the only
+# moment when the answer is knowable.
 
 
 @pytest.fixture
@@ -208,6 +229,23 @@ def store_with_corpus():
             os.rmdir(tmpdir)
         except OSError:
             pass
+
+
+@pytest.fixture
+def ranking_corpus(store_with_corpus):
+    """``store_with_corpus``, but only for a run that built a REAL embedder.
+
+    Skips otherwise. See the note above ``store_with_corpus`` for why this
+    cannot be a module-level ``skipif``.
+    """
+    store, embedder, db_path = store_with_corpus
+    backend = getattr(embedder, "backend", None)
+    if backend == "fake":
+        pytest.skip(
+            "hybrid-vs-semantic ranking is baselined against a real embedding "
+            "model; this run built the fake (model2vec) backend"
+        )
+    return store, embedder, db_path
 
 
 def _ids(chunks):
@@ -277,14 +315,13 @@ def test_sanitize_fts5_query_handles_none():
 # ── Hybrid vs semantic on the seeded corpus ──────────────────────────────
 
 
-@_SKIP_FAKE_EMBEDDER
-def test_hybrid_beats_semantic_q5_manhole_spacing(store_with_corpus, monkeypatch):
+def test_hybrid_beats_semantic_q5_manhole_spacing(ranking_corpus, monkeypatch):
     """Q5: manhole spacing — semantic clusters on the repeated-token
     Vol3 legends. The TL chunk should land top-5 with hybrid
     (matches the docstring; the BM25 exact-token contribution from
     "MANHOLE" + "TYPE" pulls it up even though the natural-language
     query has no "1000m"/"intervals")."""
-    store, embedder, _ = store_with_corpus
+    store, embedder, _ = ranking_corpus
     # NOTE (scrub audit 2026-08-12): the "DG2" token in this query is PINNED
     # FIXTURE DATA, not a stray client reference. Under RAG_EMBEDDING_MODEL=fake
     # the embedding is a deterministic function of the exact string, so editing
@@ -300,11 +337,10 @@ def test_hybrid_beats_semantic_q5_manhole_spacing(store_with_corpus, monkeypatch
         f"hybrid should surface TL chunk top-5; got = {_ids(hyb)}"
 
 
-@_SKIP_FAKE_EMBEDDER
-def test_hybrid_beats_semantic_q4_trench_width(store_with_corpus, monkeypatch):
+def test_hybrid_beats_semantic_q4_trench_width(ranking_corpus, monkeypatch):
     """Q4: trench width — BM25 catches 'Payable trench width' on exact
     tokens, semantic disperses across noise."""
-    store, embedder, _ = store_with_corpus
+    store, embedder, _ = ranking_corpus
     query = "What is the payable trench width on the DG2 project"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
@@ -313,11 +349,10 @@ def test_hybrid_beats_semantic_q4_trench_width(store_with_corpus, monkeypatch):
         f"hybrid should land trench-width chunk top-5; got = {_ids(hyb)}"
 
 
-@_SKIP_FAKE_EMBEDDER
-def test_hybrid_beats_semantic_q2_sectional_elevation(store_with_corpus, monkeypatch):
+def test_hybrid_beats_semantic_q2_sectional_elevation(ranking_corpus, monkeypatch):
     """Q2: SECTIONAL ELEVATION exact-token match should pull the TL
     chunk into the top of the hybrid ranking."""
-    store, embedder, _ = store_with_corpus
+    store, embedder, _ = ranking_corpus
     query = "SECTIONAL ELEVATION drawing for telecom infrastructure"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
@@ -326,12 +361,11 @@ def test_hybrid_beats_semantic_q2_sectional_elevation(store_with_corpus, monkeyp
         f"hybrid should surface TL chunk by SECTIONAL ELEVATION; got = {_ids(hyb)}"
 
 
-@_SKIP_FAKE_EMBEDDER
-def test_hybrid_preserves_q3_prc501(store_with_corpus, monkeypatch):
+def test_hybrid_preserves_q3_prc501(ranking_corpus, monkeypatch):
     """Q3 regression: PRC-501 query must still hit the PRC-501 chunk
     top-1 or top-2 under hybrid (semantic was already good; hybrid
     shouldn't break it)."""
-    store, embedder, _ = store_with_corpus
+    store, embedder, _ = ranking_corpus
     query = "PRC-501 Design Reviews and Acceptance procedure"
 
     monkeypatch.setenv("RAG_HYBRID_SEARCH", "true")
@@ -423,3 +457,42 @@ def test_chunk_to_dict_drops_rrf_score():
     d = c.to_dict()
     assert "rrf_score" not in d
     assert d["score"] == 0.5
+
+
+def test_ranking_guard_is_not_decided_at_import_time():
+    """Fence: no module-level skipif in this file may read the environment.
+
+    This is the defect this file was fixed for, expressed as a test so it
+    cannot come back. A ``pytest.mark.skipif`` at module scope is evaluated
+    when the module is imported; eight other test modules set
+    ``RAG_EMBEDDING_MODEL=fake`` in ``os.environ`` at *their* module scope,
+    permanently and with no unwind. Whether that has happened yet depends on
+    collection order, so an import-time guard and the run-time fixture could
+    — and did — disagree, running ranking assertions against the fake
+    embedder.
+
+    Whatever decides whether a ranking test runs must ask the embedder that
+    was actually built, at the moment it exists.
+    """
+    import ast as _ast
+    from pathlib import Path as _Path
+
+    src = _Path(__file__).read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+
+    offenders = []
+    for node in tree.body:  # module scope only; nested is run-time
+        for sub in _ast.walk(node):
+            if not isinstance(sub, _ast.Call):
+                continue
+            target = _ast.unparse(sub.func)
+            if not target.endswith("skipif"):
+                continue
+            rendered = _ast.unparse(sub)
+            if "getenv" in rendered or "environ" in rendered:
+                offenders.append(rendered[:120])
+
+    assert not offenders, (
+        "a module-level skipif reads the environment; move the decision into "
+        "a fixture that inspects the built embedder instead: " + "; ".join(offenders)
+    )
