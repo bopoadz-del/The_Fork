@@ -49,7 +49,7 @@ def _seed_routing_pattern(le, project_id: str, action: str, corrected: bool = Fa
             "score": 1.0,
             "corrected": corrected,
         }),
-        "source": "test",
+        "source": "feedback_route",
     }, {})
 
 
