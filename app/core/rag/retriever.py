@@ -1199,8 +1199,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         return name_cache[doc_id]
 
     # Elect the unnamed contract from answer-bearing evidence. The generator
-    # is consumed lazily and short-circuits on the first filled particulars
-    # row, so a healthy query resolves only a handful of names.
+    # is consumed lazily and only for a particulars-shaped query, and it
+    # stops at the first filled row — so a healthy lookup resolves a handful
+    # of names, and the memo means the loop below never resolves one twice.
     scope = _ContractScope(
         query,
         ranked_docs=((_name(c.doc_id), c.text or "") for c in candidates),

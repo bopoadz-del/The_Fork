@@ -390,6 +390,43 @@ def test_a_clause_that_only_cross_references_the_contract_data_is_not_a_row():
     assert contract_data_particulars_delta(DD22_TFC_CLAUSE) <= 0.0
 
 
+#: The discriminator is the delicate part of this change, so it is pinned as
+#: a table rather than by example. True means "a pointer to the Contract
+#: Data", which earns no heading tier.
+_XREF_CASES = [
+    # Genuine headings and sections — the tier exists for these.
+    ("Contract Data\n1.1.75 Time for Completion | 640 days", False),
+    ("PARTICULAR CONDITIONS PART A - CONTRACT DATA\n\n1.1.1 ACA | SAR 900,000.00",
+     False),
+    ("Appendix to Tender\nItem 3 Performance Bond ... 10%", False),
+    ("Section 4 — Contract Particulars\n4.1 Retention | 5%", False),
+    ("Table 2: Contract Data summary — 1.1.75 | 640 days", False),
+    # Subject position, not a reference: this sentence STATES the particular.
+    ("The Contract Data states 640 days for the whole of the Works.", False),
+    # Pointers — a clause telling the reader where the value is stated.
+    ("...at the rate stated in the Contract Data for every calendar day.", True),
+    ("...as stated in the Contract Data, being 1,095 days.", True),
+    ("...set out in the Contract Data at 0.1% per day.", True),
+    ("...named in the Contract Data or replaced under 3.6 within 28 days.", True),
+    ("...specified in the Contract Data as 365 days.", True),
+    ("...the period given in the Contract Data (10% cap).", True),
+    ("...the amount inserted in the Contract Data, SAR 8,640,000.00.", True),
+    ("...listed in the Appendix to Tender at 5%.", True),
+    ("...referred to in the Contract Particulars as 20 days.", True),
+    ("...under the Contract Data the notification period is 365 days.", True),
+    ("...per the Contract Data, 640 days.", True),
+]
+
+
+@pytest.mark.parametrize("text, is_pointer", _XREF_CASES)
+def test_heading_versus_cross_reference_discriminator(text, is_pointer):
+    assert contract_data_mention_is_only_a_cross_reference(text) is is_pointer
+    if is_pointer:
+        assert contract_data_particulars_delta(text) <= 0.0
+    else:
+        assert contract_data_particulars_delta(text) > 0.0
+
+
 def test_a_real_contract_data_heading_still_earns_the_heading_tier():
     """The tier exists for a Contract Data section that reached retrieval
     through the plain word chunker, with no index-time prefix. A heading
@@ -451,6 +488,31 @@ def test_an_unrelated_who_question_is_not_pulled_onto_the_particulars_path():
         "What is the document number and revision of the priced Bill of "
         "Quantities, and who prepared it?"
     )
+
+
+def test_a9_is_the_only_battery_ask_this_reclassifies():
+    """Containment. Measured against `main` across all 35 frozen asks in
+    ``tests/fixtures/ui_phys/questions.json``: A9 is the single case whose
+    classification moves. These are the ones it must not move — each would
+    change which pipeline answers a question that is already passing.
+    """
+    import json
+    from pathlib import Path
+
+    catalog = json.loads(
+        (
+            Path(__file__).resolve().parent
+            / "fixtures" / "ui_phys" / "questions.json"
+        ).read_text(encoding="utf-8")
+    )
+    cases = catalog["cases"]
+    must_not = ["A8", "B1", "B6", "C2", "C4", "D1", "D3", "E3", "E4", "G1", "G5", "G6"]
+    for cid in must_not:
+        ask = cases[cid]["ask"]
+        assert not query_asks_for_contract_particulars(ask), f"{cid}: {ask!r}"
+    for cid in ("A1", "A3", "A5", "A6", "A9"):
+        ask = cases[cid]["ask"]
+        assert query_asks_for_contract_particulars(ask), f"{cid}: {ask!r}"
 
 
 def test_a_particulars_row_whose_value_is_a_name_counts_as_filled():
