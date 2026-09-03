@@ -48,6 +48,7 @@ and ``complete`` is false unless the work actually finished.
 """
 from __future__ import annotations
 
+import atexit
 import faulthandler
 import json
 import os
@@ -461,13 +462,9 @@ def install_signal_handlers(
 ) -> Callable[[], None]:
     """Turn a stop signal into a named, logged, cooperative stop.
 
-    Returns a callable that restores the previous handlers — tests must not
-    leave a handler installed on the pytest process, and a run that finishes
-    normally should not keep one either.
-
-    SIGHUP is included by default for p1b: a detached Render Shell run that is
-    not a session leader gets HUPed when the shell closes, and dying silently
-    there is indistinguishable from the OOM kill we are hunting.
+    Defaults to ``stop_signals()``. Returns a callable that restores the
+    previous handlers — tests must not leave a handler installed on the pytest
+    process, and a run that finishes normally should not keep one either.
     """
     if signums is None:
         signums = stop_signals()
@@ -711,7 +708,6 @@ class RunLifecycle:
         self._restore_handlers: Optional[Callable[[], None]] = None
         self._previous_excepthook: Optional[Callable[..., None]] = None
         self._atexit_registered = False
-        self._dump_signal_registered = False
         self._progress: Dict[str, Any] = {
             "folder": None,
             "done": 0,
@@ -754,8 +750,6 @@ class RunLifecycle:
             )
             self.install_excepthook()
         if self._register_atexit:
-            import atexit
-
             atexit.register(self._atexit_flush)
             self._atexit_registered = True
 
@@ -875,8 +869,6 @@ class RunLifecycle:
             sys.excepthook = self._previous_excepthook
             self._previous_excepthook = None
         if self._atexit_registered:
-            import atexit
-
             atexit.unregister(self._atexit_flush)
             self._atexit_registered = False
         sig = getattr(signal, "SIGUSR1", None)

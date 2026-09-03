@@ -422,6 +422,41 @@ def test_completed_run_flushes_once_and_records_completed(tmp_path):
     assert len(flushes) == 1
 
 
+def test_start_prints_the_previous_run_postmortem(tmp_path):
+    """The operator does not have to know to look: the next start says it."""
+    state = tmp_path / "state.json"
+    lifecycle.write_state_atomically(state, {
+        "run_id": "37159882e871",
+        "phase": lifecycle.PHASE_RUNNING,
+        "pid": 829,
+        "progress": {"folder": "the client project", "done": 316,
+                     "total": 1361, "in_flight": 2},
+        "memory": {"rss_mb": 3400.0, "oom_kill": 0, "uptime_s": 41231.0},
+    })
+    logged = []
+    run = lifecycle.RunLifecycle(
+        run_id="next", label="test", state_path=state, flush=None,
+        log=logged.append, stall_after_s=0, install_handlers=False,
+        register_atexit=False,
+    )
+    run.start(context={})
+    assert any(
+        "POSTMORTEM previous run 37159882e871 DIED WITHOUT A FINAL TALLY at "
+        "316/1361" in line for line in logged
+    ), logged
+
+
+def test_finish_infers_complete_from_the_reason(tmp_path):
+    flushes = []
+    run = _lifecycle(tmp_path, flushes)
+    run.finish(lifecycle.PHASE_COMPLETED)
+    assert flushes == [(lifecycle.PHASE_COMPLETED, True)]
+
+    other = _lifecycle(tmp_path, flushes)
+    other.finish("signal:SIGTERM")
+    assert flushes[-1] == ("signal:SIGTERM", False)
+
+
 def test_uncaught_exception_flushes_before_the_traceback(tmp_path):
     flushes = []
     run = _lifecycle(tmp_path, flushes)
@@ -599,6 +634,43 @@ def test_supervisor_names_a_sigkilled_child(tmp_path, capsys):
     assert "killed by SIGKILL (9)" in blob
     assert "OOM killer" in blob
     assert "DIED WITHOUT A FINAL TALLY at 316/1361" in blob
+
+
+def test_supervisor_calls_the_oom_verdict_when_the_counter_moves(monkeypatch):
+    """The claim this whole mechanism rests on: after reaping a killed child,
+    the cgroup counter says whether the kernel did it."""
+    snapshots = iter([
+        lifecycle.MemorySnapshot(oom_kill=0, cgroup_current_mb=3900.0),
+        lifecycle.MemorySnapshot(oom_kill=1, cgroup_current_mb=900.0),
+    ])
+    monkeypatch.setattr(
+        lifecycle, "read_memory_snapshot", lambda **_k: next(snapshots),
+    )
+    logged = []
+    code = lifecycle.run_supervised(
+        [sys.executable, "-c",
+         "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"]
+        if os.name == "posix" else [sys.executable, "-c", "raise SystemExit(9)"],
+        log=logged.append,
+    )
+    assert code in (137, 9)
+    assert any(
+        "VERDICT cgroup oom_kill 0 -> 1: the kernel OOM killer fired" in line
+        for line in logged
+    ), logged
+
+
+@POSIX_ONLY
+def test_supervisor_installs_and_restores_forwarding_handlers():
+    before = signal.getsignal(signal.SIGTERM)
+    logged = []
+    assert lifecycle.run_supervised(
+        [sys.executable, "-c", "print('ok')"],
+        log=logged.append,
+        forward=[signal.SIGTERM, 999999],
+    ) == 0
+    assert signal.getsignal(signal.SIGTERM) is before
+    assert any("could not hook signal 999999" in line for line in logged)
 
 
 def test_supervisor_passes_through_a_clean_exit(tmp_path):
