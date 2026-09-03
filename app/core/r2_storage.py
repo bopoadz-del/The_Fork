@@ -19,14 +19,42 @@ import base64
 import hashlib
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 
+def _log_r2_failure(message: str, *args: Any) -> None:
+    """Log an expected R2 failure without a traceback.
+
+    ``exc_info=True`` was leftover after #477: TIER-1 still printed a full
+    botocore AccessDenied stack (run de6a06b7542c at 323/1380) next to
+    'ingest continues', which looks like a crash and can trip log-based
+    restarts. Never attach exception info here.
+    """
+    try:
+        logger.warning(message, *args)
+    except Exception as log_exc:
+        # Logging must not become the abort. Print is the fallback.
+        try:
+            formatted = message % args if args else message
+        except Exception:
+            formatted = message
+        print(
+            f"[r2_storage] {formatted}; also failed to log "
+            f"({type(log_exc).__name__}: {log_exc})",
+            file=sys.stderr,
+        )
+
+
 def _client() -> Optional[Any]:
-    """Return a boto3 S3 client if R2 credentials are configured."""
+    """Return a boto3 S3 client if R2 credentials are configured.
+
+    Never raises. Client construction AccessDenied (or any boto/botocore
+    failure) returns ``None`` so callers cannot abort ingest.
+    """
     try:
         import boto3
         from botocore.config import Config
@@ -41,14 +69,22 @@ def _client() -> Optional[Any]:
         logger.debug("R2 credentials incomplete; archive disabled")
         return None
 
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name="auto",
-        config=Config(signature_version="s3v4"),
-    )
+    try:
+        return boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+    except Exception as exc:
+        _log_r2_failure(
+            "R2 client construction failed (%s: %s); archive disabled",
+            type(exc).__name__,
+            exc,
+        )
+        return None
 
 
 def _bucket_name() -> Optional[str]:
@@ -73,7 +109,15 @@ def object_key_for(project_id: str, drive_file_id: str, original_name: str) -> s
 
 def r2_configured() -> bool:
     """True when the process can actually GET an object (client + bucket)."""
-    return bool(_client() and _bucket_name())
+    try:
+        return bool(_client() and _bucket_name())
+    except Exception as exc:
+        _log_r2_failure(
+            "R2 configured-check failed (%s: %s); treating as not configured",
+            type(exc).__name__,
+            exc,
+        )
+        return False
 
 
 def fetch_failure_reason(
@@ -88,7 +132,16 @@ def fetch_failure_reason(
     key = (object_key or "").strip()
     if not key:
         return "R2 object key is empty"
-    if _client() is None:
+    try:
+        client = _client()
+    except Exception as exc:
+        _log_r2_failure(
+            "R2 client check failed (%s: %s); treating as not configured",
+            type(exc).__name__,
+            exc,
+        )
+        return "R2 is not configured on this service"
+    if client is None:
         return "R2 is not configured on this service"
     resolved = (bucket or _bucket_name() or "").strip()
     if not resolved:
@@ -167,12 +220,11 @@ def archive_document(
             "error": None,
         }
     except Exception as exc:  # archive must never kill ingestion
-        logger.warning(
+        _log_r2_failure(
             "R2 archive failed for %s (%s: %s); ingest continues without object storage",
             original_name,
             type(exc).__name__,
             exc,
-            exc_info=True,
         )
         return _failed_archive(
             error=f"R2_UPLOAD_FAILED: {type(exc).__name__}: {exc}",
@@ -198,15 +250,20 @@ def fetch_object_bytes(
     if not key:
         return None
     resolved_bucket = (bucket or _bucket_name() or "").strip()
-    s3 = _client()
-    if not s3 or not resolved_bucket:
-        return None
     try:
+        s3 = _client()
+        if not s3 or not resolved_bucket:
+            return None
         resp = s3.get_object(Bucket=resolved_bucket, Key=key)
         body = resp["Body"].read()
         return body if body is not None else b""
-    except Exception:
-        logger.warning("R2 get_object failed for %s", key, exc_info=True)
+    except Exception as exc:
+        _log_r2_failure(
+            "R2 get_object failed for %s (%s: %s)",
+            key,
+            type(exc).__name__,
+            exc,
+        )
         return None
 
 

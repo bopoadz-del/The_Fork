@@ -5,10 +5,17 @@ Production PutObject AccessDenied (runs da768576d477 / 549f02b012c5 at
 ``archive_document``, the whole ``p1b_ingest_drive_server`` run — before the
 Neon document row was written. Archive is best-effort: log, set
 ``r2_archived=False``, keep indexing.
+
+After #477, run de6a06b7542c still died at 323/1380: leftover
+``exc_info=True`` printed a full AccessDenied traceback next to
+'ingest continues', and a leaked ``fut.result()`` ClientError still
+aborted the main thread. Those paths must stay caught and traceback-free.
 """
 from __future__ import annotations
 
 import hashlib
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -112,6 +119,122 @@ def test_archive_document_second_file_still_runs_after_access_denied(monkeypatch
     assert second["error"] is None
     assert second["r2_object_key"]
     assert s3.calls == 2
+
+
+def test_client_construction_access_denied_returns_none(monkeypatch):
+    """``_client()`` itself must swallow AccessDenied — callers used to leak."""
+    _r2_env(monkeypatch)
+    import boto3
+
+    def _boom(*_a, **_k):
+        raise _access_denied("CreateClient")
+
+    monkeypatch.setattr(boto3, "client", _boom)
+    assert r2_storage._client() is None
+
+
+def test_r2_configured_survives_client_access_denied(monkeypatch):
+    _r2_env(monkeypatch)
+
+    def _boom():
+        raise _access_denied("CreateClient")
+
+    monkeypatch.setattr(r2_storage, "_client", _boom)
+    assert r2_storage.r2_configured() is False
+
+
+def test_fetch_failure_reason_survives_client_access_denied(monkeypatch):
+    _r2_env(monkeypatch)
+
+    def _boom():
+        raise _access_denied("CreateClient")
+
+    monkeypatch.setattr(r2_storage, "_client", _boom)
+    reason = r2_storage.fetch_failure_reason("projects/x/drive/y/z.pdf")
+    assert "not configured" in reason.lower()
+
+
+def test_fetch_object_bytes_survives_client_access_denied(monkeypatch):
+    """``_client()`` sat outside the get_object try; a raise aborted preview/ingest."""
+    _r2_env(monkeypatch)
+
+    def _boom():
+        raise _access_denied()
+
+    monkeypatch.setattr(r2_storage, "_client", _boom)
+    assert r2_storage.fetch_object_bytes("projects/x/drive/y/z.pdf") is None
+
+
+class _DeniedGetS3:
+    def get_object(self, **kwargs):
+        raise _access_denied("GetObject")
+
+
+def test_fetch_object_bytes_get_object_access_denied_returns_none(monkeypatch):
+    _r2_env(monkeypatch)
+    monkeypatch.setattr(r2_storage, "_client", lambda: _DeniedGetS3())
+    assert r2_storage.fetch_object_bytes("projects/x/drive/y/z.pdf") is None
+
+
+def test_archive_document_access_denied_does_not_log_traceback(monkeypatch):
+    """#477 leftover: exc_info=True dumped a ClientError stack beside 'continues'."""
+    _r2_env(monkeypatch)
+    monkeypatch.setattr(r2_storage, "_client", lambda: _DeniedS3())
+    records: List[logging.LogRecord] = []
+
+    class _ListHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _ListHandler()
+    log = logging.getLogger("app.core.r2_storage")
+    log.addHandler(handler)
+    old_level = log.level
+    log.setLevel(logging.WARNING)
+    try:
+        result = r2_storage.archive_document(
+            "proj-1", "drive-1", "spec.pdf", b"%PDF-1.4", _sha(b"%PDF-1.4"),
+        )
+    finally:
+        log.removeHandler(handler)
+        log.setLevel(old_level)
+
+    assert result["archived"] is False
+    assert records, "archive failure must still be logged"
+    formatter = logging.Formatter("%(message)s")
+    for rec in records:
+        assert rec.exc_info is None or rec.exc_info[0] is None
+        assert not rec.exc_text
+        formatted = formatter.format(rec)
+        assert "Traceback" not in formatted
+        assert "ingest continues" in rec.getMessage()
+
+
+def test_future_result_or_error_swallows_access_denied():
+    """Bare fut.result() on the main thread was the leftover process-abort."""
+    from scripts.p1b_ingest_drive_server import future_result_or_error
+
+    def _boom():
+        raise _access_denied()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(_boom)
+        rel, result = future_result_or_error(
+            fut, {"name": "x.pdf", "_drive_path": "Tier1/x.pdf"},
+        )
+    assert rel == "Tier1/x.pdf"
+    assert result["status"] == "error"
+    assert "AccessDenied" in result["error"]
+
+
+def test_future_result_or_error_returns_ok_tuple():
+    from scripts.p1b_ingest_drive_server import future_result_or_error
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(lambda: ("Tier1/ok.pdf", {"status": "ok", "rag_indexed": 2}))
+        rel, result = future_result_or_error(fut, {"name": "ok.pdf"})
+    assert rel == "Tier1/ok.pdf"
+    assert result["rag_indexed"] == 2
 
 
 def _install_ingest_fakes(monkeypatch, archive_impl, added: List[Dict[str, Any]], indexed: List[str]):
