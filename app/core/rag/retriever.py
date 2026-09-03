@@ -9,7 +9,7 @@ where caching, dimension matching, and graceful-degradation policy live.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from app.core.contract_data_chunks import particulars_chunk_states_a_value
 from app.core.rag.embeddings import Embedder, get_embedder
@@ -363,12 +363,17 @@ def filename_matches_named_contracts(
     return any(cid in text_l for cid in named_ids)
 
 
-def elect_answer_bearing_contract(query: str, ranked_docs) -> Optional[str]:
+def elect_answer_bearing_contract(
+    query: str,
+    ranked_docs: Iterable[Tuple[str, str]],
+) -> Optional[str]:
     """Which contract owns an UNNAMED answer, decided by evidence not by rank.
 
     ``ranked_docs`` is ``(filename, chunk_text)`` in descending final-score
-    order. Returns the winning PREFIX-YEAR-SEQ, or None to leave the choice
-    to arrival order (today's behaviour).
+    order. It may be a lazy iterable: nothing is consumed for a question that
+    wants no particular, and the walk stops at the first filled row.
+    Returns the winning PREFIX-YEAR-SEQ, or None to leave the choice to
+    arrival order (today's behaviour).
 
     WHY THIS EXISTS. The unnamed fence locks onto the first candidate that
     carries a contract id and drops every other id, so the top-ranked chunk
@@ -416,7 +421,11 @@ class _ContractScope:
     carrying a contract id wins, as before.
     """
 
-    def __init__(self, query: str, ranked_docs=None) -> None:
+    def __init__(
+        self,
+        query: str,
+        ranked_docs: Optional[Iterable[Tuple[str, str]]] = None,
+    ) -> None:
         self.named = extract_contract_doc_ids(query or "")
         self.winning: Optional[str] = None
         if not self.named and ranked_docs is not None:
