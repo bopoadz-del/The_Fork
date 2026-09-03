@@ -699,6 +699,14 @@ class RunLifecycle:
         self._register_atexit = register_atexit
 
         self.stop_flag = StopFlag()
+        # Every document >= 1 MB is extracted in a FORKED child
+        # (app/core/extract_isolated), and a fork inherits this object, the
+        # signal handlers and the sidecar path. A child that ran the flush or
+        # a state write would overwrite the parent's evidence with a copy of
+        # it — with the child's pid and a snapshot of the parent's progress
+        # frozen at fork time. Only the process that armed the lifecycle may
+        # write for it.
+        self._owner_pid = os.getpid()
         self.started_monotonic = time.monotonic()
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.context: Dict[str, Any] = {}
@@ -784,6 +792,10 @@ class RunLifecycle:
     def snapshot(self) -> MemorySnapshot:
         return read_memory_snapshot()
 
+    def owns_process(self) -> bool:
+        """False in a forked child, which must not write for its parent."""
+        return os.getpid() == self._owner_pid
+
     # -- progress ------------------------------------------------------------
 
     def note_progress(
@@ -840,7 +852,7 @@ class RunLifecycle:
         and the report is still written once, with the FIRST (most specific)
         reason rather than the last.
         """
-        if self.finished_reason is not None:
+        if self.finished_reason is not None or not self.owns_process():
             return
         self.finished_reason = reason
         if complete is None:
@@ -931,6 +943,8 @@ class RunLifecycle:
         extra: Optional[Dict[str, Any]] = None,
     ) -> MemorySnapshot:
         memory = self.snapshot()
+        if not self.owns_process():
+            return memory
         payload: Dict[str, Any] = {
             "run_id": self.run_id,
             "label": self.label,

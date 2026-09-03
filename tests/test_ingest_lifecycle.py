@@ -585,6 +585,34 @@ def test_stall_watchdog_dumps_threads_when_progress_stops(tmp_path):
 
 
 @POSIX_ONLY
+def test_a_forked_child_cannot_clobber_the_parents_evidence(tmp_path):
+    """Every document >= 1 MB is extracted in a forked child that inherits
+    this object, the sidecar path and the signal handlers. A child write would
+    replace the parent's progress with a fork-time copy of it."""
+    flushes = []
+    run = _lifecycle(tmp_path, flushes)
+    run.start(context={})
+    run.note_progress(316, 1361, folder="the client project", in_flight=2)
+
+    pid = os.fork()
+    if pid == 0:  # child — must be a no-op, then leave without atexit
+        try:
+            run.note_progress(9999, 9999, folder="child")
+            run.finish("completed", complete=True)
+        finally:
+            os._exit(0)
+    _, status = os.waitpid(pid, 0)
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+
+    state = lifecycle.read_state(tmp_path / "state.json")
+    assert state["progress"]["done"] == 316
+    assert state["phase"] == lifecycle.PHASE_RUNNING
+    assert state["pid"] == os.getpid()
+    assert flushes == []
+    assert run.owns_process() is True
+
+
+@POSIX_ONLY
 def test_stop_signal_writes_the_sidecar_from_inside_the_handler(tmp_path):
     """Render sends SIGTERM then SIGKILL ~30s later. If the graceful drain
     does not finish in that window, the handler's own write is the only
