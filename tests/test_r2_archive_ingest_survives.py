@@ -177,37 +177,44 @@ def test_fetch_object_bytes_get_object_access_denied_returns_none(monkeypatch):
 
 
 def test_archive_document_access_denied_does_not_log_traceback(monkeypatch):
-    """#477 leftover: exc_info=True dumped a ClientError stack beside 'continues'."""
+    """#477 leftover: exc_info=True dumped a ClientError stack beside 'continues'.
+
+    Do not attach a Handler. ``app.infra.monitoring`` replaces ``root.handlers``
+    and the full suite can raise ``logging.disable``; virgin + postgres CI
+    then saw ``records=[]`` on this probe. Spy the module logger the same
+    way ``tests/test_silent_handler_logging.py`` does.
+    """
     _r2_env(monkeypatch)
     monkeypatch.setattr(r2_storage, "_client", lambda: _DeniedS3())
-    records: List[logging.LogRecord] = []
+    # Reproduce the CI starve: global disable + replaced root handlers.
+    # The spy still sees logger.warning; a Handler would not.
+    logging.disable(logging.CRITICAL)
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
 
-    class _ListHandler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            records.append(record)
+    calls: List[Dict[str, Any]] = []
 
-    handler = _ListHandler()
-    log = logging.getLogger("app.core.r2_storage")
-    log.addHandler(handler)
-    old_level = log.level
-    log.setLevel(logging.WARNING)
+    def _capture(msg, *args, **kwargs):
+        try:
+            text = msg % args if args else str(msg)
+        except Exception:
+            text = str(msg)
+        calls.append({"text": text, "kwargs": dict(kwargs)})
+
+    monkeypatch.setattr(r2_storage.logger, "warning", _capture)
+
     try:
         result = r2_storage.archive_document(
             "proj-1", "drive-1", "spec.pdf", b"%PDF-1.4", _sha(b"%PDF-1.4"),
         )
     finally:
-        log.removeHandler(handler)
-        log.setLevel(old_level)
+        logging.disable(logging.NOTSET)
 
     assert result["archived"] is False
-    assert records, "archive failure must still be logged"
-    formatter = logging.Formatter("%(message)s")
-    for rec in records:
-        assert rec.exc_info is None or rec.exc_info[0] is None
-        assert not rec.exc_text
-        formatted = formatter.format(rec)
-        assert "Traceback" not in formatted
-        assert "ingest continues" in rec.getMessage()
+    assert calls, "archive failure must still be logged"
+    assert any("ingest continues" in c["text"] for c in calls), calls
+    for c in calls:
+        assert c["kwargs"].get("exc_info") in (None, False)
+        assert "Traceback" not in c["text"]
 
 
 def test_future_result_or_error_swallows_access_denied():
