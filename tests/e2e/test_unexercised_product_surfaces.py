@@ -12,6 +12,7 @@ re-ingest, no mock payloads — every call hits the live FastAPI app.
 from __future__ import annotations
 
 import io
+import os
 import time
 import uuid
 from pathlib import Path
@@ -193,28 +194,37 @@ def test_admin_surfaces_are_forbidden_for_a_normal_user(client, session):
         assert "Admin access required" in text, f"{path} said only: {text}"
 
 
-def test_the_debug_router_is_not_mounted_outside_a_dev_environment(client, session):
-    """``/v1/debug/env`` 404s here because THE ROUTE DOES NOT EXIST.
+def test_the_debug_router_mount_follows_the_process_environment(client, session):
+    """The live app's debug mount matches ``debug.is_dev_environment()``.
 
-    Measured on this suite (ENV and ENVIRONMENT both unset, so app.main
-    resolves the environment to "production"): app.main mounts the debug
-    router only for dev/development/local/test/testing. That is stronger
-    than any per-role rule -- the endpoint is absent for an admin too -- and
-    it is a different mechanism from the 403 above.
+    ``app.main`` decides the mount at import time from ENV/ENVIRONMENT.
+    GitHub Actions sets ``ENV=testing``, which is on the dest allow-list, so
+    CI's imported app HAS ``/v1/debug/env``. A local e2e run with ENV unset
+    resolves to production and the route is absent. Both are the same rule.
 
-    The distinction is asserted, not just the number: a bodyless 404 is
-    Starlette finding no route, while a role-gated 404 would carry an error
-    envelope. Without this, a future change that mounted the debug router in
-    production and 404'd non-admins would satisfy a bare ``== 404`` and
-    silently put an env-dump endpoint on the internet.
+    A previous version of this test inspected ``app.routes`` and assumed ENV
+    was unset. That passed locally and failed every CI job that sets
+    ``ENV=testing`` (virgin, production-like, postgres). The payload must
+    still never reach a normal user: 403 when mounted, bodyless 404 when not.
     """
+    from app.routers import debug as debug_mod
+
     routes = {getattr(r, "path", "") for r in app.routes}
-    assert "/v1/debug/env" not in routes
-    assert "/debug/env" not in routes
+    mounted = "/v1/debug/env" in routes
+    assert mounted is debug_mod.is_dev_environment(), (
+        f"live app mount={mounted} but is_dev_environment()="
+        f"{debug_mod.is_dev_environment()} (ENV={os.getenv('ENV')!r})"
+    )
+    assert ("/debug/env" in routes) is mounted
 
     r = client.get("/v1/debug/env", headers=session["headers"])
-    assert r.status_code == 404
-    assert r.text.strip() in ("", '{"detail":"Not Found"}'), r.text[:200]
+    if mounted:
+        assert r.status_code == 403, r.text[:200]
+        assert "Admin access required" in r.text
+        assert "data_dir" not in r.text
+    else:
+        assert r.status_code == 404
+        assert r.text.strip() in ("", '{"detail":"Not Found"}'), r.text[:200]
 
 
 def _debug_only_client(role: str):
