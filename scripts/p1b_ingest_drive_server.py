@@ -225,9 +225,7 @@ def _load_priority_manifest(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def main() -> int:
-    from app.core import ingest_sharding as sharding
-
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Server-side Drive ingestion by priority tier")
     ap.add_argument("--priority-manifest", default="manifests/p1b_priority_manifest.json",
                     help="Path to the priority manifest")
@@ -237,6 +235,22 @@ def main() -> int:
                     help="Report path")
     ap.add_argument("--resume", action="store_true",
                     help="Skip files already indexed in the project (by drive_file_id)")
+    ap.add_argument(
+        "--folder-id",
+        action="append",
+        default=None,
+        dest="folder_ids",
+        metavar="ID",
+        help=(
+            "Restrict this run to these Drive folder id(s). Repeat the flag or "
+            "pass comma-separated ids. Walks that folder instead of the full "
+            "tier parent; documents still use the matching parent project's "
+            "row (project_id / folder_name from the tier entry). If the id is "
+            "not a parent folder_id in this tier, it is treated as a subfolder "
+            "of the unique parent that has a folder_id. Omit to walk every "
+            "folder in the tier (default --tier N --resume behaviour)."
+        ),
+    )
     ap.add_argument("--keep-alive", action="store_true",
                     help="After the ingestion pass completes, sleep forever so a background worker stays live")
     ap.add_argument("--total-shards", type=int, default=None,
@@ -249,7 +263,83 @@ def main() -> int:
                     help="Process at most N files after shard filter (env: INGEST_LIMIT)")
     ap.add_argument("--offset", type=int, default=None,
                     help="Skip first N files after shard filter (env: INGEST_OFFSET)")
-    args = ap.parse_args()
+    return ap
+
+
+def parse_folder_ids(raw: List[str] | None) -> List[str]:
+    """Flatten repeatable and comma-separated ``--folder-id`` values."""
+    if not raw:
+        return []
+    out: List[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        for part in str(item).split(","):
+            fid = part.strip()
+            if not fid or fid in seen:
+                continue
+            seen.add(fid)
+            out.append(fid)
+    return out
+
+
+def folder_entries_for_run(
+    tier_folders: List[Dict[str, Any]],
+    requested_ids: List[str],
+    *,
+    tier: int,
+) -> List[Dict[str, Any]]:
+    """Return the folder entries this run should walk.
+
+    With no ``requested_ids``, the tier list is unchanged (full parent walk).
+    With ids, each id that matches a parent ``folder_id`` walks that parent.
+    An id that is not a parent is a subfolder walk of the unique parent that
+    has a ``folder_id`` — same ``project_id`` / ``folder_name``, different
+    walk root. Raises ``ValueError`` when an id matches no parent and there
+    is no unique parent to attach it to.
+    """
+    if not requested_ids:
+        return list(tier_folders)
+
+    parents_by_id: Dict[str, Dict[str, Any]] = {}
+    parents_with_id: List[Dict[str, Any]] = []
+    for entry in tier_folders:
+        fid = (entry.get("folder_id") or "").strip() or None
+        if not fid:
+            continue
+        parents_by_id[fid] = entry
+        parents_with_id.append(entry)
+
+    walks: List[Dict[str, Any]] = []
+    unmatched: List[str] = []
+    for fid in requested_ids:
+        if fid in parents_by_id:
+            spec = dict(parents_by_id[fid])
+            spec["walk_folder_id"] = fid
+            walks.append(spec)
+            continue
+        if len(parents_with_id) == 1:
+            spec = dict(parents_with_id[0])
+            spec["walk_folder_id"] = fid
+            walks.append(spec)
+            continue
+        unmatched.append(fid)
+
+    if unmatched:
+        raise ValueError(
+            f"--folder-id not in tier {tier} parent folders and no unique "
+            f"parent to treat as a subfolder walk: {', '.join(unmatched)}"
+        )
+    if not walks:
+        raise ValueError(
+            f"--folder-id did not match any folder in tier {tier}"
+        )
+    return walks
+
+
+def main() -> int:
+    from app.core import ingest_sharding as sharding
+
+    args = build_parser().parse_args()
 
     try:
         total_shards, shard_index = sharding.resolve_shard_env(
@@ -285,10 +375,23 @@ def main() -> int:
         print(f"ERROR: tier {args.tier} not found in priority manifest.", file=sys.stderr)
         return 1
 
+    requested_ids = parse_folder_ids(args.folder_ids)
+    if args.folder_ids is not None and not requested_ids:
+        print("ERROR: --folder-id was given but no folder id was provided.", file=sys.stderr)
+        return 1
+    try:
+        folder_entries = folder_entries_for_run(
+            tier["folders"], requested_ids, tier=args.tier,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
     run_id = uuid.uuid4().hex[:12]
     print(
-        f"[p1b-server] run_id={run_id} tier={args.tier} folders={len(tier['folders'])} "
-        f"shard_index={shard_index} total_shards={total_shards} dry_run={dry_run}",
+        f"[p1b-server] run_id={run_id} tier={args.tier} folders={len(folder_entries)} "
+        f"shard_index={shard_index} total_shards={total_shards} dry_run={dry_run}"
+        + (f" folder_ids={requested_ids}" if requested_ids else ""),
         file=sys.stderr,
     )
 
@@ -337,8 +440,9 @@ def main() -> int:
         if dry_manifest.exists():
             dry_manifest.unlink()
 
-    for folder_entry in tier["folders"]:
-        folder_id = folder_entry.get("folder_id")
+    for folder_entry in folder_entries:
+        parent_folder_id = folder_entry.get("folder_id")
+        folder_id = folder_entry.get("walk_folder_id") or parent_folder_id
         folder_name = folder_entry.get("folder_name") or folder_entry.get("project_id")
         project_id_for_folder = folder_entry.get("project_id")
 
@@ -346,7 +450,14 @@ def main() -> int:
             print(f"[p1b-server] SKIP {folder_name}: no folder_id (needs Chadi to set)", file=sys.stderr)
             continue
 
-        print(f"[p1b-server] walking {folder_name} ({folder_id}) ...", file=sys.stderr)
+        if parent_folder_id and folder_id != parent_folder_id:
+            print(
+                f"[p1b-server] walking {folder_name} subfolder ({folder_id}) "
+                f"parent={parent_folder_id} ...",
+                file=sys.stderr,
+            )
+        else:
+            print(f"[p1b-server] walking {folder_name} ({folder_id}) ...", file=sys.stderr)
         files, walk_errors = gdrive_service.walk_folder(folder_id, max_depth=12, page_size=200)
         if walk_errors:
             for err in walk_errors:
