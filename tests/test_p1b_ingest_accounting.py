@@ -446,6 +446,30 @@ def test_run_lock_is_a_logged_noop_on_sqlite(tmp_path, monkeypatch, capsys):
     assert "concurrent-run protection is OFF" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(
+    not (os.getenv("DATABASE_URL") or "").startswith(("postgres://", "postgresql")),
+    reason="the real pg_try_advisory_lock round trip needs a Postgres DATABASE_URL",
+)
+def test_advisory_lock_is_exclusive_and_released_on_postgres():
+    """The round trip CI's test-postgres job covers and SQLite cannot.
+
+    The nested acquisition opens a second Postgres session, which is exactly
+    the shape of two ingest runs racing for the same folder.
+    """
+    probe = "p1b_lock_probe_project"
+    with p1b.run_advisory_lock(1, probe) as state:
+        assert state == "acquired"
+        with pytest.raises(p1b.RunLockUnavailable):
+            with p1b.run_advisory_lock(1, probe):
+                pass
+        # A different tier is a different key and must not be blocked.
+        with p1b.run_advisory_lock(2, probe) as other:
+            assert other == "acquired"
+    # Released on exit, so the next run can take it.
+    with p1b.run_advisory_lock(1, probe) as state:
+        assert state == "acquired"
+
+
 # ── atomic report writes ──────────────────────────────────────────────────
 
 
