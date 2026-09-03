@@ -184,35 +184,35 @@
    {
     "id": "progress_quantity",
     "description": "PE sheet: Planned%/Actual%/Remaining qty/Progress variance",
-    "implemented_by": "app.lib.construction_formulas_planning.progress_quantity",
+    "implemented_by": "app.lib.construction_formulas.progress_quantity",
     "domain": "planning",
     "tier": "operational"
    },
    {
     "id": "productivity_manpower_duration",
     "description": "PE sheet: productivity → manhours → manpower → duration",
-    "implemented_by": "app.lib.construction_formulas_planning.productivity_manpower_duration",
+    "implemented_by": "app.lib.construction_formulas.productivity_manpower_duration",
     "domain": "planning",
     "tier": "operational"
    },
    {
     "id": "pe_unit_convert",
     "description": "PE sheet unit conversions (m↔ft, m2↔ft2, m3↔ft3, day↔hour)",
-    "implemented_by": "app.lib.construction_formulas_planning.pe_unit_convert",
+    "implemented_by": "app.lib.construction_formulas.pe_unit_convert",
     "domain": "planning",
     "tier": "foundational"
    },
    {
     "id": "material_consumption",
     "description": "PE sheet material required from qty/output (+ optional waste)",
-    "implemented_by": "app.lib.construction_formulas_planning.material_consumption",
+    "implemented_by": "app.lib.construction_formulas.material_consumption",
     "domain": "planning",
     "tier": "operational"
    },
    {
     "id": "concrete_mix_proportions",
     "description": "PE sheet concrete mix from caller-supplied cement:sand:agg ratios",
-    "implemented_by": "app.lib.construction_formulas_planning.concrete_mix_proportions",
+    "implemented_by": "app.lib.construction_formulas.concrete_mix_proportions",
     "domain": "planning",
     "tier": "operational"
    },
