@@ -7,9 +7,31 @@ from app.dependencies import require_api_key
 router = APIRouter()
 
 
+#: The ONLY environments in which debug routes exist. Fail closed: anything
+#: not on this list is production, including an unset variable.
+#:
+#: This list is shared with ``app.main``, which decides whether to mount the
+#: router at all. It used to be duplicated there, and the two copies had
+#: already drifted: main.py used this allow-list while ``_is_production``
+#: below tested ``env == "production"`` exactly, so ENV="prod-eu" (or "prod",
+#: or "production-eu") was NOT production to the endpoint. Nothing was
+#: exposed, because such a value also fails the mount test -- but the two
+#: answers to "is this production" disagreed, and only one of them was
+#: guarding the payload. One list, one answer.
+DEV_ENVIRONMENTS = frozenset({"dev", "development", "local", "test", "testing"})
+
+
+def current_environment() -> str:
+    return os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
+
+
+def is_dev_environment() -> bool:
+    """True only for an explicitly named development environment."""
+    return current_environment() in DEV_ENVIRONMENTS
+
+
 def _is_production() -> bool:
-    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).strip().lower()
-    return env == "production"
+    return not is_dev_environment()
 
 
 def _require_non_production():
