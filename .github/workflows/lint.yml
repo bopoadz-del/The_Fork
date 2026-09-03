@@ -108,18 +108,20 @@ jobs:
           fi
 
   integrity:
-    # Two BLOCKING gates that answer the two questions a stranger cloning this
-    # repo would actually care about: is anything hollow, and is anything
-    # secret in here?
+    # Three BLOCKING gates that answer the questions a stranger cloning this
+    # repo would actually care about: is anything hollow, is anything
+    # secret in here, and does anything swallow Exception with pass?
     #
-    # Both are cheap (no deps, seconds to run) and both have already caught
-    # something real, which is why they block rather than report:
+    # All are cheap (no deps, seconds to run) and the first two have already
+    # caught something real, which is why they block rather than report:
     #
     #  - audit_stubs found 41 hollow functions, three of them on the drawing
     #    ingest path — every drawing came out with no tables, no markups and
     #    no title block, and nothing said so.
     #  - scan_secrets found a live Fork API key in a recovery runbook and a
     #    live Render key hardcoded in a scheduled-task script.
+    #  - scan_exception_pass is the S110 twin for `except Exception: pass`,
+    #    which ruff's default S110 does not cover.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -141,6 +143,14 @@ jobs:
         # untracked .env on a developer's disk is where secrets are supposed
         # to live and is correctly ignored.
         run: python scripts/scan_secrets.py
+
+      - name: No silent except Exception: pass
+        # Twin of the S110 gate above. ruff S110 (check-typed-exception =
+        # false) flags bare `except: pass` only. This AST walk flags the
+        # typed form S110 misses: `except Exception: pass` and
+        # `except Exception as <name>: pass`. Stdlib only. Exit 1 with a
+        # file:line list. Empty ALLOWLIST is the goal.
+        run: python scripts/scan_exception_pass.py
 
   eslint:
     # BLOCKING, unlike ruff above. This gate exists because of a specific
