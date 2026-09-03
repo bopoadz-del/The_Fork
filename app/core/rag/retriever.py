@@ -387,18 +387,39 @@ def elect_answer_bearing_contract(
 
     A General Conditions clause or a defined-term glossary entry is not an
     answer to "what is the rate" or "who is the Engineer"; it is a pointer to
-    the row that holds it. So when the question asks for a filled particular
-    and the pool contains one, the contract that owns the best-matching
-    FILLED PARTICULARS ROW wins the pool — a pointer from another contract
-    cannot take it away.
+    the row that holds it. So when the question asks for a kind of answer and
+    the pool contains one, the contract that owns the best-ranked chunk OF
+    THAT KIND wins the pool — a pointer from another contract cannot take it
+    away.
+
+    Each ask shape brings its own idea of what an answer looks like, because
+    the wrong-year chunk that wins is different every time:
+
+    * a filled Contract Data particulars row, for a particular or a numbered
+      contract Schedule (wave-1 A3/A5/A9, wave-2 G1);
+    * a chunk of a bill of quantities, for measured scope (wave-2 F1, whose
+      three citations were all another year's Conditions of Contract prose
+      describing the demolition scope in words).
+
+    An ask that matches no shape returns None and keeps arrival order, so
+    this can never reorder a corpus it has no opinion about.
 
     This complements the named-id fence (#443) rather than re-implementing
     it: a question that names its contract never reaches here.
     """
-    if not query_asks_for_contract_particulars(query):
+    # (does the ask want this kind of answer?, is this chunk that answer?)
+    # Built here, not at module scope: both halves are defined further down.
+    kinds = [
+        (query_asks_for_contract_particulars,
+         lambda _name, text: is_contract_data_particulars_row(text)),
+        (query_asks_for_boq_scope,
+         lambda name, _text: document_is_a_bill_of_quantities(name)),
+    ]
+    active = [is_answer for asks, is_answer in kinds if asks(query)]
+    if not active:
         return None
     for filename, text in ranked_docs:
-        if not is_contract_data_particulars_row(text):
+        if not any(is_answer(filename, text) for is_answer in active):
             continue
         ids = extract_contract_doc_ids(filename or "")
         if ids:
@@ -846,6 +867,52 @@ _CD_WHO_IS_RE = re.compile(
     r"(?i)\bwho\s+(?:is|are)\b|\bname\s+of\s+the\b|"
     r"\bwhich\s+(?:firm|company|entity|organisation|organization)\b",
 )
+# A numbered Schedule / Appendix / Annex of the contract is a Contract Data
+# register row: "Schedule 10 | Not Used", "Schedule 9 | Health & Safety KPIs".
+# Live wave-2 G1 (Sev-1) asked what Schedule 10 contains and was answered out
+# of a DIFFERENT project's show package, which has a Schedule 10 of its own
+# and talks about it at length. The register row that says "Not Used" IS the
+# answer, and it is a filled particulars row — but the ask was not recognised
+# as wanting one, so nothing lifted it and the arrival-order fence dropped
+# the contract it belongs to.
+#
+# The context word is required: a numbered schedule also appears inside
+# specifications and method statements, and those asks must stay where they
+# are rather than being scoped to a contract's Contract Data.
+_CD_SCHEDULE_ASK_RE = re.compile(
+    r"(?i)\b(?:schedule|appendix|annex(?:ure)?)\s+(?:no\.?\s*)?\d+[A-Za-z]?\b",
+)
+_CD_SCHEDULE_CONTEXT_RE = re.compile(
+    r"(?i)\b(?:contract|contracts|volume|volumes|"
+    r"conditions\s+of\s+contract|tender)\b",
+)
+# Arithmetic over a particular that wants a MONEY answer. Live wave-2 E1:
+# "Calculate the delay damages per calendar day in SAR for the whole of the
+# Works" retrieved the 0.1%-per-day rate row at rank 1 and then reported the
+# SAR figure as absent — because a percentage is not an amount, and the row
+# carrying the amount shares no wording with the question, so it lost every
+# top-5 slot to rows that do.
+_CD_MONEY_ARITHMETIC_ASK_RE = re.compile(
+    r"(?i)\b(?:calculate|compute|work\s+out|how\s+much)\b",
+)
+_CD_MONEY_UNIT_ASK_RE = re.compile(
+    r"(?i)\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b|"
+    r"\bmonetary\b|\bamount\s+per\b|\bvalue\s+per\b",
+)
+# A particulars row whose value IS an amount of money — the base a
+# percentage-of-the-Contract-Price calculation needs.
+_CD_MONETARY_VALUE_RE = re.compile(
+    r"(?i)\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b[^\n]{0,12}"
+    r"\d{1,3}(?:,\d{3})+(?:\.\d+)?",
+)
+# Bill-of-quantities / measured-scope asks. Live wave-2 F1 asked for a WBS
+# over "the demolition and site clearance scope in this project's BOQ" and
+# every citation came from another year's Conditions of Contract, whose prose
+# describes that scope in words while the BOQ carries it as measured rows.
+_BOQ_SCOPE_ASK_RE = re.compile(
+    r"(?i)\bbo[q]\b|\bbill\s+of\s+quantit|\bschedule\s+of\s+quantit|"
+    r"\bmeasured\s+(?:work|works|items?|quantit)|\bpriced\s+bill\b",
+)
 _CD_PARTICULARS_PREFIX_RE = re.compile(
     r"contract\s+data\s+particulars", re.IGNORECASE,
 )
@@ -1004,7 +1071,113 @@ def query_asks_for_contract_particulars(query: str) -> bool:
         return True
     if _CD_WHO_IS_RE.search(q) and _CD_CONTRACT_ROLE_RE.search(q):
         return True
+    if _CD_SCHEDULE_ASK_RE.search(q) and _CD_SCHEDULE_CONTEXT_RE.search(q):
+        return True
     return bool(_FILLED_IN_ASK_RE.search(q) and _CD_HEADING_IN_CHUNK_RE.search(q))
+
+
+def query_asks_for_boq_scope(query: str) -> bool:
+    """True when the question is about measured scope in a bill of quantities.
+
+    The answer lives in BOQ item rows, not in the prose of a Conditions of
+    Contract that happens to describe the same scope — and certainly not in
+    another contract year's prose, which is what wave-2 F1 returned for all
+    three of its citations.
+    """
+    return bool(_BOQ_SCOPE_ASK_RE.search((query or "").strip()))
+
+
+def document_is_a_bill_of_quantities(filename: str) -> bool:
+    """True when the DOCUMENT NAME says it is a bill of quantities.
+
+    Consumes ``doc_index.BOQ_FILENAME_RE`` rather than restating it, so the
+    retrieval-side test cannot drift from the one the indexer already uses to
+    pick a chunker and an OCR budget. The import is deferred because
+    ``doc_index`` imports this module; it is reached only for a BOQ-shaped
+    ask, and ``sys.modules`` caches it after the first.
+    """
+    name = filename or ""
+    if not name:
+        return False
+    try:
+        from app.core.doc_index import BOQ_FILENAME_RE
+    except Exception as exc:  # noqa: BLE001 — never break a turn over this
+        logger.warning("BOQ filename test unavailable: %s", exc)
+        return False
+    return bool(BOQ_FILENAME_RE.search(name))
+
+
+def query_needs_a_monetary_base(query: str) -> bool:
+    """True when the ask is arithmetic over a particular and wants money out.
+
+    A rate expressed as a percentage cannot answer "how much per day in SAR"
+    on its own; the amount it is a percentage OF has to be in the excerpts
+    too. Wave-2 E1 is the whole failure: the 0.1%-per-day row came back at
+    rank 1 and the answer then reported the SAR figure as absent.
+    """
+    q = (query or "").strip()
+    if not q:
+        return False
+    return bool(
+        _CD_MONEY_ARITHMETIC_ASK_RE.search(q) and _CD_MONEY_UNIT_ASK_RE.search(q)
+    )
+
+
+def particulars_row_states_an_amount_of_money(text: str) -> bool:
+    """True when a particulars row's value is an amount of money.
+
+    This is the base row an arithmetic ask needs. Deliberately the row's
+    VALUE and not its label: "10% of the Accepted Contract Amount" names the
+    base without stating it, and that row is what wave-2 E1 already had.
+    """
+    t = text or ""
+    if not _CD_PARTICULARS_PREFIX_RE.search(t):
+        return False
+    return bool(_CD_MONETARY_VALUE_RE.search(_cd_chunk_body(t)))
+
+
+def reserve_monetary_base_row(
+    query: str,
+    kept: List[Chunk],
+    ranked: List[Chunk],
+    *,
+    allow=None,
+) -> bool:
+    """Give the amount a percentage refers to one slot in the top-k.
+
+    Returns True when a swap happened. ``kept`` is modified in place: the
+    LOWEST-ranked survivor is replaced, so k is unchanged and the rows the
+    question actually named keep their places.
+
+    A reservation rather than a bigger bonus, deliberately. The money row
+    earns no label bonus — the question says "in SAR", and the row says
+    "SAR 8,640,000.00", and they share no term the overlap can see — so on
+    the live Contract Data it competes against 200 siblings that each earn
+    the full 1.40. Any constant large enough to clear that field is a
+    constant fitted to one corpus's cosine spread; one slot is a guarantee.
+
+    ``allow`` is the caller's contract-scope test, so a reserved row cannot
+    re-enter a contract the fence already excluded.
+    """
+    if not kept or not query_needs_a_monetary_base(query):
+        return False
+    if any(particulars_row_states_an_amount_of_money(c.text or "") for c in kept):
+        return False
+    present = {c.chunk_id for c in kept}
+    for chunk in ranked:
+        if chunk.chunk_id in present:
+            continue
+        if not particulars_row_states_an_amount_of_money(chunk.text or ""):
+            continue
+        if allow is not None and not allow(chunk):
+            continue
+        kept[-1] = chunk
+        logger.debug(
+            "reserved a Contract Data money row for an arithmetic ask; "
+            "a percentage alone cannot answer it",
+        )
+        return True
+    return False
 
 
 def contract_data_particulars_delta(text: str) -> float:
@@ -1226,6 +1399,13 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         kept.append(chunk)
         if len(kept) >= k:
             break
+    reserve_monetary_base_row(
+        query, kept, candidates,
+        allow=lambda c: not _is_noise_filename(_name(c.doc_id))
+        and scope.allow(_name(c.doc_id), c.text or ""),
+    )
+    for chunk in kept:
+        chunk.source_name = _name(chunk.doc_id)
     return kept, noise_filtered
 
 
@@ -1832,6 +2012,15 @@ def retrieve_with_filter(
     # model/scoring failure — see reranker.rerank.
     if rerank_on and len(kept) > k:
         kept = _reranker.rerank(query, kept, k)
+
+    # Runs on the FINAL k, after the rerank cut, so the reserved row cannot be
+    # reordered back out. Re-uses the same noise and contract-scope gates the
+    # loop above applied.
+    reserve_monetary_base_row(
+        query, kept, [c for _, c in scored],
+        allow=lambda c: not _is_noise_filename(name_by_id.get(c.doc_id, ""))
+        and scope.allow(name_by_id.get(c.doc_id, ""), c.text or ""),
+    )
 
     # Tag each returned chunk with its retrieval layer so the chat runtime can
     # disclose a Master-Corpus fallback (STEP 0b). "own" is the active project;

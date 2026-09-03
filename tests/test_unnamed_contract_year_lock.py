@@ -33,6 +33,25 @@ Two things decide the race wrongly, and both are pinned below.
    part of the particulars machinery ran on A9, so a glossary definition
    won on raw cosine — and locked its own contract year.
 
+WAVE 2 added three more of the same family, and the second half of this
+file covers them:
+
+* **F1** FAIL_WRONG_CONTRACT — a WBS over "the demolition and site
+  clearance scope in this project's BOQ" cited another contract year's
+  Conditions of Contract three times out of three. Its prose describes that
+  scope in words; the bill carries it as measured rows. Not a Contract Data
+  particular, so the election declined and arrival order decided.
+* **G1** FAIL_WRONG_CONTRACT (Sev-1) — "what does Schedule 10 of the
+  contract contain" was answered out of a **different project's** show
+  package, which has a Schedule 10 of its own and discusses it at length.
+  The contract's own register says ``Schedule 10: Not Used``, which IS the
+  answer and IS a filled particulars row — but the ask was not recognised
+  as wanting one, so nothing lifted it and the fence dropped the contract.
+* **E1** FAIL — "calculate the delay damages per calendar day in SAR"
+  retrieved the 0.1%-per-day row and then reported the SAR figure as
+  absent. A percentage is not an amount, and the row holding the amount
+  shares no wording with the question.
+
 SANITIZED FIXTURE. The two contract/document ids are the live ones and are
 already in git (``tests/test_cross_contract_fence.py``, ``AGENTS.md``);
 every figure, party and value here is fixture-only and deliberately differs
@@ -500,11 +519,16 @@ def test_an_unrelated_who_question_is_not_pulled_onto_the_particulars_path():
     )
 
 
-def test_a9_is_the_only_battery_ask_this_reclassifies():
+def test_only_three_battery_asks_are_reclassified_as_particulars():
     """Containment. Measured against `main` across all 35 frozen asks in
-    ``tests/fixtures/ui_phys/questions.json``: A9 is the single case whose
-    classification moves. These are the ones it must not move — each would
-    change which pipeline answers a question that is already passing.
+    ``tests/fixtures/ui_phys/questions.json``, exactly three move: A9 (the
+    Engineer's identity) and C4 / G1 (numbered contract Schedules). All
+    three want a filled Contract Data row.
+
+    The rest must not move — each would change which pipeline answers a
+    question that is already passing. D1 is on this list deliberately:
+    "who signed the letter" is a different retrieval class and must stay off
+    the particulars path.
     """
     import json
     from pathlib import Path
@@ -516,13 +540,21 @@ def test_a9_is_the_only_battery_ask_this_reclassifies():
         ).read_text(encoding="utf-8")
     )
     cases = catalog["cases"]
-    must_not = ["A8", "B1", "B6", "C2", "C4", "D1", "D3", "E3", "E4", "G1", "G5", "G6"]
+    must_not = [
+        "A8", "B1", "B2", "B3", "B4", "B5", "B6", "C1", "C2", "C3",
+        "D1", "D2", "D3", "E3", "E4", "F1", "F2", "F3", "G3", "G4", "G5", "G6",
+    ]
     for cid in must_not:
         ask = cases[cid]["ask"]
         assert not query_asks_for_contract_particulars(ask), f"{cid}: {ask!r}"
-    for cid in ("A1", "A3", "A5", "A6", "A9"):
+    for cid in ("A1", "A3", "A5", "A6", "A9", "C4", "G1"):
         ask = cases[cid]["ask"]
         assert query_asks_for_contract_particulars(ask), f"{cid}: {ask!r}"
+    # Every asked case is accounted for, so a new one cannot slip in
+    # unclassified when this file is next read.
+    asked = {cid for cid, c in cases.items() if c.get("ask")}
+    assert asked == set(must_not) | {"A1", "A2", "A3", "A4", "A5", "A6",
+                                     "A7", "A9", "C4", "E1", "E2", "G1", "G2"}
 
 
 def test_a_particulars_row_whose_value_is_a_name_counts_as_filled():
@@ -736,5 +768,511 @@ def test_mutation_probe_a9_needs_the_role_ask_to_be_recognised(
     assert top
     assert A9_ANSWER not in _blob(top), (
         "probe did not reproduce A9 — the role ask is not load-bearing:\n"
+        + _report(top)
+    )
+
+
+# ══ WAVE 2 ════════════════════════════════════════════════════════════════
+#
+# F1, G1 and E1: the same disease reaching past the Contract Data. F1 and G1
+# are the fence again — an unnamed ask whose pool is frozen by whichever
+# chunk sorted first, so the contract being asked about is deleted. E1 is
+# the narrower one: the right contract wins and the arithmetic still cannot
+# run, because a percentage is not an amount.
+
+DD23_BOQ_NAME = (
+    "DD-2023-118_the client project II Infrastructure Package 1_"
+    "Demolition and Site Clearance BOQ.pdf"
+)
+#: The foreign document G1 invented its answer from. It carries no
+#: PREFIX-YEAR-SEQ, so the contract fence cannot see it at all — which is
+#: why the contract's own register row has to WIN rather than be alone.
+FOREIGN_NAME = "2015 MWC (Show Package).docx"
+
+F1 = (
+    "Generate a high-level WBS for the demolition and site clearance scope "
+    "in this project's BOQ."
+)
+G1 = "What does Schedule 10 of the contract contain?"
+E1 = (
+    "Calculate the delay damages per calendar day in SAR for the whole of "
+    "the Works."
+)
+
+#: The Contract Data of the contract being asked about, with the Volume 4
+#: schedule register in it. Run through the real chunker, so the register
+#: rows land in a particulars window exactly as the indexer puts them there.
+DD23_CONTRACT_DATA_W2 = """Volume 1 - Conditions of Contract
+
+Particular Conditions Part A - Contract Data
+
+1.1.1 Accepted Contract Amount excluding VAT | SAR 8,640,000.00
+1.1.27 Defects Notification Period | 365 days from the Taking-Over Certificate
+1.1.75 Time for Completion for the whole of the Works | 640 days
+8.8 Delay Damages for the whole of the Works | 0.1% of the Contract Price per calendar day
+8.8 Maximum amount of delay damages | 10% of the Accepted Contract Amount
+Volume 4 Schedules
+Schedule 9 | Health & Safety KPIs
+Schedule 10 | Not Used
+""" + "\n".join(
+    # The live Contract Data carries 200+ rows. E1's money row has to survive
+    # a field of siblings that all earn the family bonus and, unlike it, the
+    # full label bonus too. Six rows is not that field, and a fixture that
+    # cannot fail proves nothing.
+    f"1.9.{i} Delay damages and completion — spare particulars field {i} "
+    f"for the whole of the Works | {i} calendar days"
+    for i in range(1, 45)
+)
+
+E1_RATE_ROW = "0.1% of the Contract Price per calendar day"
+E1_MONEY = "SAR 8,640,000.00"
+G1_REGISTER_ROW = "Schedule 10: Not Used"
+F1_BOQ_ITEM = "D110"
+
+#: Measured rows — the evidence a BOQ/scope ask has to be built on.
+_BOQ_PAGE_1 = (
+    "Demolition and Site Clearance. Page d/3/1.\n"
+    "| D110 | General site clearance | 158 | ha | 2,500.00 | 395,000.00 |\n"
+    "| D290.1 | Removal of trees in existing sidewalks | 48 | Nr | 220.00 |"
+)
+_BOQ_PAGE_3 = (
+    "Demolition and Site Clearance. Page d/3/3.\n"
+    "| D549.2 | Removal of existing chain link fence | 80 | m | 15.00 |\n"
+    "| D599.5 | Breaking out existing carriageway | 1,200 | m2 | 18.00 |"
+)
+DD23_BOQ_ROWS = [_BOQ_PAGE_1, _BOQ_PAGE_3]
+
+# Another year's Conditions of Contract. Its prose describes the demolition
+# scope, refers to the Contract Data, and lists the Schedules — so it reads
+# as relevant to all three questions without answering any of them.
+_DD22_SCOPE_CLAUSE = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 4.1. The Contractor "
+    "shall execute the demolition and site clearance scope described in the "
+    "Bill of Quantities and is responsible for the scope of the Works."
+)
+_DD22_SCHEDULES_CLAUSE = (
+    "Volume 1 - Conditions of Contract. Schedules to the Contract. The "
+    "Schedules listed in Volume 4 form part of the Contract. Schedule 10 "
+    "shall be read with the Conditions of Contract."
+)
+_DD22_DELAY_CLAUSE_W2 = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 8.8 Delay Damages. The "
+    "Contractor shall pay delay damages for the whole of the Works at the "
+    "rate stated in the Contract Data for every calendar day."
+)
+DD22_CHUNKS_W2 = [
+    _DD22_SCOPE_CLAUSE, _DD22_SCHEDULES_CLAUSE, _DD22_DELAY_CLAUSE_W2,
+]
+
+_FOREIGN_SCHEDULE_10 = (
+    "2015 MWC Show Package. Schedule 10 — Works Guarantee. The Contractor "
+    "shall provide a Works Guarantee in the form annexed. Schedule 10 sets "
+    "out any applicable Works Guarantees required under the show package."
+)
+_FOREIGN_SCHEDULE_10_CONT = (
+    "2015 MWC Show Package. Schedule 10 continued. The Works Guarantee "
+    "shall be issued by a bank acceptable to the Employer."
+)
+FOREIGN_CHUNKS = [_FOREIGN_SCHEDULE_10, _FOREIGN_SCHEDULE_10_CONT]
+
+_W2_NAMES = {
+    "w2_dd23_cd": DD23_NAME,
+    "w2_dd23_boq": DD23_BOQ_NAME,
+    "w2_dd22": DD22_NAME,
+    "w2_foreign": FOREIGN_NAME,
+}
+
+#: Per-case cosine, because the `fake` embedder is a hash and its similarity
+#: carries no meaning. These are the orderings wave 2 measured: the wrong
+#: source leads every one of the three.
+_W2_SCORES = {
+    F1: {"w2_dd22": 0.90, "w2_dd23_boq": 0.58, "w2_dd23_cd": 0.40,
+         "w2_foreign": 0.35},
+    G1: {"w2_foreign": 0.92, "w2_dd22": 0.80, "w2_dd23_cd": 0.45,
+         "w2_dd23_boq": 0.20},
+    E1: {"w2_dd22": 0.88, "w2_dd23_cd": 0.55, "w2_foreign": 0.30,
+         "w2_dd23_boq": 0.20},
+}
+#: The money row states an amount and nothing the question says, so it scores
+#: below its own siblings for this question.
+_W2_MONEY_ROW_SCORE = 0.34
+
+
+@pytest.fixture
+def wave2_corpus(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_CD_PARTICULARS_BOOST", raising=False)
+
+    from sqlalchemy import delete as _sa_delete
+
+    from app.core.rag import embeddings as _emb
+    from app.core.rag import retriever as ret
+    from app.core.rag import vector_store as _vs
+
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+    from app.core.rag.embeddings import Embedder
+    from app.core.rag.vector_store import get_store
+
+    embedder = Embedder(model_name="fake")
+    store = get_store(dim=embedder.dim)
+    with store._lock, store._session_factory()() as session:
+        session.execute(_sa_delete(store._rag_chunk_cls))
+        session.commit()
+
+    cd_chunks = contract_data_particulars_chunks(
+        DD23_CONTRACT_DATA_W2, filename=DD23_NAME,
+    )
+    assert cd_chunks, "the particulars chunker produced nothing to retrieve"
+    assert any(G1_REGISTER_ROW in c for c in cd_chunks), (
+        "the schedule register did not land in a particulars window — the "
+        "fixture no longer models what the indexer emits"
+    )
+    for doc_id, texts in (
+        ("w2_dd23_cd", cd_chunks),
+        ("w2_dd23_boq", DD23_BOQ_ROWS),
+        ("w2_dd22", DD22_CHUNKS_W2),
+        ("w2_foreign", FOREIGN_CHUNKS),
+    ):
+        store.upsert_chunks(PROJECT, doc_id, texts, embedder.encode(texts))
+
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda d: _W2_NAMES.get(d, ""))
+
+    real_search = store.search
+    active = {"ask": F1}
+
+    def live_shaped(project_id, query_vec, k=20, query_text=None):
+        hits = real_search(project_id, query_vec, k=k, query_text=query_text)
+        table = _W2_SCORES[active["ask"]]
+        for chunk in hits:
+            chunk.score = table.get(chunk.doc_id, 0.2)
+            if active["ask"] is E1 and E1_MONEY in (chunk.text or ""):
+                chunk.score = _W2_MONEY_ROW_SCORE
+        return hits
+
+    monkeypatch.setattr(store, "search", live_shaped)
+
+    def top_k(ask, k=5):
+        active["ask"] = ask
+        chunks, _ = ret.retrieve_with_filter(ask, PROJECT, k=k)
+        return [(_W2_NAMES.get(c.doc_id, ""), c.text or "") for c in chunks]
+
+    yield ret, top_k
+
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+
+
+# ── F1: measured scope lives in the bill, not another year's prose ────────
+
+
+def test_f1_reaches_the_contracts_own_bill_not_another_years_prose(wave2_corpus):
+    """All three of F1's live citations were the wrong contract year."""
+    _ret, top_k = wave2_corpus
+    top = top_k(F1)
+
+    assert top, "nothing retrieved — the bill is in the fixture"
+    assert F1_BOQ_ITEM in _blob(top), (
+        "no measured BOQ row reached the top-5:\n" + _report(top)
+    )
+    assert top[0][0] == DD23_BOQ_NAME, (
+        "rank 1 is not the contract's own bill:\n" + _report(top)
+    )
+    assert DD22_NAME not in [name for name, _t in top], (
+        "another contract year is still in the top-5:\n" + _report(top)
+    )
+
+
+def test_a_bill_of_quantities_ask_is_recognised():
+    from app.core.rag.retriever import query_asks_for_boq_scope
+
+    assert query_asks_for_boq_scope(F1)
+    assert query_asks_for_boq_scope(
+        "In the demolition BOQ, what is the rate and amount for general "
+        "site clearance (item D110)?"
+    )
+    assert query_asks_for_boq_scope("What is in the priced Bill of Quantities?")
+    # Not a bill ask: no measured-scope wording anywhere in it.
+    assert not query_asks_for_boq_scope(G1)
+    assert not query_asks_for_boq_scope(A3)
+    assert not query_asks_for_boq_scope(
+        "Who signed the letter about the batching plant at Creek Bend, "
+        "and in what capacity?"
+    )
+
+
+def test_the_boq_document_test_is_the_indexers_own_pattern():
+    """One pattern, not two. The indexer already uses it to pick a chunker
+    and an OCR budget; a second copy here would drift from it silently."""
+    from app.core.doc_index import _BOQ_NAME_RE, BOQ_FILENAME_RE
+    from app.core.rag.retriever import document_is_a_bill_of_quantities
+
+    assert BOQ_FILENAME_RE is _BOQ_NAME_RE
+
+    for name in (
+        DD23_BOQ_NAME,
+        "FX-2044-0000-AAA-BOQ-CA-000001 Priced Bill of Quantities Rev B.pdf",
+        "Schedule of Quantities - Roads.xlsx",
+    ):
+        assert document_is_a_bill_of_quantities(name), name
+    for name in (DD22_NAME, DD23_NAME, FOREIGN_NAME, "", None):
+        assert not document_is_a_bill_of_quantities(name), name
+
+
+def test_mutation_probe_f1_needs_the_bill_to_count_as_evidence(
+    wave2_corpus, monkeypatch,
+):
+    """Remove the bill from the kinds of answer the election knows about and
+    F1's live failure returns: the wrong contract year takes the whole pool
+    and the measured rows are at no rank."""
+    ret, top_k = wave2_corpus
+    monkeypatch.setattr(ret, "query_asks_for_boq_scope", lambda _q: False)
+    top = top_k(F1)
+
+    assert top, "the probe must reproduce a wrong answer, not an empty one"
+    assert DD22_NAME == top[0][0], (
+        "probe did not put the wrong year at rank 1:\n" + _report(top)
+    )
+    assert F1_BOQ_ITEM not in _blob(top), (
+        "probe did not reproduce F1 — the bill is still reachable:\n"
+        + _report(top)
+    )
+
+
+# ── G1: the register row that says "Not Used" IS the answer ───────────────
+
+
+def test_g1_reaches_the_contracts_own_schedule_register(wave2_corpus):
+    """Sev-1. The live answer invented a Works Guarantee out of another
+    project's show package. The contract's own register says Not Used."""
+    _ret, top_k = wave2_corpus
+    top = top_k(G1)
+
+    assert top, "nothing retrieved — the register is in the fixture"
+    assert G1_REGISTER_ROW in _blob(top), (
+        "the register row never reached the top-5, so the answer can only "
+        "come from somewhere else:\n" + _report(top)
+    )
+    assert DD22_NAME not in [name for name, _t in top], (
+        "another contract year is still in the top-5:\n" + _report(top)
+    )
+
+
+def test_g1_own_register_outranks_another_projects_schedule_ten(wave2_corpus):
+    """The foreign document carries no contract id, so the fence cannot drop
+    it — it has to LOSE. Ranking below the contract's own register is what
+    lets #468's "Not Used IS the answer" instruction bite."""
+    _ret, top_k = wave2_corpus
+    top = top_k(G1)
+    names = [name for name, _t in top]
+
+    own = [i for i, (_n, text) in enumerate(top) if G1_REGISTER_ROW in text]
+    foreign = [i for i, name in enumerate(names) if name == FOREIGN_NAME]
+    assert own, _report(top)
+    assert not foreign or min(own) < min(foreign), (
+        "another project's Schedule 10 outranks this contract's register:\n"
+        + _report(top)
+    )
+    assert names[0] == DD23_NAME, (
+        "rank 1 is not the contract being asked about:\n" + _report(top)
+    )
+
+
+def test_a_numbered_contract_schedule_ask_wants_a_register_row():
+    assert query_asks_for_contract_particulars(G1)
+    assert query_asks_for_contract_particulars(
+        "What does Schedule 9 of the contract volumes cover?"
+    )
+    assert query_asks_for_contract_particulars(
+        "Does Appendix 3 of the contract apply?"
+    )
+    # No contract context: a numbered schedule also appears inside
+    # specifications and method statements, and those asks stay put.
+    assert not query_asks_for_contract_particulars(
+        "What does Schedule 10 contain?"
+    )
+    assert not query_asks_for_contract_particulars(
+        "What scheduling method does Specification 003113 require for "
+        "programmes?"
+    )
+
+
+def test_mutation_probe_g1_needs_the_schedule_ask_recognised(
+    wave2_corpus, monkeypatch,
+):
+    """With the Schedule-N ask unrecognised, nothing lifts the register row
+    and the fence hands the pool to whichever contract sorted first."""
+    ret, top_k = wave2_corpus
+    real = ret.query_asks_for_contract_particulars
+    monkeypatch.setattr(
+        ret,
+        "query_asks_for_contract_particulars",
+        lambda q: False if q == G1 else real(q),
+    )
+    top = top_k(G1)
+
+    assert top
+    assert G1_REGISTER_ROW not in _blob(top), (
+        "probe did not reproduce G1 — the register row is still reachable, "
+        "so recognising the ask is not what fixed it:\n" + _report(top)
+    )
+
+
+# ── E1: a percentage is not an amount ─────────────────────────────────────
+
+
+def test_e1_reaches_both_the_rate_and_the_amount_it_is_a_percentage_of(
+    wave2_corpus,
+):
+    """The live answer had the rate and reported the SAR figure as absent."""
+    _ret, top_k = wave2_corpus
+    top = top_k(E1)
+
+    assert len(top) == 5, _report(top)
+    blob = _blob(top)
+    assert E1_RATE_ROW in blob, (
+        "the rate row is missing:\n" + _report(top)
+    )
+    assert E1_MONEY in blob, (
+        "the amount the rate is a percentage of never reached the top-5, so "
+        "the arithmetic still cannot run:\n" + _report(top)
+    )
+
+
+def test_the_reserved_row_costs_the_weakest_slot_not_an_extra_one(wave2_corpus):
+    """A reservation, not an append: k is what the caller asked for, and the
+    row the question actually named keeps its place."""
+    _ret, top_k = wave2_corpus
+    top = top_k(E1, k=5)
+
+    assert len(top) == 5
+    assert E1_RATE_ROW in top[0][1], (
+        "the reservation displaced the row the question names:\n"
+        + _report(top)
+    )
+    assert E1_MONEY in top[-1][1], (
+        "the reserved row should occupy the weakest slot:\n" + _report(top)
+    )
+
+
+def test_an_arithmetic_money_ask_is_recognised():
+    from app.core.rag.retriever import query_needs_a_monetary_base
+
+    assert query_needs_a_monetary_base(E1)
+    assert query_needs_a_monetary_base(
+        "How much is the delay damages per day in AED?"
+    )
+    # Not arithmetic: a lookup for the rate itself needs no base.
+    assert not query_needs_a_monetary_base(A5)
+    assert not query_needs_a_monetary_base(A3)
+    # Arithmetic without a money answer: a duration needs no amount.
+    assert not query_needs_a_monetary_base(
+        "Calculate the remaining Time for Completion in days."
+    )
+
+
+def test_a_particulars_row_states_an_amount_only_when_its_value_does():
+    """"10% of the Accepted Contract Amount" NAMES the base without stating
+    it — and that row is what E1 already had."""
+    from app.core.rag.retriever import particulars_row_states_an_amount_of_money
+
+    rows = contract_data_particulars_chunks(
+        DD23_CONTRACT_DATA_W2, filename=DD23_NAME,
+    )
+    money = [r for r in rows if particulars_row_states_an_amount_of_money(r)]
+    assert money, "no money row found in the fixture"
+    assert all(E1_MONEY in r for r in money if "1.1.1" in r)
+
+    cap = [r for r in rows if "Maximum amount of delay damages" in r
+           and "1.1.1" not in r]
+    assert cap, "fixture lost its cap row"
+    assert not any(particulars_row_states_an_amount_of_money(r) for r in cap)
+
+
+def test_the_reservation_is_a_no_op_when_an_amount_is_already_in_the_top_k():
+    from app.core.rag.retriever import reserve_monetary_base_row
+    from app.core.rag.vector_store import Chunk
+
+    def _chunk(cid, text):
+        return Chunk(chunk_id=cid, project_id=PROJECT, doc_id="d",
+                     chunk_index=0, text=text, score=0.5)
+
+    header = (
+        "CONTRACT DATA particulars — filled-in amount / duration / "
+        f"percentage [{DD23_NAME}].\nContract Data\n"
+    )
+    kept = [_chunk("a", header + f"1.1.1 Accepted Contract Amount: {E1_MONEY}")]
+    ranked = list(kept) + [
+        _chunk("b", header + f"1.1.1 Accepted Contract Amount incl VAT: {E1_MONEY}")
+    ]
+    assert reserve_monetary_base_row(E1, kept, ranked) is False
+    assert [c.chunk_id for c in kept] == ["a"]
+
+
+def test_the_reservation_declines_for_a_non_arithmetic_ask():
+    from app.core.rag.retriever import reserve_monetary_base_row
+    from app.core.rag.vector_store import Chunk
+
+    header = (
+        "CONTRACT DATA particulars — filled-in amount / duration / "
+        f"percentage [{DD23_NAME}].\nContract Data\n"
+    )
+    kept = [Chunk(chunk_id="a", project_id=PROJECT, doc_id="d", chunk_index=0,
+                  text=header + f"8.8 Delay Damages: {E1_RATE_ROW}", score=0.5)]
+    ranked = list(kept) + [
+        Chunk(chunk_id="b", project_id=PROJECT, doc_id="d", chunk_index=1,
+              text=header + f"1.1.1 Accepted Contract Amount: {E1_MONEY}",
+              score=0.4)
+    ]
+    assert reserve_monetary_base_row(A5, kept, ranked) is False
+    assert [c.chunk_id for c in kept] == ["a"]
+
+
+def test_the_reservation_cannot_reinstate_an_excluded_contract():
+    """The reserved row goes through the caller's contract-scope test, so it
+    cannot walk a wrong-year row back through the fence."""
+    from app.core.rag.retriever import reserve_monetary_base_row
+    from app.core.rag.vector_store import Chunk
+
+    header = (
+        "CONTRACT DATA particulars — filled-in amount / duration / "
+        f"percentage [{DD22_NAME}].\nContract Data\n"
+    )
+    kept = [Chunk(chunk_id="a", project_id=PROJECT, doc_id="d23", chunk_index=0,
+                  text=f"8.8 Delay Damages: {E1_RATE_ROW}", score=0.5)]
+    wrong_year = Chunk(chunk_id="b", project_id=PROJECT, doc_id="d22",
+                       chunk_index=0,
+                       text=header + f"1.1.1 Accepted Contract Amount: {E1_MONEY}",
+                       score=0.4)
+    ranked = list(kept) + [wrong_year]
+
+    assert reserve_monetary_base_row(
+        E1, kept, ranked, allow=lambda c: c.doc_id != "d22",
+    ) is False
+    assert [c.chunk_id for c in kept] == ["a"]
+    # Without the gate the same row IS the one it would have taken, so the
+    # gate is what excluded it rather than the predicate.
+    kept2 = list(kept)
+    assert reserve_monetary_base_row(E1, kept2, ranked) is True
+
+
+def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
+    """Disable the reservation and E1's live failure returns: the rate row is
+    there, the amount is not, and the answer can only report it missing."""
+    ret, top_k = wave2_corpus
+    monkeypatch.setattr(
+        ret, "reserve_monetary_base_row",
+        lambda *_a, **_kw: False,
+    )
+    top = top_k(E1)
+
+    assert top
+    assert E1_RATE_ROW in _blob(top), _report(top)
+    assert E1_MONEY not in _blob(top), (
+        "probe did not reproduce E1 — the amount is reachable without the "
+        "reservation, so the reservation is not what fixed it:\n"
         + _report(top)
     )
