@@ -928,7 +928,7 @@ class RunLifecycle:
         self._write_state(f"signal:{name}", complete=False, extra={"signum": signum})
 
     def _atexit_flush(self) -> None:
-        if self.finished_reason is None:
+        if self.finished_reason is None and self.owns_process():
             self.log(
                 "[lifecycle] atexit reached with no recorded exit — something "
                 "left the run without going through the lifecycle"
