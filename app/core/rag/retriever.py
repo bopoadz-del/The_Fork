@@ -702,6 +702,196 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
     return [" ".join(pair) for pair in itertools.combinations(terms, 2)]
 
 
+# ── letter / named-party filename rescue (live D1) ──────────────────────────
+#
+# Live Master Corpus D1 (SHA 567147a): "who signed the UBCC Concrete
+# Batching Plant at Wadi Safar letter" retrieved only Volume 5 Other
+# Documents (geotech / plot agreement / weekly reports). The letter was
+# already in Neon (ids 8199b14b, b5033ec2) — its filename carries Letter +
+# UBCC + Batching Plant + wadi Safar. Term rescue skipped the out-of-pool
+# fetch because Volume 5 already mentioned the place-name in-chunk.
+#
+# Filename overlap is the discriminator Volume 5 cannot fake: its name is
+# a contract volume, not a letter. Kill-switch: RAG_LETTER_FILENAME_RESCUE=0.
+_LETTER_OR_SIGNATORY_RE = re.compile(
+    r"(?i)\b(?:"
+    r"who\s+signed|who\s+put\s+their\s+name|"
+    r"signed\s+the\s+letter|signator(?:y|ies)|"
+    r"in\s+what\s+capacity|"
+    r"letter\s+(?:about|on|regarding|for|to)\b"
+    r")"
+)
+_LETTER_IN_NAME_RE = re.compile(
+    r"(?i)(?:^|[\s_\-/.(])letter(?:s)?(?:[\s_\-/.)]|$)",
+)
+# Below IDENTIFIER_BONUS_MAX (2.0) so exact codes still win; above typical
+# cosine + Volume-5 term overlap so a filename-matched letter leads.
+_FILENAME_OVERLAP_BONUS_MAX = 1.6
+_FILENAME_LETTER_BONUS = 0.4
+_FILENAME_RESCUE_MIN_TERMS = 2
+_FILENAME_RESCUE_OPEN_MIN_TERMS = 3
+
+
+def letter_filename_rescue_enabled() -> bool:
+    """ON by default — this is a live recall defect. RAG_LETTER_FILENAME_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy on a corpus."""
+    return (os.getenv("RAG_LETTER_FILENAME_RESCUE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_for_letter_or_signatory(query: str) -> bool:
+    """True for a who-signed / letter-about ask (D1), not a contract-role ask.
+
+    "Who is the Engineer" stays on the Contract Data path (#483). "Who
+    signed the letter about the batching plant" is this class.
+    """
+    return bool(_LETTER_OR_SIGNATORY_RE.search(query or ""))
+
+
+def filename_looks_like_letter(filename: str) -> bool:
+    """True when the upload name or path is a correspondence letter."""
+    return bool(_LETTER_IN_NAME_RE.search(filename or ""))
+
+
+def filename_query_overlap(filename: str, terms: List[str]) -> float:
+    """Fraction of distinctive ``terms`` that appear in the filename/path."""
+    blob = (filename or "").lower()
+    cleaned = [t.lower() for t in terms if t and len(t) >= 3]
+    if not blob or not cleaned:
+        return 0.0
+    hits = sum(1 for t in cleaned if t in blob)
+    return hits / len(cleaned)
+
+
+def filename_match_bonus(
+    filename: str,
+    terms: List[str],
+    *,
+    letter_query: bool,
+) -> float:
+    """Additive lift for a chunk whose document name matches the query.
+
+    A letter-shaped name gets an extra tier so Volume 5 'Other Documents'
+    that share a place-name cannot outrank the letter the question named.
+    Zero when the name shares no distinctive term.
+    """
+    overlap = filename_query_overlap(filename, terms)
+    if overlap <= 0.0:
+        return 0.0
+    if letter_query and overlap * len(terms) < _FILENAME_RESCUE_MIN_TERMS:
+        # Fewer than two term hits: a lone "plant" in a weekly report name.
+        if not filename_looks_like_letter(filename):
+            return 0.0
+    bonus = overlap * _FILENAME_OVERLAP_BONUS_MAX
+    if filename_looks_like_letter(filename):
+        bonus += _FILENAME_LETTER_BONUS
+    return bonus
+
+
+def _apply_filename_overlap_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: lift chunks whose resolved filename matches the query."""
+    if not letter_filename_rescue_enabled():
+        return
+    terms = extract_rescue_terms(query)
+    if len(terms) < _FILENAME_RESCUE_MIN_TERMS:
+        return
+    letter_q = query_asks_for_letter_or_signatory(query)
+    for i, (score, chunk) in enumerate(scored):
+        name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+        add = filename_match_bonus(name, terms, letter_query=letter_q)
+        if add <= 0.0:
+            continue
+        boosted = score + add
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_filename_matched_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> Dict[str, str]:
+    """Pull chunks from filename-matched letters into ``fused``.
+
+    Returns ``{doc_id: original_name}`` so the later name resolution does
+    not re-query the documents table for docs we just looked up.
+    Failures never raise — the semantic pool stands.
+    """
+    names: Dict[str, str] = {}
+    if not letter_filename_rescue_enabled():
+        return names
+    terms = extract_rescue_terms(query)
+    letter_q = query_asks_for_letter_or_signatory(query)
+    if letter_q:
+        if len(terms) < _FILENAME_RESCUE_MIN_TERMS:
+            return names
+        require_letter = True
+        min_terms = _FILENAME_RESCUE_MIN_TERMS
+    else:
+        # Named-site lookup without "letter": only fire when the query is
+        # specific enough that a filename collision is unlikely.
+        if len(terms) < _FILENAME_RESCUE_OPEN_MIN_TERMS:
+            return names
+        require_letter = False
+        min_terms = _FILENAME_RESCUE_OPEN_MIN_TERMS
+
+    try:
+        from app.core.projects import documents_matching_filename_terms
+    except Exception:  # noqa: BLE001
+        logger.warning("filename rescue: projects import failed", exc_info=True)
+        return names
+
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return names
+
+    recovered = 0
+    for pid in pids:
+        try:
+            matches = documents_matching_filename_terms(
+                pid, terms, min_terms=min_terms, require_letter=require_letter,
+            )
+            if letter_q and not matches:
+                # Filename has the site/party but not the word "letter"
+                # (handover certificate). Retry on overlap alone.
+                matches = documents_matching_filename_terms(
+                    pid, terms, min_terms=_FILENAME_RESCUE_OPEN_MIN_TERMS,
+                    require_letter=False,
+                )
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning("filename rescue listing for %s failed: %s", pid, exc)
+            continue
+        if not matches:
+            continue
+        for doc in matches:
+            names[doc["id"]] = doc.get("original_name") or ""
+        try:
+            hits = fetch(pid, [d["id"] for d in matches])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("filename rescue fetch for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits:
+            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
+            if chunk.chunk_id in fused:
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            recovered += 1
+    if recovered:
+        logger.info(
+            "filename rescue recovered %d chunk(s) for terms %r (letter_query=%s)",
+            recovered, terms, letter_q,
+        )
+    return names
+
+
 
 
 # Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
@@ -1057,6 +1247,30 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             if delta:
                 chunk.score = round((chunk.score or 0.0) + delta, 6)
 
+    fused_lex: Dict[str, Tuple] = {
+        c.chunk_id: (c, c.score or 0.0, 0.0) for c in candidates
+    }
+    filename_names = _rescue_filename_matched_docs(
+        query, project_id, fused_lex, store,
+        extra_pids=_general_knowledge_project_ids(),
+    )
+    if len(fused_lex) > len(candidates):
+        seen = {c.chunk_id for c in candidates}
+        for chunk, _sem, _b in fused_lex.values():
+            if chunk.chunk_id not in seen:
+                candidates.append(chunk)
+                seen.add(chunk.chunk_id)
+
+    name_by_id: Dict[str, str] = dict(filename_names)
+    scored_lex: List[Tuple[float, Chunk]] = [
+        (c.score or 0.0, c) for c in candidates
+    ]
+    for _, chunk in scored_lex:
+        if chunk.doc_id not in name_by_id:
+            name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
+    _apply_filename_overlap_boost(query, scored_lex, name_by_id)
+    candidates = [chunk for _s, chunk in scored_lex]
+
     # Stable sort keeps the active project ahead of GK on equal scores.
     candidates.sort(key=lambda c: -(c.score or 0.0))
 
@@ -1064,7 +1278,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     noise_filtered = 0
     scope = _ContractScope(query)
     for chunk in candidates:
-        name = _doc_name_for_id(chunk.doc_id)
+        name = name_by_id.get(chunk.doc_id, "") or _doc_name_for_id(chunk.doc_id)
         if _is_noise_filename(name):
             noise_filtered += 1
             continue
@@ -1472,6 +1686,17 @@ def retrieve_with_filter(
                         recovered, rescue_terms,
                     )
 
+    # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
+    # already found place-name overlap in Volume 5 — that in-pool hit is
+    # what used to skip the out-of-pool fetch of the actual letter.
+    filename_names = _rescue_filename_matched_docs(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=gk_ids + ([fb_id] if use_fallback and fb_id else []),
+    )
+
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
     # ``gk_lex_added`` records the bonus per chunk so the H1 margin gate below
@@ -1569,7 +1794,7 @@ def retrieve_with_filter(
     #      nothing current matches.
     # The same-drawing "prefer highest revision" suppression is computed from
     # these annotations and applied in the kept-selection loop below.
-    name_by_id: Dict[str, str] = {}
+    name_by_id: Dict[str, str] = dict(filename_names)
     for _, chunk in scored:
         if chunk.doc_id not in name_by_id:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
@@ -1586,6 +1811,8 @@ def retrieve_with_filter(
             demoted = score - _revision.SUPERSEDED_PENALTY
             chunk.score = round(demoted, 6)
             scored[i] = (demoted, chunk)
+
+    _apply_filename_overlap_boost(query, scored, name_by_id)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
