@@ -3095,6 +3095,52 @@ _DIMENSION_RE = re.compile(
     r"(mm|cm|m|km|m2|m3|sqm|cum|kg|tonne|tons?|t|kn|mpa|days?|weeks?|months?|%)\b",
     re.IGNORECASE,
 )
+# Engineering shorthand writes one dimension chain with ONE trailing unit:
+# "30x20x1.5 m", "25 x 18 x 1.2 m", "1200x600". _DIMENSION_RE cannot see it --
+# it needs a word boundary before each number, and "x" is a word character, so
+# only the last number in the chain can ever match.
+#
+# THE MEASUREMENT (F-PHRASE-1, gate_battery_13b2bf7_2026-08-31.md). Battery
+# question E4, verbatim from the instrument:
+#
+#     "Concrete volume for a raft 30x20x1.5 m including your documented
+#      waste factor."               -> 1 dimension -> refusal
+#
+# A conversational paraphrase of the SAME question, same session, same corpus:
+#
+#     "I'm pouring a raft 30 m long, 20 m wide and 1.5 m thick, how much
+#      concrete do I need ...?"     -> 3 dimensions -> 900 -> 945 m3, 119 trucks
+#
+# The user wrote the dimensions the way an engineer writes them and the
+# platform decided that was a document lookup. Nothing about the question was
+# ambiguous; the notation was.
+#
+# Narrow on purpose: at least TWO numbers joined by x / × / *, which is not a
+# shape prose produces by accident. A document lookup ("what is the rate for
+# 600x600 floor tiles") still has no calc verb and is unaffected.
+_COMPACT_DIMENSION_RE = re.compile(
+    r"(?<![A-Za-z0-9])\d[\d,\.]*\s*[x×*]\s*\d[\d,\.]*(?:\s*[x×*]\s*\d[\d,\.]*)*"
+    r"(?:\s*(?:mm|cm|m|km|m2|m3|sqm|cum)\b)?",
+    re.IGNORECASE,
+)
+
+
+def _count_dimensions(text: str) -> int:
+    """Measurement-bearing numbers in ``text``, counting compact chains.
+
+    A chain contributes each of its numbers: "30x20x1.5 m" is three, exactly
+    as "30 m long, 20 m wide and 1.5 m thick" is three. Overlap is avoided by
+    removing the chains before the plain pattern runs, so the trailing number
+    of a chain is not counted twice.
+    """
+    body = text or ""
+    count = 0
+    for chain in _COMPACT_DIMENSION_RE.finditer(body):
+        count += len(re.findall(r"\d[\d,\.]*", chain.group(0)))
+    body = _COMPACT_DIMENSION_RE.sub(" ", body)
+    return count + len(_DIMENSION_RE.findall(body))
+
+
 _MIN_DIMENSIONS_FOR_CALC = 2
 # Leftover L7: Compute (18.4-16)*2850 — numbers without unit suffixes.
 _ARITH_EXPR_RE = re.compile(
@@ -3112,7 +3158,7 @@ def _looks_like_self_contained_calculation(text: str) -> bool:
         return False
     if _ARITH_EXPR_RE.search(text):
         return True
-    return len(_DIMENSION_RE.findall(text)) >= _MIN_DIMENSIONS_FOR_CALC
+    return _count_dimensions(text) >= _MIN_DIMENSIONS_FOR_CALC
 
 
 def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str | None:
