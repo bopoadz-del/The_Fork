@@ -306,3 +306,119 @@ services:
           property: connectionString
       - key: UVICORN_WORKERS
         value: "2"
+
+  # ── TIER-1/2/3 Drive ingestion — background worker ───────────────────────
+  #
+  # NOT YET CREATED. Like every other block in this file, writing it here does
+  # NOT create the service; a git push changes nothing on Render. Create it in
+  # the Dashboard (New → Background Worker, same repo, same Dockerfile) and do
+  # NOT "Apply Blueprint" — see the header, applying reconciles every field of
+  # the web service too.
+  #
+  # WHY A WORKER AND NOT THE WEB SHELL. scripts/p1b_ingest_drive_server.py has
+  # been run from a Render Web Shell, and that is the direct cause of runs
+  # dying with no traceback and no final tally:
+  #
+  #   * A shell-launched process sits in that pty's foreground process group.
+  #     Closing the tab, an idle timeout or a network blip delivers SIGHUP and
+  #     the run is gone. manifests/INGESTION_STATUS.md logs this verbatim:
+  #     "500-file batch killed by session close at file 22."
+  #   * Its stdout/stderr go to the interactive session, not to the container's
+  #     PID-1 streams, so Render's log collector never sees them. When the
+  #     session ends the only record of the run ends with it.
+  #   * It shares the web service's 4 GB with uvicorn. The OOM measurement in
+  #     the MAX_DOC_UPLOAD_SIZE note above (3892 MB of 4096, then SIGKILL) was
+  #     taken on that box.
+  #
+  # In a worker the ingest process IS PID 1 — entrypoint.sh `exec`s
+  # WORKER_COMMAND — so every line the script prints lands in Render's durable,
+  # searchable log stream and process exit shows up in Events. That is what
+  # makes RENDER, not a report file and not a Neon row count, the completion
+  # authority for this job. Grep the log for the single terminal line:
+  #
+  #     [p1b-server] run_id=<id> RUNSUMMARY {"accounting":{...},"run_complete":true,...}
+  #
+  # NO DISK. A Render disk mounts to exactly one instance and the-fork already
+  # holds the-fork-data, so this worker CANNOT share /app/data. DATA_DIR below
+  # is therefore ephemeral scratch, which is fine for the ingest path — the
+  # script deletes each download right after indexing (r2_storage
+  # .delete_local_archive) and the durable outputs are the Neon rows plus the
+  # Render log. The JSON report and shard manifest the worker writes die with
+  # the container; do not treat their absence as evidence, and do not treat a
+  # stale copy as current. On the disk-backed WEB path the same script writes
+  # them under DATA_DIR (=/app/data) instead, where they survive.
+  #
+  # NOT A CRON JOB. Cron runs are capped at 12 hours and cannot attach a disk.
+  # Tier 1's remainder may fit; tiers 2 and 3 will not.
+  #
+  # --keep-alive is load-bearing: Render restarts a worker whose process exits,
+  # so without it a finished pass would loop forever re-walking Drive. With it,
+  # a finished worker parks and the last log line stays readable.
+  - type: worker
+    name: the-fork-ingest
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # 4 GB. Extraction peaks are documented above and are not a function of
+    # file size; a 4.4 MB PDF is what produced the 3892 MB peak.
+    plan: pro
+    region: oregon
+    branch: main
+    # Ingestion is started deliberately, never by a merge landing on main.
+    autoDeploy: false
+    envVars:
+      - key: ENV
+        value: production
+      # Ephemeral — see the NO DISK note above.
+      - key: DATA_DIR
+        value: /app/data
+      - key: PYTHONIOENCODING
+        value: utf-8
+      # One file at a time. The default of 2 keeps two raw file bodies plus two
+      # extraction forks resident at once, which is what the OOM measurement
+      # was taken against.
+      - key: P1B_PARALLELISM
+        value: "1"
+      - key: WORKER_COMMAND
+        value: >-
+          python scripts/p1b_ingest_drive_server.py --tier 1 --resume
+          --keep-alive
+      # Must match the web service exactly — vectors carry an embedding
+      # identity and VectorStore._verify_embedding_identity refuses a
+      # namespace whose stamp disagrees.
+      - key: RAG_EMBEDDING_MODEL
+        value: BAAI/bge-small-en-v1.5
+      - key: CEREBRUM_VIRGIN
+        value: "false"
+      - key: CEREBRUM_DOMAIN_KITS
+        value: construction
+      # Ingest needs 1-2 live Postgres connections; the default pool of 10 per
+      # process is what knocked Postgres into recovery when five ingest
+      # workers ran at once (see app/core/db.py).
+      - key: DB_POOL_SIZE
+        value: "2"
+      - key: DB_MAX_OVERFLOW
+        value: "2"
+      # No inbound HTTP, so no queue draining here either.
+      - key: INGEST_WORKER_ENABLED
+        value: "false"
+      # ── Secrets (set in the dashboard, never in git) ───────────────────
+      - key: DATABASE_URL
+        sync: false
+      - key: DATA_ENCRYPTION_KEY
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: GDRIVE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_ENDPOINT_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
