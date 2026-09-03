@@ -51,12 +51,15 @@ STEP_TO_TARGET: Dict[str, StepTarget] = {
     "critical_path_impact": ("construction", "forensic_delay_analysis"),
     "link_procurement": ("construction", "procurement_list_generator"),
     "progress_tracker": ("construction", "progress_tracker"),
+    "look_ahead": ("construction", "look_ahead"),
+    "evm_calculate": ("construction", "evm_calculate"),
     "hold_point": ("construction", "qa_qc_inspection"),
     # Cost / BOQ
     "extract_boq": ("boq_processor", None),
     "cost_load": ("construction", "estimate_costs"),
-    "earned_value": ("construction", "progress_tracker"),
-    "cost_variance": ("construction", "sympy_reason"),
+    # Classic EVM (PV/EV/AC) — not the progress_tracker % proxy.
+    "earned_value": ("construction", "evm_calculate"),
+    "cost_variance": ("construction", "evm_calculate"),
     "cost_impact": ("construction", "change_order_impact"),
     "prolongation_cost": ("construction", "claims_builder"),
     "rework_cost": ("construction", "estimate_costs"),

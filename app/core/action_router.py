@@ -73,9 +73,16 @@ ACTION_HINTS: dict[str, str] = {
     "progress_tracker":
         "The user wants a progress / actual-vs-planned analysis. Identify "
         "completion %, slippages, and recovery options.",
+    "evm_calculate":
+        "The user wants classic Earned Value Management (PV/EV/AC → SPI, CPI, "
+        "SV, CV, and EAC/ETC/VAC when BAC is given). Do not invent actuals.",
     "resource_histogram":
         "The user wants a resource histogram (manpower / crew loading). "
         "Time-phase by week or month and flag peaks/troughs.",
+    "look_ahead":
+        "The user wants a 3–4 week look-ahead from the uploaded Primavera "
+        ".xer. List activities overlapping the window with ES/EF, float, "
+        "and critical flag — never fabricate activities.",
     "forensic_delay_analysis":
         "The user is building a forensic delay / EOT analysis. Focus on "
         "as-planned vs as-built, concurrent delays, and entitlement basis.",
@@ -276,6 +283,8 @@ GENERATIVE_INTENTS = frozenset({
     "parse_primavera_schedule",
     "forensic_delay_analysis",
     "resource_histogram",
+    "look_ahead",
+    "evm_calculate",
     # Cost/financial workflows
     "cash_flow_forecast",
     "estimate_costs",

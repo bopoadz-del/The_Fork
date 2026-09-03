@@ -131,7 +131,15 @@
   "float_analysis",
   "milestone_tracker",
   "baseline_compare",
-  "construction_calc:calculate_evm"
+  "look_ahead",
+  "evm_calculate",
+  "resource_histogram",
+  "construction_calc:calculate_evm",
+  "construction_calc:progress_quantity",
+  "construction_calc:productivity_manpower_duration",
+  "construction_calc:pe_unit_convert",
+  "construction_calc:material_consumption",
+  "construction_calc:concrete_mix_proportions"
  ],
  "handoffs": [
   {
@@ -168,10 +176,45 @@
   "formulas": [
    {
     "id": "calculate_evm",
-    "description": "Earned Value Management: CPI, SPI, EAC, ETC, VAC",
+    "description": "Earned Value Management: CPI, SPI, EAC, ETC, VAC (requires PV/EV/AC; BAC optional)",
     "implemented_by": "app.core.construction_knowledge.calculate_evm",
     "domain": "planning",
     "tier": "strategic"
+   },
+   {
+    "id": "progress_quantity",
+    "description": "PE sheet: Planned%/Actual%/Remaining qty/Progress variance",
+    "implemented_by": "app.lib.construction_formulas_planning.progress_quantity",
+    "domain": "planning",
+    "tier": "operational"
+   },
+   {
+    "id": "productivity_manpower_duration",
+    "description": "PE sheet: productivity → manhours → manpower → duration",
+    "implemented_by": "app.lib.construction_formulas_planning.productivity_manpower_duration",
+    "domain": "planning",
+    "tier": "operational"
+   },
+   {
+    "id": "pe_unit_convert",
+    "description": "PE sheet unit conversions (m↔ft, m2↔ft2, m3↔ft3, day↔hour)",
+    "implemented_by": "app.lib.construction_formulas_planning.pe_unit_convert",
+    "domain": "planning",
+    "tier": "foundational"
+   },
+   {
+    "id": "material_consumption",
+    "description": "PE sheet material required from qty/output (+ optional waste)",
+    "implemented_by": "app.lib.construction_formulas_planning.material_consumption",
+    "domain": "planning",
+    "tier": "operational"
+   },
+   {
+    "id": "concrete_mix_proportions",
+    "description": "PE sheet concrete mix from caller-supplied cement:sand:agg ratios",
+    "implemented_by": "app.lib.construction_formulas_planning.concrete_mix_proportions",
+    "domain": "planning",
+    "tier": "operational"
    },
    {
     "id": "beam_deflection_ss_udl",

@@ -121,7 +121,13 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("progress_tracker",      ["progress", "completion", "percent complete", "actual vs planned", "delay",
                                 "progress tracking", "tracking against planned", "slipping", "behind schedule", "schedule slippage",
                                 "delivery has slipped", "delivery slipped", "has slipped"]),
+    ("evm_calculate",         ["earned value", "evm", "cpi", "spi", "cost performance index",
+                                "schedule performance index", "estimate at completion", "eac",
+                                "cost variance", "schedule variance", "bcwp", "bcws", "acwp"]),
     ("resource_histogram",    ["resource", "manpower", "histogram", "crew", "labor loading", "workforce"]),
+    ("look_ahead",            ["look ahead", "lookahead", "look-ahead", "3 week look", "4 week look",
+                                "three week look", "four week look", "rolling look ahead",
+                                "short term programme", "short-term programme"]),
     ("forensic_delay_analysis", ["delay analysis", "eot", "extension of time", "delay claim", "forensic"]),
     # BIM / IFC
     ("bim_analysis",          ["bim", "ifc", "revit", "3d model", "building model", "navisworks"]),
