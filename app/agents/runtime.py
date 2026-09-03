@@ -2962,27 +2962,36 @@ def _user_intent_requires_tool(messages: list[dict[str, Any]]) -> bool:
 # (e.g. search_project_documents) and then generate the answer from memory,
 # bypassing the tool's authoritative data. When one of these matches we force
 # THAT tool by name so the real data path runs.
-_INTENT_TOOL_MAP = (
-    (("commissioning checklist", "commissioning plan", "commissioning schedule",
-      "testing and commissioning", "t&c checklist"), "commissioning_checklist"),
-    (("primavera", "xer", "p6", "baseline programme", "baseline program",
-      "programme milestones", "program milestones", "project milestones",
-      "schedule milestones", "milestones from"), "primavera_parser"),
-    # Engineering CALCULATIONS: force the deterministic calculator so the model
-    # runs the exact maths instead of computing the formula in prose (observed
-    # gpt-4o-mini doing wrong prose-math + claiming it "cannot run the tool").
-    # Only unambiguous calc phrases — cost build-ups stay on tool_choice=auto so
-    # the cost-grounding path isn't forced.
-    (("dewatering", "uplift check", "mix design", "formwork striking",
-      "modulus of rupture", "well point spacing", "well-point spacing",
-      "diaphragm wall volume", "crane capacity", "crane planning",
-      "bearing pressure", "beam deflection",
-      # reporting / commercial / procurement / risk calculators
-      "earned value", "evm", "cost performance index", "schedule performance index",
-      "estimate at completion", "interim payment", "net payment due",
-      "tender evaluation", "evaluate tenders", "score the tenders", "bid evaluation",
-      "risk score", "probability and impact"), "construction_calc"),
-)
+#
+# DATA, not code: rows live in app/routing/intent_map.yaml. Adding a row
+# never requires an edit here — load the yaml, restart. The matrix test
+# (tests/routing/test_intent_map_matrix.py) proves every row routes both
+# of its phrasings.
+_INTENT_MAP_PATH = Path(__file__).resolve().parent.parent / "routing" / "intent_map.yaml"
+
+
+def _parse_intent_tool_map(raw: str) -> tuple:
+    """Turn intent_map.yaml text into ((phrases...), tool) rows."""
+    import yaml
+
+    data = yaml.safe_load(raw) or {}
+    rows = data.get("rows") or []
+    parsed: list[tuple[tuple[str, ...], str]] = []
+    for row in rows:
+        phrases = tuple(p for p in (row.get("phrases") or []) if p)
+        tool = (row.get("tool") or "").strip()
+        if phrases and tool:
+            parsed.append((phrases, tool))
+    return tuple(parsed)
+
+
+def _load_intent_tool_map(path: Path | None = None) -> tuple:
+    """Load the intent map from yaml. ``path`` is for tests that add a row."""
+    target = path or _INTENT_MAP_PATH
+    return _parse_intent_tool_map(target.read_text(encoding="utf-8"))
+
+
+_INTENT_TOOL_MAP = _load_intent_tool_map()
 
 
 _IPC_ISSUE_RE = re.compile(
@@ -3075,7 +3084,7 @@ def _carries_ipc_figures(text: str) -> bool:
 # every input was in the question. `guardrail height` failed the same way.
 #
 # Both HAVE calculators (concrete_volume, guardrail_top_rail_height — 76 are
-# registered), but _INTENT_TOOL_MAP's ~22 phrases only reach about a dozen of
+# registered), but the intent_map.yaml phrases only reach about a dozen of
 # them. Rather than chase 76 keyword spellings, detect the SHAPE that is
 # unambiguously a calculation: an explicit calc verb plus at least two
 # measurement-bearing numbers.
