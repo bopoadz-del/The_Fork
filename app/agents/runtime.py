@@ -29,6 +29,14 @@ from typing import (
 import httpx
 
 from app.blocks import BLOCK_REGISTRY
+from app.core.answer_report_intent import (
+    answer_report_export_descriptor,
+    answer_report_export_enabled,
+    collect_answer_pairs,
+    compose_answer_report_reply,
+    message_wants_answer_report,
+    parse_answer_report_range,
+)
 from app.core.clash_intent import message_wants_clash
 from app.core.contract_lookup_intent import message_is_contract_data_lookup
 from app.core.rag.inject import rag_inject
@@ -776,6 +784,8 @@ async def _predispatch_file_tool(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
+        if message_wants_answer_report(user_msg):
+            return None
         if not user_msg:
             return None
         # A self-contained L×W×D volume ask must not steal drawing_qto just
@@ -1206,6 +1216,8 @@ def _message_wants_rfp_draft(text: str) -> bool:
     raw = text or ""
     if _message_wants_wir_form(raw):
         return False
+    if message_wants_answer_report(raw):
+        return False
     return bool(re.search(r"\brfp\b|request for proposal|invitation to tender", raw, re.I))
 
 
@@ -1434,6 +1446,8 @@ async def _predispatch_remaining_deliverables(
     user_msg, _history = _messages_user_and_history(messages)
     detect = (operator_text or user_msg or "").strip()
     if not detect or _message_wants_wir_form(detect):
+        return None
+    if message_wants_answer_report(detect):
         return None
     candidates = (
         (
@@ -1897,7 +1911,56 @@ _EXPORT_ACTION_RE = re.compile(
 
 def _asks_for_export(text: str) -> bool:
     """True when the turn wants a file produced, not a reference resolved."""
+    if message_wants_answer_report(text):
+        return True
     return bool(_EXPORT_ACTION_RE.search(text or ""))
+
+
+def _fulfill_answer_report(
+    user_message: str,
+    project_id: str | None,
+    conversation_id: str | None,
+    history: list[dict[str, Any]] | None,
+    agent_name: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Compile A1–A9 (or all) chat answers and persist the confirmation.
+
+    Runs without an LLM or RAG — the live H1 failure was retrieval treating
+    ``A1-A9`` as RFP attachment codes. Kill-switch is checked by the caller.
+    """
+    from app.core import agent_memory
+
+    prior: list[dict[str, Any]] = []
+    if conversation_id:
+        agent_memory.get_or_create_conversation(
+            conversation_id, agent_name, project_id,
+        )
+        prior = [
+            {"role": m["role"], "content": m["content"]}
+            for m in agent_memory.get_messages(conversation_id, limit=200)
+            if m.get("role") in ("user", "assistant")
+        ]
+        agent_memory.append_message(conversation_id, "user", user_message)
+    if not prior and history:
+        prior = [
+            {"role": m.get("role"), "content": m.get("content") or ""}
+            for m in history
+            if m.get("role") in ("user", "assistant")
+        ]
+    start_end = parse_answer_report_range(user_message)
+    start, end = start_end if start_end else (None, None)
+    pairs = collect_answer_pairs(prior, start, end)
+    answer = compose_answer_report_reply(pairs, start, end)
+    exports: list[dict[str, Any]] = []
+    if pairs and project_id and conversation_id:
+        have_start = start or 1
+        have_end = (start or 1) + len(pairs) - 1
+        exports = [answer_report_export_descriptor(
+            project_id, conversation_id, have_start, have_end,
+        )]
+    if conversation_id:
+        agent_memory.append_message(conversation_id, "assistant", answer)
+    return answer, exports
 
 
 _MISSING_REFERENCE_ANSWER = (
@@ -3174,6 +3237,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     low = text.lower()
     # Contract Data TfC / milestone Q&A must not force primavera_parser or
     # generate_wbs — those questions belong to RAG.
+    if message_wants_answer_report(text):
+        return None
     if message_is_contract_data_lookup(text):
         try:
             from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
@@ -6628,6 +6693,23 @@ class Agent:
                     "swallowed %s in _emit() — continuing",
                     "Exception", exc_info=True,
                 )
+
+        # H1: conversation-answer docx. Before the API-key check — no LLM.
+        if message_wants_answer_report(user_message) and answer_report_export_enabled():
+            answer, exports = _fulfill_answer_report(
+                user_message, project_id, conversation_id, history, self.name,
+            )
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": [{"role": "assistant", "content": answer}],
+                "sources": [],
+                "exports": exports,
+            }
+
         cfg = _llm_config()
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check entirely. The empty bearer token sent later is ignored
@@ -7364,6 +7446,26 @@ class Agent:
         def _note_tool(name: str | None) -> None:
             if name and name not in tools_invoked:
                 tools_invoked.append(name)
+
+        # H1: compile A1–A9 answers to a downloadable docx. Before the
+        # API-key check and before RAG (A1-A9 used to retrieve RFP
+        # attachments). No LLM required.
+        if message_wants_answer_report(user_message) and answer_report_export_enabled():
+            yield {"type": "start", "agent": self.name}
+            answer, exports = _fulfill_answer_report(
+                user_message, project_id, conversation_id, history, self.name,
+            )
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {
+                "type": "end",
+                "iterations": 0,
+                "sources": [],
+                "tools": list(tools_invoked),
+                "exports": exports,
+            }
+            return
+
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check. The empty bearer is ignored by Ollama's OAI endpoint.
         if cfg["env_key"]:
@@ -9900,6 +10002,10 @@ async def select_agent_for_message(
 
     if message_is_contract_data_lookup(user_message):
         info["reason"] = "contract_data_lookup"
+        return requested_agent, info
+
+    if message_wants_answer_report(user_message):
+        info["reason"] = "answer_report_export"
         return requested_agent, info
 
     block = _get_smart_orchestrator_block()

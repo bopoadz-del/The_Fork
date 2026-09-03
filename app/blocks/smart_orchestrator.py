@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 from app.blocks._procedure_routing import PROCEDURE_ROUTING_ADDITIONS
 from app.core.clash_intent import message_wants_clash
+from app.core.answer_report_intent import (
+    ANSWER_REPORT_BLOCKED_ACTIONS,
+    message_wants_answer_report,
+)
 from app.core.contract_lookup_intent import (
     CONTRACT_LOOKUP_BLOCKED_ACTIONS,
     message_is_contract_data_lookup,
@@ -706,6 +710,11 @@ class SmartOrchestratorBlock(UniversalBlock):
             results = [
                 r for r in results
                 if r["action"] not in CONTRACT_LOOKUP_BLOCKED_ACTIONS
+            ]
+        if message_wants_answer_report(message):
+            results = [
+                r for r in results
+                if r["action"] not in ANSWER_REPORT_BLOCKED_ACTIONS
             ]
         return self._apply_correctness_filters(message, results)
 

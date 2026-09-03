@@ -856,6 +856,65 @@ def _sanitize_filename(s: str) -> str:
     return safe.strip("_") or "export"
 
 
+def _render_answers_docx(
+    project_name: str,
+    pairs: List[Dict[str, str]],
+    conversation_id: str,
+    base_url: str = "",
+    heading: str = "Answers",
+) -> str:
+    """Render A1–A9 (or any collected) chat answers to a client-facing docx.
+
+    H1b on ``567147a``: the surface took one ``message_index`` and there was
+    no A1–A9 path, so 'Export A1-A9 answers as a docx report' never produced
+    a file. Same markdown + real footer contract as the single-message path
+    (H1/H2 on ``13b2bf7``) — figures stay intact, no literal asterisks, no
+    localhost in the footer.
+    """
+    from docx import Document
+    from docx.shared import Pt
+
+    from app.lib.markdown_docx import render_markdown_into_docx
+
+    doc = Document()
+    title = doc.add_heading(f"{project_name} — {heading}", level=0)
+    for run in title.runs:
+        run.font.size = Pt(18)
+
+    subtitle = doc.add_paragraph(
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    )
+    subtitle.runs[0].italic = True
+
+    for pair in pairs:
+        doc.add_heading(pair.get("label") or "Answer", level=1)
+        question = (pair.get("question") or "").strip()
+        if question:
+            q = doc.add_paragraph()
+            lead = q.add_run("Q: ")
+            lead.bold = True
+            q.add_run(question)
+        render_markdown_into_docx(doc, pair.get("answer") or "")
+
+    doc.add_paragraph()
+    doc.add_heading("Sources", level=2)
+    doc.add_paragraph(
+        "Each answer is copied from this conversation. Sources for a "
+        "given turn are visible in the chat UI under that assistant "
+        "message"
+        + (f" at {base_url}." if base_url else ".")
+    )
+
+    _add_page_footer(doc, base_url)
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".docx", delete=False, prefix=f"export-{conversation_id[:8]}-"
+    ) as f:
+        path = f.name
+    doc.save(path)
+    return path
+
+
 def _render_message_docx(
     project_name: str,
     assistant_text: str,
@@ -1003,15 +1062,26 @@ async def export_conversation_message(
         -1,
         description="Index of the assistant message to export; -1 = most recent",
     ),
+    scope: str = Query(
+        "message",
+        pattern="^(message|answers)$",
+        description="message = one turn (default); answers = A1–A9 report",
+    ),
+    range: str = Query(
+        "",
+        description="Optional A1-A9 (or 1-9) slice when scope=answers",
+    ),
     request: Request = None,  # type: ignore[assignment]
     auth: Dict[str, Any] = Depends(require_user),
 ):
-    """Export one assistant message from a conversation as a downloadable file.
+    """Export conversation answers as a downloadable file.
 
-    ``docx`` renders the full message; ``xlsx`` turns markdown pipe-tables
-    into worksheets (Message sheet for prose). ``pdf`` is 501 by decision
-    (2026-07-24, operator): docx + xlsx cover the deliverables and a real PDF
-    renderer would add a heavy dependency.
+    Default ``scope=message`` is the one-turn excerpt. ``scope=answers``
+    compiles A1–A9 (or all) chat answers into one report — the live H1
+    ask, which used to be misread as RFP attachments.
+
+    ``docx`` renders markdown; ``xlsx`` turns pipe-tables into worksheets.
+    ``pdf`` is 501 by decision (2026-07-24, operator).
     """
     proj = _check_owner(project_id, auth["user_id"])
     project_name = proj.get("name") or "Project"
@@ -1021,20 +1091,68 @@ async def export_conversation_message(
     if not assistant_msgs:
         raise HTTPException(404, "No assistant messages in this conversation")
 
+    fmt = (format or "docx").lower()
+    base_url = _public_base_url_for(request)
+
+    if (scope or "message").lower() == "answers":
+        from app.core.answer_report_intent import (
+            collect_answer_pairs,
+            parse_answer_report_range,
+            range_label,
+        )
+
+        parsed = parse_answer_report_range(range or "")
+        start, end = parsed if parsed else (None, None)
+        pairs = collect_answer_pairs(msgs, start, end)
+        if not pairs:
+            raise HTTPException(
+                404, "No assistant answers in this conversation to export",
+            )
+        heading = range_label(
+            start or 1,
+            (start or 1) + len(pairs) - 1,
+        )
+        if fmt == "docx":
+            path = _render_answers_docx(
+                project_name, pairs, conversation_id, base_url, heading,
+            )
+            media = (
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            )
+            ext = "docx"
+        elif fmt == "xlsx":
+            joined = "\n\n".join(
+                f"## {p['label']}\n\n{p.get('answer') or ''}" for p in pairs
+            )
+            path = _render_message_xlsx(project_name, joined, conversation_id)
+            media = _XLSX_MEDIA
+            ext = "xlsx"
+        elif fmt == "pdf":
+            raise HTTPException(
+                501,
+                "format='pdf' is not offered — export as 'docx' or 'xlsx' "
+                "(operator decision 2026-07-24).",
+            )
+        else:
+            raise HTTPException(400, f"Unsupported format '{format}'")
+        safe_name = _sanitize_filename(project_name)
+        download_name = f"{safe_name}-{_sanitize_filename(heading)}.{ext}"
+        return FileResponse(path, media_type=media, filename=download_name)
+
     # message_index is the position within assistant_msgs; -1 means newest.
     try:
         chosen = assistant_msgs[message_index]
     except IndexError:
         raise HTTPException(404, f"message_index {message_index} out of range")
 
-    fmt = (format or "docx").lower()
     if fmt == "docx":
         path = _render_message_docx(
             project_name,
             chosen.get("content") or "",
             conversation_id,
             message_index,
-            _public_base_url_for(request),
+            base_url,
         )
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ext = "docx"
