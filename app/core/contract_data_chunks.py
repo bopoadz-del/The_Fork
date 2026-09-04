@@ -291,6 +291,43 @@ def _line_packed_chunks(section: str, filename: str, heading: str) -> list[str]:
     ]
 
 
+_CD_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
+
+
+def particulars_chunk_states_a_value(chunk: str) -> bool:
+    """True when a rendered particulars chunk carries at least one filled row.
+
+    The counterpart to :func:`contract_data_particulars_chunks`: retrieval
+    needs to tell a window that states a particular from one that is a list
+    of unfilled keys, and only this module knows the rendered format.
+
+    ``_format_cd_chunk`` writes a filled row as ``key: value`` and an empty
+    one as a bare ``key``, so a colon with content after it IS the filled
+    marker. Chunks from the raw-line fallback keep the document's own
+    separator, so those are re-parsed with the same splitter the section
+    parser uses.
+
+    A value does not have to be a figure. ``1.3.1 (b) Engineer: <firm>`` and
+    ``Schedule 10: Not Used`` are both filled in, and a numeric-only test
+    cannot see either. It does have to say SOMETHING: a dot-leader run with
+    nothing after it splits into a "value" made only of dots, which is an
+    unfilled row drawn on paper.
+    """
+    lines = (chunk or "").splitlines()
+    # Line 0 is the label this module prepends; every candidate carries it.
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        key, sep, val = stripped.partition(":")
+        if sep and key.strip() and _CD_ALNUM_RE.search(val):
+            return True
+        parsed = _split_key_value_line(stripped)
+        if parsed and _CD_ALNUM_RE.search(parsed[1]):
+            return True
+    return False
+
+
 def contract_data_particulars_chunks(text: str, filename: str = "") -> list[str]:
     """Emit retrieval-ready Contract Data chunks, or ``[]`` when none found.
 
