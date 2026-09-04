@@ -67,7 +67,7 @@ class _Req:
 
 
 def _docx(text, base_url="https://theshovel.ai"):
-    path = _render_message_docx("DG2 Infra", text, "conv1234abcd", -1, base_url)
+    path = _render_message_docx("PRJ2 Infra", text, "conv1234abcd", -1, base_url)
     return zipfile.ZipFile(path)
 
 
@@ -231,7 +231,7 @@ def test_a_broken_request_object_never_breaks_the_export():
 
 def _xlsx_cells(text):
     import openpyxl
-    wb = openpyxl.load_workbook(_render_message_xlsx("DG2 Infra", text, "conv1234abcd"))
+    wb = openpyxl.load_workbook(_render_message_xlsx("PRJ2 Infra", text, "conv1234abcd"))
     return [c.value for ws in wb.worksheets for row in ws.iter_rows()
             for c in row if c.value is not None]
 

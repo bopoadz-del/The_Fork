@@ -67,7 +67,7 @@ the bug.
   replaced a 16-test file on main; six assertions had no replacement,
   including the only coverage of `llm_client.complete()`'s fallback.
   Restored before merge.
-- **PR #330's identifier scrub missed the DGII spelling** — 610 occurrences
+- **PR #330's identifier scrub missed the roman-numeral spelling of the project code** — 610 occurrences
   in a committed client Drive listing, plus the client project name in tool
   schemas and the system prompt shown to the LLM. Scrubbed; a dead one-off
   extractor with the client name in its filename retired. The tracked-file

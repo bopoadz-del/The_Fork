@@ -43,7 +43,7 @@ import pytest
 from app.core.rag import vector_store as vs
 from app.core.rag.inject import format_chunks_as_system_message
 
-PROJECT = "diriyah_infra_pack_1"
+PROJECT = "acme_infra_pack_1"
 
 # The chunk the assistant had already quoted from, two turns earlier.
 SBC_CHUNK = (
