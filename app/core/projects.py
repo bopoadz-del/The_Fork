@@ -191,6 +191,11 @@ def _document_as_dict(document: Document) -> Dict[str, Any]:
         "size": document.size,
         "uploaded_at": document.uploaded_at,
         "content_sha256": document.content_sha256,
+        "ingest_status": getattr(document, "ingest_status", None),
+        "ingest_status_reason": getattr(document, "ingest_status_reason", None),
+        "chunk_count": getattr(document, "chunk_count", None),
+        "drive_md5": getattr(document, "drive_md5", None),
+        "last_verified_at": getattr(document, "last_verified_at", None),
     }
     meta = coerce_document_metadata(getattr(document, "metadata_", None))
     if getattr(document, "metadata_", None) is not None:
