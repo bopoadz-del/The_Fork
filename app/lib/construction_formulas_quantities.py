@@ -8,8 +8,110 @@ parameters; arithmetic shown in ``note``.
 from __future__ import annotations
 
 import math
+import os
+import re
 
 _STEEL_DENSITY = 7850.0  # kg/m^3
+
+# Live UI pack E4 (Master Corpus / theshovel.ai):
+#   "Concrete volume for a raft 30x20x1.5 m including your documented waste
+#    factor." → net 900 m3; documented waste is 5% (× 1.05) → 945 m3.
+# Leftover L6 aliased unnamed L×W×D to excavation_volume (bank only, no
+# waste). A concrete/raft ask must pin concrete_volume and this factor.
+# Kill switch: APPLY_DOCUMENTED_WASTE=0 restores the FAIL (net 900).
+DOCUMENTED_CONCRETE_WASTE_FACTOR = 0.05
+
+_CONCRETE_VOLUME_ASK_RE = re.compile(
+    r"\b(concrete|raft|slab|footing|pile[\s-]?cap|waste[\s-]?factor)\b",
+    re.IGNORECASE,
+)
+_DOCUMENTED_WASTE_ASK_RE = re.compile(
+    r"\b(documented\s+waste|waste[\s-]?factor|including\b.{0,40}\bwaste)\b",
+    re.IGNORECASE,
+)
+_LWT_CHAIN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
+    r"(\d[\d,]*(?:\.\d+)?)\s*[x×*]\s*"
+    r"(\d[\d,]*(?:\.\d+)?)"
+    r"(?:\s*(?:mm|cm|m)\b)?",
+    re.IGNORECASE,
+)
+
+
+def documented_waste_enabled() -> bool:
+    """ON by default. ``APPLY_DOCUMENTED_WASTE=0/false/no/off`` is the kill-switch."""
+    raw = (os.getenv("APPLY_DOCUMENTED_WASTE", "1") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def documented_concrete_waste_factor() -> float:
+    """Project-documented concrete waste (5%), or 0.0 when the kill-switch is off."""
+    if not documented_waste_enabled():
+        return 0.0
+    return DOCUMENTED_CONCRETE_WASTE_FACTOR
+
+
+def looks_like_concrete_volume_ask(text: str) -> bool:
+    """True when the ask is a concrete/raft/slab volume, not leftover-L6 earthwork."""
+    return bool(_CONCRETE_VOLUME_ASK_RE.search(text or ""))
+
+
+def parse_lwt_metres(text: str) -> tuple[float, float, float] | None:
+    """First L×W×T (or L×W×D) chain in ``text``, in metres."""
+    match = _LWT_CHAIN_RE.search(text or "")
+    if not match:
+        return None
+    return tuple(float(g.replace(",", "")) for g in match.groups())  # type: ignore[return-value]
+
+
+def resolve_concrete_volume_calc(
+    calc: str | None,
+    params: dict | None = None,
+    text: str = "",
+) -> tuple[str | None, dict]:
+    """Pin ``concrete_volume`` + documented waste for a concrete/raft ask.
+
+    Leftover L6 still owns unnamed trench L×W×D (no concrete/raft/waste words).
+    E4's sheet phrasing is a concrete ask; excavation_volume would return the
+    FAIL (bank 900, waste missing).
+    """
+    out = dict(params or {})
+    blob = " ".join(
+        str(x) for x in (
+            text,
+            calc,
+            out.get("text"),
+            out.get("formula"),
+            out.get("name"),
+            out.get("calculation"),
+        ) if x
+    )
+    named = str(calc or "").strip()
+    is_concrete = named == "concrete_volume" or looks_like_concrete_volume_ask(blob)
+    if not is_concrete:
+        return calc, out
+
+    dims = parse_lwt_metres(blob)
+    if dims:
+        out.setdefault("length_m", dims[0])
+        out.setdefault("width_m", dims[1])
+        out.setdefault("thickness_m", dims[2])
+
+    if not out.get("thickness_m"):
+        for key in ("depth_m", "height_m", "thickness", "depth", "height"):
+            value = out.get(key)
+            if value not in (None, "", 0, 0.0):
+                out["thickness_m"] = value
+                break
+
+    if documented_waste_enabled():
+        requested = out.get("waste_factor")
+        if requested in (None, "", 0, 0.0) or _DOCUMENTED_WASTE_ASK_RE.search(blob):
+            out["waste_factor"] = DOCUMENTED_CONCRETE_WASTE_FACTOR
+    else:
+        out["waste_factor"] = 0.0
+
+    return "concrete_volume", out
 
 
 def concrete_volume(
@@ -29,7 +131,14 @@ def concrete_volume(
 
     rectangular: L*W*T. cylinder: pi*(D/2)^2*H.
     trapezoidal: ((top+bottom)/2 * depth) * length.
+
+    Headline ``volume_m3`` is the with-waste figure (E4 expects 945, not net
+    900). ``APPLY_DOCUMENTED_WASTE=0`` zeros the factor and restores net.
     """
+    if not documented_waste_enabled():
+        waste_factor = 0.0
+    else:
+        waste_factor = float(waste_factor)
     s = (shape or "rectangular").strip().lower()
     if s == "cylinder":
         net = math.pi * (diameter_m / 2.0) ** 2 * height_m
@@ -43,10 +152,12 @@ def concrete_volume(
         net = length_m * width_m * thickness_m
         expr = f"{length_m}*{width_m}*{thickness_m}"
     with_waste = net * (1.0 + waste_factor)
+    headline = round(with_waste, 3)
     return {
         "shape": s,
+        "volume_m3": headline,
         "net_volume_m3": round(net, 3),
-        "volume_with_waste_m3": round(with_waste, 3),
+        "volume_with_waste_m3": headline,
         "waste_factor": waste_factor,
         "standard": "geometry",
         "note": (f"Net = {expr} = {net:.3f} m3; "

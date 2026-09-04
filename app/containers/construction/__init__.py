@@ -2189,6 +2189,33 @@ class ConstructionContainer(
         for k, v in flat.items():
             calc_params.setdefault(k, v)
 
+        aliases = {
+            "length": "length_m", "width": "width_m", "depth": "depth_m",
+            "height": "depth_m", "height_m": "depth_m",
+            "thickness": "thickness_m",
+            "l": "length_m", "w": "width_m", "d": "depth_m",
+        }
+        for src, dst in aliases.items():
+            if src in calc_params and dst not in calc_params:
+                calc_params[dst] = calc_params[src]
+
+        # Live UI pack E4: leftover L6 aliased unnamed L×W×D to
+        # excavation_volume (bank 900, waste missing). A concrete/raft ask
+        # pins concrete_volume and the documented 5% waste → 945 m3.
+        from app.lib.construction_formulas_quantities import (
+            resolve_concrete_volume_calc,
+        )
+        text_blob = " ".join(
+            str(x) for x in (
+                p.get("text"), data.get("text"),
+                p.get("formula"), data.get("formula"),
+                calc,
+            ) if x
+        )
+        calc, calc_params = resolve_concrete_volume_calc(
+            None if calc is None else str(calc), calc_params, text_blob,
+        )
+
         if not calc:
             formula = str(p.get("formula") or data.get("formula") or "")
             nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", formula)]
@@ -2205,14 +2232,6 @@ class ConstructionContainer(
                 if has_l and has_w and has_d:
                     calc = "excavation_volume"
 
-        aliases = {
-            "length": "length_m", "width": "width_m", "depth": "depth_m",
-            "height": "depth_m", "height_m": "depth_m",
-            "l": "length_m", "w": "width_m", "d": "depth_m",
-        }
-        for src, dst in aliases.items():
-            if src in calc_params and dst not in calc_params:
-                calc_params[dst] = calc_params[src]
         for junk in ("formula", "unit", "block", "action"):
             calc_params.pop(junk, None)
 
