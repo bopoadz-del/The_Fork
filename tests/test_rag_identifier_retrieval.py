@@ -437,7 +437,7 @@ def test_chat_path_retrieves_ocr_spaced_d5492_without_reindex(
     monkeypatch.setattr(
         ret,
         "_doc_name_for_id",
-        lambda _id: "DGII - Infra-1 - Demolition BOQ.pdf",
+        lambda _id: "AGII - Infra-1 - Demolition BOQ.pdf",
     )
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)

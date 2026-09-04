@@ -3181,8 +3181,8 @@ def _carries_ipc_figures(text: str) -> bool:
 
     This used to be ``re.search(r"\d", raw)`` -- ANY digit anywhere. The intent
     was "no figures supplied", but a project code or a package number is not a
-    figure, so "issue the interim payment certificate ... on the DG2
-    Infrastructure Package 1 contract" tripped it on the 2 in DG2 and the 1 in
+    figure, so "issue the interim payment certificate ... on the PRJ2
+    Infrastructure Package 1 contract" tripped it on the 2 in PRJ2 and the 1 in
     Package 1. The calculator branch then cleared ``action`` and the predefined
     IPC deliverable never dispatched: instead of the clean missing-figures
     error, the turn fell through to RAG and answered a payment question out of

@@ -147,8 +147,8 @@ project's chat).
 
 ### Right shape of an answer when RAG context is present
 
-> *"The DPR PQ Policy requires vendors to complete Vendor Data Form
-> F-DPR-004-01-00 in parallel with the pre-qualification process,
+> *"The contractor PQ Policy requires vendors to complete Vendor Data Form
+> F-XXX-004-01-00 in parallel with the pre-qualification process,
 > before any RAA / award recommendation approval. A vendor who
 > pre-qualified for certain materials or services is exempt from
 > re-qualification on the same scope for 3 years. (source:

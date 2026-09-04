@@ -199,15 +199,17 @@ def _note_near_duplicate(
     return False
 
 
-# the client project area / district names that show up at large font sizes
-# inside the main drawing region of regional / key-plan sheets and win the
-# "largest cluster" title selection. They are sheet content, not
-# drawing-title text. Match as whole-token uppercase.
-_EXCLUDED_PLACE_NAMES = frozenset({
-    "KHUZAMA", "AL TURAIF", "AL BUJAIRI", "AL QARYA", "AL QARYA AL KHADRA",
-    "AL KHADRA", "AL SHOHDA", "AL DARIYAH", "DIRIYAH",
-    "MECCA", "MADINAH", "RIYADH",
-})
+# Area / district names that show up at large font sizes inside the main
+# drawing region of regional / key-plan sheets and win the "largest cluster"
+# title selection. They are sheet content, not drawing-title text. The names
+# identify the client's site, so they are supplied by the environment
+# (DRAWING_QTO_EXCLUDED_PLACE_NAMES, comma-separated), never kept in git.
+# Matched as whole-token uppercase.
+_EXCLUDED_PLACE_NAMES = frozenset(
+    re.sub(r"\s+", " ", n).strip().upper()
+    for n in os.getenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", "").split(",")
+    if n.strip()
+)
 
 
 def _to_metres_factor(doc_units: int) -> float:
@@ -1183,7 +1185,7 @@ class DrawingQTOBlock(UniversalBlock):
             # numeric check above due to embedded spaces.
             if re.fullmatch(r"1\s*:\s*\d+", t):
                 continue
-            # Phase 1.6: reject the client project area / district names that win at
+            # Phase 1.6: reject the site's area / district names that win at
             # large font on regional key-plan sheets but are not
             # drawing-title text (KHUZAMA, AL TURAIF, etc.).
             tu_compact = re.sub(r"\s+", " ", tu).strip()
