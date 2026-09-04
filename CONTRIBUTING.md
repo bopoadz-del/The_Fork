@@ -4,7 +4,7 @@ Short guide for anyone (human or AI agent) opening a PR.
 
 ## Pull-request template
 
-`.github/pull_request_template.md` is loaded automatically when you open a PR. Fill out every section. PRs with an empty body are rejected by `pr-quality.yml`.
+`.github/PULL_REQUEST_TEMPLATE.md` is loaded automatically when you open a PR. Fill out every section, including **RECEIPT**. PRs with an empty body are rejected by `pr-quality.yml`.
 
 The body shape that worked best in this repo's history is **PR #5** ("Security hardening: IDOR, auth gaps, SSRF, path traversal"). Use it as a reference:
 
