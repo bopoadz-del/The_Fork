@@ -1326,6 +1326,65 @@ def documents_matching_filename_terms(
     return [doc for _hits, doc in scored[:limit]]
 
 
+def documents_matching_title_phrase(
+    project_id: str,
+    phrase: str,
+    *,
+    limit: int = 8,
+) -> List[Dict[str, str]]:
+    """Documents whose ``original_name`` or ``file_path`` contains ``phrase``.
+
+    Used by specification-title retrieval (live pack C2). The Variation
+    Procedure spec is named in its filename
+    (``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``); cosine and
+    term-rescue cannot tell that file from a demolition-spec volume that
+    merely mentions variations. Exact-phrase LIKE on the upload name is
+    the discriminator those volumes cannot fake.
+
+    ``phrase`` is sanitised here (lowercased, collapsed whitespace, no
+    LIKE wildcards). Empty when nothing qualifies.
+    """
+    _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
+    cleaned = " ".join((phrase or "").lower().split())
+    if (
+        not cleaned
+        or len(cleaned) < 8
+        or " " not in cleaned
+        or any(ch in cleaned for ch in "%_")
+        or not source_id
+    ):
+        return []
+
+    name_l = func.lower(Document.original_name)
+    path_l = func.lower(func.coalesce(Document.file_path, ""))
+    needle = f"%{cleaned}%"
+    stmt = (
+        select(Document.id, Document.original_name, Document.file_path)
+        .where(Document.project_id == source_id)
+        .where(or_(name_l.like(needle), path_l.like(needle)))
+        .limit(max(1, int(limit or 8)))
+    )
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(stmt).all()
+    except Exception:
+        logger.warning(
+            "documents_matching_title_phrase failed for %s",
+            project_id,
+            exc_info=True,
+        )
+        return []
+    return [
+        {
+            "id": row.id,
+            "original_name": row.original_name or "",
+            "file_path": row.file_path or "",
+        }
+        for row in rows
+    ]
+
+
 def list_documents(
     project_id: str,
     *,

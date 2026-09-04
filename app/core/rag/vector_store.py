@@ -922,10 +922,11 @@ class VectorStore:
     ) -> List[Chunk]:
         """Return indexed chunks for specific documents, ordered by chunk_index.
 
-        Letter/signatory retrieval uses this to pull a filename-matched
-        letter into the candidate pool without competing against a Volume
-        5 flood in ``identifier_search``. Empty ``doc_ids`` or a store
-        miss returns ``[]``; failures never raise into the answer path.
+        Letter/signatory (D1) and specification-title (C2) retrieval use
+        this to pull a filename-matched document into the candidate pool
+        without competing against a Volume 5 / demolition-spec flood in
+        ``identifier_search``. Empty ``doc_ids`` or a store miss returns
+        ``[]``; failures never raise into the answer path.
         """
         if not project_id or not doc_ids:
             return []
