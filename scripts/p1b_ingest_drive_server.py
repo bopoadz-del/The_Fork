@@ -1302,7 +1302,7 @@ def main() -> int:
                 return True
 
             for _ in range(pool_size):
-                if run.should_stop() or not _submit_next():
+                if not _submit_next():
                     break
             while pending:
                 done, _ = wait(pending.keys(), return_when=FIRST_COMPLETED)
