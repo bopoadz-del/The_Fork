@@ -52,9 +52,10 @@ def test_version_is_1_1_0():
     assert SmartOrchestratorBlock.version == "1.1.0"
 
 
-def test_description_says_56_actions():
-    # cde_poll_events is the 56th unique action; the label must track it.
-    assert "56-action" in SmartOrchestratorBlock.description
+def test_description_says_58_actions():
+    # look_ahead + evm_calculate make 58 unique actions; the label must track it.
+    assert "58-action" in SmartOrchestratorBlock.description
+    assert "56-action" not in SmartOrchestratorBlock.description
     assert "55-action" not in SmartOrchestratorBlock.description
     assert "54-action" not in SmartOrchestratorBlock.description
     assert "53-action" not in SmartOrchestratorBlock.description
@@ -62,14 +63,14 @@ def test_description_says_56_actions():
     assert "39-action" not in SmartOrchestratorBlock.description
 
 
-def test_unique_action_count_is_56():
+def test_unique_action_count_is_58():
     """Net unique action names in ACTION_PATTERNS (PROCEDURE + smart_orch lists
-    combined) must equal 56: 17 PROCEDURE + 45 smart_orch − 6 collisions.
-    (cde_poll_events runs CM on live CDE rows, not a Fork register.)"""
+    combined) must equal 58: 17 PROCEDURE + 47 smart_orch − 6 collisions.
+    (look_ahead + evm_calculate; earlier cde_poll_events.)"""
     seen = set()
     for action, _ in ACTION_PATTERNS:
         seen.add(action)
-    assert len(seen) == 56, f"expected 56 unique actions, got {len(seen)}"
+    assert len(seen) == 58, f"expected 58 unique actions, got {len(seen)}"
 
 
 # ── Regression guards: previously-dropped keywords must now route ───────────
