@@ -157,7 +157,12 @@ async def test_progress_tracker_on_track(container):
     assert ev["contract_value"] == 1_000_000.0
     assert ev["earned_value"] == 510_000.0
     assert ev["planned_value"] == 500_000.0
-    assert ev["cost_variance"] == 10_000.0
+    # EV − PV is schedule variance (SV), not classic cost variance.
+    assert ev["schedule_variance"] == 10_000.0
+    assert ev["cost_variance"] is None  # AC not supplied
+    assert overall["schedule_performance_index_kind"] == (
+        "progress_proxy_actual_over_planned_pct"
+    )
 
     assert result["recommendations"] == ["Maintain current momentum"]
 

@@ -34,14 +34,6 @@ PROJECT_ID = "client_infra_pack_1"
 FOLDER_NAME = "the client project"
 
 
-class _ExitCalled(Exception):
-    """Stands in for ``os._exit`` so a signal test does not kill pytest."""
-
-    def __init__(self, code: int) -> None:
-        super().__init__(code)
-        self.code = code
-
-
 class _FakeStore:
     def __init__(self, counts: Dict[str, int], raises: bool = False) -> None:
         self._counts = counts
@@ -345,6 +337,7 @@ def test_aborted_run_writes_no_shard_manifest_but_does_write_a_report(
 
     report = harness.report()
     assert report["run_complete"] is False
+    assert report["complete"] is False
     assert report["exit_reason"] == "aborted_chunk_count_unavailable"
 
     summaries = harness.run_summaries(capsys.readouterr().err)
@@ -356,7 +349,13 @@ def test_aborted_run_writes_no_shard_manifest_but_does_write_a_report(
 def test_sigterm_flushes_an_aborted_report_and_no_shard_manifest(
     harness, monkeypatch, capsys,
 ):
-    """The PID-662 signature, with evidence: killed mid-run, nothing terminal."""
+    """The PID-662 signature, with evidence: killed mid-run, nothing terminal.
+
+    Composed with #481: SIGTERM is a cooperative RunLifecycle stop (drain
+    in-flight work, exit 143, ``exit_reason=signal:SIGTERM``), not an
+    immediate ``os._exit``. Accounting still records the abort: attempted
+    never equals batch, and the terminal shard manifest is not written.
+    """
     real_drain = p1b.future_result_or_error
     state = {"n": 0}
 
@@ -368,11 +367,8 @@ def test_sigterm_flushes_an_aborted_report_and_no_shard_manifest(
         return out
 
     monkeypatch.setattr(p1b, "future_result_or_error", _drain_then_signal)
-    monkeypatch.setattr(os, "_exit", lambda code: (_ for _ in ()).throw(_ExitCalled(code)))
 
-    with pytest.raises(_ExitCalled) as excinfo:
-        harness.run()
-    assert excinfo.value.code == 128 + signal.SIGTERM
+    assert harness.run() == 128 + signal.SIGTERM
 
     assert not harness.durable_shard_path.exists()
     assert not harness.legacy_shard_path.exists()
@@ -380,15 +376,17 @@ def test_sigterm_flushes_an_aborted_report_and_no_shard_manifest(
     report = harness.report()
     acc = report["accounting"]
     assert report["run_complete"] is False
-    assert report["exit_reason"] == "aborted_signal_SIGTERM"
+    assert report["complete"] is False
+    assert report["exit_reason"] == "signal:SIGTERM"
     assert 0 < acc["attempted"] < acc["batch"]
     assert acc["outstanding"] == acc["batch"] - acc["attempted"]
     # The identity survives the abort untouched — again, it proves nothing.
     assert acc["already_indexed"] + acc["assigned"] == acc["supported"]
 
     summaries = harness.run_summaries(capsys.readouterr().err)
-    assert summaries[-1]["exit_reason"] == "aborted_signal_SIGTERM"
+    assert summaries[-1]["exit_reason"] == "signal:SIGTERM"
     assert summaries[-1]["run_complete"] is False
+    assert summaries[-1]["complete"] is False
 
 
 # ── fail closed on an unusable resume check ───────────────────────────────
@@ -521,16 +519,20 @@ def test_every_log_line_carries_the_run_id(harness, capsys):
 def test_runsummary_is_one_terminal_machine_readable_line(harness, capsys):
     assert harness.run() == 0
     err = capsys.readouterr().err
-    lines = [line for line in err.splitlines() if line.strip()]
 
     summaries = harness.run_summaries(err)
     assert len(summaries) == 1
-    assert lines[-1].endswith(json.dumps(
+    # One greppable RUNSUMMARY. RunLifecycle may log EXIT after the flush;
+    # that human-readable line does not replace the machine-readable summary.
+    summary_lines = [line for line in err.splitlines() if " RUNSUMMARY " in line]
+    assert len(summary_lines) == 1
+    assert summary_lines[0].endswith(json.dumps(
         summaries[0], separators=(",", ":"), ensure_ascii=False, sort_keys=True,
     ))
 
     summary = summaries[0]
     assert summary["run_complete"] is True
+    assert summary["complete"] is True
     assert summary["exit_reason"] == "completed"
     assert summary["run_id"] == harness.report()["run_id"]
     assert summary["accounting"]["attempted"] == harness.expected_assigned

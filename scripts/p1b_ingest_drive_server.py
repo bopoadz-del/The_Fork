@@ -52,6 +52,15 @@ _UNSUPPORTED_MIMES = {
 
 _UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar"}
 
+# Sidecar heartbeat. Lives next to the report because it answers the question
+# the report cannot when the run is killed: where was it, and what was the box
+# doing, at the last moment it was alive. Default stays under manifests/ so
+# accounting evidence under DATA_DIR is not mixed with a per-file heartbeat.
+DEFAULT_RUN_STATE = "manifests/p1b_ingest_run_state.json"
+
+# Set in the child by --supervise so it cannot supervise itself recursively.
+SUPERVISED_ENV = "P1B_SUPERVISED"
+
 # Every stderr line carries the run id. Exactly one of the 26 lines used to
 # (the opening banner), so a Web Shell scrollback holding several runs could
 # not be split back into runs: a progress line from a dead run reads exactly
@@ -70,8 +79,13 @@ def current_run_id() -> str:
 
 
 def log(message: str) -> None:
-    """Emit one run-attributable line on stderr."""
-    print(f"[p1b-server] run_id={_RUN_ID} {message}", file=sys.stderr)
+    """Emit one run-attributable line on stderr.
+
+    Unbuffered on purpose: a diagnostic still sitting in a stdio buffer when
+    SIGKILL arrives never existed. Every line carries ``run_id=`` so a log
+    stream that holds several runs can be split back into runs.
+    """
+    print(f"[p1b-server] run_id={_RUN_ID} {message}", file=sys.stderr, flush=True)
 
 
 def resolve_evidence_dir() -> Path:
@@ -340,6 +354,17 @@ def _ingest_file(
             "error": f"R2_UPLOAD_FAILED: {type(exc).__name__}: {exc}",
         }
 
+    # Release the payload BEFORE indexing. Extraction is the memory peak on
+    # this box (app/core/extract_isolated measured one 4.4 MB PDF taking the
+    # live instance from 790 MB to 3.9 GB of 4 GB), and until now the whole
+    # downloaded file stayed resident through it for no reason: the bytes were
+    # already written to ``dest`` and already uploaded to R2, and every reader
+    # from here on works off the path. With P1B_MAX_FILE_SIZE_MB defaulting to
+    # 0 (no cap) and P1B_PARALLELISM=2, this was up to two multi-hundred-MB
+    # buffers held for the duration of the two heaviest extractions.
+    downloaded_bytes = len(raw_bytes)
+    del raw_bytes
+
     common_meta = {
         "drive_file_id": file_meta["id"],
         "drive_path": rel,
@@ -368,7 +393,7 @@ def _ingest_file(
         log(
             f"VERIFICATION doc_id={existing_doc['id']} "
             f"drive_file_id={file_meta['id']} drive_path={rel!r} "
-            f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
+            f"mime={mime!r} drive_size={size} downloaded_bytes={downloaded_bytes} "
             f"rag_indexed={result.get('rag_indexed', 0)} "
             f"r2_archived={archive.get('archived')} "
             f"r2_object_key={archive.get('r2_object_key')} "
@@ -393,7 +418,7 @@ def _ingest_file(
     log(
         f"VERIFICATION doc_id={doc['id']} "
         f"drive_file_id={file_meta['id']} drive_path={rel!r} "
-        f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
+        f"mime={mime!r} drive_size={size} downloaded_bytes={downloaded_bytes} "
         f"rag_indexed={result.get('rag_indexed', 0)} "
         f"r2_archived={archive.get('archived')} "
         f"r2_object_key={archive.get('r2_object_key')} "
@@ -456,6 +481,24 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Process at most N files after shard filter (env: INGEST_LIMIT)")
     ap.add_argument("--offset", type=int, default=None,
                     help="Skip first N files after shard filter (env: INGEST_OFFSET)")
+    ap.add_argument(
+        "--run-state",
+        default=None,
+        help=(
+            "Sidecar heartbeat file (env: P1B_RUN_STATE, default "
+            f"{DEFAULT_RUN_STATE}). Updated after every file so a SIGKILLed run "
+            "can still be post-mortemed on the next start."
+        ),
+    )
+    ap.add_argument(
+        "--supervise",
+        action="store_true",
+        help=(
+            "Run the ingest as a child process and report HOW it died. Only a "
+            "parent can see a SIGKILL: run 37159882e871 vanished at 316/1361 "
+            "with no traceback and nothing recorded which signal ended it."
+        ),
+    )
     return ap
 
 
@@ -529,10 +572,54 @@ def folder_entries_for_run(
     return walks
 
 
+def run_state_path(args: argparse.Namespace, *, dry_run: bool | None = None) -> Path:
+    """Where this run heartbeats. Dry runs get their own file so a plan-only
+    pass cannot overwrite the evidence left by a live run that died."""
+    raw = args.run_state or os.getenv("P1B_RUN_STATE") or DEFAULT_RUN_STATE
+    path = Path(raw)
+    if dry_run is None:
+        dry_run = bool(getattr(args, "dry_run", False))
+    if dry_run:
+        return path.with_name(path.stem + "_dry" + path.suffix)
+    return path
+
+
+def supervised_child_argv(argv: List[str]) -> List[str]:
+    """The same command, re-executed unbuffered, without ``--supervise``."""
+    return [sys.executable, "-u"] + [a for a in argv if a != "--supervise"]
+
+
+def run_under_supervisor(args: argparse.Namespace, argv: List[str] | None = None) -> int:
+    """Re-exec this script as a child so its death has a witness.
+
+    SIGKILL runs no handler, writes no traceback and flushes no buffer, so the
+    killed process itself can never explain what happened — every one of the
+    three silent TIER-1 deaths looked identical from inside. The parent sees
+    the wait status and the cgroup oom_kill counter, which is the difference
+    between "worker PID 829 disappeared" and "killed by SIGKILL (9), oom_kill
+    0 -> 1".
+    """
+    from app.core import ingest_lifecycle as lifecycle
+
+    child = supervised_child_argv(list(sys.argv if argv is None else argv))
+    env = dict(os.environ)
+    env[SUPERVISED_ENV] = "1"
+    return lifecycle.run_supervised(
+        child,
+        env=env,
+        state_path=run_state_path(args),
+        forward=lifecycle.stop_signals(),
+    )
+
+
 def main() -> int:
+    from app.core import ingest_lifecycle as lifecycle
     from app.core import ingest_sharding as sharding
 
     args = build_parser().parse_args()
+
+    if args.supervise and not os.getenv(SUPERVISED_ENV):
+        return run_under_supervisor(args)
 
     try:
         total_shards, shard_index = sharding.resolve_shard_env(
@@ -649,9 +736,10 @@ def main() -> int:
     folder_accounting: List[Dict[str, Any]] = []
     walk_error_messages: List[str] = []
     skipped_no_folder_id_folders: List[Dict[str, Any]] = []
-    # Advisory locks are entered per folder and released by _finalize(). A
-    # process that dies without unwinding cannot wedge the next run either:
-    # the locks are session-scoped, so Postgres drops them with the connection.
+    # Advisory locks are entered per folder and released by the lifecycle
+    # flush. A process that dies without unwinding cannot wedge the next run
+    # either: the locks are session-scoped, so Postgres drops them with the
+    # connection.
     run_locks = contextlib.ExitStack()
 
     def _bump_folder(folder_name: str, key: str) -> None:
@@ -675,7 +763,12 @@ def main() -> int:
             "embedder": os.environ["RAG_EMBEDDING_MODEL"],
             "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
             "exit_reason": exit_reason,
+            # Both names are load-bearing: #481's silent-exit tests read
+            # ``complete``; #482's accounting tests read ``run_complete``.
+            # They are the same boolean — completion is attempted == batch.
+            "complete": run_complete,
             "run_complete": run_complete,
+            "elapsed_sec": round(time.monotonic() - t0_global, 3),
             "accounting": dict(accounting),
             "walk_error_messages": list(walk_error_messages),
             "skipped_no_folder_id_folders": list(skipped_no_folder_id_folders),
@@ -705,6 +798,7 @@ def main() -> int:
             "total_shards": total_shards,
             "dry_run": dry_run,
             "exit_reason": exit_reason,
+            "complete": run_complete,
             "run_complete": run_complete,
             "accounting": dict(accounting),
             "global_tally": dict(global_tally),
@@ -743,6 +837,7 @@ def main() -> int:
                 "unsupported": global_tally["skipped_unsupported"],
                 "already_indexed": global_tally["already_indexed"],
                 "exit_reason": exit_reason,
+                "complete": True,
                 "run_complete": True,
                 "accounting": dict(accounting),
                 "folder_accounting": [dict(entry) for entry in folder_accounting],
@@ -755,20 +850,25 @@ def main() -> int:
             },
         )
 
-    def _finalize(exit_reason: str, *, run_complete: bool) -> None:
-        """Flush every durable artifact, then release the run lock.
+    def _flush_final(reason: str, complete: bool) -> None:
+        """The run's last words — report, optional shard, tally, RUNSUMMARY.
 
-        Reached on every exit path, signal handlers included. The shard
-        manifest is TERMINAL evidence: it is written only when every queued
-        file is accounted for, so its presence is what separates "the folder
-        loop ran to the end" from "the process died". Writing it on an
-        aborted run would destroy the only on-disk discriminator there is.
+        Called exactly once by ``RunLifecycle`` on every exit this process can
+        observe (clean finish, stop signal after drain, exception, SystemExit,
+        atexit). SIGKILL still cannot reach here; the sidecar heartbeat is
+        what names that death.
+
+        The shard manifest stays TERMINAL evidence: written only when every
+        queued file is accounted for (``complete`` / ``run_complete``). Its
+        absence is the on-disk discriminator between "the folder loop ran to
+        the end" and "the process died".
         """
         _sync_outstanding()
+        elapsed_global = time.monotonic() - t0_global
         if not dry_run:
-            _write_partial_report(exit_reason, run_complete)
-            if run_complete:
-                manifest = build_shard_manifest(exit_reason)
+            _write_partial_report(reason, complete)
+            if complete:
+                manifest = build_shard_manifest(reason)
                 atomic_write_json(durable_shard_path, manifest)
                 atomic_write_json(legacy_shard_path, manifest)
                 log(f"report written to {report_path}")
@@ -776,12 +876,38 @@ def main() -> int:
             else:
                 log(
                     f"ABORTED report written to {report_path} "
-                    f"(exit_reason={exit_reason}, "
+                    f"(exit_reason={reason}, "
                     f"attempted={accounting['attempted']}/"
                     f"batch={accounting['batch']}); "
                     f"terminal shard manifest NOT written"
                 )
-        _emit_run_summary(exit_reason, run_complete)
+        # Prefix the message with ``[p1b-server] `` so the #481 silent-exit
+        # substring ``[p1b-server] tier 1:`` still matches inside a
+        # run-attributed ``log()`` line.
+        log(
+            f"[p1b-server] tier {args.tier}: {global_tally['succeeded']} succeeded, "
+            f"{global_tally['zero_chunk']} zero-chunk, "
+            f"{global_tally['skipped_too_large']} too-large, "
+            f"{global_tally['skipped_too_small']} too-small, "
+            f"{global_tally['skipped_empty']} empty, "
+            f"{global_tally['download_failed']} download-failed, "
+            f"{global_tally['errors']} errors "
+            f"| attempted={accounting['attempted']}/batch={accounting['batch']} "
+            f"assigned={accounting['assigned']} "
+            f"already_indexed={global_tally['already_indexed']} "
+            f"unsupported={global_tally['skipped_unsupported']} "
+            f"walk_errors={accounting['walk_errors']} "
+            f"skipped_no_folder_id={accounting['skipped_no_folder_id']} "
+            f"{elapsed_global:.1f}s shard={shard_index}/{total_shards} "
+            f"dry_run={dry_run} exit_reason={reason} complete={complete}"
+        )
+        if not complete:
+            log(
+                f"RUN INCOMPLETE exit_reason={reason} — the tally "
+                f"above counts only the files that finished. Re-run with "
+                f"--resume to continue; nothing here marks the tier done."
+            )
+        _emit_run_summary(reason, complete)
         try:
             run_locks.close()
         except Exception as exc:  # noqa: BLE001 — release is best-effort
@@ -790,34 +916,31 @@ def main() -> int:
                 "the Postgres session ends with this process, which releases it"
             )
 
-    def _on_fatal_signal(signum: int, _frame: Any) -> None:
-        name = signal.Signals(signum).name
-        log(
-            f"received {name} at attempted={accounting['attempted']}/"
-            f"batch={accounting['batch']} — flushing aborted evidence"
-        )
-        _finalize(f"aborted_signal_{name}", run_complete=False)
-        # os._exit, not sys.exit: the ThreadPoolExecutor's workers are
-        # non-daemon, so a normal unwind blocks in pool shutdown waiting on an
-        # in-flight multi-hundred-MB download. Every artifact is already on
-        # disk by this point.
-        os._exit(128 + signum)
-
-    # SIGHUP is the one that matters most in practice: a process launched from
-    # a Render Web Shell is in that pty's foreground process group, so closing
-    # the tab used to kill the run with no traceback and no tally. SIGTERM is
-    # what Render sends ahead of a deploy or restart.
-    for _signal_name in ("SIGTERM", "SIGINT", "SIGHUP"):
-        _signum = getattr(signal, _signal_name, None)
-        if _signum is None:
-            continue
-        try:
-            signal.signal(_signum, _on_fatal_signal)
-        except (ValueError, OSError) as exc:
-            log(
-                f"WARN: could not install a {_signal_name} handler ({exc}); "
-                "an abort on that signal will leave no report"
-            )
+    run = lifecycle.RunLifecycle(
+        run_id=run_id,
+        label=f"p1b-server tier={args.tier} shard={shard_index}/{total_shards}",
+        state_path=run_state_path(args, dry_run=dry_run),
+        flush=_flush_final,
+        log=log,
+        stall_after_s=float(os.getenv("P1B_STALL_WARN_S", "900")),
+        heartbeat_every=max(1, int(os.getenv("P1B_HEARTBEAT_EVERY", "10"))),
+    )
+    run.start(
+        context={
+            "tier": args.tier,
+            "output": str(report_path),
+            "folders": len(folder_entries),
+            "folder_ids": requested_ids,
+            "shard_index": shard_index,
+            "total_shards": total_shards,
+            "dry_run": dry_run,
+            "limit": limit,
+            "offset": offset,
+            "parallelism": int(os.getenv("P1B_PARALLELISM", "2")),
+            "supervised": bool(os.getenv(SUPERVISED_ENV)),
+            "argv": sys.argv[1:],
+        },
+    )
 
     if dry_run:
         # Fresh dry-run manifest each invocation (multi-folder appends below).
@@ -826,6 +949,12 @@ def main() -> int:
             dry_manifest.unlink()
 
     for folder_entry in folder_entries:
+        if run.should_stop():
+            log(
+                f"not starting further folders: "
+                f"stop requested ({run.stop_reason()})"
+            )
+            break
         parent_folder_id = folder_entry.get("folder_id")
         folder_id = folder_entry.get("walk_folder_id") or parent_folder_id
         folder_name = folder_entry.get("folder_name") or folder_entry.get("project_id")
@@ -887,7 +1016,7 @@ def main() -> int:
                 run_locks.enter_context(run_advisory_lock(args.tier, project_id))
             except RunLockUnavailable as exc:
                 log(f"ERROR: {exc}; refusing to start a second concurrent run")
-                _finalize("aborted_run_lock_unavailable", run_complete=False)
+                run.finish("aborted_run_lock_unavailable", complete=False)
                 return 1
             except Exception as exc:  # noqa: BLE001 — surfaced as a hard abort
                 # Fail closed for the same reason the resume check does. An
@@ -898,7 +1027,7 @@ def main() -> int:
                     f"({type(exc).__name__}: {exc}); aborting rather than "
                     f"ingesting without concurrent-run protection"
                 )
-                _finalize("aborted_run_lock_error", run_complete=False)
+                run.finish("aborted_run_lock_error", complete=False)
                 return 1
 
             # Resume is ALWAYS on for live runs. A document row alone is
@@ -922,7 +1051,7 @@ def main() -> int:
                     f"degrading to row-presence resume, which would count "
                     f"zero-chunk documents as already indexed"
                 )
-                _finalize("aborted_chunk_count_unavailable", run_complete=False)
+                run.finish("aborted_chunk_count_unavailable", complete=False)
                 return 1
 
             def _doc_is_unsupported(doc: Dict[str, Any]) -> bool:
@@ -1157,6 +1286,7 @@ def main() -> int:
         # main loop held it.
         tally_lock = threading.RLock()
         done_count = 0
+        stop_announced = False
         log(f"parallel ingestion with {pool_size} workers "
             f"({sort_label}, {len(filtered_files)} files)")
         with ThreadPoolExecutor(max_workers=pool_size) as pool:
@@ -1172,7 +1302,7 @@ def main() -> int:
                 return True
 
             for _ in range(pool_size):
-                if not _submit_next():
+                if run.should_stop() or not _submit_next():
                     break
             while pending:
                 done, _ = wait(pending.keys(), return_when=FIRST_COMPLETED)
@@ -1190,50 +1320,63 @@ def main() -> int:
                         )
                         if idx % 10 == 0:
                             _write_partial_report()
-                    _submit_next()
+                    # Heartbeat outside the tally lock: this also writes the
+                    # sidecar, and the signal handler runs on this same thread.
+                    run.note_progress(
+                        idx,
+                        len(filtered_files),
+                        folder=folder_name,
+                        in_flight=len(pending),
+                    )
+                    # A stop request stops SUBMITTING but still drains what is
+                    # already running, so the tally covers every file actually
+                    # attempted. At most ``pool_size`` files are in flight.
+                    if not run.should_stop():
+                        _submit_next()
+                    elif not stop_announced:
+                        stop_announced = True
+                        log(
+                            f"stop requested ({run.stop_reason()}) — "
+                            f"draining {len(pending)} in-flight file(s), "
+                            f"submitting no more"
+                        )
 
         elapsed_folder = time.monotonic() - t0_folder
         log(f"{folder_name} done in {elapsed_folder:.1f}s")
+        if run.should_stop():
+            log(
+                f"not starting further folders: "
+                f"stop requested ({run.stop_reason()})"
+            )
+            break
 
-    elapsed_global = time.monotonic() - t0_global
     _sync_outstanding()
-    # A dry run queues nothing, so there is nothing to account for.
-    fully_accounted = dry_run or accounting["outstanding"] == 0
-    log(
-        f"tier {args.tier}: {global_tally['succeeded']} succeeded, "
-        f"{global_tally['zero_chunk']} zero-chunk, "
-        f"{global_tally['skipped_too_large']} too-large, "
-        f"{global_tally['skipped_too_small']} too-small, "
-        f"{global_tally['skipped_empty']} empty, "
-        f"{global_tally['download_failed']} download-failed, "
-        f"{global_tally['errors']} errors "
-        f"| attempted={accounting['attempted']}/batch={accounting['batch']} "
-        f"assigned={accounting['assigned']} "
-        f"already_indexed={global_tally['already_indexed']} "
-        f"unsupported={global_tally['skipped_unsupported']} "
-        f"walk_errors={accounting['walk_errors']} "
-        f"skipped_no_folder_id={accounting['skipped_no_folder_id']} "
-        f"{elapsed_global:.1f}s shard={shard_index}/{total_shards} dry_run={dry_run}"
-    )
-    if not fully_accounted:
-        # Every future should have been drained by the pool's context manager,
-        # so this is a bug rather than an expected state — but it must never
-        # be papered over by writing the terminal manifest anyway.
-        log(
-            f"ERROR: {accounting['outstanding']} queued file(s) were never "
-            f"accounted for; refusing to write a terminal shard manifest"
+    # Exactly one final flush, here or from the atexit/excepthook fallback.
+    # Completion is still ``attempted == batch``; a stop signal is never
+    # complete even if the drain happened to empty the queue.
+    if run.should_stop():
+        run.finish(f"signal:{run.stop_reason()}", complete=False)
+        exit_code = lifecycle.signal_exit_code(
+            run.stop_flag.signum or getattr(signal, "SIGTERM", 15)
         )
-    _finalize(
-        "completed" if fully_accounted else "incomplete_accounting",
-        run_complete=fully_accounted,
-    )
-    if not fully_accounted:
-        return 1
-    if args.keep_alive and not dry_run:
+    else:
+        fully_accounted = dry_run or accounting["outstanding"] == 0
+        if not fully_accounted:
+            log(
+                f"ERROR: {accounting['outstanding']} queued file(s) were never "
+                f"accounted for; refusing to write a terminal shard manifest"
+            )
+            run.finish("incomplete_accounting", complete=False)
+            exit_code = 1
+        else:
+            run.finish(lifecycle.PHASE_COMPLETED, complete=True)
+            exit_code = 0
+
+    if args.keep_alive and not dry_run and exit_code == 0:
         log("pass complete; keeping container alive for log inspection.")
         while True:
             time.sleep(3600)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":
