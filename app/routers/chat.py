@@ -898,7 +898,12 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                 from app.core.contract_lookup_intent import (
                     message_is_contract_data_lookup,
                 )
+                from app.core.answer_report_intent import (
+                    message_wants_answer_report,
+                )
                 if message_is_contract_data_lookup(prompt):
+                    intent = {"action": None}
+                elif message_wants_answer_report(prompt):
                     intent = {"action": None}
                 else:
                     intent = await understand_intent(

@@ -43,6 +43,7 @@ EXPORT_ASKS = [
     "Can you download the BOQ to Excel?",
     "Save Schedule 10 as a PDF",
     "give me a docx copy",
+    "Export A1-A9 answers as a docx report",
 ]
 
 LOOKUP_ASKS = [
