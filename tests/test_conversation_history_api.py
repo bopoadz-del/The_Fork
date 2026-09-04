@@ -134,10 +134,11 @@ def test_history_returns_persisted_turns(client, monkeypatch):
     assert roles[0] == "user"
     assert roles[-1] == "assistant"
 
-    # Content check
+    # Content check. Coverage honesty may append "N of M project documents
+    # indexed", so match the mocked body as a substring, not list equality.
     contents = [m["content"] for m in msgs]
     assert "hello history" in contents
-    assert "mocked answer" in contents
+    assert any("mocked answer" in (c or "") for c in contents)
 
 
 def test_history_cross_tenant_404(client, monkeypatch):
