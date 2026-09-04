@@ -185,6 +185,15 @@ _SMOKE_INPUTS = {
     "productivity_rate": dict(output_quantity=500, labor_hours=40, crew_size=4),
     # Additive discipline library — planning.
     "critical_path_float": dict(early_start=5, early_finish=10, late_start=8, late_finish=13),
+    "progress_quantity": dict(total_qty=1000, planned_qty=400, actual_qty=350),
+    "productivity_manpower_duration": dict(
+        quantity_executed=100, man_hours=50, quantity=200, daily_production=20,
+    ),
+    "pe_unit_convert": dict(value=10, from_unit="m", to_unit="ft"),
+    "material_consumption": dict(quantity_of_work=100, output_per_unit=10, waste_percent=5),
+    "concrete_mix_proportions": dict(
+        wet_volume=10, cement_parts=1, sand_parts=2, aggregate_parts=4,
+    ),
     # Additive discipline library — safety.
     "scaffold_load_capacity": dict(platform_area_m2=10, duty="medium"),
     "fall_arrest_force": dict(worker_mass_kg=100, free_fall_m=1.8, deceleration_distance_m=1.0),
