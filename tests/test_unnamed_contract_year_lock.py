@@ -1144,14 +1144,23 @@ def test_e1_reaches_both_the_rate_and_the_amount_it_is_a_percentage_of(
 
 def test_the_reserved_row_costs_the_weakest_slot_not_an_extra_one(wave2_corpus):
     """A reservation, not an append: k is what the caller asked for, and the
-    row the question actually named keeps its place."""
+    row the question named survives the swap.
+
+    Asserted as presence, not as a rank. The particulars family is built to
+    tie — every window here earns the same 0.85 plus the same capped label
+    bonus — and which of a set of tied chunks a store returns first is a
+    store's business: SQLite and pgvector order them differently, and an
+    earlier version of this test read that difference as a regression.
+    """
     _ret, top_k = wave2_corpus
     top = top_k(E1, k=5)
 
-    assert len(top) == 5
-    assert E1_RATE_ROW in top[0][1], (
-        "the reservation displaced the row the question names:\n"
+    assert len(top) == 5, (
+        "the reservation took an extra slot instead of the weakest one:\n"
         + _report(top)
+    )
+    assert any(E1_RATE_ROW in text for _n, text in top), (
+        "the reservation evicted the row the question names:\n" + _report(top)
     )
     assert E1_MONEY in top[-1][1], (
         "the reserved row should occupy the weakest slot:\n" + _report(top)
@@ -1260,8 +1269,16 @@ def test_the_reservation_cannot_reinstate_an_excluded_contract():
 
 
 def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
-    """Disable the reservation and E1's live failure returns: the rate row is
-    there, the amount is not, and the answer can only report it missing."""
+    """Disable the reservation and E1's live failure returns: the amount is
+    at no rank, and the answer can only report it missing.
+
+    Only the amount is asserted. The 44 filler rows in this fixture are
+    deliberately label-identical to the rate row — same "delay damages …
+    whole of the Works … calendar days" wording — so they earn the same
+    capped label bonus and their order among themselves is arbitrary. That
+    makes the fixture a hard test of the reservation and a useless one for
+    any claim about where the rate row lands.
+    """
     ret, top_k = wave2_corpus
     monkeypatch.setattr(
         ret, "reserve_monetary_base_row",
@@ -1270,7 +1287,6 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
     top = top_k(E1)
 
     assert top
-    assert E1_RATE_ROW in _blob(top), _report(top)
     assert E1_MONEY not in _blob(top), (
         "probe did not reproduce E1 — the amount is reachable without the "
         "reservation, so the reservation is not what fixed it:\n"
