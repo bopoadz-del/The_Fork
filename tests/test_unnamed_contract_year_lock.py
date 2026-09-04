@@ -724,6 +724,19 @@ def test_mutation_probe_arrival_order_election_brings_the_failure_back(
     monkeypatch.setattr(
         ret, "elect_answer_bearing_contract", lambda _q, _docs: None,
     )
+
+    # The live failure was election-plus-arrival-order: a wrong-year chunk
+    # at rank 1 locked the pool. After this PR, a particulars ask whose
+    # election declined still refuses to lock onto a GC pointer / schedule
+    # duration — so restoring arrival-order lock is part of the probe.
+    real_init = ret._ContractScope.__init__
+
+    def _naive_lock(self, query, ranked_docs=None):
+        real_init(self, query, ranked_docs)
+        self.winning = None
+        self._particulars = False
+
+    monkeypatch.setattr(ret._ContractScope, "__init__", _naive_lock)
     top = _top_k(ret, names, ask)
 
     assert top, "the probe must reproduce a wrong answer, not an empty one"
@@ -1266,6 +1279,254 @@ def test_the_reservation_cannot_reinstate_an_excluded_contract():
     # gate is what excluded it rather than the predicate.
     kept2 = list(kept)
     assert reserve_monetary_base_row(E1, kept2, ranked) is True
+
+
+# ══ WAVE 1 RETEST (29c4bdd / #483 live) ═══════════════════════════════════
+#
+# #483 made the unnamed fence elect from a filled particulars row. A9 now
+# passes live (the Engineer row is a named party with a colon). A3 and A5
+# still fail on Master Corpus:
+#
+# * A3 FAIL_WRONG_CONTRACT — "Overall duration for the completion of the
+#   Works is 548 days" from another package's Volume 4 Schedules. The
+#   executed contract's Time for Completion sits on a scanned clause line
+#   with no pipe/colon, so the days stay in the key and the election
+#   predicate (colon + content) never fires. Arrival order then locks the
+#   pool to the schedule.
+# * A5 FAIL — same-year General Conditions Sub-Clause 8.8 fills the top-k;
+#   the cost gate then wipes a Delay Damages particular as if it were an
+#   ungrounded BOQ unit rate.
+
+DD22_SCHED_NAME = (
+    "DD-2022-175 - the project Demolition and Site Clearance Works "
+    "Package 1 Volume 4 Schedules.pdf"
+)
+DD22_SCHEDULE_548 = (
+    "Schedule 5: Project Schedule. Overall duration for the completion "
+    "of the Works is 548 days from the Commencement Date."
+)
+# Live scanned Contract Data: clause number + label + value, no separator.
+# The days / percent live in the key, which is why #483's filled-row
+# predicate cannot see them.
+DD23_UNSPLIT_TFC_LINE = (
+    "1.1.75 Time for Completion for the whole of the Works 852 days"
+)
+DD23_UNSPLIT_DELAY_LINE = (
+    "8.8 Delay Damages for the whole of the Works 0.1% of the "
+    "Contract Price per calendar day"
+)
+# Only the scanned TfC / Delay Damages lines — no pipe-separated siblings.
+# A mixed window with ACA/DNP already elects via those filled rows, which
+# is why A2/A6/A9 pass and is NOT the live A3/A5 miss.
+DD23_UNSPLIT_CONTRACT_DATA = f"""Volume 1 - Conditions of Contract
+
+Particular Conditions Part A - Contract Data
+
+{DD23_UNSPLIT_TFC_LINE}
+{DD23_UNSPLIT_DELAY_LINE}
+"""
+A3_LIVE_ANSWER = "852 days"
+A5_LIVE_ANSWER = "0.1% of the Contract Price per calendar day"
+
+
+def _unsplit_particulars_chunk(line: str) -> str:
+    """How the indexer renders a clause line it could not split: the value
+    stays on the key, with no colon. Mirrors ``_format_cd_chunk`` when
+    ``val`` is empty."""
+    return (
+        "CONTRACT DATA particulars — filled-in amount / duration / "
+        f"percentage [{DD23_NAME}].\n"
+        "Particular Conditions Part A - Contract Data\n"
+        f"{line}"
+    )
+
+
+def test_a_scanned_clause_line_peels_the_trailing_filled_value():
+    """Live A3/A5: scanned Contract Data rows arrive with no separator.
+    The duration / percentage must come off the key so the election can
+    see a filled particular."""
+    from app.core.contract_data_chunks import parse_contract_data_rows
+
+    rows = parse_contract_data_rows(
+        "Particular Conditions Part A - Contract Data\n"
+        f"{DD23_UNSPLIT_TFC_LINE}\n"
+        f"{DD23_UNSPLIT_DELAY_LINE}\n"
+    )
+    tfc = [(k, v) for k, v in rows if "time for completion" in k.lower()]
+    delay = [(k, v) for k, v in rows if "delay damages" in k.lower()]
+    assert tfc, rows
+    assert delay, rows
+    assert "852" in tfc[0][1], (
+        f"Time for Completion value was not peeled off the key: {tfc[0]!r}"
+    )
+    assert "0.1%" in delay[0][1], (
+        f"Delay Damages value was not peeled off the key: {delay[0]!r}"
+    )
+
+
+def test_an_unsplit_tfc_particulars_chunk_is_filled_duration_evidence():
+    """A9 treats a named party as filled. A Time for Completion / duration
+    particular on a scanned line must count the same way, or the election
+    declines and arrival order hands the pool to another package."""
+    chunk = _unsplit_particulars_chunk(DD23_UNSPLIT_TFC_LINE)
+    assert is_contract_data_particulars_row(chunk), (
+        "852 days on the TfC line is filled duration evidence; the "
+        "election must be able to see it"
+    )
+    assert elect_answer_bearing_contract(
+        A3, _ranked((DD22_SCHED_NAME, DD22_SCHEDULE_548), (DD23_NAME, chunk)),
+    ) == "dd-2023-118"
+
+
+def test_a_schedule_overall_duration_is_not_time_for_completion_evidence():
+    """Volume 4 'overall duration … 548 days' is a programme note, not the
+    Contract Data particular. It must not elect a contract and must not
+    beat the executed contract's own TfC row."""
+    chunk = _unsplit_particulars_chunk(DD23_UNSPLIT_TFC_LINE)
+    assert elect_answer_bearing_contract(
+        A3, _ranked((DD22_SCHED_NAME, DD22_SCHEDULE_548)),
+    ) is None
+    assert elect_answer_bearing_contract(
+        A3, _ranked((DD22_SCHED_NAME, DD22_SCHEDULE_548), (DD23_NAME, chunk)),
+    ) == "dd-2023-118"
+
+
+def test_election_requires_the_asked_label_not_any_filled_row():
+    """A filled Accepted Contract Amount row must not lock the pool for a
+    Time for Completion ask — that is how another package's particulars
+    window can steal A3."""
+    aca_only = (
+        "CONTRACT DATA particulars — filled-in amount / duration / "
+        f"percentage [{DD22_NAME}].\n"
+        "Contract Data\n"
+        "1.1.1 Accepted Contract Amount including VAT: SAR 9,936,000.00"
+    )
+    assert elect_answer_bearing_contract(
+        A3, _ranked((DD22_NAME, aca_only)),
+    ) is None
+    tfc = _unsplit_particulars_chunk(DD23_UNSPLIT_TFC_LINE)
+    assert elect_answer_bearing_contract(
+        A3, _ranked((DD22_NAME, aca_only), (DD23_NAME, tfc)),
+    ) == "dd-2023-118"
+
+
+@pytest.fixture
+def a3_schedule_steal_corpus(tmp_path, monkeypatch):
+    """Live A3 shape: another package's Volume 4 schedule duration leads
+    on cosine; the executed contract's TfC is a scanned clause line."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", GK_PROJECT)
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_CD_PARTICULARS_BOOST", raising=False)
+
+    from sqlalchemy import delete as _sa_delete
+
+    from app.core.rag import embeddings as _emb
+    from app.core.rag import retriever as ret
+    from app.core.rag import vector_store as _vs
+
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+    from app.core.rag.embeddings import Embedder
+    from app.core.rag.vector_store import get_store
+
+    embedder = Embedder(model_name="fake")
+    store = get_store(dim=embedder.dim)
+    with store._lock, store._session_factory()() as session:
+        session.execute(_sa_delete(store._rag_chunk_cls))
+        session.commit()
+
+    names = {
+        "dd22_sched": DD22_SCHED_NAME,
+        "dd23_gc_delay": DD23_NAME,
+    }
+    cd_chunks = contract_data_particulars_chunks(
+        DD23_UNSPLIT_CONTRACT_DATA, filename=DD23_NAME,
+    )
+    assert cd_chunks, "unsplittable Contract Data produced no chunks"
+    for i, chunk in enumerate(cd_chunks):
+        doc_id = f"dd23_unsplit_{i}"
+        names[doc_id] = DD23_NAME
+        store.upsert_chunks(PROJECT, doc_id, [chunk], embedder.encode([chunk]))
+
+    store.upsert_chunks(
+        PROJECT, "dd22_sched", [DD22_SCHEDULE_548],
+        embedder.encode([DD22_SCHEDULE_548]),
+    )
+    store.upsert_chunks(
+        PROJECT, "dd23_gc_delay", [DD22_DELAY_CLAUSE],
+        embedder.encode([DD22_DELAY_CLAUSE]),
+    )
+
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda did: names.get(did, ""))
+
+    real_search = store.search
+
+    def schedule_leads(project_id, query_vec, k=20, query_text=None):
+        hits = real_search(project_id, query_vec, k=k, query_text=query_text)
+        for chunk in hits:
+            if chunk.doc_id == "dd22_sched":
+                chunk.score = 0.93
+            elif chunk.doc_id == "dd23_gc_delay":
+                chunk.score = 0.90
+            else:
+                chunk.score = 0.52
+        return hits
+
+    monkeypatch.setattr(store, "search", schedule_leads)
+    yield ret, names
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+
+
+def test_a3_schedule_duration_does_not_steal_the_executed_contract(
+    a3_schedule_steal_corpus,
+):
+    """Live A3: 548 days from DD-2022-175 Volume 4 Schedules. The executed
+    contract's 852-day Time for Completion particular must own the pool."""
+    ret, names = a3_schedule_steal_corpus
+    top = _top_k(ret, names, A3)
+    blob = _blob(top)
+    assert A3_LIVE_ANSWER in blob, (
+        "852-day TfC never reached the top-5:\n" + _report(top)
+    )
+    assert "548 days" not in blob, (
+        "another package's schedule duration is still answering A3:\n"
+        + _report(top)
+    )
+    assert top[0][0] == DD23_NAME, (
+        "rank 1 is not the executed contract:\n" + _report(top)
+    )
+    assert DD22_SCHED_NAME not in [n for n, _t in top], (
+        "the wrong-year schedule is still in the top-5:\n" + _report(top)
+    )
+
+
+def test_a5_rate_row_beats_same_year_general_conditions(
+    a3_schedule_steal_corpus,
+):
+    """Live A5: three HIGH chunks from DD-2023-118 Conditions of Contract
+    and no rate. The Contract Data percentage particular must lead."""
+    ret, names = a3_schedule_steal_corpus
+    top = _top_k(ret, names, A5)
+    blob = _blob(top)
+    assert A5_LIVE_ANSWER in blob, (
+        "Delay Damages rate never reached the top-5:\n" + _report(top)
+    )
+    assert top[0][1].startswith("CONTRACT DATA particulars"), (
+        "rank 1 is not the Contract Data rate row:\n" + _report(top)
+    )
+    assert "at the rate stated in the Contract Data" not in top[0][1]
+
+
+def test_a2_a6_a9_still_pass_on_the_two_year_corpus(two_year_corpus):
+    """The A3/A5 peel and label-aware election must not take the asks
+    that already pass live off their filled rows."""
+    ret, names = two_year_corpus
+    _assert_own_contract_data_leads(_top_k(ret, names, A2), "SAR 9,936,000.00")
+    _assert_own_contract_data_leads(_top_k(ret, names, A6), "365 days")
+    _assert_own_contract_data_leads(_top_k(ret, names, A9), A9_ANSWER)
 
 
 def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):

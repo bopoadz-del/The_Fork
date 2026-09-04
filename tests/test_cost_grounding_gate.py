@@ -118,3 +118,58 @@ def test_gate_disabled_by_env(monkeypatch):
     monkeypatch.setenv("COST_GROUNDING_GATE", "0")
     out = _cost_grounding_gate(_FABRICATED_ANSWER, _sys(_DRAWING_SOUP), messages=[])
     assert out == _FABRICATED_ANSWER  # flag off -> pass through unchanged
+
+
+# Live Wave-1 A5 (29c4bdd): the model quoted the Contract Data Delay Damages
+# particular (and sometimes a SAR-per-day expansion). The gate treated that
+# as an ungrounded BOQ unit rate and replaced the whole answer with
+# "upload your priced BOQ". A Contract Data lookup is not a unit-rate quote.
+_A5_ASK = "What are the Delay Damages for the whole of the Works?"
+_A5_GC_CLAUSE = (
+    "Sub-Clause 8.8 Delay Damages. The Contractor shall pay delay damages "
+    "for the whole of the Works at the rate stated in the Contract Data "
+    "for every calendar day."
+)
+_A5_ANSWER_WITH_SAR = (
+    "Delay Damages are 0.1% of the Contract Price per calendar day "
+    "(SAR 2,017,680.12 per day)."
+)
+
+
+def test_delay_damages_particular_is_not_wiped_as_a_boq_rate():
+    """A5 live: Sources cited DD-2023-118 Conditions of Contract; the
+    answer was the BOQ-rate refusal. A Contract Data fact lookup must
+    keep the particular even when a SAR expansion is ungrounded."""
+    msgs = [{"role": "user", "content": _A5_ASK}]
+    out = _cost_grounding_gate(
+        _A5_ANSWER_WITH_SAR, _sys(_A5_GC_CLAUSE), messages=msgs,
+    )
+    assert out == _A5_ANSWER_WITH_SAR
+    assert out != _CG_REFUSAL
+
+
+def test_unit_rate_ask_still_refuses_an_ungrounded_price():
+    """The A5 exception is the question class, not a hole in the gate."""
+    msgs = [{"role": "user", "content": "What is the unit rate for ready-mix?"}]
+    out = _cost_grounding_gate(
+        _FABRICATED_ANSWER, _sys(_DRAWING_SOUP), messages=msgs,
+    )
+    assert out == _CG_REFUSAL
+
+
+def test_e1_arithmetic_delay_damages_in_sar_is_still_gated():
+    """E1 asks for a SAR figure. A percentage-only excerpt cannot ground
+    an invented daily amount — that reservation is retrieval's job, and
+    the gate still refuses a fabricated SAR total."""
+    ask = (
+        "Calculate the delay damages per calendar day in SAR for the "
+        "whole of the Works."
+    )
+    msgs = [{"role": "user", "content": ask}]
+    answer = "The daily delay damages are SAR 9,936.00."
+    rate_only = (
+        "CONTRACT DATA particulars.\n"
+        "8.8 Delay Damages: 0.1% of the Contract Price per calendar day"
+    )
+    out = _cost_grounding_gate(answer, _sys(rate_only), messages=msgs)
+    assert out == _CG_REFUSAL
