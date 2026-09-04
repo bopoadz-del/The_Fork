@@ -1,11 +1,11 @@
-"""Smart Orchestrator Block - 56-action keyword router for construction workflows.
+"""Smart Orchestrator Block - 58-action keyword router for construction workflows.
 
 The runtime action list is built by prepending PROCEDURE_ROUTING_ADDITIONS
 (17 procedure-specific actions, PRC-301..PRC-606) to the in-file ACTION_PATTERNS
 list. Six action names appear in both lists; their keyword
 lists are MERGED at scoring time so neither source loses coverage.
-Net unique actions: 17 + 45 smart_orch − 6 collisions = 56
-(cde_post_rfi + cde_poll_events).
+Net unique actions: 17 + 47 smart_orch − 6 collisions = 58
+(look_ahead + evm_calculate; earlier cde_post_rfi + cde_poll_events).
 """
 
 import re
@@ -121,7 +121,13 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("progress_tracker",      ["progress", "completion", "percent complete", "actual vs planned", "delay",
                                 "progress tracking", "tracking against planned", "slipping", "behind schedule", "schedule slippage",
                                 "delivery has slipped", "delivery slipped", "has slipped"]),
+    ("evm_calculate",         ["earned value", "evm", "cpi", "spi", "cost performance index",
+                                "schedule performance index", "estimate at completion", "eac",
+                                "cost variance", "schedule variance", "bcwp", "bcws", "acwp"]),
     ("resource_histogram",    ["resource", "manpower", "histogram", "crew", "labor loading", "workforce"]),
+    ("look_ahead",            ["look ahead", "lookahead", "look-ahead", "3 week look", "4 week look",
+                                "three week look", "four week look", "rolling look ahead",
+                                "short term programme", "short-term programme"]),
     ("forensic_delay_analysis", ["delay analysis", "eot", "extension of time", "delay claim", "forensic"]),
     # BIM / IFC
     ("bim_analysis",          ["bim", "ifc", "revit", "3d model", "building model", "navisworks"]),
@@ -223,7 +229,7 @@ class SmartOrchestratorBlock(UniversalBlock):
     auto_validate = False
     name = "smart_orchestrator"
     version = "1.1.0"
-    description = "56-action construction keyword router: maps user messages to action queues with parallel execution hints"
+    description = "58-action construction keyword router: maps user messages to action queues with parallel execution hints"
     layer = 2
     tags = ["infrastructure", "construction", "orchestration", "routing", "nlp"]
     requires = []

@@ -1,0 +1,65 @@
+# Intent → tool map. Runtime loads this file; adding a row never edits
+# app/agents/runtime.py. Each row needs at least two `phrasings` — the
+# matrix test asserts both force `tool` via _forced_specific_tool.
+#
+# `phrases` are substring matchers (same contract as the old tuple).
+# `phrasings` are full user messages used only by the matrix test.
+
+rows:
+  - tool: commissioning_checklist
+    phrases:
+      - commissioning checklist
+      - commissioning plan
+      - commissioning schedule
+      - testing and commissioning
+      - t&c checklist
+    phrasings:
+      - produce a commissioning checklist for the HVAC system
+      - draft a testing and commissioning plan for the plant
+
+  - tool: primavera_parser
+    phrases:
+      - primavera
+      - xer
+      - p6
+      - baseline programme
+      - baseline program
+      - programme milestones
+      - program milestones
+      - project milestones
+      - schedule milestones
+      - milestones from
+    phrasings:
+      - parse the primavera xer for programme milestones
+      - extract baseline programme milestones from the p6 file
+
+  - tool: construction_calc
+    phrases:
+      - dewatering
+      - uplift check
+      - mix design
+      - formwork striking
+      - modulus of rupture
+      - well point spacing
+      - well-point spacing
+      - diaphragm wall volume
+      - crane capacity
+      - crane planning
+      - bearing pressure
+      - beam deflection
+      - earned value
+      - evm
+      - cost performance index
+      - schedule performance index
+      - estimate at completion
+      - interim payment
+      - net payment due
+      - tender evaluation
+      - evaluate tenders
+      - score the tenders
+      - bid evaluation
+      - risk score
+      - probability and impact
+    phrasings:
+      - run a dewatering uplift check for 23 m water depth
+      - compute the earned value for this month
