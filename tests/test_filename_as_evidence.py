@@ -5,9 +5,9 @@ NOC expires, retrieval returned the correct document — and the answer was stil
 wrong, because "17 July 2025" appears nowhere in the extracted text. It exists
 only in the filename::
 
-    AM Rev Design NOC DG2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf
+    AM Rev Design NOC PRJ2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf
 
-The chunk itself is OCR-degraded: "NOC Reference 0095-DG2-PR Issue Date
+The chunk itself is OCR-degraded: "NOC Reference 0095-PRJ2-PR Issue Date
 13\02\2025 ... Time Duration 6 months". So the model did date arithmetic on
 noise to reach a date the document never states in extractable form.
 
@@ -25,10 +25,10 @@ from __future__ import annotations
 from app.core.rag.inject import _MAX_SOURCE_NAME_CHARS, format_chunks_as_system_message
 from app.core.rag.vector_store import Chunk
 
-NOC_NAME = "AM Rev Design NOC DG2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf"
+NOC_NAME = "AM Rev Design NOC PRJ2 Infra Package 1 - Street Lighting (exp. 17Jul25).pdf"
 
 
-def _chunk(name: str = "", text: str = "NOC Reference 0095-DG2-PR") -> Chunk:
+def _chunk(name: str = "", text: str = "NOC Reference 0095-PRJ2-PR") -> Chunk:
     c = Chunk(
         chunk_id="f1c78383:26cf9357:0", project_id="f1c78383", doc_id="26cf9357",
         chunk_index=0, text=text, score=0.702,

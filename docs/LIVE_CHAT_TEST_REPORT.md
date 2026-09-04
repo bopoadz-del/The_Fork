@@ -244,7 +244,7 @@ turn summary: total=2.11s  first_token=2.11s  events=5  answer_chars=147
 
 **Question:** What is the name of the project and who is the client and contractor?
 
-**Expected:** Answer prose must NOT contain the client project / the client / the client / DPR
+**Expected:** Answer prose must NOT contain the client project / the client / the contractor
 
 **Raw transcript:**
 ```
@@ -256,7 +256,7 @@ I don't have the specific name of the project, client, or contractor from the pr
 [   4.39s] END         ... "sources": [{"doc_id": "64b42ea1", "doc_name": "DD-2022-085-CLIENT PMC Infra PSA- Signed Contract.pdf", ... "confidence": "High"}]
 ```
 
-**Verdict:** PASS -- Answer prose is clean: no the client project, the client, the client, or DPR in the response. It honestly said it doesn't have the details. Sources footer shows "DD-2022-085-CLIENT PMC Infra PSA" in the filename -- this is the KNOWN, ACCEPTED gap (document filenames are not scrubbed). Not scored as a fail per test protocol.
+**Verdict:** PASS -- Answer prose is clean: no client project, client, or contractor name in the response. It honestly said it doesn't have the details. Sources footer shows "DD-2022-085-CLIENT PMC Infra PSA" in the filename -- this is the KNOWN, ACCEPTED gap (document filenames are not scrubbed). Not scored as a fail per test protocol.
 
 ---
 
