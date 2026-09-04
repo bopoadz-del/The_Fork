@@ -40,6 +40,33 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   or `GROQ_API_KEY`; everything else (auth, projects, uploads, block `/v1/execute`)
   works without any provider key.
 
+### TIER-1 Drive ingest (`scripts/p1b_ingest_drive_server.py`)
+- The run can no longer end without a final tally. Every observable exit —
+ clean finish, `SIGTERM`/`SIGINT`/`SIGHUP`, uncaught exception, `SystemExit`,
+ `atexit` — flushes the report once through `app/core/ingest_lifecycle`
+ (`RunLifecycle`), and both the report JSON and the tally line carry
+ `exit_reason=` + `complete=`. An unfinished run also prints
+ `RUN INCOMPLETE` and exits `128+signal` (143 on SIGTERM). Nothing marks a
+ partial run complete; the 4609 tier-1 gate still means what it meant.
+- `SIGKILL` (cgroup OOM killer) cannot be handled, so a sidecar heartbeat is
+ written after **every** file to `manifests/p1b_ingest_run_state.json`
+ (gitignored, override with `--run-state` / `P1B_RUN_STATE`) carrying RSS,
+ `memory.current`/`memory.max`, the cgroup `oom_kill` counter and
+ `/proc/uptime`. The next start prints a `POSTMORTEM` line naming where the
+ dead run stopped, and whether the box was replaced (uptime went backwards)
+ or the kernel OOM-killed it (`oom_kill` counter went up).
+- For a detached run prefer `--supervise` (or `nohup`/`setsid`): only a parent
+ sees a `SIGKILL` wait status. The start banner logs `session_leader=` —
+ `False` means closing the Render Shell will SIGHUP the run.
+- `kill -USR1 <pid>` dumps every thread's stack without killing the run, and a
+ run that stops making progress for `P1B_STALL_WARN_S` (default 900) dumps
+ them by itself. Use this before assuming a stale log means a dead process:
+ the forked extraction child in `app/core/extract_isolated` can wedge for
+ `DOC_EXTRACT_TIMEOUT_S` per file.
+- `StopFlag` / `install_signal_handlers` live in `app/core/ingest_lifecycle`
+ and are re-exported by `scripts/rag_render_bulk_ingest.py`. Do not fork a
+ second stop protocol; `tests/test_ingest_lifecycle.py` guards the drift.
+
 ### Frontend
 - The chat UI is a **build artifact** — `frontend/dist` is gitignored and NOT
   committed, so the update script does not build it. uvicorn only serves the real

@@ -100,6 +100,28 @@ Unsupported formats (`.dwg`, `.plt`, `.nwd`, etc.) must be itemized in the recon
 4. Batch runner killed again on 36 MB scanned PDF OCR.
 5. Local 1,000-file batch reduced embedder reload but still laptop-bound.
 6. **Local run halted** — vectors are laptop-local and non-shippable.
+7. Server runs 37159882e871 (316/1361), 315/1362 and 323/1380 stopped with no
+   traceback, no tally line and no final report. See below.
+
+## Silent Server Exits (runs 315/1362, 323/1380, 316/1361)
+
+`scripts/p1b_ingest_drive_server.py` has no code path that produces that
+signature: every early `return` prints `ERROR: ...` and sits above the
+`run_id=` line, and an exception prints a traceback. A run that emits the run
+line and then nothing was **ended from outside the interpreter or crashed
+below it**, and the build recorded nothing about which.
+
+Two causes fit the evidence equally well and were not distinguishable:
+
+| Cause | Why it fits | Why it is not proven |
+|-------|-------------|----------------------|
+| cgroup OOM `SIGKILL` | Three deaths cluster at the same position in a size-sorted queue (files of 4.7–4.9 MB, from the point where `--resume` leaves only the larger tail). `app/core/extract_isolated` measured ONE 4.4 MB PDF taking the live box 790 MB → 3.9 GB of 4 GB before a SIGKILL, and `P1B_PARALLELISM=2` runs two of those at once with `P1B_MAX_FILE_SIZE_MB` defaulting to 0. | No SIGKILL leaves a log line, and nothing read the cgroup `oom_kill` counter. |
+| Container/shell lifecycle `SIGTERM`/`SIGHUP` | Per-file time is roughly constant, so a time-based kill also lands at a similar file count. A Render Shell run that is not a session leader is HUPed on shell close; a deploy of the attached web service recycles the container. | No handler was installed, so neither signal was ever named. |
+
+Both are now recorded rather than inferred — see the ingest lifecycle notes in
+`AGENTS.md`. The next run names the signal (`exit_reason=signal:SIGTERM`), or
+leaves a sidecar heartbeat whose post-mortem says whether the cgroup
+`oom_kill` counter moved and whether the host was replaced.
 
 ---
 

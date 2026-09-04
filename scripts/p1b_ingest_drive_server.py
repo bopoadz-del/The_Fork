@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -48,6 +49,14 @@ _UNSUPPORTED_MIMES = {
 }
 
 _UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar"}
+
+# Sidecar heartbeat. Lives next to the report because it answers the question
+# the report cannot when the run is killed: where was it, and what was the box
+# doing, at the last moment it was alive.
+DEFAULT_RUN_STATE = "manifests/p1b_ingest_run_state.json"
+
+# Set in the child by --supervise so it cannot supervise itself recursively.
+SUPERVISED_ENV = "P1B_SUPERVISED"
 
 
 def future_result_or_error(
@@ -199,6 +208,17 @@ def _ingest_file(
             "error": f"R2_UPLOAD_FAILED: {type(exc).__name__}: {exc}",
         }
 
+    # Release the payload BEFORE indexing. Extraction is the memory peak on
+    # this box (app/core/extract_isolated measured one 4.4 MB PDF taking the
+    # live instance from 790 MB to 3.9 GB of 4 GB), and until now the whole
+    # downloaded file stayed resident through it for no reason: the bytes were
+    # already written to ``dest`` and already uploaded to R2, and every reader
+    # from here on works off the path. With P1B_MAX_FILE_SIZE_MB defaulting to
+    # 0 (no cap) and P1B_PARALLELISM=2, this was up to two multi-hundred-MB
+    # buffers held for the duration of the two heaviest extractions.
+    downloaded_bytes = len(raw_bytes)
+    del raw_bytes
+
     common_meta = {
         "drive_file_id": file_meta["id"],
         "drive_path": rel,
@@ -227,7 +247,7 @@ def _ingest_file(
         print(
             f"[p1b-server] VERIFICATION doc_id={existing_doc['id']} "
             f"drive_file_id={file_meta['id']} drive_path={rel!r} "
-            f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
+            f"mime={mime!r} drive_size={size} downloaded_bytes={downloaded_bytes} "
             f"rag_indexed={result.get('rag_indexed', 0)} "
             f"r2_archived={archive.get('archived')} "
             f"r2_object_key={archive.get('r2_object_key')} "
@@ -253,7 +273,7 @@ def _ingest_file(
     print(
         f"[p1b-server] VERIFICATION doc_id={doc['id']} "
         f"drive_file_id={file_meta['id']} drive_path={rel!r} "
-        f"mime={mime!r} drive_size={size} downloaded_bytes={len(raw_bytes)} "
+        f"mime={mime!r} drive_size={size} downloaded_bytes={downloaded_bytes} "
         f"rag_indexed={result.get('rag_indexed', 0)} "
         f"r2_archived={archive.get('archived')} "
         f"r2_object_key={archive.get('r2_object_key')} "
@@ -309,6 +329,24 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Process at most N files after shard filter (env: INGEST_LIMIT)")
     ap.add_argument("--offset", type=int, default=None,
                     help="Skip first N files after shard filter (env: INGEST_OFFSET)")
+    ap.add_argument(
+        "--run-state",
+        default=None,
+        help=(
+            "Sidecar heartbeat file (env: P1B_RUN_STATE, default "
+            f"{DEFAULT_RUN_STATE}). Updated after every file so a SIGKILLed run "
+            "can still be post-mortemed on the next start."
+        ),
+    )
+    ap.add_argument(
+        "--supervise",
+        action="store_true",
+        help=(
+            "Run the ingest as a child process and report HOW it died. Only a "
+            "parent can see a SIGKILL: run 37159882e871 vanished at 316/1361 "
+            "with no traceback and nothing recorded which signal ended it."
+        ),
+    )
     return ap
 
 
@@ -382,10 +420,54 @@ def folder_entries_for_run(
     return walks
 
 
+def run_state_path(args: argparse.Namespace, *, dry_run: bool | None = None) -> Path:
+    """Where this run heartbeats. Dry runs get their own file so a plan-only
+    pass cannot overwrite the evidence left by a live run that died."""
+    raw = args.run_state or os.getenv("P1B_RUN_STATE") or DEFAULT_RUN_STATE
+    path = Path(raw)
+    if dry_run is None:
+        dry_run = bool(getattr(args, "dry_run", False))
+    if dry_run:
+        return path.with_name(path.stem + "_dry" + path.suffix)
+    return path
+
+
+def supervised_child_argv(argv: List[str]) -> List[str]:
+    """The same command, re-executed unbuffered, without ``--supervise``."""
+    return [sys.executable, "-u"] + [a for a in argv if a != "--supervise"]
+
+
+def run_under_supervisor(args: argparse.Namespace, argv: List[str] | None = None) -> int:
+    """Re-exec this script as a child so its death has a witness.
+
+    SIGKILL runs no handler, writes no traceback and flushes no buffer, so the
+    killed process itself can never explain what happened — every one of the
+    three silent TIER-1 deaths looked identical from inside. The parent sees
+    the wait status and the cgroup oom_kill counter, which is the difference
+    between "worker PID 829 disappeared" and "killed by SIGKILL (9), oom_kill
+    0 -> 1".
+    """
+    from app.core import ingest_lifecycle as lifecycle
+
+    child = supervised_child_argv(list(sys.argv if argv is None else argv))
+    env = dict(os.environ)
+    env[SUPERVISED_ENV] = "1"
+    return lifecycle.run_supervised(
+        child,
+        env=env,
+        state_path=run_state_path(args),
+        forward=lifecycle.stop_signals(),
+    )
+
+
 def main() -> int:
+    from app.core import ingest_lifecycle as lifecycle
     from app.core import ingest_sharding as sharding
 
     args = build_parser().parse_args()
+
+    if args.supervise and not os.getenv(SUPERVISED_ENV):
+        return run_under_supervisor(args)
 
     try:
         total_shards, shard_index = sharding.resolve_shard_env(
@@ -463,23 +545,130 @@ def main() -> int:
             "skipped_empty": 0, "download_failed": 0, "errors": 0,
         })[key] += 1
 
-    def _write_partial_report() -> None:
-        partial = {
+    def _report_payload(reason: str, complete: bool) -> Dict[str, Any]:
+        """One report shape for every write.
+
+        ``exit_reason`` / ``complete`` are the fields the three silent deaths
+        needed and no report carried: a partial report and a finished one were
+        byte-indistinguishable apart from the counts, so a run that stopped at
+        316/1361 read as a run that had 316 files to do. The tally itself is
+        untouched — nothing here promotes an unfinished run to a finished one.
+        """
+        return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run_id": run_id,
             "tier": args.tier,
             "embedder": os.environ["RAG_EMBEDDING_MODEL"],
             "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
+            "exit_reason": reason,
+            "complete": complete,
+            "elapsed_sec": round(time.monotonic() - t0_global, 3),
+            "shard_index": shard_index,
+            "total_shards": total_shards,
             "global_tally": global_tally,
             "folder_tallies": folder_tallies,
             "results": results,
         }
+
+    def _write_report(reason: str, complete: bool) -> None:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as fh:
-            json.dump(partial, fh, indent=2, ensure_ascii=False)
+            json.dump(_report_payload(reason, complete), fh, indent=2, ensure_ascii=False)
+
+    def _write_partial_report() -> None:
+        _write_report("in_progress", False)
+
+    def _flush_final(reason: str, complete: bool) -> None:
+        """The run's last words. Called exactly once, by the lifecycle guard,
+        on every exit path this process can observe — normal return, stop
+        signal, exception, SystemExit, atexit.
+
+        Before this existed the tally line was the last statement of ``main``,
+        so any exit that was not a clean fall-through produced no tally at all
+        and the operator had to infer the outcome from a truncated log.
+        """
+        elapsed_global = time.monotonic() - t0_global
+        if not dry_run:
+            _write_report(reason, complete)
+            shard_manifest = sharding.empty_shard_manifest(
+                shard_index=shard_index,
+                total_shards=total_shards,
+                extra={
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "run_id": run_id,
+                    "tier": args.tier,
+                    "embedder": os.environ["RAG_EMBEDDING_MODEL"],
+                    "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
+                    "exit_reason": reason,
+                    "complete": complete,
+                    "processed": global_tally["succeeded"],
+                    "skipped": global_tally["skipped_too_large"] + global_tally["skipped_too_small"]
+                    + global_tally["skipped_empty"],
+                    "failed": global_tally["errors"] + global_tally["zero_chunk"]
+                    + global_tally["download_failed"],
+                    "unsupported": global_tally["skipped_unsupported"],
+                    "already_indexed": global_tally["already_indexed"],
+                    "durations_sec": {"_total": round(elapsed_global, 3)},
+                    "global_tally": global_tally,
+                    "folder_tallies": folder_tallies,
+                    "results": results,
+                },
+            )
+            shard_out = sharding.shard_manifest_path(shard_index, total_shards)
+            shard_out.parent.mkdir(parents=True, exist_ok=True)
+            with open(shard_out, "w", encoding="utf-8") as fh:
+                json.dump(shard_manifest, fh, indent=2, ensure_ascii=False)
+            print(f"[p1b-server] report written to {args.output}", file=sys.stderr, flush=True)
+            print(f"[p1b-server] shard manifest → {shard_out}", file=sys.stderr, flush=True)
+        print(
+            f"[p1b-server] tier {args.tier}: {global_tally['succeeded']} succeeded, "
+            f"{global_tally['zero_chunk']} zero-chunk, "
+            f"{global_tally['skipped_too_large']} too-large, "
+            f"{global_tally['skipped_too_small']} too-small, "
+            f"{global_tally['skipped_unsupported']} unsupported, "
+            f"{global_tally['already_indexed']} already_indexed, "
+            f"{global_tally['errors']} errors, {elapsed_global:.1f}s "
+            f"shard={shard_index}/{total_shards} dry_run={dry_run} "
+            f"exit_reason={reason} complete={complete}",
+            file=sys.stderr,
+            flush=True,
+        )
+        if not complete:
+            print(
+                f"[p1b-server] RUN INCOMPLETE exit_reason={reason} — the tally "
+                f"above counts only the files that finished. Re-run with "
+                f"--resume to continue; nothing here marks the tier done.",
+                file=sys.stderr,
+                flush=True,
+            )
 
     t0_global = time.monotonic()
+    run = lifecycle.RunLifecycle(
+        run_id=run_id,
+        label=f"p1b-server tier={args.tier} shard={shard_index}/{total_shards}",
+        state_path=run_state_path(args, dry_run=dry_run),
+        flush=_flush_final,
+        stall_after_s=float(os.getenv("P1B_STALL_WARN_S", "900")),
+        heartbeat_every=max(1, int(os.getenv("P1B_HEARTBEAT_EVERY", "10"))),
+    )
+    run.start(
+        context={
+            "tier": args.tier,
+            "output": args.output,
+            "folders": len(folder_entries),
+            "folder_ids": requested_ids,
+            "shard_index": shard_index,
+            "total_shards": total_shards,
+            "dry_run": dry_run,
+            "limit": limit,
+            "offset": offset,
+            "parallelism": int(os.getenv("P1B_PARALLELISM", "2")),
+            "supervised": bool(os.getenv(SUPERVISED_ENV)),
+            "argv": sys.argv[1:],
+        },
+    )
+
     if dry_run:
         # Fresh dry-run manifest each invocation (multi-folder appends below).
         dry_manifest = sharding.shard_manifest_path(shard_index, total_shards)
@@ -747,8 +936,10 @@ def main() -> int:
         pool_size = max(1, int(os.getenv("P1B_PARALLELISM", "2")))
         tally_lock = threading.Lock()
         done_count = 0
+        stop_announced = False
         print(f"[p1b-server] parallel ingestion with {pool_size} workers "
-              f"({sort_label}, {len(filtered_files)} files)", file=sys.stderr)
+              f"({sort_label}, {len(filtered_files)} files)",
+              file=sys.stderr, flush=True)
         with ThreadPoolExecutor(max_workers=pool_size) as pool:
             pending: Dict[Future, Dict[str, Any]] = {}
             file_iter = iter(filtered_files)
@@ -778,61 +969,63 @@ def main() -> int:
                             f"[p1b-server] {folder_name} {idx}/{len(filtered_files)} "
                             f"[{status}] {rel}",
                             file=sys.stderr,
+                            flush=True,
                         )
                         if idx % 10 == 0:
                             _write_partial_report()
-                    _submit_next()
+                    # Heartbeat outside the tally lock: this also writes the
+                    # sidecar, and the signal handler runs on this same thread.
+                    run.note_progress(
+                        idx,
+                        len(filtered_files),
+                        folder=folder_name,
+                        in_flight=len(pending),
+                    )
+                    # A stop request stops SUBMITTING but still drains what is
+                    # already running, so the tally covers every file actually
+                    # attempted. At most ``pool_size`` files are in flight, so
+                    # the drain is bounded by the extraction timeout, not by
+                    # the remaining queue.
+                    if not run.should_stop():
+                        _submit_next()
+                    elif not stop_announced:
+                        stop_announced = True
+                        print(
+                            f"[p1b-server] stop requested ({run.stop_reason()}) — "
+                            f"draining {len(pending)} in-flight file(s), "
+                            f"submitting no more",
+                            file=sys.stderr,
+                            flush=True,
+                        )
 
         elapsed_folder = time.monotonic() - t0_folder
-        print(f"[p1b-server] {folder_name} done in {elapsed_folder:.1f}s", file=sys.stderr)
+        print(f"[p1b-server] {folder_name} done in {elapsed_folder:.1f}s",
+              file=sys.stderr, flush=True)
+        if run.should_stop():
+            print(
+                f"[p1b-server] not starting further folders: "
+                f"stop requested ({run.stop_reason()})",
+                file=sys.stderr,
+                flush=True,
+            )
+            break
 
-    elapsed_global = time.monotonic() - t0_global
-    if not dry_run:
-        _write_partial_report()
-        shard_manifest = sharding.empty_shard_manifest(
-            shard_index=shard_index,
-            total_shards=total_shards,
-            extra={
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "run_id": run_id,
-                "tier": args.tier,
-                "embedder": os.environ["RAG_EMBEDDING_MODEL"],
-                "namespace": os.environ["RAG_VECTOR_NAMESPACE"],
-                "processed": global_tally["succeeded"],
-                "skipped": global_tally["skipped_too_large"] + global_tally["skipped_too_small"]
-                + global_tally["skipped_empty"],
-                "failed": global_tally["errors"] + global_tally["zero_chunk"]
-                + global_tally["download_failed"],
-                "unsupported": global_tally["skipped_unsupported"],
-                "already_indexed": global_tally["already_indexed"],
-                "durations_sec": {"_total": round(elapsed_global, 3)},
-                "global_tally": global_tally,
-                "folder_tallies": folder_tallies,
-                "results": results,
-            },
+    # Exactly one final flush, here or from the atexit/excepthook fallback.
+    if run.should_stop():
+        run.finish(f"signal:{run.stop_reason()}", complete=False)
+        exit_code = lifecycle.signal_exit_code(
+            run.stop_flag.signum or getattr(signal, "SIGTERM", 15)
         )
-        shard_out = sharding.shard_manifest_path(shard_index, total_shards)
-        shard_out.parent.mkdir(parents=True, exist_ok=True)
-        with open(shard_out, "w", encoding="utf-8") as fh:
-            json.dump(shard_manifest, fh, indent=2, ensure_ascii=False)
-        print(f"[p1b-server] report written to {args.output}", file=sys.stderr)
-        print(f"[p1b-server] shard manifest → {shard_out}", file=sys.stderr)
-    print(
-        f"[p1b-server] tier {args.tier}: {global_tally['succeeded']} succeeded, "
-        f"{global_tally['zero_chunk']} zero-chunk, "
-        f"{global_tally['skipped_too_large']} too-large, "
-        f"{global_tally['skipped_too_small']} too-small, "
-        f"{global_tally['skipped_unsupported']} unsupported, "
-        f"{global_tally['already_indexed']} already_indexed, "
-        f"{global_tally['errors']} errors, {elapsed_global:.1f}s "
-        f"shard={shard_index}/{total_shards} dry_run={dry_run}",
-        file=sys.stderr,
-    )
+    else:
+        run.finish(lifecycle.PHASE_COMPLETED, complete=True)
+        exit_code = 0
+
     if args.keep_alive and not dry_run:
-        print("[p1b-server] pass complete; keeping container alive for log inspection.", file=sys.stderr)
+        print("[p1b-server] pass complete; keeping container alive for log inspection.",
+              file=sys.stderr, flush=True)
         while True:
             time.sleep(3600)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

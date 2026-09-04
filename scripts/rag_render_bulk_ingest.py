@@ -24,7 +24,6 @@ import hashlib
 import json
 import os
 import re
-import signal
 import sys
 import time
 import traceback
@@ -38,6 +37,16 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+
+# StopFlag and the handler installer moved to app/core/ingest_lifecycle so this
+# script and scripts/p1b_ingest_drive_server.py share ONE stop protocol instead
+# of drifting into two. Re-exported here because the call sites and tests import
+# them from this module. tests/test_ingest_lifecycle.py asserts they stay the
+# same objects.
+from app.core.ingest_lifecycle import (  # noqa: E402 - after sys.path bootstrap
+    StopFlag,
+    install_signal_handlers as _install_signal_handlers,
+)
 
 PG_ID = "dpg-d8m22mcm0tmc73b04elg-a"
 # The project + expected totals were hardcoded to the first backfill
@@ -197,12 +206,6 @@ class IngestStats:
     rejected_wrong_identity: int = 0
     regenerated_text_hash: int = 0
     stopped_reason: str = ""
-
-
-@dataclass
-class StopFlag:
-    stop: bool = False
-    reason: str = ""
 
 
 class ChunkStore(Protocol):
@@ -918,17 +921,11 @@ def _tune_torch(threads: int) -> None:
 
 
 def install_signal_handlers(stop_flag: StopFlag) -> None:
-    def _handler(signum, _frame):
-        name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
-        stop_flag.stop = True
-        stop_flag.reason = name
-        log(f"[signal] received {name} — will stop after current batch")
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            signal.signal(sig, _handler)
-        except (ValueError, OSError):
-            pass
+    """One-arg shim so existing call sites keep working; the implementation is
+    ``app.core.ingest_lifecycle.install_signal_handlers``. SIGHUP is included
+    there — a detached Render Shell run that is HUPed on shell close used to
+    die as silently as an OOM kill."""
+    _install_signal_handlers(stop_flag, log=log)
 
 
 class ProcessLock:
