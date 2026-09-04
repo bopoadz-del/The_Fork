@@ -960,6 +960,25 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
     fallbacks only — pass the project's priced-BOQ rates (from RAG) for a firm
     cost so the answer stays grounded.
     """
+    params = params or {}
+    if params and not isinstance(params, dict):
+        return {"status": "error", "error": "params must be an object of keyword arguments."}
+    if not isinstance(params, dict):
+        params = {}
+    # Live UI pack E4: a concrete/raft ask (or leftover-L6 excavation name
+    # plus "documented waste factor" in ``text``) must apply the project's
+    # 5% waste. Resolve before the name lookup so a missing calculation
+    # still reaches concrete_volume when the ask carries the dims.
+    try:
+        from app.lib.construction_formulas_quantities import (
+            resolve_concrete_volume_calc,
+        )
+        name, params = resolve_concrete_volume_calc(name, params)
+    except Exception:  # noqa: BLE001 — never break a non-concrete calc
+        logger.warning(
+            "swallowed %s in resolve_concrete_volume_calc() — continuing",
+            "Exception", exc_info=True,
+        )
     fn = CALCULATORS.get(name)
     if fn is None:
         return {
@@ -967,9 +986,6 @@ def run_calculation(name: str, params: Optional[Dict[str, Any]] = None) -> Dict[
             "error": f"Unknown calculation '{name}'.",
             "available": available_calculations(),
         }
-    params = params or {}
-    if not isinstance(params, dict):
-        return {"status": "error", "error": "params must be an object of keyword arguments."}
     # LLMs (and the construction-block envelope) often pass extra keys
     # like ``text`` / ``formula``. Drop unknowns rather than TypeError.
     sig = _inspect.signature(fn)

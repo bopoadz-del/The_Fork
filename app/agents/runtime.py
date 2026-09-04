@@ -29,6 +29,14 @@ from typing import (
 import httpx
 
 from app.blocks import BLOCK_REGISTRY
+from app.core.answer_report_intent import (
+    answer_report_export_descriptor,
+    answer_report_export_enabled,
+    collect_answer_pairs,
+    compose_answer_report_reply,
+    message_wants_answer_report,
+    parse_answer_report_range,
+)
 from app.core.clash_intent import message_wants_clash
 from app.core.contract_lookup_intent import message_is_contract_data_lookup
 from app.core.rag.inject import rag_inject
@@ -612,6 +620,12 @@ _HISTOGRAM_PHRASES = (
     "resource histogram", "crew histogram", "workforce histogram",
     "labor loading", "labour loading",
 )
+_LOOKAHEAD_PHRASES = (
+    "look ahead", "look-ahead", "lookahead",
+    "3 week look", "4 week look", "three week look", "four week look",
+    "rolling look ahead", "short term programme", "short-term programme",
+    "short term program", "short-term program",
+)
 _HISTOGRAM_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b", re.IGNORECASE,
 )
@@ -630,6 +644,18 @@ def _message_wants_resource_histogram(text: str) -> bool:
         return True
     return "histogram" in low and any(
         t in low for t in (".xer", "primavera", "p6", "taskrsrc")
+    )
+
+
+def _message_wants_look_ahead(text: str) -> bool:
+    """True when the turn asks for a 3–4 week look-ahead from a .xer."""
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    if any(p in low for p in _LOOKAHEAD_PHRASES):
+        return True
+    return "look" in low and "ahead" in low and any(
+        t in low for t in (".xer", "primavera", "p6", "schedule", "programme", "program")
     )
 
 
@@ -776,6 +802,8 @@ async def _predispatch_file_tool(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
+        if message_wants_answer_report(user_msg):
+            return None
         if not user_msg:
             return None
         # A self-contained L×W×D volume ask must not steal drawing_qto just
@@ -1083,6 +1111,64 @@ async def _predispatch_resource_histogram(
         return None
 
 
+async def _predispatch_look_ahead(
+    agent: "Agent", messages: list, project_id: str | None,
+) -> dict[str, Any] | None:
+    """Run ``look_ahead`` before the model steals primavera_parser.
+
+    Same pattern as histogram predispatch. Kill-switch:
+    ``AGENT_LOOKAHEAD_PREDISPATCH=0``.
+    """
+    if os.getenv("AGENT_LOOKAHEAD_PREDISPATCH", "1") == "0":
+        return None
+    if "construction" not in getattr(agent, "allowed_blocks", ()):
+        return None
+    if not project_id:
+        return None
+    try:
+        user_msg, _history = _messages_user_and_history(messages)
+        if not user_msg or not _message_wants_look_ahead(user_msg):
+            return None
+        schedule_file, picked_name = _resolve_histogram_schedule_file(
+            project_id, user_msg,
+        )
+        if not schedule_file:
+            return None
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+        result = await container.look_ahead(
+            {}, {"schedule_file": schedule_file},
+        )
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        compact = dict(result)
+        acts = compact.get("activities") if isinstance(compact.get("activities"), list) else []
+        compact["activities"] = acts[:40]
+        payload = json.dumps(compact, default=str)[:6000]
+        messages.append({
+            "role": "user",
+            "content": (
+                "PLATFORM PRE-DISPATCH: look_ahead has ALREADY been "
+                f"run on '{picked_name}'. Authoritative result:\n"
+                f"{payload}\n"
+                "Report the overlapping activities from this result. Do not "
+                "invent activities. Do not call primavera_parser for this "
+                "look-ahead. Do not re-call look_ahead unless a different "
+                "file is named."
+            ),
+        })
+        return {
+            "name": "look_ahead",
+            "ok": True,
+            "predispatched": True,
+            "result": compact,
+        }
+    except Exception:  # noqa: BLE001
+        _LOG.warning("look-ahead pre-dispatch failed; continuing normally",
+                     exc_info=True)
+        return None
+
+
 _WIR_FORM_RE = re.compile(
     r"\b("
     r"work inspection request|\bwir\b|inspection request|"
@@ -1205,6 +1291,8 @@ def _message_wants_job_requisition(text: str) -> bool:
 def _message_wants_rfp_draft(text: str) -> bool:
     raw = text or ""
     if _message_wants_wir_form(raw):
+        return False
+    if message_wants_answer_report(raw):
         return False
     return bool(re.search(r"\brfp\b|request for proposal|invitation to tender", raw, re.I))
 
@@ -1343,6 +1431,7 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "safety_briefing": {"wir_form", "commissioning_checklist"},
         "rfi_generator": {"wir_form", "safety_briefing"},
         "resource_histogram": {"primavera_parser", "safety_briefing"},
+        "look_ahead": {"primavera_parser", "safety_briefing", "resource_histogram"},
         "claims_builder": {
             "payment_certificate", "wir_form", "interim_certificate_generator",
         },
@@ -1434,6 +1523,8 @@ async def _predispatch_remaining_deliverables(
     user_msg, _history = _messages_user_and_history(messages)
     detect = (operator_text or user_msg or "").strip()
     if not detect or _message_wants_wir_form(detect):
+        return None
+    if message_wants_answer_report(detect):
         return None
     candidates = (
         (
@@ -1897,7 +1988,56 @@ _EXPORT_ACTION_RE = re.compile(
 
 def _asks_for_export(text: str) -> bool:
     """True when the turn wants a file produced, not a reference resolved."""
+    if message_wants_answer_report(text):
+        return True
     return bool(_EXPORT_ACTION_RE.search(text or ""))
+
+
+def _fulfill_answer_report(
+    user_message: str,
+    project_id: str | None,
+    conversation_id: str | None,
+    history: list[dict[str, Any]] | None,
+    agent_name: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Compile A1–A9 (or all) chat answers and persist the confirmation.
+
+    Runs without an LLM or RAG — the live H1 failure was retrieval treating
+    ``A1-A9`` as RFP attachment codes. Kill-switch is checked by the caller.
+    """
+    from app.core import agent_memory
+
+    prior: list[dict[str, Any]] = []
+    if conversation_id:
+        agent_memory.get_or_create_conversation(
+            conversation_id, agent_name, project_id,
+        )
+        prior = [
+            {"role": m["role"], "content": m["content"]}
+            for m in agent_memory.get_messages(conversation_id, limit=200)
+            if m.get("role") in ("user", "assistant")
+        ]
+        agent_memory.append_message(conversation_id, "user", user_message)
+    if not prior and history:
+        prior = [
+            {"role": m.get("role"), "content": m.get("content") or ""}
+            for m in history
+            if m.get("role") in ("user", "assistant")
+        ]
+    start_end = parse_answer_report_range(user_message)
+    start, end = start_end if start_end else (None, None)
+    pairs = collect_answer_pairs(prior, start, end)
+    answer = compose_answer_report_reply(pairs, start, end)
+    exports: list[dict[str, Any]] = []
+    if pairs and project_id and conversation_id:
+        have_start = start or 1
+        have_end = (start or 1) + len(pairs) - 1
+        exports = [answer_report_export_descriptor(
+            project_id, conversation_id, have_start, have_end,
+        )]
+    if conversation_id:
+        agent_memory.append_message(conversation_id, "assistant", answer)
+    return answer, exports
 
 
 _MISSING_REFERENCE_ANSWER = (
@@ -2962,27 +3102,36 @@ def _user_intent_requires_tool(messages: list[dict[str, Any]]) -> bool:
 # (e.g. search_project_documents) and then generate the answer from memory,
 # bypassing the tool's authoritative data. When one of these matches we force
 # THAT tool by name so the real data path runs.
-_INTENT_TOOL_MAP = (
-    (("commissioning checklist", "commissioning plan", "commissioning schedule",
-      "testing and commissioning", "t&c checklist"), "commissioning_checklist"),
-    (("primavera", "xer", "p6", "baseline programme", "baseline program",
-      "programme milestones", "program milestones", "project milestones",
-      "schedule milestones", "milestones from"), "primavera_parser"),
-    # Engineering CALCULATIONS: force the deterministic calculator so the model
-    # runs the exact maths instead of computing the formula in prose (observed
-    # gpt-4o-mini doing wrong prose-math + claiming it "cannot run the tool").
-    # Only unambiguous calc phrases — cost build-ups stay on tool_choice=auto so
-    # the cost-grounding path isn't forced.
-    (("dewatering", "uplift check", "mix design", "formwork striking",
-      "modulus of rupture", "well point spacing", "well-point spacing",
-      "diaphragm wall volume", "crane capacity", "crane planning",
-      "bearing pressure", "beam deflection",
-      # reporting / commercial / procurement / risk calculators
-      "earned value", "evm", "cost performance index", "schedule performance index",
-      "estimate at completion", "interim payment", "net payment due",
-      "tender evaluation", "evaluate tenders", "score the tenders", "bid evaluation",
-      "risk score", "probability and impact"), "construction_calc"),
-)
+#
+# DATA, not code: rows live in app/routing/intent_map.yaml. Adding a row
+# never requires an edit here — load the yaml, restart. The matrix test
+# (tests/routing/test_intent_map_matrix.py) proves every row routes both
+# of its phrasings.
+_INTENT_MAP_PATH = Path(__file__).resolve().parent.parent / "routing" / "intent_map.yaml"
+
+
+def _parse_intent_tool_map(raw: str) -> tuple:
+    """Turn intent_map.yaml text into ((phrases...), tool) rows."""
+    import yaml
+
+    data = yaml.safe_load(raw) or {}
+    rows = data.get("rows") or []
+    parsed: list[tuple[tuple[str, ...], str]] = []
+    for row in rows:
+        phrases = tuple(p for p in (row.get("phrases") or []) if p)
+        tool = (row.get("tool") or "").strip()
+        if phrases and tool:
+            parsed.append((phrases, tool))
+    return tuple(parsed)
+
+
+def _load_intent_tool_map(path: Path | None = None) -> tuple:
+    """Load the intent map from yaml. ``path`` is for tests that add a row."""
+    target = path or _INTENT_MAP_PATH
+    return _parse_intent_tool_map(target.read_text(encoding="utf-8"))
+
+
+_INTENT_TOOL_MAP = _load_intent_tool_map()
 
 
 _IPC_ISSUE_RE = re.compile(
@@ -3032,8 +3181,8 @@ def _carries_ipc_figures(text: str) -> bool:
 
     This used to be ``re.search(r"\d", raw)`` -- ANY digit anywhere. The intent
     was "no figures supplied", but a project code or a package number is not a
-    figure, so "issue the interim payment certificate ... on the DG2
-    Infrastructure Package 1 contract" tripped it on the 2 in DG2 and the 1 in
+    figure, so "issue the interim payment certificate ... on the PRJ2
+    Infrastructure Package 1 contract" tripped it on the 2 in PRJ2 and the 1 in
     Package 1. The calculator branch then cleared ``action`` and the predefined
     IPC deliverable never dispatched: instead of the clean missing-figures
     error, the turn fell through to RAG and answered a payment question out of
@@ -3075,7 +3224,7 @@ def _carries_ipc_figures(text: str) -> bool:
 # every input was in the question. `guardrail height` failed the same way.
 #
 # Both HAVE calculators (concrete_volume, guardrail_top_rail_height — 76 are
-# registered), but _INTENT_TOOL_MAP's ~22 phrases only reach about a dozen of
+# registered), but the intent_map.yaml phrases only reach about a dozen of
 # them. Rather than chase 76 keyword spellings, detect the SHAPE that is
 # unambiguously a calculation: an explicit calc verb plus at least two
 # measurement-bearing numbers.
@@ -3174,6 +3323,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     low = text.lower()
     # Contract Data TfC / milestone Q&A must not force primavera_parser or
     # generate_wbs — those questions belong to RAG.
+    if message_wants_answer_report(text):
+        return None
     if message_is_contract_data_lookup(text):
         try:
             from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
@@ -3196,6 +3347,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
             )
     if "resource_histogram" in available and _message_wants_resource_histogram(text):
         return "resource_histogram"
+    if "look_ahead" in available and _message_wants_look_ahead(text):
+        return "look_ahead"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             return tool
@@ -3527,6 +3680,27 @@ def _is_document_deliverable_request(user_message: str | None) -> bool:
     if _RATE_QUOTE_RE.search(user_message):
         return False
     return bool(_DOCUMENT_DELIVERABLE_RE.search(user_message))
+
+
+def _is_contract_data_fact_lookup(user_message: str | None) -> bool:
+    """True for a Contract Data Q&A turn that is not asking for a unit rate
+    or a SAR arithmetic result.
+
+    Live Wave-1 A5: "What are the Delay Damages for the whole of the
+    Works?" is a filled-particular lookup. The cost gate's BOQ refusal is
+    the wrong instrument — it wiped a grounded (or model-expanded)
+    percentage particular because a SAR-per-day gloss did not sit in a
+    rate-semantic chunk. E1 ("calculate … in SAR") still gates.
+    """
+    if not user_message:
+        return False
+    if _RATE_QUOTE_RE.search(user_message):
+        return False
+    from app.core.contract_lookup_intent import message_is_contract_data_lookup
+    if not message_is_contract_data_lookup(user_message):
+        return False
+    from app.core.rag.retriever import query_needs_a_monetary_base
+    return not query_needs_a_monetary_base(user_message)
 
 
 def _infer_commissioning_systems(text: str | None) -> list[str] | None:
@@ -4063,7 +4237,10 @@ def _construction_calc_tool_schema() -> dict[str, Any]:
                 "cost build-up, MEP, QC). Returns the computed result. For COST "
                 "build-ups, pass the project's real unit rates in `params` (from the "
                 "priced BOQ / rate schedule) when available — the built-in defaults "
-                "are indicative GCC fallbacks only. Deterministic: call once."
+                "are indicative GCC fallbacks only. For concrete/raft/slab volume, "
+                "use calculation=concrete_volume; the project's documented waste "
+                "factor (5%) is applied and volume_m3 is the with-waste figure "
+                "(30×20×1.5 m → 945 m3). Deterministic: call once."
             ),
             "parameters": {
                 "type": "object",
@@ -4301,7 +4478,14 @@ def _cost_grounding_gate(
         figs = _cg_money_values(text)
         if not figs:
             return text  # not a cost/rate answer — leave it alone
-        if _is_document_deliverable_request(_latest_user_text(messages)):
+        user = _latest_user_text(messages)
+        if _is_document_deliverable_request(user):
+            return text
+        if _is_contract_data_fact_lookup(user):
+            # Live A5: Delay Damages is a Contract Data particular, not a
+            # BOQ unit rate. Replacing the answer with "upload your priced
+            # BOQ" is the wrong refusal for this question class. Arithmetic
+            # that wants a SAR figure (E1) still goes through the gate.
             return text
         rag_context = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         grounded = _cg_grounded_numbers(rag_context, messages)
@@ -4441,6 +4625,9 @@ def _postprocess_answer(
     messages: list[dict[str, Any]],
     fallback_used: bool = False,
     agent_name: str | None = None,
+    project_id: str | None = None,
+    coverage: tuple[int, int] | None = None,
+    audit_rec: dict[str, Any] | None = None,
 ) -> str:
     """Final-answer post-processing: cost-grounding gate (may refuse an
     ungrounded cost claim) then the standards advisory (appends a non-blocking
@@ -4471,6 +4658,12 @@ def _postprocess_answer(
     # when the banner isn't already present (idempotent across retries).
     if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
         text = _MASTER_CORPUS_FALLBACK_NOTE + text
+    from app.core.rag.coverage_honesty import apply_coverage_honesty
+    text = apply_coverage_honesty(
+        text,
+        project_id=project_id or (audit_rec or {}).get("project_id"),
+        coverage=coverage,
+    )
     return text
 
 
@@ -4731,6 +4924,16 @@ def _build_sources_from_audit(
         if layer != "own":
             from app.core.identifier_scrub import scrub_identifiers_filename
             display_name = scrub_identifiers_filename(display_name)
+        # Consume #468's class. Prefer the tag the injector already wrote;
+        # fall back to classify() on the same inputs it uses. Do not invent
+        # a fifth class here.
+        from app.core.rag.source_class import classify, label_for
+        source_class = (chunk_meta.get("source_class") or "").strip() or classify(
+            layer,
+            chunk_meta.get("source_name") or doc_name,
+            chunk_meta.get("text") or "",
+        )
+        source_class_label = label_for(source_class)
         return {
             "doc_id": chunk_meta["doc_id"],
             "doc_name": display_name,
@@ -4747,6 +4950,8 @@ def _build_sources_from_audit(
             "confidence": conf,
             "layer": layer,
             "layer_label": label,
+            "source_class": source_class,
+            "source_class_label": source_class_label,
         }
 
     # 1) Try to extract citations from the agent's text first.
@@ -6558,6 +6763,74 @@ class Agent:
                     },
                 },
             })
+            # ── synthetic tool: look_ahead ────────────────────────────────────
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "look_ahead",
+                    "description": (
+                        "Build a 3–4 week look-ahead from a Primavera P6 "
+                        ".xer. CALL THIS when the user asks for a look-ahead "
+                        "/ lookahead programme. Returns activities overlapping "
+                        "the window with ES/EF, remaining duration, total "
+                        "float, critical flag, WBS, and name. Never invent "
+                        "activities. Prefer the .xer the user named. Do NOT "
+                        "call primavera_parser for a look-ahead."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "schedule_file": {
+                                "type": "string",
+                                "description": (
+                                    "The .xer original_name. Must be a "
+                                    "project document name."
+                                ),
+                            },
+                            "weeks": {
+                                "type": "number",
+                                "description": "Look-ahead length in weeks (default 3).",
+                            },
+                            "days": {
+                                "type": "number",
+                                "description": "Look-ahead length in calendar days (overrides weeks).",
+                            },
+                            "as_of": {
+                                "type": "string",
+                                "description": "As-of / data date YYYY-MM-DD (optional).",
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            })
+            # ── synthetic tool: evm_calculate ────────────────────────────────
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "evm_calculate",
+                    "description": (
+                        "Classic Earned Value Management. REQUIRES Planned "
+                        "Value (PV), Earned Value (EV), and Actual Cost (AC). "
+                        "BAC optional for EAC/ETC/VAC. Returns SPI, CPI, SV, "
+                        "CV. Do not invent actuals — refuse if PV/EV/AC missing. "
+                        "Prefer this over progress_tracker for true EVM."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "pv": {"type": "number", "description": "Planned Value (BCWS)"},
+                            "ev": {"type": "number", "description": "Earned Value (BCWP)"},
+                            "ac": {"type": "number", "description": "Actual Cost (ACWP)"},
+                            "bac": {"type": "number", "description": "Budget at Completion (optional)"},
+                            "bcws": {"type": "number"},
+                            "bcwp": {"type": "number"},
+                            "acwp": {"type": "number"},
+                        },
+                        "required": [],
+                    },
+                },
+            })
 
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
@@ -6628,6 +6901,23 @@ class Agent:
                     "swallowed %s in _emit() — continuing",
                     "Exception", exc_info=True,
                 )
+
+        # H1: conversation-answer docx. Before the API-key check — no LLM.
+        if message_wants_answer_report(user_message) and answer_report_export_enabled():
+            answer, exports = _fulfill_answer_report(
+                user_message, project_id, conversation_id, history, self.name,
+            )
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": [{"role": "assistant", "content": answer}],
+                "sources": [],
+                "exports": exports,
+            }
+
         cfg = _llm_config()
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check entirely. The empty bearer token sent later is ignored
@@ -6743,6 +7033,11 @@ class Agent:
         )
         if _hist_pre:
             tool_calls_made.append(_hist_pre)
+        _la_pre = await _predispatch_look_ahead(
+            self, messages, project_id,
+        )
+        if _la_pre:
+            tool_calls_made.append(_la_pre)
         _wir_pre = None
         if not _locked:
             _wir_pre = await _predispatch_wir_form(
@@ -6815,6 +7110,7 @@ class Agent:
                         final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
+                        audit_rec=_rag_audit,
                     )
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
@@ -6915,7 +7211,7 @@ class Agent:
                         final_text, messages, user_message=user_message,
                         project_id=project_id, api_key=api_key, user_id=user_id,
                     )
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -7036,7 +7332,7 @@ class Agent:
             final_text, messages, user_message=user_message,
             project_id=project_id, api_key=api_key, user_id=user_id,
         )
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -7364,6 +7660,26 @@ class Agent:
         def _note_tool(name: str | None) -> None:
             if name and name not in tools_invoked:
                 tools_invoked.append(name)
+
+        # H1: compile A1–A9 answers to a downloadable docx. Before the
+        # API-key check and before RAG (A1-A9 used to retrieve RFP
+        # attachments). No LLM required.
+        if message_wants_answer_report(user_message) and answer_report_export_enabled():
+            yield {"type": "start", "agent": self.name}
+            answer, exports = _fulfill_answer_report(
+                user_message, project_id, conversation_id, history, self.name,
+            )
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {
+                "type": "end",
+                "iterations": 0,
+                "sources": [],
+                "tools": list(tools_invoked),
+                "exports": exports,
+            }
+            return
+
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check. The empty bearer is ignored by Ollama's OAI endpoint.
         if cfg["env_key"]:
@@ -7555,6 +7871,38 @@ class Agent:
                    "ok": True,
                    "summary": _hist_summary[:400],
                    "result": _hist_summary,
+                   "predispatched": True}
+
+        _la_pre = await _predispatch_look_ahead(
+            self, messages, project_id,
+        )
+        if _la_pre:
+            _note_tool(_la_pre["name"])
+            stream_tool_results.append(_la_pre)
+            _la_summary = _summarize_result(_la_pre.get("result"))
+            _la_file = ""
+            if isinstance(_la_pre.get("result"), dict):
+                _la_file = str(
+                    (_la_pre.get("result") or {}).get("schedule_file") or ""
+                )
+            yield {"type": "tool_call",
+                   "tool": _la_pre["name"],
+                   "name": _la_pre["name"],
+                   "args_preview": json.dumps({
+                       "schedule_file": _la_file,
+                       "activity_count": (
+                           (_la_pre.get("result") or {}).get("activity_count")
+                           if isinstance(_la_pre.get("result"), dict)
+                           else None
+                       ),
+                   }, default=str)[:200],
+                   "predispatched": True}
+            yield {"type": "tool_result",
+                   "tool": _la_pre["name"],
+                   "name": _la_pre["name"],
+                   "ok": True,
+                   "summary": _la_summary[:400],
+                   "result": _la_summary,
                    "predispatched": True}
 
         _wir_pre = None
@@ -7857,6 +8205,7 @@ class Agent:
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
+                            audit_rec=_rag_audit,
                         )
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
@@ -7909,7 +8258,7 @@ class Agent:
                             ):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     else:
@@ -7917,6 +8266,7 @@ class Agent:
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
+                            audit_rec=_rag_audit,
                         )
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMED-SYNTH iter=%d chars=%d cum=%.1fs",
@@ -7958,6 +8308,7 @@ class Agent:
                         final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
+                        audit_rec=_rag_audit,
                     )
                     _LOG.warning(
                         "chat_stream: iter=%d recovered deliverable after LLM error %s",
@@ -8097,7 +8448,7 @@ class Agent:
                                 if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                     final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -8253,7 +8604,7 @@ class Agent:
             _LOG.warning("chat_stream: forced final unusable, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:
@@ -9355,6 +9706,95 @@ class Agent:
                 "result": result,
             }
 
+        # ── synthetic tool: look_ahead ───────────────────────────────────────
+        if name == "look_ahead":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            raw = args.get("schedule_file") or args.get("file_path") or ""
+            resolved = _resolve_file_path(project_id, raw) if raw else ""
+            if not resolved or not os.path.exists(str(resolved)):
+                resolved, _picked = _resolve_histogram_schedule_file(
+                    project_id, user_message or "",
+                )
+            if not resolved:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": (
+                            "No schedule file resolved — name the .xer "
+                            "or upload one."
+                        ),
+                    },
+                }
+            la_params = {"schedule_file": resolved}
+            for key in ("weeks", "days", "as_of", "data_date"):
+                if args.get(key) is not None:
+                    la_params[key] = args.get(key)
+            try:
+                result = await container.look_ahead({}, la_params)
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"look_ahead failed: {e}",
+                    },
+                }
+            return {
+                "name": "look_ahead",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
+        # ── synthetic tool: evm_calculate ────────────────────────────────────
+        if name == "evm_calculate":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            try:
+                result = await container.evm_calculate({}, args or {})
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"evm_calculate failed: {e}",
+                    },
+                }
+            return {
+                "name": "evm_calculate",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
         # ── synthetic tool: remember_fact ────────────────────────────────────
         if name == "remember_fact":
             from app.core import agent_memory
@@ -9375,7 +9815,16 @@ class Agent:
         # ── synthetic tool: construction_calc (deterministic formula library) ─
         if name == "construction_calc":
             from app.lib import construction_formulas as _cf
-            result = _cf.run_calculation(args.get("calculation"), args.get("params"))
+            calc_params = dict(args.get("params") or {})
+            # Live UI pack E4: the model often passes the user ask as
+            # ``text`` / ``formula`` beside (or instead of) ``params``.
+            for key in ("text", "formula"):
+                if args.get(key) and key not in calc_params:
+                    calc_params[key] = args[key]
+            result = _cf.run_calculation(
+                args.get("calculation") or args.get("name") or args.get("calculator"),
+                calc_params,
+            )
             return {
                 "name": "construction_calc",
                 "ok": isinstance(result, dict) and result.get("status") != "error",
@@ -9900,6 +10349,10 @@ async def select_agent_for_message(
 
     if message_is_contract_data_lookup(user_message):
         info["reason"] = "contract_data_lookup"
+        return requested_agent, info
+
+    if message_wants_answer_report(user_message):
+        info["reason"] = "answer_report_export"
         return requested_agent, info
 
     block = _get_smart_orchestrator_block()

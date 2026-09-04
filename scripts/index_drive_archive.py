@@ -593,10 +593,14 @@ class _Watchdog:
         # `--per-doc-timeout-seconds 5` smoke test.
         try:
             self._pool.apply(_warmup_worker)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             # If even warmup fails, keep going — the per-file call will
             # surface the real error. We don't want to abort the batch.
-            pass
+            print(
+                f"worker warmup failed ({type(exc).__name__}: {exc}); "
+                f"continuing — per-file calls will surface the error",
+                flush=True,
+            )
 
     def call(self, path: str, ext: str) -> Tuple[Optional[Dict], Optional[float]]:
         """Run extract() in the worker with a hard timeout.

@@ -120,8 +120,8 @@ def bench_toolcalls(model: str, runs: int) -> dict:
                         try:
                             json.loads(args)
                             good = True
-                        except Exception:
-                            pass
+                        except json.JSONDecodeError:
+                            good = False
             if good:
                 ok += 1
     avg_lat = round(sum(latencies) / len(latencies), 2) if latencies else None

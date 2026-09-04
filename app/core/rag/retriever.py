@@ -9,8 +9,9 @@ where caching, dimension matching, and graceful-degradation policy live.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
+from app.core.contract_data_chunks import particulars_chunk_states_a_value
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import (
     Chunk,
@@ -362,6 +363,73 @@ def filename_matches_named_contracts(
     return any(cid in text_l for cid in named_ids)
 
 
+def elect_answer_bearing_contract(
+    query: str,
+    ranked_docs: Iterable[Tuple[str, str]],
+) -> Optional[str]:
+    """Which contract owns an UNNAMED answer, decided by evidence not by rank.
+
+    ``ranked_docs`` is ``(filename, chunk_text)`` in descending final-score
+    order. It may be a lazy iterable: nothing is consumed for a question that
+    wants no particular, and the walk stops at the first filled row.
+    Returns the winning PREFIX-YEAR-SEQ, or None to leave the choice to
+    arrival order (today's behaviour).
+
+    WHY THIS EXISTS. The unnamed fence locks onto the first candidate that
+    carries a contract id and drops every other id, so the top-ranked chunk
+    does not merely outrank the rest — it DELETES the other contract from the
+    result set. On the live Master Corpus that is decided by whichever chunk
+    happens to sort first, and wave-1 measured both outcomes on one corpus in
+    one session: A2 and A6 passed because a DD-2023-118 Contract Data row
+    sorted first, while A5 and A9 failed because a DD-2022-175 Conditions of
+    Contract clause did — and once it had, the DD-2023-118 row holding the
+    answer could not appear at any rank.
+
+    A General Conditions clause or a defined-term glossary entry is not an
+    answer to "what is the rate" or "who is the Engineer"; it is a pointer to
+    the row that holds it. So when the question asks for a kind of answer and
+    the pool contains one, the contract that owns the best-ranked chunk OF
+    THAT KIND wins the pool — a pointer from another contract cannot take it
+    away.
+
+    Each ask shape brings its own idea of what an answer looks like, because
+    the wrong-year chunk that wins is different every time:
+
+    * a filled Contract Data particulars row, for a particular or a numbered
+      contract Schedule (wave-1 A3/A5/A9, wave-2 G1);
+    * a chunk of a bill of quantities, for measured scope (wave-2 F1, whose
+      three citations were all another year's Conditions of Contract prose
+      describing the demolition scope in words).
+
+    An ask that matches no shape returns None and keeps arrival order, so
+    this can never reorder a corpus it has no opinion about.
+
+    This complements the named-id fence (#443) rather than re-implementing
+    it: a question that names its contract never reaches here.
+    """
+    # (does the ask want this kind of answer?, is this chunk that answer?)
+    # Built here, not at module scope: both halves are defined further down.
+    kinds = [
+        (query_asks_for_contract_particulars,
+         lambda _name, text: (
+             is_contract_data_particulars_row(text)
+             and particulars_row_answers_asked_label(query, text)
+         )),
+        (query_asks_for_boq_scope,
+         lambda name, _text: document_is_a_bill_of_quantities(name)),
+    ]
+    active = [is_answer for asks, is_answer in kinds if asks(query)]
+    if not active:
+        return None
+    for filename, text in ranked_docs:
+        if not any(is_answer(filename, text) for is_answer in active):
+            continue
+        ids = extract_contract_doc_ids(filename or "")
+        if ids:
+            return ids[0]
+    return None
+
+
 class _ContractScope:
     """Drop wrong-contract chunks before top-K selection.
 
@@ -369,14 +437,28 @@ class _ContractScope:
     if none remain the result is empty (fail closed — do not fill with
     another year's DD contract).
 
-    Unnamed query: the first kept chunk that carries a contract id wins
-    the result set; later chunks from a different PREFIX-YEAR-SEQ are
-    dropped so one answer cannot mix years.
+    Unnamed query: one contract wins the result set and chunks from a
+    different PREFIX-YEAR-SEQ are dropped, so one answer cannot mix years.
+    The winner is elected from answer-bearing evidence when the question
+    asks for a filled Contract Data particular (see
+    :func:`elect_answer_bearing_contract`); otherwise the first kept chunk
+    carrying a contract id wins, as before.
     """
 
-    def __init__(self, query: str) -> None:
-        self.named = extract_contract_doc_ids(query or "")
+    def __init__(
+        self,
+        query: str,
+        ranked_docs: Optional[Iterable[Tuple[str, str]]] = None,
+    ) -> None:
+        self.query = query or ""
+        self.named = extract_contract_doc_ids(self.query)
         self.winning: Optional[str] = None
+        self._particulars = (
+            not self.named
+            and query_asks_for_contract_particulars(self.query)
+        )
+        if not self.named and ranked_docs is not None:
+            self.winning = elect_answer_bearing_contract(self.query, ranked_docs)
 
     def allow(self, filename: str, chunk_text: str = "") -> bool:
         if self.named:
@@ -387,6 +469,19 @@ class _ContractScope:
         if not ids:
             return True
         if self.winning is None:
+            # A particulars ask whose election declined must not freeze the
+            # pool on a Volume 4 schedule duration or a GC pointer. Only a
+            # matching-label filled row may lock arrival order (live A3).
+            if self._particulars:
+                if (
+                    is_contract_data_particulars_row(chunk_text)
+                    and particulars_row_answers_asked_label(
+                        self.query, chunk_text,
+                    )
+                ):
+                    self.winning = ids[0]
+                    return True
+                return False
             self.winning = ids[0]
             return True
         return self.winning in ids
@@ -702,6 +797,385 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
     return [" ".join(pair) for pair in itertools.combinations(terms, 2)]
 
 
+# ── letter / named-party filename rescue (live D1) ──────────────────────────
+#
+# Live Master Corpus D1 (SHA 567147a): "who signed the UBCC Concrete
+# Batching Plant at Wadi Safar letter" retrieved only Volume 5 Other
+# Documents (geotech / plot agreement / weekly reports). The letter was
+# already in Neon (ids 8199b14b, b5033ec2) — its filename carries Letter +
+# UBCC + Batching Plant + wadi Safar. Term rescue skipped the out-of-pool
+# fetch because Volume 5 already mentioned the place-name in-chunk.
+#
+# Filename overlap is the discriminator Volume 5 cannot fake: its name is
+# a contract volume, not a letter. Kill-switch: RAG_LETTER_FILENAME_RESCUE=0.
+_LETTER_OR_SIGNATORY_RE = re.compile(
+    r"(?i)\b(?:"
+    r"who\s+signed|who\s+put\s+their\s+name|"
+    r"signed\s+the\s+letter|signator(?:y|ies)|"
+    r"in\s+what\s+capacity|"
+    r"letter\s+(?:about|on|regarding|for|to)\b"
+    r")"
+)
+_LETTER_IN_NAME_RE = re.compile(
+    r"(?i)(?:^|[\s_\-/.(])letter(?:s)?(?:[\s_\-/.)]|$)",
+)
+# Below IDENTIFIER_BONUS_MAX (2.0) so exact codes still win; above typical
+# cosine + Volume-5 term overlap so a filename-matched letter leads.
+_FILENAME_OVERLAP_BONUS_MAX = 1.6
+_FILENAME_LETTER_BONUS = 0.4
+_FILENAME_RESCUE_MIN_TERMS = 2
+_FILENAME_RESCUE_OPEN_MIN_TERMS = 3
+
+
+def letter_filename_rescue_enabled() -> bool:
+    """ON by default — this is a live recall defect. RAG_LETTER_FILENAME_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy on a corpus."""
+    return (os.getenv("RAG_LETTER_FILENAME_RESCUE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_for_letter_or_signatory(query: str) -> bool:
+    """True for a who-signed / letter-about ask (D1), not a contract-role ask.
+
+    "Who is the Engineer" stays on the Contract Data path (#483). "Who
+    signed the letter about the batching plant" is this class.
+    """
+    return bool(_LETTER_OR_SIGNATORY_RE.search(query or ""))
+
+
+def filename_looks_like_letter(filename: str) -> bool:
+    """True when the upload name or path is a correspondence letter."""
+    return bool(_LETTER_IN_NAME_RE.search(filename or ""))
+
+
+def filename_query_overlap(filename: str, terms: List[str]) -> float:
+    """Fraction of distinctive ``terms`` that appear in the filename/path."""
+    blob = (filename or "").lower()
+    cleaned = [t.lower() for t in terms if t and len(t) >= 3]
+    if not blob or not cleaned:
+        return 0.0
+    hits = sum(1 for t in cleaned if t in blob)
+    return hits / len(cleaned)
+
+
+def filename_match_bonus(
+    filename: str,
+    terms: List[str],
+    *,
+    letter_query: bool,
+) -> float:
+    """Additive lift for a chunk whose document name matches the query.
+
+    A letter-shaped name gets an extra tier so Volume 5 'Other Documents'
+    that share a place-name cannot outrank the letter the question named.
+    Zero when the name shares no distinctive term, and zero on a weak
+    one-token collision (``contract.pdf`` vs "Conditions of Contract")
+    so ordinary Q&A ranking stays byte-identical.
+    """
+    cleaned = [t for t in terms if t and len(t) >= 3]
+    overlap = filename_query_overlap(filename, cleaned)
+    if overlap <= 0.0 or not cleaned:
+        return 0.0
+    hits = overlap * len(cleaned)
+    is_letter = filename_looks_like_letter(filename)
+    if letter_query:
+        if hits < _FILENAME_RESCUE_MIN_TERMS and not is_letter:
+            return 0.0
+    elif hits < _FILENAME_RESCUE_OPEN_MIN_TERMS and not (
+        is_letter and hits >= _FILENAME_RESCUE_MIN_TERMS
+    ):
+        return 0.0
+    bonus = overlap * _FILENAME_OVERLAP_BONUS_MAX
+    if is_letter:
+        bonus += _FILENAME_LETTER_BONUS
+    return bonus
+
+
+def _apply_filename_overlap_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: lift chunks whose resolved filename matches the query."""
+    if not letter_filename_rescue_enabled():
+        return
+    terms = extract_rescue_terms(query)
+    if len(terms) < _FILENAME_RESCUE_MIN_TERMS:
+        return
+    letter_q = query_asks_for_letter_or_signatory(query)
+    for i, (score, chunk) in enumerate(scored):
+        name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+        add = filename_match_bonus(name, terms, letter_query=letter_q)
+        if add <= 0.0:
+            continue
+        boosted = score + add
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_filename_matched_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> Dict[str, str]:
+    """Pull chunks from filename-matched letters into ``fused``.
+
+    Returns ``{doc_id: original_name}`` so the later name resolution does
+    not re-query the documents table for docs we just looked up.
+    Failures never raise — the semantic pool stands.
+    """
+    names: Dict[str, str] = {}
+    if not letter_filename_rescue_enabled():
+        return names
+    terms = extract_rescue_terms(query)
+    letter_q = query_asks_for_letter_or_signatory(query)
+    if letter_q:
+        if len(terms) < _FILENAME_RESCUE_MIN_TERMS:
+            return names
+        require_letter = True
+        min_terms = _FILENAME_RESCUE_MIN_TERMS
+    else:
+        # Named-site lookup without "letter": only fire when the query is
+        # specific enough that a filename collision is unlikely.
+        if len(terms) < _FILENAME_RESCUE_OPEN_MIN_TERMS:
+            return names
+        require_letter = False
+        min_terms = _FILENAME_RESCUE_OPEN_MIN_TERMS
+
+    try:
+        from app.core.projects import documents_matching_filename_terms
+    except Exception:  # noqa: BLE001
+        logger.warning("filename rescue: projects import failed", exc_info=True)
+        return names
+
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return names
+
+    recovered = 0
+    for pid in pids:
+        try:
+            matches = documents_matching_filename_terms(
+                pid, terms, min_terms=min_terms, require_letter=require_letter,
+            )
+            if letter_q and not matches:
+                # Filename has the site/party but not the word "letter"
+                # (handover certificate). Retry on overlap alone.
+                matches = documents_matching_filename_terms(
+                    pid, terms, min_terms=_FILENAME_RESCUE_OPEN_MIN_TERMS,
+                    require_letter=False,
+                )
+        except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+            logger.warning("filename rescue listing for %s failed: %s", pid, exc)
+            continue
+        if not matches:
+            continue
+        for doc in matches:
+            names[doc["id"]] = doc.get("original_name") or ""
+        try:
+            hits = fetch(pid, [d["id"] for d in matches])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("filename rescue fetch for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits:
+            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
+            if chunk.chunk_id in fused:
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            recovered += 1
+    if recovered:
+        logger.info(
+            "filename rescue recovered %d chunk(s) for terms %r (letter_query=%s)",
+            recovered, terms, letter_q,
+        )
+    return names
+
+
+# ── specification-title filename rescue (live C2) ──────────────────────────
+#
+# Live Master Corpus C2 (SHA 567147a): "Which specification document covers
+# the Variation Procedure, and what is its number?" retrieved DD-2022-175
+# Demolition Specs Part 3. The governing spec is already in Neon —
+# ``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``. Term rescue treated
+# the demolition volume's in-chunk "specification" / "procedure" overlap as
+# already-grounded and skipped the out-of-pool fetch. Cosine prefers the
+# long demolition volume over the short titled spec.
+#
+# The filename is the discriminator Demolition Specs cannot fake: it
+# carries the Title-Case phrase the question used. Kill-switch:
+# RAG_SPEC_TITLE_RESCUE=0.
+_SPEC_IDENTITY_ASK_RE = re.compile(
+    r"(?i)\b(?:which|what)\s+specification\s+(?:document|section)s?\b"
+    r"|\bspecification\s+document\s+covers\b"
+    r"|\band\s+what\s+is\s+its\s+number\b"
+)
+# Two-or-more consecutive Title-Case words ("Variation Procedure").
+# Leading question words ("Which Specification") are stripped below.
+_TITLE_CASE_PHRASE_RE = re.compile(
+    r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\b"
+)
+_TITLE_PHRASE_STOP = frozenset({
+    "which", "what", "whose", "when", "where", "why",
+    "this", "that", "the", "and", "for", "its", "our",
+})
+# Equal to IDENTIFIER_BONUS_MAX so a titled filename beats a high-cosine
+# demolition volume the way an exact code beats boilerplate.
+_SPEC_TITLE_FILENAME_BONUS = 2.0
+
+
+def spec_title_rescue_enabled() -> bool:
+    """ON by default — this is a live recall defect. RAG_SPEC_TITLE_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy on a corpus."""
+    return (os.getenv("RAG_SPEC_TITLE_RESCUE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_which_specification_document(query: str) -> bool:
+    """True for a which-spec-covers-X / what-is-its-number ask (C2).
+
+    Numbered-spec questions ("Specification 003113") stay on the
+    identifier path. Contract-role and letter asks are not this class.
+    """
+    return bool(_SPEC_IDENTITY_ASK_RE.search(query or ""))
+
+
+def extract_document_title_phrases(query: str) -> List[str]:
+    """Title-Case phrases of two or more content words from ``query``.
+
+    ``Variation Procedure`` is a document title. ``Which Specification``
+    is question scaffolding and is dropped. Lowercased, deduplicated.
+    """
+    found: List[str] = []
+    seen: Set[str] = set()
+    for match in _TITLE_CASE_PHRASE_RE.finditer(query or ""):
+        words = [
+            w for w in match.group(1).split()
+            if w.lower() not in _TITLE_PHRASE_STOP
+        ]
+        if len(words) < 2:
+            continue
+        phrase = " ".join(words).lower()
+        if phrase in seen or len(phrase) < 8:
+            continue
+        seen.add(phrase)
+        found.append(phrase)
+    return found
+
+
+def spec_title_filename_bonus(filename: str, phrases: List[str]) -> float:
+    """Additive lift when the upload name carries a queried title phrase.
+
+    Zero when the name shares no title phrase, so ordinary Q&A ranking
+    stays byte-identical.
+    """
+    blob = (filename or "").lower()
+    if not blob or not phrases:
+        return 0.0
+    if any(phrase and phrase in blob for phrase in phrases):
+        return _SPEC_TITLE_FILENAME_BONUS
+    return 0.0
+
+
+def _apply_spec_title_filename_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: lift chunks whose resolved filename matches a spec title."""
+    if not spec_title_rescue_enabled():
+        return
+    if not query_asks_which_specification_document(query):
+        return
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+        add = spec_title_filename_bonus(name, phrases)
+        if add <= 0.0:
+            continue
+        boosted = score + add
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_spec_title_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> Dict[str, str]:
+    """Pull chunks from title-matched specs into ``fused``.
+
+    Returns ``{doc_id: original_name}`` so later name resolution does
+    not re-query the documents table for docs we just looked up.
+    Failures never raise — the semantic pool stands.
+    """
+    names: Dict[str, str] = {}
+    if not spec_title_rescue_enabled():
+        return names
+    if not query_asks_which_specification_document(query):
+        return names
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return names
+
+    try:
+        from app.core.projects import documents_matching_title_phrase
+    except Exception:  # noqa: BLE001
+        logger.warning("spec-title rescue: projects import failed", exc_info=True)
+        return names
+
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return names
+
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+    for pid in pids:
+        matches: List[Dict[str, str]] = []
+        for phrase in phrases:
+            try:
+                matches.extend(documents_matching_title_phrase(pid, phrase))
+            except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+                logger.warning(
+                    "spec-title rescue listing for %s (%r) failed: %s",
+                    pid, phrase, exc,
+                )
+        if not matches:
+            continue
+        seen_docs: Set[str] = set()
+        unique_matches: List[Dict[str, str]] = []
+        for doc in matches:
+            did = doc.get("id") or ""
+            if not did or did in seen_docs:
+                continue
+            seen_docs.add(did)
+            unique_matches.append(doc)
+            names[did] = doc.get("original_name") or ""
+        try:
+            hits = fetch(pid, [d["id"] for d in unique_matches])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("spec-title rescue fetch for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits:
+            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
+            if chunk.chunk_id in fused:
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            recovered += 1
+    if recovered:
+        logger.info(
+            "spec-title rescue recovered %d chunk(s) for phrases %r",
+            recovered, phrases,
+        )
+    return names
 
 
 # Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
@@ -777,6 +1251,68 @@ _FILLED_IN_ASK_RE = re.compile(
     r"duration|figure)|per\s+(?:calendar\s+)?day|calendar\s+days|"
     r"\bpercentage\b|\bamount\b)",
 )
+# Not every Contract Data particular is a number. A filled row can name a
+# party (the Engineer), a method (the approved electronic communication), or
+# an address — and asking WHO the Engineer is wants that filled row, not the
+# General Conditions' "'Engineer' means the person appointed by the Employer"
+# glossary entry. Live wave-1 A9 answered from the glossary of a DIFFERENT
+# contract year because the ask was never recognised as particulars-shaped,
+# so no part of the particulars machinery ran on it.
+_CD_CONTRACT_ROLE_RE = re.compile(
+    r"(?i)\b(?:engineer(?:'s\s+representative)?|"
+    r"employer(?:'s\s+representative)?|contractor|"
+    r"dispute\s+(?:adjudication\s+)?board|adjudicator)\b",
+)
+_CD_WHO_IS_RE = re.compile(
+    r"(?i)\bwho\s+(?:is|are)\b|\bname\s+of\s+the\b|"
+    r"\bwhich\s+(?:firm|company|entity|organisation|organization)\b",
+)
+# A numbered Schedule / Appendix / Annex of the contract is a Contract Data
+# register row: "Schedule 10 | Not Used", "Schedule 9 | Health & Safety KPIs".
+# Live wave-2 G1 (Sev-1) asked what Schedule 10 contains and was answered out
+# of a DIFFERENT project's show package, which has a Schedule 10 of its own
+# and talks about it at length. The register row that says "Not Used" IS the
+# answer, and it is a filled particulars row — but the ask was not recognised
+# as wanting one, so nothing lifted it and the arrival-order fence dropped
+# the contract it belongs to.
+#
+# The context word is required: a numbered schedule also appears inside
+# specifications and method statements, and those asks must stay where they
+# are rather than being scoped to a contract's Contract Data.
+_CD_SCHEDULE_ASK_RE = re.compile(
+    r"(?i)\b(?:schedule|appendix|annex(?:ure)?)\s+(?:no\.?\s*)?\d+[A-Za-z]?\b",
+)
+_CD_SCHEDULE_CONTEXT_RE = re.compile(
+    r"(?i)\b(?:contract|contracts|volume|volumes|"
+    r"conditions\s+of\s+contract|tender)\b",
+)
+# Arithmetic over a particular that wants a MONEY answer. Live wave-2 E1:
+# "Calculate the delay damages per calendar day in SAR for the whole of the
+# Works" retrieved the 0.1%-per-day rate row at rank 1 and then reported the
+# SAR figure as absent — because a percentage is not an amount, and the row
+# carrying the amount shares no wording with the question, so it lost every
+# top-5 slot to rows that do.
+_CD_MONEY_ARITHMETIC_ASK_RE = re.compile(
+    r"(?i)\b(?:calculate|compute|work\s+out|how\s+much)\b",
+)
+_CD_MONEY_UNIT_ASK_RE = re.compile(
+    r"(?i)\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b|"
+    r"\bmonetary\b|\bamount\s+per\b|\bvalue\s+per\b",
+)
+# A particulars row whose value IS an amount of money — the base a
+# percentage-of-the-Contract-Price calculation needs.
+_CD_MONETARY_VALUE_RE = re.compile(
+    r"(?i)\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b[^\n]{0,12}"
+    r"\d{1,3}(?:,\d{3})+(?:\.\d+)?",
+)
+# Bill-of-quantities / measured-scope asks. Live wave-2 F1 asked for a WBS
+# over "the demolition and site clearance scope in this project's BOQ" and
+# every citation came from another year's Conditions of Contract, whose prose
+# describes that scope in words while the BOQ carries it as measured rows.
+_BOQ_SCOPE_ASK_RE = re.compile(
+    r"(?i)\bbo[q]\b|\bbill\s+of\s+quantit|\bschedule\s+of\s+quantit|"
+    r"\bmeasured\s+(?:work|works|items?|quantit)|\bpriced\s+bill\b",
+)
 _CD_PARTICULARS_PREFIX_RE = re.compile(
     r"contract\s+data\s+particulars", re.IGNORECASE,
 )
@@ -795,6 +1331,27 @@ _CD_FILLED_VALUE_RE = re.compile(
     r"\d+(?:\.\d+)?\s*%|"
     r"\d+\s+(?:calendar\s+|working\s+)?days?)",
 )
+# A Conditions-of-Contract clause that says "at the rate stated in the
+# Contract Data" is a POINTER to the answer, not the answer. It carries the
+# heading phrase and — being a clause about delay damages — repeats every
+# label word the question uses, so it used to collect the heading tier plus
+# the full label bonus and land within ~0.45 of the row that actually holds
+# the rate. Live wave-1 A5 is that chunk winning: the answer cited
+# Sub-Clause 8.8 and then reported the rate and cap as absent from its
+# excerpts, because the clause it had only refers to where they are stated.
+#
+# The discriminator is what precedes the phrase. A section heading sits at a
+# line start; a cross-reference is governed by a preposition ("in the",
+# "stated in the", "set out in the"). Only when EVERY mention in the chunk is
+# prepositional is the chunk a pointer — one genuine heading is enough to
+# keep the tier.
+_CD_XREF_LEAD_RE = re.compile(
+    r"(?i)\b(?:stated|set\s+out|specified|given|listed|described|defined|"
+    r"identified|named|shown|provided|inserted|entered|contained|"
+    r"referred\s+to|required)?\s*"
+    r"\b(?:in|within|under|per|to|of|from|into)\s+(?:the\s+)?$",
+)
+_CD_XREF_LOOKBACK = 48
 _CD_PARTICULARS_PREFIX_BONUS = 0.85
 _CD_PARTICULARS_HEADING_BONUS = 0.40
 _CD_DEFINITION_PENALTY = 0.40
@@ -854,6 +1411,57 @@ def _cd_label_bonus(query_terms: frozenset, text: str) -> float:
     return min(overlap * _CD_LABEL_TERM_BONUS, _CD_LABEL_BONUS_CAP)
 
 
+def contract_data_mention_is_only_a_cross_reference(text: str) -> bool:
+    """True when every "Contract Data" mention points AT it rather than IS it.
+
+    ``... at the rate stated in the Contract Data for every calendar day ...``
+    is a clause telling the reader where to look. ``Contract Data`` on its own
+    line, followed by rows, is the thing itself. False when the chunk has no
+    mention at all — the caller has already established there is one.
+    """
+    t = text or ""
+    mentions = list(_CD_HEADING_IN_CHUNK_RE.finditer(t))
+    if not mentions:
+        return False
+    for m in mentions:
+        lead = t[max(0, m.start() - _CD_XREF_LOOKBACK):m.start()]
+        if not _CD_XREF_LEAD_RE.search(lead):
+            return False
+    return True
+
+
+def is_contract_data_particulars_row(text: str) -> bool:
+    """True for an index-time ``CONTRACT DATA particulars`` chunk that states
+    a particular — the "answer-bearing Contract Data evidence" predicate the
+    unnamed contract election runs on (:func:`elect_answer_bearing_contract`).
+
+    Deliberately stricter than the scoring tier below, which asks only "is
+    this a particulars chunk". The election decides which contract owns the
+    whole result set, so it must be satisfied by a row that carries a VALUE
+    and not by a window of unfilled keys — a clause number like ``1.1.67``
+    reads as a decimal to the numeric test, so numbers alone are not proof
+    that anything is filled in.
+    """
+    t = text or ""
+    if not _CD_PARTICULARS_PREFIX_RE.search(t):
+        return False
+    return particulars_chunk_states_a_value(t)
+
+
+def particulars_row_answers_asked_label(query: str, text: str) -> bool:
+    """True when a particulars chunk's BODY names the particular the ask
+    is about.
+
+    The unnamed election used to lock the pool to the first filled
+    particulars row of any kind. A filled Accepted Contract Amount window
+    from another package then stole A3 (Time for Completion), the same
+    way a glossary definition used to steal A9 before the role-identity
+    ask was recognised. Label overlap is the same signal the scoring
+    bonus already uses, computed on the body so the identical header
+    every particulars chunk carries cannot elect.
+    """
+    return _cd_label_bonus(_significant_terms(query), text) > 0.0
+
 
 def _cd_particulars_boost_enabled() -> bool:
     return (os.getenv("RAG_CD_PARTICULARS_BOOST") or "").strip().lower() not in (
@@ -862,17 +1470,173 @@ def _cd_particulars_boost_enabled() -> bool:
 
 
 def query_asks_for_contract_particulars(query: str) -> bool:
-    """True when the question wants a filled-in Contract Data figure.
+    """True when the question wants a filled-in Contract Data particular.
 
     Definition questions ("what does Accepted Contract Amount mean") stay
     on the glossary path. Arithmetic unit-rate questions are not this.
+
+    A particular is not always a figure: "who is the Engineer" asks for the
+    filled row that names the party, which is why a contract-role identity
+    ask counts here too.
     """
     q = (query or "").strip()
     if not q or _DEFINITION_QUESTION_RE.search(q):
         return False
     if _PARTICULARS_FIELD_RE.search(q):
         return True
+    if _CD_WHO_IS_RE.search(q) and _CD_CONTRACT_ROLE_RE.search(q):
+        return True
+    if _CD_SCHEDULE_ASK_RE.search(q) and _CD_SCHEDULE_CONTEXT_RE.search(q):
+        return True
     return bool(_FILLED_IN_ASK_RE.search(q) and _CD_HEADING_IN_CHUNK_RE.search(q))
+
+
+def query_asks_for_boq_scope(query: str) -> bool:
+    """True when the question is about measured scope in a bill of quantities.
+
+    The answer lives in BOQ item rows, not in the prose of a Conditions of
+    Contract that happens to describe the same scope — and certainly not in
+    another contract year's prose, which is what wave-2 F1 returned for all
+    three of its citations.
+    """
+    return bool(_BOQ_SCOPE_ASK_RE.search((query or "").strip()))
+
+
+def document_is_a_bill_of_quantities(filename: str) -> bool:
+    """True when the DOCUMENT NAME says it is a bill of quantities.
+
+    Consumes ``doc_index.BOQ_FILENAME_RE`` rather than restating it, so the
+    retrieval-side test cannot drift from the one the indexer already uses to
+    pick a chunker and an OCR budget. The import is deferred because
+    ``doc_index`` imports this module; it is reached only for a BOQ-shaped
+    ask, and ``sys.modules`` caches it after the first.
+    """
+    name = filename or ""
+    if not name:
+        return False
+    try:
+        from app.core.doc_index import BOQ_FILENAME_RE
+    except Exception as exc:  # noqa: BLE001 — never break a turn over this
+        logger.warning("BOQ filename test unavailable: %s", exc)
+        return False
+    return bool(BOQ_FILENAME_RE.search(name))
+
+
+def query_needs_a_monetary_base(query: str) -> bool:
+    """True when the ask is arithmetic over a particular and wants money out.
+
+    A rate expressed as a percentage cannot answer "how much per day in SAR"
+    on its own; the amount it is a percentage OF has to be in the excerpts
+    too. Wave-2 E1 is the whole failure: the 0.1%-per-day row came back at
+    rank 1 and the answer then reported the SAR figure as absent.
+    """
+    q = (query or "").strip()
+    if not q:
+        return False
+    return bool(
+        _CD_MONEY_ARITHMETIC_ASK_RE.search(q) and _CD_MONEY_UNIT_ASK_RE.search(q)
+    )
+
+
+def particulars_row_states_an_amount_of_money(text: str) -> bool:
+    """True when a particulars row's value is an amount of money.
+
+    This is the base row an arithmetic ask needs. Deliberately the row's
+    VALUE and not its label: "10% of the Accepted Contract Amount" names the
+    base without stating it, and that row is what wave-2 E1 already had.
+    """
+    t = text or ""
+    if not _CD_PARTICULARS_PREFIX_RE.search(t):
+        return False
+    return bool(_CD_MONETARY_VALUE_RE.search(_cd_chunk_body(t)))
+
+
+def reserve_monetary_base_row(
+    query: str,
+    kept: List[Chunk],
+    ranked: List[Chunk],
+    *,
+    allow=None,
+) -> bool:
+    """Give the amount a percentage refers to one slot in the top-k.
+
+    Returns True when a swap happened. ``kept`` is modified in place: the
+    LOWEST-ranked survivor is replaced, so k is unchanged and the rows the
+    question actually named keep their places.
+
+    A reservation rather than a bigger bonus, deliberately. The money row
+    earns no label bonus — the question says "in SAR", and the row says
+    "SAR 8,640,000.00", and they share no term the overlap can see — so on
+    the live Contract Data it competes against 200 siblings that each earn
+    the full 1.40. Any constant large enough to clear that field is a
+    constant fitted to one corpus's cosine spread; one slot is a guarantee.
+
+    ``allow`` is the caller's contract-scope test, so a reserved row cannot
+    re-enter a contract the fence already excluded.
+    """
+    if not kept or not query_needs_a_monetary_base(query):
+        return False
+    if any(particulars_row_states_an_amount_of_money(c.text or "") for c in kept):
+        return False
+    present = {c.chunk_id for c in kept}
+    for chunk in ranked:
+        if chunk.chunk_id in present:
+            continue
+        if not particulars_row_states_an_amount_of_money(chunk.text or ""):
+            continue
+        if allow is not None and not allow(chunk):
+            continue
+        kept[-1] = chunk
+        logger.debug(
+            "reserved a Contract Data money row for an arithmetic ask; "
+            "a percentage alone cannot answer it",
+        )
+        return True
+    return False
+
+
+def reserve_matching_particulars_row(
+    query: str,
+    kept: List[Chunk],
+    ranked: List[Chunk],
+    *,
+    allow=None,
+) -> bool:
+    """Give the particulars row the question named one slot in the top-k.
+
+    Same-year General Conditions clauses can fill every slot after the
+    fence has locked the right PREFIX-YEAR-SEQ (live A5: three HIGH
+    Sub-Clause 8.8 chunks, no rate). A reservation rather than a bigger
+    bonus: the clause repeats every label word and its cosine is not
+    bounded.
+    """
+    if not kept or not query_asks_for_contract_particulars(query):
+        return False
+    if any(
+        is_contract_data_particulars_row(c.text or "")
+        and particulars_row_answers_asked_label(query, c.text or "")
+        for c in kept
+    ):
+        return False
+    present = {c.chunk_id for c in kept}
+    for chunk in ranked:
+        if chunk.chunk_id in present:
+            continue
+        text = chunk.text or ""
+        if not (
+            is_contract_data_particulars_row(text)
+            and particulars_row_answers_asked_label(query, text)
+        ):
+            continue
+        if allow is not None and not allow(chunk):
+            continue
+        kept[-1] = chunk
+        logger.debug(
+            "reserved a matching Contract Data particulars row; "
+            "same-year General Conditions had filled the top-k",
+        )
+        return True
+    return False
 
 
 def contract_data_particulars_delta(text: str) -> float:
@@ -880,16 +1644,22 @@ def contract_data_particulars_delta(text: str) -> float:
 
     Dedicated ``CONTRACT DATA particulars`` chunks (index-time prefix) get
     the strongest lift. Other chunks that still carry a Contract Data
-    heading plus a filled value get a smaller lift. Glossary "means the"
-    chunks with no filled figure are demoted so they cannot bury the row.
+    heading plus a filled value get a smaller lift — but a chunk whose only
+    mention of the Contract Data is a cross-reference to it does not, because
+    a clause that says where the rate is stated is not the row that states
+    it. Glossary "means the" chunks with no filled figure are demoted so they
+    cannot bury the row.
     """
     t = text or ""
-    if _CD_PARTICULARS_PREFIX_RE.search(t) and _CD_FILLED_VALUE_RE.search(t):
+    if _CD_PARTICULARS_PREFIX_RE.search(t) and (
+        _CD_FILLED_VALUE_RE.search(t) or particulars_chunk_states_a_value(t)
+    ):
         return _CD_PARTICULARS_PREFIX_BONUS
     if (
         _CD_HEADING_IN_CHUNK_RE.search(t)
         and _CD_FILLED_VALUE_RE.search(t)
         and not _CD_MEANS_RE.search(t)
+        and not contract_data_mention_is_only_a_cross_reference(t)
     ):
         return _CD_PARTICULARS_HEADING_BONUS
     if _CD_MEANS_RE.search(t) and not _CD_FILLED_VALUE_RE.search(t):
@@ -1057,14 +1827,54 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             if delta:
                 chunk.score = round((chunk.score or 0.0) + delta, 6)
 
+    fused_lex: Dict[str, Tuple] = {
+        c.chunk_id: (c, c.score or 0.0, 0.0) for c in candidates
+    }
+    filename_names = _rescue_filename_matched_docs(
+        query, project_id, fused_lex, store,
+        extra_pids=_general_knowledge_project_ids(),
+    )
+    filename_names.update(_rescue_spec_title_docs(
+        query, project_id, fused_lex, store,
+        extra_pids=_general_knowledge_project_ids(),
+    ))
+    if len(fused_lex) > len(candidates):
+        seen = {c.chunk_id for c in candidates}
+        for chunk, _sem, _b in fused_lex.values():
+            if chunk.chunk_id not in seen:
+                candidates.append(chunk)
+                seen.add(chunk.chunk_id)
+
+    name_by_id: Dict[str, str] = dict(filename_names)
+    scored_lex: List[Tuple[float, Chunk]] = [
+        (c.score or 0.0, c) for c in candidates
+    ]
+    for _, chunk in scored_lex:
+        if chunk.doc_id not in name_by_id:
+            name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
+    _apply_filename_overlap_boost(query, scored_lex, name_by_id)
+    _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
+    candidates = [chunk for _s, chunk in scored_lex]
+
     # Stable sort keeps the active project ahead of GK on equal scores.
     candidates.sort(key=lambda c: -(c.score or 0.0))
 
     kept: List[Chunk] = []
     noise_filtered = 0
-    scope = _ContractScope(query)
+
+    def _name(doc_id: str) -> str:
+        return name_by_id.get(doc_id, "") or _doc_name_for_id(doc_id)
+
+    # Elect the unnamed contract from answer-bearing evidence. Reads the
+    # SAME ``name_by_id`` the loop below uses, which #490 populates from its
+    # filename rescue — so a document that only entered the pool because its
+    # NAME matched the query is electable on that name.
+    scope = _ContractScope(
+        query,
+        ranked_docs=((_name(c.doc_id), c.text or "") for c in candidates),
+    )
     for chunk in candidates:
-        name = _doc_name_for_id(chunk.doc_id)
+        name = _name(chunk.doc_id)
         if _is_noise_filename(name):
             noise_filtered += 1
             continue
@@ -1074,6 +1884,14 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         kept.append(chunk)
         if len(kept) >= k:
             break
+    _allow = (
+        lambda c: not _is_noise_filename(_name(c.doc_id))
+        and scope.allow(_name(c.doc_id), c.text or "")
+    )
+    reserve_matching_particulars_row(query, kept, candidates, allow=_allow)
+    reserve_monetary_base_row(query, kept, candidates, allow=_allow)
+    for chunk in kept:
+        chunk.source_name = _name(chunk.doc_id)
     return kept, noise_filtered
 
 
@@ -1472,6 +2290,29 @@ def retrieve_with_filter(
                         recovered, rescue_terms,
                     )
 
+    # Letter / named-party filename rescue (D1). Runs EVEN WHEN term rescue
+    # already found place-name overlap in Volume 5 — that in-pool hit is
+    # what used to skip the out-of-pool fetch of the actual letter.
+    extra_rescue_pids = gk_ids + ([fb_id] if use_fallback and fb_id else [])
+    filename_names = _rescue_filename_matched_docs(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    )
+    # Spec-title filename rescue (C2). Runs EVEN WHEN term rescue already
+    # found "specification" / "procedure" overlap in a demolition volume
+    # — that in-pool hit is what used to skip the out-of-pool fetch of
+    # the titled Variation Procedure spec.
+    filename_names.update(_rescue_spec_title_docs(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    ))
+
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
     # ``gk_lex_added`` records the bonus per chunk so the H1 margin gate below
@@ -1569,7 +2410,7 @@ def retrieve_with_filter(
     #      nothing current matches.
     # The same-drawing "prefer highest revision" suppression is computed from
     # these annotations and applied in the kept-selection loop below.
-    name_by_id: Dict[str, str] = {}
+    name_by_id: Dict[str, str] = dict(filename_names)
     for _, chunk in scored:
         if chunk.doc_id not in name_by_id:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
@@ -1586,6 +2427,9 @@ def retrieve_with_filter(
             demoted = score - _revision.SUPERSEDED_PENALTY
             chunk.score = round(demoted, 6)
             scored[i] = (demoted, chunk)
+
+    _apply_filename_overlap_boost(query, scored, name_by_id)
+    _apply_spec_title_filename_boost(query, scored, name_by_id)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
@@ -1629,19 +2473,27 @@ def retrieve_with_filter(
     # next-best project chunks flow into the freed slots; when the pool has
     # no project chunks left the result simply comes back shorter.
     #
-    # Cross-encoder rerank (RAG_RERANKER, default OFF): collect a DEEPER
-    # candidate pool through the very same gates below, then let the
-    # cross-encoder pick the best k from it. Flag off -> target == k and the
-    # loop is byte-identical to before. The gates run FIRST either way, so a
-    # noise-filtered, revision-suppressed, or GK-capped chunk can never be
-    # resurrected by a good rerank score.
+    # Cross-encoder rerank (RERANK_ENABLED / RAG_RERANKER, default OFF):
+    # collect a DEEPER candidate pool (default top-50 hybrid) through the
+    # very same gates below, then let the cross-encoder pick the best k.
+    # Flag off -> target == k and the loop is byte-identical to before.
+    # The gates run FIRST either way, so a noise-filtered, revision-
+    # suppressed, or GK-capped chunk can never be resurrected by a good
+    # rerank score. Do not enable in production until artifacts/fork/
+    # RERANK_EVAL.md shows zero regressions + a held p95.
     rerank_on = _reranker.enabled()
     target = _reranker.candidate_depth(k) if rerank_on else k
     kept: List[Chunk] = []
     noise_dropped = 0
     revision_suppressed = 0
     gk_kept = 0
-    scope = _ContractScope(query)
+    # `scored` is already in final rank order, so this election sees exactly
+    # the ranking the user would have got — and prevents a wrong-contract
+    # pointer at rank 1 from deleting the row that holds the answer.
+    scope = _ContractScope(
+        query,
+        ranked_docs=((name_by_id.get(c.doc_id, ""), c.text or "") for _, c in scored),
+    )
     for _, c in scored:
         name = name_by_id.get(c.doc_id, "")
         if _is_noise_filename(name):
@@ -1674,6 +2526,20 @@ def retrieve_with_filter(
     # model/scoring failure — see reranker.rerank.
     if rerank_on and len(kept) > k:
         kept = _reranker.rerank(query, kept, k)
+
+    # Runs on the FINAL k, after the rerank cut, so the reserved row cannot be
+    # reordered back out. Re-uses the same noise and contract-scope gates the
+    # loop above applied.
+    _allow_final = (
+        lambda c: not _is_noise_filename(name_by_id.get(c.doc_id, ""))
+        and scope.allow(name_by_id.get(c.doc_id, ""), c.text or "")
+    )
+    reserve_matching_particulars_row(
+        query, kept, [c for _, c in scored], allow=_allow_final,
+    )
+    reserve_monetary_base_row(
+        query, kept, [c for _, c in scored], allow=_allow_final,
+    )
 
     # Tag each returned chunk with its retrieval layer so the chat runtime can
     # disclose a Master-Corpus fallback (STEP 0b). "own" is the active project;

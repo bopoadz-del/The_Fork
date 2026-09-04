@@ -974,6 +974,7 @@ async def test_hydration_records_friction_patterns_on_learning_engine(
 
     # Isolate learning_engine state per test
     monkeypatch.setenv("LEARNING_ENGINE_STORAGE", str(tmp_path / "le_state.json"))
+    monkeypatch.setenv("LEARNING_ENGINE_ENABLED", "1")
 
     async def fake_chat(prompt, max_tokens=600):
         return ("## ok", "offline_template")

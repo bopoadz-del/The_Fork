@@ -150,6 +150,35 @@ def contract_data_spans(text: str, filename: str = "") -> list[tuple[int, int]]:
     return []
 
 
+def _peel_trailing_filled_value(text: str) -> tuple[str, str] | None:
+    """Split a scanned Contract Data line whose value is glued to the key.
+
+    Live A3/A5: OCR / table extraction yields
+    ``1.1.75 Time for Completion for the whole of the Works 852 days``
+    with no pipe, colon or dot-leader. The duration (or percentage) then
+    lives in the key, so :func:`particulars_chunk_states_a_value` — which
+    requires a value side — cannot see a filled particular, the unnamed
+    election declines, and arrival order hands the pool to another
+    package's schedule.
+
+    Restricted to high-signal keys so a General Conditions sentence that
+    happens to end in ``28 days`` is not treated as a particulars row.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    match = _CD_FILLED_VALUE_RE.search(raw)
+    if not match or match.start() < 8:
+        return None
+    key = raw[: match.start()].strip()
+    val = raw[match.start():].strip()
+    if not key or not val:
+        return None
+    if not _CD_HIGH_SIGNAL_KEY_RE.search(key):
+        return None
+    return key, val
+
+
 def _split_key_value_line(line: str) -> tuple[str, str] | None:
     stripped = (line or "").strip()
     if not stripped or _CD_SEP_ONLY_RE.match(stripped):
@@ -170,8 +199,11 @@ def _split_key_value_line(line: str) -> tuple[str, str] | None:
                 break
         if nested:
             return f"{clause} {nested.group(1).strip()}", nested.group(2).strip()
+        peeled = _peel_trailing_filled_value(rest)
+        if peeled:
+            return f"{clause} {peeled[0]}", peeled[1]
         return f"{clause} {rest}", ""
-    return None
+    return _peel_trailing_filled_value(stripped)
 
 
 def _is_cd_continuation(line: str) -> bool:
@@ -289,6 +321,43 @@ def _line_packed_chunks(section: str, filename: str, heading: str) -> list[str]:
         f"{_CONTRACT_DATA_LABEL}{src}.\n{heading}\n{body}".strip()
         for body in packed
     ]
+
+
+_CD_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
+
+
+def particulars_chunk_states_a_value(chunk: str) -> bool:
+    """True when a rendered particulars chunk carries at least one filled row.
+
+    The counterpart to :func:`contract_data_particulars_chunks`: retrieval
+    needs to tell a window that states a particular from one that is a list
+    of unfilled keys, and only this module knows the rendered format.
+
+    ``_format_cd_chunk`` writes a filled row as ``key: value`` and an empty
+    one as a bare ``key``, so a colon with content after it IS the filled
+    marker. Chunks from the raw-line fallback keep the document's own
+    separator, so those are re-parsed with the same splitter the section
+    parser uses.
+
+    A value does not have to be a figure. ``1.3.1 (b) Engineer: <firm>`` and
+    ``Schedule 10: Not Used`` are both filled in, and a numeric-only test
+    cannot see either. It does have to say SOMETHING: a dot-leader run with
+    nothing after it splits into a "value" made only of dots, which is an
+    unfilled row drawn on paper.
+    """
+    lines = (chunk or "").splitlines()
+    # Line 0 is the label this module prepends; every candidate carries it.
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        key, sep, val = stripped.partition(":")
+        if sep and key.strip() and _CD_ALNUM_RE.search(val):
+            return True
+        parsed = _split_key_value_line(stripped)
+        if parsed and _CD_ALNUM_RE.search(parsed[1]):
+            return True
+    return False
 
 
 def contract_data_particulars_chunks(text: str, filename: str = "") -> list[str]:

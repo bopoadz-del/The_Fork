@@ -31,6 +31,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     nothing leaks between tests."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("LEARNING_ENGINE_STORAGE", str(tmp_path / "le_state.json"))
+    monkeypatch.setenv("LEARNING_ENGINE_ENABLED", "1")
     from app.blocks.learning_engine import LearningEngineBlock
     LearningEngineBlock.reset_shared_instance_cache()
     yield tmp_path

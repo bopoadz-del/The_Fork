@@ -1,6 +1,6 @@
 """A bare IPC request must reach the predefined payment_certificate path.
 
-Live find: "Issue the interim payment certificate for this month on the DG2
+Live find: "Issue the interim payment certificate for this month on the PRJ2
 Infrastructure Package 1 contract." routed with ``action=None,
 reason=named_calculator`` and ran NO tool. Instead of the clean
 missing-figures error the API returns, the turn fell through to RAG and
@@ -8,7 +8,7 @@ answered a payment question out of procurement-programme excerpts.
 
 ``_message_wants_named_calculator`` guards against stealing that deliverable,
 but tested it with ``re.search(r"\\d", raw)`` -- ANY digit anywhere. A project
-code (DG2), a package number (Package 1), a date or a revision is not a
+code (PRJ2), a package number (Package 1), a date or a revision is not a
 figure, so the guard never fired and the calculator branch took the turn.
 
 The same function must still keep the F5 behaviour its docstring describes:
@@ -28,7 +28,7 @@ from app.agents.runtime import _message_wants_named_calculator
     "message",
     [
         "Issue the interim payment certificate for this month on the "
-        "DG2 Infrastructure Package 1 contract.",
+        "PRJ2 Infrastructure Package 1 contract.",
         "issue an interim payment certificate from the contract",
         "Issue the interim payment certificate for IPC No. 7 dated 15 March 2025.",
         "Prepare the payment certificate per drawing INF-054-CPH-460 Rev 2.",

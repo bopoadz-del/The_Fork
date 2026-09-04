@@ -247,6 +247,7 @@ def _predefined_workflows() -> set:
 # wired (as_built_deviation_report → as_built_file/design_file, etc.).
 _ACTION_FILE_PARAMS: Dict[str, List[tuple]] = {
     "resource_histogram": [("schedule_file", (".xer",))],
+    "look_ahead": [("schedule_file", (".xer",))],
 }
 
 
@@ -897,7 +898,12 @@ async def chat_stream_v1(request: Request, auth: dict = Depends(require_user)):
                 from app.core.contract_lookup_intent import (
                     message_is_contract_data_lookup,
                 )
+                from app.core.answer_report_intent import (
+                    message_wants_answer_report,
+                )
                 if message_is_contract_data_lookup(prompt):
+                    intent = {"action": None}
+                elif message_wants_answer_report(prompt):
                     intent = {"action": None}
                 else:
                     intent = await understand_intent(

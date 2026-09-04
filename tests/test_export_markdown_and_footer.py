@@ -20,8 +20,9 @@ H2 found the same markers leaking into spreadsheet cells
 (``**Total activities:** 204``).
 
 These are bugs against a stated requirement, so they land now (owner's ruling
-R4). Multi-message report export -- the surface takes one ``message_index``
-and there is no A1-A9 path -- is a spec gap, filed as H1b, and is NOT here.
+R4). Multi-message A1–A9 report export (H1b) lives in
+``tests/test_answer_report_export.py``; this file stays the single-message
+markdown + footer contract.
 
 Every assertion below reads the produced file, never a return value.
 """
@@ -66,7 +67,7 @@ class _Req:
 
 
 def _docx(text, base_url="https://theshovel.ai"):
-    path = _render_message_docx("DG2 Infra", text, "conv1234abcd", -1, base_url)
+    path = _render_message_docx("PRJ2 Infra", text, "conv1234abcd", -1, base_url)
     return zipfile.ZipFile(path)
 
 
@@ -230,7 +231,7 @@ def test_a_broken_request_object_never_breaks_the_export():
 
 def _xlsx_cells(text):
     import openpyxl
-    wb = openpyxl.load_workbook(_render_message_xlsx("DG2 Infra", text, "conv1234abcd"))
+    wb = openpyxl.load_workbook(_render_message_xlsx("PRJ2 Infra", text, "conv1234abcd"))
     return [c.value for ws in wb.worksheets for row in ws.iter_rows()
             for c in row if c.value is not None]
 

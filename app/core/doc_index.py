@@ -2163,6 +2163,13 @@ _BOQ_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Public name for the same test, so retrieval can ask "is this document a
+#: bill of quantities?" without a second copy of the pattern drifting from
+#: this one. ``app.core.rag.retriever`` consumes it through a deferred import
+#: (this module imports the retriever, so the dependency only runs one way at
+#: import time).
+BOQ_FILENAME_RE = _BOQ_NAME_RE
+
 
 def _looks_like_boq(filename: str, ext: str) -> bool:
     """Cheap gate before invoking the (heavier) BOQ parser.
@@ -2966,12 +2973,19 @@ async def search_project_documents(
     # Hybrid retriever lives in app.core.rag.retriever; local import to
     # keep app.core.doc_index importable when the RAG stack isn't fully
     # wired (tests, minimal install).
+    from app.core.rag import reranker as _reranker
     from app.core.rag.retriever import _doc_name_for_id, retrieve_with_filter
 
     # Over-fetch chunks so we can still return ``top_k`` DISTINCT documents
     # after the "best chunk per document" collapse below. 4x is enough
     # for typical corpora where each doc has 2-10 chunks.
+    #
+    # RERANK_ENABLED (default false): collect the hybrid top-50 and let the
+    # retriever's cross-encoder pick the best k. Flag off leaves over_fetch
+    # unchanged so this path stays byte-identical to today's search.
     over_fetch = max(top_k * 4, 20)
+    if _reranker.enabled():
+        over_fetch = max(over_fetch, _reranker.candidate_depth(top_k))
 
     def _query() -> list[Any]:
         try:

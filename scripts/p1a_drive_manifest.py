@@ -135,8 +135,12 @@ def main() -> int:
                     )
                     if resp.status_code == 200:
                         folder_name = resp.json().get("name") or folder_id
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — name is cosmetic
+            print(
+                f"[p1a] folder name lookup failed for {folder_id}: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
         results.append(_walk_one(folder_id, folder_name, project_id))
 
     manifest = {

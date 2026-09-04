@@ -40,6 +40,33 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   or `GROQ_API_KEY`; everything else (auth, projects, uploads, block `/v1/execute`)
   works without any provider key.
 
+### TIER-1 Drive ingest (`scripts/p1b_ingest_drive_server.py`)
+- The run can no longer end without a final tally. Every observable exit —
+ clean finish, `SIGTERM`/`SIGINT`/`SIGHUP`, uncaught exception, `SystemExit`,
+ `atexit` — flushes the report once through `app/core/ingest_lifecycle`
+ (`RunLifecycle`), and both the report JSON and the tally line carry
+ `exit_reason=` + `complete=`. An unfinished run also prints
+ `RUN INCOMPLETE` and exits `128+signal` (143 on SIGTERM). Nothing marks a
+ partial run complete; the 4609 tier-1 gate still means what it meant.
+- `SIGKILL` (cgroup OOM killer) cannot be handled, so a sidecar heartbeat is
+ written after **every** file to `manifests/p1b_ingest_run_state.json`
+ (gitignored, override with `--run-state` / `P1B_RUN_STATE`) carrying RSS,
+ `memory.current`/`memory.max`, the cgroup `oom_kill` counter and
+ `/proc/uptime`. The next start prints a `POSTMORTEM` line naming where the
+ dead run stopped, and whether the box was replaced (uptime went backwards)
+ or the kernel OOM-killed it (`oom_kill` counter went up).
+- For a detached run prefer `--supervise` (or `nohup`/`setsid`): only a parent
+ sees a `SIGKILL` wait status. The start banner logs `session_leader=` —
+ `False` means closing the Render Shell will SIGHUP the run.
+- `kill -USR1 <pid>` dumps every thread's stack without killing the run, and a
+ run that stops making progress for `P1B_STALL_WARN_S` (default 900) dumps
+ them by itself. Use this before assuming a stale log means a dead process:
+ the forked extraction child in `app/core/extract_isolated` can wedge for
+ `DOC_EXTRACT_TIMEOUT_S` per file.
+- `StopFlag` / `install_signal_handlers` live in `app/core/ingest_lifecycle`
+ and are re-exported by `scripts/rag_render_bulk_ingest.py`. Do not fork a
+ second stop protocol; `tests/test_ingest_lifecycle.py` guards the drift.
+
 ### Frontend
 - The chat UI is a **build artifact** — `frontend/dist` is gitignored and NOT
   committed, so the update script does not build it. uvicorn only serves the real
@@ -79,19 +106,25 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   the formula registry (`excavation_volume` for L×W×D). Extra LLM kwargs
   such as `text` are stripped. Do not send the model to `drawing_qto` when
   the user already supplied the dimensions.
+- Live UI pack E4 (raft 30×20×1.5 including documented waste): a
+  concrete/raft ask pins `concrete_volume` and the documented 5% waste
+  (900 × 1.05 = 945 m³). Unnamed earthwork L×W×D stays `excavation_volume`.
+  Kill-switch `APPLY_DOCUMENTED_WASTE=0` restores the FAIL (net 900).
 - Currency rate units (`AED/m2`, `USD/ft2`) are not document identifiers.
   Pinned self-coding conversions must not hit the RAG-miss short-circuit.
 - Contract Data Q&A (Time for Completion, milestones, delay damages, DNP,
   performance bond, Engineer, Aconex) stays on project-assistant + RAG.
   Do not dispatch `generate_wbs` / predefined schedule.
-- Python lint gates: `scripts/audit_stubs.py` and `scripts/scan_secrets.py` (stdlib
- only). `scan_secrets.py` is fail-closed on `SECRET_SCAN_PATTERNS` (env-fed
- client-pattern denylist). If that env is unset/empty the script exits
- non-zero and never reports clean — a missing denylist is a red gate, not a
- skip. Do not hardcode the patterns; they are a repository secret. The ruff
- S110 gate uses ruff, which is **not** in `requirements.txt` — CI installs
- `ruff==0.16.1` on demand; do the same locally if you need it
- (`pip install ruff==0.16.1`).
+- Python lint gates: `scripts/audit_stubs.py`, `scripts/scan_secrets.py`, and
+  `scripts/scan_exception_pass.py` (stdlib only). `scan_secrets.py` is
+  fail-closed on `SECRET_SCAN_PATTERNS` (env-fed client-pattern denylist).
+  If that env is unset/empty the script exits non-zero and never reports
+  clean — a missing denylist is a red gate, not a skip. Do not hardcode the
+  patterns; they are a repository secret. The ruff S110 gate uses ruff,
+  which is **not** in `requirements.txt` — CI installs `ruff==0.16.1` on
+  demand; do the same locally if you need it (`pip install ruff==0.16.1`).
+  S110 is bare `except: pass` only; `scan_exception_pass.py` is the
+  `except Exception: pass` twin.
 
 ### Production Render (non-obvious)
 - Live service is `the-fork` (`srv-d9s6l67avr4c73aiujsg`) at `https://theshovel.ai`. Auto-deploy is **After CI Checks Pass** (`autoDeployTrigger: checksPass` in `render.yaml`). A red required GitHub check skips the auto-deploy. This blueprint value does not change the running service until Dashboard Auto-Deploy is flipped (prefer that one toggle; Apply Blueprint is still dangerous — see `render.yaml` header). A Render API deploy **without** `commitId` ships whatever is currently on `main`, not the feature-branch SHA. Pass the pushed commit explicitly.

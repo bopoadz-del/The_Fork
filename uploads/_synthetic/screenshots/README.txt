@@ -1,15 +1,15 @@
 Save to Downloads (not Drive):
 
   cd C:\Users\shimm\The_Fork
-  git fetch origin cursor/dg2-pack-synthetic-docs-5b2e
-  git checkout cursor/dg2-pack-synthetic-docs-5b2e
+  git fetch origin <the synthetic-docs branch>
+  git checkout <the synthetic-docs branch>
   git pull
   uploads\_synthetic\screenshots\copy-to-downloads.bat
 
 Files land at:
   C:\Users\shimm\Downloads\the_fork_screenshots
 
-Open these after:  git pull origin cursor/dg2-pack-synthetic-docs-5b2e
+Open these after:  git pull origin <the synthetic-docs branch>
 
 Windows path:
   C:\Users\shimm\The_Fork\uploads\_synthetic\screenshots
