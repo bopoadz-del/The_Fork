@@ -124,3 +124,22 @@
   font-size: 11px;
   color: var(--text-secondary);
 }
+
+.sources-list__class {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.sources-list__class-label {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.sources-list__class-code {
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+}

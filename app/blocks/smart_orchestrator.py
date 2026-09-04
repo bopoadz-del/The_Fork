@@ -302,7 +302,7 @@ class SmartOrchestratorBlock(UniversalBlock):
         # already worked. Every learned dispatch is recorded as a
         # routing_decisions pattern on learning_engine so the next retrain
         # has live data, not just seed keywords.
-        routing_mode = data.get("routing_mode") or params.get("routing_mode") or self.config.get("routing_mode", "keyword")
+        routing_mode = data.get("routing_mode") or params.get("routing_mode") or self.config.get("routing_mode", "auto")
         learned_prediction: Optional[Dict[str, Any]] = None
         if routing_mode == "learned":
             learned_prediction = self._predict_learned(user_message)
