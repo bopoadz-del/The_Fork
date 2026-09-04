@@ -1864,12 +1864,14 @@ def retrieve_with_filter(
     # next-best project chunks flow into the freed slots; when the pool has
     # no project chunks left the result simply comes back shorter.
     #
-    # Cross-encoder rerank (RAG_RERANKER, default OFF): collect a DEEPER
-    # candidate pool through the very same gates below, then let the
-    # cross-encoder pick the best k from it. Flag off -> target == k and the
-    # loop is byte-identical to before. The gates run FIRST either way, so a
-    # noise-filtered, revision-suppressed, or GK-capped chunk can never be
-    # resurrected by a good rerank score.
+    # Cross-encoder rerank (RERANK_ENABLED / RAG_RERANKER, default OFF):
+    # collect a DEEPER candidate pool (default top-50 hybrid) through the
+    # very same gates below, then let the cross-encoder pick the best k.
+    # Flag off -> target == k and the loop is byte-identical to before.
+    # The gates run FIRST either way, so a noise-filtered, revision-
+    # suppressed, or GK-capped chunk can never be resurrected by a good
+    # rerank score. Do not enable in production until artifacts/fork/
+    # RERANK_EVAL.md shows zero regressions + a held p95.
     rerank_on = _reranker.enabled()
     target = _reranker.candidate_depth(k) if rerank_on else k
     kept: List[Chunk] = []

@@ -625,6 +625,133 @@ def histogram_from_taskrsrc(
     )
 
 
+def _coerce_date(value: Any) -> Optional[date]:
+    """Best-effort coerce of str/date/datetime to ``date``."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = _parse_xer_date(text)
+    if parsed is not None:
+        return parsed
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def activity_overlaps_window(
+    start: Optional[date],
+    finish: Optional[date],
+    window_start: date,
+    window_end: date,
+) -> bool:
+    """True when ``[start, finish]`` overlaps ``[window_start, window_end]``.
+
+    Inclusive calendar-day overlap (same idea as histogram period bucketing).
+    Activities with only a start (open finish) or only a finish still match
+    when that single date lands in the window. Missing both dates → False.
+    """
+    if start is None and finish is None:
+        return False
+    # Open-ended activity: treat a lone date as a one-day span.
+    a0 = start if start is not None else finish
+    a1 = finish if finish is not None else start
+    assert a0 is not None and a1 is not None
+    if a1 < a0:
+        a0, a1 = a1, a0
+    return not (a1 < window_start or a0 > window_end)
+
+
+def select_look_ahead(
+    activities: List[Dict[str, Any]],
+    *,
+    as_of: Optional[date] = None,
+    window_days: int = 21,
+) -> Dict[str, Any]:
+    """Filter schedule activities that overlap a look-ahead calendar window.
+
+    Pure date math — no I/O. Each activity dict may carry ``start``/``finish``
+    (or ``early_start``/``early_finish`` / ``es``/``ef``), ``remaining_duration``
+    / ``remaining_duration_days``, ``total_float`` / ``total_float_days``,
+    ``name``, ``id``/``code``, ``wbs``/``wbs_id``.
+
+    Returns ``{as_of, window_days, window_end, activities, count}``. Empty
+    input yields an empty activities list (callers decide whether that is an
+    error — the container refuses empty schedules).
+    """
+    if window_days < 1:
+        raise ValueError("window_days must be >= 1")
+    as_of_d = as_of or date.today()
+    # Inclusive end: a 21-day window from day D covers D .. D+20.
+    window_end = as_of_d + timedelta(days=window_days - 1)
+
+    selected: List[Dict[str, Any]] = []
+    for raw in activities or []:
+        if not isinstance(raw, dict):
+            continue
+        start = _coerce_date(
+            raw.get("start") or raw.get("early_start") or raw.get("es")
+            or raw.get("target_start")
+        )
+        finish = _coerce_date(
+            raw.get("finish") or raw.get("early_finish") or raw.get("ef")
+            or raw.get("target_finish")
+        )
+        if not activity_overlaps_window(start, finish, as_of_d, window_end):
+            continue
+        tf_raw = raw.get("total_float")
+        if tf_raw is None:
+            tf_raw = raw.get("total_float_days")
+        try:
+            total_float = float(tf_raw) if tf_raw is not None else None
+        except (TypeError, ValueError):
+            total_float = None
+        rem_raw = raw.get("remaining_duration")
+        if rem_raw is None:
+            rem_raw = raw.get("remaining_duration_days")
+        try:
+            remaining = float(rem_raw) if rem_raw is not None else None
+        except (TypeError, ValueError):
+            remaining = None
+        is_critical = raw.get("is_critical")
+        if is_critical is None and total_float is not None:
+            is_critical = total_float <= 0
+        selected.append({
+            "id": raw.get("id") or raw.get("code") or "",
+            "code": raw.get("code") or raw.get("id") or "",
+            "name": raw.get("name") or "",
+            "wbs": raw.get("wbs") or raw.get("wbs_id") or "",
+            "start": start.isoformat() if start else None,
+            "finish": finish.isoformat() if finish else None,
+            "remaining_duration_days": remaining,
+            "total_float_days": total_float,
+            "is_critical": bool(is_critical) if is_critical is not None else False,
+            "percent_complete": raw.get("percent_complete"),
+            "status": raw.get("status") or "",
+        })
+
+    selected.sort(key=lambda a: (
+        a.get("start") or "9999",
+        a.get("finish") or "9999",
+        a.get("id") or "",
+    ))
+    return {
+        "as_of": as_of_d.isoformat(),
+        "window_days": window_days,
+        "window_end": window_end.isoformat(),
+        "activities": selected,
+        "count": len(selected),
+    }
+
+
 def write_schedule_excel(
     output: CPMOutput,
     path: str,
