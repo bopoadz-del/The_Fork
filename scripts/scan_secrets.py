@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail the build if secret material is in the working tree.
 
-Four rules, in descending order of certainty:
+Four hardcoded credential-shape rules, in descending order of certainty:
 
   1. AWS access key ids   -- `AKIA` + 16 uppercase alphanumerics. Unambiguous.
   2. Private key blocks   -- `-----BEGIN ... PRIVATE KEY`. Unambiguous.
@@ -12,7 +12,19 @@ Four rules, in descending order of certainty:
      like a password, and they make every derived key reproducible by
      anyone holding the source.
 
-Exit 0 if clean, 1 if anything is found.
+Plus an env-fed client-pattern denylist (``SECRET_SCAN_PATTERNS``): one
+regex per line, from a repository secret. Those patterns are themselves
+secret — a committed list of the client names you must not commit *is a
+list of client names*. A match is reported as ``file:line (pattern #N)``
+only; the matched text and the regex are never echoed.
+
+FAIL-CLOSED: if ``SECRET_SCAN_PATTERNS`` is unset, empty, or comments-only,
+this exits non-zero and never prints or concludes "clean". A scan that
+inspected nothing because it was given nothing to look for has not found
+nothing. A missing denylist is a red gate, not a skip.
+
+Exit 0 if clean (config present AND no hits). Exit 2 if the denylist is
+missing. Exit 1 if anything is found.
 
 WHY IT ONLY SCANS TRACKED FILES: an untracked `.env` on a developer's disk
 is where secrets are SUPPOSED to live. Flagging it would train everyone to
@@ -22,13 +34,23 @@ the scan follows `git ls-files` — exactly the set that gets pushed.
 To allow a specific line (a documented placeholder, a test fixture key),
 put `pragma: allowlist secret` in a comment on that line. Deliberate,
 visible, and greppable — unlike a path exclusion that silently widens.
+The allowlist applies to credential-shape rules only, not to the env-fed
+client-pattern denylist.
+
+Usage:
+    python scripts/scan_secrets.py            # scan tracked files
+    python scripts/scan_secrets.py --paths a b
 """
 from __future__ import annotations
 
+import argparse
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+ENV_VAR = "SECRET_SCAN_PATTERNS"
 
 ALLOW_MARKER = "pragma: allowlist secret"
 
@@ -137,9 +159,92 @@ def should_scan(rel: str) -> bool:
     return p.suffix.lower() not in SKIP_SUFFIXES and p.name not in SKIP_NAMES
 
 
-def scan() -> list[str]:
+def load_client_patterns(env: dict[str, str] | None = None) -> list[re.Pattern[str]]:
+    """Compile the env-fed client-pattern denylist.
+
+    Raises ``ValueError`` when none are configured -- fail-closed. A scan
+    that finds nothing because it was given nothing to look for is not a
+    clean scan, and reporting it as one is the silent-failure class this
+    gate exists to catch.
+    """
+    source = os.environ if env is None else env
+    raw = (source.get(ENV_VAR) or "").strip()
+    if not raw:
+        raise ValueError(
+            f"{ENV_VAR} is empty or unset. This scan refuses to report a clean "
+            "result it did not earn: with no patterns configured it inspected "
+            "nothing, and calling that 'no secret material found' is the "
+            "silent failure this gate exists to catch. Set the repository "
+            "secret."
+        )
+    patterns = []
+    for index, line in enumerate(raw.replace("\\n", "\n").splitlines()):
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        try:
+            patterns.append(re.compile(text, re.IGNORECASE))
+        except re.error as exc:
+            # The bad pattern is NOT echoed: it is a client pattern.
+            raise ValueError(
+                f"pattern {index} in {ENV_VAR} is not a valid regex "
+                f"({exc.msg}). The pattern itself is not printed -- it is "
+                "the secret."
+            ) from exc
+    if not patterns:
+        raise ValueError(
+            f"{ENV_VAR} contained no usable patterns (only blanks or comments)."
+        )
+    return patterns
+
+
+def scan_client_text(
+    text: str, patterns: list[re.Pattern[str]]
+) -> list[tuple[int, int]]:
+    """Return ``(line_number, pattern_index)`` for every client-pattern hit.
+
+    Deliberately returns no matched text. Echoing a hit would write the
+    client's content into a CI log, which is the leak this scan exists to
+    prevent.
+    """
+    hits: list[tuple[int, int]] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        for index, pattern in enumerate(patterns):
+            if pattern.search(line):
+                hits.append((line_number, index))
+    return hits
+
+
+def scan_client_paths(
+    paths: list[Path], patterns: list[re.Pattern[str]]
+) -> list[tuple[str, int, int]]:
+    findings: list[tuple[str, int, int]] = []
+    for path in paths:
+        rel = str(path).replace("\\", "/")
+        if not should_scan(rel):
+            continue
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="strict")
+        except (OSError, UnicodeDecodeError):
+            continue  # unreadable or binary; nothing a text regex can judge
+        findings.extend(
+            (rel, line_number, index)
+            for line_number, index in scan_client_text(text, patterns)
+        )
+    return findings
+
+
+def _resolve_scan_paths(rel_paths: list[str] | None) -> list[str]:
+    if rel_paths is not None:
+        return rel_paths
+    return tracked_files()
+
+
+def scan(rel_paths: list[str] | None = None) -> list[str]:
     findings: list[str] = []
-    for rel in tracked_files():
+    for rel in _resolve_scan_paths(rel_paths):
         if not should_scan(rel):
             continue
         path = Path(rel)
@@ -166,18 +271,55 @@ def scan() -> list[str]:
 
 
 def main() -> int:
-    findings = scan()
-    if findings:
-        print("SECRET MATERIAL FOUND:")
-        for f in findings:
-            print("  " + f)
-        print(f"TOTAL: {len(findings)}")
-        print(
-            "\nIf one of these is a documented placeholder or a test fixture, "
-            f"put `{ALLOW_MARKER}` in a comment on that line."
-        )
+    parser = argparse.ArgumentParser(
+        description="Credential-shape + env-fed client-pattern scan (fail-closed)."
+    )
+    parser.add_argument("--paths", nargs="*", type=Path)
+    args = parser.parse_args()
+
+    try:
+        patterns = load_client_patterns()
+    except ValueError as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
+
+    if args.paths is not None:
+        path_list = list(args.paths)
+        rel_paths = [str(p) for p in path_list]
+    else:
+        rel_paths = tracked_files()
+        path_list = [Path(rel) for rel in rel_paths]
+
+    findings = scan(rel_paths)
+    client_findings = scan_client_paths(path_list, patterns)
+
+    if findings or client_findings:
+        if findings:
+            print("SECRET MATERIAL FOUND:")
+            for f in findings:
+                print("  " + f)
+            print(f"TOTAL: {len(findings)}")
+            print(
+                "\nIf one of these is a documented placeholder or a test fixture, "
+                f"put `{ALLOW_MARKER}` in a comment on that line."
+            )
+        if client_findings:
+            print(
+                f"CLIENT CONTENT DETECTED -- {len(client_findings)} hit(s). "
+                "The matched text is not printed here on purpose: echoing it "
+                "would write the client's content into a CI log, which is the "
+                "leak this scan exists to prevent. Open the file and line below.",
+                file=sys.stderr,
+            )
+            for rel, line_number, index in client_findings:
+                print(f"  {rel}:{line_number}  (pattern #{index})", file=sys.stderr)
         return 1
-    print("NO SECRET MATERIAL IN TRACKED FILES.")
+
+    print(
+        f"NO SECRET MATERIAL IN TRACKED FILES. "
+        f"client-pattern scan: clean ({len(patterns)} pattern(s), "
+        f"{len(path_list)} file(s))"
+    )
     return 0
 
 

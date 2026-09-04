@@ -142,6 +142,34 @@ jobs:
         # Scans `git ls-files` — the set that actually gets pushed. An
         # untracked .env on a developer's disk is where secrets are supposed
         # to live and is correctly ignored.
+        #
+        # Fail-closed (CI twin 2a): SECRET_SCAN_PATTERNS is the env-fed
+        # client-pattern denylist. If the repository secret is unset the
+        # script exits non-zero and never reports "clean". A missing
+        # denylist is a red gate, not a skip. Patterns are never hardcoded
+        # and a match is never echoed (file:line + pattern index only).
+        env:
+          SECRET_SCAN_PATTERNS: ${{ secrets.SECRET_SCAN_PATTERNS }}
+        run: python scripts/scan_secrets.py
+
+  client-pattern-scan:
+    # CI twin 2a — dedicated blocking job so the fail-closed denylist is a
+    # first-class required-check context (same contract as The_Level's
+    # `client-pattern scan`). Runs on every commit: PR + push to main.
+    # Does not weaken the S110 or audit_stubs gates above.
+    name: client-pattern scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Client-pattern + secret scan (fail-closed)
+        env:
+          SECRET_SCAN_PATTERNS: ${{ secrets.SECRET_SCAN_PATTERNS }}
         run: python scripts/scan_secrets.py
 
       # Quote the name: an unquoted `Exception: pass` is invalid YAML
