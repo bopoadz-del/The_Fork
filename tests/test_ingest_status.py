@@ -56,19 +56,77 @@ def test_formats_that_can_never_yield_text_are_closed(ext):
 
 @pytest.mark.parametrize(
     "ext,chunks",
-    [(".kmz", 43), (".zip", 119), (".jpg", 1), (".ifc", 1), (".png", 1)],
+    [(".zip", 119), (".jpg", 1), (".ifc", 1), (".png", 1)],
 )
 def test_evidence_beats_the_extension_list(ext, chunks):
     """A document that produced chunks yielded text, whatever its extension.
 
     Checking policy before evidence was caught in a dry run about to demote
-    172 documents holding ~14,000 real chunks to UNSUPPORTED_TYPE -- 311 .kmz
-    averaging 43 chunks each, .zip averaging 119. The extension list was
-    wrong, which is exactly why it must be consulted last.
+    172 documents holding ~14,000 real chunks to UNSUPPORTED_TYPE -- .zip
+    archives averaging 119 chunks each. The extension list was wrong for
+    .zip, which is exactly why it must be consulted last.
+
+    .kmz is deliberately NOT in this table any more -- see
+    ``test_kmz_is_never_indexed_even_with_chunks`` below. It used to be the
+    poster child for this exact rule (311 files averaging 43 chunks) until a
+    RAG data-quality audit showed those chunks were GIS attribute dumps and
+    CAD entity handles, not text. .kmz is the one extension where evidence
+    must NOT beat policy.
     """
     c = ist.classify(chunk_count=chunks, extension=ext)
     assert c.status != ist.UNSUPPORTED_TYPE
     assert c.status == (ist.TEXT_SPARSE if chunks == 1 else ist.INDEXED)
+
+
+@pytest.mark.parametrize("ext", [".kmz", ".kml"])
+def test_kmz_and_kml_with_no_chunks_are_unsupported_and_closed(ext):
+    """RAG DATA-QUALITY INCIDENT (2026-09).
+
+    260 .kmz documents in the corpus had produced 11,630 chunks. Auditing a
+    sample found 146 GIS attribute tables (key=value rows with coordinates),
+    39 pure CAD entity dumps ("Cameras | Paths | Model | Polyline [9CA0] |
+    Hatch [771B]"), 34 near-empty fragments, and 41 bare name lists -- not
+    one of them retrievable prose. .kmz averaged ~45 chunks/doc, so it was
+    silently one of the largest contributors to the index. The owner's
+    ruling: NO kmz in the RAG at all, even the technically retrievable ones.
+    A zero-chunk .kmz/.kml must classify as UNSUPPORTED_TYPE(terminal), not
+    ZERO_CHUNK (which would sit in OPEN_STATUSES and look like unfinished
+    ingest work forever).
+    """
+    c = ist.classify(chunk_count=0, extension=ext)
+    assert c.status == ist.UNSUPPORTED_TYPE
+    assert c.reason == f"{ext.lstrip('.')}:terminal"
+    assert not c.is_open
+
+
+@pytest.mark.parametrize("ext", [".kmz", ".kml"])
+def test_kmz_is_never_indexed_even_with_chunks(ext):
+    """THE REGRESSION GUARD.
+
+    ``classify`` checks chunk_count evidence BEFORE the extension list (see
+    ``test_evidence_beats_the_extension_list``), which is exactly the trap
+    here: .kmz DOES chunk successfully (zipped/raw KML is XML), so without an
+    explicit denylist an already-chunked .kmz would fall straight through
+    evidence-beats-policy and register as INDEXED -- silently re-admitting
+    the 260 documents / 11,630 chunks the owner ordered purged. Pinning this
+    at the real observed volume (45 chunks/doc) so the guard cannot be
+    "fixed" back to the old evidence-beats-policy behavior without this test
+    failing.
+    """
+    c = ist.classify(chunk_count=45, extension=ext)
+    assert c.status == ist.UNSUPPORTED_TYPE
+    assert c.reason == f"{ext.lstrip('.')}:terminal"
+    assert not c.is_open
+
+
+def test_zip_with_chunks_is_still_indexed_not_over_reached():
+    """Proves the kmz/kml denylist did not over-reach onto ``.zip``.
+
+    .zip stayed in TEXT_BEARING_EXTS and is not geospatial-container noise --
+    it averaged 119 real chunks/doc in the same corpus and must still ride
+    the evidence-beats-policy path to INDEXED."""
+    c = ist.classify(chunk_count=119, extension=".zip")
+    assert c.status == ist.INDEXED
 
 
 def test_empty_file_with_no_chunks_is_settled_not_open():
