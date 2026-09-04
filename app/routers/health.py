@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Response
 
@@ -7,6 +8,23 @@ from app.dependencies import block_instances, MONITORING_AVAILABLE, get_monitori
 from app.infra.monitoring import get_observability_health_payload
 
 router = APIRouter()
+
+# Deploy platforms inject the shipped commit. Render sets RENDER_GIT_COMMIT.
+# GIT_SHA / SOURCE_VERSION are accepted aliases. Never invent a hash.
+_BUILD_SHA_ENV_KEYS = ("RENDER_GIT_COMMIT", "GIT_SHA", "SOURCE_VERSION")
+
+
+def _deployed_build_sha() -> str | None:
+    """SHA from the already-deployed environment, or None if unset.
+
+    Do not shell out to git or guess a hash. An unset env is an honest null
+    so deploy verification can tell "not injected" from "this SHA is live".
+    """
+    for key in _BUILD_SHA_ENV_KEYS:
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+    return None
 
 
 def _evaluate_health() -> dict:
@@ -24,6 +42,7 @@ def _evaluate_health() -> dict:
         # Render's liveness probe, so a transient DB blip must NOT restart a
         # live service mid-incident. Use /ready for a hard readiness gate.
         "status": "healthy" if db["ok"] else "degraded",
+        "build_sha": _deployed_build_sha(),
         "checks": {
             "database": db,
             "embedder": emb,
