@@ -411,7 +411,10 @@ def elect_answer_bearing_contract(
     # Built here, not at module scope: both halves are defined further down.
     kinds = [
         (query_asks_for_contract_particulars,
-         lambda _name, text: is_contract_data_particulars_row(text)),
+         lambda _name, text: (
+             is_contract_data_particulars_row(text)
+             and particulars_row_answers_asked_label(query, text)
+         )),
         (query_asks_for_boq_scope,
          lambda name, _text: document_is_a_bill_of_quantities(name)),
     ]
@@ -447,10 +450,15 @@ class _ContractScope:
         query: str,
         ranked_docs: Optional[Iterable[Tuple[str, str]]] = None,
     ) -> None:
-        self.named = extract_contract_doc_ids(query or "")
+        self.query = query or ""
+        self.named = extract_contract_doc_ids(self.query)
         self.winning: Optional[str] = None
+        self._particulars = (
+            not self.named
+            and query_asks_for_contract_particulars(self.query)
+        )
         if not self.named and ranked_docs is not None:
-            self.winning = elect_answer_bearing_contract(query, ranked_docs)
+            self.winning = elect_answer_bearing_contract(self.query, ranked_docs)
 
     def allow(self, filename: str, chunk_text: str = "") -> bool:
         if self.named:
@@ -461,6 +469,19 @@ class _ContractScope:
         if not ids:
             return True
         if self.winning is None:
+            # A particulars ask whose election declined must not freeze the
+            # pool on a Volume 4 schedule duration or a GC pointer. Only a
+            # matching-label filled row may lock arrival order (live A3).
+            if self._particulars:
+                if (
+                    is_contract_data_particulars_row(chunk_text)
+                    and particulars_row_answers_asked_label(
+                        self.query, chunk_text,
+                    )
+                ):
+                    self.winning = ids[0]
+                    return True
+                return False
             self.winning = ids[0]
             return True
         return self.winning in ids
@@ -1427,6 +1448,21 @@ def is_contract_data_particulars_row(text: str) -> bool:
     return particulars_chunk_states_a_value(t)
 
 
+def particulars_row_answers_asked_label(query: str, text: str) -> bool:
+    """True when a particulars chunk's BODY names the particular the ask
+    is about.
+
+    The unnamed election used to lock the pool to the first filled
+    particulars row of any kind. A filled Accepted Contract Amount window
+    from another package then stole A3 (Time for Completion), the same
+    way a glossary definition used to steal A9 before the role-identity
+    ask was recognised. Label overlap is the same signal the scoring
+    bonus already uses, computed on the body so the identical header
+    every particulars chunk carries cannot elect.
+    """
+    return _cd_label_bonus(_significant_terms(query), text) > 0.0
+
+
 def _cd_particulars_boost_enabled() -> bool:
     return (os.getenv("RAG_CD_PARTICULARS_BOOST") or "").strip().lower() not in (
         "0", "false", "no", "off",
@@ -1554,6 +1590,50 @@ def reserve_monetary_base_row(
         logger.debug(
             "reserved a Contract Data money row for an arithmetic ask; "
             "a percentage alone cannot answer it",
+        )
+        return True
+    return False
+
+
+def reserve_matching_particulars_row(
+    query: str,
+    kept: List[Chunk],
+    ranked: List[Chunk],
+    *,
+    allow=None,
+) -> bool:
+    """Give the particulars row the question named one slot in the top-k.
+
+    Same-year General Conditions clauses can fill every slot after the
+    fence has locked the right PREFIX-YEAR-SEQ (live A5: three HIGH
+    Sub-Clause 8.8 chunks, no rate). A reservation rather than a bigger
+    bonus: the clause repeats every label word and its cosine is not
+    bounded.
+    """
+    if not kept or not query_asks_for_contract_particulars(query):
+        return False
+    if any(
+        is_contract_data_particulars_row(c.text or "")
+        and particulars_row_answers_asked_label(query, c.text or "")
+        for c in kept
+    ):
+        return False
+    present = {c.chunk_id for c in kept}
+    for chunk in ranked:
+        if chunk.chunk_id in present:
+            continue
+        text = chunk.text or ""
+        if not (
+            is_contract_data_particulars_row(text)
+            and particulars_row_answers_asked_label(query, text)
+        ):
+            continue
+        if allow is not None and not allow(chunk):
+            continue
+        kept[-1] = chunk
+        logger.debug(
+            "reserved a matching Contract Data particulars row; "
+            "same-year General Conditions had filled the top-k",
         )
         return True
     return False
@@ -1804,11 +1884,12 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         kept.append(chunk)
         if len(kept) >= k:
             break
-    reserve_monetary_base_row(
-        query, kept, candidates,
-        allow=lambda c: not _is_noise_filename(_name(c.doc_id))
-        and scope.allow(_name(c.doc_id), c.text or ""),
+    _allow = (
+        lambda c: not _is_noise_filename(_name(c.doc_id))
+        and scope.allow(_name(c.doc_id), c.text or "")
     )
+    reserve_matching_particulars_row(query, kept, candidates, allow=_allow)
+    reserve_monetary_base_row(query, kept, candidates, allow=_allow)
     for chunk in kept:
         chunk.source_name = _name(chunk.doc_id)
     return kept, noise_filtered
@@ -2449,10 +2530,15 @@ def retrieve_with_filter(
     # Runs on the FINAL k, after the rerank cut, so the reserved row cannot be
     # reordered back out. Re-uses the same noise and contract-scope gates the
     # loop above applied.
+    _allow_final = (
+        lambda c: not _is_noise_filename(name_by_id.get(c.doc_id, ""))
+        and scope.allow(name_by_id.get(c.doc_id, ""), c.text or "")
+    )
+    reserve_matching_particulars_row(
+        query, kept, [c for _, c in scored], allow=_allow_final,
+    )
     reserve_monetary_base_row(
-        query, kept, [c for _, c in scored],
-        allow=lambda c: not _is_noise_filename(name_by_id.get(c.doc_id, ""))
-        and scope.allow(name_by_id.get(c.doc_id, ""), c.text or ""),
+        query, kept, [c for _, c in scored], allow=_allow_final,
     )
 
     # Tag each returned chunk with its retrieval layer so the chat runtime can

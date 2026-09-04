@@ -3682,6 +3682,27 @@ def _is_document_deliverable_request(user_message: str | None) -> bool:
     return bool(_DOCUMENT_DELIVERABLE_RE.search(user_message))
 
 
+def _is_contract_data_fact_lookup(user_message: str | None) -> bool:
+    """True for a Contract Data Q&A turn that is not asking for a unit rate
+    or a SAR arithmetic result.
+
+    Live Wave-1 A5: "What are the Delay Damages for the whole of the
+    Works?" is a filled-particular lookup. The cost gate's BOQ refusal is
+    the wrong instrument — it wiped a grounded (or model-expanded)
+    percentage particular because a SAR-per-day gloss did not sit in a
+    rate-semantic chunk. E1 ("calculate … in SAR") still gates.
+    """
+    if not user_message:
+        return False
+    if _RATE_QUOTE_RE.search(user_message):
+        return False
+    from app.core.contract_lookup_intent import message_is_contract_data_lookup
+    if not message_is_contract_data_lookup(user_message):
+        return False
+    from app.core.rag.retriever import query_needs_a_monetary_base
+    return not query_needs_a_monetary_base(user_message)
+
+
 def _infer_commissioning_systems(text: str | None) -> list[str] | None:
     """Map the user's wording onto commissioning system keys.
 
@@ -4457,7 +4478,14 @@ def _cost_grounding_gate(
         figs = _cg_money_values(text)
         if not figs:
             return text  # not a cost/rate answer — leave it alone
-        if _is_document_deliverable_request(_latest_user_text(messages)):
+        user = _latest_user_text(messages)
+        if _is_document_deliverable_request(user):
+            return text
+        if _is_contract_data_fact_lookup(user):
+            # Live A5: Delay Damages is a Contract Data particular, not a
+            # BOQ unit rate. Replacing the answer with "upload your priced
+            # BOQ" is the wrong refusal for this question class. Arithmetic
+            # that wants a SAR figure (E1) still goes through the gate.
             return text
         rag_context = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         grounded = _cg_grounded_numbers(rag_context, messages)
