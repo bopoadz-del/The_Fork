@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 SCOPED_DISPATCH_ALLOWLIST = frozenset({
     "cash_flow_forecast",
     "resource_histogram",
+    "look_ahead",
+    "evm_calculate",
     "risk_register_auto_populate",
     "procurement_list_generator",
     "procurement_optimizer",

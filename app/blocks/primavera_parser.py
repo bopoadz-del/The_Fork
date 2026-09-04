@@ -311,10 +311,17 @@ class PrimaveraParserBlock(UniversalBlock):
         if not rows:
             return {}
         r = rows[0]
+        # P6 data date is last_recalc_date when present; plan_start is only a
+        # fallback for look-ahead / as-of defaults.
+        data_date = (
+            _parse_date(r.get("last_recalc_date", ""))
+            or _parse_date(r.get("plan_start_date", ""))
+        )
         return {
             "id": r.get("proj_id", ""),
             "name": r.get("proj_short_name", ""),
             "planned_start": _parse_date(r.get("plan_start_date", "")),
+            "data_date": data_date,
             "must_finish": _parse_date(r.get("scd_end_date", "")),
             "status": r.get("status_code", ""),
         }

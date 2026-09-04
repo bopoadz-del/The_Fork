@@ -247,6 +247,7 @@ def _predefined_workflows() -> set:
 # wired (as_built_deviation_report → as_built_file/design_file, etc.).
 _ACTION_FILE_PARAMS: Dict[str, List[tuple]] = {
     "resource_histogram": [("schedule_file", (".xer",))],
+    "look_ahead": [("schedule_file", (".xer",))],
 }
 
 

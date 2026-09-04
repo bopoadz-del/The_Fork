@@ -248,20 +248,30 @@ class ConstructionScheduleMixin:
         #       hour-semantics _calculate_cpm assumes when it divides by 8)
         #   total_float_days -> total_float (already in days)
         #   percent_complete -> percent_complete
+        #   remaining_duration_days / code kept for look_ahead consumers
         flat_activities = []
         for a in result.get("activities", []):
             flat_activities.append({
-                "id": a.get("id", ""),
+                "id": a.get("code") or a.get("id", ""),
+                "code": a.get("code") or a.get("id", ""),
                 "name": a.get("name", ""),
                 "start": a.get("start") or "",
                 "finish": a.get("finish") or "",
                 "duration": (a.get("original_duration_days") or 0) * 8,
+                "remaining_duration_days": a.get("remaining_duration_days"),
                 "total_float": a.get("total_float_days", 999),
+                "total_float_days": a.get("total_float_days", 999),
                 "free_float": a.get("total_float_days", 0),
                 "percent_complete": a.get("percent_complete", 0),
                 "wbs": a.get("wbs_id", ""),
+                "wbs_id": a.get("wbs_id", ""),
                 "type": a.get("type", ""),
                 "status": a.get("status", ""),
+                "is_critical": (
+                    float(a["total_float_days"]) <= 0
+                    if a.get("total_float_days") is not None
+                    else False
+                ),
             })
 
         schedule_meta = result.get("schedule_data", {}) or {}
@@ -272,7 +282,13 @@ class ConstructionScheduleMixin:
             "file_type": "xer",
             "project_id": project_meta.get("id", ""),
             "project_name": project_meta.get("name", ""),
-            "data_date": project_meta.get("planned_start") or "",
+            # Prefer P6 data date (last_recalc) when the parser exposes it;
+            # otherwise fall back to planned start.
+            "data_date": (
+                project_meta.get("data_date")
+                or project_meta.get("planned_start")
+                or ""
+            ),
             "activities": flat_activities,
         }
     def _analyze_delays(self, current: Dict, baseline: Dict) -> Dict:
@@ -370,24 +386,41 @@ class ConstructionScheduleMixin:
         })
         return options
     async def progress_tracker(self, input_data: Any, params: Dict) -> Dict:
-        """Track construction progress against planned schedule and BOQ."""
+        """Track construction progress against planned % / BOQ (progress proxy).
+
+        This is **not** classic EVM. SPI here is actual%/planned% (a progress
+        proxy). EV−PV is **schedule variance in currency terms**, not cost
+        variance. For true CPI/SPI/CV/SV/EAC use ``evm_calculate`` (or
+        ``construction_calc`` → ``calculate_evm``) with PV, EV, and AC.
+        """
         data = input_data if isinstance(input_data, dict) else {}
         p = params or {}
 
         planned_pct = float(p.get("planned_percent") or data.get("planned_percent", 0))
         actual_pct = float(p.get("actual_percent") or data.get("actual_percent", 0))
         contract_value = float(p.get("contract_value") or data.get("contract_value", 0))
+        actual_cost = p.get("actual_cost")
+        if actual_cost is None:
+            actual_cost = data.get("actual_cost")
         reporting_period = p.get("reporting_period", datetime.now(timezone.utc).strftime("%B %Y"))
         activities = p.get("activities") or data.get("activities", [])
         photos = p.get("photos") or data.get("photos", [])
 
         variance = round(actual_pct - planned_pct, 2)
-        spi = round(actual_pct / planned_pct, 3) if planned_pct else 1.0
+        # Progress-proxy SPI (actual % / planned %) — NOT classic EV/PV SPI.
+        spi_proxy = round(actual_pct / planned_pct, 3) if planned_pct else 1.0
         earned_value = round(contract_value * actual_pct / 100, 2) if contract_value else None
         planned_value = round(contract_value * planned_pct / 100, 2) if contract_value else None
-        cost_variance = None
+        # EV − PV is schedule variance (SV), not cost variance.
+        schedule_variance = None
         if earned_value is not None and planned_value is not None:
-            cost_variance = round(earned_value - planned_value, 2)
+            schedule_variance = round(earned_value - planned_value, 2)
+        cost_variance = None
+        if earned_value is not None and actual_cost is not None:
+            try:
+                cost_variance = round(earned_value - float(actual_cost), 2)
+            except (TypeError, ValueError):
+                cost_variance = None
 
         status = "on_track" if abs(variance) <= 2 else ("ahead" if variance > 0 else "delayed")
         delay_days = round(abs(variance) / 0.5) if variance < -2 else 0
@@ -406,6 +439,26 @@ class ConstructionScheduleMixin:
                 ),
             })
 
+        ev_block = None
+        if contract_value:
+            ev_block = {
+                "contract_value": contract_value or None,
+                "earned_value": earned_value,
+                "planned_value": planned_value,
+                # Classic name: EV − PV = schedule variance (SV).
+                "schedule_variance": schedule_variance,
+                # True CV = EV − AC only when actual_cost is supplied.
+                "cost_variance": cost_variance,
+                "actual_cost": float(actual_cost) if actual_cost is not None and cost_variance is not None else (
+                    float(actual_cost) if actual_cost is not None else None
+                ),
+                "note": (
+                    "Progress-proxy figures from % × contract_value. "
+                    "schedule_variance = EV − PV. cost_variance requires actual_cost. "
+                    "For classic EVM (SPI=EV/PV, CPI=EV/AC) call evm_calculate."
+                ),
+            }
+
         return {
             "status": "success",
             "action": "progress_tracker",
@@ -414,16 +467,13 @@ class ConstructionScheduleMixin:
                 "planned_percent": planned_pct,
                 "actual_percent": actual_pct,
                 "variance_percent": variance,
-                "schedule_performance_index": spi,
+                # Kept for callers; clearly labeled as a % proxy, not EV/PV SPI.
+                "schedule_performance_index": spi_proxy,
+                "schedule_performance_index_kind": "progress_proxy_actual_over_planned_pct",
                 "status": status,
                 "estimated_delay_days": delay_days,
             },
-            "earned_value": {
-                "contract_value": contract_value or None,
-                "earned_value": earned_value,
-                "planned_value": planned_value,
-                "cost_variance": cost_variance,
-            } if contract_value else None,
+            "earned_value": ev_block,
             "activities": activity_summary,
             "photos_reviewed": len(photos),
             "key_risks": [
@@ -433,6 +483,54 @@ class ConstructionScheduleMixin:
                 ["Issue delay notice and prepare recovery programme"] if variance < -10
                 else ["Monitor weekly and flag if variance exceeds -5%"] if variance < -2
                 else ["Maintain current momentum"]
+            ),
+        }
+
+    async def evm_calculate(self, input_data: Any, params: Dict) -> Dict:
+        """Classic EVM calculator — requires PV, EV, AC (BAC optional for forecasts).
+
+        Single wired path into ``construction_knowledge.calculate_evm``. Refuses
+        when PV/EV/AC are missing; does not invent actuals. Prefer this (or
+        ``construction_calc`` with ``calculation=calculate_evm``) over treating
+        ``progress_tracker`` as EVM.
+        """
+        from app.core.construction_knowledge import calculate_evm
+
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        merged = {**data, **p}
+
+        def _pick(*keys):
+            for k in keys:
+                if merged.get(k) is not None and merged.get(k) != "":
+                    return merged.get(k)
+            return None
+
+        result = calculate_evm(
+            bac=_pick("bac", "BAC", "budget_at_completion"),
+            bcwp=_pick("bcwp", "BCWP"),
+            bcws=_pick("bcws", "BCWS"),
+            acwp=_pick("acwp", "ACWP"),
+            pv=_pick("pv", "PV", "planned_value"),
+            ev=_pick("ev", "EV", "earned_value"),
+            ac=_pick("ac", "AC", "actual_cost"),
+        )
+        if isinstance(result, dict) and isinstance(result.get("error"), str):
+            return {
+                "status": "error",
+                "action": "evm_calculate",
+                "error": result["error"],
+                "required": result.get("required"),
+                "optional": result.get("optional"),
+            }
+        return {
+            "status": "success",
+            "action": "evm_calculate",
+            "evm": result,
+            "source": "construction_knowledge.calculate_evm",
+            "note": (
+                "Classic EVM: SPI=EV/PV, CPI=EV/AC, SV=EV−PV, CV=EV−AC. "
+                "EAC defaults to BAC/CPI when BAC present and CPI>0."
             ),
         }
     async def warranty_maintenance_schedule(self, input_data: Any, params: Dict) -> Dict:
@@ -884,6 +982,151 @@ class ConstructionScheduleMixin:
                 "Time-phased man-hours from the schedule's real P6 TASKRSRC "
                 "RT_Labor assignments only (material/cost/equipment excluded); "
                 "trades are the P6 resource short names."
+            ),
+        }
+
+    async def look_ahead(self, input_data: Any, params: Dict) -> Dict:
+        """3–4 week look-ahead from an uploaded Primavera ``.xer``.
+
+        Activities whose ES/EF (or start/finish) overlap the window are
+        returned with remaining duration, total float, critical flag, WBS, and
+        name. Driven by schedule dates — not Aconex/CDE. Honest error when no
+        ``.xer`` / no activities; never fabricates rows.
+        """
+        import os
+        from datetime import date as _date
+
+        data = input_data if isinstance(input_data, dict) else {}
+        p = params or {}
+        schedule_file = (
+            data.get("schedule_file") or p.get("schedule_file")
+            or data.get("file_path") or p.get("file_path")
+        )
+
+        # Window: weeks (default 3 → 21 calendar days) or explicit days (21–28).
+        window_days = p.get("days") if p.get("days") is not None else data.get("days")
+        weeks = p.get("weeks") if p.get("weeks") is not None else data.get("weeks")
+        if window_days is not None:
+            try:
+                window_days = int(window_days)
+            except (TypeError, ValueError):
+                return {
+                    "status": "error",
+                    "action": "look_ahead",
+                    "error": f"Invalid days value: {window_days!r}",
+                }
+        elif weeks is not None:
+            try:
+                window_days = int(float(weeks) * 7)
+            except (TypeError, ValueError):
+                return {
+                    "status": "error",
+                    "action": "look_ahead",
+                    "error": f"Invalid weeks value: {weeks!r}",
+                }
+        else:
+            window_days = 21  # default ~3 weeks calendar
+
+        if window_days < 1:
+            return {
+                "status": "error",
+                "action": "look_ahead",
+                "error": "window must be at least 1 day",
+            }
+
+        if not schedule_file:
+            return {
+                "status": "error",
+                "action": "look_ahead",
+                "error": (
+                    "No schedule file provided — pass schedule_file pointing "
+                    "to a Primavera P6 .xer"
+                ),
+            }
+        if not os.path.exists(str(schedule_file)):
+            return {
+                "status": "error",
+                "action": "look_ahead",
+                "error": f"Schedule file not found: {schedule_file}",
+            }
+        if not str(schedule_file).lower().endswith(".xer"):
+            return {
+                "status": "error",
+                "action": "look_ahead",
+                "error": "Look-ahead requires a Primavera P6 .xer schedule",
+            }
+
+        schedule_data = await self._parse_xer_file(str(schedule_file))
+        if not isinstance(schedule_data, dict) or schedule_data.get("status") == "error":
+            return {
+                "status": "error",
+                "action": "look_ahead",
+                "error": (
+                    (schedule_data or {}).get("error")
+                    if isinstance(schedule_data, dict)
+                    else "XER parse failed"
+                ),
+            }
+
+        activities = schedule_data.get("activities") or []
+        if not activities:
+            return {
+                "status": "error",
+                "action": "look_ahead",
+                "error": (
+                    "Schedule contains no activities — cannot build a look-ahead"
+                ),
+            }
+
+        as_of_raw = (
+            p.get("as_of") or data.get("as_of")
+            or p.get("data_date") or data.get("data_date")
+            or schedule_data.get("data_date")
+        )
+        as_of_date = None
+        if as_of_raw:
+            try:
+                from app.lib.pm_computations import _coerce_date
+                as_of_date = _coerce_date(as_of_raw)
+            except Exception:  # noqa: BLE001
+                as_of_date = None
+            if as_of_date is None:
+                return {
+                    "status": "error",
+                    "action": "look_ahead",
+                    "error": f"Invalid as_of / data_date: {as_of_raw!r}",
+                }
+        else:
+            as_of_date = _date.today()
+
+        try:
+            from app.lib.pm_computations import select_look_ahead
+            window = select_look_ahead(
+                activities, as_of=as_of_date, window_days=window_days,
+            )
+        except ValueError as exc:
+            return {
+                "status": "error",
+                "action": "look_ahead",
+                "error": str(exc),
+            }
+
+        return {
+            "status": "success",
+            "action": "look_ahead",
+            "as_of": window["as_of"],
+            "window_days": window["window_days"],
+            "window_end": window["window_end"],
+            "activity_count": window["count"],
+            "activities": window["activities"],
+            "schedule_file": os.path.basename(str(schedule_file)),
+            "total_activities_in_schedule": len(activities),
+            "source": "primavera_xer_dates",
+            "note": (
+                f"Look-ahead: activities overlapping {window['as_of']} … "
+                f"{window['window_end']} ({window_days} calendar days) from "
+                "uploaded .xer ES/EF (or start/finish). Empty overlap is a "
+                "valid result — no fabricated activities."
             ),
         }
 
