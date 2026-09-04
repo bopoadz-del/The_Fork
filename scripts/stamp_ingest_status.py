@@ -35,7 +35,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from app.core import ingest_status as ist  # noqa: E402
+from app.core import ingest_status as ist
 
 
 def _norm_stem(name: str) -> str:

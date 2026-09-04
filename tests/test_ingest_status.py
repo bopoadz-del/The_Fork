@@ -13,7 +13,6 @@ import pytest
 
 from app.core import ingest_status as ist
 
-
 # Calibration measured on 10 known-sparse drawing sheets vs 10 known-rich text
 # PDFs. The gap between these two numbers is empty in the sample; the threshold
 # lives inside it. If either bound moves, the gate's justification moves too.
@@ -111,7 +110,7 @@ def test_terminal_sparse_is_settled_and_recoverable_sparse_is_work():
 
 
 def _dense(**kw):
-    base = dict(chunk_count=40, extension=".pdf", page_count=40)
+    base = {"chunk_count": 40, "extension": ".pdf", "page_count": 40}
     base.update(kw)
     return ist.classify(**base)
 
@@ -188,7 +187,7 @@ def test_migration_backfill_only_ever_touches_unverified_rows():
     src = Path("alembic/versions/0016_document_ingest_status.py").read_text(
         encoding="utf-8"
     )
-    updates = re.findall(r"UPDATE documents[^;]*?\"\s*\)\)", src, flags=re.S)
+    updates = re.findall(r"UPDATE documents[^;]*?\"\s*\)\)", src, flags=re.DOTALL)
     assert updates, "expected backfill UPDATE statements in migration 0016"
     for stmt in updates:
         assert "ingest_status = 'UNVERIFIED'" in stmt, (

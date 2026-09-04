@@ -193,6 +193,4 @@ def _is_sparse_for_extent(
         return False
     # Backstop: a heavy page that is nonetheless full of text is a real
     # document (a large-format scan OCR'd successfully), not a drawing.
-    if chars is not None and chars / page_count >= _SPARSE_CHARS_PER_PAGE:
-        return False
-    return True
+    return not (chars is not None and chars / page_count >= _SPARSE_CHARS_PER_PAGE)
