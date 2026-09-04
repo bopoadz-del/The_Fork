@@ -64,16 +64,17 @@ DOMAIN-suitable cross-encoder can be trialled later by env change alone:
   `rerank(query, chunks, k)`. Lazy singleton, HF_HOME cache, every failure
   degrades to the original cosine order.
 - Retriever hook: with `RAG_RERANKER=1` the final-selection loop collects
-  `RAG_RERANK_CANDIDATES` (default 30) through the SAME gates (noise filter,
+  `RAG_RERANK_CANDIDATES` (default 50) through the SAME gates (noise filter,
   revision suppression, GK cap) and the cross-encoder picks the top-k.
   Gates run first — a suppressed chunk can never be resurrected.
 - Flag OFF (shipped default) = byte-identical pipeline, zero boot memory.
 
 | env | default | note |
 |---|---|---|
-| `RAG_RERANKER` | off | keep OFF until a domain-suitable model is validated |
+| `RERANK_ENABLED` | off | canonical flag; keep OFF until a domain-suitable model is validated |
+| `RAG_RERANKER` | off | alias; ignored when `RERANK_ENABLED` is set |
 | `RAG_RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | measured NEGATIVE on drive_archive — replace before enabling |
-| `RAG_RERANK_CANDIDATES` | 30 | never below k |
+| `RAG_RERANK_CANDIDATES` | 50 | hybrid top-50; never below k |
 
 Enable-later checklist: (1) pick a candidate model sized for the box,
 (2) re-run `scratchpad`-style offline proof against live top-50 FIRST,

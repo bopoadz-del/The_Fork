@@ -95,15 +95,44 @@ def test_single_candidate_short_circuits_without_model(monkeypatch):
 
 def test_enabled_default_off(monkeypatch):
     monkeypatch.delenv("RAG_RERANKER", raising=False)
+    monkeypatch.delenv("RERANK_ENABLED", raising=False)
     assert reranker.enabled() is False
 
 
 @pytest.mark.parametrize("val,want", [
     ("1", True), ("true", True), ("on", True), ("0", False), ("", False),
+    ("false", False),
 ])
 def test_enabled_parsing(monkeypatch, val, want):
     monkeypatch.setenv("RAG_RERANKER", val)
+    monkeypatch.delenv("RERANK_ENABLED", raising=False)
     assert reranker.enabled() is want
+
+
+@pytest.mark.parametrize("val,want", [
+    ("1", True), ("true", True), ("yes", True), ("on", True),
+    ("false", False), ("0", False),
+])
+def test_rerank_enabled_is_the_canonical_flag(monkeypatch, val, want):
+    monkeypatch.setenv("RERANK_ENABLED", val)
+    monkeypatch.delenv("RAG_RERANKER", raising=False)
+    assert reranker.enabled() is want
+
+
+def test_rerank_enabled_wins_over_alias(monkeypatch):
+    """An operator pinning RERANK_ENABLED=false must not be flipped by alias."""
+    monkeypatch.setenv("RERANK_ENABLED", "false")
+    monkeypatch.setenv("RAG_RERANKER", "1")
+    assert reranker.enabled() is False
+    monkeypatch.setenv("RERANK_ENABLED", "true")
+    monkeypatch.setenv("RAG_RERANKER", "0")
+    assert reranker.enabled() is True
+
+
+def test_default_candidate_depth_is_hybrid_top_50(monkeypatch):
+    monkeypatch.delenv("RAG_RERANK_CANDIDATES", raising=False)
+    assert reranker.DEFAULT_CANDIDATES == 50
+    assert reranker.candidate_depth(5) == 50
 
 
 def test_candidate_depth_never_below_k(monkeypatch):
@@ -149,9 +178,10 @@ def _install(monkeypatch, chunks, names=None):
 
 
 def test_flag_off_pipeline_untouched(monkeypatch):
-    """CONSERVATION: with RAG_RERANKER unset the result is the plain cosine
+    """CONSERVATION: with both flags unset the result is the plain cosine
     top-k and the model is never consulted."""
     monkeypatch.delenv("RAG_RERANKER", raising=False)
+    monkeypatch.delenv("RERANK_ENABLED", raising=False)
     _use_model(monkeypatch, _NeverCalled())
     pool = [_chunk(f"c{i}", 0.9 - i * 0.01) for i in range(10)]
     ret = _install(monkeypatch, pool)
@@ -162,7 +192,7 @@ def test_flag_off_pipeline_untouched(monkeypatch):
 def test_flag_on_surfaces_buried_truth_through_retriever(monkeypatch):
     """PLANTED TRUTH end-to-end: the relevant chunk is 20th by cosine; with
     the flag on it must reach the top-3."""
-    monkeypatch.setenv("RAG_RERANKER", "1")
+    monkeypatch.setenv("RERANK_ENABLED", "true")
     _use_model(monkeypatch, _OverlapScorer())
     pool = [_chunk(f"c{i}", 0.9 - i * 0.01, text="unrelated clause") for i in range(19)]
     pool.append(_chunk("needle", 0.60,

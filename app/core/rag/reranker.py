@@ -23,12 +23,16 @@ chunk.
 
 OPS. Everything is env-gated and fails open:
 
-  RAG_RERANKER=1                 enable (default OFF — flag off is
-                                 byte-identical to today's pipeline)
+  RERANK_ENABLED=false           canonical flag (default OFF — flag off is
+                                 byte-identical to today's pipeline).
+                                 Truthy values: 1 / true / yes / on.
+  RAG_RERANKER=1                 alias kept for existing tests / .env files;
+                                 ignored when RERANK_ENABLED is set.
   RAG_RERANKER_MODEL             cross-encoder checkpoint (default
                                  cross-encoder/ms-marco-MiniLM-L-6-v2,
                                  ~90MB — sized for the 512Mi web box)
-  RAG_RERANK_CANDIDATES          candidate pool depth (default 30)
+  RAG_RERANK_CANDIDATES          candidate pool depth (default 50 — hybrid
+                                 top-50, then cross-encoder picks top-k)
 
 The model is lazy-loaded on first use (a process-wide singleton, cached
 under HF_HOME like the embedder) so a flag-off boot pays zero memory. Any
@@ -46,7 +50,8 @@ from collections.abc import Sequence
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-DEFAULT_CANDIDATES = 30
+DEFAULT_CANDIDATES = 50
+_TRUTHY = {"1", "true", "yes", "on"}
 
 # Chunk text is bounded per pair so one pathological chunk cannot blow the
 # cross-encoder's input budget (the model truncates at 512 tokens anyway;
@@ -60,8 +65,15 @@ _load_failed = False
 
 
 def enabled() -> bool:
-    """True when RAG_RERANKER is set to a truthy value (default OFF)."""
-    return os.getenv("RAG_RERANKER", "").strip().lower() in {"1", "true", "yes", "on"}
+    """True when RERANK_ENABLED (canonical) or RAG_RERANKER is truthy.
+
+    Default OFF. ``RERANK_ENABLED`` wins when both are set so an operator
+    can pin the canonical flag without leftover alias values flipping it.
+    """
+    canonical = os.getenv("RERANK_ENABLED")
+    if canonical is not None and canonical.strip() != "":
+        return canonical.strip().lower() in _TRUTHY
+    return os.getenv("RAG_RERANKER", "").strip().lower() in _TRUTHY
 
 
 def candidate_depth(k: int) -> int:
