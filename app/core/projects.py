@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, func, select, text as sqla_text
+from sqlalchemy import delete, func, or_, select, text as sqla_text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.db import SessionLocal, engine, get_database_url
@@ -1244,6 +1244,86 @@ def find_document_by_sha(
             .limit(1)
         ).first()
     return _document_as_dict(document) if document else None
+
+
+def documents_matching_filename_terms(
+    project_id: str,
+    terms: List[str],
+    *,
+    min_terms: int = 2,
+    require_letter: bool = False,
+    limit: int = 8,
+) -> List[Dict[str, str]]:
+    """Documents whose ``original_name`` or ``file_path`` overlap ``terms``.
+
+    Used by letter/signatory retrieval so a named-site letter (the UBCC /
+    Wadi Safar completion letter lives in ``Misc/`` with the site and
+    party in the filename) can be found without listing the whole corpus.
+    ``terms`` are already sanitised by the retriever (alphanumeric, ≥4
+    chars); LIKE wildcards are therefore not attacker-controlled.
+
+    Returns ``[{id, original_name, file_path}, ...]`` ranked by overlap
+    descending, capped at ``limit``. Empty when nothing qualifies.
+    """
+    _ensure_db()
+    source_id = _master_corpus_source(project_id) or project_id
+    cleaned: List[str] = []
+    seen: set[str] = set()
+    for raw in terms or []:
+        tok = (raw or "").strip().lower()
+        if len(tok) < 3 or tok in seen:
+            continue
+        if any(ch in tok for ch in "%_"):
+            continue
+        seen.add(tok)
+        cleaned.append(tok)
+        if len(cleaned) >= 8:
+            break
+    if not cleaned or not source_id:
+        return []
+
+    name_l = func.lower(Document.original_name)
+    path_l = func.lower(func.coalesce(Document.file_path, ""))
+    term_clauses = [
+        or_(name_l.like(f"%{tok}%"), path_l.like(f"%{tok}%"))
+        for tok in cleaned
+    ]
+    stmt = (
+        select(Document.id, Document.original_name, Document.file_path)
+        .where(Document.project_id == source_id)
+        .where(or_(*term_clauses))
+    )
+    if require_letter:
+        stmt = stmt.where(or_(name_l.like("%letter%"), path_l.like("%letter%")))
+    stmt = stmt.limit(80)
+
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(stmt).all()
+    except Exception:
+        logger.warning(
+            "documents_matching_filename_terms failed for %s",
+            project_id,
+            exc_info=True,
+        )
+        return []
+
+    scored: List[Tuple[int, Dict[str, str]]] = []
+    for row in rows:
+        blob = f"{row.original_name or ''} {row.file_path or ''}".lower()
+        hits = sum(1 for tok in cleaned if tok in blob)
+        if hits < min_terms:
+            continue
+        scored.append((
+            hits,
+            {
+                "id": row.id,
+                "original_name": row.original_name or "",
+                "file_path": row.file_path or "",
+            },
+        ))
+    scored.sort(key=lambda item: -item[0])
+    return [doc for _hits, doc in scored[:limit]]
 
 
 def list_documents(

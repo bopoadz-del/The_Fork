@@ -913,6 +913,73 @@ class VectorStore:
                     out.setdefault(did, []).append(txt or "")
         return out
 
+    def chunks_for_docs(
+        self,
+        project_id: str,
+        doc_ids: List[str],
+        *,
+        k_per_doc: int = 12,
+    ) -> List[Chunk]:
+        """Return indexed chunks for specific documents, ordered by chunk_index.
+
+        Letter/signatory retrieval uses this to pull a filename-matched
+        letter into the candidate pool without competing against a Volume
+        5 flood in ``identifier_search``. Empty ``doc_ids`` or a store
+        miss returns ``[]``; failures never raise into the answer path.
+        """
+        if not project_id or not doc_ids:
+            return []
+        unique = []
+        seen: Set[str] = set()
+        for did in doc_ids:
+            if did and did not in seen:
+                seen.add(did)
+                unique.append(did)
+        if not unique:
+            return []
+        per = max(1, int(k_per_doc or 12))
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    stmt = (
+                        select(self._rag_chunk_cls)
+                        .where(
+                            self._rag_chunk_cls.project_id == project_id,
+                            self._rag_chunk_cls.doc_id.in_(unique),
+                        )
+                        .order_by(
+                            self._rag_chunk_cls.doc_id,
+                            self._rag_chunk_cls.chunk_index,
+                        )
+                    )
+                    rows = session.scalars(stmt).all()
+        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
+            logger.warning(
+                "chunks_for_docs failed for project=%s docs=%s: %s",
+                project_id, unique, exc,
+            )
+            return []
+        taken: Dict[str, int] = {}
+        out: List[Chunk] = []
+        for r in rows:
+            n = taken.get(r.doc_id, 0)
+            if n >= per:
+                continue
+            taken[r.doc_id] = n + 1
+            out.append(
+                Chunk(
+                    chunk_id=r.chunk_id,
+                    project_id=r.project_id,
+                    doc_id=r.doc_id,
+                    chunk_index=int(r.chunk_index),
+                    text=r.text or "",
+                    score=0.0,
+                    knowledge_layer=getattr(r, "knowledge_layer", None),
+                    authority=getattr(r, "authority", None),
+                )
+            )
+        return out
+
     def search(
         self,
         project_id: str,
