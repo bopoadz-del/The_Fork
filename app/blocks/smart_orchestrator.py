@@ -72,6 +72,10 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("construction_calc", [
         "bank volume", "excavation volume", "trench volume", "pit volume",
         "rectangular trench", "rectangular pit", "cut volume",
+        # Live UI pack E4 — leftover L6 keywords were earthwork-only, so
+        # "Concrete volume for a raft … waste factor" never reached the
+        # calculator and the model reported net 900.
+        "concrete volume", "raft volume", "waste factor",
     ]),
     # BOQ / Cost
     ("boq_process",           ["boq", "bill of quantities", "bill of quantity", "quantities sheet", "cost sheet", "price list", ".xlsx", ".csv"]),
