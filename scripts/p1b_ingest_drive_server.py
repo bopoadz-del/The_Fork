@@ -50,7 +50,12 @@ _UNSUPPORTED_MIMES = {
     "application/vnd.google-apps.folder",
 }
 
-_UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar"}
+# .kmz/.kml (geospatial containers) are excluded here on purpose: a 2026-09
+# RAG data-quality incident found 260 .kmz documents had produced 11,630
+# chunks that were GIS attribute dumps and raw CAD entity handles ("Polyline
+# [9CA0]"), not retrievable prose. See app/core/ingest_status.py for the full
+# incident writeup and the matching UNSUPPORTED_TYPE guard.
+_UNSUPPORTED_EXTS = {".gdoc", ".gsheet", ".gslides", ".gdraw", ".rar", ".kmz", ".kml"}
 
 # Sidecar heartbeat. Lives next to the report because it answers the question
 # the report cannot when the run is killed: where was it, and what was the box

@@ -747,10 +747,20 @@ def test_extract_xlsx_keeps_priced_boq_row_intact(tmp_path, monkeypatch):
     assert any("Rebar 12mm" in ln and "3000" in ln for ln in text.splitlines())
 
 
-def test_extract_kmz_indexes_labels_not_coordinates(tmp_path, monkeypatch):
-    """KMZ extraction indexes the human-meaningful <name>/<description> labels
-    and drops the raw <coordinates> dump (which otherwise explodes into
-    coordinate-noise chunks). Duplicate labels are de-duped."""
+def test_extract_kmz_is_unsupported(tmp_path, monkeypatch):
+    """.kmz is EXCLUDED from ``_SUPPORTED_EXTS``, not extracted for labels.
+
+    This reverses an earlier design (kept only as history: a prior version of
+    this test asserted KMZ extraction indexed human-meaningful <name>/
+    <description> labels while dropping raw <coordinates> dumps). A 2026-09
+    RAG data-quality incident showed that "extractable" was not "usable" at
+    corpus scale: 260 .kmz documents produced 11,630 chunks, and auditing
+    them found 146 GIS attribute tables, 39 pure CAD entity dumps ("Cameras |
+    Paths | Model | Polyline [9CA0] | Hatch [771B]"), 34 near-empty
+    fragments, and 41 bare name lists -- not retrievable prose, at ~45
+    chunks/doc. The owner's ruling: NO kmz in the RAG at all, so extraction
+    must never run for it, regardless of how clean a given KML happens to
+    be."""
     import io
     import zipfile
 
@@ -765,10 +775,6 @@ def test_extract_kmz_indexes_labels_not_coordinates(tmp_path, monkeypatch):
         "    <description>Invert level 45.20</description>\n"
         "    <Point><coordinates>46.6,24.7,0 46.7,24.8,0</coordinates></Point>\n"
         "  </Placemark>\n"
-        "  <Placemark>\n"
-        "    <name>Manhole MH-12</name>\n"            # duplicate -> de-duped
-        "    <description>-46.6,24.7</description>\n"  # pure coords -> dropped
-        "  </Placemark>\n"
         "</Document></kml>\n"
     )
     buf = io.BytesIO()
@@ -781,12 +787,7 @@ def test_extract_kmz_indexes_labels_not_coordinates(tmp_path, monkeypatch):
     importlib.reload(doc_index)
     text = doc_index.extract_document_text(doc_path, "survey.kmz")
 
-    assert "Site Boundary" in text
-    assert "Manhole MH-12" in text
-    assert "Invert level 45.20" in text
-    assert text.count("Manhole MH-12") == 1        # de-duped
-    assert "46.6,24.7,0" not in text               # raw coordinate dump excluded
-    assert "-46.6,24.7" not in text                # pure-coordinate label dropped
+    assert text == ""
 
 
 def test_extract_xlsx_mocked(tmp_path, monkeypatch):

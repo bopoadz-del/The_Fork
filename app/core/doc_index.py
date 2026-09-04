@@ -70,8 +70,18 @@ logger = logging.getLogger(__name__)
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 
 # Extensions we know how to extract text from.
+#
+# .kmz/.kml (geospatial containers) are DELIBERATELY EXCLUDED. A 2026-09 RAG
+# data-quality incident found 260 .kmz documents had produced 11,630 chunks
+# across the index, and auditing them found 146 GIS attribute tables
+# (key=value rows with coordinates), 39 pure CAD entity dumps ("Cameras |
+# Paths | Model | Polyline [9CA0] | Hatch [771B]"), 34 near-empty fragments,
+# and 41 bare name lists -- none of it retrievable prose, at ~45 chunks/doc.
+# The owner's ruling was NO kmz in the RAG at all. Reuse this constant rather
+# than adding a parallel kmz/kml check elsewhere -- see the matching
+# UNSUPPORTED_TYPE guard in app/core/ingest_status.py.
 _SUPPORTED_EXTS = (
-    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".doc", ".docx", ".xlsx", ".pptx", ".kmz", ".zip", ".rar", ".msg", ".ifc"}
+    {".txt", ".md", ".csv", ".json", ".xml", ".pdf", ".doc", ".docx", ".xlsx", ".pptx", ".zip", ".rar", ".msg", ".ifc"}
     | _IMAGE_EXTS
 )
 
