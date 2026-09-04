@@ -165,6 +165,8 @@ def _validate_startup_env() -> None:
 async def lifespan(app: FastAPI):
     """Initialize all blocks + load runtime agents at startup."""
     _validate_startup_env()
+    from app.blocks.learning_engine import assert_learning_engine_hard_off
+    assert_learning_engine_hard_off()
     # On-prem sovereignty gate (STEP 2): refuse to boot if DEPLOYMENT_PROFILE=onprem
     # is misconfigured in a way that would egress (cloud LLM provider selected,
     # offline model flags unset, Sentry on). Strict no-op under the cloud profile.
