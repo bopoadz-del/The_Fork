@@ -4,8 +4,9 @@ New test shapes (2026-07-25):
 - The KB audit is a structural sweep over docs/knowledge/*.md: domain
   coverage buckets, non-empty titled notes, and — the sharp edge — NO
   project/client identifiers in the GENERAL layer (scrub policy). This
-  audit found and scrubbed live leaks ("Diriyah Gate Phase II", "DG2")
-  on its first run.
+  audit found and scrubbed live leaks on its first run. That check now lives
+  in scripts/scan_secrets.py, env-fed and fail-closed, because a test that
+  names the identifiers inline is itself the leak.
 - The scanner check is a PLANTED-DEVIATION probe: texts written to trip
   each broadened rule must be flagged, off-topic text must not be, and
   in every case the scan is advisory — it never mutates or blocks the
@@ -38,20 +39,9 @@ def test_kb_has_notes_and_all_are_titled_nonempty():
         )
 
 
-# General-layer knowledge must carry NO project/client identifiers — the
-# curated KB serves every deployment; identifiers belong to project layers.
-_IDENTIFIER_PATTERNS = re.compile(
-    r"diriyah|dar\s*al\s*arkan|dar-al-arkan|\bDG\s*2\b|\bDG2\b|\bDGII\b|"
-    r"arcadis|parsons\b|landmark\s+tower|\bTGH\b",
-    re.IGNORECASE,
-)
-
-
-@pytest.mark.parametrize("path", _notes(), ids=lambda p: os.path.basename(p))
-def test_general_kb_carries_no_project_identifiers(path):
-    body = io.open(path, encoding="utf-8").read()
-    hits = _IDENTIFIER_PATTERNS.findall(body)
-    assert not hits, f"{os.path.basename(path)} leaks project identifiers: {hits[:5]}"
+# General-layer knowledge must carry NO project/client identifiers. That gate
+# is scripts/scan_secrets.py over every tracked file, fed from the repository
+# secret; it is not re-implemented here with the names written out.
 
 
 # Domain buckets the pilot depends on — each must have at least one note.
