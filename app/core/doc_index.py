@@ -2163,6 +2163,13 @@ _BOQ_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Public name for the same test, so retrieval can ask "is this document a
+#: bill of quantities?" without a second copy of the pattern drifting from
+#: this one. ``app.core.rag.retriever`` consumes it through a deferred import
+#: (this module imports the retriever, so the dependency only runs one way at
+#: import time).
+BOQ_FILENAME_RE = _BOQ_NAME_RE
+
 
 def _looks_like_boq(filename: str, ext: str) -> bool:
     """Cheap gate before invoking the (heavier) BOQ parser.
