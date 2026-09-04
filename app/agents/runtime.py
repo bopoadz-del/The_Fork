@@ -29,6 +29,14 @@ from typing import (
 import httpx
 
 from app.blocks import BLOCK_REGISTRY
+from app.core.answer_report_intent import (
+    answer_report_export_descriptor,
+    answer_report_export_enabled,
+    collect_answer_pairs,
+    compose_answer_report_reply,
+    message_wants_answer_report,
+    parse_answer_report_range,
+)
 from app.core.clash_intent import message_wants_clash
 from app.core.contract_lookup_intent import message_is_contract_data_lookup
 from app.core.rag.inject import rag_inject
@@ -794,6 +802,8 @@ async def _predispatch_file_tool(
         return None
     try:
         user_msg, _history = _messages_user_and_history(messages)
+        if message_wants_answer_report(user_msg):
+            return None
         if not user_msg:
             return None
         # A self-contained L×W×D volume ask must not steal drawing_qto just
@@ -1282,6 +1292,8 @@ def _message_wants_rfp_draft(text: str) -> bool:
     raw = text or ""
     if _message_wants_wir_form(raw):
         return False
+    if message_wants_answer_report(raw):
+        return False
     return bool(re.search(r"\brfp\b|request for proposal|invitation to tender", raw, re.I))
 
 
@@ -1511,6 +1523,8 @@ async def _predispatch_remaining_deliverables(
     user_msg, _history = _messages_user_and_history(messages)
     detect = (operator_text or user_msg or "").strip()
     if not detect or _message_wants_wir_form(detect):
+        return None
+    if message_wants_answer_report(detect):
         return None
     candidates = (
         (
@@ -1974,7 +1988,56 @@ _EXPORT_ACTION_RE = re.compile(
 
 def _asks_for_export(text: str) -> bool:
     """True when the turn wants a file produced, not a reference resolved."""
+    if message_wants_answer_report(text):
+        return True
     return bool(_EXPORT_ACTION_RE.search(text or ""))
+
+
+def _fulfill_answer_report(
+    user_message: str,
+    project_id: str | None,
+    conversation_id: str | None,
+    history: list[dict[str, Any]] | None,
+    agent_name: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Compile A1–A9 (or all) chat answers and persist the confirmation.
+
+    Runs without an LLM or RAG — the live H1 failure was retrieval treating
+    ``A1-A9`` as RFP attachment codes. Kill-switch is checked by the caller.
+    """
+    from app.core import agent_memory
+
+    prior: list[dict[str, Any]] = []
+    if conversation_id:
+        agent_memory.get_or_create_conversation(
+            conversation_id, agent_name, project_id,
+        )
+        prior = [
+            {"role": m["role"], "content": m["content"]}
+            for m in agent_memory.get_messages(conversation_id, limit=200)
+            if m.get("role") in ("user", "assistant")
+        ]
+        agent_memory.append_message(conversation_id, "user", user_message)
+    if not prior and history:
+        prior = [
+            {"role": m.get("role"), "content": m.get("content") or ""}
+            for m in history
+            if m.get("role") in ("user", "assistant")
+        ]
+    start_end = parse_answer_report_range(user_message)
+    start, end = start_end if start_end else (None, None)
+    pairs = collect_answer_pairs(prior, start, end)
+    answer = compose_answer_report_reply(pairs, start, end)
+    exports: list[dict[str, Any]] = []
+    if pairs and project_id and conversation_id:
+        have_start = start or 1
+        have_end = (start or 1) + len(pairs) - 1
+        exports = [answer_report_export_descriptor(
+            project_id, conversation_id, have_start, have_end,
+        )]
+    if conversation_id:
+        agent_memory.append_message(conversation_id, "assistant", answer)
+    return answer, exports
 
 
 _MISSING_REFERENCE_ANSWER = (
@@ -3260,6 +3323,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     low = text.lower()
     # Contract Data TfC / milestone Q&A must not force primavera_parser or
     # generate_wbs — those questions belong to RAG.
+    if message_wants_answer_report(text):
+        return None
     if message_is_contract_data_lookup(text):
         try:
             from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
@@ -4151,7 +4216,10 @@ def _construction_calc_tool_schema() -> dict[str, Any]:
                 "cost build-up, MEP, QC). Returns the computed result. For COST "
                 "build-ups, pass the project's real unit rates in `params` (from the "
                 "priced BOQ / rate schedule) when available — the built-in defaults "
-                "are indicative GCC fallbacks only. Deterministic: call once."
+                "are indicative GCC fallbacks only. For concrete/raft/slab volume, "
+                "use calculation=concrete_volume; the project's documented waste "
+                "factor (5%) is applied and volume_m3 is the with-waste figure "
+                "(30×20×1.5 m → 945 m3). Deterministic: call once."
             ),
             "parameters": {
                 "type": "object",
@@ -4529,6 +4597,9 @@ def _postprocess_answer(
     messages: list[dict[str, Any]],
     fallback_used: bool = False,
     agent_name: str | None = None,
+    project_id: str | None = None,
+    coverage: tuple[int, int] | None = None,
+    audit_rec: dict[str, Any] | None = None,
 ) -> str:
     """Final-answer post-processing: cost-grounding gate (may refuse an
     ungrounded cost claim) then the standards advisory (appends a non-blocking
@@ -4559,6 +4630,12 @@ def _postprocess_answer(
     # when the banner isn't already present (idempotent across retries).
     if fallback_used and _MASTER_CORPUS_FALLBACK_NOTE.strip() not in text:
         text = _MASTER_CORPUS_FALLBACK_NOTE + text
+    from app.core.rag.coverage_honesty import apply_coverage_honesty
+    text = apply_coverage_honesty(
+        text,
+        project_id=project_id or (audit_rec or {}).get("project_id"),
+        coverage=coverage,
+    )
     return text
 
 
@@ -4819,6 +4896,16 @@ def _build_sources_from_audit(
         if layer != "own":
             from app.core.identifier_scrub import scrub_identifiers_filename
             display_name = scrub_identifiers_filename(display_name)
+        # Consume #468's class. Prefer the tag the injector already wrote;
+        # fall back to classify() on the same inputs it uses. Do not invent
+        # a fifth class here.
+        from app.core.rag.source_class import classify, label_for
+        source_class = (chunk_meta.get("source_class") or "").strip() or classify(
+            layer,
+            chunk_meta.get("source_name") or doc_name,
+            chunk_meta.get("text") or "",
+        )
+        source_class_label = label_for(source_class)
         return {
             "doc_id": chunk_meta["doc_id"],
             "doc_name": display_name,
@@ -4835,6 +4922,8 @@ def _build_sources_from_audit(
             "confidence": conf,
             "layer": layer,
             "layer_label": label,
+            "source_class": source_class,
+            "source_class_label": source_class_label,
         }
 
     # 1) Try to extract citations from the agent's text first.
@@ -6784,6 +6873,23 @@ class Agent:
                     "swallowed %s in _emit() — continuing",
                     "Exception", exc_info=True,
                 )
+
+        # H1: conversation-answer docx. Before the API-key check — no LLM.
+        if message_wants_answer_report(user_message) and answer_report_export_enabled():
+            answer, exports = _fulfill_answer_report(
+                user_message, project_id, conversation_id, history, self.name,
+            )
+            await _emit("final", {"answer": answer})
+            return {
+                "status": "success",
+                "answer": answer,
+                "tool_calls": [],
+                "iterations": 0,
+                "messages": [{"role": "assistant", "content": answer}],
+                "sources": [],
+                "exports": exports,
+            }
+
         cfg = _llm_config()
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check entirely. The empty bearer token sent later is ignored
@@ -6976,6 +7082,7 @@ class Agent:
                         final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
+                        audit_rec=_rag_audit,
                     )
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
@@ -7076,7 +7183,7 @@ class Agent:
                         final_text, messages, user_message=user_message,
                         project_id=project_id, api_key=api_key, user_id=user_id,
                     )
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                     messages.append({"role": "assistant", "content": final_text})
                     if conversation_id:
                         from app.core import agent_memory
@@ -7197,7 +7304,7 @@ class Agent:
             final_text, messages, user_message=user_message,
             project_id=project_id, api_key=api_key, user_id=user_id,
         )
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
         messages.append({"role": "assistant", "content": final_text})
         if conversation_id:
             from app.core import agent_memory
@@ -7525,6 +7632,26 @@ class Agent:
         def _note_tool(name: str | None) -> None:
             if name and name not in tools_invoked:
                 tools_invoked.append(name)
+
+        # H1: compile A1–A9 answers to a downloadable docx. Before the
+        # API-key check and before RAG (A1-A9 used to retrieve RFP
+        # attachments). No LLM required.
+        if message_wants_answer_report(user_message) and answer_report_export_enabled():
+            yield {"type": "start", "agent": self.name}
+            answer, exports = _fulfill_answer_report(
+                user_message, project_id, conversation_id, history, self.name,
+            )
+            for chunk in _chunks(answer, 80):
+                yield {"type": "token", "content": chunk}
+            yield {
+                "type": "end",
+                "iterations": 0,
+                "sources": [],
+                "tools": list(tools_invoked),
+                "exports": exports,
+            }
+            return
+
         # Ollama (local / self-hosted) has no auth — skip the env-key
         # check. The empty bearer is ignored by Ollama's OAI endpoint.
         if cfg["env_key"]:
@@ -8050,6 +8177,7 @@ class Agent:
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
+                            audit_rec=_rag_audit,
                         )
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
@@ -8102,7 +8230,7 @@ class Agent:
                             ):
                                 final_text = _EMPTY_RESPONSE_FALLBACK
                         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                         for chunk in _chunks(final_text, 80):
                             yield {"type": "token", "content": chunk}
                     else:
@@ -8110,6 +8238,7 @@ class Agent:
                             final_text, _rag_sys_msg, messages,
                             fallback_used=bool(_rag_audit.get("fallback_used")),
                             agent_name=self.name,
+                            audit_rec=_rag_audit,
                         )
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMED-SYNTH iter=%d chars=%d cum=%.1fs",
@@ -8151,6 +8280,7 @@ class Agent:
                         final_text, _rag_sys_msg, messages,
                         fallback_used=bool(_rag_audit.get("fallback_used")),
                         agent_name=self.name,
+                        audit_rec=_rag_audit,
                     )
                     _LOG.warning(
                         "chat_stream: iter=%d recovered deliverable after LLM error %s",
@@ -8290,7 +8420,7 @@ class Agent:
                                 if _final_text_needs_forced_retry(final_text, user_message=user_message):
                                     final_text = _EMPTY_RESPONSE_FALLBACK
                     final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+                    final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
                     if _timing:
                         _LOG.warning("TIMING chat_stream STREAMING-FINAL iter=%d chars=%d cum=%.1fs",
                                      iteration, len(final_text), time.monotonic() - _turn_t0)
@@ -8446,7 +8576,7 @@ class Agent:
             _LOG.warning("chat_stream: forced final unusable, using fallback")
             final_text = _EMPTY_RESPONSE_FALLBACK
         final_text = _sanitize_inline_paths(_sanitize_citation_labels(final_text))
-        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name)
+        final_text = _postprocess_answer(final_text, _rag_sys_msg, messages, fallback_used=bool(_rag_audit.get("fallback_used")), agent_name=self.name, audit_rec=_rag_audit)
         for chunk in _chunks(final_text, 80):
             yield {"type": "token", "content": chunk}
         if conversation_id:
@@ -9657,7 +9787,16 @@ class Agent:
         # ── synthetic tool: construction_calc (deterministic formula library) ─
         if name == "construction_calc":
             from app.lib import construction_formulas as _cf
-            result = _cf.run_calculation(args.get("calculation"), args.get("params"))
+            calc_params = dict(args.get("params") or {})
+            # Live UI pack E4: the model often passes the user ask as
+            # ``text`` / ``formula`` beside (or instead of) ``params``.
+            for key in ("text", "formula"):
+                if args.get(key) and key not in calc_params:
+                    calc_params[key] = args[key]
+            result = _cf.run_calculation(
+                args.get("calculation") or args.get("name") or args.get("calculator"),
+                calc_params,
+            )
             return {
                 "name": "construction_calc",
                 "ok": isinstance(result, dict) and result.get("status") != "error",
@@ -10182,6 +10321,10 @@ async def select_agent_for_message(
 
     if message_is_contract_data_lookup(user_message):
         info["reason"] = "contract_data_lookup"
+        return requested_agent, info
+
+    if message_wants_answer_report(user_message):
+        info["reason"] = "answer_report_export"
         return requested_agent, info
 
     block = _get_smart_orchestrator_block()

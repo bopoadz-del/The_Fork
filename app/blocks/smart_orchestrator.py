@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.universal_base import UniversalBlock
 from app.blocks._procedure_routing import PROCEDURE_ROUTING_ADDITIONS
 from app.core.clash_intent import message_wants_clash
+from app.core.answer_report_intent import (
+    ANSWER_REPORT_BLOCKED_ACTIONS,
+    message_wants_answer_report,
+)
 from app.core.contract_lookup_intent import (
     CONTRACT_LOOKUP_BLOCKED_ACTIONS,
     message_is_contract_data_lookup,
@@ -72,6 +76,10 @@ ACTION_PATTERNS: List[Tuple[str, List[str]]] = PROCEDURE_ROUTING_ADDITIONS + [
     ("construction_calc", [
         "bank volume", "excavation volume", "trench volume", "pit volume",
         "rectangular trench", "rectangular pit", "cut volume",
+        # Live UI pack E4 — leftover L6 keywords were earthwork-only, so
+        # "Concrete volume for a raft … waste factor" never reached the
+        # calculator and the model reported net 900.
+        "concrete volume", "raft volume", "waste factor",
     ]),
     # BOQ / Cost
     ("boq_process",           ["boq", "bill of quantities", "bill of quantity", "quantities sheet", "cost sheet", "price list", ".xlsx", ".csv"]),
@@ -294,7 +302,7 @@ class SmartOrchestratorBlock(UniversalBlock):
         # already worked. Every learned dispatch is recorded as a
         # routing_decisions pattern on learning_engine so the next retrain
         # has live data, not just seed keywords.
-        routing_mode = data.get("routing_mode") or params.get("routing_mode") or self.config.get("routing_mode", "keyword")
+        routing_mode = data.get("routing_mode") or params.get("routing_mode") or self.config.get("routing_mode", "auto")
         learned_prediction: Optional[Dict[str, Any]] = None
         if routing_mode == "learned":
             learned_prediction = self._predict_learned(user_message)
@@ -712,6 +720,11 @@ class SmartOrchestratorBlock(UniversalBlock):
             results = [
                 r for r in results
                 if r["action"] not in CONTRACT_LOOKUP_BLOCKED_ACTIONS
+            ]
+        if message_wants_answer_report(message):
+            results = [
+                r for r in results
+                if r["action"] not in ANSWER_REPORT_BLOCKED_ACTIONS
             ]
         return self._apply_correctness_filters(message, results)
 

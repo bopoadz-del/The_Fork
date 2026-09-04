@@ -57,6 +57,16 @@ SOURCE_CLASSES: tuple[str, ...] = (
 
 DEFAULT_CLASS = "project_corpus"
 
+#: Visible labels at the glass (Sources panel + docx footer). The classifier
+#: returns the machine class; this map is the only place the human wording
+#: is defined so the UI cannot drift from the footer.
+SOURCE_CLASS_LABELS: dict[str, str] = {
+    "project_corpus": "this contract",
+    "master_corpus": "master corpus",
+    "knowledge_base": "knowledge base",
+    "template": "template",
+}
+
 # ── template detection ────────────────────────────────────────────────────
 #
 # Conservative on purpose. A document that IS part of the contract must not
@@ -151,3 +161,13 @@ def classify_chunk(chunk: Any) -> str:
         getattr(chunk, "source_name", "") or "",
         getattr(chunk, "text", "") or "",
     )
+
+
+def label_for(source_class: str | None) -> str:
+    """Human wording for a class already decided by ``classify``.
+
+    Does not re-tag. Unknown classes fall back to the machine token so a
+    new class still appears at the glass instead of going blank.
+    """
+    key = (source_class or DEFAULT_CLASS).strip().lower()
+    return SOURCE_CLASS_LABELS.get(key, key or SOURCE_CLASS_LABELS[DEFAULT_CLASS])
