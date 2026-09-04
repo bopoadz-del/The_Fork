@@ -17,6 +17,23 @@ receipt) -- the numbers below are calibration evidence, not preference:
   returned 0.6-1.4x the characters the text layer already had, higher DPI was
   worse, and novel-token counts of 1-50 per sheet are consistent with noise on
   line-work. They are vector CAD exports whose content is geometry.
+
+REVERSED 2026-09: .kmz/.kml used to sit in ``TEXT_BEARING_EXTS`` on the
+strength of ".kmz averages 43 chunks/doc across 311 documents (it is zipped
+KML, i.e. XML)". That evidence was real but the wrong test -- "produced
+chunks" is not the same as "produced retrievable content". A RAG
+data-quality incident traced back to exactly those chunks: 260 .kmz
+documents produced 11,630 chunks, and auditing them found 146 GIS attribute
+tables (key=value rows with coordinates), 39 pure CAD entity dumps ("Cameras
+| Paths | Model | Polyline [9CA0] | Hatch [771B]"), 34 near-empty fragments,
+and 41 bare name lists -- none of it prose a retriever could use. At ~45
+chunks/doc, .kmz was silently one of the largest contributors to the index
+while contributing nothing usable. The owner's ruling: NO kmz in the RAG,
+full stop, even the ones that are technically retrievable. .kmz/.kml are now
+an explicit denylist (``_GEOSPATIAL_EXTS``) checked in ``classify`` BEFORE
+the chunk_count evidence check, so an already-chunked kmz cannot slip back
+in as INDEXED the way the evidence-beats-policy ordering was designed to let
+.dwg/.dxf slip in.
 """
 from __future__ import annotations
 
@@ -59,17 +76,35 @@ RECOVERABLE = "recoverable"  # a richer source for this document exists
 # UNSUPPORTED_TYPE rather than sitting at zero chunks looking like a failure.
 #
 # Consulted ONLY for documents that produced nothing -- see ``classify``. The
-# geospatial and archive entries are here on measured evidence, not intuition:
-# .kmz averages 43 chunks/doc across 311 documents (it is zipped KML, i.e.
-# XML), .zip averages 119 across 5, and .ifc is a STEP text format.
+# archive entry is here on measured evidence, not intuition: .zip averages
+# 119 chunks/doc across 5 documents, and .ifc is a STEP text format.
+#
+# .kmz/.kml are DELIBERATELY ABSENT -- see the reversal note above and the
+# ``_GEOSPATIAL_EXTS`` guard in ``classify``. They used to sit here on the
+# strength of "produces chunks"; that was the wrong test.
 TEXT_BEARING_EXTS = frozenset(
     {
         ".pdf", ".txt", ".md", ".csv", ".json", ".xml",
         ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
         ".rtf", ".msg", ".htm", ".html",
-        ".kmz", ".kml", ".zip", ".ifc",
+        ".zip", ".ifc",
     }
 )
+
+# .kmz/.kml are geospatial containers, not prose. They chunk (zipped/raw KML
+# is XML, so extraction "succeeds"), but the RAG data-quality incident of
+# 2026-09 showed what those chunks actually are: 260 .kmz documents produced
+# 11,630 chunks, and a sample of them broke down as 146 GIS attribute tables
+# (key=value rows with coordinates), 39 pure CAD entity dumps ("Polyline
+# [9CA0]", "Hatch [771B]"), 34 near-empty fragments, and 41 bare name lists --
+# none of it retrievable prose. At ~45 chunks/doc, .kmz was silently one of
+# the largest contributors to the index while contributing zero usable
+# content. The owner's ruling: NO kmz in the RAG, even the technically
+# retrievable ones. So this is an EXPLICIT DENYLIST, not an absence from
+# TEXT_BEARING_EXTS -- see the guard in ``classify`` that checks it before
+# chunk_count, because evidence-beats-policy (the ordering that protected
+# .dwg/.dxf) would otherwise let an already-chunked .kmz back in as INDEXED.
+_GEOSPATIAL_EXTS = frozenset({".kmz", ".kml"})
 
 # Formats whose text lives in a convertible source rather than the file we hold.
 # ``.dwg`` carries real TEXT/MTEXT/ATTRIB entities; recovering them is the
@@ -140,13 +175,27 @@ def classify(
     if not ext.startswith(".") and ext:
         ext = "." + ext
 
+    # KMZ/KML ARE ALWAYS UNSUPPORTED, regardless of chunk_count. This guard
+    # must run BEFORE the evidence-beats-policy check below: that check
+    # trusts chunk_count > 0 as proof of usable text, and .kmz/.kml chunk
+    # successfully (zipped/raw KML is XML) while producing GIS attribute
+    # dumps and raw CAD entity handles, not retrievable prose -- the 2026-09
+    # incident this module's docstring now records. Without this guard, an
+    # already-chunked .kmz would fall straight through to INDEXED below and
+    # silently re-admit exactly what the owner ordered purged.
+    if ext in _GEOSPATIAL_EXTS:
+        return Classification(UNSUPPORTED_TYPE, f"{ext.lstrip('.')}:{TERMINAL}")
+
     # EVIDENCE BEATS POLICY. A document that produced chunks yielded text, and
     # no extension list may overrule that. Ordering this the other way round
     # was caught in a dry run about to demote 172 documents holding 14,000
     # real chunks -- 311 .kmz files averaging 43 chunks each (zipped KML is
-    # XML), and .zip archives averaging 119. The list below was simply wrong,
-    # which is the argument for consulting it last and only when there is no
-    # evidence to consult instead.
+    # XML), and .zip archives averaging 119. The list below was simply wrong
+    # for .zip, which is the argument for consulting it last and only when
+    # there is no evidence to consult instead. .kmz turned out to be the
+    # counter-example: "produced chunks" was not "produced usable text" (see
+    # the 2026-09 reversal above), which is exactly why it now has its own
+    # guard ABOVE this check instead of relying on this ordering.
     if chunk_count <= 0:
         if ext in RECOVERABLE_EXTS:
             return Classification(UNSUPPORTED_TYPE, f"{ext.lstrip('.')}:{RECOVERABLE}")
