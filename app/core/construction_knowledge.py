@@ -343,28 +343,77 @@ def calculate_payment(
 # ---------------------------------------------------------------------------
 
 def calculate_evm(
-    bac: float,       # Budget at Completion
-    bcwp: float,      # Budgeted Cost of Work Performed (Earned Value)
-    bcws: float,      # Budgeted Cost of Work Scheduled (Planned Value)
-    acwp: float,      # Actual Cost of Work Performed
+    bac: Optional[float] = None,       # Budget at Completion (optional — needed for forecasts)
+    bcwp: Optional[float] = None,      # Budgeted Cost of Work Performed (Earned Value)
+    bcws: Optional[float] = None,      # Budgeted Cost of Work Scheduled (Planned Value)
+    acwp: Optional[float] = None,      # Actual Cost of Work Performed
+    *,
+    pv: Optional[float] = None,        # alias for Planned Value (= BCWS)
+    ev: Optional[float] = None,        # alias for Earned Value (= BCWP)
+    ac: Optional[float] = None,        # alias for Actual Cost (= ACWP)
 ) -> Dict:
+    """Classic EVM arithmetic. Requires Planned Value, Earned Value, and Actual Cost.
+
+    Accepts either the PMI names (BCWS/BCWP/ACWP) or the PE-sheet aliases
+    (PV/EV/AC). BAC is optional: without it, SPI/CPI/SV/CV still compute and
+    EAC/ETC/VAC are omitted (honest — no invented budget).
+
+    Default EAC when BAC and CPI>0: ``EAC = BAC / CPI`` (typical cost-performance
+    forecast). ETC = EAC − AC; VAC = BAC − EAC.
     """
-    Earned Value Management calculations - standard construction formula set.
-    """
+    # Resolve aliases — PE sheets and chat use PV/EV/AC; the knowledge base
+    # historically used BCWS/BCWP/ACWP. Prefer the explicit PMI names when both
+    # are supplied so existing callers keep their semantics.
+    planned = bcws if bcws is not None else pv
+    earned = bcwp if bcwp is not None else ev
+    actual = acwp if acwp is not None else ac
+
+    missing = [
+        name for name, val in (
+            ("PV/BCWS", planned), ("EV/BCWP", earned), ("AC/ACWP", actual),
+        )
+        if val is None
+    ]
+    if missing:
+        return {
+            "error": (
+                "EVM requires Planned Value (PV/BCWS), Earned Value (EV/BCWP), "
+                f"and Actual Cost (AC/ACWP) — missing: {', '.join(missing)}. "
+                "No invented actuals."
+            ),
+            "required": ["pv|bcws", "ev|bcwp", "ac|acwp"],
+            "optional": ["bac"],
+        }
+
+    planned_f = float(planned)
+    earned_f = float(earned)
+    actual_f = float(actual)
+    bac_f = float(bac) if bac is not None else None
+
     # Derived figures come from the UNROUNDED CPI: EAC from the 3dp display
     # value drifted 82 per 211k on the phase-3 hand-check battery (200000/0.947
     # vs 200000/(90000/95000)). Rounding is for display only, never an input.
-    cpi_raw = (bcwp / acwp) if acwp else None
+    cpi_raw = (earned_f / actual_f) if actual_f else None
     cpi = round(cpi_raw, 3) if cpi_raw is not None else None
-    spi = round(bcwp / bcws, 3) if bcws else None
-    eac = round(bac / cpi_raw, 2) if cpi_raw else None
-    etc = round(eac - acwp, 2) if eac is not None else None
-    vac = round(bac - eac, 2) if eac is not None else None
-    cv = round(bcwp - acwp, 2)
-    sv = round(bcwp - bcws, 2)
+    spi = round(earned_f / planned_f, 3) if planned_f else None
+    # Forecasts need BAC. Default formula: EAC = BAC / CPI when CPI > 0.
+    eac = None
+    etc = None
+    vac = None
+    eac_formula = None
+    if bac_f is not None and cpi_raw and cpi_raw > 0:
+        eac = round(bac_f / cpi_raw, 2)
+        etc = round(eac - actual_f, 2)
+        vac = round(bac_f - eac, 2)
+        eac_formula = "BAC / CPI"
+    cv = round(earned_f - actual_f, 2)   # CV = EV − AC  (cost variance)
+    sv = round(earned_f - planned_f, 2)  # SV = EV − PV  (schedule variance)
 
-    return {
-        "BAC": bac, "BCWP": bcwp, "BCWS": bcws, "ACWP": acwp,
+    out: Dict = {
+        "BAC": bac_f,
+        "BCWP": earned_f, "EV": earned_f,
+        "BCWS": planned_f, "PV": planned_f,
+        "ACWP": actual_f, "AC": actual_f,
         "CPI": cpi,
         "SPI": spi,
         "EAC": eac,
@@ -372,12 +421,29 @@ def calculate_evm(
         "VAC": vac,
         "CV": cv,
         "SV": sv,
+        "formulas": {
+            "SPI": "EV / PV",
+            "CPI": "EV / AC",
+            "SV": "EV − PV",
+            "CV": "EV − AC",
+            "EAC": eac_formula,
+            "ETC": "EAC − AC" if eac is not None else None,
+            "VAC": "BAC − EAC" if vac is not None else None,
+        },
         "status": {
             "cost": "UNDER BUDGET" if cv >= 0 else "OVER BUDGET",
             "schedule": "AHEAD" if sv >= 0 else "BEHIND",
-            "cpi_health": "GOOD" if cpi and cpi >= 1 else ("WARNING" if cpi and cpi >= 0.9 else "CRITICAL"),
-        }
+            "cpi_health": (
+                "GOOD" if cpi and cpi >= 1
+                else ("WARNING" if cpi and cpi >= 0.9 else "CRITICAL")
+            ),
+        },
     }
+    if bac_f is None:
+        out["note"] = (
+            "BAC omitted — SPI/CPI/SV/CV computed; EAC/ETC/VAC require BAC."
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -475,8 +541,20 @@ class ConstructionKnowledge:
     def calculate_payment(self, claimed: float, certified: float, **kwargs) -> Dict:
         return calculate_payment(claimed, certified, **kwargs)
 
-    def calculate_evm(self, bac, bcwp, bcws, acwp) -> Dict:
-        return calculate_evm(bac, bcwp, bcws, acwp)
+    def calculate_evm(
+        self,
+        bac=None,
+        bcwp=None,
+        bcws=None,
+        acwp=None,
+        *,
+        pv=None,
+        ev=None,
+        ac=None,
+    ) -> Dict:
+        return calculate_evm(
+            bac=bac, bcwp=bcwp, bcws=bcws, acwp=acwp, pv=pv, ev=ev, ac=ac,
+        )
 
     def evaluate_tender(self, tenderers: List[Dict], weights: Optional[Dict] = None) -> Dict:
         return evaluate_tender(tenderers, weights)
