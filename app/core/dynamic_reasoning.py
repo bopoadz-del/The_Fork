@@ -82,7 +82,10 @@ async def understand_intent(message: str, has_documents: bool = False) -> Dict[s
     if not message or not message.strip():
         return empty
     from app.core.contract_lookup_intent import message_is_contract_data_lookup
+    from app.core.answer_report_intent import message_wants_answer_report
     if message_is_contract_data_lookup(message):
+        return empty
+    if message_wants_answer_report(message):
         return empty
     user = message.strip()
     if has_documents:

@@ -20,8 +20,9 @@ H2 found the same markers leaking into spreadsheet cells
 (``**Total activities:** 204``).
 
 These are bugs against a stated requirement, so they land now (owner's ruling
-R4). Multi-message report export -- the surface takes one ``message_index``
-and there is no A1-A9 path -- is a spec gap, filed as H1b, and is NOT here.
+R4). Multi-message A1–A9 report export (H1b) lives in
+``tests/test_answer_report_export.py``; this file stays the single-message
+markdown + footer contract.
 
 Every assertion below reads the produced file, never a return value.
 """
