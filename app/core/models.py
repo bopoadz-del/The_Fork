@@ -332,6 +332,21 @@ class Document(Base):
     metadata_: Mapped[dict | None] = mapped_column(
         "metadata", JSON, nullable=True
     )
+    # ── ingest ledger (migration 0016) ────────────────────────────────────
+    # A row here proves a file was REGISTERED. These prove what came out of
+    # it. Without them "ingested" and "usable" are the same word, which is how
+    # 1,873 one-chunk drawing sheets passed as INDEXED.
+    ingest_status: Mapped[str] = mapped_column(
+        String, nullable=False, default="UNVERIFIED"
+    )
+    ingest_status_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Drive's own content token. Distinct from ``content_sha256`` on purpose:
+    # Drive publishes MD5, this codebase stores SHA-256, and comparing the two
+    # can only ever report "changed". Resume compares md5-to-md5; the sha stays
+    # the archive identity and is never a skip key.
+    drive_md5: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_verified_at: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ProjectFact(Base):
