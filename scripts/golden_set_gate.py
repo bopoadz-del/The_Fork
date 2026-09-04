@@ -497,8 +497,12 @@ def run_gate(args, golden: dict) -> int:
                 if p.get("name") == value or p.get("id") == value:
                     resolved = p.get("id")
                     break
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — fall back to the given id
+            print(
+                f"[warn] project lookup for {value!r} failed ({exc}); "
+                f"using unresolved id",
+                file=sys.stderr,
+            )
         _project_cache[value] = resolved
         return resolved
 

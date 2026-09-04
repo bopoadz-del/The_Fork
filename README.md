@@ -192,9 +192,10 @@ somewhere else.
 These are the same gates CI runs, and they take seconds:
 
 ```bash
-python scripts/audit_stubs.py    # no unregistered hollow functions
-python scripts/scan_secrets.py   # no secret material in tracked files
-python -m pytest tests/e2e/ -q   # the six demo flows, F1-F6
+python scripts/audit_stubs.py           # no unregistered hollow functions
+python scripts/scan_secrets.py          # no secret material in tracked files
+python scripts/scan_exception_pass.py   # no except Exception: pass
+python -m pytest tests/e2e/ -q          # the six demo flows, F1-F6
 ```
 
 `tests/e2e/` is the honest description of what this platform does: boot and
@@ -263,6 +264,7 @@ CI gates, all blocking on every PR:
 | coverage floor | 25 % overall, a regression floor |
 | `audit_stubs` | no hollow function that is not registered in [KNOWN_INCOMPLETE.md](KNOWN_INCOMPLETE.md) |
 | `scan_secrets` | no secret material in tracked files |
+| `scan_exception_pass` | zero `except Exception: pass` handlers — S110 twin; empty allowlist |
 | ruff S110 | zero silent `except: pass` handlers — baseline 0, never raise it |
 | eslint | frontend Rules of Hooks and correctness errors |
 
