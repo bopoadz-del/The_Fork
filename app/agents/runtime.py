@@ -612,6 +612,12 @@ _HISTOGRAM_PHRASES = (
     "resource histogram", "crew histogram", "workforce histogram",
     "labor loading", "labour loading",
 )
+_LOOKAHEAD_PHRASES = (
+    "look ahead", "look-ahead", "lookahead",
+    "3 week look", "4 week look", "three week look", "four week look",
+    "rolling look ahead", "short term programme", "short-term programme",
+    "short term program", "short-term program",
+)
 _HISTOGRAM_QA_RE = re.compile(
     r"\b(what is|what's|whats|explain|define)\b", re.IGNORECASE,
 )
@@ -630,6 +636,18 @@ def _message_wants_resource_histogram(text: str) -> bool:
         return True
     return "histogram" in low and any(
         t in low for t in (".xer", "primavera", "p6", "taskrsrc")
+    )
+
+
+def _message_wants_look_ahead(text: str) -> bool:
+    """True when the turn asks for a 3–4 week look-ahead from a .xer."""
+    low = (text or "").lower()
+    if not low or _HISTOGRAM_QA_RE.search(low):
+        return False
+    if any(p in low for p in _LOOKAHEAD_PHRASES):
+        return True
+    return "look" in low and "ahead" in low and any(
+        t in low for t in (".xer", "primavera", "p6", "schedule", "programme", "program")
     )
 
 
@@ -1083,6 +1101,64 @@ async def _predispatch_resource_histogram(
         return None
 
 
+async def _predispatch_look_ahead(
+    agent: "Agent", messages: list, project_id: str | None,
+) -> dict[str, Any] | None:
+    """Run ``look_ahead`` before the model steals primavera_parser.
+
+    Same pattern as histogram predispatch. Kill-switch:
+    ``AGENT_LOOKAHEAD_PREDISPATCH=0``.
+    """
+    if os.getenv("AGENT_LOOKAHEAD_PREDISPATCH", "1") == "0":
+        return None
+    if "construction" not in getattr(agent, "allowed_blocks", ()):
+        return None
+    if not project_id:
+        return None
+    try:
+        user_msg, _history = _messages_user_and_history(messages)
+        if not user_msg or not _message_wants_look_ahead(user_msg):
+            return None
+        schedule_file, picked_name = _resolve_histogram_schedule_file(
+            project_id, user_msg,
+        )
+        if not schedule_file:
+            return None
+        from app.dependencies import get_block_instance
+        container = get_block_instance("construction")
+        result = await container.look_ahead(
+            {}, {"schedule_file": schedule_file},
+        )
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        compact = dict(result)
+        acts = compact.get("activities") if isinstance(compact.get("activities"), list) else []
+        compact["activities"] = acts[:40]
+        payload = json.dumps(compact, default=str)[:6000]
+        messages.append({
+            "role": "user",
+            "content": (
+                "PLATFORM PRE-DISPATCH: look_ahead has ALREADY been "
+                f"run on '{picked_name}'. Authoritative result:\n"
+                f"{payload}\n"
+                "Report the overlapping activities from this result. Do not "
+                "invent activities. Do not call primavera_parser for this "
+                "look-ahead. Do not re-call look_ahead unless a different "
+                "file is named."
+            ),
+        })
+        return {
+            "name": "look_ahead",
+            "ok": True,
+            "predispatched": True,
+            "result": compact,
+        }
+    except Exception:  # noqa: BLE001
+        _LOG.warning("look-ahead pre-dispatch failed; continuing normally",
+                     exc_info=True)
+        return None
+
+
 _WIR_FORM_RE = re.compile(
     r"\b("
     r"work inspection request|\bwir\b|inspection request|"
@@ -1343,6 +1419,7 @@ def _conflicting_tools_after_predispatch(name: str) -> set[str]:
         "safety_briefing": {"wir_form", "commissioning_checklist"},
         "rfi_generator": {"wir_form", "safety_briefing"},
         "resource_histogram": {"primavera_parser", "safety_briefing"},
+        "look_ahead": {"primavera_parser", "safety_briefing", "resource_histogram"},
         "claims_builder": {
             "payment_certificate", "wir_form", "interim_certificate_generator",
         },
@@ -3205,6 +3282,8 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
             )
     if "resource_histogram" in available and _message_wants_resource_histogram(text):
         return "resource_histogram"
+    if "look_ahead" in available and _message_wants_look_ahead(text):
+        return "look_ahead"
     for phrases, tool in _INTENT_TOOL_MAP:
         if tool in available and any(p in low for p in phrases):
             return tool
@@ -6567,6 +6646,74 @@ class Agent:
                     },
                 },
             })
+            # ── synthetic tool: look_ahead ────────────────────────────────────
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "look_ahead",
+                    "description": (
+                        "Build a 3–4 week look-ahead from a Primavera P6 "
+                        ".xer. CALL THIS when the user asks for a look-ahead "
+                        "/ lookahead programme. Returns activities overlapping "
+                        "the window with ES/EF, remaining duration, total "
+                        "float, critical flag, WBS, and name. Never invent "
+                        "activities. Prefer the .xer the user named. Do NOT "
+                        "call primavera_parser for a look-ahead."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "schedule_file": {
+                                "type": "string",
+                                "description": (
+                                    "The .xer original_name. Must be a "
+                                    "project document name."
+                                ),
+                            },
+                            "weeks": {
+                                "type": "number",
+                                "description": "Look-ahead length in weeks (default 3).",
+                            },
+                            "days": {
+                                "type": "number",
+                                "description": "Look-ahead length in calendar days (overrides weeks).",
+                            },
+                            "as_of": {
+                                "type": "string",
+                                "description": "As-of / data date YYYY-MM-DD (optional).",
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            })
+            # ── synthetic tool: evm_calculate ────────────────────────────────
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "evm_calculate",
+                    "description": (
+                        "Classic Earned Value Management. REQUIRES Planned "
+                        "Value (PV), Earned Value (EV), and Actual Cost (AC). "
+                        "BAC optional for EAC/ETC/VAC. Returns SPI, CPI, SV, "
+                        "CV. Do not invent actuals — refuse if PV/EV/AC missing. "
+                        "Prefer this over progress_tracker for true EVM."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "pv": {"type": "number", "description": "Planned Value (BCWS)"},
+                            "ev": {"type": "number", "description": "Earned Value (BCWP)"},
+                            "ac": {"type": "number", "description": "Actual Cost (ACWP)"},
+                            "bac": {"type": "number", "description": "Budget at Completion (optional)"},
+                            "bcws": {"type": "number"},
+                            "bcwp": {"type": "number"},
+                            "acwp": {"type": "number"},
+                        },
+                        "required": [],
+                    },
+                },
+            })
 
         # ── synthetic tool: delegate_to_agent (delegating agents only) ───────
         if self.can_delegate:
@@ -6752,6 +6899,11 @@ class Agent:
         )
         if _hist_pre:
             tool_calls_made.append(_hist_pre)
+        _la_pre = await _predispatch_look_ahead(
+            self, messages, project_id,
+        )
+        if _la_pre:
+            tool_calls_made.append(_la_pre)
         _wir_pre = None
         if not _locked:
             _wir_pre = await _predispatch_wir_form(
@@ -7564,6 +7716,38 @@ class Agent:
                    "ok": True,
                    "summary": _hist_summary[:400],
                    "result": _hist_summary,
+                   "predispatched": True}
+
+        _la_pre = await _predispatch_look_ahead(
+            self, messages, project_id,
+        )
+        if _la_pre:
+            _note_tool(_la_pre["name"])
+            stream_tool_results.append(_la_pre)
+            _la_summary = _summarize_result(_la_pre.get("result"))
+            _la_file = ""
+            if isinstance(_la_pre.get("result"), dict):
+                _la_file = str(
+                    (_la_pre.get("result") or {}).get("schedule_file") or ""
+                )
+            yield {"type": "tool_call",
+                   "tool": _la_pre["name"],
+                   "name": _la_pre["name"],
+                   "args_preview": json.dumps({
+                       "schedule_file": _la_file,
+                       "activity_count": (
+                           (_la_pre.get("result") or {}).get("activity_count")
+                           if isinstance(_la_pre.get("result"), dict)
+                           else None
+                       ),
+                   }, default=str)[:200],
+                   "predispatched": True}
+            yield {"type": "tool_result",
+                   "tool": _la_pre["name"],
+                   "name": _la_pre["name"],
+                   "ok": True,
+                   "summary": _la_summary[:400],
+                   "result": _la_summary,
                    "predispatched": True}
 
         _wir_pre = None
@@ -9360,6 +9544,95 @@ class Agent:
                 }
             return {
                 "name": "resource_histogram",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
+        # ── synthetic tool: look_ahead ───────────────────────────────────────
+        if name == "look_ahead":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            raw = args.get("schedule_file") or args.get("file_path") or ""
+            resolved = _resolve_file_path(project_id, raw) if raw else ""
+            if not resolved or not os.path.exists(str(resolved)):
+                resolved, _picked = _resolve_histogram_schedule_file(
+                    project_id, user_message or "",
+                )
+            if not resolved:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": (
+                            "No schedule file resolved — name the .xer "
+                            "or upload one."
+                        ),
+                    },
+                }
+            la_params = {"schedule_file": resolved}
+            for key in ("weeks", "days", "as_of", "data_date"):
+                if args.get(key) is not None:
+                    la_params[key] = args.get(key)
+            try:
+                result = await container.look_ahead({}, la_params)
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"look_ahead failed: {e}",
+                    },
+                }
+            return {
+                "name": "look_ahead",
+                "ok": isinstance(result, dict) and result.get("status") == "success",
+                "result": result,
+            }
+
+        # ── synthetic tool: evm_calculate ────────────────────────────────────
+        if name == "evm_calculate":
+            if "construction" not in self.allowed_blocks:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": "construction container not in agent's allowed_blocks",
+                    },
+                }
+            try:
+                from app.dependencies import get_block_instance
+                container = get_block_instance("construction")
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {"status": "error", "error": f"construction unavailable: {e}"},
+                }
+            try:
+                result = await container.evm_calculate({}, args or {})
+            except Exception as e:
+                return {
+                    "name": name, "ok": False,
+                    "result": {
+                        "status": "error",
+                        "error": f"evm_calculate failed: {e}",
+                    },
+                }
+            return {
+                "name": "evm_calculate",
                 "ok": isinstance(result, dict) and result.get("status") == "success",
                 "result": result,
             }
