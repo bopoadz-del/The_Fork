@@ -8,11 +8,12 @@
  *                  completes." message
  *   • no sources — short hint
  *
- * Each row shows: confidence chip + filename + chunk reference.
- * Clicking a row opens that document in the preview pane — the cite
- * the answer used, not an unrelated project file.
+ * Each row shows: confidence chip + filename + chunk reference + the
+ * #468 source class (this contract / master corpus / knowledge base /
+ * template). Clicking a row opens that document in the preview pane.
  */
 import { FileText } from 'lucide-react'
+import { sourceClassLabel } from './sourceClassLabels'
 import './SourcesList.css'
 
 export interface CitedSource {
@@ -24,6 +25,8 @@ export interface CitedSource {
   project_id?: string
   layer?: string
   layer_label?: string
+  source_class?: string
+  source_class_label?: string
 }
 
 interface Props {
@@ -87,6 +90,8 @@ export default function SourcesList({ sources, streaming, activeDocId, onOpenSou
 }
 
 function SourceRow({ source: s }: { source: CitedSource }) {
+  const sourceClass = (s.source_class || '').trim()
+  const classLabel = s.source_class_label || sourceClassLabel(sourceClass)
   return (
     <>
       <span className={`sources-list__chip sources-list__chip--${s.confidence.toLowerCase()}`}>
@@ -100,6 +105,16 @@ function SourceRow({ source: s }: { source: CitedSource }) {
           {s.page_or_section}
           {s.layer_label ? ` · ${s.layer_label}` : ''}
         </div>
+        {sourceClass ? (
+          <div
+            className="sources-list__class"
+            data-source-class={sourceClass}
+            data-testid="source-class"
+          >
+            <span className="sources-list__class-label">{classLabel}</span>
+            <span className="sources-list__class-code">{`class=${sourceClass}`}</span>
+          </div>
+        ) : null}
       </div>
     </>
   )

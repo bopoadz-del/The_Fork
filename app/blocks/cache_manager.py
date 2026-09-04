@@ -1,5 +1,7 @@
 """Cache Manager Block - Redis wrapper with in-memory fallback."""
 
+from __future__ import annotations
+
 import json
 import logging
 import time
@@ -9,6 +11,26 @@ from app.core.universal_base import UniversalBlock
 
 
 logger = logging.getLogger(__name__)
+
+
+def compose_scoped_key(
+    raw_key: str,
+    *,
+    project_id: str | None = None,
+    contract_id: str | None = None,
+    source_class: str | None = None,
+) -> str:
+    """Cache key that cannot collide across project, contract, or class.
+
+    #443-via-cache: an unscoped ``delay-damages`` key returns another
+    year's contract. The scoped form embeds all three isolation axes.
+    """
+    return "|".join((
+        f"p={(project_id or '').strip()}",
+        f"c={(contract_id or '').strip()}",
+        f"class={(source_class or '').strip()}",
+        raw_key or "",
+    ))
 
 
 class CacheManagerBlock(UniversalBlock):
@@ -201,7 +223,23 @@ class CacheManagerBlock(UniversalBlock):
         }
 
     def _resolve_key(self, input_data: Any, params: Dict) -> Optional[str]:
-        return params.get("key") or (input_data.get("key") if isinstance(input_data, dict) else None)
+        raw = params.get("key") or (input_data.get("key") if isinstance(input_data, dict) else None)
+        if not raw:
+            return None
+        blob = params if params else {}
+        if isinstance(input_data, dict):
+            blob = {**input_data, **blob}
+        project_id = blob.get("project_id") or blob.get("projectId")
+        contract_id = blob.get("contract_id") or blob.get("contractId")
+        source_class = blob.get("source_class") or blob.get("sourceClass")
+        if project_id or contract_id or source_class:
+            return compose_scoped_key(
+                str(raw),
+                project_id=project_id,
+                contract_id=contract_id,
+                source_class=source_class,
+            )
+        return str(raw)
 
     def _evict_oldest(self):
         if self._local_cache:

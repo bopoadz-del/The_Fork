@@ -39,6 +39,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     """Standard isolation pattern + reset local_model's cache."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("LEARNING_ENGINE_STORAGE", str(tmp_path / "le_state.json"))
+    monkeypatch.setenv("LEARNING_ENGINE_ENABLED", "1")
     from app.core.learning import local_model as _lm
     _lm.invalidate_cache()
     from app.core import agent_memory as _am

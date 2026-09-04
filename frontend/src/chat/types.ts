@@ -13,6 +13,10 @@ export interface CitedSource {
   project_id?: string
   layer?: string
   layer_label?: string
+  /** #468 machine class — project_corpus | knowledge_base | template | master_corpus */
+  source_class?: string
+  /** Visible wording: this contract / knowledge base / template / master corpus */
+  source_class_label?: string
 }
 
 /** A data-backed download offer the platform attaches to an answer that cites

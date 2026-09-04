@@ -47,6 +47,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
 
     # Also reset learning_engine's storage path so its state is fresh per test
     monkeypatch.setenv("LEARNING_ENGINE_STORAGE", str(tmp_path / "le_state.json"))
+    monkeypatch.setenv("LEARNING_ENGINE_ENABLED", "1")
     yield tmp_path
     _router.invalidate_model_cache()
 
@@ -587,7 +588,7 @@ def test_embedding_vectorizer_is_stateless(isolated_data_dir, monkeypatch):
 @requires_construction_kit
 @pytest.mark.asyncio
 async def test_keyword_mode_does_not_record(isolated_data_dir):
-    """When routing_mode is the default (keyword), we don't pollute the
+    """When routing_mode is the default (auto), we don't pollute the
     routing_decisions corpus — only learned-mode dispatches log."""
     from app.blocks import BLOCK_REGISTRY
 

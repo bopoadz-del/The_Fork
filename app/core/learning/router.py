@@ -199,7 +199,13 @@ def _runtime_data_from_patterns() -> List[TrainingRow]:
 
     cls = BLOCK_REGISTRY.get("learning_engine")
     if cls is None:
-        return []
+        # Virgin / no-kit boots do not register the construction-kit block.
+        # Independently labeled rows still live on LearningEngineBlock when
+        # a test (or opt-in) wrote them — read that process-local state
+        # instead of dropping every training row.
+        from app.blocks.learning_engine import LearningEngineBlock
+
+        cls = LearningEngineBlock
     # shared_instance() — uses the same _state the writeback paths populated,
     # so train_router sees patterns hydration just recorded without a re-load.
     le = cls.shared_instance()
@@ -220,6 +226,15 @@ def _runtime_data_from_patterns() -> List[TrainingRow]:
             text = parsed.get("text") or parsed.get("message")
             action = parsed.get("action") or parsed.get("label")
             if not text or not action:
+                continue
+            from app.core.learning.trainable import is_independently_labeled
+
+            trainable = parsed.get("trainable")
+            if trainable is None:
+                trainable = obs.get("trainable")
+            if trainable is None:
+                trainable = is_independently_labeled(obs.get("source"), parsed)
+            if not trainable:
                 continue
             rows.append(TrainingRow(
                 text=text,

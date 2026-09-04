@@ -1,5 +1,7 @@
 """Learning Engine Block - Tier promotion + coefficient tuning via scikit-learn"""
 
+from __future__ import annotations
+
 import os
 import json
 import threading
@@ -15,6 +17,40 @@ def _storage_path() -> str:
     via monkeypatch.setenv. Reading once at module import means production
     is fine but tests share /tmp state across the suite."""
     return os.environ.get("LEARNING_ENGINE_STORAGE", "/tmp/cerebrum_learning_engine.json")
+
+
+def learning_engine_writes_enabled() -> bool:
+    """Local JSON writes are off unless a test (or a future Neon backend)
+    explicitly opts in. Production stays hard-off while TIER-1 ingest
+    owns the database.
+    """
+    return os.environ.get("LEARNING_ENGINE_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def assert_learning_engine_hard_off(probe_path: str | None = None) -> None:
+    """Startup assertion: when the engine is hard-off it never writes JSON.
+
+    Opt-in writes (``LEARNING_ENGINE_ENABLED=1``) skip the probe so tests
+    that exercise persistence can run. Neon-backed state is not in this
+    PR; the allowed alternative is this hard-off.
+    """
+    if learning_engine_writes_enabled():
+        return
+    import tempfile
+
+    path = probe_path or os.path.join(
+        tempfile.mkdtemp(prefix="le-hardoff-"), "must_not_write.json"
+    )
+    block = LearningEngineBlock(config={"storage_path": path})
+    block._state = {"formulas": {"probe": True}, "history": ["probe"], "patterns": {}}
+    block._save_state()
+    if os.path.exists(path):
+        raise RuntimeError(
+            "learning_engine is hard-off but wrote local JSON at "
+            f"{path}; refuse boot rather than persist unlabelled state"
+        )
 
 
 # Kept for backwards-compat in default_config below; callers should now go
@@ -133,6 +169,9 @@ class LearningEngineBlock(UniversalBlock):
         return {"formulas": {}, "history": []}
 
     def _save_state(self):
+        if not learning_engine_writes_enabled():
+            logger.info("learning_engine hard-off: refusing local JSON write")
+            return
         path = self.config.get("storage_path", _storage_path())
         try:
             with open(path, "w") as f:
@@ -240,6 +279,27 @@ class LearningEngineBlock(UniversalBlock):
         if not project_id or not observation:
             return {"status": "error", "error": "project_id and observation required"}
 
+        from app.core.learning.trainable import is_independently_labeled
+
+        pattern_source = data.get("source") or params.get("source") or "manual"
+        parsed_obs: Dict[str, Any] | None = None
+        if isinstance(observation, dict):
+            parsed_obs = observation
+        elif isinstance(observation, str):
+            try:
+                loaded = json.loads(observation)
+                if isinstance(loaded, dict):
+                    parsed_obs = loaded
+            except (ValueError, TypeError):
+                parsed_obs = None
+        trainable = is_independently_labeled(pattern_source, parsed_obs)
+        if parsed_obs is not None:
+            parsed_obs = dict(parsed_obs)
+            parsed_obs["trainable"] = trainable
+            stored_observation = json.dumps(parsed_obs, ensure_ascii=False)
+        else:
+            stored_observation = str(observation)
+
         # Lock the read-modify-write window. Before this lock, two threads
         # calling _record_pattern concurrently would both serialise + write
         # _state and the second's _save_state would silently overwrite any
@@ -252,8 +312,9 @@ class LearningEngineBlock(UniversalBlock):
                 self._state["patterns"] = {}
             bucket = self._state["patterns"].setdefault(project_id, {}).setdefault(category, [])
             bucket.append({
-                "observation": str(observation),
-                "source": data.get("source") or params.get("source") or "manual",
+                "observation": stored_observation,
+                "source": pattern_source,
+                "trainable": trainable,
                 "run_date": data.get("run_date") or params.get("run_date"),
                 "ts": time.time(),
             })
@@ -264,6 +325,7 @@ class LearningEngineBlock(UniversalBlock):
             "project_id": project_id,
             "category": category,
             "total_observations": total,
+            "trainable": trainable,
         }
 
     # ── Learned chat router (PR 1 — Applied ML) ───────────────────────────

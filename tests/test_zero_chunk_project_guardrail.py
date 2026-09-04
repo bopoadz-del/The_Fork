@@ -131,4 +131,7 @@ async def test_chat_allows_indexed_project(monkeypatch):
     )
 
     assert called is True
-    assert result["answer"] == "Here is the answer."
+    # Coverage honesty stamps "N of M project documents indexed" when the
+    # project_id is known; the guardrail contract is that the LLM answer
+    # is returned, not that the string is byte-identical.
+    assert result["answer"].startswith("Here is the answer.")

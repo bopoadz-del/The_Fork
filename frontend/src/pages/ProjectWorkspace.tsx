@@ -103,6 +103,8 @@ interface ChatMessage {
     project_id?: string
     layer?: string
     layer_label?: string
+    source_class?: string
+    source_class_label?: string
   }>
   /** Data-backed download offers from the SSE 'end' event (e.g. cost BOQ). */
   exports?: Array<{
