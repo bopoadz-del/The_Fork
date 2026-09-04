@@ -144,7 +144,10 @@ jobs:
         # to live and is correctly ignored.
         run: python scripts/scan_secrets.py
 
-      - name: No silent except Exception: pass
+      # Quote the name: an unquoted `Exception: pass` is invalid YAML
+      # (`: ` starts a mapping), so GitHub skipped the entire lint workflow
+      # and required checks ruff/eslint/integrity never appeared on the PR.
+      - name: "No silent except Exception: pass"
         # Twin of the S110 gate above. ruff S110 (check-typed-exception =
         # false) flags bare `except: pass` only. This AST walk flags the
         # typed form S110 misses: `except Exception: pass` and
