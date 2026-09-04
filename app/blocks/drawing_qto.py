@@ -1187,7 +1187,7 @@ class DrawingQTOBlock(UniversalBlock):
                 continue
             # Phase 1.6: reject the site's area / district names that win at
             # large font on regional key-plan sheets but are not
-            # drawing-title text (KHUZAMA, AL TURAIF, etc.).
+            # drawing-title text. Names come from the environment only.
             tu_compact = re.sub(r"\s+", " ", tu).strip()
             if tu_compact in _EXCLUDED_PLACE_NAMES:
                 continue
