@@ -221,18 +221,47 @@ async def test_drawing_title_rejects_pure_numeric():
         assert rejected, f"title {t!r} should have been rejected by numeric/scale filter"
 
 
-async def test_drawing_title_rejects_client_place_names():
-    """Phase 1.6: the client project area / district names must be rejected as
-    drawing_title candidates."""
-    from app.blocks.drawing_qto import _EXCLUDED_PLACE_NAMES
-    for name in ("KHUZAMA", "AL TURAIF", "AL BUJAIRI", "AL QARYA"):
-        assert name in _EXCLUDED_PLACE_NAMES, f"{name!r} missing from the client project blocklist"
-    # Lowercase and whitespace variants should round-trip to a blocked entry
-    for variant in ("khuzama", " AL  TURAIF ", "Al Bujairi"):
-        normalized = re.sub(r"\s+", " ", variant.upper()).strip()
-        assert normalized in _EXCLUDED_PLACE_NAMES, (
-            f"variant {variant!r} normalised to {normalized!r} not in blocklist"
-        )
+async def test_drawing_title_rejects_client_place_names(monkeypatch):
+    """Phase 1.6: area / district names that win the largest-font cluster on
+    key-plan sheets must be rejected as drawing_title candidates.
+
+    The real names identify the client's site, so they live ONLY in the
+    DRAWING_QTO_EXCLUDED_PLACE_NAMES env var (set on the service). The test
+    drives the same loader with synthetic names: the contract under test is
+    the normalisation, not the gazetteer's contents.
+    """
+    import importlib
+    from app.blocks import drawing_qto
+
+    monkeypatch.setenv(
+        "DRAWING_QTO_EXCLUDED_PLACE_NAMES", " north  ward ,East Quarter, ,ZED "
+    )
+    try:
+        importlib.reload(drawing_qto)
+        names = drawing_qto._EXCLUDED_PLACE_NAMES
+        assert names == frozenset({"NORTH WARD", "EAST QUARTER", "ZED"})
+        # Lowercase and whitespace variants round-trip to a blocked entry
+        for variant in ("north ward", " EAST   QUARTER ", "Zed"):
+            normalized = re.sub(r"\s+", " ", variant.upper()).strip()
+            assert normalized in names, (
+                f"variant {variant!r} normalised to {normalized!r} not in blocklist"
+            )
+    finally:
+        monkeypatch.delenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", raising=False)
+        importlib.reload(drawing_qto)
+
+
+async def test_place_name_blocklist_is_empty_without_the_env_var(monkeypatch):
+    """No client place name may be baked into the code path."""
+    import importlib
+    from app.blocks import drawing_qto
+
+    monkeypatch.delenv("DRAWING_QTO_EXCLUDED_PLACE_NAMES", raising=False)
+    try:
+        importlib.reload(drawing_qto)
+        assert drawing_qto._EXCLUDED_PLACE_NAMES == frozenset()
+    finally:
+        importlib.reload(drawing_qto)
 
 
 async def test_fitz_char_extraction_smoke():
