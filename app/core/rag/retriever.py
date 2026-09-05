@@ -491,10 +491,45 @@ class _ContractScope:
             not self.named
             and query_asks_for_contract_particulars(self.query)
         )
-        if not self.named and ranked_docs is not None:
-            self.winning = elect_answer_bearing_contract(self.query, ranked_docs)
+        self._title_phrases: List[str] = []
+        self._spec_identity_in_pool = False
+        self._aca_contract_data_in_pool = False
+        docs: Optional[List[Tuple[str, str]]] = (
+            list(ranked_docs) if ranked_docs is not None else None
+        )
+        if not self.named and docs is not None:
+            self.winning = elect_answer_bearing_contract(self.query, docs)
+        if docs is not None:
+            if spec_title_rescue_enabled() and query_asks_which_specification_document(
+                self.query,
+            ):
+                self._title_phrases = extract_document_title_phrases(self.query)
+                if self._title_phrases:
+                    self._spec_identity_in_pool = any(
+                        chunk_states_spec_document_identity(text, self._title_phrases)
+                        or spec_title_filename_bonus(name, self._title_phrases) > 0
+                        for name, text in docs
+                    )
+            if (
+                contract_data_filename_rescue_enabled()
+                and query_asks_for_accepted_contract_amount(self.query)
+            ):
+                self._aca_contract_data_in_pool = any(
+                    contract_data_chunk_states_aca(name, text, self.query)
+                    for name, text in docs
+                )
 
     def allow(self, filename: str, chunk_text: str = "") -> bool:
+        if self._spec_identity_in_pool:
+            titled = spec_title_filename_bonus(filename, self._title_phrases) > 0
+            identity = chunk_states_spec_document_identity(
+                chunk_text, self._title_phrases,
+            )
+            if not (titled or identity):
+                return False
+        if self._aca_contract_data_in_pool:
+            if not filename_looks_like_contract_data(filename):
+                return False
         if self.named:
             return filename_matches_named_contracts(
                 filename, self.named, chunk_text=chunk_text,
@@ -511,6 +546,19 @@ class _ContractScope:
                     is_contract_data_particulars_row(chunk_text)
                     and particulars_row_answers_asked_label(
                         self.query, chunk_text,
+                    )
+                ):
+                    self.winning = ids[0]
+                    return True
+                # Live A2: scanned Contract Data has PREFIX-YEAR-SEQ in
+                # the filename and no index-time particulars prefix, so
+                # the filled-row predicate never fires. The ACA filename
+                # election already decided this file owns the ask.
+                if (
+                    self._aca_contract_data_in_pool
+                    and filename_looks_like_contract_data(filename)
+                    and contract_data_chunk_states_aca(
+                        filename, chunk_text, self.query,
                     )
                 ):
                     self.winning = ids[0]
@@ -840,6 +888,14 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
 # UBCC + Batching Plant + wadi Safar. Term rescue skipped the out-of-pool
 # fetch because Volume 5 already mentioned the place-name in-chunk.
 #
+# Re-score on tip d7a4ca8 (2026-09-05, Neon project the-fork): retrieval
+# now finds b5033ec2, but the indexed text is corpus-blocked. 8199b14b is
+# MISSING from ``documents``. b5033ec2 is TEXT_SPARSE
+# (``single_window:terminal``, one 1168-char chunk) and ends
+# ``Yours sincerely, ,`` — no signatory name, role, or company. Do not
+# invent a name that is not in the chunk. Re-extract / re-ingest of the
+# richer id is an ingest job, not a ranking delta.
+#
 # Filename overlap is the discriminator Volume 5 cannot fake: its name is
 # a contract volume, not a letter. Kill-switch: RAG_LETTER_FILENAME_RESCUE=0.
 _LETTER_OR_SIGNATORY_RE = re.compile(
@@ -1042,6 +1098,14 @@ def _rescue_filename_matched_docs(
 # The filename is the discriminator Demolition Specs cannot fake: it
 # carries the Title-Case phrase the question used. Kill-switch:
 # RAG_SPEC_TITLE_RESCUE=0.
+#
+# Re-score on tip d7a4ca8: there is still no standalone upload named
+# ``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``. The identifier
+# lives as a register line inside Vol 2 Specification (8 of 9). Cosine
+# prefers the later CSI heading ``Section 012650 — Variation and
+# Adjustments`` in the same file. Filename rescue cannot see a title
+# that is not in the upload name; the remaining delta is in-chunk
+# spec-identity election (SPE-NNNNN + title).
 _SPEC_IDENTITY_ASK_RE = re.compile(
     r"(?i)\b(?:which|what)\s+specification\s+(?:document|section)s?\b"
     r"|\bspecification\s+document\s+covers\b"
@@ -1059,6 +1123,9 @@ _TITLE_PHRASE_STOP = frozenset({
 # Equal to IDENTIFIER_BONUS_MAX so a titled filename beats a high-cosine
 # demolition volume the way an exact code beats boilerplate.
 _SPEC_TITLE_FILENAME_BONUS = 2.0
+# A CSI section number (``012650``) is not a document identity. The
+# register line carries ``SPE-`` + five-or-more digits.
+_SPE_DOC_CODE_RE = re.compile(r"(?i)\bSPE-\d{5,}\b")
 
 
 def spec_title_rescue_enabled() -> bool:
@@ -1113,6 +1180,29 @@ def spec_title_filename_bonus(filename: str, phrases: List[str]) -> float:
     if any(phrase and phrase in blob for phrase in phrases):
         return _SPEC_TITLE_FILENAME_BONUS
     return 0.0
+
+
+def _normalize_retrieval_ws(text: str) -> str:
+    """Collapse OCR / table newlines so a scanned label still matches."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def chunk_states_spec_document_identity(text: str, phrases: List[str]) -> bool:
+    """True when the chunk names a SPE-NNNNN document whose title is the ask.
+
+    Live C2 on d7a4ca8: the register line ``DGDAX-DGD-PMO-SPE-012650-1.0
+    Variation Procedure`` is the document number. ``Section 012650 —
+    Variation and Adjustments`` in the same volume is a CSI heading, not
+    the identifier the question asked for. ``SPE-`` + five digits is the
+    discriminator; a bare ``012650`` is not.
+    """
+    if not phrases:
+        return False
+    blob = _normalize_retrieval_ws(text)
+    if not _SPE_DOC_CODE_RE.search(blob):
+        return False
+    lower = blob.lower()
+    return any(bool(p) and p in lower for p in phrases)
 
 
 def _apply_spec_title_filename_boost(
@@ -1209,6 +1299,204 @@ def _rescue_spec_title_docs(
             "spec-title rescue recovered %d chunk(s) for phrases %r",
             recovered, phrases,
         )
+    return names
+
+
+def _apply_spec_identity_text_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift chunks whose body is a SPE-NNNNN + title register line."""
+    if not spec_title_rescue_enabled():
+        return
+    if not query_asks_which_specification_document(query):
+        return
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_spec_document_identity(chunk.text or "", phrases):
+            continue
+        boosted = score + _SPEC_TITLE_FILENAME_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_spec_identity_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> int:
+    """Pull SPE-NNNNN + title register lines into ``fused``.
+
+    Filename title rescue cannot see a title that lives only in a volume's
+    table of contents. Failures never raise.
+    """
+    if not spec_title_rescue_enabled():
+        return 0
+    if not query_asks_which_specification_document(query):
+        return 0
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return 0
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return 0
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+    for pid in pids:
+        for phrase in phrases:
+            try:
+                hits = fetch(pid, ["SPE-", phrase], k=20)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "spec-identity rescue for %s (%r) failed: %s",
+                    pid, phrase, exc,
+                )
+                continue
+            for chunk in hits:
+                if not chunk_states_spec_document_identity(chunk.text or "", phrases):
+                    continue
+                if chunk.chunk_id in fused:
+                    continue
+                fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                recovered += 1
+    if recovered:
+        logger.info(
+            "spec-identity rescue recovered %d chunk(s) for phrases %r",
+            recovered, phrases,
+        )
+    return recovered
+
+
+# ── Contract Data filename rescue (live A2) ────────────────────────────────
+#
+# Live Master Corpus A2 retry on tip d7a4ca8: "What is the Accepted
+# Contract Amount including VAT?" retrieved Long Form PSA / CPM permit
+# trackers and reported the figure absent. The executed amount sits in
+# ``…_Contract Data.pdf`` (scanned table, newlines between Accepted /
+# Contract / Amount). That file has no ``CONTRACT DATA particulars``
+# index-time prefix, so the particulars boost and unnamed election never
+# fire. Filename "Contract Data" is the discriminator PSA/CPM cannot fake.
+# Kill-switch: RAG_CONTRACT_DATA_FILENAME_RESCUE=0.
+#
+# Not #501 (A3/A5 newest-year lock). This only gets the Contract Data
+# file into the pool for an Accepted Contract Amount ask.
+_ACA_ASK_RE = re.compile(r"(?i)accepted\s+contract\s+amount")
+_CONTRACT_DATA_FILENAME_BONUS = 2.0
+_INCLUDING_VAT_RE = re.compile(r"(?i)including\s+vat|incl\.?\s+vat")
+
+
+def contract_data_filename_rescue_enabled() -> bool:
+    """ON by default — live A2 recall defect. RAG_CONTRACT_DATA_FILENAME_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy."""
+    return (
+        os.getenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", "1") or ""
+    ).strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_for_accepted_contract_amount(query: str) -> bool:
+    """True for a filled Accepted Contract Amount ask, not a definition."""
+    q = query or ""
+    if _DEFINITION_QUESTION_RE.search(q):
+        return False
+    return bool(_ACA_ASK_RE.search(_normalize_retrieval_ws(q)))
+
+
+def filename_looks_like_contract_data(filename: str) -> bool:
+    """True when the upload name is a Contract Data file, not a PSA/CPM."""
+    blob = (filename or "").replace("_", " ")
+    return bool(re.search(r"(?i)contract\s+data", blob))
+
+
+def contract_data_chunk_states_aca(filename: str, text: str, query: str) -> bool:
+    """True when a Contract Data file's chunk states the asked ACA figure.
+
+    Scanned Particular Conditions split the label across lines
+    (``Accepted\\nContract\\nAmount (including VAT)``). Whitespace is
+    collapsed before the label test. A money amount must still be visible.
+    """
+    if not filename_looks_like_contract_data(filename):
+        return False
+    blob = _normalize_retrieval_ws(text).lower()
+    if "accepted contract amount" not in blob:
+        return False
+    if not _CD_MONETARY_VALUE_RE.search(text or ""):
+        return False
+    if _INCLUDING_VAT_RE.search(query or "") and not _INCLUDING_VAT_RE.search(blob):
+        return False
+    return True
+
+
+def _apply_contract_data_filename_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: lift Contract Data files on an Accepted Contract Amount ask."""
+    if not contract_data_filename_rescue_enabled():
+        return
+    if not query_asks_for_accepted_contract_amount(query):
+        return
+    for i, (score, chunk) in enumerate(scored):
+        name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+        if not filename_looks_like_contract_data(name):
+            continue
+        boosted = score + _CONTRACT_DATA_FILENAME_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_contract_data_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> Dict[str, str]:
+    """Pull chunks from filename-matched Contract Data files into ``fused``."""
+    names: Dict[str, str] = {}
+    if not contract_data_filename_rescue_enabled():
+        return names
+    if not query_asks_for_accepted_contract_amount(query):
+        return names
+    try:
+        from app.core.projects import documents_matching_title_phrase
+    except Exception:  # noqa: BLE001
+        logger.warning("contract-data rescue: projects import failed", exc_info=True)
+        return names
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return names
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+    for pid in pids:
+        try:
+            matches = documents_matching_title_phrase(pid, "contract data")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("contract-data rescue listing for %s failed: %s", pid, exc)
+            continue
+        if not matches:
+            continue
+        for doc in matches:
+            names[doc["id"]] = doc.get("original_name") or ""
+        try:
+            hits = fetch(pid, [d["id"] for d in matches], k_per_doc=20)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("contract-data rescue fetch for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits:
+            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
+            if chunk.chunk_id in fused:
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            recovered += 1
+    if recovered:
+        logger.info("contract-data rescue recovered %d chunk(s) for an ACA ask", recovered)
     return names
 
 
@@ -1925,14 +2213,23 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     fused_lex: Dict[str, Tuple] = {
         c.chunk_id: (c, c.score or 0.0, 0.0) for c in candidates
     }
+    extra_lex_pids = _general_knowledge_project_ids()
     filename_names = _rescue_filename_matched_docs(
         query, project_id, fused_lex, store,
-        extra_pids=_general_knowledge_project_ids(),
+        extra_pids=extra_lex_pids,
     )
     filename_names.update(_rescue_spec_title_docs(
         query, project_id, fused_lex, store,
-        extra_pids=_general_knowledge_project_ids(),
+        extra_pids=extra_lex_pids,
     ))
+    filename_names.update(_rescue_contract_data_docs(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    ))
+    _rescue_spec_identity_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
     if len(fused_lex) > len(candidates):
         seen = {c.chunk_id for c in candidates}
         for chunk, _sem, _b in fused_lex.values():
@@ -1949,6 +2246,8 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     _apply_filename_overlap_boost(query, scored_lex, name_by_id)
     _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
+    _apply_spec_identity_text_boost(query, scored_lex)
+    _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
     candidates = [chunk for _s, chunk in scored_lex]
 
     # Stable sort keeps the active project ahead of GK on equal scores.
@@ -2407,6 +2706,20 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     ))
+    filename_names.update(_rescue_contract_data_docs(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    ))
+    _rescue_spec_identity_chunks(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    )
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
@@ -2525,6 +2838,8 @@ def retrieve_with_filter(
 
     _apply_filename_overlap_boost(query, scored, name_by_id)
     _apply_spec_title_filename_boost(query, scored, name_by_id)
+    _apply_spec_identity_text_boost(query, scored)
+    _apply_contract_data_filename_boost(query, scored, name_by_id)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
