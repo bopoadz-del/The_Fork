@@ -5474,6 +5474,11 @@ _OPENROUTER_AFFORD_MAX_TOKENS_RE = re.compile(
     r"can only afford (\d+)",
     re.IGNORECASE,
 )
+_OPENROUTER_PROMPT_LIMIT_RE = re.compile(
+    r"prompt tokens limit exceeded:\s*(\d+)\s*>\s*(\d+)",
+    re.IGNORECASE,
+)
+_OPENROUTER_429_MAX_RETRIES = 2
 
 
 def _llm_http_timeout() -> float:
@@ -5859,17 +5864,51 @@ def _openrouter_402_is_in_flight(body: str) -> bool:
     return "in_flight_budget_exhausted" in text or "in_flight" in text
 
 
+def _parse_prompt_token_limit(body: str) -> tuple[int, int] | None:
+    """Parse live ``Prompt tokens limit exceeded: HAVE > CAP``."""
+    match = _OPENROUTER_PROMPT_LIMIT_RE.search(body or "")
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
 def _openrouter_402_should_retry(body: str) -> bool:
     """True for the free-tier 402s a same-provider retry can recover.
 
     ``in_flight_budget_exhausted`` is transient (another request still
     reserved). ``can only afford N`` is fixed by lowering ``max_tokens``.
+    ``Prompt tokens limit exceeded`` is fixed by compacting to the stated
+    cap (proactive ceiling can still miss when remaining credit drops).
     A bare 'insufficient credits' 402 is not retried.
     """
     return (
         _openrouter_402_is_in_flight(body)
         or _openrouter_402_afford_max_tokens(body) is not None
+        or _parse_prompt_token_limit(body) is not None
     )
+
+
+def _http_status_is_retryable(status: int) -> bool:
+    """Statuses ``llm_client.complete`` may hop to ``LLM_FALLBACK_PROVIDER``.
+
+    Includes 402 so an OpenRouter credit 402 does not silently kill
+    orchestrator intent routing. ``Agent._call_llm`` keeps its own
+    same-hop 402 policy and still refuses to burn Groq on a generic 402.
+    """
+    return status in (402, 408, 413, 429) or status >= 500
+
+
+def _provider_retry_delay_seconds(resp: Any, attempt: int) -> float:
+    """Backoff for OpenRouter 429. Honors ``Retry-After`` when present."""
+    headers = getattr(resp, "headers", None) or {}
+    raw = ""
+    if hasattr(headers, "get"):
+        raw = headers.get("retry-after") or headers.get("Retry-After") or ""
+    try:
+        delay = float(raw)
+    except (TypeError, ValueError):
+        delay = float(attempt)
+    return min(8.0, max(0.4, delay))
 
 
 def _compact_messages_for_openrouter(
@@ -9356,6 +9395,7 @@ class Agent:
                 )
                 groq_413_retried = False
                 openrouter_402_retries = 0
+                openrouter_429_retries = 0
                 while True:
                     async with httpx.AsyncClient(timeout=attempt_timeout) as client:
                         r = await client.post(
@@ -9396,6 +9436,20 @@ class Agent:
                         if afford is not None:
                             current = int(payload.get("max_tokens") or afford)
                             payload["max_tokens"] = max(1, min(current, afford))
+                        limit = _parse_prompt_token_limit(r.text)
+                        if limit:
+                            _have, cap = limit
+                            payload["messages"] = _compact_messages_for_openrouter(
+                                payload.get("messages") or messages,
+                                token_ceiling=cap,
+                            )
+                            _LOG.warning(
+                                "llm: openrouter HTTP 402 prompt-limit "
+                                "%s>%s — compacting to cap (retry %s/%s)",
+                                _have, cap,
+                                openrouter_402_retries,
+                                _OPENROUTER_402_MAX_RETRIES,
+                            )
                         _LOG.warning(
                             "llm: openrouter HTTP 402 — retry %s/%s "
                             "(afford=%s in_flight=%s max_tokens=%s)",
@@ -9406,6 +9460,22 @@ class Agent:
                             payload.get("max_tokens"),
                         )
                         await asyncio.sleep(0.4 * openrouter_402_retries)
+                        continue
+                    if (
+                        r.status_code == 429
+                        and a_cfg.get("provider") == "openrouter"
+                        and openrouter_429_retries < _OPENROUTER_429_MAX_RETRIES
+                    ):
+                        openrouter_429_retries += 1
+                        delay = _provider_retry_delay_seconds(
+                            r, openrouter_429_retries,
+                        )
+                        _LOG.warning(
+                            "llm: openrouter HTTP 429 — retrying in %.1fs "
+                            "(attempt %s)",
+                            delay, openrouter_429_retries,
+                        )
+                        await asyncio.sleep(delay)
                         continue
                     break
             except httpx.TimeoutException:
@@ -9460,7 +9530,22 @@ class Agent:
                         "swallowed %s in _call_llm() — continuing",
                         "(json.JSONDecodeError, KeyError, TypeError)", exc_info=True,
                     )
-                last_error = {"status": "error", "error": f"{a_cfg['provider']} HTTP {r.status_code}: {body[:300]}"}
+                if r.status_code == 402:
+                    last_error = {
+                        "status": "error",
+                        "error": (
+                            f"{a_cfg['provider']} HTTP 402: insufficient "
+                            f"credit — {body[:300]}"
+                        ),
+                    }
+                else:
+                    last_error = {
+                        "status": "error",
+                        "error": (
+                            f"{a_cfg['provider']} HTTP {r.status_code}: "
+                            f"{body[:300]}"
+                        ),
+                    }
                 shape_400 = r.status_code == 400 and _http_400_is_retryable(body)
                 if shape_400:
                     skip_providers.add(str(a_cfg.get("provider") or ""))

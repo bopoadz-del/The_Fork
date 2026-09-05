@@ -229,14 +229,27 @@ function msgId(): string {
  */
 function friendlyErrorMessage(raw: string): string {
   const r = raw.toLowerCase()
+  // OpenRouter in-flight 402 is transient — not a dead account.
+  if (r.includes('in-flight') || r.includes('in_flight_budget')) {
+    return 'The language model is busy with other requests. Please wait a moment and try again.'
+  }
   // Billing 429s include both "429" and "insufficient_quota" / "balance".
+  // OpenRouter 402 says "can only afford" / "requires more credits" / "prompt
+  // tokens limit" — none of those contain "insufficient", so the old matcher
+  // fell through to the generic Wave1 banner.
   // Match credit failures FIRST so they are not mislabeled as rate-limit.
   if (
+    r.includes('http 402') ||
+    r.includes('payment required') ||
+    r.includes('can only afford') ||
+    r.includes('fewer max_tokens') ||
+    r.includes('prompt tokens limit') ||
+    (r.includes('requires more') && r.includes('credit')) ||
     (r.includes('insufficient') &&
       (r.includes('balance') || r.includes('quota') || r.includes('credit') || r.includes('billing'))) ||
     (r.includes('org') && (r.includes('suspend') || r.includes('disabled')))
   ) {
-    return 'The language-model account is out of credit or suspended. Top up Kimi/Moonshot (or Groq) and try again.'
+    return 'The language-model account cannot reserve enough tokens for this request. Wait a moment and try again, or top up the provider (OpenRouter / Kimi / Groq).'
   }
   if (r.includes('offline mode') || r.includes('no cloud or local language model')) {
     return 'Chat is running in offline mode. No language model is reachable right now.'

@@ -29,12 +29,14 @@ async def complete(
     """Return the assistant message text for a tool-less completion.
 
     Mirrors ``Agent._call_llm``'s provider fallback: on a RETRYABLE failure
-    from the primary (408/413/429/5xx or a network/timeout error) it retries
+    from the primary (402/408/413/429/5xx or a network/timeout error) it retries
     once against ``LLM_FALLBACK_PROVIDER`` so the orchestrator's intent routing
-    survives a Groq rate-limit instead of silently losing smart routing for the
-    turn. Auth/validation errors (other 4xx) are not retried.
+    survives a Groq rate-limit or an OpenRouter 402 instead of silently losing
+    smart routing for the turn. Auth/validation errors (other 4xx) are not
+    retried. The retryable-status set is ``runtime._http_status_is_retryable``.
     """
     from app.agents.runtime import (
+        _http_status_is_retryable,
         _llm_config,
         _llm_fallback_config,
         _llm_http_timeout,
@@ -49,9 +51,6 @@ async def complete(
     if fallback_cfg:
         fb_key = os.getenv(fallback_cfg["env_key"]) if fallback_cfg["env_key"] else ""
         attempts.append((fallback_cfg, fb_key, fallback_cfg["default_model"]))
-
-    def _retryable(status: int) -> bool:
-        return status in (408, 413, 429) or status >= 500
 
     last_exc: Optional[Exception] = None
     for idx, (a_cfg, a_key, a_model) in enumerate(attempts):
@@ -80,7 +79,7 @@ async def complete(
                     exc = httpx.HTTPStatusError(
                         f"{a_cfg['provider']} HTTP {r.status_code}", request=r.request, response=r
                     )
-                    if _retryable(r.status_code) and not is_last:
+                    if _http_status_is_retryable(r.status_code) and not is_last:
                         last_exc = exc
                         continue
                     raise exc

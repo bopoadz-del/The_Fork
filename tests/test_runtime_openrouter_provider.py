@@ -10,12 +10,15 @@ When ``LLM_PROVIDER=openrouter`` is set, the runtime:
 - truncates tool / fetch payloads and compacts the prompt under
   ``OPENROUTER_PROMPT_TOKEN_CEILING`` (default 8000, 3 chars/token)
 - retries HTTP 402 ``in_flight`` / ``can only afford N`` on the same hop
+- retries HTTP 402 ``Prompt tokens limit exceeded`` by compacting to the cap
+- retries HTTP 429 on the same hop (honors ``Retry-After``)
 
 No live OpenRouter calls. Keys in these tests are placeholders.
 """
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from app.agents.runtime import (
     OPENROUTER_API_URL,
@@ -31,10 +34,13 @@ from app.agents.runtime import (
     _effective_fetch_document_max_chars,
     _effective_tool_result_max_chars,
     _llm_config,
+    _http_status_is_retryable,
     _openrouter_402_afford_max_tokens,
     _openrouter_402_is_in_flight,
     _openrouter_402_should_retry,
+    _parse_prompt_token_limit,
     _provider_max_tokens,
+    _provider_retry_delay_seconds,
     _resolve_openrouter_model,
     _tool_result_content,
 )
@@ -224,3 +230,39 @@ def test_openrouter_402_afford_fewer_is_parsed():
 def test_openrouter_402_generic_credits_is_not_retried():
     assert not _openrouter_402_should_retry("Insufficient credits")
     assert _openrouter_402_afford_max_tokens("bad") is None
+
+
+def test_openrouter_402_prompt_limit_is_retryable():
+    live = "Prompt tokens limit exceeded: 18398 > 10335."
+    assert _parse_prompt_token_limit(live) == (18398, 10335)
+    assert _openrouter_402_should_retry(live)
+    assert not _openrouter_402_should_retry("Insufficient credits")
+
+
+def test_http_status_is_retryable_includes_openrouter_402():
+    assert _http_status_is_retryable(402)
+    assert not _http_status_is_retryable(400)
+
+
+def test_provider_retry_delay_honors_retry_after():
+    class _H:
+        headers = {"Retry-After": "2.5"}
+
+    assert _provider_retry_delay_seconds(_H(), 1) == 2.5
+    assert 0.4 <= _provider_retry_delay_seconds(object(), 1) <= 8.0
+
+
+def test_frontend_maps_live_openrouter_402_wording():
+    """The Wave1 banner was the fallback: live 402 bodies never said
+    'insufficient'. The workspace mapper must match the live strings."""
+    src = Path("frontend/src/pages/ProjectWorkspace.tsx").read_text(
+        encoding="utf-8"
+    )
+    for needle in (
+        "can only afford",
+        "http 402",
+        "in-flight",
+        "prompt tokens limit",
+        "fewer max_tokens",
+    ):
+        assert needle in src.lower(), f"friendlyErrorMessage lost {needle!r}"
