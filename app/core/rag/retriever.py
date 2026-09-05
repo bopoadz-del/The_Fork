@@ -437,10 +437,7 @@ def elect_answer_bearing_contract(
     # Built here, not at module scope: both halves are defined further down.
     kinds = [
         (query_asks_for_contract_particulars,
-         lambda _name, text: (
-             is_contract_data_particulars_row(text)
-             and particulars_row_answers_asked_label(query, text)
-         )),
+         lambda _name, text: chunk_answers_asked_particular(query, text)),
         (query_asks_for_boq_scope,
          lambda name, _text: document_is_a_bill_of_quantities(name)),
     ]
@@ -491,28 +488,61 @@ class _ContractScope:
             not self.named
             and query_asks_for_contract_particulars(self.query)
         )
-        if not self.named and ranked_docs is not None:
-            self.winning = elect_answer_bearing_contract(self.query, ranked_docs)
+        # Live 3a5fce5 Wave-1: year-lock elects DD-2023-118 (A3 PASS) but
+        # A5's 0.1%-per-day row and A9's Engineer appointment live in a
+        # different / unprefixed chunk. Once those answers are in the
+        # pool, Client/Consultant PSA and same-year Sub-Clause 8.8 / cap
+        # rows must not occupy the top-k. Kill-switches restore the
+        # prefix-only fence.
+        self._delay_rate_in_pool = False
+        self._engineer_identity_in_pool = False
+        docs: Optional[List[Tuple[str, str]]] = (
+            list(ranked_docs) if ranked_docs is not None else None
+        )
+        if docs is not None:
+            if (
+                delay_damages_rate_rescue_enabled()
+                and query_asks_for_delay_damages_rate(self.query)
+            ):
+                self._delay_rate_in_pool = any(
+                    chunk_states_delay_damages_rate(text) for _n, text in docs
+                )
+            if (
+                engineer_identity_rescue_enabled()
+                and query_asks_who_the_engineer_is(self.query)
+            ):
+                self._engineer_identity_in_pool = any(
+                    chunk_states_engineer_identity(text) for _n, text in docs
+                )
+        if not self.named and docs is not None:
+            self.winning = elect_answer_bearing_contract(self.query, docs)
 
     def allow(self, filename: str, chunk_text: str = "") -> bool:
+        if self._delay_rate_in_pool:
+            if not chunk_states_delay_damages_rate(chunk_text):
+                return False
+        if self._engineer_identity_in_pool:
+            if not chunk_states_engineer_identity(chunk_text):
+                return False
         if self.named:
             return filename_matches_named_contracts(
                 filename, self.named, chunk_text=chunk_text,
             )
         ids = extract_contract_doc_ids(filename or "")
         if not ids:
+            # No PREFIX-YEAR-SEQ in the filename. After year-lock that
+            # used to let Long Form PSA Client/Consultant parties occupy
+            # every A9 slot. When an Engineer appointment is in the pool
+            # the identity fence above already dropped them.
             return True
         if self.winning is None:
             # A particulars ask whose election declined must not freeze the
             # pool on a Volume 4 schedule duration or a GC pointer. Only a
             # matching-label filled row may lock arrival order (live A3).
+            # Scanned Contract Data (no index-time prefix) still counts
+            # when it states the asked rate / Engineer (live A5/A9).
             if self._particulars:
-                if (
-                    is_contract_data_particulars_row(chunk_text)
-                    and particulars_row_answers_asked_label(
-                        self.query, chunk_text,
-                    )
-                ):
+                if chunk_answers_asked_particular(self.query, chunk_text):
                     self.winning = ids[0]
                     return True
                 return False
@@ -1558,6 +1588,283 @@ def particulars_row_answers_asked_label(query: str, text: str) -> bool:
     return _cd_label_bonus(_significant_terms(query), text) > 0.0
 
 
+def _collapse_retrieval_ws(text: str) -> str:
+    """Collapse OCR / table newlines so a scanned label still matches."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _env_flag_on(name: str, default: str = "1") -> bool:
+    return (os.getenv(name, default) or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def delay_damages_rate_rescue_enabled() -> bool:
+    """ON by default — live A5 recall after the #501 year-lock.
+
+    RAG_DELAY_DAMAGES_RATE_RESCUE=0 restores prefix-only ranking.
+    """
+    return _env_flag_on("RAG_DELAY_DAMAGES_RATE_RESCUE")
+
+
+def engineer_identity_rescue_enabled() -> bool:
+    """ON by default — live A9 Engineer appointment vs PSA parties.
+
+    RAG_ENGINEER_IDENTITY_RESCUE=0 restores prefix-only ranking.
+    """
+    return _env_flag_on("RAG_ENGINEER_IDENTITY_RESCUE")
+
+
+def query_asks_for_delay_damages_rate(query: str) -> bool:
+    """True for a whole-works Delay Damages *rate* ask (live A5).
+
+    E1 ("calculate … in SAR") stays on the monetary-base reservation.
+    An ask that names the maximum / cap is not this class.
+    """
+    q = query or ""
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if query_needs_a_monetary_base(q):
+        return False
+    if not re.search(r"(?i)(?:delay|liquidated)\s+damages", q):
+        return False
+    if re.search(r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b", q):
+        return False
+    return True
+
+
+def query_asks_who_the_engineer_is(query: str) -> bool:
+    """True for A9 ("who is the Engineer"), not the Representative (D1)."""
+    q = query or ""
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if not _CD_WHO_IS_RE.search(q):
+        return False
+    if re.search(r"(?i)engineer'?s\s+representative", q):
+        return False
+    return bool(re.search(r"(?i)\bengineer\b", q))
+
+
+_DELAY_RATE_KEY_RE = re.compile(r"(?i)(?:delay|liquidated)\s+damages")
+_DELAY_CAP_KEY_RE = re.compile(
+    r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b",
+)
+_DELAY_RATE_VALUE_RE = re.compile(
+    r"(?i)\d+(?:\.\d+)?\s*%[^\n]{0,80}\bper\b",
+)
+_DELAY_RATE_POINTER_RE = re.compile(
+    r"(?i)at\s+the\s+rate\s+stated\s+in\s+the\s+contract\s+data",
+)
+_ENGINEER_GLOSSARY_RE = re.compile(
+    r'(?i)"?engineer"?\s+means\s+the\s+person',
+)
+_ENGINEER_REP_RE = re.compile(r"(?i)engineer'?s\s+representative")
+_ENGINEER_KEY_RE = re.compile(r"(?i)\bengineer\b")
+_NOT_A_PARTY_NAME_RE = re.compile(
+    r"(?i)^(?:the\s+)?(?:person\s+appointed|consultant|client|"
+    r"employer|contractor|engineer)\s*$",
+)
+_PARTY_FIRM_RE = re.compile(
+    r"(?i)\b(?:limited|ltd\.?|llc|llp|gmbh|plc|inc\.?)\b",
+)
+_SCANNED_ENGINEER_LINE_RE = re.compile(
+    r"(?im)^[ \t]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?\s*)?"
+    r"engineer\b(?!\s*'?s\s+representative)[ \t]*[:|–-]?\s*(.*)$",
+)
+
+
+def _looks_like_appointed_party(val: str) -> bool:
+    """True when a particulars value is a firm / person, not a role word."""
+    name = re.sub(r"\s+", " ", (val or "")).strip(" \t.:;,-")
+    if len(name) < 4 or _NOT_A_PARTY_NAME_RE.match(name):
+        return False
+    if _PARTY_FIRM_RE.search(name):
+        return True
+    letters = re.sub(r"[^A-Za-z]", "", name)
+    return len(letters) >= 4 and any(ch.isupper() for ch in name)
+
+
+def _delay_damages_key_is_rate(key: str) -> bool:
+    if not _DELAY_RATE_KEY_RE.search(key or ""):
+        return False
+    return not _DELAY_CAP_KEY_RE.search(key or "")
+
+
+def chunk_states_delay_damages_rate(text: str) -> bool:
+    """True when the chunk states the daily Delay Damages *rate*.
+
+    A cap row (``Maximum amount of delay damages: 10%…``) and a General
+    Conditions pointer (``at the rate stated in the Contract Data``)
+    both contain the label and used to satisfy the unnamed election /
+    reservation. Live A5 after #501 then cited 118 without the 0.1%
+    per-calendar-day figure. The rate lives in a different chunk.
+    """
+    t = text or ""
+    if not t or _DELAY_RATE_POINTER_RE.search(t):
+        return False
+    for key, val in filled_particulars_rows(t):
+        if _delay_damages_key_is_rate(key) and _DELAY_RATE_VALUE_RE.search(val):
+            return True
+    blob = _collapse_retrieval_ws(t)
+    if _DELAY_RATE_POINTER_RE.search(blob):
+        return False
+    if _DELAY_CAP_KEY_RE.search(blob) and not _DELAY_RATE_VALUE_RE.search(blob):
+        return False
+    if not _DELAY_RATE_KEY_RE.search(blob):
+        return False
+    return bool(_DELAY_RATE_VALUE_RE.search(blob))
+
+
+def chunk_states_engineer_identity(text: str) -> bool:
+    """True when the chunk *appoints* the Engineer (live A9).
+
+    A glossary ``"Engineer" means the person appointed…`` and a PSA
+    Client/Consultant party list are lookalikes. The appointment is a
+    filled ``1.3.1 (b) Engineer`` row (or a scanned line with a firm
+    name). Engineer's Representative is D1 / corpus-blocked — do not
+    invent a signatory.
+    """
+    t = text or ""
+    if not t:
+        return False
+    for key, val in filled_particulars_rows(t):
+        if _ENGINEER_REP_RE.search(key):
+            continue
+        if _ENGINEER_KEY_RE.search(key) and _looks_like_appointed_party(val):
+            return True
+    if _ENGINEER_GLOSSARY_RE.search(t) and not filled_particulars_rows(t):
+        return False
+    lines = (t or "").splitlines()
+    for i, line in enumerate(lines):
+        m = _SCANNED_ENGINEER_LINE_RE.match(line)
+        if not m:
+            continue
+        rest = (m.group(1) or "").strip()
+        nxt = ""
+        if i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+        for cand in (rest, nxt, f"{rest} {nxt}".strip()):
+            if _looks_like_appointed_party(cand):
+                return True
+    return False
+
+
+def chunk_answers_asked_particular(query: str, text: str) -> bool:
+    """Election / reservation predicate for a particulars-shaped ask.
+
+    Prefixed filled rows keep today's behaviour (A3/A6/A2 year-lock).
+    After #501, A5/A9 also accept an unprefixed scanned rate /
+    Engineer appointment so the year-lock fence cannot drop the
+    chunk that actually answers.
+    """
+    if delay_damages_rate_rescue_enabled() and query_asks_for_delay_damages_rate(query):
+        if chunk_states_delay_damages_rate(text):
+            return True
+    if engineer_identity_rescue_enabled() and query_asks_who_the_engineer_is(query):
+        if chunk_states_engineer_identity(text):
+            return True
+    return (
+        is_contract_data_particulars_row(text)
+        and particulars_row_answers_asked_label(query, text)
+    )
+
+
+_DELAY_RATE_RESCUE_PHRASES = (
+    "delay damages per calendar day",
+    "delay damages per day",
+    "delay damages contract price",
+)
+_ENGINEER_IDENTITY_RESCUE_PHRASES = (
+    "1.3.1 engineer",
+    "engineer limited",
+)
+_ASKED_PARTICULAR_VALUE_BONUS = 2.0
+
+
+def _rescue_chunks_matching(
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    phrases: Tuple[str, ...],
+    keep,
+    *,
+    label: str,
+) -> int:
+    """Pull lexical hits that pass ``keep`` into ``fused``. Project-only.
+
+    General-knowledge notes (illustrative 0.05%) must not be rescued.
+    Failures never raise.
+    """
+    fetch = getattr(store, "identifier_search", None)
+    if not callable(fetch) or not phrases:
+        return 0
+    recovered = 0
+    try:
+        hits = fetch(project_id, list(phrases), k=20)
+    except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+        logger.warning("%s rescue for %s failed: %s", label, project_id, exc)
+        return 0
+    for chunk in hits:
+        if not keep(chunk.text or ""):
+            continue
+        if chunk.chunk_id in fused:
+            continue
+        fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
+        recovered += 1
+    if recovered:
+        logger.info("%s rescue recovered %d chunk(s)", label, recovered)
+    return recovered
+
+
+def _rescue_asked_particular_value_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+) -> int:
+    """Out-of-pool fetch for the A5 rate and A9 Engineer appointment."""
+    recovered = 0
+    if delay_damages_rate_rescue_enabled() and query_asks_for_delay_damages_rate(query):
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
+            chunk_states_delay_damages_rate, label="delay-damages-rate",
+        )
+    if engineer_identity_rescue_enabled() and query_asks_who_the_engineer_is(query):
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _ENGINEER_IDENTITY_RESCUE_PHRASES,
+            chunk_states_engineer_identity, label="engineer-identity",
+        )
+    return recovered
+
+
+def _apply_asked_particular_value_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift the rate / Engineer appointment over lookalikes."""
+    want_rate = (
+        delay_damages_rate_rescue_enabled()
+        and query_asks_for_delay_damages_rate(query)
+    )
+    want_eng = (
+        engineer_identity_rescue_enabled()
+        and query_asks_who_the_engineer_is(query)
+    )
+    if not want_rate and not want_eng:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        text = chunk.text or ""
+        hit = (
+            (want_rate and chunk_states_delay_damages_rate(text))
+            or (want_eng and chunk_states_engineer_identity(text))
+        )
+        if not hit:
+            continue
+        boosted = score + _ASKED_PARTICULAR_VALUE_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
 def _cd_particulars_boost_enabled() -> bool:
     return (os.getenv("RAG_CD_PARTICULARS_BOOST") or "").strip().lower() not in (
         "0", "false", "no", "off",
@@ -1707,20 +2014,30 @@ def reserve_matching_particulars_row(
     """
     if not kept or not query_asks_for_contract_particulars(query):
         return False
-    if any(
-        is_contract_data_particulars_row(c.text or "")
-        and particulars_row_answers_asked_label(query, c.text or "")
-        for c in kept
-    ):
-        return False
+    # A cap row / mixed window used to count as "already answered" for
+    # A5, so the 0.1%-per-day chunk never replaced same-year 8.8. The
+    # asked *value* (rate / Engineer) must be in kept, not merely the
+    # label family.
+    if any(chunk_answers_asked_particular(query, c.text or "") for c in kept):
+        if not (
+            delay_damages_rate_rescue_enabled()
+            and query_asks_for_delay_damages_rate(query)
+            and not any(
+                chunk_states_delay_damages_rate(c.text or "") for c in kept
+            )
+        ):
+            return False
     present = {c.chunk_id for c in kept}
     for chunk in ranked:
         if chunk.chunk_id in present:
             continue
         text = chunk.text or ""
-        if not (
-            is_contract_data_particulars_row(text)
-            and particulars_row_answers_asked_label(query, text)
+        if not chunk_answers_asked_particular(query, text):
+            continue
+        if (
+            delay_damages_rate_rescue_enabled()
+            and query_asks_for_delay_damages_rate(query)
+            and not chunk_states_delay_damages_rate(text)
         ):
             continue
         if allow is not None and not allow(chunk):
@@ -1933,6 +2250,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=_general_knowledge_project_ids(),
     ))
+    _rescue_asked_particular_value_chunks(
+        query, project_id, fused_lex, store,
+    )
     if len(fused_lex) > len(candidates):
         seen = {c.chunk_id for c in candidates}
         for chunk, _sem, _b in fused_lex.values():
@@ -1949,6 +2269,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     _apply_filename_overlap_boost(query, scored_lex, name_by_id)
     _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
+    _apply_asked_particular_value_boost(query, scored_lex)
     candidates = [chunk for _s, chunk in scored_lex]
 
     # Stable sort keeps the active project ahead of GK on equal scores.
@@ -2407,6 +2728,11 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     ))
+    # A5/A9: the year-lock may already have the right PREFIX-YEAR-SEQ
+    # (live A3) while the rate / Engineer appointment sit in a later
+    # unprefixed chunk cosine never fetched. Rescue is project-only so
+    # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
+    _rescue_asked_particular_value_chunks(query, project_id, fused, store)
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
@@ -2525,6 +2851,7 @@ def retrieve_with_filter(
 
     _apply_filename_overlap_boost(query, scored, name_by_id)
     _apply_spec_title_filename_boost(query, scored, name_by_id)
+    _apply_asked_particular_value_boost(query, scored)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
