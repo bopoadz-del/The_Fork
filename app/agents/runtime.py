@@ -70,6 +70,56 @@ def _is_generative_request(text: str) -> bool:
     return bool(_GENERATIVE_VERB_RE.search(text or ""))
 
 
+# RAG fold labels. `_apply_rag_context` appends one of these after the
+# retrieved excerpts; detectors that read `messages[-1]` after the fold
+# must recover the operator question or they classify the corpus instead.
+_RAG_FOLD_END = "----- END OF REFERENCE CONTEXT -----"
+_RAG_FOLD_QUESTION_MARKERS = (
+    "\n\nDURATION OVERRIDE REQUEST: ",
+    "\n\nCALCULATION REQUEST: ",
+    "\n\nMESSAGE: ",
+    "\n\nQUESTION: ",
+    "\n\nREQUEST: ",
+)
+
+
+def _unwrap_rag_folded_operator_text(text: str) -> str:
+    """Return the operator question when ``text`` is a RAG-folded user turn.
+
+    After `_apply_rag_context` the last user bubble is
+    ``<excerpts> + directive + question``. Duration-override / deliverable
+    detectors that then scan that bubble would parse Contract Data prose
+    (or miss 're-run' in a 6k excerpt) and skip ``generate_wbs``.
+    """
+    raw = text or ""
+    if _RAG_FOLD_END not in raw:
+        return raw
+    for marker in _RAG_FOLD_QUESTION_MARKERS:
+        idx = raw.rfind(marker)
+        if idx == -1:
+            continue
+        recovered = raw[idx + len(marker):]
+        if recovered.strip():
+            return recovered
+    return raw
+
+
+def _message_is_duration_override_rerun(
+    text: str,
+    history: list | None = None,
+) -> bool:
+    """True when this turn must re-run ``generate_wbs`` with a user duration."""
+    try:
+        from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
+        return bool(message_wants_wbs_duration_rerun(text or "", history))
+    except Exception:  # noqa: BLE001
+        _LOG.debug(
+            "duration-override intent check skipped",
+            exc_info=True,
+        )
+        return False
+
+
 # ── Capability / self-introspection questions ────────────────────────────────
 # Questions ABOUT the agent ("what tools do you have", "what can you do", "what
 # documents can you access") must be answered from the agent's REAL tool roster
@@ -201,6 +251,10 @@ def _apply_rag_context(
         return False
     if messages and messages[-1].get("role") == "user":
         question = messages[-1].get("content", "")
+        history_for_override = [
+            m for m in messages[:-1]
+            if m.get("role") in ("user", "assistant")
+        ]
         if _looks_like_self_contained_calculation(question):
             # ARITHMETIC, not a lookup. Every input is IN the question, so the
             # strict-grounding directive below ("answer using ONLY the
@@ -239,6 +293,30 @@ def _apply_rag_context(
                 "where it genuinely applies — but never invent "
                 "project-specific facts (names, drawing or clause references) "
                 "that are not in the context.\n\nCALCULATION REQUEST: "
+            )
+        elif _message_is_duration_override_rerun(question, history_for_override):
+            # OLD-pack F2 on a fresh Master Corpus thread, verbatim:
+            #   "Answer only from the client project documents. Use 45 days
+            #    for the tree-removal activity and re-run."
+            # The override parsed, but `_is_generative_request` does not see
+            # "use … re-run" as generate/create/build, so the lookup clamp
+            # told the model to answer ONLY from excerpts. Excerpts have no
+            # activity durations — the model offered to fetch a WBS instead
+            # of applying the override. Same class as the calculation
+            # carve-out: the model was obeying. The user's N days are not
+            # supposed to be in the corpus.
+            directive = (
+                "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+                "The request below is a DURATION OVERRIDE AND RE-RUN. The "
+                "user supplied activity durations IN THE REQUEST ITSELF. "
+                "Apply them via generate_wbs (or the already pre-dispatched "
+                "result) and report the new durations and recomputed "
+                "total/critical path. Do NOT refuse because activity "
+                "durations are absent from the reference context — they are "
+                "not supposed to be there; they came from the user. Do not "
+                "invent other schedule data or activity names that are not "
+                "in the tool result. Treat the context as background only."
+                "\n\nDURATION OVERRIDE REQUEST: "
             )
         elif _is_generative_request(question):
             directive = (
@@ -950,7 +1028,7 @@ def _messages_user_and_history(messages: list) -> tuple[str, list]:
             content = str(m.get("content") or "")
             if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
                 continue
-            user_msg = content
+            user_msg = _unwrap_rag_folded_operator_text(content)
     history = prior[:-1] if prior else []
     return user_msg, history
 
@@ -968,6 +1046,7 @@ def _operator_user_text(messages: list) -> str:
         content = str(m.get("content") or "")
         if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
             continue
+        content = _unwrap_rag_folded_operator_text(content)
         if content.strip():
             parts.append(content)
     return "\n".join(parts)
@@ -1001,7 +1080,8 @@ async def _predispatch_wbs_duration_override(
         from app.dependencies import get_block_instance
         container = get_block_instance("construction")
         hist_text = "\n".join(
-            str(m.get("content") or "") for m in history if m.get("role") == "user"
+            _unwrap_rag_folded_operator_text(str(m.get("content") or ""))
+            for m in history if m.get("role") == "user"
         )
         brief = hist_text.strip() or user_msg
         params = {
@@ -3090,7 +3170,7 @@ def _user_intent_requires_tool(messages: list[dict[str, Any]]) -> bool:
         # Iter > 0: assistant + tool turns have been appended; let the
         # model decide how to proceed (will be summary, not another tool).
         return False
-    raw = tail.get("content") or ""
+    raw = _unwrap_rag_folded_operator_text(tail.get("content") or "")
     if message_is_contract_data_lookup(raw):
         return False
     text = raw.lower()
@@ -3319,7 +3399,7 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     tail = messages[-1]
     if tail.get("role") != "user":
         return None
-    text = tail.get("content") or ""
+    text = _unwrap_rag_folded_operator_text(tail.get("content") or "")
     low = text.lower()
     # Contract Data TfC / milestone Q&A must not force primavera_parser or
     # generate_wbs — those questions belong to RAG.
@@ -8811,8 +8891,16 @@ class Agent:
             tool_names = {t.get("function", {}).get("name") for t in tools}
             forced_tool = (
                 _forced_specific_tool(messages, tool_names)
-                if self.name in ("project-assistant", "heavy-reasoning") else None
+                if self.name in (
+                    "project-assistant", "heavy-reasoning", "construction-pm",
+                ) else None
             )
+            # Pinned construction-pm keeps its own discipline for the rest
+            # of the intent map (histogram / look-ahead stay on predispatch).
+            # Duration-override F2 is the one steal that left the hat
+            # answering from RAG excerpts instead of generate_wbs.
+            if self.name == "construction-pm" and forced_tool != "generate_wbs":
+                forced_tool = None
             requires_tool = (
                 self.name == "project-assistant"
                 and _user_intent_requires_tool(messages)
