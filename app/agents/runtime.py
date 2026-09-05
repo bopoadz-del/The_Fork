@@ -4759,6 +4759,61 @@ def _graft_composed_delay_damages_daily(
         return text
 
 
+_GENERIC_ACK_RE = re.compile(
+    r"(?i)i(?:'m| am) ready to help|"
+    r"please let me know what specific|"
+    r"how can i help|"
+    r"what (?:would you like|can i (?:help|do))|"
+    r"i will answer (?:only )?from (?:the )?(?:client )?(?:project )?documents",
+)
+
+
+def _graft_rate_only_item(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """OLD-pack G4: state Rate Only when the retrieved row already says so.
+
+    Live Master Corpus greeted and never named D529.3. Compose nothing —
+    only fire when an excerpt already says Rate Only on the asked item.
+    A fabricated money total is replaced. Kill-switch: RAG_RATE_ONLY_RESCUE=0.
+    """
+    try:
+        from app.core.rag.retriever import (
+            answer_states_rate_only,
+            chunk_states_rate_only_item,
+            extract_asked_cesmm_codes,
+            format_rate_only_line,
+            query_asks_for_boq_item_amount,
+            rate_only_rescue_enabled,
+        )
+        if not rate_only_rescue_enabled():
+            return text
+        user = _latest_user_text(messages)
+        if not query_asks_for_boq_item_amount(user):
+            return text
+        codes = extract_asked_cesmm_codes(user)
+        if not codes:
+            return text
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        if not chunk_states_rate_only_item(rag, codes):
+            return text
+        line = format_rate_only_line(codes, rag)
+        if answer_states_rate_only(text or ""):
+            return text
+        body = (text or "").strip()
+        if not body or _GENERIC_ACK_RE.search(body) or (text or "").strip() == _CG_REFUSAL:
+            return line
+        figs = _cg_money_values(text or "")
+        if figs:
+            return line
+        return f"{line}\n\n{body}"
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception("rate-only graft failed; passing answer through")
+        return text
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -4783,6 +4838,10 @@ def _postprocess_answer(
     # text before the cost gate. A percentage-only excerpt still cannot
     # invent a daily figure; both operands must be in the excerpts.
     text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
+    # OLD-pack G4: state Rate Only when the retrieved BOQ row already
+    # says so. The live FAIL greeted ("I'm ready to help…") and never
+    # named D529.3 / Rate Only. Do not invent a money total.
+    text = _graft_rate_only_item(text, rag_sys_msg, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one

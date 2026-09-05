@@ -126,6 +126,7 @@ def _audit_chunk(c) -> Dict[str, Any]:
 def format_chunks_as_system_message(
     chunks: List[Chunk],
     total_candidates: int,
+    query: str = "",
 ) -> Dict[str, str]:
     """Build the system message that goes into the LLM context."""
     if not chunks:
@@ -215,8 +216,12 @@ def format_chunks_as_system_message(
     # "answer only from the documents" and never named the row. Do not
     # invent contents — only fire when an excerpt already says Not Used.
     from app.core.rag.retriever import (
+        chunk_states_rate_only_item,
         chunk_states_schedule_not_used,
+        extract_asked_cesmm_codes,
         extract_contract_doc_ids,
+        query_asks_for_boq_item_amount,
+        rate_only_rescue_enabled,
     )
     if any(chunk_states_schedule_not_used(c.text or "") for c in chunks):
         header += (
@@ -226,6 +231,27 @@ def format_chunks_as_system_message(
             "and do not describe what such a schedule contains in a standard "
             "form.\n"
         )
+
+    # OLD-pack G4: even on a single-class set, a retrieved Rate Only
+    # row IS the answer. Without this the model restated "answer only
+    # from the documents" / greeted and never named Rate Only. Do not
+    # invent a total — only fire when an excerpt already says Rate Only
+    # on the asked CESMM item.
+    if (
+        query
+        and rate_only_rescue_enabled()
+        and query_asks_for_boq_item_amount(query)
+    ):
+        _ro_codes = extract_asked_cesmm_codes(query)
+        if _ro_codes and any(
+            chunk_states_rate_only_item(c.text or "", _ro_codes) for c in chunks
+        ):
+            header += (
+                "RATE ONLY — an excerpt below states that the asked BOQ "
+                "item is Rate Only. That IS the answer. State Rate Only "
+                "and that no amount exists. Do not invent a money total, "
+                "and do not give a generic acknowledgement.\n"
+            )
 
     cited_contract_ids: List[str] = []
     seen_cids = set()
@@ -529,7 +555,9 @@ def rag_inject(
         return None, audit_rec
 
     kept, total_tokens = apply_token_cap(chunks)
-    sys_msg = format_chunks_as_system_message(kept, total_candidates=len(chunks))
+    sys_msg = format_chunks_as_system_message(
+        kept, total_candidates=len(chunks), query=user_message or "",
+    )
 
     # Recompute against the injected set: the token cap may have dropped the
     # master-corpus chunk, in which case the answer is NOT a fallback answer.
