@@ -55,10 +55,11 @@ def test_assert_noop_under_cloud(monkeypatch):
     assert dp.check_onprem_ready() == []
 
 
-def test_assert_raises_on_cloud_llm_provider(monkeypatch):
+@pytest.mark.parametrize("cloud_provider", ["groq", "kimi", "openrouter"])
+def test_assert_raises_on_cloud_llm_provider(monkeypatch, cloud_provider):
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "onprem")
     _clean_env(monkeypatch)
-    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("LLM_PROVIDER", cloud_provider)
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
     with pytest.raises(RuntimeError, match="cloud provider"):

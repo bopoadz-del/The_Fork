@@ -981,6 +981,79 @@ class VectorStore:
             )
         return out
 
+    def chunks_containing_all(
+        self,
+        project_id: str,
+        needles: List[str],
+        *,
+        k: int = 20,
+    ) -> List[Chunk]:
+        """Chunks whose text contains every ``needle`` (case-insensitive).
+
+        Used by C2 spec-identity rescue: the register line
+        ``…-SPE-012650-1.0 Variation Procedure`` is a short TOC chunk that
+        cosine never ranks, while ``Section 012650 — Variation and
+        Adjustments`` in the same volume floods the semantic pool. Exact
+        substring AND on the needles (``SPE-`` + the title phrase) is the
+        discriminator a CSI section heading cannot fake.
+
+        Needles are sanitised (no LIKE wildcards, min length 3). Empty
+        ``needles`` or a store miss returns ``[]``; failures never raise.
+        """
+        if not project_id or not needles:
+            return []
+        cleaned: List[str] = []
+        seen: Set[str] = set()
+        for raw in needles:
+            tok = " ".join((raw or "").lower().split())
+            if len(tok) < 3 or tok in seen:
+                continue
+            if any(ch in tok for ch in "%_"):
+                continue
+            seen.add(tok)
+            cleaned.append(tok)
+            if len(cleaned) >= 6:
+                break
+        if not cleaned:
+            return []
+        limit = max(1, int(k or 20))
+        params: Dict[str, Any] = {"project_id": project_id, "k": limit}
+        clauses: List[str] = []
+        for i, tok in enumerate(cleaned):
+            clauses.append(f"LOWER(text) LIKE :n{i}")
+            params[f"n{i}"] = f"%{tok}%"
+        sql = text(
+            "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
+            "knowledge_layer, authority "
+            f"FROM {self._table_name} "
+            "WHERE project_id = :project_id "
+            f"AND {' AND '.join(clauses)} "
+            "LIMIT :k"
+        )
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    rows = session.execute(sql, params).all()
+        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
+            logger.warning(
+                "chunks_containing_all failed for project=%s needles=%r: %s",
+                project_id, cleaned, exc,
+            )
+            return []
+        return [
+            Chunk(
+                chunk_id=r.chunk_id,
+                project_id=r.project_id,
+                doc_id=r.doc_id,
+                chunk_index=int(r.chunk_index),
+                text=r.text or "",
+                score=0.0,
+                knowledge_layer=getattr(r, "knowledge_layer", None),
+                authority=getattr(r, "authority", None),
+            )
+            for r in rows
+        ]
+
     def search(
         self,
         project_id: str,

@@ -3,6 +3,23 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-09-05 — OpenRouter free models as a first-class cloud provider
+
+**Decision (operator, 2026-09-05):** production may use **OpenRouter free
+models** as the cloud primary (`LLM_PROVIDER=openrouter`,
+`OPENROUTER_MODEL=openrouter/free` or any catalogue slug ending `:free`)
+so chat does not burn paid Kimi tokens or exhaust Groq TPD. Kimi and Groq
+remain optional primary/fallback providers (`LLM_FALLBACK_PROVIDER` can
+be `openrouter`, `kimi`, or `groq`).
+
+Paid OpenRouter slugs are refused (logged + swapped to `openrouter/free`)
+unless `OPENROUTER_ALLOW_PAID=1`. The previous production workaround
+(`LLM_PROVIDER=ollama` + `OLLAMA_URL=https://openrouter.ai/api/v1/chat/completions`)
+is replaced by this native branch — do not keep the ollama-URL shim.
+
+**Live intent:** `LLM_PROVIDER=openrouter`, `OPENROUTER_MODEL=openrouter/free`,
+`OPENROUTER_API_KEY` set on Render. Kimi/Groq keys optional.
+
 ## 2026-07-24 — SUPERSEDES all prior provider rulings: Kimi primary + Groq fallback
 
 **Decision (operator, 2026-07-24):** production chat LLM is **Moonshot

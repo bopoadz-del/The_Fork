@@ -257,19 +257,26 @@ services:
         value: construction
 
       # ── LLM providers (set in dashboard) ───────────────────────────────
-      # The cloud ladder is exactly two providers (DECISIONS.md 2026-07-24):
-      #   PRIMARY  = Kimi K2 on Moonshot's native API (LLM_PROVIDER=kimi,
-      #              KIMI_MODEL=kimi-k2.6 — a reasoning model, so the runtime
-      #              uses tool_choice=auto; forcing a specific tool 400s it).
-      #   FALLBACK = Groq free tier (LLM_FALLBACK_PROVIDER=groq). Note the
-      #              free account 413s payloads >~12k tokens across all its
-      #              models — it catches normal-size turns, not large grounded
-      #              ones (PLATFORM_HEALTH_REPORT F1a: Dev-tier upgrade lifts it).
-      # Ollama is the ON-PREM provider only (see deploy/onprem); it is not a
-      # cloud fallback.
+      # Cloud ladder (DECISIONS.md 2026-09-05): OpenRouter FREE models may be
+      # the production primary so chat does not burn paid Kimi tokens or
+      # exhaust Groq TPD:
+      #   LLM_PROVIDER=openrouter
+      #   OPENROUTER_MODEL=openrouter/free   (or any :free slug)
+      #   OPENROUTER_API_KEY=…               (dashboard; never commit)
+      # Kimi and Groq stay optional. Paid OpenRouter slugs are refused unless
+      # OPENROUTER_ALLOW_PAID=1.
+      # Historical: PRIMARY = Kimi K2 (LLM_PROVIDER=kimi, KIMI_MODEL=kimi-k2.6
+      # — reasoning model, tool_choice=auto); FALLBACK = Groq (413s payloads
+      # >~12k tokens on the free account).
+      # Ollama is the ON-PREM provider only (see deploy/onprem). Do not point
+      # OLLAMA_URL at OpenRouter — use LLM_PROVIDER=openrouter.
       - key: LLM_PROVIDER
         sync: false
       - key: LLM_FALLBACK_PROVIDER
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
         sync: false
       - key: KIMI_API_KEY
         sync: false

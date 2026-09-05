@@ -54,6 +54,15 @@ def test_productivity_rate():
     assert r["rate_per_worker_hour"] == pytest.approx(3.125, abs=0.001)
 
 
+def test_delay_damages_daily_is_rate_times_aca():
+    # 0.1% × SAR 1,754,504,456.25 = SAR 1,754,504.45625 → 1,754,504.46/day.
+    r = CALCULATORS["delay_damages_daily"](
+        rate_percent=0.1, contract_amount=1_754_504_456.25, currency="SAR",
+    )
+    assert r["daily_amount"] == pytest.approx(1_754_504.46, abs=0.005)
+    assert "1,754,504.46" in r["note"]
+
+
 # ── planning ───────────────────────────────────────────────────────────────
 
 def test_critical_path_float():

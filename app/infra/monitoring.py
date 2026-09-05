@@ -356,14 +356,14 @@ class MonitoringBlock(LegoBlock):
     layer = 2  # Monitoring layer
     tags = ["monitoring", "observability", "core"]
     # The roster must match the ladder the platform can actually call:
-    # Kimi primary, Groq fallback, Ollama on-prem (DECISIONS.md 2026-07-24).
+    # OpenRouter / Kimi / Groq on cloud, Ollama on-prem (DECISIONS.md 2026-09-05).
     # Removed cloud providers must not reappear on the roster.
     # listed here until 2026-08-12, so /v1/leaderboard printed three providers
     # the platform has no key for and cannot reach. Pinned against the
     # providers `_llm_config` can return by
     # tests/test_monitoring_roster_is_honest.py, so this cannot drift again.
     default_config = {
-        "track_providers": ["kimi", "groq", "ollama"],
+        "track_providers": ["kimi", "groq", "ollama", "openrouter"],
         "window_size": 100,
         "prediction_threshold": 0.3
     }
@@ -377,6 +377,7 @@ class MonitoringBlock(LegoBlock):
             "kimi": {"name": "Kimi (Moonshot)", "type": "cloud", "region": "global"},
             "groq": {"name": "Groq", "type": "cloud", "region": "us"},
             "ollama": {"name": "Ollama (on-prem)", "type": "edge", "region": "local"},
+            "openrouter": {"name": "OpenRouter (free)", "type": "cloud", "region": "global"},
         }
         
         # Metrics window (last 100 calls per provider)

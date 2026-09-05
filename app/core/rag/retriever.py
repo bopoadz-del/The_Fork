@@ -11,7 +11,10 @@ from __future__ import annotations
 import logging
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from app.core.contract_data_chunks import particulars_chunk_states_a_value
+from app.core.contract_data_chunks import (
+    filled_particulars_rows,
+    particulars_chunk_states_a_value,
+)
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import (
     Chunk,
@@ -363,6 +366,22 @@ def filename_matches_named_contracts(
     return any(cid in text_l for cid in named_ids)
 
 
+def _contract_id_recency(cid: str) -> Tuple[int, int]:
+    """Sort key for PREFIX-YEAR-SEQ: newer year, then higher sequence.
+
+    Unnamed Master Corpus questions can retrieve a filled Time for
+    Completion from more than one package (DD-2022-175 demolition at
+    548 days, DD-2023-118 infrastructure at 852). First-in-rank used to
+    lock the pool to whichever cosine arrived first. The later executed
+    package owns the unnamed ask; the earlier one stays reachable by
+    naming its id (#443).
+    """
+    parts = (cid or "").lower().split("-")
+    year = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else -1
+    seq = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else -1
+    return (year, seq)
+
+
 def elect_answer_bearing_contract(
     query: str,
     ranked_docs: Iterable[Tuple[str, str]],
@@ -371,7 +390,9 @@ def elect_answer_bearing_contract(
 
     ``ranked_docs`` is ``(filename, chunk_text)`` in descending final-score
     order. It may be a lazy iterable: nothing is consumed for a question that
-    wants no particular, and the walk stops at the first filled row.
+    wants no particular. When the ask is particulars-shaped the walk reads
+    every candidate so a later-year filled row can beat an earlier-year
+    filled row that happened to rank first (live A3/A5 on d7a4ca8).
     Returns the winning PREFIX-YEAR-SEQ, or None to leave the choice to
     arrival order (today's behaviour).
 
@@ -392,6 +413,11 @@ def elect_answer_bearing_contract(
     THAT KIND wins the pool — a pointer from another contract cannot take it
     away.
 
+    When TWO contracts both own that kind of answer (both state a Time for
+    Completion, both state a Delay Damages rate), first-in-rank is still
+    arrival order. The newer PREFIX-YEAR-SEQ wins: it is the later executed
+    package. Naming the older id still fail-closes onto that year.
+
     Each ask shape brings its own idea of what an answer looks like, because
     the wrong-year chunk that wins is different every time:
 
@@ -411,23 +437,32 @@ def elect_answer_bearing_contract(
     # Built here, not at module scope: both halves are defined further down.
     kinds = [
         (query_asks_for_contract_particulars,
-         lambda _name, text: (
-             is_contract_data_particulars_row(text)
-             and particulars_row_answers_asked_label(query, text)
-         )),
+         lambda _name, text: chunk_answers_asked_particular(query, text)),
         (query_asks_for_boq_scope,
          lambda name, _text: document_is_a_bill_of_quantities(name)),
+        (query_asks_for_boq_item_amount,
+         lambda _name, text: chunk_states_rate_only_item(
+             text, extract_asked_cesmm_codes(query),
+         )),
     ]
     active = [is_answer for asks, is_answer in kinds if asks(query)]
     if not active:
         return None
+    found: List[str] = []
+    seen: Set[str] = set()
     for filename, text in ranked_docs:
         if not any(is_answer(filename, text) for is_answer in active):
             continue
         ids = extract_contract_doc_ids(filename or "")
-        if ids:
-            return ids[0]
-    return None
+        if not ids:
+            continue
+        cid = ids[0]
+        if cid not in seen:
+            seen.add(cid)
+            found.append(cid)
+    if not found:
+        return None
+    return max(found, key=_contract_id_recency)
 
 
 class _ContractScope:
@@ -457,26 +492,160 @@ class _ContractScope:
             not self.named
             and query_asks_for_contract_particulars(self.query)
         )
-        if not self.named and ranked_docs is not None:
-            self.winning = elect_answer_bearing_contract(self.query, ranked_docs)
+        self._title_phrases: List[str] = []
+        self._spec_identity_in_pool = False
+        self._aca_contract_data_in_pool = False
+        # Live 3a5fce5 Wave-1: year-lock elects DD-2023-118 (A3 PASS) but
+        # A5's 0.1%-per-day row and A9's Engineer appointment live in a
+        # different / unprefixed chunk. Once those answers are in the
+        # pool, Client/Consultant PSA and same-year Sub-Clause 8.8 / cap
+        # rows must not occupy the top-k. Kill-switches restore the
+        # prefix-only fence.
+        self._delay_rate_in_pool = False
+        self._engineer_identity_in_pool = False
+        self._schedule_labels: List[str] = []
+        self._schedule_register_in_pool = False
+        # OLD-pack G4: D529.3 Amount is Rate Only. Priced lookalikes
+        # (D549.2 fence, D599.5 carriageway, Excluded culvert) used to
+        # occupy every slot and the model greeted. Not #504/#505/#506.
+        self._rate_only_codes: List[str] = []
+        self._rate_only_in_pool = False
+        docs: Optional[List[Tuple[str, str]]] = (
+            list(ranked_docs) if ranked_docs is not None else None
+        )
+        if docs is not None:
+            if spec_title_rescue_enabled() and query_asks_which_specification_document(
+                self.query,
+            ):
+                self._title_phrases = extract_document_title_phrases(self.query)
+                if self._title_phrases:
+                    self._spec_identity_in_pool = any(
+                        chunk_states_spec_document_identity(text, self._title_phrases)
+                        or spec_title_filename_bonus(name, self._title_phrases) > 0
+                        for name, text in docs
+                    )
+            if (
+                contract_data_filename_rescue_enabled()
+                and query_asks_for_accepted_contract_amount(self.query)
+            ):
+                self._aca_contract_data_in_pool = any(
+                    contract_data_chunk_states_aca(name, text, self.query)
+                    for name, text in docs
+                )
+            if (
+                delay_damages_rate_rescue_enabled()
+                and query_asks_for_delay_damages_rate(self.query)
+            ):
+                self._delay_rate_in_pool = any(
+                    chunk_states_delay_damages_rate(text) for _n, text in docs
+                )
+            if (
+                engineer_identity_rescue_enabled()
+                and query_asks_who_the_engineer_is(self.query)
+            ):
+                self._engineer_identity_in_pool = any(
+                    chunk_states_engineer_identity(text) for _n, text in docs
+                )
+            # OLD-pack G1: a Schedule-N register row ("Schedule 10: Not Used")
+            # is the answer. Vol 4 / Vol 5 / CPM mention "schedule" at length
+            # and used to occupy every slot. Not #500/#501/#502/#503.
+            if (
+                schedule_register_rescue_enabled()
+                and query_asks_for_contract_particulars(self.query)
+                and query_asks_for_numbered_contract_schedule(self.query)
+            ):
+                self._schedule_labels = extract_asked_schedule_labels(self.query)
+                if self._schedule_labels:
+                    self._schedule_register_in_pool = any(
+                        chunk_states_schedule_register(text, self._schedule_labels)
+                        for _name, text in docs
+                    )
+            if (
+                rate_only_rescue_enabled()
+                and query_asks_for_boq_item_amount(self.query)
+            ):
+                self._rate_only_codes = extract_asked_cesmm_codes(self.query)
+                if self._rate_only_codes:
+                    self._rate_only_in_pool = any(
+                        chunk_states_rate_only_item(text, self._rate_only_codes)
+                        for _n, text in docs
+                    )
+        if not self.named and docs is not None:
+            self.winning = elect_answer_bearing_contract(self.query, docs)
 
     def allow(self, filename: str, chunk_text: str = "") -> bool:
+        # Named PREFIX-YEAR-SEQ (#443) is fail-closed onto that year.
+        # The rate / Engineer fences are unnamed-only — a question that
+        # names DD-2022-175 must still see that year's chunks.
+        if self._rate_only_in_pool:
+            if not chunk_states_rate_only_item(
+                chunk_text, self._rate_only_codes,
+            ):
+                return False
+        if not self.named:
+            if self._delay_rate_in_pool:
+                if not chunk_states_delay_damages_rate(chunk_text):
+                    return False
+            if self._engineer_identity_in_pool:
+                if not chunk_states_engineer_identity(chunk_text):
+                    return False
+        if self._spec_identity_in_pool:
+            titled = spec_title_filename_bonus(filename, self._title_phrases) > 0
+            identity = chunk_states_spec_document_identity(
+                chunk_text, self._title_phrases,
+            )
+            if not (titled or identity):
+                return False
+        if self._aca_contract_data_in_pool:
+            if not filename_looks_like_contract_data(filename):
+                return False
+        if self._schedule_register_in_pool:
+            if not chunk_states_schedule_register(
+                chunk_text, self._schedule_labels,
+            ):
+                return False
         if self.named:
             return filename_matches_named_contracts(
                 filename, self.named, chunk_text=chunk_text,
             )
         ids = extract_contract_doc_ids(filename or "")
         if not ids:
+            # No PREFIX-YEAR-SEQ in the filename. After year-lock that
+            # used to let Long Form PSA Client/Consultant parties occupy
+            # every A9 slot. When an Engineer appointment is in the pool
+            # the identity fence above already dropped them.
             return True
         if self.winning is None:
             # A particulars ask whose election declined must not freeze the
             # pool on a Volume 4 schedule duration or a GC pointer. Only a
             # matching-label filled row may lock arrival order (live A3).
+            # Scanned Contract Data (no index-time prefix) still counts
+            # when it states the asked rate / Engineer (live A5/A9).
             if self._particulars:
+                if chunk_answers_asked_particular(self.query, chunk_text):
+                    self.winning = ids[0]
+                    return True
+                # Live A2: scanned Contract Data has PREFIX-YEAR-SEQ in
+                # the filename and no index-time particulars prefix, so
+                # the filled-row predicate never fires. The ACA filename
+                # election already decided this file owns the ask.
                 if (
-                    is_contract_data_particulars_row(chunk_text)
-                    and particulars_row_answers_asked_label(
-                        self.query, chunk_text,
+                    self._aca_contract_data_in_pool
+                    and filename_looks_like_contract_data(filename)
+                    and contract_data_chunk_states_aca(
+                        filename, chunk_text, self.query,
+                    )
+                ):
+                    self.winning = ids[0]
+                    return True
+                # Live G1: scanned / unprefixed register row in a
+                # PREFIX-YEAR-SEQ Contract Data file. Same exception as
+                # A2 — the row is the answer even without the index-time
+                # particulars prefix.
+                if (
+                    self._schedule_register_in_pool
+                    and chunk_states_schedule_register(
+                        chunk_text, self._schedule_labels,
                     )
                 ):
                     self.winning = ids[0]
@@ -806,6 +975,14 @@ def build_rescue_phrases(terms: List[str]) -> List[str]:
 # UBCC + Batching Plant + wadi Safar. Term rescue skipped the out-of-pool
 # fetch because Volume 5 already mentioned the place-name in-chunk.
 #
+# Re-score on tip d7a4ca8 (2026-09-05, Neon project the-fork): retrieval
+# now finds b5033ec2, but the indexed text is corpus-blocked. 8199b14b is
+# MISSING from ``documents``. b5033ec2 is TEXT_SPARSE
+# (``single_window:terminal``, one 1168-char chunk) and ends
+# ``Yours sincerely, ,`` — no signatory name, role, or company. Do not
+# invent a name that is not in the chunk. Re-extract / re-ingest of the
+# richer id is an ingest job, not a ranking delta.
+#
 # Filename overlap is the discriminator Volume 5 cannot fake: its name is
 # a contract volume, not a letter. Kill-switch: RAG_LETTER_FILENAME_RESCUE=0.
 _LETTER_OR_SIGNATORY_RE = re.compile(
@@ -1008,6 +1185,14 @@ def _rescue_filename_matched_docs(
 # The filename is the discriminator Demolition Specs cannot fake: it
 # carries the Title-Case phrase the question used. Kill-switch:
 # RAG_SPEC_TITLE_RESCUE=0.
+#
+# Re-score on tip d7a4ca8: there is still no standalone upload named
+# ``DGDAX-DGD-PMO-SPE-012650-1.0 Variation Procedure``. The identifier
+# lives as a register line inside Vol 2 Specification (8 of 9). Cosine
+# prefers the later CSI heading ``Section 012650 — Variation and
+# Adjustments`` in the same file. Filename rescue cannot see a title
+# that is not in the upload name; the remaining delta is in-chunk
+# spec-identity election (SPE-NNNNN + title).
 _SPEC_IDENTITY_ASK_RE = re.compile(
     r"(?i)\b(?:which|what)\s+specification\s+(?:document|section)s?\b"
     r"|\bspecification\s+document\s+covers\b"
@@ -1025,6 +1210,9 @@ _TITLE_PHRASE_STOP = frozenset({
 # Equal to IDENTIFIER_BONUS_MAX so a titled filename beats a high-cosine
 # demolition volume the way an exact code beats boilerplate.
 _SPEC_TITLE_FILENAME_BONUS = 2.0
+# A CSI section number (``012650``) is not a document identity. The
+# register line carries ``SPE-`` + five-or-more digits.
+_SPE_DOC_CODE_RE = re.compile(r"(?i)\bSPE-\d{5,}\b")
 
 
 def spec_title_rescue_enabled() -> bool:
@@ -1079,6 +1267,29 @@ def spec_title_filename_bonus(filename: str, phrases: List[str]) -> float:
     if any(phrase and phrase in blob for phrase in phrases):
         return _SPEC_TITLE_FILENAME_BONUS
     return 0.0
+
+
+def _normalize_retrieval_ws(text: str) -> str:
+    """Collapse OCR / table newlines so a scanned label still matches."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def chunk_states_spec_document_identity(text: str, phrases: List[str]) -> bool:
+    """True when the chunk names a SPE-NNNNN document whose title is the ask.
+
+    Live C2 on d7a4ca8: the register line ``DGDAX-DGD-PMO-SPE-012650-1.0
+    Variation Procedure`` is the document number. ``Section 012650 —
+    Variation and Adjustments`` in the same volume is a CSI heading, not
+    the identifier the question asked for. ``SPE-`` + five digits is the
+    discriminator; a bare ``012650`` is not.
+    """
+    if not phrases:
+        return False
+    blob = _normalize_retrieval_ws(text)
+    if not _SPE_DOC_CODE_RE.search(blob):
+        return False
+    lower = blob.lower()
+    return any(bool(p) and p in lower for p in phrases)
 
 
 def _apply_spec_title_filename_boost(
@@ -1178,6 +1389,408 @@ def _rescue_spec_title_docs(
     return names
 
 
+def _apply_spec_identity_text_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift chunks whose body is a SPE-NNNNN + title register line."""
+    if not spec_title_rescue_enabled():
+        return
+    if not query_asks_which_specification_document(query):
+        return
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_spec_document_identity(chunk.text or "", phrases):
+            continue
+        boosted = score + _SPEC_TITLE_FILENAME_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_spec_identity_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> int:
+    """Pull SPE-NNNNN + title register lines into ``fused``.
+
+    Filename title rescue cannot see a title that lives only in a volume's
+    table of contents. Failures never raise.
+    """
+    if not spec_title_rescue_enabled():
+        return 0
+    if not query_asks_which_specification_document(query):
+        return 0
+    phrases = extract_document_title_phrases(query)
+    if not phrases:
+        return 0
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return 0
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+    for pid in pids:
+        for phrase in phrases:
+            try:
+                hits = fetch(pid, ["SPE-", phrase], k=20)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "spec-identity rescue for %s (%r) failed: %s",
+                    pid, phrase, exc,
+                )
+                continue
+            for chunk in hits:
+                if not chunk_states_spec_document_identity(chunk.text or "", phrases):
+                    continue
+                if chunk.chunk_id in fused:
+                    continue
+                fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                recovered += 1
+    if recovered:
+        logger.info(
+            "spec-identity rescue recovered %d chunk(s) for phrases %r",
+            recovered, phrases,
+        )
+    return recovered
+
+
+# ── Contract Data filename rescue (live A2) ────────────────────────────────
+#
+# Live Master Corpus A2 retry on tip d7a4ca8: "What is the Accepted
+# Contract Amount including VAT?" retrieved Long Form PSA / CPM permit
+# trackers and reported the figure absent. The executed amount sits in
+# ``…_Contract Data.pdf`` (scanned table, newlines between Accepted /
+# Contract / Amount). That file has no ``CONTRACT DATA particulars``
+# index-time prefix, so the particulars boost and unnamed election never
+# fire. Filename "Contract Data" is the discriminator PSA/CPM cannot fake.
+# Kill-switch: RAG_CONTRACT_DATA_FILENAME_RESCUE=0.
+#
+# Not #501 (A3/A5 newest-year lock). This only gets the Contract Data
+# file into the pool for an Accepted Contract Amount ask.
+_ACA_ASK_RE = re.compile(r"(?i)accepted\s+contract\s+amount")
+_CONTRACT_DATA_FILENAME_BONUS = 2.0
+_INCLUDING_VAT_RE = re.compile(r"(?i)including\s+vat|incl\.?\s+vat")
+
+
+def contract_data_filename_rescue_enabled() -> bool:
+    """ON by default — live A2 recall defect. RAG_CONTRACT_DATA_FILENAME_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy."""
+    return (
+        os.getenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", "1") or ""
+    ).strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_for_accepted_contract_amount(query: str) -> bool:
+    """True for a filled Accepted Contract Amount ask, not a definition."""
+    q = query or ""
+    if _DEFINITION_QUESTION_RE.search(q):
+        return False
+    return bool(_ACA_ASK_RE.search(_normalize_retrieval_ws(q)))
+
+
+def filename_looks_like_contract_data(filename: str) -> bool:
+    """True when the upload name is a Contract Data file, not a PSA/CPM."""
+    blob = (filename or "").replace("_", " ")
+    return bool(re.search(r"(?i)contract\s+data", blob))
+
+
+def contract_data_chunk_states_aca(filename: str, text: str, query: str) -> bool:
+    """True when a Contract Data file's chunk states the asked ACA figure.
+
+    Scanned Particular Conditions split the label across lines
+    (``Accepted\\nContract\\nAmount (including VAT)``). Whitespace is
+    collapsed before the label test. A money amount must still be visible.
+    """
+    if not filename_looks_like_contract_data(filename):
+        return False
+    blob = _normalize_retrieval_ws(text).lower()
+    if "accepted contract amount" not in blob:
+        return False
+    if not _CD_MONETARY_VALUE_RE.search(text or ""):
+        return False
+    if _INCLUDING_VAT_RE.search(query or "") and not _INCLUDING_VAT_RE.search(blob):
+        return False
+    return True
+
+
+def _apply_contract_data_filename_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+    name_by_id: Dict[str, str],
+) -> None:
+    """In-place: lift Contract Data files on an Accepted Contract Amount ask."""
+    if not contract_data_filename_rescue_enabled():
+        return
+    if not query_asks_for_accepted_contract_amount(query):
+        return
+    for i, (score, chunk) in enumerate(scored):
+        name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
+        if not filename_looks_like_contract_data(name):
+            continue
+        boosted = score + _CONTRACT_DATA_FILENAME_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_contract_data_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> Dict[str, str]:
+    """Pull chunks from filename-matched Contract Data files into ``fused``."""
+    names: Dict[str, str] = {}
+    if not contract_data_filename_rescue_enabled():
+        return names
+    if not query_asks_for_accepted_contract_amount(query):
+        return names
+    try:
+        from app.core.projects import documents_matching_title_phrase
+    except Exception:  # noqa: BLE001
+        logger.warning("contract-data rescue: projects import failed", exc_info=True)
+        return names
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return names
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+    for pid in pids:
+        try:
+            matches = documents_matching_title_phrase(pid, "contract data")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("contract-data rescue listing for %s failed: %s", pid, exc)
+            continue
+        if not matches:
+            continue
+        for doc in matches:
+            names[doc["id"]] = doc.get("original_name") or ""
+        try:
+            hits = fetch(pid, [d["id"] for d in matches], k_per_doc=20)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("contract-data rescue fetch for %s failed: %s", pid, exc)
+            continue
+        for chunk in hits:
+            names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
+            if chunk.chunk_id in fused:
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            recovered += 1
+    if recovered:
+        logger.info("contract-data rescue recovered %d chunk(s) for an ACA ask", recovered)
+    return names
+
+
+# ── Schedule-register / Not Used rescue (live OLD-pack G1) ─────────────────
+#
+# Live Master Corpus G1 (tip a65cebb5): "Answer only from the client project
+# documents. What does Schedule 10 of the contract contain?" retrieved
+# Volume 5 / Volume 4 / CPM and answered with a generic "I will answer from
+# the documents" acknowledgement. The contract's own schedule index says
+# ``Schedule 10: Not Used``. That short register row is the answer — cosine
+# prefers the long volumes that mention "schedule" at length, and term
+# rescue treats that overlap as already-grounded so it never fetches the
+# index line. Do not invent contents; surface the register row as written.
+#
+# Same shape as C2's in-chunk identity rescue (``chunks_containing_all``)
+# plus the A2/C2 fence: when a register row is in the pool, lookalikes
+# drop. Kill-switch: RAG_SCHEDULE_REGISTER_RESCUE=0.
+#
+# Not #500 (D2/D4/D5 routing), not #501 (A3/A5 year lock), not #502
+# (C2 SPE-identity / A2 Contract Data filename).
+_SCHEDULE_REGISTER_BONUS = 2.0
+_SCHEDULE_REGISTER_ROW_RE = re.compile(
+    r"(?i)\b(schedule\s+(?:no\.?\s*)?\d+[A-Za-z]?)"
+    r"\s*[:|–—-]\s*"
+    r"(?P<val>\S[^\n]{0,79})"
+)
+_SCHEDULE_NOT_USED_COLLAPSED_RE = re.compile(
+    r"(?i)\b(schedule\s+(?:no\.?\s*)?\d+[A-Za-z]?)"
+    r"(?:\s*[:|–—-]\s*|\s+)"
+    r"not\s+used\b"
+)
+_SCHEDULE_REGISTER_PROSE_RE = re.compile(
+    r"(?i)\b(?:sets?\s+out|shall|the\s+contractor|contains?|covers?|"
+    r"includes?|must\b|will\s+provide)\b"
+)
+
+
+def schedule_register_rescue_enabled() -> bool:
+    """ON by default — live G1 recall defect. RAG_SCHEDULE_REGISTER_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy."""
+    return (
+        os.getenv("RAG_SCHEDULE_REGISTER_RESCUE", "1") or ""
+    ).strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_for_numbered_contract_schedule(query: str) -> bool:
+    """True for 'what does Schedule N of the contract contain?' — G1.
+
+    Bare 'what does Schedule 10 contain?' stays off this path: a numbered
+    schedule also appears inside specifications and method statements.
+    Definition questions and programme-build asks are not this class.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    return bool(
+        _CD_SCHEDULE_ASK_RE.search(q) and _CD_SCHEDULE_CONTEXT_RE.search(q)
+    )
+
+
+def extract_asked_schedule_labels(query: str) -> List[str]:
+    """``schedule 10`` / ``appendix 3`` labels the ask actually names."""
+    out: List[str] = []
+    seen: Set[str] = set()
+    for match in _CD_SCHEDULE_ASK_RE.finditer(query or ""):
+        label = re.sub(r"\s+", " ", match.group(0).lower()).strip()
+        if label and label not in seen:
+            seen.add(label)
+            out.append(label)
+    return out
+
+
+def _schedule_label_matches(asked: str, key: str) -> bool:
+    """True when a register key is the asked Schedule / Appendix N."""
+    asked_n = re.sub(r"(?i)\s+no\.?\s*", " ", asked or "").strip()
+    key_n = re.sub(r"(?i)\s+no\.?\s*", " ", key or "").strip()
+    if not asked_n or not key_n:
+        return False
+    return asked_n == key_n or asked_n in key_n
+
+
+def chunk_states_schedule_register(text: str, labels: List[str]) -> bool:
+    """True when ``text`` is a schedule-index row for an asked label.
+
+    ``Schedule 10: Not Used`` and ``Schedule 9 | Health & Safety KPIs``
+    are register rows. ``Schedule 10 sets out any applicable Works
+    Guarantees`` is prose from another package — not a register, and
+    must not be treated as contents we invented.
+    """
+    if not labels:
+        return False
+    wanted = [re.sub(r"\s+", " ", lab.lower()).strip() for lab in labels if lab]
+    if not wanted:
+        return False
+    blob = text or ""
+    collapsed = _normalize_retrieval_ws(blob)
+
+    def _wanted(key: str) -> bool:
+        key_l = re.sub(r"\s+", " ", (key or "").lower()).strip()
+        return any(_schedule_label_matches(lab, key_l) for lab in wanted)
+
+    if _SCHEDULE_NOT_USED_COLLAPSED_RE.search(collapsed):
+        for match in _SCHEDULE_NOT_USED_COLLAPSED_RE.finditer(collapsed):
+            if _wanted(match.group(1)):
+                return True
+    for match in _SCHEDULE_REGISTER_ROW_RE.finditer(blob):
+        val = (match.group("val") or "").strip()
+        if _SCHEDULE_REGISTER_PROSE_RE.search(val):
+            continue
+        if _wanted(match.group(1)):
+            return True
+    for key, val in filled_particulars_rows(blob):
+        if _SCHEDULE_REGISTER_PROSE_RE.search(val or ""):
+            continue
+        if _wanted(key):
+            return True
+    return False
+
+
+def chunk_states_schedule_not_used(text: str) -> bool:
+    """True when a numbered-schedule register row says Not Used.
+
+    Query-free so inject can warn the model without the user ask. Does
+    not invent: the excerpt itself must already say Not Used.
+    """
+    return bool(_SCHEDULE_NOT_USED_COLLAPSED_RE.search(_normalize_retrieval_ws(text)))
+
+
+def _apply_schedule_register_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift chunks whose body is the asked Schedule-N register."""
+    if not schedule_register_rescue_enabled():
+        return
+    if not query_asks_for_contract_particulars(query):
+        return
+    if not query_asks_for_numbered_contract_schedule(query):
+        return
+    labels = extract_asked_schedule_labels(query)
+    if not labels:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_schedule_register(chunk.text or "", labels):
+            continue
+        boosted = score + _SCHEDULE_REGISTER_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_schedule_register_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> int:
+    """Pull Schedule-N register / Not Used index rows into ``fused``.
+
+    Cosine never ranks the short index line; Vol 4/5/CPM flood the
+    semantic pool. Failures never raise.
+    """
+    if not schedule_register_rescue_enabled():
+        return 0
+    if not query_asks_for_contract_particulars(query):
+        return 0
+    if not query_asks_for_numbered_contract_schedule(query):
+        return 0
+    labels = extract_asked_schedule_labels(query)
+    if not labels:
+        return 0
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return 0
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+    for pid in pids:
+        for label in labels:
+            needle_sets = ([label, "not used"], [label])
+            for needles in needle_sets:
+                try:
+                    hits = fetch(pid, needles, k=20)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "schedule-register rescue for %s (%r) failed: %s",
+                        pid, needles, exc,
+                    )
+                    continue
+                for chunk in hits:
+                    if not chunk_states_schedule_register(
+                        chunk.text or "", labels,
+                    ):
+                        continue
+                    if chunk.chunk_id in fused:
+                        continue
+                    fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                    recovered += 1
+    if recovered:
+        logger.info(
+            "schedule-register rescue recovered %d chunk(s) for labels %r",
+            recovered, labels,
+        )
+    return recovered
+
+
 # Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
 # contract and a 129-page tender: the needle chunk ranks FIRST for a query
 # whose wording overlaps the answer's, and falls out of the top-12 for the
@@ -1245,6 +1858,21 @@ _PARTICULARS_FIELD_RE = re.compile(
     r"defects\s+notification|performance\s+(?:bond|security|guarantee)|"
     r"contract\s+data|appendix\s+to\s+(?:the\s+)?tender|"
     r"contract\s+particulars)",
+)
+# Phrases that must appear on a filled row's KEY to elect a contract.
+# "contract data" / "appendix to tender" are section headings, not a
+# particular — they classify the ask but must not match every window.
+_ASKED_PARTICULAR_KEY_RES = (
+    (re.compile(r"(?i)time\s+for\s+completion"), "time for completion"),
+    (re.compile(r"(?i)delay\s+damages"), "delay damages"),
+    (re.compile(r"(?i)liquidated\s+damages"), "liquidated damages"),
+    (re.compile(r"(?i)defects\s+notification"), "defects notification"),
+    (re.compile(r"(?i)accepted\s+contract\s+amount"), "accepted contract amount"),
+    (re.compile(r"(?i)performance\s+bond"), "performance bond"),
+    (re.compile(r"(?i)performance\s+security"), "performance security"),
+    (re.compile(r"(?i)performance\s+guarantee"), "performance guarantee"),
+    (re.compile(r"(?i)including\s+vat"), "including vat"),
+    (re.compile(r"(?i)excluding\s+vat"), "excluding vat"),
 )
 _FILLED_IN_ASK_RE = re.compile(
     r"(?i)(?:how\s+many\s+days|what\s+is\s+the\s+(?:amount|rate|percentage|"
@@ -1448,19 +2076,601 @@ def is_contract_data_particulars_row(text: str) -> bool:
     return particulars_chunk_states_a_value(t)
 
 
+def _asked_particular_key_phrases(query: str) -> Tuple[str, ...]:
+    """The Contract Data label(s) an unnamed ask is actually requesting.
+
+    Term-overlap on the chunk body is too weak: ``works`` / ``completion``
+    appear on a Volume 4 programme note and on an unfilled TfC key sitting
+    next to a filled Accepted Contract Amount. Election must see the
+    asked field on the *key* of a filled row.
+    """
+    q = (query or "").strip()
+    if not q:
+        return ()
+    phrases: List[str] = []
+    for rx, phrase in _ASKED_PARTICULAR_KEY_RES:
+        if rx.search(q):
+            phrases.append(phrase)
+    if _CD_WHO_IS_RE.search(q):
+        for m in _CD_CONTRACT_ROLE_RE.finditer(q):
+            role = re.sub(r"\s+", " ", m.group(0).lower()).strip()
+            if role:
+                phrases.append(role)
+    for m in _CD_SCHEDULE_ASK_RE.finditer(q):
+        phrases.append(re.sub(r"\s+", " ", m.group(0).lower()).strip())
+    # Dedup, keep order.
+    seen: Set[str] = set()
+    out: List[str] = []
+    for p in phrases:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return tuple(out)
+
+
 def particulars_row_answers_asked_label(query: str, text: str) -> bool:
-    """True when a particulars chunk's BODY names the particular the ask
-    is about.
+    """True when a filled row's KEY is the particular the ask names.
 
     The unnamed election used to lock the pool to the first filled
     particulars row of any kind. A filled Accepted Contract Amount window
     from another package then stole A3 (Time for Completion), the same
     way a glossary definition used to steal A9 before the role-identity
-    ask was recognised. Label overlap is the same signal the scoring
-    bonus already uses, computed on the body so the identical header
-    every particulars chunk carries cannot elect.
+    ask was recognised.
+
+    #496 required label overlap on the chunk body. That still elects a
+    mixed window whose TfC / Delay Damages *key* is unfilled. Live
+    d7a4ca8 A3/A5: DD-2022-175 won, Volume 4 ``548 days`` and Sub-Clause
+    8.8 stayed in the pool, and DD-2023-118's 852-day / 0.1% rows were
+    fenced out. The asked label's own value must be filled.
+
+    When the ask has no named field (a bare "Contract Data" lookup), the
+    previous body-overlap test stands so we do not empty a pool we have
+    no opinion about.
     """
+    phrases = _asked_particular_key_phrases(query)
+    if phrases:
+        for key, _val in filled_particulars_rows(text):
+            key_l = key.lower()
+            if any(p in key_l for p in phrases):
+                return True
+        return False
     return _cd_label_bonus(_significant_terms(query), text) > 0.0
+
+
+def _collapse_retrieval_ws(text: str) -> str:
+    """Collapse OCR / table newlines so a scanned label still matches."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _env_flag_on(name: str, default: str = "1") -> bool:
+    return (os.getenv(name, default) or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def delay_damages_rate_rescue_enabled() -> bool:
+    """ON by default — live A5 recall after the #501 year-lock.
+
+    RAG_DELAY_DAMAGES_RATE_RESCUE=0 restores prefix-only ranking.
+    """
+    return _env_flag_on("RAG_DELAY_DAMAGES_RATE_RESCUE")
+
+
+def engineer_identity_rescue_enabled() -> bool:
+    """ON by default — live A9 Engineer appointment vs PSA parties.
+
+    RAG_ENGINEER_IDENTITY_RESCUE=0 restores prefix-only ranking.
+    """
+    return _env_flag_on("RAG_ENGINEER_IDENTITY_RESCUE")
+
+
+def query_asks_for_delay_damages_rate(query: str) -> bool:
+    """True for a whole-works Delay Damages *rate* ask (live A5).
+
+    E1 ("calculate … in SAR") stays on the monetary-base reservation.
+    An ask that names the maximum / cap is not this class.
+    """
+    q = query or ""
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if query_needs_a_monetary_base(q):
+        return False
+    if not re.search(r"(?i)(?:delay|liquidated)\s+damages", q):
+        return False
+    if re.search(r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b", q):
+        return False
+    return True
+
+
+def query_asks_who_the_engineer_is(query: str) -> bool:
+    """True for A9 ("who is the Engineer"), not the Representative (D1)."""
+    q = query or ""
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if not _CD_WHO_IS_RE.search(q):
+        return False
+    if re.search(r"(?i)engineer'?s\s+representative", q):
+        return False
+    return bool(re.search(r"(?i)\bengineer\b", q))
+
+
+_DELAY_RATE_KEY_RE = re.compile(r"(?i)(?:delay|liquidated)\s+damages")
+_DELAY_CAP_KEY_RE = re.compile(
+    r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b",
+)
+_DELAY_RATE_VALUE_RE = re.compile(
+    r"(?i)\d+(?:\.\d+)?\s*%[^\n]{0,80}\bper\b",
+)
+_DELAY_RATE_POINTER_RE = re.compile(
+    r"(?i)at\s+the\s+rate\s+stated\s+in\s+the\s+contract\s+data",
+)
+_ENGINEER_GLOSSARY_RE = re.compile(
+    r'(?i)"?engineer"?\s+means\s+the\s+person',
+)
+_ENGINEER_REP_RE = re.compile(r"(?i)engineer'?s\s+representative")
+_ENGINEER_KEY_RE = re.compile(r"(?i)\bengineer\b")
+_NOT_A_PARTY_NAME_RE = re.compile(
+    r"(?i)^(?:the\s+)?(?:person\s+appointed|consultant|client|"
+    r"employer|contractor|engineer)\s*$",
+)
+_PARTY_FIRM_RE = re.compile(
+    r"(?i)\b(?:limited|ltd\.?|llc|llp|gmbh|plc|inc\.?)\b",
+)
+_SCANNED_ENGINEER_LINE_RE = re.compile(
+    r"(?im)^[ \t]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?\s*)?"
+    r"engineer\b(?!\s*'?s\s+representative)[ \t]*[:|–-]?\s*(.*)$",
+)
+
+
+def _looks_like_appointed_party(val: str) -> bool:
+    """True when a particulars value is a firm / person, not a role word."""
+    name = re.sub(r"\s+", " ", (val or "")).strip(" \t.:;,-")
+    if len(name) < 4 or _NOT_A_PARTY_NAME_RE.match(name):
+        return False
+    if _PARTY_FIRM_RE.search(name):
+        return True
+    letters = re.sub(r"[^A-Za-z]", "", name)
+    return len(letters) >= 4 and any(ch.isupper() for ch in name)
+
+
+def _delay_damages_key_is_rate(key: str) -> bool:
+    if not _DELAY_RATE_KEY_RE.search(key or ""):
+        return False
+    return not _DELAY_CAP_KEY_RE.search(key or "")
+
+
+def chunk_states_delay_damages_rate(text: str) -> bool:
+    """True when the chunk states the daily Delay Damages *rate*.
+
+    A cap row (``Maximum amount of delay damages: 10%…``) and a General
+    Conditions pointer (``at the rate stated in the Contract Data``)
+    both contain the label and used to satisfy the unnamed election /
+    reservation. Live A5 after #501 then cited 118 without the 0.1%
+    per-calendar-day figure. The rate lives in a different chunk.
+    """
+    t = text or ""
+    if not t or _DELAY_RATE_POINTER_RE.search(t):
+        return False
+    for key, val in filled_particulars_rows(t):
+        if _delay_damages_key_is_rate(key) and _DELAY_RATE_VALUE_RE.search(val):
+            return True
+    blob = _collapse_retrieval_ws(t)
+    if _DELAY_RATE_POINTER_RE.search(blob):
+        return False
+    if _DELAY_CAP_KEY_RE.search(blob) and not _DELAY_RATE_VALUE_RE.search(blob):
+        return False
+    if not _DELAY_RATE_KEY_RE.search(blob):
+        return False
+    return bool(_DELAY_RATE_VALUE_RE.search(blob))
+
+
+def chunk_states_engineer_identity(text: str) -> bool:
+    """True when the chunk *appoints* the Engineer (live A9).
+
+    A glossary ``"Engineer" means the person appointed…`` and a PSA
+    Client/Consultant party list are lookalikes. The appointment is a
+    filled ``1.3.1 (b) Engineer`` row (or a scanned line with a firm
+    name). Engineer's Representative is D1 / corpus-blocked — do not
+    invent a signatory.
+    """
+    t = text or ""
+    if not t:
+        return False
+    for key, val in filled_particulars_rows(t):
+        if _ENGINEER_REP_RE.search(key):
+            continue
+        if _ENGINEER_KEY_RE.search(key) and _looks_like_appointed_party(val):
+            return True
+    if _ENGINEER_GLOSSARY_RE.search(t) and not filled_particulars_rows(t):
+        return False
+    lines = (t or "").splitlines()
+    for i, line in enumerate(lines):
+        m = _SCANNED_ENGINEER_LINE_RE.match(line)
+        if not m:
+            continue
+        rest = (m.group(1) or "").strip()
+        nxt = ""
+        if i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+        for cand in (rest, nxt, f"{rest} {nxt}".strip()):
+            if _looks_like_appointed_party(cand):
+                return True
+    return False
+
+
+def chunk_answers_asked_particular(query: str, text: str) -> bool:
+    """Election / reservation predicate for a particulars-shaped ask.
+
+    Prefixed filled rows keep today's behaviour (A3/A6/A2 year-lock).
+    After #501, A5/A9 also accept an unprefixed scanned rate /
+    Engineer appointment so the year-lock fence cannot drop the
+    chunk that actually answers.
+    """
+    if delay_damages_rate_rescue_enabled() and query_asks_for_delay_damages_rate(query):
+        if chunk_states_delay_damages_rate(text):
+            return True
+    if engineer_identity_rescue_enabled() and query_asks_who_the_engineer_is(query):
+        if chunk_states_engineer_identity(text):
+            return True
+    return (
+        is_contract_data_particulars_row(text)
+        and particulars_row_answers_asked_label(query, text)
+    )
+
+
+_DELAY_RATE_RESCUE_PHRASES = (
+    "delay damages per calendar day",
+    "delay damages per day",
+    "delay damages contract price",
+)
+_ENGINEER_IDENTITY_RESCUE_PHRASES = (
+    "1.3.1 engineer",
+    "engineer limited",
+)
+_ASKED_PARTICULAR_VALUE_BONUS = 2.0
+
+
+def _rescue_chunks_matching(
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    phrases: Tuple[str, ...],
+    keep,
+    *,
+    label: str,
+) -> int:
+    """Pull lexical hits that pass ``keep`` into ``fused``. Project-only.
+
+    General-knowledge notes (illustrative 0.05%) must not be rescued.
+    Failures never raise.
+    """
+    fetch = getattr(store, "identifier_search", None)
+    if not callable(fetch) or not phrases:
+        return 0
+    recovered = 0
+    try:
+        hits = fetch(project_id, list(phrases), k=20)
+    except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+        logger.warning("%s rescue for %s failed: %s", label, project_id, exc)
+        return 0
+    for chunk in hits:
+        if not keep(chunk.text or ""):
+            continue
+        if chunk.chunk_id in fused:
+            continue
+        fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
+        recovered += 1
+    if recovered:
+        logger.info("%s rescue recovered %d chunk(s)", label, recovered)
+    return recovered
+
+
+def _rescue_asked_particular_value_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+) -> int:
+    """Out-of-pool fetch for the A5 rate and A9 Engineer appointment."""
+    recovered = 0
+    if delay_damages_rate_rescue_enabled() and query_asks_for_delay_damages_rate(query):
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
+            chunk_states_delay_damages_rate, label="delay-damages-rate",
+        )
+    if engineer_identity_rescue_enabled() and query_asks_who_the_engineer_is(query):
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _ENGINEER_IDENTITY_RESCUE_PHRASES,
+            chunk_states_engineer_identity, label="engineer-identity",
+        )
+    return recovered
+
+
+def _apply_asked_particular_value_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift the rate / Engineer appointment over lookalikes."""
+    want_rate = (
+        delay_damages_rate_rescue_enabled()
+        and query_asks_for_delay_damages_rate(query)
+    )
+    want_eng = (
+        engineer_identity_rescue_enabled()
+        and query_asks_who_the_engineer_is(query)
+    )
+    if not want_rate and not want_eng:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        text = chunk.text or ""
+        hit = (
+            (want_rate and chunk_states_delay_damages_rate(text))
+            or (want_eng and chunk_states_engineer_identity(text))
+        )
+        if not hit:
+            continue
+        boosted = score + _ASKED_PARTICULAR_VALUE_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+# ── Rate Only BOQ-item rescue (live OLD-pack G4) ───────────────────────────
+#
+# Live Master Corpus G4 (tip 4d8ddb79 / was a65cebb5): "Answer only from
+# the client project documents. What is the total amount for removal of
+# storm water culverts (D529.3)?" returned a generic "I'm ready to help"
+# acknowledgement plus the 3348/3348 coverage footer. The asked row is
+# Rate Only — no amount exists. Cosine prefers priced lookalikes
+# (D549.2 fence, D599.5 carriageway, an Excluded culvert that shares
+# "storm water") and term rescue treats that overlap as already-grounded.
+# Do not invent a money total; elect the Rate Only row as written.
+#
+# Same shape as A5/A9 in-pool fence + out-of-pool identifier rescue.
+# Kill-switch: RAG_RATE_ONLY_RESCUE=0.
+#
+# Not #504 (E1 delay-damages compose), not #505 (F2 duration override),
+# not #506 (G1 Schedule 10 register).
+_RATE_ONLY_BONUS = 2.0
+_RATE_ONLY_RE = re.compile(r"(?i)\brate\s*only\b")
+_ITEM_AMOUNT_ASK_RE = re.compile(
+    r"(?i)\b(?:total\s+amount|(?<!contract\s)amount|sum\s+for|value\s+for)\b",
+)
+_UNIT_RATE_ONLY_ASK_RE = re.compile(
+    r"(?i)\b(?:unit\s+rate|rate\s+for|rate\s+per)\b",
+)
+_CESMM_COMPACT_ITEM_RE = re.compile(r"(?i)^[a-z]\d{2,4}(?:\.\d+)?$")
+_CESMM_IN_TEXT_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9])([A-Z])\s*(\d{2,4}(?:\.\d+)?)(?![A-Za-z0-9])",
+)
+
+
+def rate_only_rescue_enabled() -> bool:
+    """ON by default — live G4 Rate Only recall. RAG_RATE_ONLY_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy."""
+    return _env_flag_on("RAG_RATE_ONLY_RESCUE")
+
+
+def extract_asked_cesmm_codes(query: str) -> List[str]:
+    """Compact CESMM item codes the ask names (``d529.3``, ``d549.2``)."""
+    out: List[str] = []
+    seen: Set[str] = set()
+    blob = normalize_cesmm_item_codes(query or "")
+    for ident in extract_query_identifiers(blob):
+        compact = normalize_cesmm_item_codes(ident).lower()
+        if not _CESMM_COMPACT_ITEM_RE.fullmatch(compact):
+            continue
+        if compact not in seen:
+            seen.add(compact)
+            out.append(compact)
+    for match in _CESMM_IN_TEXT_RE.finditer(blob):
+        compact = f"{match.group(1)}{match.group(2)}".lower()
+        if compact not in seen:
+            seen.add(compact)
+            out.append(compact)
+    return out
+
+
+def query_asks_for_boq_item_amount(query: str) -> bool:
+    """True for G4 (total amount of a named CESMM / BOQ item).
+
+    A2 (Accepted Contract Amount), A5 (Delay Damages rate) and E1
+    (calculate … in SAR) stay off this path. A unit-rate-only ask
+    (WAVE 2 B5 without ``amount``) is not this class — the Rate
+    column can still be a number when Amount is Rate Only.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if query_asks_for_accepted_contract_amount(q):
+        return False
+    if query_asks_for_delay_damages_rate(q) or query_needs_a_monetary_base(q):
+        return False
+    if _UNIT_RATE_ONLY_ASK_RE.search(q) and not re.search(
+        r"(?i)\b(?:total\s+)?amount\b", q,
+    ):
+        return False
+    if not _ITEM_AMOUNT_ASK_RE.search(q):
+        return False
+    return bool(extract_asked_cesmm_codes(q))
+
+
+def _cesmm_row_windows(text: str, code: str) -> List[str]:
+    """Local row / next-line windows around one CESMM code.
+
+    Amount sits to the right of the item code. A previous row's
+    Rate Only must not stain the next item on a mixed BOQ page.
+    """
+    compact = normalize_cesmm_item_codes(code or "")
+    if not compact:
+        return []
+    letter, rest = compact[0], compact[1:]
+    item_re = re.compile(
+        rf"(?i)(?<![A-Za-z0-9]){re.escape(letter)}\s*{re.escape(rest)}"
+        r"(?![A-Za-z0-9])",
+    )
+    # A new BOQ row starts with a CESMM code (optionally after a pipe).
+    # CESMM4 is letter + 2-3 digits (D529.3 / D110). Do not treat a
+    # unit + rate ("m 1370.00") as the next item.
+    other_re = re.compile(
+        r"(?i)^(?:\s*[|]\s*)?([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b",
+    )
+    blob = text or ""
+    windows: List[str] = []
+    lines = blob.splitlines() or [blob]
+    for i, line in enumerate(lines):
+        if not item_re.search(line):
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if other_re.match(nxt.strip()) and not item_re.search(nxt):
+            nxt = ""
+        windows.append(_normalize_retrieval_ws(f"{line} {nxt}"))
+    if windows:
+        return windows
+    # One-line OCR / table soup: cut at the next pipe-led CESMM item,
+    # not at a unit + rate ("m 1370.00").
+    next_item = re.compile(
+        r"(?i)(?:\s*[|]\s+)([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b",
+    )
+    for match in item_re.finditer(blob):
+        tail = blob[match.end(): match.end() + 160]
+        cut = next_item.search(tail)
+        if cut:
+            tail = tail[:cut.start()]
+        windows.append(_normalize_retrieval_ws(blob[match.start(): match.end()] + tail))
+    return windows
+
+
+def chunk_states_rate_only_item(text: str, codes: List[str]) -> bool:
+    """True when the asked CESMM row's Amount is Rate Only.
+
+    A priced lookalike on the same page (D549.2 / D599.5) and an
+    Excluded culvert that only shares the description are not this.
+    Does not invent: the excerpt itself must already say Rate Only
+    on the asked item's row.
+    """
+    if not codes or not _RATE_ONLY_RE.search(text or ""):
+        return False
+    for code in codes:
+        for window in _cesmm_row_windows(text, code):
+            if _RATE_ONLY_RE.search(window):
+                return True
+    return False
+
+
+def chunk_states_rate_only_row(text: str) -> bool:
+    """Query-free: a CESMM row in ``text`` already says Rate Only."""
+    if not text or not _RATE_ONLY_RE.search(text):
+        return False
+    blob = normalize_cesmm_item_codes(text)
+    codes = [
+        f"{m.group(1)}{m.group(2)}".lower()
+        for m in _CESMM_IN_TEXT_RE.finditer(blob)
+    ]
+    return bool(codes) and chunk_states_rate_only_item(text, codes)
+
+
+def format_rate_only_line(codes: List[str], excerpt: str = "") -> str:
+    """User-facing Rate Only sentence. Does not invent a money total."""
+    code = (codes[0] if codes else "the item")
+    pretty = f"{code[0].upper()}{code[1:]}" if code and code[0].isalpha() else code
+    desc = ""
+    collapsed = _normalize_retrieval_ws(excerpt or "")
+    if re.search(r"(?i)storm\s+water\s+culvert", collapsed):
+        desc = " (removal of storm water culverts)"
+    return (
+        f"{pretty}{desc} is Rate Only. No amount exists for this item "
+        f"in the client BOQ — do not invent a total."
+    )
+
+
+def answer_states_rate_only(text: str) -> bool:
+    """True when ``text`` already elects Rate Only / no amount."""
+    blob = text or ""
+    if _RATE_ONLY_RE.search(blob):
+        return True
+    return bool(re.search(r"(?i)\bno amount\b", blob))
+
+
+def _apply_rate_only_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift the asked Rate Only row over priced lookalikes."""
+    if not rate_only_rescue_enabled():
+        return
+    if not query_asks_for_boq_item_amount(query):
+        return
+    codes = extract_asked_cesmm_codes(query)
+    if not codes:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_rate_only_item(chunk.text or "", codes):
+            continue
+        boosted = score + _RATE_ONLY_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_rate_only_item_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: Optional[List[str]] = None,
+) -> int:
+    """Pull the asked CESMM Rate Only row into ``fused``. Project-first.
+
+    Identifier search collapses OCR ``D 529.3``. ``chunks_containing_all``
+    is the out-of-pool backup when cosine never fetched the short row.
+    Failures never raise. GK rate-book notes are not searched.
+    """
+    if not rate_only_rescue_enabled():
+        return 0
+    if not query_asks_for_boq_item_amount(query):
+        return 0
+    codes = extract_asked_cesmm_codes(query)
+    if not codes:
+        return 0
+
+    def _keep(text: str) -> bool:
+        return chunk_states_rate_only_item(text, codes)
+
+    recovered = _rescue_chunks_matching(
+        project_id, fused, store, tuple(codes),
+        _keep, label="rate-only-item",
+    )
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return recovered
+    pids = [project_id] + [
+        p for p in (extra_pids or []) if p and p != project_id
+    ]
+    for pid in pids:
+        for code in codes:
+            rest = code[1:] if len(code) > 1 else code
+            needle_sets = ([code, "rate only"], [rest, "rate only"])
+            for needles in needle_sets:
+                try:
+                    hits = fetch(pid, needles, k=20)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "rate-only rescue for %s (%r) failed: %s",
+                        pid, needles, exc,
+                    )
+                    continue
+                for chunk in hits:
+                    if not _keep(chunk.text or ""):
+                        continue
+                    if chunk.chunk_id in fused:
+                        continue
+                    fused[chunk.chunk_id] = (chunk, 0.0, _RATE_ONLY_BONUS)
+                    recovered += 1
+    if recovered:
+        logger.info(
+            "rate-only rescue recovered %d chunk(s) for codes %r",
+            recovered, codes,
+        )
+    return recovered
 
 
 def _cd_particulars_boost_enabled() -> bool:
@@ -1612,20 +2822,30 @@ def reserve_matching_particulars_row(
     """
     if not kept or not query_asks_for_contract_particulars(query):
         return False
-    if any(
-        is_contract_data_particulars_row(c.text or "")
-        and particulars_row_answers_asked_label(query, c.text or "")
-        for c in kept
-    ):
-        return False
+    # A cap row / mixed window used to count as "already answered" for
+    # A5, so the 0.1%-per-day chunk never replaced same-year 8.8. The
+    # asked *value* (rate / Engineer) must be in kept, not merely the
+    # label family.
+    if any(chunk_answers_asked_particular(query, c.text or "") for c in kept):
+        if not (
+            delay_damages_rate_rescue_enabled()
+            and query_asks_for_delay_damages_rate(query)
+            and not any(
+                chunk_states_delay_damages_rate(c.text or "") for c in kept
+            )
+        ):
+            return False
     present = {c.chunk_id for c in kept}
     for chunk in ranked:
         if chunk.chunk_id in present:
             continue
         text = chunk.text or ""
-        if not (
-            is_contract_data_particulars_row(text)
-            and particulars_row_answers_asked_label(query, text)
+        if not chunk_answers_asked_particular(query, text):
+            continue
+        if (
+            delay_damages_rate_rescue_enabled()
+            and query_asks_for_delay_damages_rate(query)
+            and not chunk_states_delay_damages_rate(text)
         ):
             continue
         if allow is not None and not allow(chunk):
@@ -1830,14 +3050,33 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     fused_lex: Dict[str, Tuple] = {
         c.chunk_id: (c, c.score or 0.0, 0.0) for c in candidates
     }
+    extra_lex_pids = _general_knowledge_project_ids()
     filename_names = _rescue_filename_matched_docs(
         query, project_id, fused_lex, store,
-        extra_pids=_general_knowledge_project_ids(),
+        extra_pids=extra_lex_pids,
     )
     filename_names.update(_rescue_spec_title_docs(
         query, project_id, fused_lex, store,
-        extra_pids=_general_knowledge_project_ids(),
+        extra_pids=extra_lex_pids,
     ))
+    filename_names.update(_rescue_contract_data_docs(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    ))
+    _rescue_spec_identity_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
+    _rescue_asked_particular_value_chunks(
+        query, project_id, fused_lex, store,
+    )
+    _rescue_schedule_register_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
+    _rescue_rate_only_item_chunks(
+        query, project_id, fused_lex, store,
+    )
     if len(fused_lex) > len(candidates):
         seen = {c.chunk_id for c in candidates}
         for chunk, _sem, _b in fused_lex.values():
@@ -1854,6 +3093,11 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
             name_by_id[chunk.doc_id] = _doc_name_for_id(chunk.doc_id)
     _apply_filename_overlap_boost(query, scored_lex, name_by_id)
     _apply_spec_title_filename_boost(query, scored_lex, name_by_id)
+    _apply_spec_identity_text_boost(query, scored_lex)
+    _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
+    _apply_asked_particular_value_boost(query, scored_lex)
+    _apply_schedule_register_boost(query, scored_lex)
+    _apply_rate_only_boost(query, scored_lex)
     candidates = [chunk for _s, chunk in scored_lex]
 
     # Stable sort keeps the active project ahead of GK on equal scores.
@@ -2312,6 +3556,35 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     ))
+    filename_names.update(_rescue_contract_data_docs(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    ))
+    _rescue_spec_identity_chunks(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    )
+    # A5/A9: the year-lock may already have the right PREFIX-YEAR-SEQ
+    # (live A3) while the rate / Engineer appointment sit in a later
+    # unprefixed chunk cosine never fetched. Rescue is project-only so
+    # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
+    _rescue_asked_particular_value_chunks(query, project_id, fused, store)
+    _rescue_schedule_register_chunks(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    )
+    # G4: Rate Only CESMM row (D529.3) vs priced lookalikes. Project-only
+    # so a curated CESMM note cannot impersonate the client's Amount.
+    _rescue_rate_only_item_chunks(query, project_id, fused, store)
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
@@ -2430,6 +3703,11 @@ def retrieve_with_filter(
 
     _apply_filename_overlap_boost(query, scored, name_by_id)
     _apply_spec_title_filename_boost(query, scored, name_by_id)
+    _apply_spec_identity_text_boost(query, scored)
+    _apply_contract_data_filename_boost(query, scored, name_by_id)
+    _apply_asked_particular_value_boost(query, scored)
+    _apply_schedule_register_boost(query, scored)
+    _apply_rate_only_boost(query, scored)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)

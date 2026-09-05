@@ -5,9 +5,9 @@ markdown body for the system prompt). Each agent can call any block in its
 `allowed_blocks` list as a tool. The runtime handles the back-and-forth with the
 LLM: turn → optional tool call(s) → run blocks → return results → continue.
 
-Provider: OpenAI-compatible `/v1/chat/completions` JSON protocol (Kimi / Groq /
-Ollama). A local-inference adapter is wired into the chat block as a fallback;
-see ``app/blocks/chat.py``.
+Provider: OpenAI-compatible `/v1/chat/completions` JSON protocol (OpenRouter /
+Kimi / Groq / Ollama). A local-inference adapter is wired into the chat block
+as a fallback; see ``app/blocks/chat.py``.
 """
 
 from __future__ import annotations
@@ -68,6 +68,56 @@ def _is_generative_request(text: str) -> bool:
     corpus the model would otherwise refuse ("I can't generate that from the
     provided material"), which is the opposite of what the user asked for."""
     return bool(_GENERATIVE_VERB_RE.search(text or ""))
+
+
+# RAG fold labels. `_apply_rag_context` appends one of these after the
+# retrieved excerpts; detectors that read `messages[-1]` after the fold
+# must recover the operator question or they classify the corpus instead.
+_RAG_FOLD_END = "----- END OF REFERENCE CONTEXT -----"
+_RAG_FOLD_QUESTION_MARKERS = (
+    "\n\nDURATION OVERRIDE REQUEST: ",
+    "\n\nCALCULATION REQUEST: ",
+    "\n\nMESSAGE: ",
+    "\n\nQUESTION: ",
+    "\n\nREQUEST: ",
+)
+
+
+def _unwrap_rag_folded_operator_text(text: str) -> str:
+    """Return the operator question when ``text`` is a RAG-folded user turn.
+
+    After `_apply_rag_context` the last user bubble is
+    ``<excerpts> + directive + question``. Duration-override / deliverable
+    detectors that then scan that bubble would parse Contract Data prose
+    (or miss 're-run' in a 6k excerpt) and skip ``generate_wbs``.
+    """
+    raw = text or ""
+    if _RAG_FOLD_END not in raw:
+        return raw
+    for marker in _RAG_FOLD_QUESTION_MARKERS:
+        idx = raw.rfind(marker)
+        if idx == -1:
+            continue
+        recovered = raw[idx + len(marker):]
+        if recovered.strip():
+            return recovered
+    return raw
+
+
+def _message_is_duration_override_rerun(
+    text: str,
+    history: list | None = None,
+) -> bool:
+    """True when this turn must re-run ``generate_wbs`` with a user duration."""
+    try:
+        from app.lib.wbs_duration_overrides import message_wants_wbs_duration_rerun
+        return bool(message_wants_wbs_duration_rerun(text or "", history))
+    except Exception:  # noqa: BLE001
+        _LOG.debug(
+            "duration-override intent check skipped",
+            exc_info=True,
+        )
+        return False
 
 
 # ── Capability / self-introspection questions ────────────────────────────────
@@ -201,6 +251,10 @@ def _apply_rag_context(
         return False
     if messages and messages[-1].get("role") == "user":
         question = messages[-1].get("content", "")
+        history_for_override = [
+            m for m in messages[:-1]
+            if m.get("role") in ("user", "assistant")
+        ]
         if _looks_like_self_contained_calculation(question):
             # ARITHMETIC, not a lookup. Every input is IN the question, so the
             # strict-grounding directive below ("answer using ONLY the
@@ -239,6 +293,30 @@ def _apply_rag_context(
                 "where it genuinely applies — but never invent "
                 "project-specific facts (names, drawing or clause references) "
                 "that are not in the context.\n\nCALCULATION REQUEST: "
+            )
+        elif _message_is_duration_override_rerun(question, history_for_override):
+            # OLD-pack F2 on a fresh Master Corpus thread, verbatim:
+            #   "Answer only from the client project documents. Use 45 days
+            #    for the tree-removal activity and re-run."
+            # The override parsed, but `_is_generative_request` does not see
+            # "use … re-run" as generate/create/build, so the lookup clamp
+            # told the model to answer ONLY from excerpts. Excerpts have no
+            # activity durations — the model offered to fetch a WBS instead
+            # of applying the override. Same class as the calculation
+            # carve-out: the model was obeying. The user's N days are not
+            # supposed to be in the corpus.
+            directive = (
+                "\n\n----- END OF REFERENCE CONTEXT -----\n\n"
+                "The request below is a DURATION OVERRIDE AND RE-RUN. The "
+                "user supplied activity durations IN THE REQUEST ITSELF. "
+                "Apply them via generate_wbs (or the already pre-dispatched "
+                "result) and report the new durations and recomputed "
+                "total/critical path. Do NOT refuse because activity "
+                "durations are absent from the reference context — they are "
+                "not supposed to be there; they came from the user. Do not "
+                "invent other schedule data or activity names that are not "
+                "in the tool result. Treat the context as background only."
+                "\n\nDURATION OVERRIDE REQUEST: "
             )
         elif _is_generative_request(question):
             directive = (
@@ -950,7 +1028,7 @@ def _messages_user_and_history(messages: list) -> tuple[str, list]:
             content = str(m.get("content") or "")
             if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
                 continue
-            user_msg = content
+            user_msg = _unwrap_rag_folded_operator_text(content)
     history = prior[:-1] if prior else []
     return user_msg, history
 
@@ -968,6 +1046,7 @@ def _operator_user_text(messages: list) -> str:
         content = str(m.get("content") or "")
         if content.lstrip().startswith("PLATFORM PRE-DISPATCH:"):
             continue
+        content = _unwrap_rag_folded_operator_text(content)
         if content.strip():
             parts.append(content)
     return "\n".join(parts)
@@ -1001,7 +1080,8 @@ async def _predispatch_wbs_duration_override(
         from app.dependencies import get_block_instance
         container = get_block_instance("construction")
         hist_text = "\n".join(
-            str(m.get("content") or "") for m in history if m.get("role") == "user"
+            _unwrap_rag_folded_operator_text(str(m.get("content") or ""))
+            for m in history if m.get("role") == "user"
         )
         brief = hist_text.strip() or user_msg
         params = {
@@ -3090,7 +3170,7 @@ def _user_intent_requires_tool(messages: list[dict[str, Any]]) -> bool:
         # Iter > 0: assistant + tool turns have been appended; let the
         # model decide how to proceed (will be summary, not another tool).
         return False
-    raw = tail.get("content") or ""
+    raw = _unwrap_rag_folded_operator_text(tail.get("content") or "")
     if message_is_contract_data_lookup(raw):
         return False
     text = raw.lower()
@@ -3319,7 +3399,7 @@ def _forced_specific_tool(messages: list[dict[str, Any]], available: set) -> str
     tail = messages[-1]
     if tail.get("role") != "user":
         return None
-    text = tail.get("content") or ""
+    text = _unwrap_rag_folded_operator_text(tail.get("content") or "")
     low = text.lower()
     # Contract Data TfC / milestone Q&A must not force primavera_parser or
     # generate_wbs — those questions belong to RAG.
@@ -4563,6 +4643,7 @@ def gate_cost_answer(
         for t in authoritative_texts or []:
             if t:
                 messages.append({"role": "tool", "content": str(t)})
+        text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
         return _cost_grounding_gate(text, rag_sys_msg, messages)
     except Exception:  # noqa: BLE001 — a gate must never break an answer
         _LOG.exception("gate_cost_answer failed; passing answer through")
@@ -4619,6 +4700,120 @@ _MASTER_CORPUS_FALLBACK_NOTE = (
 )
 
 
+def _graft_composed_delay_damages_daily(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """OLD-pack E1: state rate × ACA as a daily figure when both are in docs.
+
+    The live FAIL quoted Contract Data sources and never multiplied.
+    Compose from retrieved excerpts only — no invented operands. A
+    fabricated SAR/day still loses when the ACA is absent. The composed
+    envelope is appended as a tool message so the cost gate can ground
+    the product (0.1% × ACA is not a pairwise product of the raw
+    numbers 0.1 and the ACA).
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_states_daily_amount,
+            compose_delay_damages_daily_from_excerpts,
+            format_delay_damages_daily_line,
+        )
+        user = _latest_user_text(messages)
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        composed = compose_delay_damages_daily_from_excerpts(user, rag)
+        if not composed:
+            return text
+        line = format_delay_damages_daily_line(composed)
+        payload = json.dumps({
+            "calculation": "delay_damages_daily",
+            "daily_amount": composed["daily_amount"],
+            "rate_percent": composed["rate_percent"],
+            "contract_amount": composed["contract_amount"],
+            "currency": composed["currency"],
+            "note": composed.get("note") or line,
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "delay_damages_daily" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        if answer_states_daily_amount(text or "", composed["daily_amount"]):
+            return text
+        figs = _cg_money_values(text or "")
+        daily = float(composed["daily_amount"])
+        base = float(composed["contract_amount"])
+        extras = [
+            v for _f, v in figs
+            if abs(v - daily) > 1.0 and abs(v - base) > 1.0
+        ]
+        if extras or (text or "").strip() == _CG_REFUSAL:
+            return line
+        body = (text or "").strip()
+        return line if not body else f"{line}\n\n{body}"
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.exception("delay-damages daily compose failed; passing answer through")
+        return text
+
+
+_GENERIC_ACK_RE = re.compile(
+    r"(?i)i(?:'m| am) ready to help|"
+    r"please let me know what specific|"
+    r"how can i help|"
+    r"what (?:would you like|can i (?:help|do))|"
+    r"i will answer (?:only )?from (?:the )?(?:client )?(?:project )?documents",
+)
+
+
+def _graft_rate_only_item(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """OLD-pack G4: state Rate Only when the retrieved row already says so.
+
+    Live Master Corpus greeted and never named D529.3. Compose nothing —
+    only fire when an excerpt already says Rate Only on the asked item.
+    A fabricated money total is replaced. Kill-switch: RAG_RATE_ONLY_RESCUE=0.
+    """
+    try:
+        from app.core.rag.retriever import (
+            answer_states_rate_only,
+            chunk_states_rate_only_item,
+            extract_asked_cesmm_codes,
+            format_rate_only_line,
+            query_asks_for_boq_item_amount,
+            rate_only_rescue_enabled,
+        )
+        if not rate_only_rescue_enabled():
+            return text
+        user = _latest_user_text(messages)
+        if not query_asks_for_boq_item_amount(user):
+            return text
+        codes = extract_asked_cesmm_codes(user)
+        if not codes:
+            return text
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        if not chunk_states_rate_only_item(rag, codes):
+            return text
+        line = format_rate_only_line(codes, rag)
+        if answer_states_rate_only(text or ""):
+            return text
+        body = (text or "").strip()
+        if not body or _GENERIC_ACK_RE.search(body) or (text or "").strip() == _CG_REFUSAL:
+            return line
+        figs = _cg_money_values(text or "")
+        if figs:
+            return line
+        return f"{line}\n\n{body}"
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception("rate-only graft failed; passing answer through")
+        return text
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -4639,6 +4834,14 @@ def _postprocess_answer(
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
+    # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
+    # text before the cost gate. A percentage-only excerpt still cannot
+    # invent a daily figure; both operands must be in the excerpts.
+    text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
+    # OLD-pack G4: state Rate Only when the retrieved BOQ row already
+    # says so. The live FAIL greeted ("I'm ready to help…") and never
+    # named D529.3 / Rate Only. Do not invent a money total.
+    text = _graft_rate_only_item(text, rag_sys_msg, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one
@@ -5208,6 +5411,12 @@ GROQ_RETIRED_MODELS = {
 KIMI_API_URL = "https://api.moonshot.ai/v1/chat/completions"
 KIMI_DEFAULT_MODEL = "kimi-k2.6"
 
+# OpenRouter — OpenAI-compatible chat-completions. Same payload shape as Groq.
+# Default model is the free router (`openrouter/free`); any `:free` slug is
+# allowed. Paid slugs are refused unless OPENROUTER_ALLOW_PAID=1.
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_DEFAULT_MODEL = "openrouter/free"
+
 
 def _llm_http_timeout() -> float:
     """Per-call HTTP timeout for an LLM request (seconds).
@@ -5265,20 +5474,53 @@ OLLAMA_DEFAULT_URL = "http://localhost:11434/v1/chat/completions"
 OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
 
 
+def _openrouter_model_is_free(name: str) -> bool:
+    """True for ``openrouter/free`` or any catalogue slug ending in ``:free``."""
+    slug = (name or "").strip()
+    if not slug:
+        return False
+    return slug == OPENROUTER_DEFAULT_MODEL or slug.endswith(":free")
+
+
+def _resolve_openrouter_model(name: str | None) -> str:
+    """Pin a free OpenRouter slug, or the default router.
+
+    Paid slugs (anything other than ``openrouter/free`` / ``*:free``) are
+    refused unless ``OPENROUTER_ALLOW_PAID=1``. The warning + default swap
+    keeps production from silently billing when an operator pastes a paid id.
+    """
+    raw = (name or "").strip() or OPENROUTER_DEFAULT_MODEL
+    if _openrouter_model_is_free(raw):
+        return raw
+    allow = (os.getenv("OPENROUTER_ALLOW_PAID") or "").strip().lower()
+    if allow in ("1", "true", "yes", "on"):
+        return raw
+    _LOG.warning(
+        "openrouter: refusing paid model %r (set OPENROUTER_ALLOW_PAID=1 to "
+        "override); using %s",
+        raw,
+        OPENROUTER_DEFAULT_MODEL,
+    )
+    return OPENROUTER_DEFAULT_MODEL
+
+
 def _llm_config() -> dict[str, Any]:
     """Pick the active LLM provider's URL + env-key + default model.
 
     Precedence:
-      1. Explicit ``LLM_PROVIDER`` env var (``kimi`` | ``groq`` | ``ollama``)
-         wins.
+      1. Explicit ``LLM_PROVIDER`` env var (``openrouter`` | ``kimi`` |
+         ``groq`` | ``ollama``) wins.
       2. Otherwise: Kimi when a KIMI_API_KEY is set, else Groq when a
-         GROQ_API_KEY is set, else Kimi (the documented primary).
-    OpenAI and DeepSeek were removed 2026-07-25 — the cloud ladder is Kimi
-    primary + Groq fallback; Ollama is the on-prem provider.
+         GROQ_API_KEY is set, else Kimi (the historical primary).
+    OpenAI and DeepSeek were removed 2026-07-25. Cloud production may use
+    OpenRouter free models as primary (``OPENROUTER_MODEL=openrouter/free``
+    or any ``:free`` slug); Kimi and Groq stay optional. Ollama is the
+    on-prem provider. Do not point ``OLLAMA_URL`` at OpenRouter — use
+    ``LLM_PROVIDER=openrouter``.
 
     Per-provider override envs let the operator pin a specific model
     without code changes:
-      - ``GROQ_MODEL`` / ``KIMI_MODEL`` / ``OLLAMA_MODEL``
+      - ``OPENROUTER_MODEL`` / ``GROQ_MODEL`` / ``KIMI_MODEL`` / ``OLLAMA_MODEL``
       - ``OLLAMA_URL`` overrides the localhost default — set this to your
         Cloudflare Tunnel / Tailscale / VPS URL so the Render deploy can
         reach your self-hosted Ollama.
@@ -5291,10 +5533,9 @@ def _llm_config() -> dict[str, Any]:
         so the downstream auth path adds the header just like Groq
         or DeepSeek.
     """
-    # The ladder is Kimi (primary) + Groq (the one cloud fallback) + Ollama
-    # (on-prem only). OpenAI and DeepSeek were removed 2026-07-25. An unset or
-    # unrecognized LLM_PROVIDER resolves to Kimi (the documented primary), with
-    # Groq as the auto-pick only when a Kimi key is absent but a Groq key exists.
+    # Unset or unrecognized LLM_PROVIDER resolves to Kimi (historical primary),
+    # with Groq as the auto-pick only when a Kimi key is absent but a Groq key
+    # exists. OpenRouter is explicit-only (LLM_PROVIDER / LLM_FALLBACK_PROVIDER).
     provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
     if not provider:
         provider = "kimi" if os.getenv("KIMI_API_KEY") else (
@@ -5315,6 +5556,13 @@ def _llm_config() -> dict[str, Any]:
             "url": url,
             "env_key": "OLLAMA_API_KEY" if os.getenv("OLLAMA_API_KEY") else "",
             "default_model": os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
+        }
+    if provider == "openrouter":
+        return {
+            "provider": "openrouter",
+            "url": OPENROUTER_API_URL,
+            "env_key": "OPENROUTER_API_KEY",
+            "default_model": _resolve_openrouter_model(os.getenv("OPENROUTER_MODEL")),
         }
     if provider == "groq":
         return {
@@ -5424,10 +5672,10 @@ def _llm_fallback_config(primary: dict[str, Any]) -> dict[str, Any] | None:
        new key, and has no fixed-temperature constraint. Set
        KIMI_FALLBACK_MODEL=moonshot-v1-128k.
 
-    2. CROSS-PROVIDER fallback (``LLM_FALLBACK_PROVIDER`` = ``groq`` |
-       ``ollama``): degrade to another provider on a retryable failure
-       (413/429/5xx/network). Returns ``None`` when unset, names the primary
-       provider, or its API-key env is missing.
+    2. CROSS-PROVIDER fallback (``LLM_FALLBACK_PROVIDER`` = ``openrouter`` |
+       ``groq`` | ``ollama``): degrade to another provider on a retryable
+       failure (413/429/5xx/network). Returns ``None`` when unset, names the
+       primary provider, or its API-key env is missing.
 
     Reuses ``_llm_config`` for URL/suffix normalisation by pinning the provider
     through the env for the duration of one synchronous call.
@@ -8010,7 +8258,7 @@ class Agent:
             # Kimi is the production primary; gating on Groq alone made
             # SYNTHESIS_STREAMING=1 a dead switch in prod. Keep this list in
             # step with the allowlist in _stream_synthesis.
-            and cfg["provider"] in ("groq", "kimi")
+            and cfg["provider"] in ("groq", "kimi", "openrouter")
             # rag_debug needs the whole final text to run its with/without-RAG
             # A/B in the non-streaming branch; don't stream those turns.
             and not rag_debug
@@ -8747,8 +8995,16 @@ class Agent:
             tool_names = {t.get("function", {}).get("name") for t in tools}
             forced_tool = (
                 _forced_specific_tool(messages, tool_names)
-                if self.name in ("project-assistant", "heavy-reasoning") else None
+                if self.name in (
+                    "project-assistant", "heavy-reasoning", "construction-pm",
+                ) else None
             )
+            # Pinned construction-pm keeps its own discipline for the rest
+            # of the intent map (histogram / look-ahead stay on predispatch).
+            # Duration-override F2 is the one steal that left the hat
+            # answering from RAG excerpts instead of generate_wbs.
+            if self.name == "construction-pm" and forced_tool != "generate_wbs":
+                forced_tool = None
             requires_tool = (
                 self.name == "project-assistant"
                 and _user_intent_requires_tool(messages)
@@ -8781,12 +9037,13 @@ class Agent:
             # Groq uses "auto", where Llama calls tools cleanly on its own and
             # the turn always completes. Decided PER-ATTEMPT so a fallback to a
             # different provider gets the right value.
-            if provider in ("groq", "kimi"):
+            if provider in ("groq", "kimi", "openrouter"):
                 # Groq: forcing tool_choice makes Llama-4-Scout emit the tool as
                 # PROSE -> HTTP 400 tool_use_failed. Kimi K2: forcing a specific
                 # tool 400s outright ("tool_choice 'specified' is incompatible
-                # with thinking enabled" — K2 is a reasoning model). Both call
-                # tools cleanly on "auto", so never force them.
+                # with thinking enabled" — K2 is a reasoning model). OpenRouter
+                # is OpenAI-compatible like Groq; routed free models must not
+                # be forced. All three call tools cleanly on "auto".
                 return "auto"
             if forced_tool:
                 # Force THIS tool by name — "required" alone let the model pick
@@ -9116,10 +9373,11 @@ class Agent:
         """
         cfg = _llm_config()
         native_ollama = _is_native_ollama(cfg)
-        if cfg["provider"] not in ("groq", "openai", "kimi") and not native_ollama:
-            # Only Groq, OpenAI, Kimi, and native Ollama streaming are verified.
+        if cfg["provider"] not in ("groq", "openai", "kimi", "openrouter") and not native_ollama:
+            # Only Groq, OpenAI, Kimi, OpenRouter, and native Ollama streaming
+            # are verified. OpenRouter is OpenAI-compatible (same SSE shape as Groq).
             raise _SynthStreamError(
-                "streaming synthesis only verified for groq/openai/kimi/native-ollama"
+                "streaming synthesis only verified for groq/openai/kimi/openrouter/native-ollama"
             )
         # Soft daily cap: mirror _call_llm. Over cap -> fall back so the
         # non-streaming path emits the structured cap error the UI expects.
