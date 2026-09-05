@@ -181,6 +181,9 @@ _SMOKE_INPUTS = {
     # Additive discipline library — commercial / PM.
     "roi_calculator": dict(gain=1_200_000, cost=1_000_000),
     "unit_cost_total": dict(quantity=100, unit_rate=250),
+    "delay_damages_daily": dict(
+        rate_percent=0.1, contract_amount=1_754_504_456.25, currency="SAR",
+    ),
     "cost_per_area": dict(total_cost=1_000_000, area=5000),
     "productivity_rate": dict(output_quantity=500, labor_hours=40, crew_size=4),
     # Additive discipline library — planning.

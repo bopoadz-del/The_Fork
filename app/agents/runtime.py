@@ -4563,6 +4563,7 @@ def gate_cost_answer(
         for t in authoritative_texts or []:
             if t:
                 messages.append({"role": "tool", "content": str(t)})
+        text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
         return _cost_grounding_gate(text, rag_sys_msg, messages)
     except Exception:  # noqa: BLE001 — a gate must never break an answer
         _LOG.exception("gate_cost_answer failed; passing answer through")
@@ -4619,6 +4620,65 @@ _MASTER_CORPUS_FALLBACK_NOTE = (
 )
 
 
+def _graft_composed_delay_damages_daily(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """OLD-pack E1: state rate × ACA as a daily figure when both are in docs.
+
+    The live FAIL quoted Contract Data sources and never multiplied.
+    Compose from retrieved excerpts only — no invented operands. A
+    fabricated SAR/day still loses when the ACA is absent. The composed
+    envelope is appended as a tool message so the cost gate can ground
+    the product (0.1% × ACA is not a pairwise product of the raw
+    numbers 0.1 and the ACA).
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            answer_states_daily_amount,
+            compose_delay_damages_daily_from_excerpts,
+            format_delay_damages_daily_line,
+        )
+        user = _latest_user_text(messages)
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        composed = compose_delay_damages_daily_from_excerpts(user, rag)
+        if not composed:
+            return text
+        line = format_delay_damages_daily_line(composed)
+        payload = json.dumps({
+            "calculation": "delay_damages_daily",
+            "daily_amount": composed["daily_amount"],
+            "rate_percent": composed["rate_percent"],
+            "contract_amount": composed["contract_amount"],
+            "currency": composed["currency"],
+            "note": composed.get("note") or line,
+        })
+        if isinstance(messages, list) and not any(
+            isinstance(m, dict)
+            and m.get("role") == "tool"
+            and "delay_damages_daily" in str(m.get("content") or "")
+            for m in messages
+        ):
+            messages.append({"role": "tool", "content": payload})
+        if answer_states_daily_amount(text or "", composed["daily_amount"]):
+            return text
+        figs = _cg_money_values(text or "")
+        daily = float(composed["daily_amount"])
+        base = float(composed["contract_amount"])
+        extras = [
+            v for _f, v in figs
+            if abs(v - daily) > 1.0 and abs(v - base) > 1.0
+        ]
+        if extras or (text or "").strip() == _CG_REFUSAL:
+            return line
+        body = (text or "").strip()
+        return line if not body else f"{line}\n\n{body}"
+    except Exception:  # noqa: BLE001 — compose must never break a turn
+        _LOG.exception("delay-damages daily compose failed; passing answer through")
+        return text
+
+
 def _postprocess_answer(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
@@ -4639,6 +4699,10 @@ def _postprocess_answer(
     prepended so the fallback is visible in the answer itself."""
     text = _recover_answer_from_tool_messages(text, messages)
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
+    # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
+    # text before the cost gate. A percentage-only excerpt still cannot
+    # invent a daily figure; both operands must be in the excerpts.
+    text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
     text = _cost_grounding_gate(text, rag_sys_msg, messages)
     # Citation provenance: an attribution no evidence record backs is removed
     # and the answer flagged. Sibling of the cost gate above -- that one
