@@ -63,3 +63,28 @@ rows:
     phrasings:
       - run a dewatering uplift check for 23 m water depth
       - compute the earned value for this month
+
+  # MEP coordination kit (Cerebrum-Blocks: mep_coordination). Thin mount --
+  # the kit is vendored through the Store like every other kit; no kit code
+  # lives in this repo.
+  #
+  # Deliberately does NOT capture "extract quantities from this IFC": that is
+  # bim_extractor's job. The two are easy to confuse because both take an IFC,
+  # and routing a quantities ask to the clash judge returns a clash report to
+  # someone who asked for a schedule of quantities.
+  - tool: mep_coordination
+    phrases:
+      - clash detection
+      - clash report
+      - clashes
+      - clash judge
+      - coordination report
+      - coordination issues
+      - clearance violation
+      - clearance between
+      - services clash
+      - mep coordination
+      - bcf
+    phrasings:
+      - run clash detection on this model
+      - is there enough clearance between the gas main and the LV cable
