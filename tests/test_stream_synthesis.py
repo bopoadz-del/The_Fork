@@ -38,6 +38,7 @@ _LLM_ENV = (
     "KIMI_API_KEY", "KIMI_MODEL", "KIMI_FALLBACK_MODEL",
     "GROQ_API_KEY", "GROQ_MODEL",
     "OLLAMA_API_KEY", "OLLAMA_URL", "OLLAMA_MODEL",
+    "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_ALLOW_PAID",
     "USAGE_DAILY_CAP_USD",
 )
 
@@ -174,6 +175,16 @@ async def _drain(agent, **kw):
 
 
 # ── the provider gate ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_openrouter_streams_like_groq(monkeypatch, stream):
+    """OpenRouter is OpenAI-compatible; SYNTHESIS_STREAMING must not skip it."""
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    stream(_StreamResponse(_sse("ok")))
+
+    assert await _drain(_agent(), api_key="or-test-key") == ["ok"]
+
 
 @pytest.mark.asyncio
 async def test_kimi_the_production_primary_streams(monkeypatch, stream):

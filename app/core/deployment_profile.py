@@ -34,7 +34,7 @@ PROFILE_ONPREM = "onprem"
 
 # LLM providers that egress to a third-party cloud. Under on-prem only Ollama
 # (pointed at a LOCAL host) is permitted.
-_CLOUD_LLM_PROVIDERS = frozenset({"groq", "openai", "deepseek", "kimi", "moonshot", "anthropic"})
+_CLOUD_LLM_PROVIDERS = frozenset({"groq", "openai", "deepseek", "kimi", "moonshot", "anthropic", "openrouter"})
 
 # Model-loading offline flags that must be present in the environment before
 # any transformers/HF import so the embedder never phones home. Truthy check.

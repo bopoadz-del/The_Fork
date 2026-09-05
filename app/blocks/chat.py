@@ -235,10 +235,9 @@ class ChatBlock(TypedBlock):
                     "use_local_model requested but local stack unavailable; falling back to cloud"
                 )
 
-        # ── Cloud provider selection — Kimi or Groq depending on which
-        # creds are set. This is the same _llm_config() the agent runtime
-        # uses so that LLM_PROVIDER=groq applies uniformly across the chat
-        # block route and the agent path.
+        # ── Cloud provider selection via _llm_config() (same as the agent
+        # runtime) so LLM_PROVIDER=openrouter|kimi|groq|ollama applies
+        # uniformly across the chat block route and the agent path.
         from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
         cfg = _llm_config()
         # Provider auth. ``_llm_config`` sets env_key="OLLAMA_API_KEY" when an
