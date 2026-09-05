@@ -53,6 +53,7 @@ _LLM_ENV = (
     "KIMI_API_KEY", "KIMI_MODEL", "KIMI_FALLBACK_MODEL",
     "GROQ_API_KEY", "GROQ_MODEL",
     "OLLAMA_API_KEY", "OLLAMA_URL", "OLLAMA_MODEL",
+    "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_ALLOW_PAID",
     "USAGE_DAILY_CAP_USD", "FORCE_CALC_ON_DIMENSIONS",
 )
 
@@ -1029,6 +1030,19 @@ def test_fallback_config_resolves_ollama_with_url_normalisation(monkeypatch):
     cfg = _llm_fallback_config({"provider": "kimi"})
     assert cfg is not None and cfg["provider"] == "ollama"
     assert cfg["url"].endswith("/v1/chat/completions"), cfg["url"]
+
+
+def test_fallback_config_resolves_openrouter(monkeypatch):
+    from app.agents.runtime import OPENROUTER_API_URL, _llm_fallback_config
+
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    cfg = _llm_fallback_config({"provider": "kimi"})
+    assert cfg is not None
+    assert cfg["provider"] == "openrouter"
+    assert cfg["url"] == OPENROUTER_API_URL
+    assert cfg["env_key"] == "OPENROUTER_API_KEY"
+    assert cfg["default_model"] == "openrouter/free"
 
 
 def test_fallback_ladder_keeps_groq_when_kimi_model_fallback_is_set(monkeypatch):

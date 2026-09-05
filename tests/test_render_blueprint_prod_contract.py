@@ -38,6 +38,18 @@ def test_blueprint_does_not_pin_an_ollama_intent_model():
     )
 
 
+def test_blueprint_lists_openrouter_keys_unsynced():
+    """OpenRouter is a first-class cloud provider; keys stay dashboard-only."""
+    env = _web_env()
+    for key in ("OPENROUTER_API_KEY", "OPENROUTER_MODEL"):
+        item = env.get(key)
+        assert item is not None, f"{key} missing from render.yaml"
+        assert item.get("sync") is False, f"{key} must be sync:false"
+        assert not (item.get("value") or "").strip(), (
+            f"{key} must not pin a committed value"
+        )
+
+
 def test_blueprint_does_not_commit_ollama_as_cloud_provider():
     env = _web_env()
     for key in ("LLM_PROVIDER", "LLM_FALLBACK_PROVIDER"):

@@ -2,7 +2,7 @@
 dynamic reasoning uses for UNDERSTAND / PLAN.
 
 Reuses `runtime._llm_config()` so it follows whatever provider is configured:
-Kimi primary + Groq fallback on cloud (DECISIONS.md 2026-07-24), or Ollama
+OpenRouter free / Kimi / Groq on cloud (DECISIONS.md 2026-09-05), or Ollama
 on-prem. The reasoner never hardcodes a provider — "on the cloud" is a
 config choice, not a code change.
 """
