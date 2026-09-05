@@ -8,7 +8,13 @@ import {
   type ReactNode,
 } from 'react'
 import { ApiError, apiGet, apiPost } from '../lib/api'
-import { clearToken, getToken, setToken } from '../lib/token'
+import {
+  clearRememberedEmail,
+  clearToken,
+  getToken,
+  setRememberedEmail,
+  setToken,
+} from '../lib/token'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 // /me returns user_id; /login returns user.id — normalise to a single shape.
@@ -53,7 +59,8 @@ interface MeResponse {
 interface AuthContextValue {
   user: AuthUser | null
   loading: boolean
-  login: (email: string, password: string) => Promise<void>
+  /** ``remember`` decides whether the session survives closing the browser. */
+  login: (email: string, password: string, remember?: boolean) => Promise<void>
   register: (
     email: string,
     password: string,
@@ -102,9 +109,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
   }, [])
 
-  const login = async (email: string, password: string): Promise<void> => {
+  const login = async (
+    email: string,
+    password: string,
+    remember = true,
+  ): Promise<void> => {
     const data = await apiPost<LoginResponse>('/v1/users/login', { email, password })
-    setToken(data.token)
+    // remember=true  -> localStorage, survives a browser restart
+    // remember=false -> sessionStorage, gone when the tab closes
+    setToken(data.token, remember)
+    // The email is a convenience for the next visit. The password is never
+    // stored -- the browser's password manager owns that.
+    if (remember) {
+      setRememberedEmail(email)
+    } else {
+      clearRememberedEmail()
+    }
     setUser({
       id: data.user.id,
       email: data.user.email,

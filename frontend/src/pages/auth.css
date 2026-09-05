@@ -132,3 +132,45 @@
 .auth-toggle__link:hover {
   color: var(--accent-hover);
 }
+
+/* ── Remember me ──
+   Sits between the password field and the submit button. The hint line
+   states what the tick actually does: persistence on this device, not a
+   stored password. Nothing here implies credentials are saved, because
+   they are not -- only the session token's lifetime changes. */
+.auth-remember {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: calc(var(--space-1) * -1);
+}
+
+.auth-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.auth-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.auth-remember__label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  line-height: 1.35;
+}
+
+.auth-remember__hint {
+  font-size: 11.5px;
+  color: var(--text-subtle);
+}

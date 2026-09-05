@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { apiPost } from '../lib/api'
+import { getRememberedEmail } from '../lib/token'
 import BrandMark from '../components/BrandMark'
 import './pages.css'
 import './auth.css'
@@ -13,8 +14,13 @@ export default function Login() {
   const navigate = useNavigate()
 
   const [mode, setMode] = useState<Mode>('signin')
-  const [email, setEmail] = useState('')
+  // Pre-fill from the last "Remember me" sign-in. Only ever the address --
+  // the password is the browser password manager's job, never ours.
+  const [email, setEmail] = useState(() => getRememberedEmail() ?? '')
   const [password, setPassword] = useState('')
+  // Ticked by default only for someone we already remember; a first-time or
+  // opted-out visitor has to choose persistence deliberately.
+  const [remember, setRemember] = useState(() => getRememberedEmail() !== null)
   const [displayName, setDisplayName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -80,7 +86,7 @@ export default function Login() {
 
     try {
       if (mode === 'signin') {
-        await login(email, password)
+        await login(email, password, remember)
       } else {
         const result = await register(email, password, displayName.trim() || undefined)
         if (result.verificationRequired) {
@@ -172,6 +178,27 @@ export default function Login() {
               disabled={submitting}
             />
           </div>
+
+          {/* Sign-in only. On registration the session is always kept, so
+              offering the choice there would be a control that does nothing. */}
+          {mode === 'signin' && (
+            <div className="auth-remember">
+              <input
+                id="remember"
+                className="auth-checkbox"
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                disabled={submitting}
+              />
+              <label className="auth-remember__label" htmlFor="remember">
+                Remember me
+                <span className="auth-remember__hint">
+                  Stay signed in on this device
+                </span>
+              </label>
+            </div>
+          )}
 
           {error && (
             <div className="auth-error" role="alert">
