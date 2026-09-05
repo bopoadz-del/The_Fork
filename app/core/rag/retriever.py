@@ -440,6 +440,10 @@ def elect_answer_bearing_contract(
          lambda _name, text: chunk_answers_asked_particular(query, text)),
         (query_asks_for_boq_scope,
          lambda name, _text: document_is_a_bill_of_quantities(name)),
+        (query_asks_for_boq_item_amount,
+         lambda _name, text: chunk_states_rate_only_item(
+             text, extract_asked_cesmm_codes(query),
+         )),
     ]
     active = [is_answer for asks, is_answer in kinds if asks(query)]
     if not active:
@@ -501,6 +505,11 @@ class _ContractScope:
         self._engineer_identity_in_pool = False
         self._schedule_labels: List[str] = []
         self._schedule_register_in_pool = False
+        # OLD-pack G4: D529.3 Amount is Rate Only. Priced lookalikes
+        # (D549.2 fence, D599.5 carriageway, Excluded culvert) used to
+        # occupy every slot and the model greeted. Not #504/#505/#506.
+        self._rate_only_codes: List[str] = []
+        self._rate_only_in_pool = False
         docs: Optional[List[Tuple[str, str]]] = (
             list(ranked_docs) if ranked_docs is not None else None
         )
@@ -551,6 +560,16 @@ class _ContractScope:
                         chunk_states_schedule_register(text, self._schedule_labels)
                         for _name, text in docs
                     )
+            if (
+                rate_only_rescue_enabled()
+                and query_asks_for_boq_item_amount(self.query)
+            ):
+                self._rate_only_codes = extract_asked_cesmm_codes(self.query)
+                if self._rate_only_codes:
+                    self._rate_only_in_pool = any(
+                        chunk_states_rate_only_item(text, self._rate_only_codes)
+                        for _n, text in docs
+                    )
         if not self.named and docs is not None:
             self.winning = elect_answer_bearing_contract(self.query, docs)
 
@@ -558,6 +577,11 @@ class _ContractScope:
         # Named PREFIX-YEAR-SEQ (#443) is fail-closed onto that year.
         # The rate / Engineer fences are unnamed-only — a question that
         # names DD-2022-175 must still see that year's chunks.
+        if self._rate_only_in_pool:
+            if not chunk_states_rate_only_item(
+                chunk_text, self._rate_only_codes,
+            ):
+                return False
         if not self.named:
             if self._delay_rate_in_pool:
                 if not chunk_states_delay_damages_rate(chunk_text):
@@ -2390,6 +2414,265 @@ def _apply_asked_particular_value_boost(
         scored[i] = (boosted, chunk)
 
 
+# ── Rate Only BOQ-item rescue (live OLD-pack G4) ───────────────────────────
+#
+# Live Master Corpus G4 (tip 4d8ddb79 / was a65cebb5): "Answer only from
+# the client project documents. What is the total amount for removal of
+# storm water culverts (D529.3)?" returned a generic "I'm ready to help"
+# acknowledgement plus the 3348/3348 coverage footer. The asked row is
+# Rate Only — no amount exists. Cosine prefers priced lookalikes
+# (D549.2 fence, D599.5 carriageway, an Excluded culvert that shares
+# "storm water") and term rescue treats that overlap as already-grounded.
+# Do not invent a money total; elect the Rate Only row as written.
+#
+# Same shape as A5/A9 in-pool fence + out-of-pool identifier rescue.
+# Kill-switch: RAG_RATE_ONLY_RESCUE=0.
+#
+# Not #504 (E1 delay-damages compose), not #505 (F2 duration override),
+# not #506 (G1 Schedule 10 register).
+_RATE_ONLY_BONUS = 2.0
+_RATE_ONLY_RE = re.compile(r"(?i)\brate\s*only\b")
+_ITEM_AMOUNT_ASK_RE = re.compile(
+    r"(?i)\b(?:total\s+amount|(?<!contract\s)amount|sum\s+for|value\s+for)\b",
+)
+_UNIT_RATE_ONLY_ASK_RE = re.compile(
+    r"(?i)\b(?:unit\s+rate|rate\s+for|rate\s+per)\b",
+)
+_CESMM_COMPACT_ITEM_RE = re.compile(r"(?i)^[a-z]\d{2,4}(?:\.\d+)?$")
+_CESMM_IN_TEXT_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9])([A-Z])\s*(\d{2,4}(?:\.\d+)?)(?![A-Za-z0-9])",
+)
+
+
+def rate_only_rescue_enabled() -> bool:
+    """ON by default — live G4 Rate Only recall. RAG_RATE_ONLY_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy."""
+    return _env_flag_on("RAG_RATE_ONLY_RESCUE")
+
+
+def extract_asked_cesmm_codes(query: str) -> List[str]:
+    """Compact CESMM item codes the ask names (``d529.3``, ``d549.2``)."""
+    out: List[str] = []
+    seen: Set[str] = set()
+    blob = normalize_cesmm_item_codes(query or "")
+    for ident in extract_query_identifiers(blob):
+        compact = normalize_cesmm_item_codes(ident).lower()
+        if not _CESMM_COMPACT_ITEM_RE.fullmatch(compact):
+            continue
+        if compact not in seen:
+            seen.add(compact)
+            out.append(compact)
+    for match in _CESMM_IN_TEXT_RE.finditer(blob):
+        compact = f"{match.group(1)}{match.group(2)}".lower()
+        if compact not in seen:
+            seen.add(compact)
+            out.append(compact)
+    return out
+
+
+def query_asks_for_boq_item_amount(query: str) -> bool:
+    """True for G4 (total amount of a named CESMM / BOQ item).
+
+    A2 (Accepted Contract Amount), A5 (Delay Damages rate) and E1
+    (calculate … in SAR) stay off this path. A unit-rate-only ask
+    (WAVE 2 B5 without ``amount``) is not this class — the Rate
+    column can still be a number when Amount is Rate Only.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if query_asks_for_accepted_contract_amount(q):
+        return False
+    if query_asks_for_delay_damages_rate(q) or query_needs_a_monetary_base(q):
+        return False
+    if _UNIT_RATE_ONLY_ASK_RE.search(q) and not re.search(
+        r"(?i)\b(?:total\s+)?amount\b", q,
+    ):
+        return False
+    if not _ITEM_AMOUNT_ASK_RE.search(q):
+        return False
+    return bool(extract_asked_cesmm_codes(q))
+
+
+def _cesmm_row_windows(text: str, code: str) -> List[str]:
+    """Local row / next-line windows around one CESMM code.
+
+    Amount sits to the right of the item code. A previous row's
+    Rate Only must not stain the next item on a mixed BOQ page.
+    """
+    compact = normalize_cesmm_item_codes(code or "")
+    if not compact:
+        return []
+    letter, rest = compact[0], compact[1:]
+    item_re = re.compile(
+        rf"(?i)(?<![A-Za-z0-9]){re.escape(letter)}\s*{re.escape(rest)}"
+        r"(?![A-Za-z0-9])",
+    )
+    # A new BOQ row starts with a CESMM code (optionally after a pipe).
+    # CESMM4 is letter + 2-3 digits (D529.3 / D110). Do not treat a
+    # unit + rate ("m 1370.00") as the next item.
+    other_re = re.compile(
+        r"(?i)^(?:\s*[|]\s*)?([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b",
+    )
+    blob = text or ""
+    windows: List[str] = []
+    lines = blob.splitlines() or [blob]
+    for i, line in enumerate(lines):
+        if not item_re.search(line):
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if other_re.match(nxt.strip()) and not item_re.search(nxt):
+            nxt = ""
+        windows.append(_normalize_retrieval_ws(f"{line} {nxt}"))
+    if windows:
+        return windows
+    # One-line OCR / table soup: cut at the next pipe-led CESMM item,
+    # not at a unit + rate ("m 1370.00").
+    next_item = re.compile(
+        r"(?i)(?:\s*[|]\s+)([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b",
+    )
+    for match in item_re.finditer(blob):
+        tail = blob[match.end(): match.end() + 160]
+        cut = next_item.search(tail)
+        if cut:
+            tail = tail[:cut.start()]
+        windows.append(_normalize_retrieval_ws(blob[match.start(): match.end()] + tail))
+    return windows
+
+
+def chunk_states_rate_only_item(text: str, codes: List[str]) -> bool:
+    """True when the asked CESMM row's Amount is Rate Only.
+
+    A priced lookalike on the same page (D549.2 / D599.5) and an
+    Excluded culvert that only shares the description are not this.
+    Does not invent: the excerpt itself must already say Rate Only
+    on the asked item's row.
+    """
+    if not codes or not _RATE_ONLY_RE.search(text or ""):
+        return False
+    for code in codes:
+        for window in _cesmm_row_windows(text, code):
+            if _RATE_ONLY_RE.search(window):
+                return True
+    return False
+
+
+def chunk_states_rate_only_row(text: str) -> bool:
+    """Query-free: a CESMM row in ``text`` already says Rate Only."""
+    if not text or not _RATE_ONLY_RE.search(text):
+        return False
+    blob = normalize_cesmm_item_codes(text)
+    codes = [
+        f"{m.group(1)}{m.group(2)}".lower()
+        for m in _CESMM_IN_TEXT_RE.finditer(blob)
+    ]
+    return bool(codes) and chunk_states_rate_only_item(text, codes)
+
+
+def format_rate_only_line(codes: List[str], excerpt: str = "") -> str:
+    """User-facing Rate Only sentence. Does not invent a money total."""
+    code = (codes[0] if codes else "the item")
+    pretty = f"{code[0].upper()}{code[1:]}" if code and code[0].isalpha() else code
+    desc = ""
+    collapsed = _normalize_retrieval_ws(excerpt or "")
+    if re.search(r"(?i)storm\s+water\s+culvert", collapsed):
+        desc = " (removal of storm water culverts)"
+    return (
+        f"{pretty}{desc} is Rate Only. No amount exists for this item "
+        f"in the client BOQ — do not invent a total."
+    )
+
+
+def answer_states_rate_only(text: str) -> bool:
+    """True when ``text`` already elects Rate Only / no amount."""
+    blob = text or ""
+    if _RATE_ONLY_RE.search(blob):
+        return True
+    return bool(re.search(r"(?i)\bno amount\b", blob))
+
+
+def _apply_rate_only_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift the asked Rate Only row over priced lookalikes."""
+    if not rate_only_rescue_enabled():
+        return
+    if not query_asks_for_boq_item_amount(query):
+        return
+    codes = extract_asked_cesmm_codes(query)
+    if not codes:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_rate_only_item(chunk.text or "", codes):
+            continue
+        boosted = score + _RATE_ONLY_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_rate_only_item_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: Optional[List[str]] = None,
+) -> int:
+    """Pull the asked CESMM Rate Only row into ``fused``. Project-first.
+
+    Identifier search collapses OCR ``D 529.3``. ``chunks_containing_all``
+    is the out-of-pool backup when cosine never fetched the short row.
+    Failures never raise. GK rate-book notes are not searched.
+    """
+    if not rate_only_rescue_enabled():
+        return 0
+    if not query_asks_for_boq_item_amount(query):
+        return 0
+    codes = extract_asked_cesmm_codes(query)
+    if not codes:
+        return 0
+
+    def _keep(text: str) -> bool:
+        return chunk_states_rate_only_item(text, codes)
+
+    recovered = _rescue_chunks_matching(
+        project_id, fused, store, tuple(codes),
+        _keep, label="rate-only-item",
+    )
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return recovered
+    pids = [project_id] + [
+        p for p in (extra_pids or []) if p and p != project_id
+    ]
+    for pid in pids:
+        for code in codes:
+            rest = code[1:] if len(code) > 1 else code
+            needle_sets = ([code, "rate only"], [rest, "rate only"])
+            for needles in needle_sets:
+                try:
+                    hits = fetch(pid, needles, k=20)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "rate-only rescue for %s (%r) failed: %s",
+                        pid, needles, exc,
+                    )
+                    continue
+                for chunk in hits:
+                    if not _keep(chunk.text or ""):
+                        continue
+                    if chunk.chunk_id in fused:
+                        continue
+                    fused[chunk.chunk_id] = (chunk, 0.0, _RATE_ONLY_BONUS)
+                    recovered += 1
+    if recovered:
+        logger.info(
+            "rate-only rescue recovered %d chunk(s) for codes %r",
+            recovered, codes,
+        )
+    return recovered
+
+
 def _cd_particulars_boost_enabled() -> bool:
     return (os.getenv("RAG_CD_PARTICULARS_BOOST") or "").strip().lower() not in (
         "0", "false", "no", "off",
@@ -2791,6 +3074,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
     )
+    _rescue_rate_only_item_chunks(
+        query, project_id, fused_lex, store,
+    )
     if len(fused_lex) > len(candidates):
         seen = {c.chunk_id for c in candidates}
         for chunk, _sem, _b in fused_lex.values():
@@ -2811,6 +3097,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
     _apply_asked_particular_value_boost(query, scored_lex)
     _apply_schedule_register_boost(query, scored_lex)
+    _apply_rate_only_boost(query, scored_lex)
     candidates = [chunk for _s, chunk in scored_lex]
 
     # Stable sort keeps the active project ahead of GK on equal scores.
@@ -3295,6 +3582,9 @@ def retrieve_with_filter(
         store,
         extra_pids=extra_rescue_pids,
     )
+    # G4: Rate Only CESMM row (D529.3) vs priced lookalikes. Project-only
+    # so a curated CESMM note cannot impersonate the client's Amount.
+    _rescue_rate_only_item_chunks(query, project_id, fused, store)
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
@@ -3417,6 +3707,7 @@ def retrieve_with_filter(
     _apply_contract_data_filename_boost(query, scored, name_by_id)
     _apply_asked_particular_value_boost(query, scored)
     _apply_schedule_register_boost(query, scored)
+    _apply_rate_only_boost(query, scored)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
