@@ -499,6 +499,8 @@ class _ContractScope:
         # prefix-only fence.
         self._delay_rate_in_pool = False
         self._engineer_identity_in_pool = False
+        self._schedule_labels: List[str] = []
+        self._schedule_register_in_pool = False
         docs: Optional[List[Tuple[str, str]]] = (
             list(ranked_docs) if ranked_docs is not None else None
         )
@@ -535,6 +537,20 @@ class _ContractScope:
                 self._engineer_identity_in_pool = any(
                     chunk_states_engineer_identity(text) for _n, text in docs
                 )
+            # OLD-pack G1: a Schedule-N register row ("Schedule 10: Not Used")
+            # is the answer. Vol 4 / Vol 5 / CPM mention "schedule" at length
+            # and used to occupy every slot. Not #500/#501/#502/#503.
+            if (
+                schedule_register_rescue_enabled()
+                and query_asks_for_contract_particulars(self.query)
+                and query_asks_for_numbered_contract_schedule(self.query)
+            ):
+                self._schedule_labels = extract_asked_schedule_labels(self.query)
+                if self._schedule_labels:
+                    self._schedule_register_in_pool = any(
+                        chunk_states_schedule_register(text, self._schedule_labels)
+                        for _name, text in docs
+                    )
         if not self.named and docs is not None:
             self.winning = elect_answer_bearing_contract(self.query, docs)
 
@@ -558,6 +574,11 @@ class _ContractScope:
                 return False
         if self._aca_contract_data_in_pool:
             if not filename_looks_like_contract_data(filename):
+                return False
+        if self._schedule_register_in_pool:
+            if not chunk_states_schedule_register(
+                chunk_text, self._schedule_labels,
+            ):
                 return False
         if self.named:
             return filename_matches_named_contracts(
@@ -589,6 +610,18 @@ class _ContractScope:
                     and filename_looks_like_contract_data(filename)
                     and contract_data_chunk_states_aca(
                         filename, chunk_text, self.query,
+                    )
+                ):
+                    self.winning = ids[0]
+                    return True
+                # Live G1: scanned / unprefixed register row in a
+                # PREFIX-YEAR-SEQ Contract Data file. Same exception as
+                # A2 — the row is the answer even without the index-time
+                # particulars prefix.
+                if (
+                    self._schedule_register_in_pool
+                    and chunk_states_schedule_register(
+                        chunk_text, self._schedule_labels,
                     )
                 ):
                     self.winning = ids[0]
@@ -1528,6 +1561,210 @@ def _rescue_contract_data_docs(
     if recovered:
         logger.info("contract-data rescue recovered %d chunk(s) for an ACA ask", recovered)
     return names
+
+
+# ── Schedule-register / Not Used rescue (live OLD-pack G1) ─────────────────
+#
+# Live Master Corpus G1 (tip a65cebb5): "Answer only from the client project
+# documents. What does Schedule 10 of the contract contain?" retrieved
+# Volume 5 / Volume 4 / CPM and answered with a generic "I will answer from
+# the documents" acknowledgement. The contract's own schedule index says
+# ``Schedule 10: Not Used``. That short register row is the answer — cosine
+# prefers the long volumes that mention "schedule" at length, and term
+# rescue treats that overlap as already-grounded so it never fetches the
+# index line. Do not invent contents; surface the register row as written.
+#
+# Same shape as C2's in-chunk identity rescue (``chunks_containing_all``)
+# plus the A2/C2 fence: when a register row is in the pool, lookalikes
+# drop. Kill-switch: RAG_SCHEDULE_REGISTER_RESCUE=0.
+#
+# Not #500 (D2/D4/D5 routing), not #501 (A3/A5 year lock), not #502
+# (C2 SPE-identity / A2 Contract Data filename).
+_SCHEDULE_REGISTER_BONUS = 2.0
+_SCHEDULE_REGISTER_ROW_RE = re.compile(
+    r"(?i)\b(schedule\s+(?:no\.?\s*)?\d+[A-Za-z]?)"
+    r"\s*[:|–—-]\s*"
+    r"(?P<val>\S[^\n]{0,79})"
+)
+_SCHEDULE_NOT_USED_COLLAPSED_RE = re.compile(
+    r"(?i)\b(schedule\s+(?:no\.?\s*)?\d+[A-Za-z]?)"
+    r"(?:\s*[:|–—-]\s*|\s+)"
+    r"not\s+used\b"
+)
+_SCHEDULE_REGISTER_PROSE_RE = re.compile(
+    r"(?i)\b(?:sets?\s+out|shall|the\s+contractor|contains?|covers?|"
+    r"includes?|must\b|will\s+provide)\b"
+)
+
+
+def schedule_register_rescue_enabled() -> bool:
+    """ON by default — live G1 recall defect. RAG_SCHEDULE_REGISTER_RESCUE=0
+    restores pre-fix ranking if the lift ever proves noisy."""
+    return (
+        os.getenv("RAG_SCHEDULE_REGISTER_RESCUE", "1") or ""
+    ).strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def query_asks_for_numbered_contract_schedule(query: str) -> bool:
+    """True for 'what does Schedule N of the contract contain?' — G1.
+
+    Bare 'what does Schedule 10 contain?' stays off this path: a numbered
+    schedule also appears inside specifications and method statements.
+    Definition questions and programme-build asks are not this class.
+    """
+    q = (query or "").strip()
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    return bool(
+        _CD_SCHEDULE_ASK_RE.search(q) and _CD_SCHEDULE_CONTEXT_RE.search(q)
+    )
+
+
+def extract_asked_schedule_labels(query: str) -> List[str]:
+    """``schedule 10`` / ``appendix 3`` labels the ask actually names."""
+    out: List[str] = []
+    seen: Set[str] = set()
+    for match in _CD_SCHEDULE_ASK_RE.finditer(query or ""):
+        label = re.sub(r"\s+", " ", match.group(0).lower()).strip()
+        if label and label not in seen:
+            seen.add(label)
+            out.append(label)
+    return out
+
+
+def _schedule_label_matches(asked: str, key: str) -> bool:
+    """True when a register key is the asked Schedule / Appendix N."""
+    asked_n = re.sub(r"(?i)\s+no\.?\s*", " ", asked or "").strip()
+    key_n = re.sub(r"(?i)\s+no\.?\s*", " ", key or "").strip()
+    if not asked_n or not key_n:
+        return False
+    return asked_n == key_n or asked_n in key_n
+
+
+def chunk_states_schedule_register(text: str, labels: List[str]) -> bool:
+    """True when ``text`` is a schedule-index row for an asked label.
+
+    ``Schedule 10: Not Used`` and ``Schedule 9 | Health & Safety KPIs``
+    are register rows. ``Schedule 10 sets out any applicable Works
+    Guarantees`` is prose from another package — not a register, and
+    must not be treated as contents we invented.
+    """
+    if not labels:
+        return False
+    wanted = [re.sub(r"\s+", " ", lab.lower()).strip() for lab in labels if lab]
+    if not wanted:
+        return False
+    blob = text or ""
+    collapsed = _normalize_retrieval_ws(blob)
+
+    def _wanted(key: str) -> bool:
+        key_l = re.sub(r"\s+", " ", (key or "").lower()).strip()
+        return any(_schedule_label_matches(lab, key_l) for lab in wanted)
+
+    if _SCHEDULE_NOT_USED_COLLAPSED_RE.search(collapsed):
+        for match in _SCHEDULE_NOT_USED_COLLAPSED_RE.finditer(collapsed):
+            if _wanted(match.group(1)):
+                return True
+    for match in _SCHEDULE_REGISTER_ROW_RE.finditer(blob):
+        val = (match.group("val") or "").strip()
+        if _SCHEDULE_REGISTER_PROSE_RE.search(val):
+            continue
+        if _wanted(match.group(1)):
+            return True
+    for key, val in filled_particulars_rows(blob):
+        if _SCHEDULE_REGISTER_PROSE_RE.search(val or ""):
+            continue
+        if _wanted(key):
+            return True
+    return False
+
+
+def chunk_states_schedule_not_used(text: str) -> bool:
+    """True when a numbered-schedule register row says Not Used.
+
+    Query-free so inject can warn the model without the user ask. Does
+    not invent: the excerpt itself must already say Not Used.
+    """
+    return bool(_SCHEDULE_NOT_USED_COLLAPSED_RE.search(_normalize_retrieval_ws(text)))
+
+
+def _apply_schedule_register_boost(
+    query: str,
+    scored: List[Tuple[float, Chunk]],
+) -> None:
+    """In-place: lift chunks whose body is the asked Schedule-N register."""
+    if not schedule_register_rescue_enabled():
+        return
+    if not query_asks_for_contract_particulars(query):
+        return
+    if not query_asks_for_numbered_contract_schedule(query):
+        return
+    labels = extract_asked_schedule_labels(query)
+    if not labels:
+        return
+    for i, (score, chunk) in enumerate(scored):
+        if not chunk_states_schedule_register(chunk.text or "", labels):
+            continue
+        boosted = score + _SCHEDULE_REGISTER_BONUS
+        chunk.score = round(boosted, 6)
+        scored[i] = (boosted, chunk)
+
+
+def _rescue_schedule_register_chunks(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+    extra_pids: List[str],
+) -> int:
+    """Pull Schedule-N register / Not Used index rows into ``fused``.
+
+    Cosine never ranks the short index line; Vol 4/5/CPM flood the
+    semantic pool. Failures never raise.
+    """
+    if not schedule_register_rescue_enabled():
+        return 0
+    if not query_asks_for_contract_particulars(query):
+        return 0
+    if not query_asks_for_numbered_contract_schedule(query):
+        return 0
+    labels = extract_asked_schedule_labels(query)
+    if not labels:
+        return 0
+    fetch = getattr(store, "chunks_containing_all", None)
+    if not callable(fetch):
+        return 0
+    pids = [project_id] + [p for p in extra_pids if p and p != project_id]
+    recovered = 0
+    for pid in pids:
+        for label in labels:
+            needle_sets = ([label, "not used"], [label])
+            for needles in needle_sets:
+                try:
+                    hits = fetch(pid, needles, k=20)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "schedule-register rescue for %s (%r) failed: %s",
+                        pid, needles, exc,
+                    )
+                    continue
+                for chunk in hits:
+                    if not chunk_states_schedule_register(
+                        chunk.text or "", labels,
+                    ):
+                        continue
+                    if chunk.chunk_id in fused:
+                        continue
+                    fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                    recovered += 1
+    if recovered:
+        logger.info(
+            "schedule-register rescue recovered %d chunk(s) for labels %r",
+            recovered, labels,
+        )
+    return recovered
 
 
 # Dual-query retrieval (F18, phase-3 campaign). Measured on a 203-page
@@ -2550,6 +2787,10 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _rescue_asked_particular_value_chunks(
         query, project_id, fused_lex, store,
     )
+    _rescue_schedule_register_chunks(
+        query, project_id, fused_lex, store,
+        extra_pids=extra_lex_pids,
+    )
     if len(fused_lex) > len(candidates):
         seen = {c.chunk_id for c in candidates}
         for chunk, _sem, _b in fused_lex.values():
@@ -2569,6 +2810,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _apply_spec_identity_text_boost(query, scored_lex)
     _apply_contract_data_filename_boost(query, scored_lex, name_by_id)
     _apply_asked_particular_value_boost(query, scored_lex)
+    _apply_schedule_register_boost(query, scored_lex)
     candidates = [chunk for _s, chunk in scored_lex]
 
     # Stable sort keeps the active project ahead of GK on equal scores.
@@ -3046,6 +3288,13 @@ def retrieve_with_filter(
     # unprefixed chunk cosine never fetched. Rescue is project-only so
     # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
     _rescue_asked_particular_value_chunks(query, project_id, fused, store)
+    _rescue_schedule_register_chunks(
+        query,
+        project_id,
+        fused,
+        store,
+        extra_pids=extra_rescue_pids,
+    )
 
     # General-knowledge lexical boost: lift GK reference chunks that overlap the
     # query so everyday phrasings surface curated references (units/CESMM/FIDIC).
@@ -3167,6 +3416,7 @@ def retrieve_with_filter(
     _apply_spec_identity_text_boost(query, scored)
     _apply_contract_data_filename_boost(query, scored, name_by_id)
     _apply_asked_particular_value_boost(query, scored)
+    _apply_schedule_register_boost(query, scored)
 
     # Stage 3 (layered RAG): authority-precedence re-rank. Add a small term so a
     # higher-authority / higher-layer chunk (e.g. an L2B contractual clause)
