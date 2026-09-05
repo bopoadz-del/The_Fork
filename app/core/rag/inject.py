@@ -210,7 +210,23 @@ def format_chunks_as_system_message(
             "a section contains in a standard form.\n"
         )
 
-    from app.core.rag.retriever import extract_contract_doc_ids
+    # OLD-pack G1: even on a single-class set, a retrieved register row
+    # that says Not Used is the answer. Without this the model restated
+    # "answer only from the documents" and never named the row. Do not
+    # invent contents — only fire when an excerpt already says Not Used.
+    from app.core.rag.retriever import (
+        chunk_states_schedule_not_used,
+        extract_contract_doc_ids,
+    )
+    if any(chunk_states_schedule_not_used(c.text or "") for c in chunks):
+        header += (
+            "SCHEDULE REGISTER — an excerpt below states that a numbered "
+            "contract schedule is Not Used. That IS the answer. State that "
+            "the schedule is Not Used. Do not give a generic acknowledgement, "
+            "and do not describe what such a schedule contains in a standard "
+            "form.\n"
+        )
+
     cited_contract_ids: List[str] = []
     seen_cids = set()
     for c in chunks:
