@@ -360,6 +360,51 @@ def particulars_chunk_states_a_value(chunk: str) -> bool:
     return False
 
 
+def filled_particulars_rows(chunk: str) -> list[tuple[str, str]]:
+    """Filled ``(key, value)`` rows visible in a particulars chunk.
+
+    Used by the unnamed-contract election so it can require that the
+    *asked* label's value is filled, not merely that the window contains
+    some other filled sibling plus the label as an unfilled key. Live
+    A3/A5 on a two-year corpus: a DD-2022-175 window with a filled
+    Accepted Contract Amount and a bare Time for Completion key used to
+    lock the pool to the wrong year.
+
+    Colon rows (named parties, ``Schedule N: Not Used``) are included —
+    those values are not figures and the peel regex cannot see them.
+    """
+    lines = (chunk or "").splitlines()
+    if not lines:
+        return []
+    start = 1 if _CONTRACT_DATA_LABEL.lower() in lines[0].lower() else 0
+    body = "\n".join(lines[start:])
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(key: str, val: str) -> None:
+        key, val = key.strip(), val.strip()
+        if not key or not val or not _CD_ALNUM_RE.search(val):
+            return
+        item = (key, val)
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+
+    for key, val in parse_contract_data_rows(body):
+        _add(key, val)
+    for line in lines[start:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        key, sep, val = stripped.partition(":")
+        if sep:
+            _add(key, val)
+        parsed = _split_key_value_line(stripped)
+        if parsed:
+            _add(parsed[0], parsed[1])
+    return out
+
+
 def contract_data_particulars_chunks(text: str, filename: str = "") -> list[str]:
     """Emit retrieval-ready Contract Data chunks, or ``[]`` when none found.
 
