@@ -257,19 +257,20 @@ services:
         value: construction
 
       # ── LLM providers (set in dashboard) ───────────────────────────────
-      # The cloud ladder is exactly two providers (DECISIONS.md 2026-07-24):
-      #   PRIMARY  = Kimi K2 on Moonshot's native API (LLM_PROVIDER=kimi,
-      #              KIMI_MODEL=kimi-k2.6 — a reasoning model, so the runtime
-      #              uses tool_choice=auto; forcing a specific tool 400s it).
-      #   FALLBACK = Groq free tier (LLM_FALLBACK_PROVIDER=groq). Note the
-      #              free account 413s payloads >~12k tokens across all its
-      #              models — it catches normal-size turns, not large grounded
-      #              ones (PLATFORM_HEALTH_REPORT F1a: Dev-tier upgrade lifts it).
+      # Cloud primary is OpenRouter free (DECISIONS.md 2026-09-05):
+      #   PRIMARY  = OpenRouter (LLM_PROVIDER=openrouter,
+      #              OPENROUTER_MODEL=openrouter/free).
+      #   FALLBACK = unset. Do not pin Groq; live was burning Groq TPD.
+      # Groq remains in code for emergency LLM_PROVIDER=groq only.
       # Ollama is the ON-PREM provider only (see deploy/onprem); it is not a
       # cloud fallback.
       - key: LLM_PROVIDER
         sync: false
       - key: LLM_FALLBACK_PROVIDER
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
         sync: false
       - key: KIMI_API_KEY
         sync: false

@@ -1,4 +1,4 @@
-"""Production blueprint must match the live Kimi + Groq ladder.
+"""Production blueprint must match the live OpenRouter-free ladder.
 
 render.yaml is the reviewable production surface. A committed Ollama intent
 model, an enabled ingest worker with no worker service, or a 90s stream
@@ -32,9 +32,20 @@ def test_blueprint_does_not_pin_an_ollama_intent_model():
     value = (intent.get("value") or "").strip()
     assert ":" not in value, (
         f"ORCHESTRATOR_INTENT_MODEL={value!r} is an Ollama-style id. Cloud "
-        "prod is Kimi; Moonshot 400s that name every chat turn and predefined "
+        "prod is OpenRouter; that name 400s every chat turn and predefined "
         "schedule routing never fires. Leave it unset (provider default) or "
         "pin a model the PRIMARY provider serves."
+    )
+
+
+def test_blueprint_declares_openrouter_keys():
+    env = _web_env()
+    assert "OPENROUTER_API_KEY" in env, (
+        "OPENROUTER_API_KEY must be declared on the-fork so Apply Blueprint "
+        "can sync the documented cloud primary."
+    )
+    assert "OPENROUTER_MODEL" in env, (
+        "OPENROUTER_MODEL must be declared on the-fork (default openrouter/free)."
     )
 
 
@@ -43,8 +54,8 @@ def test_blueprint_does_not_commit_ollama_as_cloud_provider():
     for key in ("LLM_PROVIDER", "LLM_FALLBACK_PROVIDER"):
         value = ((env.get(key) or {}).get("value") or "").strip().lower()
         assert value != "ollama", (
-            f"{key}={value!r} in render.yaml. Cloud ladder is Kimi primary + "
-            "Groq fallback; Ollama is on-prem only."
+            f"{key}={value!r} in render.yaml. Cloud primary is OpenRouter "
+            "free with no Groq fallback; Ollama is on-prem only."
         )
 
 

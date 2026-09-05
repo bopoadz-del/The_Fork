@@ -1,8 +1,8 @@
-"""Chat Block — active cloud provider (Kimi/Groq via _llm_config) + local-inference fallback.
+"""Chat Block — active cloud provider (OpenRouter via _llm_config) + local-inference fallback.
 
 The chat must never go completely dark on the user. Order of attempts:
 
-1. **Active cloud provider** (Kimi primary / Groq fallback, via _llm_config).
+1. **Active cloud provider** (OpenRouter free primary, via _llm_config).
 2. **Local LLM** (kept *inside* the platform — no third-party cloud) via:
    - Ollama HTTP at ``OLLAMA_URL`` (default ``http://localhost:11434``) when a
      local model is installed. The default local model is
@@ -235,15 +235,14 @@ class ChatBlock(TypedBlock):
                     "use_local_model requested but local stack unavailable; falling back to cloud"
                 )
 
-        # ── Cloud provider selection — Kimi or Groq depending on which
-        # creds are set. This is the same _llm_config() the agent runtime
-        # uses so that LLM_PROVIDER=groq applies uniformly across the chat
-        # block route and the agent path.
+        # ── Cloud provider selection via _llm_config() (OpenRouter primary).
+        # Same resolver the agent runtime uses so LLM_PROVIDER applies
+        # uniformly across the chat block route and the agent path.
         from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
         cfg = _llm_config()
         # Provider auth. ``_llm_config`` sets env_key="OLLAMA_API_KEY" when an
         # Ollama Cloud key is present, "" for self-hosted Ollama, and the
-        # provider key for Kimi/Groq. Check env_key FIRST so Ollama Cloud
+        # provider key for OpenRouter/Kimi/Groq. Check env_key FIRST so Ollama Cloud
         # (ollama.com — returns HTTP 401 without a Bearer) gets its key
         # forwarded, exactly like the agent runtime path. Only fall back to an
         # empty key for self-hosted Ollama, which needs no auth.
@@ -260,8 +259,8 @@ class ChatBlock(TypedBlock):
 
         if cloud_ready:
             # Use the caller's model when one is pinned, else the active
-            # provider's default (from _llm_config — Kimi primary / Groq
-            # fallback / Ollama on-prem).
+            # provider's default (from _llm_config — OpenRouter free /
+            # Ollama on-prem).
             effective_model = model or cfg["default_model"]
             # Only forward system_prompt when one was resolved — older
             # tests stub _call_cloud with a fixed signature that ends at
@@ -626,7 +625,7 @@ class ChatBlock(TypedBlock):
             "generate an AI response right now. Your message was received intact:\n\n"
             f"> {snippet or '(empty)'}\n\n"
             "**How to restore full chat:**\n"
-            "- Set `KIMI_API_KEY` or `GROQ_API_KEY` in `.env` to use a cloud provider, **or**\n"
+            "- Set `OPENROUTER_API_KEY` in `.env` to use the cloud provider, **or**\n"
             "- Run a local model: `ollama serve` + `ollama pull qwen2.5:3b-instruct`\n"
             "  (optionally set `OLLAMA_URL` and `LOCAL_LLM_MODEL`), **or**\n"
             "- Provide a GGUF file via `LLAMA_CPP_MODEL_PATH` with `llama-cpp-python` installed.\n\n"

@@ -27,6 +27,7 @@ async def test_offline_template_when_no_provider_available(monkeypatch):
 
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("LLAMA_CPP_MODEL_PATH", raising=False)
     # Point Ollama at an unreachable port so the local path fails fast.
     monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:1")
@@ -41,7 +42,7 @@ async def test_offline_template_when_no_provider_available(monkeypatch):
     # The user's message must be echoed back so they know the chat is alive.
     assert "Hello, what is 2+2?" in text
     # The template must surface BOTH error reasons so the operator knows what to fix.
-    assert "KIMI_API_KEY" in text or "GROQ_API_KEY" in text
+    assert "OPENROUTER_API_KEY" in text
     assert "ollama" in text.lower() or "llama" in text.lower()
 
 

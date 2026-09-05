@@ -3,6 +3,21 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-09-05 — SUPERSEDES 2026-07-24: OpenRouter free primary, no Groq fallback
+
+**Decision (operator, 2026-09-05):** production chat LLM is **OpenRouter
+free** (`LLM_PROVIDER=openrouter`, `OPENROUTER_MODEL=openrouter/free`,
+`OPENROUTER_API_KEY`). `LLM_FALLBACK_PROVIDER` is empty. Groq is **not**
+the cloud fallback — live was burning Groq `gpt-oss-120b` TPD.
+
+This overrides the 2026-07-24 Kimi-primary + Groq-fallback ruling below.
+The Groq code path stays for emergency `LLM_PROVIDER=groq` only.
+
+**Intended live env:** `LLM_PROVIDER=openrouter`,
+`OPENROUTER_MODEL=openrouter/free`, `LLM_FALLBACK_PROVIDER=` (empty).
+The temporary Render workaround (`LLM_PROVIDER=ollama` pointed at
+OpenRouter's URL) is replaced by the first-class `openrouter` branch.
+
 ## 2026-07-24 — SUPERSEDES all prior provider rulings: Kimi primary + Groq fallback
 
 **Decision (operator, 2026-07-24):** production chat LLM is **Moonshot

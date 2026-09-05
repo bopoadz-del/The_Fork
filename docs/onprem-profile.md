@@ -25,7 +25,7 @@ install an in-process socket blocker — that would risk breaking local Postgres
 Under `onprem`, `check_onprem_ready()` returns — and `assert_onprem_ready()`
 raises `RuntimeError` on — any of:
 
-- `LLM_PROVIDER` unset or a cloud provider (groq/openai/deepseek/kimi/anthropic) → must be `ollama`.
+- `LLM_PROVIDER` unset or a cloud provider (openrouter/groq/openai/deepseek/kimi/anthropic) → must be `ollama`.
 - `LLM_FALLBACK_PROVIDER` a cloud provider.
 - `OLLAMA_API_KEY` set (that means Ollama **Cloud** — egress).
 - `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` not truthy.

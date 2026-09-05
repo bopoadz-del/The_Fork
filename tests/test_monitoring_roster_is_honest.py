@@ -37,9 +37,9 @@ import pytest
 
 from app.infra.monitoring import MonitoringBlock
 
-# Providers `_llm_config` can actually return. Kimi primary, Groq fallback,
-# Ollama on-prem (DECISIONS.md 2026-07-24).
-LIVE_LADDER = {"kimi", "groq", "ollama"}
+# Providers `_llm_config` can actually return. OpenRouter primary, Kimi,
+# Groq (emergency override), Ollama on-prem (DECISIONS.md 2026-09-05).
+LIVE_LADDER = {"openrouter", "kimi", "groq", "ollama"}
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def test_the_roster_matches_what_llm_config_can_actually_return():
     """Derived from the code rather than from LIVE_LADDER, so the constant
     above cannot become its own stale twin.
 
-    `_llm_config` resolves an unset/unrecognised LLM_PROVIDER to kimi, so
+    `_llm_config` resolves an unset/unrecognised LLM_PROVIDER to openrouter, so
     driving it with each name is a complete enumeration of what the platform
     can be pointed at.
     """
@@ -76,7 +76,7 @@ def test_the_roster_matches_what_llm_config_can_actually_return():
     from app.agents.runtime import _llm_config
 
     resolvable = set()
-    for name in ("kimi", "groq", "ollama", "", "nonsense"):
+    for name in ("openrouter", "kimi", "groq", "ollama", "", "nonsense"):
         with mock.patch.dict(os.environ, {"LLM_PROVIDER": name}, clear=False):
             resolvable.add(_llm_config()["provider"])
 

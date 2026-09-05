@@ -36,9 +36,9 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   `RAG_EMBEDDING_MODEL=fake` to skip the download.
 - Registration auto-verifies in dev (no `RESEND_API_KEY`), so you can
   `POST /v1/users/register` then `/v1/users/login` and use the app without email.
-- LLM chat (`/v1/chat/stream`, `/v1/agents/*/chat`) needs a funded `KIMI_API_KEY`
-  or `GROQ_API_KEY`; everything else (auth, projects, uploads, block `/v1/execute`)
-  works without any provider key.
+- LLM chat (`/v1/chat/stream`, `/v1/agents/*/chat`) needs a funded
+  `OPENROUTER_API_KEY`; everything else (auth, projects, uploads, block
+  `/v1/execute`) works without any provider key.
 
 ### TIER-1 Drive ingest (`scripts/p1b_ingest_drive_server.py`)
 - The run can no longer end without a final tally. Every observable exit —
@@ -129,7 +129,7 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
 ### Production Render (non-obvious)
 - Live service is `the-fork` (`srv-d9s6l67avr4c73aiujsg`) at `https://theshovel.ai`. Auto-deploy is **After CI Checks Pass** (`autoDeployTrigger: checksPass` in `render.yaml`). A red required GitHub check skips the auto-deploy. This blueprint value does not change the running service until Dashboard Auto-Deploy is flipped (prefer that one toggle; Apply Blueprint is still dangerous — see `render.yaml` header). A Render API deploy **without** `commitId` ships whatever is currently on `main`, not the feature-branch SHA. Pass the pushed commit explicitly.
 - `/v1/agents/*/chat` and `/v1/chat/stream` conversation ids must be `ws-{projectId}-{unix_ms}` only. Extra path segments 404.
-- Kimi HTTP 400 on orphaned `tool_call_id`s ("must be followed by tool messages") or `tokenization failed` is retryable: skip any remaining Moonshot hop and take `LLM_FALLBACK_PROVIDER` (Groq). Generic 400/401/403/404 still do not fall back. User nudges wait until every tool in the assistant batch has a result so the pairing 400 is not generated in the first place.
+- Kimi HTTP 400 on orphaned `tool_call_id`s ("must be followed by tool messages") or `tokenization failed` is retryable: skip any remaining Moonshot hop and take `LLM_FALLBACK_PROVIDER` when set. Cloud default has no Groq fallback. Generic 400/401/403/404 still do not fall back. User nudges wait until every tool in the assistant batch has a result so the pairing 400 is not generated in the first place.
 
 ### Stale docs to ignore
 - `README.md` and `.claude/skills/run-the-fork/SKILL.md` claim the React frontend

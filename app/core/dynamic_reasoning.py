@@ -6,7 +6,7 @@ wants a DELIVERABLE or an ANSWER. This is the "dynamic reasoning over predefined
 routes" the operator asked for — the model understands "how long is procurement"
 is a QUESTION, which keyword routing (procurement_list_generator) cannot.
 
-Runs on the configured cloud ladder (Kimi primary, Groq fallback) or on-prem
+Runs on the configured cloud ladder (OpenRouter free primary) or on-prem
 Ollama. Bounded output: a known workflow name or "none", so a bad/hallucinated
 read simply falls through to the dynamic agent — never invents a step.
 """

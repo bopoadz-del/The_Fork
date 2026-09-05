@@ -17,7 +17,7 @@ offline flags exist anywhere** (`HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` /
 ultralytics offline are unset in `.env.example`, app config, and every Dockerfile):
 
 1. **RAG embedder auto-downloads from HuggingFace on every boot** (E-M1) — warm-loaded in `main.py` lifespan. Fail-closed with no network.
-2. **LLM egress to cloud providers** (E-L1) — the default provider ladder is Groq/OpenAI/DeepSeek/Kimi. On-prem must pin `LLM_PROVIDER=ollama` + local `OLLAMA_URL`.
+2. **LLM egress to cloud providers** (E-L1) — the default provider is OpenRouter free. On-prem must pin `LLM_PROVIDER=ollama` + local `OLLAMA_URL`.
 
 Everything else is either build-time (vendor it), a disable-able cloud connector, a user-triggered arbitrary-URL tool, or Google Fonts in the frontend.
 
@@ -25,11 +25,11 @@ Everything else is either build-time (vendor it), a disable-able cloud connector
 
 ## 1. LLM providers
 
-Central config: `app/agents/runtime.py:1606–1684` (base-URL constants + `_llm_config`), precedence `LLM_PROVIDER` → GROQ → OPENAI → DeepSeek; fallback via `LLM_FALLBACK_PROVIDER` (`:1721`). Same resolution reused by `app/core/llm_client.py`, `app/blocks/chat.py`, `app/blocks/formula_executor_v2.py`, `app/blocks/project_reasoner.py`.
+Central config: `app/agents/runtime.py` (base-URL constants + `_llm_config`), precedence `LLM_PROVIDER` → OpenRouter (documented primary) → Kimi / Groq keys if present; fallback via `LLM_FALLBACK_PROVIDER` (cloud default: empty). Same resolution reused by `app/core/llm_client.py`, `app/blocks/chat.py`, `app/blocks/formula_executor_v2.py`, `app/blocks/project_reasoner.py`.
 
 | ID | Destination | Env | Call sites | Trigger | On-prem disposition |
 |----|-------------|-----|-----------|---------|---------------------|
-| E-L1 | `api.groq.com`, `api.openai.com`, `api.deepseek.com`, `api.moonshot.ai` | `LLM_PROVIDER`, `*_API_KEY`, `*_MODEL` | runtime.py:3719/3752/3947/3977; llm_client.py:61; chat.py:355/413; formula_executor_v2.py:157; project_reasoner.py:155 | Request | **Force `LLM_PROVIDER=ollama` + `LLM_FALLBACK_PROVIDER=ollama`.** Cloud provider constants stay in code but are unreachable under the profile; the profile refuses to start if a cloud provider is selected. |
+| E-L1 | `openrouter.ai`, `api.groq.com`, `api.openai.com`, `api.deepseek.com`, `api.moonshot.ai` | `LLM_PROVIDER`, `*_API_KEY`, `*_MODEL` | runtime.py `_llm_config`; llm_client.py; chat.py; formula_executor_v2.py; project_reasoner.py | Request | **Force `LLM_PROVIDER=ollama` + `LLM_FALLBACK_PROVIDER=ollama`.** Cloud provider constants stay in code but are unreachable under the profile; the profile refuses to start if a cloud provider is selected. |
 | E-L2 | Ollama — `http://localhost:11434` (default) **or** `OLLAMA_URL` cloud (`ollama.com`/tunnel) + `OLLAMA_API_KEY` | `OLLAMA_URL`, `OLLAMA_API_KEY`, `OLLAMA_MODEL` | runtime.py:1670, chat.py:522/523 | Request | **Keep — this is the on-prem path.** Pin `OLLAMA_URL=http://localhost:11434` (or the in-compose ollama service), and assert `OLLAMA_API_KEY` is empty so no cloud tunnel is used. |
 
 ## 2. Model / weight downloads (HuggingFace / ultralytics)

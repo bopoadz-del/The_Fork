@@ -9,8 +9,8 @@ WBS generation, and cost analysis.
 
 The deployed instance runs on Render (FastAPI web service + Postgres
 16 with pgvector). Chat is provider-driven via `LLM_PROVIDER`: the
-cloud ladder is Kimi K2 primary (`KIMI_MODEL=kimi-k2.6`) with a Groq
-fallback (`GROQ_MODEL=llama-3.3-70b-versatile`) — Ollama is the
+cloud primary is OpenRouter free (`LLM_PROVIDER=openrouter`,
+`OPENROUTER_MODEL=openrouter/free`) — no Groq fallback. Ollama is the
 on-prem provider only, not a cloud fallback. The canonical `chunks_v2`
 store held ~10,500 indexed chunks across 53 docs at last count
 (PILOT_READINESS.md, 2026-07-12); no "142k" figure is sourced anywhere
@@ -71,8 +71,8 @@ schedules, reports) and gives the operator a chat surface that:
       │  + tsvector GIN         │  to LLM provider
       ▼                         ▼
 ┌──────────────┐         ┌──────────────────┐
-│  Postgres 16 │         │  Kimi K2 primary │
-│  + pgvector  │         │  Groq fallback   │
+│  Postgres 16 │         │  OpenRouter free │
+│  + pgvector  │         │  (no Groq hop)   │
 │  on Render   │         │                  │
 └──────────────┘         └──────────────────┘
 ```
