@@ -723,6 +723,10 @@ def test_mutation_probe_arrival_order_election_brings_the_failure_back(
     number of chunks the other contract can put at rank 1 is not.
     """
     ret, names = two_year_corpus
+    # Post-#501 A5/A9 rescues also lift the answer-bearing row. This
+    # probe measures #483 arrival-order election alone.
+    monkeypatch.setenv("RAG_DELAY_DAMAGES_RATE_RESCUE", "0")
+    monkeypatch.setenv("RAG_ENGINEER_IDENTITY_RESCUE", "0")
     monkeypatch.setattr(
         ret, "elect_answer_bearing_contract", lambda _q, _docs: None,
     )
@@ -737,6 +741,10 @@ def test_mutation_probe_arrival_order_election_brings_the_failure_back(
         real_init(self, query, ranked_docs)
         self.winning = None
         self._particulars = False
+        # A5/A9 post-#501 fences also elect from evidence. Disable them
+        # so this probe still measures arrival-order election alone.
+        self._delay_rate_in_pool = False
+        self._engineer_identity_in_pool = False
 
     monkeypatch.setattr(ret._ContractScope, "__init__", _naive_lock)
     top = _top_k(ret, names, ask)
@@ -1641,6 +1649,19 @@ def test_newer_year_owns_delay_damages_when_both_years_state_a_rate():
     )
     assert elect_answer_bearing_contract(A5, ranked) == "dd-2023-118"
     assert elect_answer_bearing_contract(LIVE_A5, ranked) == "dd-2023-118"
+
+
+def test_a_delay_damages_cap_is_not_the_daily_rate():
+    """3a5fce5 A5: year-lock elected 118 from a cap / 8.8 family row.
+    The 0.1%-per-day figure is a different chunk and must be the thing
+    reservation / the rate fence treat as the answer."""
+    from app.core.rag.retriever import chunk_states_delay_damages_rate
+
+    dd23 = _unsplit_particulars_chunk(DD23_UNSPLIT_DELAY_LINE)
+    assert chunk_states_delay_damages_rate(dd23)
+    assert not chunk_states_delay_damages_rate(DD22_FILLED_DELAY_CAP)
+    assert not chunk_states_delay_damages_rate(DD22_DELAY_CLAUSE)
+    assert particulars_row_answers_asked_label(A5, DD22_FILLED_DELAY_CAP)
 
 
 def test_naming_the_older_year_still_fail_closes_to_that_year(two_year_corpus):
