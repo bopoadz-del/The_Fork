@@ -32,13 +32,17 @@ from app.agents.runtime import (
 )
 
 
+def _content(payload, offset=0):
+    return _tool_result_content(payload, offset=offset, max_chars=_TOOL_RESULT_MAX_CHARS)
+
+
 def _big(rows: int = 400) -> dict:
     return {"items": [{"code": f"D{i}", "desc": f"Breakout item {i}",
                        "unit": "m", "qty": i} for i in range(rows)]}
 
 
 def test_a_result_with_windows_left_is_not_finished():
-    content = _tool_result_content(_big())
+    content = _content(_big())
     assert json.loads(content)["chars_remaining"] > 0
     assert _has_unread_windows(content) is True
 
@@ -49,7 +53,7 @@ def test_the_last_window_is_finished():
     payload = _big()
     offset, seen = 0, 0
     while True:
-        content = _tool_result_content(payload, offset=offset)
+        content = _content(payload, offset=offset)
         parsed = json.loads(content)
         seen += 1
         if not parsed["next_char_offset"]:
@@ -62,7 +66,7 @@ def test_the_last_window_is_finished():
 
 def test_a_small_result_is_finished_immediately():
     """No envelope at all, so nothing to keep reading."""
-    content = _tool_result_content({"items": [{"code": "D110"}]})
+    content = _content({"items": [{"code": "D110"}]})
     assert "chars_remaining" not in content
     assert _has_unread_windows(content) is False
 
@@ -102,8 +106,8 @@ def test_the_two_conditions_are_independent():
     an unfinished one from the same tool does not. Both halves matter, so
     neither can be dropped without a test failing."""
     result = {"name": "boq_processor", "ok": True, "result": _big()}
-    truncated = _tool_result_content(_big())
-    complete = _tool_result_content({"items": [{"code": "D110"}]})
+    truncated = _content(_big())
+    complete = _content({"items": [{"code": "D110"}]})
 
     assert _should_force_synthesis(result) and _has_unread_windows(truncated)
     assert _should_force_synthesis(result) and not _has_unread_windows(complete)
@@ -114,8 +118,8 @@ def test_the_boundary_is_the_serialized_cap_not_the_row_count():
     tracks the real truncation rather than a guess about payload size."""
     small = {"pad": "x" * (_TOOL_RESULT_MAX_CHARS // 2)}
     big = {"pad": "x" * (_TOOL_RESULT_MAX_CHARS * 3)}
-    assert _has_unread_windows(_tool_result_content(small)) is False
-    assert _has_unread_windows(_tool_result_content(big)) is True
+    assert _has_unread_windows(_content(small)) is False
+    assert _has_unread_windows(_content(big)) is True
 
 
 # -- the wiring, driven through a real turn --------------------------------
