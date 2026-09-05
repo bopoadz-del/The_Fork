@@ -5,8 +5,11 @@ Deterministic arithmetic — currency/units are whatever the caller passes
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
+
+logger = logging.getLogger(__name__)
 
 
 def roi_calculator(gain: float, cost: float) -> dict:
@@ -149,7 +152,7 @@ def parse_delay_damages_rate_percent(text: str) -> float | None:
             if m:
                 return float(m.group(1))
     except Exception:  # noqa: BLE001 — fall through to the scanned regex
-        pass
+        logger.debug("particulars rate parse failed; using scanned regex", exc_info=True)
     blob = _collapse_ws(t)
     if _POINTER_RE.search(blob) and not _DD_RATE_PCT_RE.search(blob):
         return None
@@ -202,7 +205,7 @@ def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
             amount = float(money.group(2).replace(",", ""))
             _bucket(amount, money.group(1).upper(), f"{key} {val}")
     except Exception:  # noqa: BLE001 — scanned fallback still runs
-        pass
+        logger.debug("particulars ACA parse failed; using scanned regex", exc_info=True)
 
     blob = _collapse_ws(t)
     for m in _MONEY_RE.finditer(blob):
