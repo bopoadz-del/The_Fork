@@ -723,6 +723,10 @@ def test_mutation_probe_arrival_order_election_brings_the_failure_back(
     number of chunks the other contract can put at rank 1 is not.
     """
     ret, names = two_year_corpus
+    # Post-#501 A5/A9 rescues also lift the answer-bearing row. This
+    # probe measures #483 arrival-order election alone.
+    monkeypatch.setenv("RAG_DELAY_DAMAGES_RATE_RESCUE", "0")
+    monkeypatch.setenv("RAG_ENGINEER_IDENTITY_RESCUE", "0")
     monkeypatch.setattr(
         ret, "elect_answer_bearing_contract", lambda _q, _docs: None,
     )
@@ -737,6 +741,10 @@ def test_mutation_probe_arrival_order_election_brings_the_failure_back(
         real_init(self, query, ranked_docs)
         self.winning = None
         self._particulars = False
+        # A5/A9 post-#501 fences also elect from evidence. Disable them
+        # so this probe still measures arrival-order election alone.
+        self._delay_rate_in_pool = False
+        self._engineer_identity_in_pool = False
 
     monkeypatch.setattr(ret._ContractScope, "__init__", _naive_lock)
     top = _top_k(ret, names, ask)

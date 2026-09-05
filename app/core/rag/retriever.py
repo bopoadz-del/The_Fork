@@ -518,12 +518,16 @@ class _ContractScope:
             self.winning = elect_answer_bearing_contract(self.query, docs)
 
     def allow(self, filename: str, chunk_text: str = "") -> bool:
-        if self._delay_rate_in_pool:
-            if not chunk_states_delay_damages_rate(chunk_text):
-                return False
-        if self._engineer_identity_in_pool:
-            if not chunk_states_engineer_identity(chunk_text):
-                return False
+        # Named PREFIX-YEAR-SEQ (#443) is fail-closed onto that year.
+        # The rate / Engineer fences are unnamed-only — a question that
+        # names DD-2022-175 must still see that year's chunks.
+        if not self.named:
+            if self._delay_rate_in_pool:
+                if not chunk_states_delay_damages_rate(chunk_text):
+                    return False
+            if self._engineer_identity_in_pool:
+                if not chunk_states_engineer_identity(chunk_text):
+                    return False
         if self.named:
             return filename_matches_named_contracts(
                 filename, self.named, chunk_text=chunk_text,
