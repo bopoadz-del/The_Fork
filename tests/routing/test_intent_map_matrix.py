@@ -23,6 +23,10 @@ INTENT_MAP_YAML = Path(__file__).resolve().parents[2] / "app" / "routing" / "int
 
 # Tools the matrix rows name — must be in the forced-tool available set.
 AVAILABLE = {
+    # Vendored from the Cerebrum-Blocks mep_coordination kit. Listed here for
+    # the same reason as every other entry: the matrix asserts routing against
+    # the tools a live turn would actually have.
+    "mep_coordination",
     "commissioning_checklist",
     "primavera_parser",
     "construction_calc",
