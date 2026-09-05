@@ -5416,6 +5416,12 @@ KIMI_DEFAULT_MODEL = "kimi-k2.6"
 # allowed. Paid slugs are refused unless OPENROUTER_ALLOW_PAID=1.
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_DEFAULT_MODEL = "openrouter/free"
+# OpenRouter reserves the full requested max_tokens against remaining
+# credit even for :free / openrouter/free models. A $0-balance account
+# 402s 8192 (live: "can only afford 2454"). Default 2048 fits that
+# affordance; override with OPENROUTER_MAX_TOKENS. Agent YAML stays
+# high for Kimi — the ceiling is applied only on the OpenRouter hop.
+OPENROUTER_DEFAULT_MAX_TOKENS = 2048
 
 
 def _llm_http_timeout() -> float:
@@ -5558,6 +5564,9 @@ def _llm_config() -> dict[str, Any]:
             "default_model": os.getenv("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
         }
     if provider == "openrouter":
+        # max_tokens ceiling is applied in _provider_max_tokens (env
+        # OPENROUTER_MAX_TOKENS), not here — same chokepoint as Kimi's
+        # reasoning floor, including fallback / streaming hops.
         return {
             "provider": "openrouter",
             "url": OPENROUTER_API_URL,
@@ -5698,8 +5707,28 @@ def _provider_temperature(cfg: dict[str, Any], default: float) -> float:
     return default if fixed is None else float(fixed)
 
 
+def _openrouter_max_tokens_ceiling() -> int:
+    """Credit-reservation ceiling for outbound OpenRouter ``max_tokens``.
+
+    OpenRouter bills/reserves the full requested ``max_tokens`` even on
+    ``:free`` slugs. Keep the default under the observed $0-balance
+    affordance (~2454). Invalid / non-positive env values fall back to
+    ``OPENROUTER_DEFAULT_MAX_TOKENS``.
+    """
+    raw = (os.getenv("OPENROUTER_MAX_TOKENS") or "").strip()
+    if not raw:
+        return OPENROUTER_DEFAULT_MAX_TOKENS
+    try:
+        value = int(raw)
+    except ValueError:
+        return OPENROUTER_DEFAULT_MAX_TOKENS
+    if value < 1:
+        return OPENROUTER_DEFAULT_MAX_TOKENS
+    return value
+
+
 def _provider_max_tokens(cfg: dict[str, Any], configured: int) -> int:
-    """The max_tokens this provider needs to produce any content at all.
+    """Adjust the agent's ``max_tokens`` for this provider.
 
     Reasoning providers declare ``reasoning_min_tokens``: the shared budget is
     spent on chain-of-thought first, so a configured cap below the model's
@@ -5707,11 +5736,19 @@ def _provider_max_tokens(cfg: dict[str, Any], configured: int) -> int:
     (measured: 1024 -> 0 chars content, 3,940 chars reasoning). The floor only
     LIFTS a starving budget; a generous agent budget passes through, and
     providers without the field keep the agent's own value.
+
+    OpenRouter additionally applies a CEILING (``OPENROUTER_MAX_TOKENS``,
+    default 2048). OpenRouter reserves the full requested max_tokens against
+    remaining credit even for :free models, so an agent YAML of 8192 402s a
+    $0-balance free account. Kimi / Groq / Ollama are unchanged.
     """
+    tokens = int(configured)
     floor = cfg.get("reasoning_min_tokens")
-    if floor is None:
-        return configured
-    return max(int(configured), int(floor))
+    if floor is not None:
+        tokens = max(tokens, int(floor))
+    if cfg.get("provider") == "openrouter":
+        tokens = min(tokens, _openrouter_max_tokens_ceiling())
+    return tokens
 
 
 def _is_native_ollama(cfg: dict[str, Any]) -> bool:
