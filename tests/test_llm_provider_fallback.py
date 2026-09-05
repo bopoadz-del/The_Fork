@@ -46,6 +46,7 @@ from app.agents.runtime import (
     OPENROUTER_API_URL,
     Agent,
     _http_400_is_retryable,
+    _http_status_is_retryable,
     _resolve_groq_model,
 )
 
@@ -73,10 +74,11 @@ def clean_llm_env(monkeypatch):
 class _Resp:
     """The parts of an httpx.Response `_call_llm` touches."""
 
-    def __init__(self, status_code=200, payload=None, text=None):
+    def __init__(self, status_code=200, payload=None, text=None, headers=None):
         self.status_code = status_code
         self._payload = payload if payload is not None else _ok_body()
         self.text = text if text is not None else json.dumps(self._payload)
+        self.headers = headers or {}
         # llm_client wraps a >=400 response in HTTPStatusError(request=r.request,
         # response=r). Without this attribute that construction raises
         # AttributeError, which its generic except then misreads as a network
@@ -1091,6 +1093,30 @@ async def test_orchestrator_complete_does_not_fall_back_on_a_bad_key(monkeypatch
     assert len(fake.calls) == 1, f"a 401 was retried on the intent path: {fake.urls}"
 
 
+@pytest.mark.asyncio
+async def test_orchestrator_complete_falls_back_on_openrouter_402(monkeypatch, http):
+    """Intent routing used a private retryable set that omitted 402."""
+    from app.core import llm_client
+
+    _openrouter_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(
+        _Resp(402, text="You requested up to 2048 tokens, but can only afford 996"),
+        _Resp(200, _ok_body("intent json")),
+    )
+
+    out = await llm_client.complete([{"role": "user", "content": "hi"}])
+
+    assert out == "intent json"
+    assert fake.urls == [OPENROUTER_API_URL, GROQ_API_URL], fake.urls
+
+
+def test_http_status_is_retryable_includes_402():
+    assert _http_status_is_retryable(402)
+    assert _http_status_is_retryable(429)
+    assert not _http_status_is_retryable(401)
+
+
 # ── OpenRouter free-tier 402 (same-hop retry, not a provider fallback) ──
 
 def _openrouter_primary(monkeypatch):
@@ -1167,6 +1193,8 @@ async def test_openrouter_402_generic_does_not_retry(monkeypatch, http, no_sleep
 
     assert result["status"] == "error", result
     assert "402" in result["error"]
+    assert "insufficient" in result["error"].lower()
+    assert "credit" in result["error"].lower()
     assert len(fake.calls) == 1
 
 
@@ -1215,3 +1243,76 @@ async def test_openrouter_402_does_not_fall_back_to_groq(
 
     assert result["status"] == "error", result
     assert fake.urls == [OPENROUTER_API_URL]
+
+
+_OR_402_PROMPT_LIMIT = (
+    '{"error":{"message":"Prompt tokens limit exceeded: 18398 > 10335. '
+    'To increase, visit https://openrouter.ai/settings/credits and upgrade '
+    'to a paid account","code":402}}'
+)
+
+
+@pytest.mark.asyncio
+async def test_openrouter_402_prompt_limit_compacts_and_retries(
+        monkeypatch, http, no_sleep):
+    """#514's proactive ceiling can miss when remaining credit drops.
+
+    Raise the proactive budget so the first hop stays large; the live
+    prompt-limit 402 must still compact on the same hop.
+    """
+    _openrouter_primary(monkeypatch)
+    monkeypatch.setenv("OPENROUTER_PROMPT_TOKEN_CEILING", "20000")
+    # Between the raised proactive budget (~60k chars) and the live cap
+    # (10335 * 3 ≈ 31k chars) so only the reactive hop shrinks it.
+    huge = "x" * 45000
+    messages = [
+        {"role": "user", "content": "What is the Accepted Contract Amount including VAT?"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "1", "type": "function",
+             "function": {"name": "search", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "1", "name": "search", "content": huge},
+    ]
+    fake = http(
+        _Resp(402, text=_OR_402_PROMPT_LIMIT),
+        _Resp(200, _ok_body("SAR 450,000,000")),
+    )
+
+    result = await _agent(model="openrouter/free")._call_llm(
+        messages, "or-test-key",
+    )
+
+    assert result["status"] == "success", result
+    assert fake.urls == [OPENROUTER_API_URL, OPENROUTER_API_URL], fake.urls
+    first_tool = next(
+        m for m in fake.calls[0]["payload"]["messages"] if m.get("role") == "tool"
+    )
+    second_tool = next(
+        m for m in fake.calls[1]["payload"]["messages"] if m.get("role") == "tool"
+    )
+    assert len(str(second_tool.get("content") or "")) < len(
+        str(first_tool.get("content") or "")
+    ), "prompt-limit 402 did not compact the retry payload"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_429_retries_same_provider(monkeypatch, http):
+    _openrouter_primary(monkeypatch)
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds):
+        slept.append(float(seconds))
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+    fake = http(
+        _Resp(429, text="Rate limit exceeded", headers={"retry-after": "1.5"}),
+        _Resp(200, _ok_body("recovered")),
+    )
+
+    result = await _agent(model="openrouter/free")._call_llm(
+        list(USER), "or-test-key",
+    )
+
+    assert result["status"] == "success", result
+    assert fake.urls == [OPENROUTER_API_URL, OPENROUTER_API_URL], fake.urls
+    assert slept == [1.5], slept
