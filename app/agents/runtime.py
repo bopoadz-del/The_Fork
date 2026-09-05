@@ -1932,7 +1932,35 @@ def _requested_char_offset(tool_call: dict[str, Any] | None) -> int:
         return 0
 
 
-def _tool_result_content(payload: dict[str, Any], offset: int = 0) -> str:
+def _is_openrouter_llm() -> bool:
+    """True when the configured primary provider is OpenRouter.
+
+    Reads ``LLM_PROVIDER`` directly (same source ``_llm_config`` uses) so
+    tool-result insertion can tighten caps before the first hop without
+    constructing a full provider config.
+    """
+    return (os.getenv("LLM_PROVIDER") or "").strip().lower() == "openrouter"
+
+
+def _effective_tool_result_max_chars() -> int:
+    """Per-tool JSON cap. OpenRouter uses a tighter free-tier ceiling."""
+    if _is_openrouter_llm():
+        return _OPENROUTER_TOOL_RESULT_MAX_CHARS
+    return _TOOL_RESULT_MAX_CHARS
+
+
+def _effective_fetch_document_max_chars() -> int:
+    """Per-fetch text cap. OpenRouter uses a tighter free-tier ceiling."""
+    if _is_openrouter_llm():
+        return _OPENROUTER_FETCH_DOCUMENT_MAX_CHARS
+    return _FETCH_DOCUMENT_MAX_CHARS
+
+
+def _tool_result_content(
+    payload: dict[str, Any],
+    offset: int = 0,
+    max_chars: int | None = None,
+) -> str:
     """Serialize a tool result for the `tool` message, truncating SAFELY.
 
     NEVER slice serialized JSON. `json.dumps` emits ASCII with \\uXXXX
@@ -1954,10 +1982,17 @@ def _tool_result_content(payload: dict[str, Any], offset: int = 0) -> str:
     Over-long results become a VALID object carrying a truncated preview:
     the preview is a JSON *string value*, so json.dumps escapes it properly
     and the payload always parses.
+
+    ``max_chars`` overrides the provider cap (OpenRouter free-tier is
+    tighter than the Kimi/Groq default). Tests pass an explicit cap so
+    they stay independent of ``LLM_PROVIDER``.
     """
+    cap = int(max_chars) if max_chars is not None else _effective_tool_result_max_chars()
+    if cap < 1:
+        cap = _TOOL_RESULT_MAX_CHARS
     text = json.dumps(payload, default=str)
     start = max(0, min(int(offset or 0), len(text)))
-    if len(text) <= _TOOL_RESULT_MAX_CHARS and not start:
+    if len(text) <= cap and not start:
         return text
     window = text[start:]
 
@@ -1969,13 +2004,13 @@ def _tool_result_content(payload: dict[str, Any], offset: int = 0) -> str:
             {
                 "truncated": True,
                 "note": (
-                    f"Tool result exceeded {_TOOL_RESULT_MAX_CHARS} characters "
+                    f"Tool result exceeded {cap} characters "
                     "and was truncated. Call this tool again with the SAME "
                     f"file_path and char_offset={next_offset} to read the next "
                     "window, and repeat until chars_remaining is 0. Do that "
                     "BEFORE telling the user you could not find something."
                     if more else
-                    f"Tool result exceeded {_TOOL_RESULT_MAX_CHARS} characters "
+                    f"Tool result exceeded {cap} characters "
                     "and was truncated. This is the LAST window -- you have "
                     "now seen the whole result."
                 ),
@@ -2016,10 +2051,10 @@ def _tool_result_content(payload: dict[str, Any], offset: int = 0) -> str:
     # `\"` and every `\` becomes `\\` — so escape-heavy content (exactly what
     # this guards) can nearly double. A fixed budget therefore overshoots the
     # cap; shrink until the ENVELOPE fits, measuring the real thing.
-    keep = _TOOL_RESULT_MAX_CHARS
+    keep = cap
     out = _envelope(keep)
-    while len(out) > _TOOL_RESULT_MAX_CHARS and keep > 0:
-        overshoot = len(out) - _TOOL_RESULT_MAX_CHARS
+    while len(out) > cap and keep > 0:
+        overshoot = len(out) - cap
         keep = max(0, keep - max(overshoot, 32))
         out = _envelope(keep)
     return out
@@ -3024,9 +3059,10 @@ def _fetch_document_content(
             "that is not yet OCR-indexed)"
         )
 
-    truncated = len(text) > _FETCH_DOCUMENT_MAX_CHARS
+    fetch_cap = _effective_fetch_document_max_chars()
+    truncated = len(text) > fetch_cap
     if truncated:
-        text = text[:_FETCH_DOCUMENT_MAX_CHARS]
+        text = text[:fetch_cap]
     return {"text": text, "truncated": truncated, "source": source}, doc, None
 
 
@@ -5422,6 +5458,22 @@ OPENROUTER_DEFAULT_MODEL = "openrouter/free"
 # affordance; override with OPENROUTER_MAX_TOKENS. Agent YAML stays
 # high for Kimi — the ceiling is applied only on the OpenRouter hop.
 OPENROUTER_DEFAULT_MAX_TOKENS = 2048
+# Free-tier OpenRouter derives a tiny prompt budget from remaining credit
+# (live Wave1: 18398 > 10335 after search + fetch). Keep the outbound
+# prompt under this ceiling with a conservative 3-chars-per-token estimate
+# so Contract Data Q&A still fits without paid credits. Override with
+# OPENROUTER_PROMPT_TOKEN_CEILING.
+OPENROUTER_DEFAULT_PROMPT_TOKEN_CEILING = 8000
+_OPENROUTER_CHARS_PER_TOKEN = 3
+# Tighter than the Kimi/Groq defaults: a 24k fetch + 8k search already
+# blows the free prompt budget. These still hold a Contract Data clause.
+_OPENROUTER_TOOL_RESULT_MAX_CHARS = 4000
+_OPENROUTER_FETCH_DOCUMENT_MAX_CHARS = 8000
+_OPENROUTER_402_MAX_RETRIES = 2
+_OPENROUTER_AFFORD_MAX_TOKENS_RE = re.compile(
+    r"can only afford (\d+)",
+    re.IGNORECASE,
+)
 
 
 def _llm_http_timeout() -> float:
@@ -5751,6 +5803,92 @@ def _provider_max_tokens(cfg: dict[str, Any], configured: int) -> int:
     return tokens
 
 
+def _openrouter_prompt_token_ceiling() -> int:
+    """Hard ceiling on approximate prompt tokens for an OpenRouter hop.
+
+    Free-tier credit derives a prompt budget around 10k tokens. Default
+    8000 leaves headroom for tool schemas and the conservative estimate.
+    Invalid / too-small env values fall back to the default.
+    """
+    raw = (os.getenv("OPENROUTER_PROMPT_TOKEN_CEILING") or "").strip()
+    if not raw:
+        return OPENROUTER_DEFAULT_PROMPT_TOKEN_CEILING
+    try:
+        value = int(raw)
+    except ValueError:
+        return OPENROUTER_DEFAULT_PROMPT_TOKEN_CEILING
+    if value < 512:
+        return OPENROUTER_DEFAULT_PROMPT_TOKEN_CEILING
+    return value
+
+
+def _approx_prompt_tokens(messages: list[dict[str, Any]] | None) -> int:
+    """Conservative prompt-token estimate: 3 characters ≈ 1 token.
+
+    JSON tool dumps tokenize worse than prose; 3 chars/token over-estimates
+    relative to the usual 4 so the ceiling fires before OpenRouter's
+    credit-derived prompt budget (~10k on a $0 free account).
+    """
+    chars = _approx_message_chars(messages)
+    return (chars + _OPENROUTER_CHARS_PER_TOKEN - 1) // _OPENROUTER_CHARS_PER_TOKEN
+
+
+def _openrouter_prompt_char_budget(token_ceiling: int | None = None) -> int:
+    ceiling = (
+        int(token_ceiling)
+        if token_ceiling is not None
+        else _openrouter_prompt_token_ceiling()
+    )
+    return max(512, ceiling) * _OPENROUTER_CHARS_PER_TOKEN
+
+
+def _openrouter_402_afford_max_tokens(body: str) -> int | None:
+    """Parse ``can only afford N`` from an OpenRouter HTTP 402 body."""
+    match = _OPENROUTER_AFFORD_MAX_TOKENS_RE.search(body or "")
+    if not match:
+        return None
+    try:
+        value = int(match.group(1))
+    except ValueError:
+        return None
+    return value if value >= 1 else None
+
+
+def _openrouter_402_is_in_flight(body: str) -> bool:
+    text = (body or "").lower()
+    return "in_flight_budget_exhausted" in text or "in_flight" in text
+
+
+def _openrouter_402_should_retry(body: str) -> bool:
+    """True for the free-tier 402s a same-provider retry can recover.
+
+    ``in_flight_budget_exhausted`` is transient (another request still
+    reserved). ``can only afford N`` is fixed by lowering ``max_tokens``.
+    A bare 'insufficient credits' 402 is not retried.
+    """
+    return (
+        _openrouter_402_is_in_flight(body)
+        or _openrouter_402_afford_max_tokens(body) is not None
+    )
+
+
+def _compact_messages_for_openrouter(
+    messages: list[dict[str, Any]],
+    token_ceiling: int | None = None,
+) -> list[dict[str, Any]]:
+    """Keep an OpenRouter hop under the free-tier prompt budget.
+
+    Reuses the Groq TPM compactor (oldest / largest tool payloads first,
+    then retrieval excerpts, then middle history) with a char budget
+    derived from ``OPENROUTER_PROMPT_TOKEN_CEILING`` (default 8000).
+    """
+    return _compact_messages_for_tpm(
+        messages,
+        budget=_openrouter_prompt_char_budget(token_ceiling),
+        compact_note="Compacted for OpenRouter free-tier prompt budget.",
+    )
+
+
 def _is_native_ollama(cfg: dict[str, Any]) -> bool:
     """True when the configured Ollama endpoint uses the native /api/chat
     protocol rather than the OpenAI-compatible /v1/chat/completions path."""
@@ -5916,7 +6054,9 @@ _TOOL_PREVIEW_FLOOR = 1000
 _LAST_TOOL_PREVIEW = 6000
 
 
-def _compacted_tool_payload(content: str, keep: int) -> str:
+def _compacted_tool_payload(
+    content: str, keep: int, note: str | None = None,
+) -> str:
     """A truncated tool result that says exactly what it lost.
 
     Live on 554e0b9: asked how many cubic metres of demolition are in the
@@ -5942,7 +6082,7 @@ def _compacted_tool_payload(content: str, keep: int) -> str:
     return json.dumps(
         {
             "truncated": True,
-            "note": "Compacted for Groq TPM 8000.",
+            "note": note or "Compacted for Groq TPM 8000.",
             "chars_shown": min(kept, len(content)),
             "chars_dropped": dropped,
             "chars_total": len(content),
@@ -6038,6 +6178,7 @@ def _compact_retrieval_message(content: str, budget: int) -> str:
 def _compact_messages_for_tpm(
     messages: list[dict[str, Any]],
     budget: int = _GROQ_TPM_CHAR_BUDGET,
+    compact_note: str | None = None,
 ) -> list[dict[str, Any]]:
     """Shrink a Groq hop so on-demand TPM 8000 is not blown by tool dumps.
 
@@ -6102,7 +6243,9 @@ def _compact_messages_for_tpm(
             out.append(cm)
             continue
         if role == "tool" and idx in compact_tool:
-            cm["content"] = _compacted_tool_payload(content, compact_tool[idx])
+            cm["content"] = _compacted_tool_payload(
+                content, compact_tool[idx], note=compact_note,
+            )
         elif role == "system" and len(content) > 2500:
             # The retrieval brief is handled after this loop: it is the
             # turn's evidence and must be the LAST thing sacrificed, not cut
@@ -6133,7 +6276,9 @@ def _compact_messages_for_tpm(
             if have is None or have <= _TOOL_PREVIEW_FLOOR:
                 continue
             new_keep = max(_TOOL_PREVIEW_FLOOR, have - over)
-            shrunk = _compacted_tool_payload(messages[i]["content"], new_keep)
+            shrunk = _compacted_tool_payload(
+                messages[i]["content"], new_keep, note=compact_note,
+            )
             over -= len(cm["content"]) - len(shrunk)
             cm["content"] = shrunk
             compact_tool[i] = new_keep
@@ -9149,6 +9294,8 @@ class Agent:
                 payload["messages"] = _compact_messages_for_tpm(messages)
                 # Leave TPM headroom under the live on-demand 8000 cap.
                 payload["max_tokens"] = min(int(payload["max_tokens"] or 1024), 1024)
+            elif a_cfg.get("provider") == "openrouter":
+                payload["messages"] = _compact_messages_for_openrouter(messages)
             else:
                 payload["messages"] = messages
             if tools and with_tools:
@@ -9208,6 +9355,7 @@ class Agent:
                     else {"Content-Type": "application/json"}
                 )
                 groq_413_retried = False
+                openrouter_402_retries = 0
                 while True:
                     async with httpx.AsyncClient(timeout=attempt_timeout) as client:
                         r = await client.post(
@@ -9237,6 +9385,28 @@ class Agent:
                                 compact_model,
                             )
                             continue
+                    if (
+                        r.status_code == 402
+                        and a_cfg.get("provider") == "openrouter"
+                        and openrouter_402_retries < _OPENROUTER_402_MAX_RETRIES
+                        and _openrouter_402_should_retry(r.text)
+                    ):
+                        openrouter_402_retries += 1
+                        afford = _openrouter_402_afford_max_tokens(r.text)
+                        if afford is not None:
+                            current = int(payload.get("max_tokens") or afford)
+                            payload["max_tokens"] = max(1, min(current, afford))
+                        _LOG.warning(
+                            "llm: openrouter HTTP 402 — retry %s/%s "
+                            "(afford=%s in_flight=%s max_tokens=%s)",
+                            openrouter_402_retries,
+                            _OPENROUTER_402_MAX_RETRIES,
+                            afford,
+                            _openrouter_402_is_in_flight(r.text),
+                            payload.get("max_tokens"),
+                        )
+                        await asyncio.sleep(0.4 * openrouter_402_retries)
+                        continue
                     break
             except httpx.TimeoutException:
                 last_error = {"status": "error", "error": f"{a_cfg['provider']} LLM call timed out ({int(attempt_timeout)}s)."}
@@ -9435,6 +9605,8 @@ class Agent:
         if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
             model = cfg["default_model"]
         messages = _sanitize_messages_for_provider(messages)
+        if cfg.get("provider") == "openrouter":
+            messages = _compact_messages_for_openrouter(messages)
         temperature = _provider_temperature(cfg, self.temperature)
         stream_max_tokens = _provider_max_tokens(cfg, self.max_tokens)
         headers = (

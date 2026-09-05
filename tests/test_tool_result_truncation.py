@@ -36,6 +36,11 @@ from app.agents.runtime import (
 )
 
 
+def _content(payload, offset=0):
+    """Pin the Kimi/Groq 8k cap so these tests ignore LLM_PROVIDER."""
+    return _tool_result_content(payload, offset=offset, max_chars=_TOOL_RESULT_MAX_CHARS)
+
+
 def _en_dash_docs(n: int) -> dict:
     """The shape that actually broke it — en dashes become \\u2013."""
     return {
@@ -49,12 +54,12 @@ def _en_dash_docs(n: int) -> dict:
 
 def test_small_result_is_passed_through_unchanged():
     payload = {"documents": [{"name": "a.pdf"}]}
-    assert json.loads(_tool_result_content(payload)) == payload
+    assert json.loads(_content(payload)) == payload
 
 
 def test_oversized_result_is_still_valid_json():
     """The load-bearing assertion. The old code failed exactly here."""
-    out = _tool_result_content(_en_dash_docs(300))
+    out = _content(_en_dash_docs(300))
 
     parsed = json.loads(out)  # must not raise
     assert parsed["truncated"] is True
@@ -74,13 +79,13 @@ def test_the_old_raw_slice_really_did_produce_invalid_json():
 
 
 def test_truncated_result_stays_within_the_cap():
-    out = _tool_result_content(_en_dash_docs(500))
+    out = _content(_en_dash_docs(500))
     assert len(out) <= _TOOL_RESULT_MAX_CHARS
 
 
 def test_truncation_is_announced_to_the_model():
     """Silent truncation would let the model present a partial list as whole."""
-    parsed = json.loads(_tool_result_content(_en_dash_docs(300)))
+    parsed = json.loads(_content(_en_dash_docs(300)))
 
     assert parsed["truncated"] is True
     assert "truncated" in parsed["note"].lower()
@@ -92,10 +97,10 @@ def test_non_serialisable_values_do_not_explode():
     class Weird:
         def __repr__(self): return "<weird>"
 
-    small = json.loads(_tool_result_content({"v": Weird()}))
+    small = json.loads(_content({"v": Weird()}))
     assert isinstance(small["v"], str)
 
-    big = json.loads(_tool_result_content({"v": [Weird()] * 4000}))
+    big = json.loads(_content({"v": [Weird()] * 4000}))
     assert big["truncated"] is True
 
 
@@ -103,7 +108,7 @@ def test_non_serialisable_values_do_not_explode():
 def test_output_always_parses_across_sizes(n):
     """Sweep sizes so the cut lands at many different offsets — including
     inside an escape sequence, which is the whole hazard."""
-    json.loads(_tool_result_content(_en_dash_docs(n)))
+    json.loads(_content(_en_dash_docs(n)))
 
 
 # -- what the truncation SAYS, not just that it stays parseable ------------
@@ -123,7 +128,7 @@ def test_output_always_parses_across_sizes(n):
 
 
 def test_the_envelope_states_the_loss_as_a_number():
-    parsed = json.loads(_tool_result_content(_en_dash_docs(300)))
+    parsed = json.loads(_content(_en_dash_docs(300)))
     assert parsed["chars_total"] > parsed["chars_shown"]
     assert parsed["chars_dropped"] == parsed["chars_total"] - parsed["chars_shown"]
     assert parsed["chars_shown"] == len(parsed["preview"])
@@ -135,7 +140,7 @@ def test_the_envelope_forbids_the_absence_claim():
     IS present and never of what is absent. A truncated tool result is the
     same shape of evidence and carries more authority, being the tool's own
     output rather than a search hit."""
-    parsed = json.loads(_tool_result_content(_en_dash_docs(300)))
+    parsed = json.loads(_content(_en_dash_docs(300)))
     rule = parsed["scope_of_absence"]
     assert "NEVER state" in rule
     assert "absent" in rule
@@ -148,7 +153,7 @@ def test_the_numbers_survive_the_shrink_loop():
     final preview rather than the first attempt -- otherwise the model is
     told it can see more than it can."""
     for n in (300, 500, 900):
-        parsed = json.loads(_tool_result_content(_en_dash_docs(n)))
+        parsed = json.loads(_content(_en_dash_docs(n)))
         assert parsed["chars_shown"] == len(parsed["preview"])
         assert str(parsed["chars_shown"]) in parsed["scope_of_absence"]
 
@@ -157,7 +162,7 @@ def test_a_small_result_carries_no_scope_note():
     """Nothing was lost, so there is nothing to warn about -- and a warning
     on a complete result would teach the model to hedge answers it can
     fully support."""
-    out = _tool_result_content({"documents": [{"name": "a.pdf"}]})
+    out = _content({"documents": [{"name": "a.pdf"}]})
     assert "scope_of_absence" not in out
     assert "chars_dropped" not in out
 
@@ -188,7 +193,7 @@ def _walk(payload: dict, limit: int = 20):
     """Every window the model would read, following next_char_offset."""
     out, offset = [], 0
     for _ in range(limit):
-        parsed = json.loads(_tool_result_content(payload, offset=offset))
+        parsed = json.loads(_content(payload, offset=offset))
         out.append(parsed)
         if not parsed["next_char_offset"]:
             return out
@@ -254,11 +259,11 @@ def test_every_window_is_valid_json():
     can cut mid-escape. An offset can now START mid-escape too -- the preview
     is a JSON string value, so it is re-escaped and still parses."""
     for offset in (0, 1, 500, 4001, 7999, 8000, 12345):
-        json.loads(_tool_result_content(_en_dash_docs(300), offset=offset))
+        json.loads(_content(_en_dash_docs(300), offset=offset))
 
 
 def test_an_offset_past_the_end_terminates_rather_than_looping():
-    parsed = json.loads(_tool_result_content(_big(), offset=10**9))
+    parsed = json.loads(_content(_big(), offset=10**9))
     assert parsed["chars_shown"] == 0
     assert parsed["chars_remaining"] == 0
     assert parsed["next_char_offset"] is None
@@ -266,9 +271,9 @@ def test_an_offset_past_the_end_terminates_rather_than_looping():
 
 def test_a_result_that_fits_is_still_returned_whole_at_offset_zero():
     small = {"documents": [{"name": "a.pdf"}]}
-    assert json.loads(_tool_result_content(small)) == small
+    assert json.loads(_content(small)) == small
     # ...but an explicit offset into it is honoured rather than ignored.
-    assert json.loads(_tool_result_content(small, offset=5))["char_offset"] == 5
+    assert json.loads(_content(small, offset=5))["char_offset"] == 5
 
 
 @pytest.mark.parametrize(

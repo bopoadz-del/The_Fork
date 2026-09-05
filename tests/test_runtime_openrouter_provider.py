@@ -7,18 +7,36 @@ When ``LLM_PROVIDER=openrouter`` is set, the runtime:
 - refuses paid slugs unless ``OPENROUTER_ALLOW_PAID=1``
 - caps outbound ``max_tokens`` (``OPENROUTER_MAX_TOKENS``, default 2048)
   so a $0-balance free account is not 402'd by agent YAML of 8192
+- truncates tool / fetch payloads and compacts the prompt under
+  ``OPENROUTER_PROMPT_TOKEN_CEILING`` (default 8000, 3 chars/token)
+- retries HTTP 402 ``in_flight`` / ``can only afford N`` on the same hop
 
 No live OpenRouter calls. Keys in these tests are placeholders.
 """
 from __future__ import annotations
 
+import json
+
 from app.agents.runtime import (
     OPENROUTER_API_URL,
     OPENROUTER_DEFAULT_MAX_TOKENS,
     OPENROUTER_DEFAULT_MODEL,
+    OPENROUTER_DEFAULT_PROMPT_TOKEN_CEILING,
+    _FETCH_DOCUMENT_MAX_CHARS,
+    _OPENROUTER_FETCH_DOCUMENT_MAX_CHARS,
+    _OPENROUTER_TOOL_RESULT_MAX_CHARS,
+    _TOOL_RESULT_MAX_CHARS,
+    _approx_prompt_tokens,
+    _compact_messages_for_openrouter,
+    _effective_fetch_document_max_chars,
+    _effective_tool_result_max_chars,
     _llm_config,
+    _openrouter_402_afford_max_tokens,
+    _openrouter_402_is_in_flight,
+    _openrouter_402_should_retry,
     _provider_max_tokens,
     _resolve_openrouter_model,
+    _tool_result_content,
 )
 
 
@@ -112,3 +130,97 @@ def test_openrouter_ceiling_does_not_touch_other_providers(monkeypatch):
     assert _provider_max_tokens({"provider": "kimi"}, 8192) == 8192
     assert _provider_max_tokens({"provider": "groq"}, 8192) == 8192
     assert _provider_max_tokens({"provider": "kimi", "reasoning_min_tokens": 4096}, 8192) == 8192
+
+
+def test_openrouter_tool_and_fetch_caps_are_tighter(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    assert _effective_tool_result_max_chars() == _OPENROUTER_TOOL_RESULT_MAX_CHARS
+    assert _effective_fetch_document_max_chars() == _OPENROUTER_FETCH_DOCUMENT_MAX_CHARS
+    assert _OPENROUTER_TOOL_RESULT_MAX_CHARS < _TOOL_RESULT_MAX_CHARS
+    assert _OPENROUTER_FETCH_DOCUMENT_MAX_CHARS < _FETCH_DOCUMENT_MAX_CHARS
+
+
+def test_openrouter_caps_do_not_change_other_providers(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    assert _effective_tool_result_max_chars() == _TOOL_RESULT_MAX_CHARS
+    assert _effective_fetch_document_max_chars() == _FETCH_DOCUMENT_MAX_CHARS
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    assert _effective_tool_result_max_chars() == _TOOL_RESULT_MAX_CHARS
+    assert _effective_fetch_document_max_chars() == _FETCH_DOCUMENT_MAX_CHARS
+
+
+def test_openrouter_tool_result_truncates_under_tighter_cap(monkeypatch):
+    """A mid-size payload fits Kimi's 8k cap but not OpenRouter's 4k cap."""
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    payload = {"text": "A" * 5000, "source": "extracted"}
+    out = _tool_result_content(payload)
+    assert len(out) <= _OPENROUTER_TOOL_RESULT_MAX_CHARS
+    parsed = json.loads(out)
+    assert parsed["truncated"] is True
+    assert "A" * 80 in parsed["preview"]
+
+
+def test_openrouter_compaction_keeps_prompt_under_ceiling(monkeypatch):
+    """search + fetch dumps that 402'd live (18398 > 10335) stay under 8k."""
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.delenv("OPENROUTER_PROMPT_TOKEN_CEILING", raising=False)
+    messages = [
+        {"role": "system", "content": "You are a project assistant. " * 200},
+        {"role": "user", "content": "What is the Time for Completion in Contract Data?"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "s1", "type": "function",
+             "function": {"name": "search_project_documents", "arguments": "{}"}},
+        ]},
+        {
+            "role": "tool",
+            "tool_call_id": "s1",
+            "name": "search_project_documents",
+            "content": "SEARCH " + ("hit " * 5000),
+        },
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "f1", "type": "function",
+             "function": {"name": "fetch_document", "arguments": "{}"}},
+        ]},
+        {
+            "role": "tool",
+            "tool_call_id": "f1",
+            "name": "fetch_document",
+            "content": (
+                "CONTRACT DATA Time for Completion 852 days. "
+                + ("x" * 24000)
+            ),
+        },
+    ]
+    assert _approx_prompt_tokens(messages) > OPENROUTER_DEFAULT_PROMPT_TOKEN_CEILING
+    out = _compact_messages_for_openrouter(messages)
+    assert _approx_prompt_tokens(out) <= OPENROUTER_DEFAULT_PROMPT_TOKEN_CEILING
+    last_tool = next(
+        m for m in reversed(out)
+        if isinstance(m, dict) and m.get("role") == "tool"
+    )
+    content = str(last_tool.get("content") or "")
+    assert "Time for Completion" in content
+    assert "852" in content
+    assert "OpenRouter" in content
+
+
+def test_openrouter_402_in_flight_is_retryable():
+    live = (
+        '{"error":{"message":"This request requires more credits, '
+        'or fewer max_tokens. in_flight_budget_exhausted"}}'
+    )
+    assert _openrouter_402_is_in_flight(live)
+    assert _openrouter_402_should_retry(live)
+    assert _openrouter_402_afford_max_tokens(live) is None
+
+
+def test_openrouter_402_afford_fewer_is_parsed():
+    live = "You requested up to 2048 tokens, but can only afford 996"
+    assert _openrouter_402_afford_max_tokens(live) == 996
+    assert _openrouter_402_should_retry(live)
+    assert not _openrouter_402_is_in_flight(live)
+
+
+def test_openrouter_402_generic_credits_is_not_retried():
+    assert not _openrouter_402_should_retry("Insufficient credits")
+    assert _openrouter_402_afford_max_tokens("bad") is None
