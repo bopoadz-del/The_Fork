@@ -147,14 +147,15 @@ def test_fetch_unknown_id_honest_error(fetch_env):
 
 
 def test_fetch_truncates_large_documents(monkeypatch, fetch_env):
+    cap = runtime_mod._effective_fetch_document_max_chars()
     monkeypatch.setattr(
         "app.core.doc_index.extract_document_text",
-        lambda file_path, filename: "x" * (runtime_mod._FETCH_DOCUMENT_MAX_CHARS + 100),
+        lambda file_path, filename: "x" * (cap + 100),
     )
     content, doc, err = runtime_mod._fetch_document_content("p1", "d1", "")
     assert err is None
     assert content["truncated"] is True
-    assert len(content["text"]) == runtime_mod._FETCH_DOCUMENT_MAX_CHARS
+    assert len(content["text"]) == cap
 
 
 def test_fetch_no_extractable_text_honest_error(monkeypatch, fetch_env):
