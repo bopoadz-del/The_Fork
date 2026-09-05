@@ -34,7 +34,12 @@ async def complete(
     survives a Groq rate-limit instead of silently losing smart routing for the
     turn. Auth/validation errors (other 4xx) are not retried.
     """
-    from app.agents.runtime import _llm_config, _llm_fallback_config, _llm_http_timeout
+    from app.agents.runtime import (
+        _llm_config,
+        _llm_fallback_config,
+        _llm_http_timeout,
+        _provider_max_tokens,
+    )
     cfg = _llm_config()
     fallback_cfg = _llm_fallback_config(cfg)
     if timeout is None:
@@ -55,13 +60,14 @@ async def complete(
         # models REJECT any temperature but 1 with HTTP 400 — the same rule
         # Agent._call_llm applies via fixed_temperature). Without this, the
         # predefined-synthesis path 400'd on Kimi and silently fell back to
-        # the deterministic render.
+        # the deterministic render. max_tokens goes through the same helper
+        # so OpenRouter's credit-reservation ceiling applies here too.
         eff_temperature = a_cfg.get("fixed_temperature", temperature)
         payload: Dict[str, Any] = {
             "model": a_model,
             "messages": messages,
             "temperature": eff_temperature,
-            "max_tokens": max_tokens,
+            "max_tokens": _provider_max_tokens(a_cfg, int(max_tokens)),
             "stream": False,
         }
         headers = {"Content-Type": "application/json"}
