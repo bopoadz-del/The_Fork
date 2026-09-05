@@ -41,8 +41,12 @@ REG_NAME = (
     "DD-2023-118_DG2 Infra P1_Vol 1.0_Cond of Contract "
     "(complete)_Contract Data.pdf"
 )
-VOL4_NAME = "DD-2023-118_DG2 Infra P1_Vol 4 - Schedules.pdf"
-VOL5_NAME = "DD-2023-118_DG2 Infra P1_Vol 5 - Specifications.pdf"
+# Live citations were Vol 5 / Vol 4 / CPM — those uploads do not carry
+# a PREFIX-YEAR-SEQ, so the particulars arrival-order lock cannot drop
+# them. A year-seq on the lookalikes would hide the defect this fence
+# is for.
+VOL4_NAME = "Vol 4 - Schedules.pdf"
+VOL5_NAME = "Vol 5 - Specifications.pdf"
 CPM_NAME = "CPM 16-01-2024.pdf"
 SHOW_NAME = "2015 MWC (Show Package).docx"
 
