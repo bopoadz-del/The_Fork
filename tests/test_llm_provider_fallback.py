@@ -32,6 +32,7 @@ _assume` exists to catch a leak that collapses two attempts into one.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 
@@ -42,6 +43,7 @@ from app.agents.runtime import (
     GROQ_API_URL,
     GROQ_DEFAULT_MODEL,
     KIMI_API_URL,
+    OPENROUTER_API_URL,
     Agent,
     _http_400_is_retryable,
     _resolve_groq_model,
@@ -54,6 +56,7 @@ _LLM_ENV = (
     "GROQ_API_KEY", "GROQ_MODEL",
     "OLLAMA_API_KEY", "OLLAMA_URL", "OLLAMA_MODEL",
     "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_ALLOW_PAID",
+    "OPENROUTER_MAX_TOKENS", "OPENROUTER_PROMPT_TOKEN_CEILING",
     "USAGE_DAILY_CAP_USD", "FORCE_CALC_ON_DIMENSIONS",
 )
 
@@ -1086,3 +1089,129 @@ async def test_orchestrator_complete_does_not_fall_back_on_a_bad_key(monkeypatch
     with pytest.raises(httpx.HTTPStatusError):
         await llm_client.complete([{"role": "user", "content": "hi"}])
     assert len(fake.calls) == 1, f"a 401 was retried on the intent path: {fake.urls}"
+
+
+# ── OpenRouter free-tier 402 (same-hop retry, not a provider fallback) ──
+
+def _openrouter_primary(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    monkeypatch.delenv("OPENROUTER_MAX_TOKENS", raising=False)
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    async def _instant(_s):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _instant)
+
+
+@pytest.mark.asyncio
+async def test_openrouter_402_in_flight_retries_same_hop(monkeypatch, http, no_sleep):
+    """Live Wave1: in_flight_budget_exhausted after a tool-round balloon."""
+    _openrouter_primary(monkeypatch)
+    fake = http(
+        _Resp(
+            402,
+            text=(
+                '{"error":{"message":"This request requires more credits, '
+                'or fewer max_tokens. in_flight_budget_exhausted"}}'
+            ),
+        ),
+        _Resp(200, _ok_body("Time for Completion is 852 days")),
+    )
+
+    result = await _agent(model="openrouter/free")._call_llm(
+        list(USER), "or-test-key",
+    )
+
+    assert result["status"] == "success", result
+    assert "852" in result["choice"]["message"]["content"]
+    assert fake.urls == [OPENROUTER_API_URL, OPENROUTER_API_URL]
+    assert fake.calls[0]["payload"]["max_tokens"] == fake.calls[1]["payload"]["max_tokens"]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_402_afford_fewer_lowers_max_tokens(
+    monkeypatch, http, no_sleep,
+):
+    """Live: 'You requested up to 2048 tokens, but can only afford 996'."""
+    _openrouter_primary(monkeypatch)
+    fake = http(
+        _Resp(402, text="You requested up to 2048 tokens, but can only afford 996"),
+        _Resp(200, _ok_body("ok")),
+    )
+
+    result = await _agent(model="openrouter/free")._call_llm(
+        list(USER), "or-test-key",
+    )
+
+    assert result["status"] == "success", result
+    assert fake.urls == [OPENROUTER_API_URL, OPENROUTER_API_URL]
+    assert fake.calls[0]["payload"]["max_tokens"] == 2048
+    assert fake.calls[1]["payload"]["max_tokens"] == 996
+
+
+@pytest.mark.asyncio
+async def test_openrouter_402_generic_does_not_retry(monkeypatch, http, no_sleep):
+    _openrouter_primary(monkeypatch)
+    fake = http(
+        _Resp(402, text="Insufficient credits"),
+        _Resp(200, _ok_body("should never run")),
+    )
+
+    result = await _agent(model="openrouter/free")._call_llm(
+        list(USER), "or-test-key",
+    )
+
+    assert result["status"] == "error", result
+    assert "402" in result["error"]
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_openrouter_hop_compacts_large_tool_payload(monkeypatch, http):
+    _openrouter_primary(monkeypatch)
+    huge = "x" * 40000
+    messages = [
+        {"role": "user", "content": "What is Time for Completion?"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "1", "type": "function",
+             "function": {"name": "fetch_document", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "1", "name": "fetch_document",
+         "content": huge},
+    ]
+    fake = http(_Resp(200, _ok_body("852 days")))
+
+    result = await _agent(model="openrouter/free")._call_llm(
+        messages, "or-test-key",
+    )
+
+    assert result["status"] == "success", result
+    tool = next(
+        m for m in fake.calls[0]["payload"]["messages"] if m.get("role") == "tool"
+    )
+    assert len(str(tool.get("content") or "")) < len(huge)
+    assert "OpenRouter" in str(tool.get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_openrouter_402_does_not_fall_back_to_groq(
+    monkeypatch, http, no_sleep,
+):
+    """402 retry is same-provider; a generic 402 must not burn Groq."""
+    _openrouter_primary(monkeypatch)
+    _groq_fallback(monkeypatch)
+    fake = http(
+        _Resp(402, text="Insufficient credits"),
+        _Resp(200, _ok_body("should never run")),
+    )
+
+    result = await _agent(model="openrouter/free")._call_llm(
+        list(USER), "or-test-key",
+    )
+
+    assert result["status"] == "error", result
+    assert fake.urls == [OPENROUTER_API_URL]
