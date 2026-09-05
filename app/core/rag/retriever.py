@@ -11,7 +11,10 @@ from __future__ import annotations
 import logging
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from app.core.contract_data_chunks import particulars_chunk_states_a_value
+from app.core.contract_data_chunks import (
+    filled_particulars_rows,
+    particulars_chunk_states_a_value,
+)
 from app.core.rag.embeddings import Embedder, get_embedder
 from app.core.rag.vector_store import (
     Chunk,
@@ -363,6 +366,22 @@ def filename_matches_named_contracts(
     return any(cid in text_l for cid in named_ids)
 
 
+def _contract_id_recency(cid: str) -> Tuple[int, int]:
+    """Sort key for PREFIX-YEAR-SEQ: newer year, then higher sequence.
+
+    Unnamed Master Corpus questions can retrieve a filled Time for
+    Completion from more than one package (DD-2022-175 demolition at
+    548 days, DD-2023-118 infrastructure at 852). First-in-rank used to
+    lock the pool to whichever cosine arrived first. The later executed
+    package owns the unnamed ask; the earlier one stays reachable by
+    naming its id (#443).
+    """
+    parts = (cid or "").lower().split("-")
+    year = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else -1
+    seq = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else -1
+    return (year, seq)
+
+
 def elect_answer_bearing_contract(
     query: str,
     ranked_docs: Iterable[Tuple[str, str]],
@@ -371,7 +390,9 @@ def elect_answer_bearing_contract(
 
     ``ranked_docs`` is ``(filename, chunk_text)`` in descending final-score
     order. It may be a lazy iterable: nothing is consumed for a question that
-    wants no particular, and the walk stops at the first filled row.
+    wants no particular. When the ask is particulars-shaped the walk reads
+    every candidate so a later-year filled row can beat an earlier-year
+    filled row that happened to rank first (live A3/A5 on d7a4ca8).
     Returns the winning PREFIX-YEAR-SEQ, or None to leave the choice to
     arrival order (today's behaviour).
 
@@ -391,6 +412,11 @@ def elect_answer_bearing_contract(
     the pool contains one, the contract that owns the best-ranked chunk OF
     THAT KIND wins the pool — a pointer from another contract cannot take it
     away.
+
+    When TWO contracts both own that kind of answer (both state a Time for
+    Completion, both state a Delay Damages rate), first-in-rank is still
+    arrival order. The newer PREFIX-YEAR-SEQ wins: it is the later executed
+    package. Naming the older id still fail-closes onto that year.
 
     Each ask shape brings its own idea of what an answer looks like, because
     the wrong-year chunk that wins is different every time:
@@ -421,13 +447,21 @@ def elect_answer_bearing_contract(
     active = [is_answer for asks, is_answer in kinds if asks(query)]
     if not active:
         return None
+    found: List[str] = []
+    seen: Set[str] = set()
     for filename, text in ranked_docs:
         if not any(is_answer(filename, text) for is_answer in active):
             continue
         ids = extract_contract_doc_ids(filename or "")
-        if ids:
-            return ids[0]
-    return None
+        if not ids:
+            continue
+        cid = ids[0]
+        if cid not in seen:
+            seen.add(cid)
+            found.append(cid)
+    if not found:
+        return None
+    return max(found, key=_contract_id_recency)
 
 
 class _ContractScope:
@@ -1246,6 +1280,21 @@ _PARTICULARS_FIELD_RE = re.compile(
     r"contract\s+data|appendix\s+to\s+(?:the\s+)?tender|"
     r"contract\s+particulars)",
 )
+# Phrases that must appear on a filled row's KEY to elect a contract.
+# "contract data" / "appendix to tender" are section headings, not a
+# particular — they classify the ask but must not match every window.
+_ASKED_PARTICULAR_KEY_RES = (
+    (re.compile(r"(?i)time\s+for\s+completion"), "time for completion"),
+    (re.compile(r"(?i)delay\s+damages"), "delay damages"),
+    (re.compile(r"(?i)liquidated\s+damages"), "liquidated damages"),
+    (re.compile(r"(?i)defects\s+notification"), "defects notification"),
+    (re.compile(r"(?i)accepted\s+contract\s+amount"), "accepted contract amount"),
+    (re.compile(r"(?i)performance\s+bond"), "performance bond"),
+    (re.compile(r"(?i)performance\s+security"), "performance security"),
+    (re.compile(r"(?i)performance\s+guarantee"), "performance guarantee"),
+    (re.compile(r"(?i)including\s+vat"), "including vat"),
+    (re.compile(r"(?i)excluding\s+vat"), "excluding vat"),
+)
 _FILLED_IN_ASK_RE = re.compile(
     r"(?i)(?:how\s+many\s+days|what\s+is\s+the\s+(?:amount|rate|percentage|"
     r"duration|figure)|per\s+(?:calendar\s+)?day|calendar\s+days|"
@@ -1448,18 +1497,64 @@ def is_contract_data_particulars_row(text: str) -> bool:
     return particulars_chunk_states_a_value(t)
 
 
+def _asked_particular_key_phrases(query: str) -> Tuple[str, ...]:
+    """The Contract Data label(s) an unnamed ask is actually requesting.
+
+    Term-overlap on the chunk body is too weak: ``works`` / ``completion``
+    appear on a Volume 4 programme note and on an unfilled TfC key sitting
+    next to a filled Accepted Contract Amount. Election must see the
+    asked field on the *key* of a filled row.
+    """
+    q = (query or "").strip()
+    if not q:
+        return ()
+    phrases: List[str] = []
+    for rx, phrase in _ASKED_PARTICULAR_KEY_RES:
+        if rx.search(q):
+            phrases.append(phrase)
+    if _CD_WHO_IS_RE.search(q):
+        for m in _CD_CONTRACT_ROLE_RE.finditer(q):
+            role = re.sub(r"\s+", " ", m.group(0).lower()).strip()
+            if role:
+                phrases.append(role)
+    for m in _CD_SCHEDULE_ASK_RE.finditer(q):
+        phrases.append(re.sub(r"\s+", " ", m.group(0).lower()).strip())
+    # Dedup, keep order.
+    seen: Set[str] = set()
+    out: List[str] = []
+    for p in phrases:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return tuple(out)
+
+
 def particulars_row_answers_asked_label(query: str, text: str) -> bool:
-    """True when a particulars chunk's BODY names the particular the ask
-    is about.
+    """True when a filled row's KEY is the particular the ask names.
 
     The unnamed election used to lock the pool to the first filled
     particulars row of any kind. A filled Accepted Contract Amount window
     from another package then stole A3 (Time for Completion), the same
     way a glossary definition used to steal A9 before the role-identity
-    ask was recognised. Label overlap is the same signal the scoring
-    bonus already uses, computed on the body so the identical header
-    every particulars chunk carries cannot elect.
+    ask was recognised.
+
+    #496 required label overlap on the chunk body. That still elects a
+    mixed window whose TfC / Delay Damages *key* is unfilled. Live
+    d7a4ca8 A3/A5: DD-2022-175 won, Volume 4 ``548 days`` and Sub-Clause
+    8.8 stayed in the pool, and DD-2023-118's 852-day / 0.1% rows were
+    fenced out. The asked label's own value must be filled.
+
+    When the ask has no named field (a bare "Contract Data" lookup), the
+    previous body-overlap test stands so we do not empty a pool we have
+    no opinion about.
     """
+    phrases = _asked_particular_key_phrases(query)
+    if phrases:
+        for key, _val in filled_particulars_rows(text):
+            key_l = key.lower()
+            if any(p in key_l for p in phrases):
+                return True
+        return False
     return _cd_label_bonus(_significant_terms(query), text) > 0.0
 
 

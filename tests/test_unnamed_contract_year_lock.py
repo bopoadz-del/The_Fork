@@ -64,11 +64,13 @@ from __future__ import annotations
 import pytest
 
 from app.core.contract_data_chunks import contract_data_particulars_chunks
+from app.core.contract_data_chunks import filled_particulars_rows
 from app.core.rag.retriever import (
     contract_data_mention_is_only_a_cross_reference,
     contract_data_particulars_delta,
     elect_answer_bearing_contract,
     is_contract_data_particulars_row,
+    particulars_row_answers_asked_label,
     query_asks_for_contract_particulars,
 )
 
@@ -1324,6 +1326,8 @@ Particular Conditions Part A - Contract Data
 
 {DD23_UNSPLIT_TFC_LINE}
 {DD23_UNSPLIT_DELAY_LINE}
+1.1.27 Defects Notification Period | 365 days from the Taking-Over Certificate
+1.3.1 (b) Engineer | Northwater Engineers (Demo Saudi Limited)
 """
 A3_LIVE_ANSWER = "852 days"
 A5_LIVE_ANSWER = "0.1% of the Contract Price per calendar day"
@@ -1553,3 +1557,232 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
         "reservation, so the reservation is not what fixed it:\n"
         + _report(top)
     )
+
+
+# ══ d7a4ca8 LIVE REGRESSION ═══════════════════════════════════════════════
+#
+# Wave-1 on tip/main d7a4ca8 (#500 unit pins) scored A3+A5
+# FAIL_WRONG_CONTRACT against the same Neon Master Corpus that passed on
+# 7877c21. The #483/#496 election still locked to the FIRST filled
+# matching-label chunk. After the #499 kmz purge, a DD-2022-175
+# demolition particular (548 days / Sub-Clause 8.8) ranked ahead of
+# DD-2023-118's scanned 852-day / 0.1% rows and deleted 118 from every
+# rank. Volume 4 "overall duration … 548 days" then stayed in the pool
+# because it shares the elected year.
+#
+# The live UI pack prefixes every ask with the client-documents clamp.
+# That must not change classification or election.
+
+LIVE_PREFIX = "Answer only from the client project documents. "
+LIVE_A3 = LIVE_PREFIX + A3
+LIVE_A5 = LIVE_PREFIX + A5
+
+DD22_FILLED_TFC_548 = (
+    "CONTRACT DATA particulars — filled-in amount / duration / "
+    f"percentage [{DD22_NAME}].\n"
+    "Particular Conditions Part A - Contract Data\n"
+    "1.1.75 Time for Completion for the whole of the Works: 548 days"
+)
+DD22_FILLED_DELAY_CAP = (
+    "CONTRACT DATA particulars — filled-in amount / duration / "
+    f"percentage [{DD22_NAME}].\n"
+    "Particular Conditions Part A - Contract Data\n"
+    "8.8 Maximum amount of delay damages: 10% of the Accepted Contract Amount"
+)
+DD22_MIXED_ACA_UNFILLED_TFC = (
+    "CONTRACT DATA particulars — filled-in amount / duration / "
+    f"percentage [{DD22_NAME}].\n"
+    "Contract Data\n"
+    "1.1.1 Accepted Contract Amount including VAT: SAR 1,000,000.00\n"
+    "1.1.75 Time for Completion for the whole of the Works\n"
+    "8.8 Delay Damages for the whole of the Works"
+)
+
+
+def test_a_mixed_window_does_not_elect_on_an_unfilled_asked_label():
+    """Filled ACA + a bare TfC key is not Time for Completion evidence."""
+    assert is_contract_data_particulars_row(DD22_MIXED_ACA_UNFILLED_TFC)
+    assert not particulars_row_answers_asked_label(A3, DD22_MIXED_ACA_UNFILLED_TFC)
+    assert not particulars_row_answers_asked_label(A5, DD22_MIXED_ACA_UNFILLED_TFC)
+    assert particulars_row_answers_asked_label(A2, DD22_MIXED_ACA_UNFILLED_TFC)
+    assert elect_answer_bearing_contract(
+        A3, _ranked((DD22_NAME, DD22_MIXED_ACA_UNFILLED_TFC)),
+    ) is None
+    keys = [k.lower() for k, _v in filled_particulars_rows(DD22_MIXED_ACA_UNFILLED_TFC)]
+    assert any("accepted contract amount" in k for k in keys)
+    assert not any("time for completion" in k for k in keys)
+
+
+def test_newer_year_owns_the_unnamed_ask_when_both_state_the_particular():
+    """Live A3: 2022's own 548-day TfC row ranked first. 118's 852-day
+    scanned line is also filled evidence. First-in-rank used to lock 2022
+    and keep Volume 4 in the pool."""
+    dd23 = _unsplit_particulars_chunk(DD23_UNSPLIT_TFC_LINE)
+    ranked = _ranked(
+        (DD22_NAME, DD22_FILLED_TFC_548),
+        (DD22_SCHED_NAME, DD22_SCHEDULE_548),
+        (DD23_NAME, dd23),
+    )
+    assert elect_answer_bearing_contract(A3, ranked) == "dd-2023-118"
+    assert elect_answer_bearing_contract(LIVE_A3, ranked) == "dd-2023-118"
+    assert particulars_row_answers_asked_label(A3, DD22_FILLED_TFC_548)
+    assert particulars_row_answers_asked_label(A3, dd23)
+    assert not particulars_row_answers_asked_label(A3, DD22_SCHEDULE_548)
+
+
+def test_newer_year_owns_delay_damages_when_both_years_state_a_rate():
+    """Live A5: 2022's Delay Damages family (cap row / GC 8.8) ranked
+    first. 118's 0.1%-per-day scanned line must still own the unnamed ask."""
+    dd23 = _unsplit_particulars_chunk(DD23_UNSPLIT_DELAY_LINE)
+    ranked = _ranked(
+        (DD22_NAME, DD22_DELAY_CLAUSE),
+        (DD22_NAME, DD22_FILLED_DELAY_CAP),
+        (DD23_NAME, dd23),
+    )
+    assert elect_answer_bearing_contract(A5, ranked) == "dd-2023-118"
+    assert elect_answer_bearing_contract(LIVE_A5, ranked) == "dd-2023-118"
+
+
+def test_naming_the_older_year_still_fail_closes_to_that_year(two_year_corpus):
+    """Newest-year election is unnamed-only. #443 still owns a named id."""
+    ret, names = two_year_corpus
+    chunks, _ = ret.retrieve_with_filter(
+        "Per the DD-2022-175 contract, what is the Time for Completion "
+        "for the whole of the Works?",
+        PROJECT,
+        k=5,
+    )
+    assert chunks, "the named year is in the fixture"
+    assert all(names.get(c.doc_id, "") == DD22_NAME for c in chunks)
+
+
+@pytest.fixture
+def live_two_filled_years_corpus(tmp_path, monkeypatch):
+    """d7a4ca8 live A3/A5 shape: 2022 states the particular (548 days /
+    a delay-damages cap), Volume 4 restates 548, 118's scanned 852 / 0.1%
+    sit lower on cosine. The live prefix is the ask the UI actually sent.
+    """
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", GK_PROJECT)
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_CD_PARTICULARS_BOOST", raising=False)
+
+    from sqlalchemy import delete as _sa_delete
+
+    from app.core.rag import embeddings as _emb
+    from app.core.rag import retriever as ret
+    from app.core.rag import vector_store as _vs
+
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+    from app.core.rag.embeddings import Embedder
+    from app.core.rag.vector_store import get_store
+
+    embedder = Embedder(model_name="fake")
+    store = get_store(dim=embedder.dim)
+    with store._lock, store._session_factory()() as session:
+        session.execute(_sa_delete(store._rag_chunk_cls))
+        session.commit()
+
+    names = {
+        "dd22_tfc": DD22_NAME,
+        "dd22_delay_cap": DD22_NAME,
+        "dd22_gc_delay": DD22_NAME,
+        "dd22_sched": DD22_SCHED_NAME,
+        "dd22_mixed": DD22_NAME,
+    }
+    cd_chunks = contract_data_particulars_chunks(
+        DD23_UNSPLIT_CONTRACT_DATA, filename=DD23_NAME,
+    )
+    assert cd_chunks, "unsplittable Contract Data produced no chunks"
+    for i, chunk in enumerate(cd_chunks):
+        doc_id = f"dd23_unsplit_{i}"
+        names[doc_id] = DD23_NAME
+        store.upsert_chunks(PROJECT, doc_id, [chunk], embedder.encode([chunk]))
+
+    store.upsert_chunks(
+        PROJECT, "dd22_tfc", [DD22_FILLED_TFC_548],
+        embedder.encode([DD22_FILLED_TFC_548]),
+    )
+    store.upsert_chunks(
+        PROJECT, "dd22_delay_cap", [DD22_FILLED_DELAY_CAP],
+        embedder.encode([DD22_FILLED_DELAY_CAP]),
+    )
+    store.upsert_chunks(
+        PROJECT, "dd22_gc_delay", [DD22_DELAY_CLAUSE],
+        embedder.encode([DD22_DELAY_CLAUSE]),
+    )
+    store.upsert_chunks(
+        PROJECT, "dd22_sched", [DD22_SCHEDULE_548],
+        embedder.encode([DD22_SCHEDULE_548]),
+    )
+    store.upsert_chunks(
+        PROJECT, "dd22_mixed", [DD22_MIXED_ACA_UNFILLED_TFC],
+        embedder.encode([DD22_MIXED_ACA_UNFILLED_TFC]),
+    )
+
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda did: names.get(did, ""))
+
+    real_search = store.search
+
+    def older_year_leads(project_id, query_vec, k=20, query_text=None):
+        hits = real_search(project_id, query_vec, k=k, query_text=query_text)
+        for chunk in hits:
+            if chunk.doc_id.startswith("dd22_"):
+                chunk.score = 0.93
+            else:
+                chunk.score = 0.51
+        return hits
+
+    monkeypatch.setattr(store, "search", older_year_leads)
+    yield ret, names
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+
+
+def test_a3_live_prefix_returns_852_not_548(live_two_filled_years_corpus):
+    """d7a4ca8 A3: 548 days from DD-2022-175 Volume 4. Want 852 / 118."""
+    ret, names = live_two_filled_years_corpus
+    top = _top_k(ret, names, LIVE_A3)
+    blob = _blob(top)
+    assert A3_LIVE_ANSWER in blob, (
+        "852-day TfC never reached the top-5:\n" + _report(top)
+    )
+    assert "548 days" not in blob, (
+        "the older package is still answering A3:\n" + _report(top)
+    )
+    assert all("DD-2023-118" in n or not n for n, _t in top), (
+        "a DD-2022 file survived the unnamed fence:\n" + _report(top)
+    )
+
+
+def test_a5_live_prefix_returns_the_rate_not_the_2022_clause(
+    live_two_filled_years_corpus,
+):
+    """d7a4ca8 A5: Sub-Clause 8.8 from DD-2022-175, no 0.1%. Want 118."""
+    ret, names = live_two_filled_years_corpus
+    top = _top_k(ret, names, LIVE_A5)
+    blob = _blob(top)
+    assert A5_LIVE_ANSWER in blob, (
+        "0.1% rate never reached the top-5:\n" + _report(top)
+    )
+    assert "at the rate stated in the Contract Data" not in blob, (
+        "the 2022 General Conditions pointer is still in the excerpts:\n"
+        + _report(top)
+    )
+    assert all("DD-2023-118" in n or not n for n, _t in top), (
+        "a DD-2022 file survived the unnamed fence:\n" + _report(top)
+    )
+
+
+def test_a2_a6_a9_still_pass_when_the_older_year_also_has_filled_rows(
+    live_two_filled_years_corpus,
+):
+    """Newest-year election must not take the already-passing asks off 118."""
+    ret, names = live_two_filled_years_corpus
+    # A2 is in the mixed 2022 window (filled ACA) AND missing from the
+    # 118 unsplit fixture (only TfC + Delay Damages lines). A2 is
+    # therefore not asserted here — the two_year_corpus control covers it.
+    _assert_own_contract_data_leads(_top_k(ret, names, A6), "365 days")
+    _assert_own_contract_data_leads(_top_k(ret, names, A9), A9_ANSWER)
