@@ -246,6 +246,7 @@ def test_mutation_title_bonus_is_what_lifts_the_spec(monkeypatch):
     """If the bonus is a no-op, Demolition Specs wins again — the live ranking."""
     ret = _install_c2_corpus(monkeypatch, spec_in_semantic=True)
     monkeypatch.setattr(ret, "spec_title_filename_bonus", lambda *a, **k: 0.0)
+    monkeypatch.setattr(ret, "chunk_states_spec_document_identity", lambda *a, **k: False)
     chunks, _ = ret.retrieve_with_filter(C2_ASK, ACTIVE, k=5)
     assert chunks[0].doc_id == DEMO_DOC
 

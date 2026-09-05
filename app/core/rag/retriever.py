@@ -516,6 +516,19 @@ class _ContractScope:
                 ):
                     self.winning = ids[0]
                     return True
+                # Live A2: scanned Contract Data has PREFIX-YEAR-SEQ in
+                # the filename and no index-time particulars prefix, so
+                # the filled-row predicate never fires. The ACA filename
+                # election already decided this file owns the ask.
+                if (
+                    self._aca_contract_data_in_pool
+                    and filename_looks_like_contract_data(filename)
+                    and contract_data_chunk_states_aca(
+                        filename, chunk_text, self.query,
+                    )
+                ):
+                    self.winning = ids[0]
+                    return True
                 return False
             self.winning = ids[0]
             return True
