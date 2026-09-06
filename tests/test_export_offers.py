@@ -218,3 +218,19 @@ def test_both_offers_can_appear_on_one_turn():
         f"/v1/projects/{PROJECT}/export/cost-boq",
         f"/v1/projects/{PROJECT}/export/schedule-from-document",
     }, endpoints
+
+
+def test_audit_export_uses_ui_alias_not_drive_archive_source(monkeypatch):
+    """Same H1 scoping bug: audit project_id is the remapped RAG corpus."""
+    from app.core import projects as projects_mod
+
+    monkeypatch.setattr(projects_mod, "MASTER_CORPUS_PROJECT_ID", "master_corpus")
+    monkeypatch.setattr(projects_mod, "MASTER_CORPUS_SOURCE_PROJECT_ID", "drive_archive")
+    exports = _build_exports_from_audit(
+        _audit("doc-boq", project_id="drive_archive"),
+        "per the BOQ",
+        [_wbs_call()],
+    )
+    endpoints = {e["endpoint"] for e in exports}
+    assert all("drive_archive" not in ep for ep in endpoints), endpoints
+    assert any("/v1/projects/master_corpus/" in ep for ep in endpoints), endpoints

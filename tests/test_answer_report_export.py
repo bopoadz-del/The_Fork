@@ -21,6 +21,7 @@ from app.core.answer_report_intent import (
     answer_report_export_descriptor,
     collect_answer_pairs,
     compose_answer_report_reply,
+    export_workspace_project_id,
     message_wants_answer_report,
     parse_answer_report_range,
 )
@@ -200,6 +201,32 @@ def test_descriptor_points_at_scope_answers_not_an_rfp_endpoint():
     assert "schedule-from-document" not in desc["endpoint"]
 
 
+def test_descriptor_uses_ui_alias_not_drive_archive_source(monkeypatch):
+    """Live H1: chat remaps master_corpus → drive_archive; the button must not.
+
+    The 404 was ``Project 'drive_archive' not found`` while the user was
+    on Master Corpus. Fail if the offer looks up the archive corpus id.
+    """
+    from app.core import projects as projects_mod
+
+    monkeypatch.setattr(projects_mod, "MASTER_CORPUS_PROJECT_ID", "master_corpus")
+    monkeypatch.setattr(projects_mod, "MASTER_CORPUS_SOURCE_PROJECT_ID", "drive_archive")
+
+    assert export_workspace_project_id(
+        "drive_archive", "ws-master_corpus-1740000000000",
+    ) == "master_corpus"
+    assert export_workspace_project_id("drive_archive", "ws-other-1") == "master_corpus"
+    assert export_workspace_project_id("p-owned", "ws-p-owned-1") == "p-owned"
+
+    desc = answer_report_export_descriptor(
+        "drive_archive", "ws-master_corpus-1740000000000", 1, 9,
+    )
+    assert "/v1/projects/master_corpus/" in desc["endpoint"]
+    assert "drive_archive" not in desc["endpoint"]
+    assert "scope=answers" in desc["endpoint"]
+    assert "range=A1-A9" in desc["endpoint"]
+
+
 def test_chat_short_circuit_offers_the_docx_and_does_not_mention_rfp_files():
     from app.agents.runtime import Agent
 
@@ -226,6 +253,36 @@ def test_chat_short_circuit_offers_the_docx_and_does_not_mention_rfp_files():
     assert offer["format"] == "docx"
     assert "scope=answers" in offer["endpoint"]
     assert out["tool_calls"] == []
+
+
+def test_short_circuit_stamps_ui_project_when_runtime_has_source_id(monkeypatch):
+    """Reproduce the live remap: agent sees drive_archive, button must not."""
+    from app.agents.runtime import Agent
+    from app.core import agent_memory
+    from app.core import projects as projects_mod
+
+    monkeypatch.setattr(projects_mod, "MASTER_CORPUS_PROJECT_ID", "master_corpus")
+    monkeypatch.setattr(projects_mod, "MASTER_CORPUS_SOURCE_PROJECT_ID", "drive_archive")
+
+    agent = Agent(
+        name="project-assistant",
+        description="test",
+        system_prompt="test",
+        allowed_blocks=[],
+    )
+    cid = "ws-master_corpus-h1-scope"
+    agent_memory.get_or_create_conversation(cid, "project-assistant", "drive_archive")
+    for m in A1_A9_HISTORY:
+        agent_memory.append_message(cid, m["role"], m["content"])
+
+    out = asyncio.run(agent.chat(
+        H1_EXPORT_ASK, project_id="drive_archive", conversation_id=cid,
+    ))
+    assert out["status"] == "success"
+    assert out["exports"], "no download offer — the docx cannot land"
+    offer = out["exports"][0]
+    assert "/v1/projects/master_corpus/" in offer["endpoint"]
+    assert "drive_archive" not in offer["endpoint"]
 
 
 def test_stream_short_circuit_emits_exports_on_end():
@@ -387,6 +444,75 @@ def test_default_scope_is_still_last_message_only(_export_http):
     assert "Jane Fixture" in doc
     assert "8,640,000.00" not in doc
     assert "Conversation Excerpt" in doc
+
+
+def test_export_http_looks_up_master_corpus_not_drive_archive(monkeypatch):
+    """Owner gate must resolve the UI project, never the RAG archive id.
+
+    Live: the A1–A9 button POSTed ``/v1/projects/drive_archive/.../export``
+    and ``_check_owner`` 404'd. New descriptors stamp ``master_corpus``;
+    a leftover ``drive_archive`` URL must also remap before lookup.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.core import agent_memory
+    from app.core import projects as projects_mod
+    from app.dependencies import require_user
+    from app.main import app
+
+    monkeypatch.setattr(projects_mod, "MASTER_CORPUS_PROJECT_ID", "master_corpus")
+    monkeypatch.setattr(projects_mod, "MASTER_CORPUS_SOURCE_PROJECT_ID", "drive_archive")
+
+    looked_up: list[str] = []
+    real_get = projects_mod.get_project
+
+    def _spy(project_id, *args, **kwargs):
+        looked_up.append(project_id)
+        if project_id == "master_corpus":
+            return {"id": "master_corpus", "name": "Master Corpus"}
+        if project_id == "drive_archive":
+            return None
+        return real_get(project_id, *args, **kwargs)
+
+    monkeypatch.setattr(projects_mod, "get_project", _spy)
+
+    app.dependency_overrides[require_user] = lambda: {
+        "user_id": "u1", "role": "user",
+    }
+    cid = "ws-master_corpus-h1http"
+    agent_memory.get_or_create_conversation(cid, "project-assistant", "drive_archive")
+    for m in A1_A9_HISTORY:
+        agent_memory.append_message(cid, m["role"], m["content"])
+
+    desc = answer_report_export_descriptor("drive_archive", cid, 1, 9)
+    assert "drive_archive" not in desc["endpoint"]
+    assert "/v1/projects/master_corpus/" in desc["endpoint"]
+
+    try:
+        with TestClient(app) as client:
+            res = client.post(
+                desc["endpoint"],
+                headers={"host": "theshovel.ai", "x-forwarded-proto": "https"},
+            )
+            assert res.status_code == 200, res.text
+            assert res.content[:2] == b"PK"
+            assert "master_corpus" in looked_up
+            assert "drive_archive" not in looked_up
+
+            looked_up.clear()
+            stale = (
+                f"/v1/projects/drive_archive/conversations/{cid}/export"
+                f"?format=docx&scope=answers&range=A1-A9"
+            )
+            stale_res = client.post(
+                stale,
+                headers={"host": "theshovel.ai", "x-forwarded-proto": "https"},
+            )
+            assert stale_res.status_code == 200, stale_res.text
+            assert "master_corpus" in looked_up
+            assert "drive_archive" not in looked_up
+    finally:
+        app.dependency_overrides.clear()
 
 
 # --------------------------------------------------------------------------
