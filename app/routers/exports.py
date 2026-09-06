@@ -288,8 +288,12 @@ class EvmExportRequest(BaseModel):
 def _check_owner(project_id: str, user_id: str) -> Dict[str, Any]:
     # master_corpus is a virtual alias — any authenticated user may read/export
     # conversations scoped to it (same as GET /v1/projects/master_corpus).
+    # Live H1: chat remaps the alias to MASTER_CORPUS_SOURCE_PROJECT_ID
+    # (drive_archive). Stale export buttons that stamp that backing id
+    # must still resolve — look up the UI alias, never the archive id.
+    lookup_id = projects_store.ui_project_id(project_id) or project_id
     proj = projects_store.get_project(
-        project_id, user_id=user_id, include_admin_approved=True
+        lookup_id, user_id=user_id, include_admin_approved=True
     )
     if not proj:
         raise HTTPException(404, f"Project '{project_id}' not found")

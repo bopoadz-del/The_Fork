@@ -5555,6 +5555,7 @@ def _build_exports_from_audit(
         return []
     try:
         from app.core import projects as _projects
+        project_id = _projects.ui_project_id(project_id) or project_id
     except Exception:
         _projects = None
 
