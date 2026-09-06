@@ -48,6 +48,21 @@ def _master_corpus_source(project_id: Optional[str]) -> Optional[str]:
     return None
 
 
+def ui_project_id(project_id: Optional[str]) -> Optional[str]:
+    """The project id export URLs and owner gates must use.
+
+    Chat remaps ``MASTER_CORPUS_PROJECT_ID`` (``master_corpus``) to
+    ``MASTER_CORPUS_SOURCE_PROJECT_ID`` (live: ``drive_archive``) so RAG
+    hits the backing corpus. That remapped id is not a user-visible
+    project: ``get_project('drive_archive')`` 404s for a signed-in user
+    on Master Corpus (UI-PHYS H1). Reverse-map the source back to the
+    alias. Any other id is returned unchanged.
+    """
+    if project_id and project_id == MASTER_CORPUS_SOURCE_PROJECT_ID:
+        return MASTER_CORPUS_PROJECT_ID
+    return project_id
+
+
 # ── document roles that feed the readiness gate ─────────────────────────────
 ROLE_BASELINE = "baseline_schedule"
 ROLE_DAILY = "daily_report"

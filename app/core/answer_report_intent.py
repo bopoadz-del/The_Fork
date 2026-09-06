@@ -124,6 +124,32 @@ def message_wants_answer_report(text: str) -> bool:
     return bool(_ANSWERS_OR_CONVO_RE.search(raw))
 
 
+def export_workspace_project_id(
+    project_id: str,
+    conversation_id: str = "",
+) -> str:
+    """UI/workspace project id for an export URL — never the RAG backing id.
+
+    Live H1: chat remaps ``master_corpus`` → ``drive_archive`` before the
+    agent runs. Stamping that remapped id into
+    ``/v1/projects/{id}/conversations/.../export`` 404s
+    (``Project 'drive_archive' not found``). Prefer the ``ws-{ui_pid}``
+    conversation prefix, then reverse-map the master-corpus source.
+    """
+    from app.core.projects import MASTER_CORPUS_PROJECT_ID, ui_project_id
+
+    cid = conversation_id or ""
+    if cid.startswith("ws-"):
+        rest = cid[3:]
+        if rest == MASTER_CORPUS_PROJECT_ID:
+            return MASTER_CORPUS_PROJECT_ID
+        if "-" in rest:
+            pid, suffix = rest.rsplit("-", 1)
+            if pid == MASTER_CORPUS_PROJECT_ID and suffix:
+                return MASTER_CORPUS_PROJECT_ID
+    return ui_project_id(project_id) or project_id
+
+
 def answer_report_export_descriptor(
     project_id: str,
     conversation_id: str,
@@ -131,6 +157,7 @@ def answer_report_export_descriptor(
     end: Optional[int],
 ) -> dict[str, Any]:
     """SSE ``exports`` offer the frontend already knows how to click."""
+    scoped = export_workspace_project_id(project_id, conversation_id)
     label = range_label(start, end)
     qs = "format=docx&scope=answers"
     if start is not None and end is not None:
@@ -140,7 +167,7 @@ def answer_report_export_descriptor(
         "format": "docx",
         "method": "POST",
         "endpoint": (
-            f"/v1/projects/{project_id}/conversations/{conversation_id}/export?{qs}"
+            f"/v1/projects/{scoped}/conversations/{conversation_id}/export?{qs}"
         ),
         "payload": {},
     }

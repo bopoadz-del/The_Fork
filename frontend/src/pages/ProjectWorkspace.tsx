@@ -10,6 +10,7 @@ import AppHeader from '../components/AppHeader'
 import { type Project } from './ProjectCard'
 import { apiGet, apiPost, apiPostForm, ApiError } from '../lib/api'
 import { getToken } from '../lib/token'
+import { exportEndpointForWorkspace } from '../lib/exportEndpoint'
 import WorkspaceShell from '../layout/WorkspaceShell'
 import LeftPanel from '../layout/LeftPanel'
 import RightPanel from '../layout/RightPanel'
@@ -1497,11 +1498,14 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
                 .catch((e) => alert(`Download error: ${(e as Error).message}`))
             }}
             onExport={(descriptor) => {
-              // Data-backed download offer (e.g. cost BOQ). The descriptor's
-              // endpoint is server-relative; generation happens server-side on
-              // click (bounded), not in the chat hot path.
+              // Data-backed download offer (e.g. cost BOQ / A1–A9 Word). The
+              // descriptor's endpoint is server-relative; generation happens
+              // server-side on click (bounded), not in the chat hot path.
+              // Rewrite a remapped RAG corpus id (drive_archive) to the
+              // workspace the user is actually in.
               const token = getToken() || ''
-              void fetch(`${API_BASE}${descriptor.endpoint}`, {
+              const endpoint = exportEndpointForWorkspace(descriptor.endpoint, id)
+              void fetch(`${API_BASE}${endpoint}`, {
                 method: descriptor.method || 'POST',
                 headers: {
                   Authorization: `Bearer ${token}`,
