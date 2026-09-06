@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import cast, delete, func, select, text
+from sqlalchemy import cast, delete, func, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -1038,6 +1038,83 @@ class VectorStore:
             logger.warning(
                 "chunks_containing_all failed for project=%s needles=%r: %s",
                 project_id, cleaned, exc,
+            )
+            return []
+        return [
+            Chunk(
+                chunk_id=r.chunk_id,
+                project_id=r.project_id,
+                doc_id=r.doc_id,
+                chunk_index=int(r.chunk_index),
+                text=r.text or "",
+                score=0.0,
+                knowledge_layer=getattr(r, "knowledge_layer", None),
+                authority=getattr(r, "authority", None),
+            )
+            for r in rows
+        ]
+
+    def chunks_following(
+        self,
+        project_id: str,
+        anchors: List[Tuple[str, int]],
+        *,
+        n: int = 1,
+    ) -> List[Chunk]:
+        """Return the next ``n`` same-doc chunks after each (doc_id, index).
+
+        Used by C1 spec-precedence list rescue: an intro that ends
+        ``as follows`` under Sub-Clause 1.5.1(d) is chunk N; the
+        bullet list is chunk N+1. ``chunks_for_docs`` cannot do this —
+        it returns the first ``k_per_doc`` rows of a file, so a late
+        split (or a long TOC) never yields the neighbor.
+
+        Empty ``anchors`` or a store miss returns ``[]``; failures
+        never raise into the answer path.
+        """
+        if not project_id or not anchors:
+            return []
+        step = max(1, int(n or 1))
+        wanted: Dict[str, Set[int]] = {}
+        for raw_id, raw_idx in anchors:
+            did = (raw_id or "").strip()
+            if not did:
+                continue
+            try:
+                base = int(raw_idx)
+            except (TypeError, ValueError):
+                continue
+            wanted.setdefault(did, set()).update(
+                range(base + 1, base + 1 + step)
+            )
+        if not wanted:
+            return []
+        clauses = [
+            (
+                (self._rag_chunk_cls.doc_id == did)
+                & self._rag_chunk_cls.chunk_index.in_(sorted(indexes))
+            )
+            for did, indexes in wanted.items()
+        ]
+        try:
+            with self._lock:
+                with self._session_factory()() as session:
+                    stmt = (
+                        select(self._rag_chunk_cls)
+                        .where(
+                            self._rag_chunk_cls.project_id == project_id,
+                            or_(*clauses),
+                        )
+                        .order_by(
+                            self._rag_chunk_cls.doc_id,
+                            self._rag_chunk_cls.chunk_index,
+                        )
+                    )
+                    rows = session.scalars(stmt).all()
+        except Exception as exc:  # noqa: BLE001 — rescue must not break the turn
+            logger.warning(
+                "chunks_following failed for project=%s anchors=%s: %s",
+                project_id, list(wanted), exc,
             )
             return []
         return [
