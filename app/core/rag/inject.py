@@ -273,8 +273,10 @@ def format_chunks_as_system_message(
             header += (
                 "TIME FOR COMPLETION — an excerpt below states the Time for "
                 "Completion for the whole of the Works in days. That IS the "
-                "answer. State that duration. Do not answer from a permit "
-                "tracker, community schedule, or PSA recital instead.\n"
+                "answer. Lead with that duration. Do not open with a "
+                "sectional, notice-period, or lookalike figure (including "
+                "90 days), and do not answer from a permit tracker, "
+                "community schedule, or PSA recital instead.\n"
             )
     if query and query_asks_who_the_engineer_is(query):
         if any(chunk_states_engineer_identity(c.text or "") for c in chunks):

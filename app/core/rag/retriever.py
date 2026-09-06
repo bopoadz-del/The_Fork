@@ -2179,10 +2179,17 @@ def particulars_row_answers_asked_label(query: str, text: str) -> bool:
     """
     phrases = _asked_particular_key_phrases(query)
     if phrases:
+        want_whole_tfc = (
+            "time for completion" in phrases
+            and query_asks_for_time_for_completion(query)
+        )
         for key, _val in filled_particulars_rows(text):
             key_l = key.lower()
-            if any(p in key_l for p in phrases):
-                return True
+            if not any(p in key_l for p in phrases):
+                continue
+            if want_whole_tfc and not _tfc_row_is_whole_works(key, text):
+                continue
+            return True
         return False
     return _cd_label_bonus(_significant_terms(query), text) > 0.0
 
@@ -2424,6 +2431,22 @@ _TFC_PERMIT_TRACKER_RE = re.compile(
     r"(?i)permit[- ]track|commencement[- ]completion|"
     r"community\s+[a-z0-9-]+\s+\w{3}-\d{2}\s+to\s+\w{3}-\d{2}",
 )
+# Live A3 PARTIAL after #516: a sectional / Vol-2 "within 90 days" figure
+# ranked ahead of DD-2023-118 Contract Data 852 and the graft led with 90.
+_TFC_SECTIONAL_RE = re.compile(
+    r"(?i)\bsection(?:al)?s?\s+"
+    r"(?:\d+|[ivxlcd]+|[a-z]\b|of\s+(?:the\s+)?works)",
+)
+_TFC_CLAUSE_1175_RE = re.compile(r"(?i)\b1\.1\.75\b")
+_TFC_POINTER_RE = re.compile(
+    r"(?i)(?:stated|named|identified|set\s+out|specified|defined|"
+    r"described|referred\s+to)\s+in\s+(?:the\s+)?contract\s+data",
+)
+_TFC_NOTICE_DAYS_RE = re.compile(
+    r"(?i)\b(?:within|not\s+later\s+than|no\s+later\s+than|"
+    r"after\s+(?:the\s+)?(?:taking[- ]over|toc)|before\s+the)\s+"
+    r"(\d{2,4})\s+(?:calendar\s+|working\s+)?days",
+)
 
 
 def aca_including_vat_rescue_enabled() -> bool:
@@ -2450,7 +2473,7 @@ def query_asks_for_aca_including_vat(query: str) -> bool:
 
 
 def query_asks_for_time_for_completion(query: str) -> bool:
-    """True for A3 whole-Works TfC, not a milestone-only ask (A4)."""
+    """True for A3 whole-Works TfC, not a milestone-only or sectional ask."""
     q = query or ""
     if not q or _DEFINITION_QUESTION_RE.search(q):
         return False
@@ -2458,7 +2481,131 @@ def query_asks_for_time_for_completion(query: str) -> bool:
         return False
     if _CD_MILESTONE_QUERY_RE.search(q) and not _CD_WHOLE_WORKS_QUERY_RE.search(q):
         return False
+    # G2 / "Section 2 of the Works" is not the whole-Works particular.
+    if _TFC_SECTIONAL_RE.search(q) and not _CD_WHOLE_WORKS_QUERY_RE.search(q):
+        return False
     return True
+
+
+def _tfc_key_is_not_whole_works(key: str) -> bool:
+    """True when a TfC key is a milestone or section, not whole-of-Works."""
+    k = key or ""
+    if _CD_MILESTONE_CHUNK_RE.search(k):
+        return True
+    if _CD_WHOLE_WORKS_QUERY_RE.search(k):
+        return False
+    return bool(_TFC_SECTIONAL_RE.search(k))
+
+
+def _tfc_row_is_whole_works(key: str, chunk_text: str = "") -> bool:
+    """Positive test: this key is the whole-Works particular, not a lookalike.
+
+    A Vol-2 sentence that mentions Time for Completion and peels
+    ``within 90 days`` as a value is not clause 1.1.75.
+    """
+    k = key or ""
+    if not k or _CD_MILESTONE_CHUNK_RE.search(k) or _TFC_SECTIONAL_RE.search(k):
+        return False
+    if _TFC_POINTER_RE.search(k):
+        return False
+    if _CD_WHOLE_WORKS_QUERY_RE.search(k) or _TFC_CLAUSE_1175_RE.search(k):
+        return True
+    if not re.search(r"(?i)time\s+for\s+completion", k):
+        return False
+    if len(k) > 96:
+        return False
+    return bool(
+        _CD_PARTICULARS_PREFIX_RE.search(chunk_text or "")
+        or _TFC_CLAUSE_1175_RE.search(chunk_text or "")
+    )
+
+
+def _tfc_row_anchor_index(text: str, key: str, val: str, days_num: str) -> int:
+    """Index of this key+value, not the first lookalike with the same label."""
+    loc = (text or "").lower()
+    key_l = (key or "").lower()
+    val_l = (val or "").lower()
+    num = (days_num or "").split()[0]
+    if key_l:
+        start = 0
+        while True:
+            i = loc.find(key_l[:40], start)
+            if i < 0:
+                break
+            window = loc[i: i + max(len(key_l) + 80, 160)]
+            if num and num in window:
+                return i
+            if val_l and val_l[:24] in window:
+                return i
+            start = i + max(1, len(key_l[:40]))
+    if val_l:
+        return loc.find(val_l)
+    return -1
+
+
+def _tfc_days_from_block(block: str) -> Optional[str]:
+    """Days figure tied to the TfC label, not a neighbouring notice period."""
+    blob = _normalize_retrieval_ws(block)
+    if not blob:
+        return None
+    anchors = (
+        _TFC_CLAUSE_1175_RE,
+        re.compile(r"(?i)time\s+for\s+completion"),
+        _CD_WHOLE_WORKS_QUERY_RE,
+    )
+    for rx in anchors:
+        for m in rx.finditer(blob):
+            window = blob[m.start(): m.end() + 120]
+            if _tfc_key_is_not_whole_works(window):
+                continue
+            notice = _TFC_NOTICE_DAYS_RE.search(window)
+            dm = _TFC_DAYS_RE.search(window)
+            if not dm:
+                continue
+            if notice and notice.group(1) == dm.group(1):
+                continue
+            return f"{dm.group(1)} days"
+    for dm in _TFC_DAYS_RE.finditer(blob):
+        lead = blob[max(0, dm.start() - 48): dm.end() + 8]
+        if _TFC_NOTICE_DAYS_RE.search(lead):
+            continue
+        if _tfc_key_is_not_whole_works(lead):
+            continue
+        return f"{dm.group(1)} days"
+    return None
+
+
+def _score_tfc_candidate(days: str, context: str, *, from_particulars: bool) -> int:
+    """Higher wins. Whole-Works Contract Data / newer year beat lookalikes."""
+    ctx = context or ""
+    score = 0
+    if _CD_WHOLE_WORKS_QUERY_RE.search(ctx):
+        score += 100
+    if _TFC_CLAUSE_1175_RE.search(ctx):
+        score += 80
+    if from_particulars or _CD_PARTICULARS_PREFIX_RE.search(ctx):
+        score += 60
+    elif _CD_HEADING_IN_CHUNK_RE.search(ctx) and not (
+        contract_data_mention_is_only_a_cross_reference(ctx)
+    ):
+        score += 40
+    ids = extract_contract_doc_ids(ctx)
+    if ids:
+        year, seq = max(_contract_id_recency(cid) for cid in ids)
+        if year > 0:
+            score += year
+        if seq > 0:
+            score += min(seq, 30)
+    if _tfc_key_is_not_whole_works(ctx):
+        score -= 200
+    if _TFC_PERMIT_TRACKER_RE.search(ctx):
+        score -= 200
+    if _TFC_POINTER_RE.search(ctx) and not from_particulars:
+        score -= 80
+    notice = _TFC_NOTICE_DAYS_RE.search(ctx)
+    if notice and notice.group(1) == (days or "").split()[0]:
+        score -= 150
+    return score
 
 
 def chunk_states_aca_including_vat(text: str) -> bool:
@@ -2495,7 +2642,9 @@ def chunk_states_time_for_completion(text: str) -> bool:
 
     Permit-tracker / community commencement-completion tables (live A3)
     mention completion dates but are not the Contract Data duration.
-    Milestone-only rows are not this class.
+    Milestone-only and sectional rows are not this class. A Vol-2
+    specification that only cites TfC and a ``within 90 days`` notice
+    is a lookalike, not the particular.
     """
     t = text or ""
     if not t or _TFC_PERMIT_TRACKER_RE.search(t):
@@ -2505,17 +2654,45 @@ def chunk_states_time_for_completion(text: str) -> bool:
         return False
     if _CD_MILESTONE_CHUNK_RE.search(blob) and not _CD_WHOLE_WORKS_QUERY_RE.search(blob):
         return False
+    if _TFC_SECTIONAL_RE.search(blob) and not _CD_WHOLE_WORKS_QUERY_RE.search(blob):
+        return False
     for key, val in filled_particulars_rows(t):
         key_l = key.lower()
         if "time for completion" not in key_l:
             continue
-        if "milestone" in key_l:
+        if not _tfc_row_is_whole_works(key, t):
+            continue
+        if _CD_PARTICULARS_PREFIX_RE.search(val or ""):
             continue
         if _TFC_DAYS_RE.search(val) or _TFC_DAYS_RE.search(key):
             return True
-    if _CD_MILESTONE_CHUNK_RE.search(blob):
+    if _CD_MILESTONE_CHUNK_RE.search(blob) and not _CD_WHOLE_WORKS_QUERY_RE.search(blob):
         return False
-    return bool(_TFC_DAYS_RE.search(blob))
+    if _TFC_POINTER_RE.search(blob) and not (
+        _CD_PARTICULARS_PREFIX_RE.search(t)
+        or (
+            _CD_HEADING_IN_CHUNK_RE.search(t)
+            and not contract_data_mention_is_only_a_cross_reference(t)
+        )
+    ):
+        return False
+    days = _tfc_days_from_block(t)
+    if not days:
+        return False
+    if not (
+        _CD_WHOLE_WORKS_QUERY_RE.search(blob)
+        or _TFC_CLAUSE_1175_RE.search(blob)
+        or _CD_PARTICULARS_PREFIX_RE.search(t)
+        or (
+            _CD_HEADING_IN_CHUNK_RE.search(t)
+            and not contract_data_mention_is_only_a_cross_reference(t)
+        )
+    ):
+        return False
+    notice = _TFC_NOTICE_DAYS_RE.search(blob)
+    if notice and notice.group(1) == days.split()[0]:
+        return False
+    return True
 
 
 def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
@@ -2560,27 +2737,49 @@ def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
 def extract_time_for_completion_days(text: str) -> Optional[str]:
     """Whole-Works TfC duration as written (e.g. ``852 days``), or None.
 
-    Walks rows even when a permit-tracker decoy shares the same blob
-    (graft reads the full RAG system message).
+    Walks the full RAG blob (graft reads the system message). When a
+    sectional / notice-period 90-day lookalike and the Contract Data
+    852-day particular share the same text, elect the whole-Works row
+    — first-in-blob used to prepend 90 days onto a correct 852 answer.
     """
     t = text or ""
     if not t:
         return None
+    cands: List[Tuple[int, int, str]] = []
+    order = 0
     for key, val in filled_particulars_rows(t):
         key_l = key.lower()
-        if "time for completion" not in key_l or "milestone" in key_l:
+        if "time for completion" not in key_l:
             continue
-        if _TFC_PERMIT_TRACKER_RE.search(f"{key} {val}"):
+        if not _tfc_row_is_whole_works(key, t):
+            continue
+        joined = f"{key} {val}"
+        if _TFC_PERMIT_TRACKER_RE.search(joined):
+            continue
+        if _CD_PARTICULARS_PREFIX_RE.search(val or ""):
             continue
         m = _TFC_DAYS_RE.search(val) or _TFC_DAYS_RE.search(key)
-        if m:
-            return f"{m.group(1)} days"
+        if not m:
+            continue
+        days = f"{m.group(1)} days"
+        idx = _tfc_row_anchor_index(t, key, val, m.group(1))
+        local = t[max(0, idx - 240): idx + 280] if idx >= 0 else joined
+        score = _score_tfc_candidate(days, joined + "\n" + local, from_particulars=True)
+        cands.append((-score, order, days))
+        order += 1
     for block in re.split(r"\n{2,}|\[doc_id=", t):
-        if chunk_states_time_for_completion(block):
-            m = _TFC_DAYS_RE.search(_normalize_retrieval_ws(block))
-            if m:
-                return f"{m.group(1)} days"
-    return None
+        if not chunk_states_time_for_completion(block):
+            continue
+        days = _tfc_days_from_block(block)
+        if not days:
+            continue
+        score = _score_tfc_candidate(days, block, from_particulars=False)
+        cands.append((-score, order, days))
+        order += 1
+    if not cands:
+        return None
+    cands.sort()
+    return cands[0][2]
 
 
 def extract_engineer_identity(text: str) -> Optional[str]:
