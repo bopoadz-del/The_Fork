@@ -236,7 +236,7 @@ class ChatBlock(TypedBlock):
                 )
 
         # ── Cloud provider selection via _llm_config() (same as the agent
-        # runtime) so LLM_PROVIDER=openrouter|kimi|groq|ollama applies
+        # runtime) so LLM_PROVIDER=deepseek|openrouter|kimi|groq|ollama applies
         # uniformly across the chat block route and the agent path.
         from app.agents.runtime import _llm_config  # local import: avoid cycle at module load
         cfg = _llm_config()

@@ -37,9 +37,9 @@ import pytest
 
 from app.infra.monitoring import MonitoringBlock
 
-# Providers `_llm_config` can actually return. OpenRouter / Kimi / Groq
-# on cloud, Ollama on-prem (DECISIONS.md 2026-09-05).
-LIVE_LADDER = {"kimi", "groq", "ollama", "openrouter"}
+# Providers `_llm_config` can actually return. DeepSeek / OpenRouter /
+# Kimi / Groq on cloud, Ollama on-prem.
+LIVE_LADDER = {"kimi", "groq", "ollama", "openrouter", "deepseek"}
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ def test_the_roster_matches_what_llm_config_can_actually_return():
     from app.agents.runtime import _llm_config
 
     resolvable = set()
-    for name in ("kimi", "groq", "ollama", "openrouter", "", "nonsense"):
+    for name in ("kimi", "groq", "ollama", "openrouter", "deepseek", "", "nonsense"):
         with mock.patch.dict(os.environ, {"LLM_PROVIDER": name}, clear=False):
             resolvable.add(_llm_config()["provider"])
 
@@ -86,10 +86,11 @@ def test_the_roster_matches_what_llm_config_can_actually_return():
     )
 
 
-@pytest.mark.parametrize("dead", ["deepseek", "openai", "anthropic", "local_ollama"])
+@pytest.mark.parametrize("dead", ["openai", "anthropic", "local_ollama"])
 def test_a_removed_provider_is_not_monitored(dead):
-    """Named explicitly, because these are the four that were actually there.
-    A generic equality check states the rule; this states the incident."""
+    """Named explicitly, because these lingered on the roster after the
+    2026-07-25 purge. DeepSeek was restored 2026-09-06 and is live again;
+    OpenAI / Anthropic / the old ``local_ollama`` alias stay off."""
     assert dead not in MonitoringBlock(None, {}).providers
 
 

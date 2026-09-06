@@ -237,10 +237,11 @@ async def test_call_cloud_includes_bearer_when_api_key_set(monkeypatch):
 
 
 def test_chat_block_source_has_no_forbidden_provider_names():
-    """Provider names removed per platform direction — they must not return."""
+    """Removed cloud providers must not return. DeepSeek was restored
+    2026-09-06 as a first-class native chat provider and is allowed."""
 
     src = inspect.getsource(ChatBlock)
-    forbidden = ["anthropic", "openai", "grok", "claude", "deepseek"]
+    forbidden = ["anthropic", "openai", "grok", "claude"]
     for term in forbidden:
         assert term.lower() not in src.lower(), f"forbidden provider name '{term}' reappeared in ChatBlock"
 

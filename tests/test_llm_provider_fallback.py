@@ -40,6 +40,7 @@ import httpx
 import pytest
 
 from app.agents.runtime import (
+    DEEPSEEK_API_URL,
     GROQ_API_URL,
     GROQ_DEFAULT_MODEL,
     KIMI_API_URL,
@@ -58,6 +59,7 @@ _LLM_ENV = (
     "OLLAMA_API_KEY", "OLLAMA_URL", "OLLAMA_MODEL",
     "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_ALLOW_PAID",
     "OPENROUTER_MAX_TOKENS", "OPENROUTER_PROMPT_TOKEN_CEILING",
+    "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL",
     "USAGE_DAILY_CAP_USD", "FORCE_CALC_ON_DIMENSIONS",
 )
 
@@ -1050,6 +1052,27 @@ def test_fallback_config_resolves_openrouter(monkeypatch):
     assert cfg["default_model"] == "openrouter/free"
 
 
+def test_fallback_config_resolves_deepseek(monkeypatch):
+    from app.agents.runtime import DEEPSEEK_API_URL, _llm_fallback_config
+
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    cfg = _llm_fallback_config({"provider": "kimi"})
+    assert cfg is not None
+    assert cfg["provider"] == "deepseek"
+    assert cfg["url"] == DEEPSEEK_API_URL
+    assert cfg["env_key"] == "DEEPSEEK_API_KEY"
+    assert cfg["default_model"] == "deepseek-chat"
+
+
+def test_fallback_config_is_none_when_deepseek_key_is_missing(monkeypatch):
+    from app.agents.runtime import _llm_fallback_config
+
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "deepseek")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    assert _llm_fallback_config({"provider": "kimi"}) is None
+
+
 def test_fallback_ladder_keeps_groq_when_kimi_model_fallback_is_set(monkeypatch):
     from app.agents.runtime import _llm_fallback_ladder
 
@@ -1123,6 +1146,42 @@ def _openrouter_primary(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "openrouter")
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
     monkeypatch.delenv("OPENROUTER_MAX_TOKENS", raising=False)
+
+
+def _deepseek_primary(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+
+
+@pytest.mark.asyncio
+async def test_deepseek_primary_falls_back_to_kimi(monkeypatch, http):
+    """Operator recipe: LLM_PROVIDER=deepseek, LLM_FALLBACK_PROVIDER=kimi."""
+    _deepseek_primary(monkeypatch)
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "kimi")
+    monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
+    fake = http(_Resp(429, text="rate limited"), _Resp(200, _ok_body("recovered")))
+
+    result = await _agent()._call_llm(list(USER), "ds-test-key")
+
+    assert result["status"] == "success", result
+    assert fake.urls == [DEEPSEEK_API_URL, KIMI_API_URL], fake.urls
+    assert fake.calls[0]["headers"]["Authorization"] == "Bearer ds-test-key"
+    assert fake.calls[1]["headers"]["Authorization"] == "Bearer kimi-test-key"
+    assert fake.models[0] == "deepseek-chat"
+    # DeepSeek keeps the agent's temperature; Kimi pins 1.
+    assert fake.temperatures == [0.3, 1.0], fake.temperatures
+
+
+@pytest.mark.asyncio
+async def test_deepseek_sends_tool_choice_auto(monkeypatch, http):
+    _deepseek_primary(monkeypatch)
+    fake = http(_Resp(200))
+
+    await _agent()._call_llm(list(DELIVERABLE), "ds-test-key")
+
+    assert fake.urls == [DEEPSEEK_API_URL]
+    assert fake.tool_choices == ["auto"], fake.tool_choices
 
 
 @pytest.fixture

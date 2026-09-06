@@ -257,9 +257,13 @@ services:
         value: construction
 
       # ── LLM providers (set in dashboard) ───────────────────────────────
-      # Cloud ladder (DECISIONS.md 2026-09-05): OpenRouter FREE models may be
-      # the production primary so chat does not burn paid Kimi tokens or
-      # exhaust Groq TPD:
+      # DeepSeek native API (optional cloud primary; OpenRouter free 402s
+      # a $0-credit account):
+      #   LLM_PROVIDER=deepseek
+      #   DEEPSEEK_API_KEY=…               (dashboard; never commit)
+      #   DEEPSEEK_MODEL=deepseek-chat     (or deepseek-reasoner)
+      #   LLM_FALLBACK_PROVIDER=kimi       (or groq)
+      # OpenRouter FREE models (DECISIONS.md 2026-09-05):
       #   LLM_PROVIDER=openrouter
       #   OPENROUTER_MODEL=openrouter/free   (or any :free slug)
       #   OPENROUTER_API_KEY=…               (dashboard; never commit)
@@ -267,12 +271,17 @@ services:
       # OPENROUTER_ALLOW_PAID=1.
       # Historical: PRIMARY = Kimi K2 (LLM_PROVIDER=kimi, KIMI_MODEL=kimi-k2.6
       # — reasoning model, tool_choice=auto); FALLBACK = Groq (413s payloads
-      # >~12k tokens on the free account).
+      # >~12k tokens on the free account). Unset LLM_PROVIDER still resolves
+      # to Kimi — do not change that default here.
       # Ollama is the ON-PREM provider only (see deploy/onprem). Do not point
       # OLLAMA_URL at OpenRouter — use LLM_PROVIDER=openrouter.
       - key: LLM_PROVIDER
         sync: false
       - key: LLM_FALLBACK_PROVIDER
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
