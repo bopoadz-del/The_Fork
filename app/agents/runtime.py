@@ -5447,6 +5447,15 @@ GROQ_RETIRED_MODELS = {
 KIMI_API_URL = "https://api.moonshot.ai/v1/chat/completions"
 KIMI_DEFAULT_MODEL = "kimi-k2.6"
 
+# DeepSeek — OpenAI-compatible chat-completions at the native API.
+# Same payload shape as Groq/Kimi (tool-calling + streaming). Default
+# model is ``deepseek-chat``; ``DEEPSEEK_MODEL`` may pin ``deepseek-reasoner``
+# or a current catalogue id (e.g. deepseek-v4-flash). Temperature is NOT
+# pinned: the API accepts 0–2 on non-thinking models and ignores it in
+# thinking mode rather than 400ing (unlike Moonshot K2).
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
+
 # OpenRouter — OpenAI-compatible chat-completions. Same payload shape as Groq.
 # Default model is the free router (`openrouter/free`); any `:free` slug is
 # allowed. Paid slugs are refused unless OPENROUTER_ALLOW_PAID=1.
@@ -5545,6 +5554,27 @@ def _openrouter_model_is_free(name: str) -> bool:
     return slug == OPENROUTER_DEFAULT_MODEL or slug.endswith(":free")
 
 
+def _resolve_attempt_model(cfg: dict[str, Any], agent_model: str | None) -> str:
+    """Provider default unless the agent pin belongs on this provider.
+
+    Every hat YAML still pins ``kimi-k2.6``. That is a live Moonshot id.
+    Sending it to DeepSeek (or leaving a dead ``gpt-4*`` / leftover
+    ``deepseek-*`` pin on Kimi) 404s the turn. DeepSeek keeps only
+    ``deepseek-*`` pins; every other provider keeps the historical
+    placeholder remap (empty / ``deepseek-*`` / ``gpt-4*`` / ``gpt-3*``
+    → ``default_model``).
+    """
+    default = str(cfg.get("default_model") or "")
+    model = (agent_model or "").strip()
+    if cfg.get("provider") == "deepseek":
+        if model.startswith("deepseek-"):
+            return model
+        return default
+    if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
+        return default
+    return model
+
+
 def _resolve_openrouter_model(name: str | None) -> str:
     """Pin a free OpenRouter slug, or the default router.
 
@@ -5571,19 +5601,23 @@ def _llm_config() -> dict[str, Any]:
     """Pick the active LLM provider's URL + env-key + default model.
 
     Precedence:
-      1. Explicit ``LLM_PROVIDER`` env var (``openrouter`` | ``kimi`` |
-         ``groq`` | ``ollama``) wins.
+      1. Explicit ``LLM_PROVIDER`` env var (``deepseek`` | ``openrouter`` |
+         ``kimi`` | ``groq`` | ``ollama``) wins.
       2. Otherwise: Kimi when a KIMI_API_KEY is set, else Groq when a
          GROQ_API_KEY is set, else Kimi (the historical primary).
-    OpenAI and DeepSeek were removed 2026-07-25. Cloud production may use
-    OpenRouter free models as primary (``OPENROUTER_MODEL=openrouter/free``
-    or any ``:free`` slug); Kimi and Groq stay optional. Ollama is the
-    on-prem provider. Do not point ``OLLAMA_URL`` at OpenRouter — use
+    OpenAI stays removed (2026-07-25). DeepSeek is restored as an
+    explicit-only cloud primary (``LLM_PROVIDER=deepseek`` /
+    ``LLM_FALLBACK_PROVIDER=deepseek``); it is never auto-picked from a
+    bare ``DEEPSEEK_API_KEY``. Cloud production may also use OpenRouter
+    free models (``OPENROUTER_MODEL=openrouter/free`` or any ``:free``
+    slug); Kimi and Groq stay optional. Ollama is the on-prem provider.
+    Do not point ``OLLAMA_URL`` at OpenRouter — use
     ``LLM_PROVIDER=openrouter``.
 
     Per-provider override envs let the operator pin a specific model
     without code changes:
-      - ``OPENROUTER_MODEL`` / ``GROQ_MODEL`` / ``KIMI_MODEL`` / ``OLLAMA_MODEL``
+      - ``DEEPSEEK_MODEL`` / ``OPENROUTER_MODEL`` / ``GROQ_MODEL`` /
+        ``KIMI_MODEL`` / ``OLLAMA_MODEL``
       - ``OLLAMA_URL`` overrides the localhost default — set this to your
         Cloudflare Tunnel / Tailscale / VPS URL so the Render deploy can
         reach your self-hosted Ollama.
@@ -5598,7 +5632,8 @@ def _llm_config() -> dict[str, Any]:
     """
     # Unset or unrecognized LLM_PROVIDER resolves to Kimi (historical primary),
     # with Groq as the auto-pick only when a Kimi key is absent but a Groq key
-    # exists. OpenRouter is explicit-only (LLM_PROVIDER / LLM_FALLBACK_PROVIDER).
+    # exists. DeepSeek and OpenRouter are explicit-only (LLM_PROVIDER /
+    # LLM_FALLBACK_PROVIDER).
     provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
     if not provider:
         provider = "kimi" if os.getenv("KIMI_API_KEY") else (
@@ -5630,6 +5665,18 @@ def _llm_config() -> dict[str, Any]:
             "env_key": "OPENROUTER_API_KEY",
             "default_model": _resolve_openrouter_model(os.getenv("OPENROUTER_MODEL")),
         }
+    if provider == "deepseek":
+        # No fixed_temperature: DeepSeek accepts the agent's temperature
+        # on deepseek-chat and ignores it on thinking/reasoner rather
+        # than 400ing. Do not copy Kimi's temperature=1 pin.
+        return {
+            "provider": "deepseek",
+            "url": DEEPSEEK_API_URL,
+            "env_key": "DEEPSEEK_API_KEY",
+            "default_model": (
+                (os.getenv("DEEPSEEK_MODEL") or "").strip() or DEEPSEEK_DEFAULT_MODEL
+            ),
+        }
     if provider == "groq":
         return {
             "provider": "groq",
@@ -5658,7 +5705,8 @@ def _llm_config() -> dict[str, Any]:
             # here (see _provider_max_tokens), like fixed_temperature.
             "reasoning_min_tokens": int(os.getenv("KIMI_REASONING_MIN_TOKENS", "4096")),
         }
-    # Default / fallthrough = Kimi (primary). OpenAI and DeepSeek are gone.
+    # Default / fallthrough = Kimi (primary). Unrecognised names (including
+    # leftover ``openai``) must not steal a different cloud provider.
     return {
         "provider": "kimi",
         "url": KIMI_API_URL,
@@ -5738,10 +5786,11 @@ def _llm_fallback_config(primary: dict[str, Any]) -> dict[str, Any] | None:
        new key, and has no fixed-temperature constraint. Set
        KIMI_FALLBACK_MODEL=moonshot-v1-128k.
 
-    2. CROSS-PROVIDER fallback (``LLM_FALLBACK_PROVIDER`` = ``openrouter`` |
-       ``groq`` | ``ollama``): degrade to another provider on a retryable
-       failure (413/429/5xx/network). Returns ``None`` when unset, names the
-       primary provider, or its API-key env is missing.
+    2. CROSS-PROVIDER fallback (``LLM_FALLBACK_PROVIDER`` = ``deepseek`` |
+       ``openrouter`` | ``kimi`` | ``groq`` | ``ollama``): degrade to another
+       provider on a retryable failure (413/429/5xx/network). Returns
+       ``None`` when unset, names the primary provider, or its API-key env
+       is missing.
 
     Reuses ``_llm_config`` for URL/suffix normalisation by pinning the provider
     through the env for the duration of one synchronous call.
@@ -8479,7 +8528,7 @@ class Agent:
             # Kimi is the production primary; gating on Groq alone made
             # SYNTHESIS_STREAMING=1 a dead switch in prod. Keep this list in
             # step with the allowlist in _stream_synthesis.
-            and cfg["provider"] in ("groq", "kimi", "openrouter")
+            and cfg["provider"] in ("groq", "kimi", "openrouter", "deepseek")
             # rag_debug needs the whole final text to run its with/without-RAG
             # A/B in the non-streaming branch; don't stream those turns.
             and not rag_debug
@@ -9182,11 +9231,9 @@ class Agent:
                         "Exception", exc_info=True,
                     )
         # An agent that pinned a provider-specific model is left alone; an
-        # unpinned/legacy-placeholder agent uses the active provider's default
-        # (Kimi primary / Groq fallback / Ollama on-prem, from _llm_config).
-        model = self.model
-        if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
-            model = cfg["default_model"]
+        # unpinned/legacy-placeholder (or a foreign pin such as kimi-k2.6
+        # on DeepSeek) uses the active provider's default from _llm_config.
+        model = _resolve_attempt_model(cfg, self.model)
         # Whitelist-sanitise every outbound message (drops `reasoning` and any
         # other non-standard field that would make a strict provider — Groq —
         # reject the request). Single chokepoint, covers all callers.
@@ -9258,13 +9305,14 @@ class Agent:
             # Groq uses "auto", where Llama calls tools cleanly on its own and
             # the turn always completes. Decided PER-ATTEMPT so a fallback to a
             # different provider gets the right value.
-            if provider in ("groq", "kimi", "openrouter"):
+            if provider in ("groq", "kimi", "openrouter", "deepseek"):
                 # Groq: forcing tool_choice makes Llama-4-Scout emit the tool as
                 # PROSE -> HTTP 400 tool_use_failed. Kimi K2: forcing a specific
                 # tool 400s outright ("tool_choice 'specified' is incompatible
                 # with thinking enabled" — K2 is a reasoning model). OpenRouter
                 # is OpenAI-compatible like Groq; routed free models must not
-                # be forced. All three call tools cleanly on "auto".
+                # be forced. DeepSeek reasoner / thinking mode is the same
+                # class of constraint. All four call tools cleanly on "auto".
                 return "auto"
             if forced_tool:
                 # Force THIS tool by name — "required" alone let the model pick
@@ -9665,11 +9713,13 @@ class Agent:
         """
         cfg = _llm_config()
         native_ollama = _is_native_ollama(cfg)
-        if cfg["provider"] not in ("groq", "openai", "kimi", "openrouter") and not native_ollama:
-            # Only Groq, OpenAI, Kimi, OpenRouter, and native Ollama streaming
-            # are verified. OpenRouter is OpenAI-compatible (same SSE shape as Groq).
+        if cfg["provider"] not in ("groq", "openai", "kimi", "openrouter", "deepseek") and not native_ollama:
+            # Groq / Kimi / OpenRouter / DeepSeek share the OpenAI SSE shape.
+            # Native Ollama is verified separately. Do not re-open OpenAI as
+            # a selectable provider — the leftover name only keeps old
+            # allowlist comments honest.
             raise _SynthStreamError(
-                "streaming synthesis only verified for groq/openai/kimi/openrouter/native-ollama"
+                "streaming synthesis only verified for groq/openai/kimi/openrouter/deepseek/native-ollama"
             )
         # Soft daily cap: mirror _call_llm. Over cap -> fall back so the
         # non-streaming path emits the structured cap error the UI expects.
@@ -9686,9 +9736,7 @@ class Agent:
                     over = False
                 if over:
                     raise _SynthStreamError("daily cap reached")
-        model = self.model
-        if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
-            model = cfg["default_model"]
+        model = _resolve_attempt_model(cfg, self.model)
         messages = _sanitize_messages_for_provider(messages)
         if cfg.get("provider") == "openrouter":
             messages = _compact_messages_for_openrouter(messages)

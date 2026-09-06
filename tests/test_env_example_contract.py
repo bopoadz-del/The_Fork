@@ -82,11 +82,17 @@ def test_env_example_uses_cors_extra_origins():
     assert "CORS_ORIGINS" not in declared
 
 
-def test_env_example_has_no_deepseek():
+def test_env_example_declares_deepseek():
+    """DeepSeek is a first-class cloud primary; operators must see the
+    key + model when copying .env.example. The 2026-07-25 purge banned
+    these names; the 2026-09-06 restore requires them again."""
     repo_root = Path(__file__).resolve().parent.parent
     text = (repo_root / ".env.example").read_text(encoding="utf-8")
-    assert "DEEPSEEK" not in text
-    assert "deepseek" not in text.lower()
+    declared = _declared_keys(text)
+    assert "DEEPSEEK_API_KEY" in declared
+    assert "DEEPSEEK_MODEL" in declared
+    assert "DEEPSEEK_API_KEY" in text
+    assert "deepseek-chat" in text.lower()
 
 
 def test_env_example_does_not_default_to_production():

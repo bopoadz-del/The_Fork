@@ -55,7 +55,7 @@ def test_assert_noop_under_cloud(monkeypatch):
     assert dp.check_onprem_ready() == []
 
 
-@pytest.mark.parametrize("cloud_provider", ["groq", "kimi", "openrouter"])
+@pytest.mark.parametrize("cloud_provider", ["groq", "kimi", "openrouter", "deepseek"])
 def test_assert_raises_on_cloud_llm_provider(monkeypatch, cloud_provider):
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "onprem")
     _clean_env(monkeypatch)

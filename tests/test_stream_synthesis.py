@@ -39,6 +39,7 @@ _LLM_ENV = (
     "GROQ_API_KEY", "GROQ_MODEL",
     "OLLAMA_API_KEY", "OLLAMA_URL", "OLLAMA_MODEL",
     "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_ALLOW_PAID",
+    "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL",
     "USAGE_DAILY_CAP_USD",
 )
 
@@ -184,6 +185,16 @@ async def test_openrouter_streams_like_groq(monkeypatch, stream):
     stream(_StreamResponse(_sse("ok")))
 
     assert await _drain(_agent(), api_key="or-test-key") == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_deepseek_streams_like_groq(monkeypatch, stream):
+    """DeepSeek is OpenAI-compatible; SYNTHESIS_STREAMING must not skip it."""
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
+    stream(_StreamResponse(_sse("ok")))
+
+    assert await _drain(_agent(), api_key="ds-test-key") == ["ok"]
 
 
 @pytest.mark.asyncio
