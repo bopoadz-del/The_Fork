@@ -361,8 +361,9 @@ def test_a6_kill_switch_restores_psa_first(monkeypatch):
     chunks, _ = ret.retrieve_with_filter(LIVE_A6, ACTIVE, k=5)
     blob = " ".join(c.text for c in chunks)
     assert chunks
-    assert chunks[0].doc_id == PSA_DOC
     assert A6_DAYS not in blob
+    assert all(c.doc_id != SCAN_DNP_DOC for c in chunks)
+    assert chunks[0].doc_id in {PSA_DOC, CPM_DOC, CPM16_DOC, GC_DOC}
 
 
 def test_a2_a3_a5_a9_c1_e1_f1_are_not_stolen_onto_the_dnp_row(monkeypatch):

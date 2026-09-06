@@ -3298,7 +3298,10 @@ def query_wants_contract_data_file(query: str) -> bool:
         or query_asks_for_time_for_completion(query)
         or query_asks_who_the_engineer_is(query)
         or query_asks_delay_damages_daily_amount(query)
-        or query_asks_for_defects_notification_period(query)
+        or (
+            dnp_rescue_enabled()
+            and query_asks_for_defects_notification_period(query)
+        )
     )
 
 
