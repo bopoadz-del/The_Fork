@@ -113,17 +113,21 @@ def compose_delay_damages_daily_enabled() -> bool:
 def query_asks_delay_damages_daily_amount(query: str) -> bool:
     """True for E1 (calculate … delay damages … in SAR), not A5 rate lookup.
 
-    Reuses the monetary-base ask class so A5 ("What are the Delay
-    Damages…") stays a particular lookup and this path stays compose-only.
+    Delegates to the retriever twin so retrieval rescue and compose
+    cannot drift on the ask class.
     """
-    q = query or ""
-    if not q or not _DD_ASK_RE.search(q):
-        return False
     try:
-        from app.core.rag.retriever import query_needs_a_monetary_base
+        from app.core.rag.retriever import (
+            query_asks_delay_damages_daily_amount as _asks,
+        )
+        return _asks(query)
     except Exception:  # noqa: BLE001 — never break a turn over an import
-        return False
-    return bool(query_needs_a_monetary_base(q))
+        q = query or ""
+        return bool(q and _DD_ASK_RE.search(q) and re.search(
+            r"(?i)\b(?:calculate|compute|work\s+out|how\s+much)\b", q,
+        ) and re.search(
+            r"(?i)\b(?:sar|aed|usd|eur|gbp|qar|bhd|kwd|omr)\b", q,
+        ))
 
 
 def _collapse_ws(text: str) -> str:

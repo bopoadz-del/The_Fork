@@ -506,6 +506,9 @@ class _ContractScope:
         self._engineer_identity_in_pool = False
         self._aca_incl_vat_in_pool = False
         self._tfc_in_pool = False
+        # OLD-pack E1: rate × ACA. A5's exclusive rate fence would
+        # drop the money row; E1 needs both operands in the top-k.
+        self._e1_compose_in_pool = False
         self._schedule_labels: List[str] = []
         self._schedule_register_in_pool = False
         # OLD-pack G4: D529.3 Amount is Rate Only. Priced lookalikes
@@ -563,6 +566,19 @@ class _ContractScope:
                 self._tfc_in_pool = any(
                     chunk_states_time_for_completion(text) for _n, text in docs
                 )
+            if (
+                delay_damages_daily_rescue_enabled()
+                and query_asks_delay_damages_daily_amount(self.query)
+            ):
+                has_rate = any(
+                    chunk_states_delay_damages_rate(text) for _n, text in docs
+                )
+                has_aca = any(
+                    chunk_states_accepted_contract_amount(text) for _n, text in docs
+                )
+                # Only fence when both operands are reachable. A
+                # rate-only fence would delete the ACA (live E1).
+                self._e1_compose_in_pool = has_rate and has_aca
             # OLD-pack G1: a Schedule-N register row ("Schedule 10: Not Used")
             # is the answer. Vol 4 / Vol 5 / CPM mention "schedule" at length
             # and used to occupy every slot. Not #500/#501/#502/#503.
@@ -611,6 +627,12 @@ class _ContractScope:
                     return False
             if self._tfc_in_pool:
                 if not chunk_states_time_for_completion(chunk_text):
+                    return False
+            if self._e1_compose_in_pool:
+                if not (
+                    chunk_states_delay_damages_rate(chunk_text)
+                    or chunk_states_accepted_contract_amount(chunk_text)
+                ):
                     return False
         if self._spec_identity_in_pool:
             titled = spec_title_filename_bonus(filename, self._title_phrases) > 0
@@ -1555,6 +1577,7 @@ def _apply_contract_data_filename_boost(
     want_aca = query_asks_for_accepted_contract_amount(query)
     want_tfc = query_asks_for_time_for_completion(query)
     want_eng = query_asks_who_the_engineer_is(query)
+    want_e1 = query_asks_delay_damages_daily_amount(query)
     for i, (score, chunk) in enumerate(scored):
         name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
         if not filename_looks_like_contract_data(name):
@@ -1563,9 +1586,15 @@ def _apply_contract_data_filename_boost(
         # A2 keeps today's "any Contract Data file" lift. A3/A9 only
         # lift the row that answers — an ACA-only Contract Data file
         # must not steal Time for Completion (test_a3_is_not_stolen).
+        # E1 lifts the two compose operands, not every CD sibling.
         if want_tfc and not want_aca and not chunk_states_time_for_completion(text):
             continue
         if want_eng and not want_aca and not chunk_states_engineer_identity(text):
+            continue
+        if want_e1 and not want_aca and not (
+            chunk_states_delay_damages_rate(text)
+            or chunk_states_accepted_contract_amount(text)
+        ):
             continue
         boosted = score + _CONTRACT_DATA_FILENAME_BONUS
         chunk.score = round(boosted, 6)
@@ -1617,6 +1646,8 @@ def _rescue_contract_data_docs(
             keep = chunk_states_time_for_completion
         elif query_asks_who_the_engineer_is(query):
             keep = chunk_states_engineer_identity
+        elif query_asks_delay_damages_daily_amount(query):
+            keep = _chunk_is_e1_compose_operand
         paired = _pair_adjacent_keep_text(hits, keep) if keep else []
         for chunk in paired:
             names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
@@ -2213,6 +2244,18 @@ def delay_damages_rate_rescue_enabled() -> bool:
     return _env_flag_on("RAG_DELAY_DAMAGES_RATE_RESCUE")
 
 
+def delay_damages_daily_rescue_enabled() -> bool:
+    """ON by default — live E1 rate × ACA recall after #520.
+
+    A5 rate rescue is exclusive (fence drops every non-rate chunk).
+    E1 needs the rate AND the Accepted Contract Amount; cosine on a
+    3k-doc corpus ranks Spec TOC / Daywork / insurance over scanned
+    Contract Data. RAG_DELAY_DAMAGES_DAILY_RESCUE=0 restores that FAIL.
+    Distinct from COMPOSE_DELAY_DAMAGES_DAILY (the multiply step).
+    """
+    return _env_flag_on("RAG_DELAY_DAMAGES_DAILY_RESCUE")
+
+
 def engineer_identity_rescue_enabled() -> bool:
     """ON by default — live A9 Engineer appointment vs PSA parties.
 
@@ -2237,6 +2280,19 @@ def query_asks_for_delay_damages_rate(query: str) -> bool:
     if re.search(r"(?i)\b(?:maximum|max(?:imum)?\s+amount|capped?)\b", q):
         return False
     return True
+
+
+def query_asks_delay_damages_daily_amount(query: str) -> bool:
+    """True for E1 (calculate … delay damages … in SAR), not A5 rate lookup.
+
+    Reuses the monetary-base ask class so A5 stays a particular lookup
+    and this path stays compose-only. Twin of
+    ``construction_formulas_commercial.query_asks_delay_damages_daily_amount``.
+    """
+    q = query or ""
+    if not q or not _DELAY_RATE_KEY_RE.search(q):
+        return False
+    return query_needs_a_monetary_base(q)
 
 
 def query_asks_who_the_engineer_is(query: str) -> bool:
@@ -2391,6 +2447,12 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
     if delay_damages_rate_rescue_enabled() and query_asks_for_delay_damages_rate(query):
         if chunk_states_delay_damages_rate(text):
             return True
+    if delay_damages_daily_rescue_enabled() and query_asks_delay_damages_daily_amount(query):
+        if (
+            chunk_states_delay_damages_rate(text)
+            or chunk_states_accepted_contract_amount(text)
+        ):
+            return True
     if engineer_identity_rescue_enabled() and query_asks_who_the_engineer_is(query):
         if chunk_states_engineer_identity(text):
             return True
@@ -2410,6 +2472,10 @@ _DELAY_RATE_RESCUE_PHRASES = (
     "delay damages per calendar day",
     "delay damages per day",
     "delay damages contract price",
+)
+_ACA_BASE_RESCUE_PHRASES = (
+    "accepted contract amount excluding vat",
+    "accepted contract amount",
 )
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
@@ -2606,6 +2672,42 @@ def _score_tfc_candidate(days: str, context: str, *, from_particulars: bool) -> 
     if notice and notice.group(1) == (days or "").split()[0]:
         score -= 150
     return score
+
+
+def chunk_states_accepted_contract_amount(text: str) -> bool:
+    """True when the chunk states an Accepted Contract Amount in money.
+
+    E1's rate base. Including-VAT and excluding-VAT both count —
+    compose prefers excl when both are in the excerpts. A delay-damages
+    rate row that only *names* the Contract Price / ACA is not this.
+    A cap row (``10% of the Accepted Contract Amount``) has no SAR
+    figure and fails the money test.
+    """
+    t = text or ""
+    blob = _normalize_retrieval_ws(t).lower()
+    if "accepted contract amount" not in blob:
+        return False
+    if not _CD_MONETARY_VALUE_RE.search(t):
+        return False
+    if _DELAY_RATE_KEY_RE.search(blob) and _DELAY_RATE_VALUE_RE.search(blob):
+        for key, val in filled_particulars_rows(t):
+            joined = f"{key} {val}".lower()
+            if (
+                "accepted contract amount" in joined
+                and _CD_MONETARY_VALUE_RE.search(val)
+                and not _DELAY_RATE_KEY_RE.search(key)
+            ):
+                return True
+        return False
+    return True
+
+
+def _chunk_is_e1_compose_operand(text: str) -> bool:
+    """Rate row or ACA money row — the two E1 multiply operands."""
+    return (
+        chunk_states_delay_damages_rate(text)
+        or chunk_states_accepted_contract_amount(text)
+    )
 
 
 def chunk_states_aca_including_vat(text: str) -> bool:
@@ -2946,11 +3048,12 @@ def extract_engineer_identity(text: str) -> Optional[str]:
 
 
 def query_wants_contract_data_file(query: str) -> bool:
-    """A2 / A3 / A9 live in a Contract Data file, not PSA / CPM / drawings."""
+    """A2 / A3 / A9 / E1 live in a Contract Data file, not PSA / CPM / drawings."""
     return (
         query_asks_for_accepted_contract_amount(query)
         or query_asks_for_time_for_completion(query)
         or query_asks_who_the_engineer_is(query)
+        or query_asks_delay_damages_daily_amount(query)
     )
 
 
@@ -3044,6 +3147,15 @@ def _rescue_asked_particular_value_chunks(
             project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
             chunk_states_delay_damages_rate, label="delay-damages-rate",
         )
+    if delay_damages_daily_rescue_enabled() and query_asks_delay_damages_daily_amount(query):
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _DELAY_RATE_RESCUE_PHRASES,
+            chunk_states_delay_damages_rate, label="delay-damages-daily-rate",
+        )
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _ACA_BASE_RESCUE_PHRASES,
+            chunk_states_accepted_contract_amount, label="delay-damages-daily-aca",
+        )
     if engineer_identity_rescue_enabled() and query_asks_who_the_engineer_is(query):
         recovered += _rescue_chunks_matching(
             project_id, fused, store, _ENGINEER_IDENTITY_RESCUE_PHRASES,
@@ -3071,6 +3183,10 @@ def _apply_asked_particular_value_boost(
         delay_damages_rate_rescue_enabled()
         and query_asks_for_delay_damages_rate(query)
     )
+    want_e1 = (
+        delay_damages_daily_rescue_enabled()
+        and query_asks_delay_damages_daily_amount(query)
+    )
     want_eng = (
         engineer_identity_rescue_enabled()
         and query_asks_who_the_engineer_is(query)
@@ -3083,12 +3199,13 @@ def _apply_asked_particular_value_boost(
         time_for_completion_rescue_enabled()
         and query_asks_for_time_for_completion(query)
     )
-    if not (want_rate or want_eng or want_aca or want_tfc):
+    if not (want_rate or want_e1 or want_eng or want_aca or want_tfc):
         return
     for i, (score, chunk) in enumerate(scored):
         text = chunk.text or ""
         hit = (
             (want_rate and chunk_states_delay_damages_rate(text))
+            or (want_e1 and _chunk_is_e1_compose_operand(text))
             or (want_eng and chunk_states_engineer_identity(text))
             or (want_aca and chunk_states_aca_including_vat(text))
             or (want_tfc and chunk_states_time_for_completion(text))
@@ -3472,13 +3589,23 @@ def reserve_monetary_base_row(
     """
     if not kept or not query_needs_a_monetary_base(query):
         return False
-    if any(particulars_row_states_an_amount_of_money(c.text or "") for c in kept):
+    e1 = (
+        delay_damages_daily_rescue_enabled()
+        and query_asks_delay_damages_daily_amount(query)
+    )
+
+    def _is_money_base(text: str) -> bool:
+        if particulars_row_states_an_amount_of_money(text):
+            return True
+        return bool(e1 and chunk_states_accepted_contract_amount(text))
+
+    if any(_is_money_base(c.text or "") for c in kept):
         return False
     present = {c.chunk_id for c in kept}
     for chunk in ranked:
         if chunk.chunk_id in present:
             continue
-        if not particulars_row_states_an_amount_of_money(chunk.text or ""):
+        if not _is_money_base(chunk.text or ""):
             continue
         if allow is not None and not allow(chunk):
             continue
@@ -3513,13 +3640,21 @@ def reserve_matching_particulars_row(
     # asked *value* (rate / Engineer) must be in kept, not merely the
     # label family.
     if any(chunk_answers_asked_particular(query, c.text or "") for c in kept):
-        if not (
+        need_a5_rate = (
             delay_damages_rate_rescue_enabled()
             and query_asks_for_delay_damages_rate(query)
             and not any(
                 chunk_states_delay_damages_rate(c.text or "") for c in kept
             )
-        ):
+        )
+        need_e1_rate = (
+            delay_damages_daily_rescue_enabled()
+            and query_asks_delay_damages_daily_amount(query)
+            and not any(
+                chunk_states_delay_damages_rate(c.text or "") for c in kept
+            )
+        )
+        if not (need_a5_rate or need_e1_rate):
             return False
     present = {c.chunk_id for c in kept}
     for chunk in ranked:
@@ -3531,6 +3666,12 @@ def reserve_matching_particulars_row(
         if (
             delay_damages_rate_rescue_enabled()
             and query_asks_for_delay_damages_rate(query)
+            and not chunk_states_delay_damages_rate(text)
+        ):
+            continue
+        if (
+            delay_damages_daily_rescue_enabled()
+            and query_asks_delay_damages_daily_amount(query)
             and not chunk_states_delay_damages_rate(text)
         ):
             continue
