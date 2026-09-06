@@ -78,6 +78,8 @@ def _install(monkeypatch, results_by_query_text, calls=None):
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
     monkeypatch.delenv("RAG_DUAL_QUERY", raising=False)
+    # This file measures dual-query merge, not the A3 TfC value boost.
+    monkeypatch.setenv("RAG_TIME_FOR_COMPLETION_RESCUE", "0")
     return ret
 
 

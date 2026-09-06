@@ -4680,6 +4680,7 @@ def gate_cost_answer(
             if t:
                 messages.append({"role": "tool", "content": str(t)})
         text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
+        text = _graft_asked_contract_particular(text, rag_sys_msg, messages)
         return _cost_grounding_gate(text, rag_sys_msg, messages)
     except Exception:  # noqa: BLE001 — a gate must never break an answer
         _LOG.exception("gate_cost_answer failed; passing answer through")
@@ -4734,6 +4735,114 @@ _MASTER_CORPUS_FALLBACK_NOTE = (
     "_This project has no documents of its own for this question — "
     "answering from the Master Corpus._\n\n"
 )
+
+
+_MISSING_PARTICULAR_RE = re.compile(
+    r"(?i)could not (?:confirm|find)|did not find|what i did not find|"
+    r"none of (?:the|which)|not among the excerpts|"
+    r"i can search again",
+)
+_DELAY_DAMAGES_ANSWER_RE = re.compile(r"(?i)delay\s+damages")
+
+
+def _graft_asked_contract_particular_enabled() -> bool:
+    raw = (os.getenv("GRAFT_ASKED_CONTRACT_PARTICULAR", "1") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _graft_asked_contract_particular(
+    text: str,
+    rag_sys_msg: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None,
+) -> str:
+    """Wave-1 A2/A3/A9: state the asked Contract Data row from excerpts.
+
+    DeepSeek answered a neighboring field (delay damages for an including-VAT
+    ACA ask) or reported the particular absent after retrieving permit
+    trackers / CoC 1.3–1.8. Compose nothing — only fire when the excerpt
+    already states the asked value. Kill-switch: GRAFT_ASKED_CONTRACT_PARTICULAR=0.
+    """
+    try:
+        if not _graft_asked_contract_particular_enabled():
+            return text
+        from app.core.rag.retriever import (
+            extract_aca_including_vat,
+            extract_engineer_identity,
+            extract_time_for_completion_days,
+            query_asks_for_aca_including_vat,
+            query_asks_for_time_for_completion,
+            query_asks_who_the_engineer_is,
+        )
+        user = _latest_user_text(messages)
+        rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
+        if not user or not rag:
+            return text
+        line = ""
+        if query_asks_for_aca_including_vat(user):
+            parsed = extract_aca_including_vat(rag)
+            if not parsed:
+                return text
+            amount, currency = parsed
+            line = (
+                f"The Accepted Contract Amount including VAT is "
+                f"{currency} {amount:,.2f}."
+            )
+            already = (
+                f"{amount:,.2f}" in (text or "")
+                or f"{amount:.2f}" in (text or "")
+                or f"{amount:,.2f}".replace(",", "") in (text or "").replace(",", "")
+            )
+            if already and not _DELAY_DAMAGES_ANSWER_RE.search(text or ""):
+                return text
+            if _DELAY_DAMAGES_ANSWER_RE.search(text or "") or _MISSING_PARTICULAR_RE.search(
+                text or "",
+            ) or _GENERIC_ACK_RE.search(text or "") or (text or "").strip() == _CG_REFUSAL:
+                return line
+            body = (text or "").strip()
+            return line if not body else f"{line}\n\n{body}"
+        if query_asks_for_time_for_completion(user):
+            days = extract_time_for_completion_days(rag)
+            if not days:
+                return text
+            line = (
+                f"The Time for Completion for the whole of the Works is {days}."
+            )
+            if days.split()[0] in (text or "") and not _MISSING_PARTICULAR_RE.search(text or ""):
+                return text
+            if (
+                _MISSING_PARTICULAR_RE.search(text or "")
+                or _GENERIC_ACK_RE.search(text or "")
+                or (text or "").strip() == _CG_REFUSAL
+            ):
+                return line
+            body = (text or "").strip()
+            return line if not body else f"{line}\n\n{body}"
+        if query_asks_who_the_engineer_is(user):
+            name = extract_engineer_identity(rag)
+            if not name:
+                return text
+            line = f"The Engineer is {name}."
+            if name.lower() in (text or "").lower() and not _MISSING_PARTICULAR_RE.search(
+                text or "",
+            ):
+                return text
+            # Live A9: JACOBS / CH2M split across two tokens.
+            tokens = [t for t in re.split(r"[^A-Za-z0-9]+", name) if len(t) >= 4]
+            if tokens and all(t.lower() in (text or "").lower() for t in tokens):
+                if not _MISSING_PARTICULAR_RE.search(text or ""):
+                    return text
+            if (
+                _MISSING_PARTICULAR_RE.search(text or "")
+                or _GENERIC_ACK_RE.search(text or "")
+                or (text or "").strip() == _CG_REFUSAL
+            ):
+                return line
+            body = (text or "").strip()
+            return line if not body else f"{line}\n\n{body}"
+        return text
+    except Exception:  # noqa: BLE001 — graft must never break a turn
+        _LOG.exception("asked-particular graft failed; passing answer through")
+        return text
 
 
 def _graft_composed_delay_damages_daily(
@@ -4874,6 +4983,9 @@ def _postprocess_answer(
     # text before the cost gate. A percentage-only excerpt still cannot
     # invent a daily figure; both operands must be in the excerpts.
     text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
+    # Wave-1 DeepSeek: A2 answered delay damages, A3/A9 said the
+    # particular was absent. Graft the asked row from excerpts only.
+    text = _graft_asked_contract_particular(text, rag_sys_msg, messages)
     # OLD-pack G4: state Rate Only when the retrieved BOQ row already
     # says so. The live FAIL greeted ("I'm ready to help…") and never
     # named D529.3 / Rate Only. Do not invent a money total.

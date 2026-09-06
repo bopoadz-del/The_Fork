@@ -277,6 +277,8 @@ def _install_corpus(monkeypatch, *, semantic, rescue_hits, names):
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
     monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
     monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
