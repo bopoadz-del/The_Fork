@@ -2695,43 +2695,174 @@ def chunk_states_time_for_completion(text: str) -> bool:
     return True
 
 
+def _aca_row_is_including_vat(key: str, val: str) -> bool:
+    """True when this particulars row is the including-VAT ACA, not a neighbor.
+
+    A system-message mega-row that mentions the inject hint and later
+    peels the first SAR figure (live A2: excl-VAT / delay-damages) is
+    not this class — same 96-char key cap as whole-Works TfC.
+    """
+    k = (key or "").strip()
+    v = (val or "").strip()
+    if not k or len(k) > 96:
+        return False
+    # RAG system-message peels can glue the next [doc_id=…] chunk onto a
+    # short including-VAT key and steal the previous figure.
+    if "[doc_id=" in v or len(v) > 160:
+        return False
+    joined = f"{k} {v}"
+    if "accepted contract amount" not in joined.lower():
+        return False
+    if _DELAY_RATE_KEY_RE.search(k) or _DELAY_RATE_KEY_RE.search(joined[:80]):
+        return False
+    try:
+        from app.lib.construction_formulas_commercial import (
+            _EXCL_VAT_RE,
+            _INCL_VAT_RE,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    if _EXCL_VAT_RE.search(k) and not _INCL_VAT_RE.search(k):
+        return False
+    if _EXCL_VAT_RE.search(joined) and not _INCL_VAT_RE.search(k):
+        return False
+    return bool(_INCL_VAT_RE.search(k) or (
+        _INCL_VAT_RE.search(joined) and not _EXCL_VAT_RE.search(joined)
+    ))
+
+
+def _aca_nearest_vat_is_including(lead: str) -> bool:
+    """True when the last VAT qualifier before the figure is including-VAT.
+
+    Adjacent excl/incl table rows share a 64-char window; first-excl-in-window
+    would reject the including-VAT amount sitting on the next line.
+    """
+    try:
+        from app.lib.construction_formulas_commercial import (
+            _EXCL_VAT_RE,
+            _INCL_VAT_RE,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    last_incl = max((m.start() for m in _INCL_VAT_RE.finditer(lead or "")), default=-1)
+    last_excl = max((m.start() for m in _EXCL_VAT_RE.finditer(lead or "")), default=-1)
+    return last_incl >= 0 and last_incl > last_excl
+
+
+def _aca_money_is_including_vat(tight: str, wide: str) -> bool:
+    """True when the figure's local label is including VAT, not excl-VAT."""
+    try:
+        from app.lib.construction_formulas_commercial import _INCL_VAT_RE
+    except Exception:  # noqa: BLE001
+        return False
+    if "accepted contract amount" not in (wide or "").lower():
+        return False
+    if not _INCL_VAT_RE.search(tight or ""):
+        return False
+    if not _aca_nearest_vat_is_including(tight or ""):
+        return False
+    if _DELAY_RATE_KEY_RE.search(wide or "") and re.search(
+        r"(?i)per\s+(?:calendar\s+)?day", wide or "",
+    ):
+        return False
+    return True
+
+
+def _score_aca_incl_candidate(
+    context: str, *, from_particulars: bool,
+) -> int:
+    """Higher wins. Including-VAT Contract Data / newer year beat neighbors."""
+    try:
+        from app.lib.construction_formulas_commercial import (
+            _EXCL_VAT_RE,
+            _INCL_VAT_RE,
+        )
+    except Exception:  # noqa: BLE001
+        _EXCL_VAT_RE = None
+        _INCL_VAT_RE = None
+    ctx = context or ""
+    score = 0
+    if from_particulars:
+        score += 60
+    elif _CD_PARTICULARS_PREFIX_RE.search(ctx) or (
+        _CD_HEADING_IN_CHUNK_RE.search(ctx)
+        and not contract_data_mention_is_only_a_cross_reference(ctx)
+    ):
+        score += 40
+    if _INCL_VAT_RE is not None and _INCL_VAT_RE.search(ctx) and not (
+        _EXCL_VAT_RE.search(ctx) if _EXCL_VAT_RE is not None else False
+    ):
+        score += 100
+    if _EXCL_VAT_RE is not None and _EXCL_VAT_RE.search(ctx) and not (
+        _INCL_VAT_RE.search(ctx) if _INCL_VAT_RE is not None else False
+    ):
+        score -= 200
+    if _DELAY_RATE_KEY_RE.search(ctx):
+        score -= 200
+    ids = extract_contract_doc_ids(ctx)
+    if ids:
+        year, seq = max(_contract_id_recency(cid) for cid in ids)
+        if year > 0:
+            score += year
+        if seq > 0:
+            score += min(seq, 30)
+    return score
+
+
 def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
-    """Including-VAT ACA from client text, or None. Does not invent."""
+    """Including-VAT ACA from client text, or None. Does not invent.
+
+    Walks the full RAG blob (graft reads the system message). When an
+    excluding-VAT neighbor or delay-damages base shares the text, elect
+    the including-VAT row — first-in-blob used to prepend the excl-VAT
+    figure labeled as including VAT (live A2 after #517).
+    """
     t = text or ""
     if not t:
         return None
     try:
         from app.lib.construction_formulas_commercial import (
-            _INCL_VAT_RE,
             _MONEY_RE,
             _collapse_ws,
         )
     except Exception:  # noqa: BLE001
         return None
-    found: List[Tuple[float, str]] = []
+    cands: List[Tuple[int, int, Tuple[float, str]]] = []
+    order = 0
     try:
         for key, val in filled_particulars_rows(t):
-            joined = f"{key} {val}"
-            if "accepted contract amount" not in joined.lower():
+            if not _aca_row_is_including_vat(key, val):
                 continue
-            if not _INCL_VAT_RE.search(joined):
+            money = _MONEY_RE.search(val) or _MONEY_RE.search(f"{key} {val}")
+            if not money:
                 continue
-            money = _MONEY_RE.search(val) or _MONEY_RE.search(joined)
-            if money:
-                found.append((float(money.group(2).replace(",", "")), money.group(1).upper()))
+            amount = float(money.group(2).replace(",", ""))
+            currency = money.group(1).upper()
+            idx = (t or "").lower().find((val or "").lower()[:24]) if val else -1
+            local = t[max(0, idx - 280): idx + 80] if idx >= 0 else f"{key} {val}"
+            score = _score_aca_incl_candidate(
+                f"{key} {val}\n{local}", from_particulars=True,
+            )
+            cands.append((-score, order, (amount, currency)))
+            order += 1
     except Exception:  # noqa: BLE001
         logger.debug("including-VAT particulars parse failed", exc_info=True)
     blob = _collapse_ws(t)
     for m in _MONEY_RE.finditer(blob):
-        ctx = blob[max(0, m.start() - 160):m.end() + 24]
-        if "accepted contract amount" not in ctx.lower():
+        tight = blob[max(0, m.start() - 64): m.end() + 8]
+        wide = blob[max(0, m.start() - 160): m.end() + 24]
+        if not _aca_money_is_including_vat(tight, wide):
             continue
-        if not _INCL_VAT_RE.search(ctx):
-            continue
-        found.append((float(m.group(2).replace(",", "")), m.group(1).upper()))
-    if not found:
+        amount = float(m.group(2).replace(",", ""))
+        currency = m.group(1).upper()
+        score_ctx = blob[max(0, m.start() - 280): m.end() + 80]
+        score = _score_aca_incl_candidate(score_ctx, from_particulars=False)
+        cands.append((-score, order, (amount, currency)))
+        order += 1
+    if not cands:
         return None
-    return found[0]
+    cands.sort()
+    return cands[0][2]
 
 
 def extract_time_for_completion_days(text: str) -> Optional[str]:
