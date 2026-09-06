@@ -4842,7 +4842,7 @@ def _graft_asked_contract_particular(
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
 ) -> str:
-    """Wave-1 A2/A3/A9: state the asked Contract Data row from excerpts.
+    """Wave-1 A2/A3/A6/A9: state the asked Contract Data row from excerpts.
 
     DeepSeek answered a neighboring field (delay damages for an including-VAT
     ACA ask) or reported the particular absent after retrieving permit
@@ -4854,9 +4854,11 @@ def _graft_asked_contract_particular(
             return text
         from app.core.rag.retriever import (
             extract_aca_including_vat,
+            extract_defects_notification_period,
             extract_engineer_identity,
             extract_time_for_completion_days,
             query_asks_for_aca_including_vat,
+            query_asks_for_defects_notification_period,
             query_asks_for_time_for_completion,
             query_asks_who_the_engineer_is,
         )
@@ -4948,6 +4950,26 @@ def _graft_asked_contract_particular(
             ):
                 return line
             body = (text or "").strip()
+            return line if not body else f"{line}\n\n{body}"
+        if query_asks_for_defects_notification_period(user):
+            days = extract_defects_notification_period(rag)
+            if not days:
+                return text
+            line = f"The Defects Notification Period is {days}."
+            raw = text or ""
+            elected_num = days.split()[0]
+            if (
+                elected_num in raw
+                and not _MISSING_PARTICULAR_RE.search(raw)
+            ):
+                return text
+            if (
+                _MISSING_PARTICULAR_RE.search(raw)
+                or _GENERIC_ACK_RE.search(raw)
+                or raw.strip() == _CG_REFUSAL
+            ):
+                return line
+            body = raw.strip()
             return line if not body else f"{line}\n\n{body}"
         return text
     except Exception:  # noqa: BLE001 — graft must never break a turn

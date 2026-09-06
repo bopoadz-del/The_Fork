@@ -17,7 +17,7 @@ Sub-Clause 1.5.1(d). Neon already has the list on the next same-doc
 chunk (c5cf8daa / DD-2023-118 Vol 2: chunk_index 2 = intro, 3 = list).
 
 When a hit is that open-list intro, elect the neighbor. Do not invent
-a signatory. Do not steal A2/A3/A5/A9. Kill-switch:
+a signatory. Do not steal A2/A3/A5/A6/A9. Kill-switch:
 RAG_SPEC_PRECEDENCE_LIST_RESCUE=0. Fixture wording only.
 """
 from __future__ import annotations
@@ -39,6 +39,7 @@ C1_ASK = CATALOG["cases"]["C1"]["ask"]
 A2_ASK = CATALOG["cases"]["A2"]["ask"]
 A3_ASK = CATALOG["cases"]["A3"]["ask"]
 A5_ASK = CATALOG["cases"]["A5"]["ask"]
+A6_ASK = CATALOG["cases"]["A6"]["ask"]
 A9_ASK = CATALOG["cases"]["A9"]["ask"]
 C2_ASK = CATALOG["cases"]["C2"]["ask"]
 LIVE_PREFIX = "Answer only from the client project documents. "
@@ -123,6 +124,7 @@ def test_c1_ask_shape_and_list_gates():
     assert not query_asks_for_spec_precedence_list(A2_ASK)
     assert not query_asks_for_spec_precedence_list(A3_ASK)
     assert not query_asks_for_spec_precedence_list(A5_ASK)
+    assert not query_asks_for_spec_precedence_list(A6_ASK)
     assert not query_asks_for_spec_precedence_list(A9_ASK)
     assert not query_asks_for_spec_precedence_list(C2_ASK)
     assert not query_asks_for_spec_precedence_list(
@@ -288,9 +290,9 @@ def test_c1_kill_switch_restores_intro_first(monkeypatch):
     assert SOPR not in blob
 
 
-def test_a2_a3_a5_a9_are_not_stolen_onto_the_c1_list(monkeypatch):
+def test_a2_a3_a5_a6_a9_are_not_stolen_onto_the_c1_list(monkeypatch):
     ret = _install_c1_corpus(monkeypatch, list_in_semantic=False)
-    for ask in (A2_ASK, A3_ASK, A5_ASK, A9_ASK):
+    for ask in (A2_ASK, A3_ASK, A5_ASK, A6_ASK, A9_ASK):
         chunks, _ = ret.retrieve_with_filter(ask, ACTIVE, k=5)
         assert all(
             not ret.chunk_states_spec_precedence_list(c.text) for c in chunks
