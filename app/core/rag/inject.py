@@ -264,9 +264,9 @@ def format_chunks_as_system_message(
             header += (
                 "ACCEPTED CONTRACT AMOUNT INCLUDING VAT — an excerpt below "
                 "states the Accepted Contract Amount including VAT. That IS "
-                "the answer. State that including-VAT figure. Do not answer "
-                "delay damages, a daily rate, or the excluding-VAT amount "
-                "instead.\n"
+                "the answer. Lead with that including-VAT figure. Do not "
+                "open with the excluding-VAT amount, and do not answer "
+                "delay damages or a daily rate instead.\n"
             )
     if query and query_asks_for_time_for_completion(query):
         if any(chunk_states_time_for_completion(c.text or "") for c in chunks):

@@ -4743,11 +4743,55 @@ _MISSING_PARTICULAR_RE = re.compile(
     r"i can search again",
 )
 _DELAY_DAMAGES_ANSWER_RE = re.compile(r"(?i)delay\s+damages")
+# Live A2 FAIL after #517: graft / model led with excl-VAT labeled as
+# including VAT, then restated the elected including-VAT figure.
+_ACA_INCL_CLAIM_RE = re.compile(
+    r"(?i)(?:the\s+)?accepted\s+contract\s+amount\s+including\s+vat\s+is\s+"
+    r"(SAR|AED|USD|EUR|GBP|QAR|BHD|KWD|OMR)\s*"
+    r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{2})\.?",
+)
 # Live A3 PARTIAL: graft prepended "…is 90 days." then the model stated 852.
 _TFC_WHOLE_WORKS_CLAIM_RE = re.compile(
     r"(?i)(?:the\s+)?time\s+for\s+completion\s+for\s+(?:the\s+)?"
     r"whole\s+of\s+the\s+works\s+is\s+(\d{2,4})\s+days\.?",
 )
+
+
+def _aca_claim_amount(match: re.Match[str]) -> float | None:
+    raw = (match.group(2) or "").replace(",", "")
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _has_conflicting_aca_incl_claim(text: str, elected_amount: float) -> bool:
+    return any(
+        amt is not None and abs(amt - elected_amount) > 0.005
+        for amt in (
+            _aca_claim_amount(m) for m in _ACA_INCL_CLAIM_RE.finditer(text or "")
+        )
+    )
+
+
+def _strip_conflicting_aca_incl_claims(text: str, elected_amount: float) -> str:
+    """Drop 'including VAT is SAR X' claims that are not the elected row."""
+    raw = text or ""
+    if not raw:
+        return raw
+
+    def _keep_or_drop(match: re.Match[str]) -> str:
+        amt = _aca_claim_amount(match)
+        if amt is not None and abs(amt - elected_amount) <= 0.005:
+            return match.group(0)
+        return ""
+
+    cleaned = _ACA_INCL_CLAIM_RE.sub(_keep_or_drop, raw)
+    cleaned = re.sub(r"(?m)^\s*\.\s*$", "", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r" {2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 def _has_conflicting_whole_works_tfc_claim(text: str, elected_days: str) -> bool:
@@ -4820,19 +4864,32 @@ def _graft_asked_contract_particular(
                 f"The Accepted Contract Amount including VAT is "
                 f"{currency} {amount:,.2f}."
             )
+            raw = text or ""
             already = (
-                f"{amount:,.2f}" in (text or "")
-                or f"{amount:.2f}" in (text or "")
-                or f"{amount:,.2f}".replace(",", "") in (text or "").replace(",", "")
+                f"{amount:,.2f}" in raw
+                or f"{amount:.2f}" in raw
+                or f"{amount:,.2f}".replace(",", "") in raw.replace(",", "")
             )
-            if already and not _DELAY_DAMAGES_ANSWER_RE.search(text or ""):
+            if (
+                already
+                and not _DELAY_DAMAGES_ANSWER_RE.search(raw)
+                and not _MISSING_PARTICULAR_RE.search(raw)
+                and not _has_conflicting_aca_incl_claim(raw, amount)
+            ):
                 return text
-            if _DELAY_DAMAGES_ANSWER_RE.search(text or "") or _MISSING_PARTICULAR_RE.search(
-                text or "",
-            ) or _GENERIC_ACK_RE.search(text or "") or (text or "").strip() == _CG_REFUSAL:
+            if (
+                _DELAY_DAMAGES_ANSWER_RE.search(raw)
+                or _MISSING_PARTICULAR_RE.search(raw)
+                or _GENERIC_ACK_RE.search(raw)
+                or raw.strip() == _CG_REFUSAL
+            ):
                 return line
-            body = (text or "").strip()
-            return line if not body else f"{line}\n\n{body}"
+            cleaned = _strip_conflicting_aca_incl_claims(raw, amount)
+            if not cleaned:
+                return line
+            if cleaned.startswith(line):
+                return cleaned
+            return f"{line}\n\n{cleaned}"
         if query_asks_for_time_for_completion(user):
             days = extract_time_for_completion_days(rag)
             if not days:
