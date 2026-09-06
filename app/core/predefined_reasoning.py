@@ -158,9 +158,70 @@ def build_schedule_plan(context: Dict[str, Any]) -> ExecutionPlan:
     return ExecutionPlan(understanding="produce/answer a construction schedule", steps=steps)
 
 
-def deliver_schedule(session: ProjectSession, deliverable: bool) -> str:
+# Live leftover F1: a WBS / work-breakdown ask used to return only
+# "Schedule built: N activities…" + a workbook offer. The tree was already
+# staged on session.data["wbs"]["wbs_tree"]; DELIVER just never printed it.
+_WBS_OUTLINE_ASK_RE = re.compile(
+    r"\b(?:wbs|work\s+breakdown(?:\s+structure)?|"
+    r"high[- ]level\s+(?:breakdown|outline|structure)|"
+    r"breakdown\s+of\s+(?:the\s+)?(?:work|scope|works))\b",
+    re.IGNORECASE,
+)
+
+
+def message_wants_wbs_outline(message: str) -> bool:
+    """True when the turn asked to see the WBS hierarchy, not only a schedule."""
+    return bool(_WBS_OUTLINE_ASK_RE.search(message or ""))
+
+
+def format_wbs_outline(wbs_tree: Any, *, title: str = "High-level WBS") -> str:
+    """Render numbered WBS codes as a hierarchical outline.
+
+    ``wbs_tree`` maps ``"1"`` → phase, ``"1.1"`` → package. Only codes already
+    in the tree are printed — this does not invent names or levels.
+    """
+    if not isinstance(wbs_tree, dict) or not wbs_tree:
+        return ""
+
+    def _sort_key(code: str) -> tuple:
+        parts: list = []
+        for piece in str(code).split("."):
+            try:
+                parts.append(int(piece))
+            except (TypeError, ValueError):
+                parts.append(piece)
+        return tuple(parts)
+
+    rows: list[tuple[str, str]] = []
+    for raw_code, raw_name in wbs_tree.items():
+        code = str(raw_code).strip()
+        name = str(raw_name).strip() if raw_name is not None else ""
+        if not code or not name:
+            continue
+        rows.append((code, name))
+    if not rows:
+        return ""
+    rows.sort(key=lambda item: _sort_key(item[0]))
+
+    lines = [f"## {title}", ""]
+    for code, name in rows:
+        # Phase rows (no dot) as headings so the glass shows levels, not a flat list.
+        if "." not in code:
+            lines.append(f"### {code} {name}")
+        else:
+            lines.append(f"{code} {name}")
+    return "\n".join(lines).strip()
+
+
+def deliver_schedule(session: ProjectSession, deliverable: bool,
+                     message: str = "") -> str:
     """Deterministic DELIVER: a written answer from the staged summary. (LLM
-    polish is optional and can wrap this later — the numbers are fixed.)"""
+    polish is optional and can wrap this later — the numbers are fixed.)
+
+    A WBS / work-breakdown ask also surfaces the staged ``wbs_tree`` as a
+    numbered hierarchy. The tree is what ``generate_wbs`` already returned;
+    this does not invent corpus content.
+    """
     s = session.data.get("schedule_summary") or {}
     if not s:
         return "I could not build the schedule for this request."
@@ -194,7 +255,22 @@ def deliver_schedule(session: ProjectSession, deliverable: bool) -> str:
         parts.append(
             "The cost-loaded workbook (CPM, cumulative man-days S-curve, "
             "manpower histogram, milestones) is ready to download.")
-    return " ".join(parts)
+    summary = " ".join(parts)
+
+    wbs = session.data.get("wbs") if isinstance(session.data.get("wbs"), dict) else {}
+    tree = wbs.get("wbs_tree") if isinstance(wbs.get("wbs_tree"), dict) else {}
+    scaffold = wbs.get("scaffold") if isinstance(wbs.get("scaffold"), dict) else {}
+    if message_wants_wbs_outline(message) and tree:
+        blocks: list[str] = []
+        declaration = scaffold.get("declaration")
+        if declaration:
+            blocks.append(f"_{declaration}_")
+        outline = format_wbs_outline(tree)
+        if outline:
+            blocks.append(outline)
+        blocks.append(summary)
+        return "\n\n".join(blocks)
+    return summary
 
 
 def _export_descriptor(context: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -243,7 +319,8 @@ def build_histogram_plan(context: Dict[str, Any]) -> ExecutionPlan:
     return ExecutionPlan(understanding="produce a manpower histogram", steps=steps)
 
 
-def deliver_histogram(session: ProjectSession, deliverable: bool) -> str:
+def deliver_histogram(session: ProjectSession, deliverable: bool,
+                      message: str = "") -> str:
     """Deterministic DELIVER for the histogram plan — numbers straight from
     the session, provenance stated up front."""
     h = session.data.get("manpower") or {}
@@ -580,7 +657,7 @@ async def run_workflow(action: str, context: Dict[str, Any],
     plan = builder(context)
     run = await PlanExecutor().run(plan, session)
     deliver = DELIVER_REGISTRY.get(action, deliver_schedule)
-    answer = deliver(session, deliverable)
+    answer = deliver(session, deliverable, context.get("message") or "")
     export = _export_descriptor(context) if deliverable else None
     return {
         "handled": True,
