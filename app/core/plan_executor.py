@@ -200,6 +200,8 @@ class PlanExecutor:
             "duration_overrides": step.args.get("duration_overrides"),
             "procurement_lead_times": session.data.get("procurement_lead_times") or [],
             "target_milestones": session.data.get("target_milestones") or [],
+            "project_id": step.args.get("project_id") or session.data.get("project_id"),
+            "boq_items": step.args.get("boq_items"),
         }
         wbs = await ConstructionContainer().generate_wbs({}, params)
         session.data["wbs"] = wbs

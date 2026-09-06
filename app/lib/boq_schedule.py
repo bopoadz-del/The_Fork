@@ -43,11 +43,15 @@ Excel writers consume it unchanged.
 
 from __future__ import annotations
 
+import logging
 import math
+import os
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.lib.boq_pricing import categorize
+
+logger = logging.getLogger(__name__)
 
 # Standard shift. Overridable per call — some projects run 10s, Ramadan runs 6.
 DEFAULT_HOURS_PER_DAY = 8.0
@@ -464,6 +468,251 @@ def schedule_basis(manhours_per_unit: Dict[str, float],
                "a package run consecutively (shared crew). Overlap between "
                "packages is a planning decision and is not assumed here.")
     return out
+
+
+# ── leftover F1: high-level WBS from retrieved BOQ demolition rows ─────────
+#
+# generate_wbs is a template scheduler. Live F1 asked for a WBS over "the
+# demolition and site clearance scope in this project's BOQ" and still got
+# the building scaffold (Site Preparation / Substructure / Superstructure)
+# because retrieved CESMM rows were never elected into the tree. These
+# helpers parse measured rows that are already in the excerpts, filter to
+# demolition / site-clearance, and build a high-level tree. They do not
+# invent item codes or descriptions. Kill-switch: BOQ_SCOPE_WBS=0.
+
+_BOQ_SCOPE_WBS_PHASE = "Demolition and Site Clearance"
+
+_PIPE_BOQ_ROW_RE = re.compile(
+    r"\|\s*(?P<code>[A-Za-z]\s*\d{2,4}(?:\.\d+)?)\s*"
+    r"\|\s*(?P<desc>[^|\n]+?)\s*\|",
+)
+_INDEXER_BOQ_LINE_RE = re.compile(
+    r"(?i)BOQ line item(?:[^—\n]*)?[—–-]\s*(?P<desc>.+?):\s*total quantity",
+)
+_CESMM_PROSE_ROW_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(?P<code>[A-Z]\s*\d{2,4}(?:\.\d+)?)\s+"
+    r"(?P<desc>[A-Za-z][^|\n]{3,120})",
+)
+_SKIP_BOQ_DESC_RE = re.compile(
+    r"(?i)\b(?:part\s+summary|grand\s+total|carried\s+forward|"
+    r"total\s+this\s+page|brought\s+forward|item\s*$|description\s*$)\b",
+)
+_TRAILING_MEASURED_RE = re.compile(
+    r"\s+\d[\d,]*(?:\.\d+)?\s*"
+    r"(?:ha|m2|m²|m3|m³|nr|nos|no\.?|m|lm|sum|item|kg|t)\b.*$",
+    re.IGNORECASE,
+)
+_DEMO_SITE_CLEAR_ITEM_RE = re.compile(
+    r"(?i)\b(?:demolit|site\s+clear|clearance|clearing|grubbing|"
+    r"tree\s+remov|remov(?:al|e)\s+of\s+(?:trees?|fence|culvert|pavement|"
+    r"carriageway)|breaking\s+out|chain\s+link|carriageway|sidewalk|"
+    r"road\s+markings?)\b",
+)
+_CESMM_D_CODE_RE = re.compile(r"(?i)^D\d{2,4}(?:\.\d+)?$")
+
+
+def boq_scope_wbs_enabled() -> bool:
+    """ON by default — live leftover F1 BOQ-grounded WBS.
+
+    ``BOQ_SCOPE_WBS=0`` restores the building-template scaffold.
+    """
+    return (os.getenv("BOQ_SCOPE_WBS", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _compact_cesmm_code(code: str) -> str:
+    return re.sub(r"\s+", "", (code or "").strip()).upper()
+
+
+def _clean_boq_description(desc: str) -> str:
+    text = re.sub(r"\s+", " ", (desc or "").strip())
+    text = _TRAILING_MEASURED_RE.sub("", text).strip(" |-")
+    return text[:120]
+
+
+def parse_boq_measured_rows(text: str) -> List[Dict[str, Any]]:
+    """Extract CESMM / priced-bill rows from retrieved chunk text.
+
+    Accepts pipe tables, indexer ``BOQ line item — …`` lines, and
+    ``D110 General site clearance`` prose. Returns only rows that
+    already appear in ``text`` — nothing is invented.
+    """
+    blob = text or ""
+    if not blob.strip():
+        return []
+    found: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(code: str, desc: str) -> None:
+        item_key = _compact_cesmm_code(code)
+        description = _clean_boq_description(desc)
+        if not description or _SKIP_BOQ_DESC_RE.search(description):
+            return
+        if item_key and not re.match(r"(?i)^[A-Z]\d{2,4}(?:\.\d+)?$", item_key):
+            return
+        key = (item_key, _norm_desc(description))
+        if not key[1] or key in seen:
+            return
+        seen.add(key)
+        found.append({
+            "item_key": item_key or None,
+            "description": description,
+        })
+
+    for match in _PIPE_BOQ_ROW_RE.finditer(blob):
+        _add(match.group("code"), match.group("desc"))
+    for match in _INDEXER_BOQ_LINE_RE.finditer(blob):
+        _add("", match.group("desc"))
+    for match in _CESMM_PROSE_ROW_RE.finditer(blob):
+        _add(match.group("code"), match.group("desc"))
+    return found
+
+
+def item_is_demolition_or_site_clearance(item: Dict[str, Any]) -> bool:
+    """True for CESMM class D or a demolition / site-clearance description."""
+    code = _compact_cesmm_code(str(item.get("item_key") or ""))
+    if _CESMM_D_CODE_RE.match(code):
+        return True
+    desc = str(item.get("description") or item.get("item_key") or "")
+    if _DEMO_SITE_CLEAR_ITEM_RE.search(desc):
+        return True
+    return categorize(desc) == "Demolition"
+
+
+def filter_demolition_site_clearance_items(
+    items: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Keep retrieved demolition / site-clearance rows only."""
+    out: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        if not item_is_demolition_or_site_clearance(item):
+            continue
+        key = (
+            _compact_cesmm_code(str(item.get("item_key") or "")),
+            _norm_desc(item.get("description") or item.get("item_key")),
+        )
+        if not key[1] or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _chunk_looks_like_measured_boq(text: str, filename: str) -> bool:
+    """True when the excerpt is a bill row, not contract prose about the bill."""
+    try:
+        from app.core.rag.retriever import document_is_a_bill_of_quantities
+    except Exception:  # noqa: BLE001 — retrieval helper must not break WBS
+        document_is_a_bill_of_quantities = None
+    if document_is_a_bill_of_quantities and document_is_a_bill_of_quantities(filename):
+        return True
+    blob = text or ""
+    if re.search(r"(?i)BOQ line item", blob):
+        return True
+    if blob.count("|") >= 4 and _CESMM_PROSE_ROW_RE.search(blob):
+        return True
+    return False
+
+
+def retrieve_boq_scope_items(query: str, project_id: str) -> List[Dict[str, Any]]:
+    """Retrieve measured BOQ rows for a demolition / site-clearance WBS ask.
+
+    Uses the existing BOQ-scope election in ``retrieve_with_filter``. Empty
+    when there is no project, retrieval fails, or no measured rows land.
+    """
+    if not project_id or not (query or "").strip():
+        return []
+    try:
+        from app.core.rag.retriever import _doc_name_for_id, retrieve_with_filter
+        chunks, _noise = retrieve_with_filter(query, project_id, k=8)
+    except Exception as exc:  # noqa: BLE001 — fall through to template scaffold
+        logger.warning("BOQ-scope WBS retrieval failed: %s", exc)
+        return []
+
+    collected: List[Dict[str, Any]] = []
+    for chunk in chunks or []:
+        text = getattr(chunk, "text", "") or ""
+        filename = (
+            getattr(chunk, "source_name", "")
+            or _doc_name_for_id(getattr(chunk, "doc_id", "") or "")
+        )
+        if not _chunk_looks_like_measured_boq(text, filename):
+            continue
+        for row in parse_boq_measured_rows(text):
+            item = dict(row)
+            if filename:
+                item["source"] = filename
+            collected.append(item)
+    return filter_demolition_site_clearance_items(collected)
+
+
+def wbs_tree_from_boq_items(
+    items: Iterable[Dict[str, Any]],
+    *,
+    phase: str = _BOQ_SCOPE_WBS_PHASE,
+) -> Dict[str, str]:
+    """High-level tree: one phase, one package per retrieved BOQ row.
+
+    Package names keep the CESMM code when the row had one. No template
+    packages are added.
+    """
+    scoped = filter_demolition_site_clearance_items(items)
+    if not scoped:
+        return {}
+    tree: Dict[str, str] = {"1": phase}
+    for idx, item in enumerate(scoped, start=1):
+        code = _compact_cesmm_code(str(item.get("item_key") or ""))
+        desc = _clean_boq_description(
+            str(item.get("description") or item.get("item_key") or "")
+        )
+        name = f"{code} {desc}".strip() if code else desc
+        if name:
+            tree[f"1.{idx}"] = name
+    return tree
+
+
+def activities_from_boq_scope_outline(
+    items: Iterable[Dict[str, Any]],
+    *,
+    phase: str = _BOQ_SCOPE_WBS_PHASE,
+) -> List[Dict[str, Any]]:
+    """One lightweight activity per retrieved row so CPM / cost-load can run.
+
+    Durations are placeholders (1 day). This is a high-level scope WBS, not
+    a productivity-derived programme — callers must say so.
+    """
+    scoped = filter_demolition_site_clearance_items(items)
+    activities: List[Dict[str, Any]] = []
+    prev: Optional[str] = None
+    phase_slug = _slug(phase)
+    for idx, item in enumerate(scoped, start=1):
+        act_id = f"1.{idx}"
+        code = _compact_cesmm_code(str(item.get("item_key") or ""))
+        desc = _clean_boq_description(
+            str(item.get("description") or item.get("item_key") or "Item")
+        )
+        name = f"{code} {desc}".strip() if code else desc
+        activities.append({
+            "id": act_id,
+            "code": act_id,
+            "name": name[:120] or f"Item {idx}",
+            "duration_days": 1,
+            "predecessors": [prev] if prev else [],
+            "resources": ["demolition"],
+            "wbs_phase": phase_slug,
+            "boq": {
+                "item_key": item.get("item_key") or code or None,
+                "description": desc,
+                "source": item.get("source"),
+                "category": "Demolition",
+            },
+        })
+        prev = act_id
+    return activities
 
 
 # ── learning the norms back from a built programme ─────────────────────────
