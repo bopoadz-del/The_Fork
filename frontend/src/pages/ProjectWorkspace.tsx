@@ -10,6 +10,7 @@ import AppHeader from '../components/AppHeader'
 import { type Project } from './ProjectCard'
 import { apiGet, apiPost, apiPostForm, ApiError } from '../lib/api'
 import { getToken } from '../lib/token'
+import { exportEndpointForWorkspace } from '../lib/exportEndpoint'
 import WorkspaceShell from '../layout/WorkspaceShell'
 import LeftPanel from '../layout/LeftPanel'
 import RightPanel from '../layout/RightPanel'
@@ -771,23 +772,6 @@ type WorkspaceState =
   | { tag: 'not-found' }
   | { tag: 'error'; message: string }
   | { tag: 'ready'; project: ProjectDetail }
-
-/** Stamp the active UI project onto a server export URL.
-
- * Chat remaps master_corpus → drive_archive for RAG. A download offer that
- * keeps that backing id 404s (`Project 'drive_archive' not found`). The
- * workspace URL is the project the user is in.
- */
-export function exportEndpointForWorkspace(
-  endpoint: string,
-  workspaceProjectId: string | undefined,
-): string {
-  if (!workspaceProjectId || !endpoint) return endpoint
-  return endpoint.replace(
-    /^(\/v1\/projects\/)[^/?#]+/,
-    `$1${workspaceProjectId}`,
-  )
-}
 
 export default function ProjectWorkspace() {
   const { id } = useParams<{ id: string }>()
