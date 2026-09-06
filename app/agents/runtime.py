@@ -5554,6 +5554,27 @@ def _openrouter_model_is_free(name: str) -> bool:
     return slug == OPENROUTER_DEFAULT_MODEL or slug.endswith(":free")
 
 
+def _resolve_attempt_model(cfg: dict[str, Any], agent_model: str | None) -> str:
+    """Provider default unless the agent pin belongs on this provider.
+
+    Every hat YAML still pins ``kimi-k2.6``. That is a live Moonshot id.
+    Sending it to DeepSeek (or leaving a dead ``gpt-4*`` / leftover
+    ``deepseek-*`` pin on Kimi) 404s the turn. DeepSeek keeps only
+    ``deepseek-*`` pins; every other provider keeps the historical
+    placeholder remap (empty / ``deepseek-*`` / ``gpt-4*`` / ``gpt-3*``
+    → ``default_model``).
+    """
+    default = str(cfg.get("default_model") or "")
+    model = (agent_model or "").strip()
+    if cfg.get("provider") == "deepseek":
+        if model.startswith("deepseek-"):
+            return model
+        return default
+    if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
+        return default
+    return model
+
+
 def _resolve_openrouter_model(name: str | None) -> str:
     """Pin a free OpenRouter slug, or the default router.
 
@@ -9210,11 +9231,9 @@ class Agent:
                         "Exception", exc_info=True,
                     )
         # An agent that pinned a provider-specific model is left alone; an
-        # unpinned/legacy-placeholder agent uses the active provider's default
-        # (DeepSeek / OpenRouter / Kimi / Groq / Ollama, from _llm_config).
-        model = self.model
-        if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
-            model = cfg["default_model"]
+        # unpinned/legacy-placeholder (or a foreign pin such as kimi-k2.6
+        # on DeepSeek) uses the active provider's default from _llm_config.
+        model = _resolve_attempt_model(cfg, self.model)
         # Whitelist-sanitise every outbound message (drops `reasoning` and any
         # other non-standard field that would make a strict provider — Groq —
         # reject the request). Single chokepoint, covers all callers.
@@ -9717,9 +9736,7 @@ class Agent:
                     over = False
                 if over:
                     raise _SynthStreamError("daily cap reached")
-        model = self.model
-        if not model or model.startswith(("deepseek-", "gpt-4", "gpt-3")):
-            model = cfg["default_model"]
+        model = _resolve_attempt_model(cfg, self.model)
         messages = _sanitize_messages_for_provider(messages)
         if cfg.get("provider") == "openrouter":
             messages = _compact_messages_for_openrouter(messages)

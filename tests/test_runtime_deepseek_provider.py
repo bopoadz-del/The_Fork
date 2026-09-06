@@ -20,6 +20,7 @@ from app.agents.runtime import (
     KIMI_API_URL,
     _llm_config,
     _provider_temperature,
+    _resolve_attempt_model,
 )
 
 
@@ -85,3 +86,23 @@ def test_unrecognised_provider_still_falls_through_to_kimi(monkeypatch):
     assert cfg["provider"] == "kimi"
     monkeypatch.setenv("LLM_PROVIDER", "nonsense")
     assert _llm_config()["provider"] == "kimi"
+
+
+def test_deepseek_remaps_foreign_hat_pin(monkeypatch):
+    """Every hat YAML pins kimi-k2.6; that id 404s on api.deepseek.com."""
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    cfg = _llm_config()
+    assert _resolve_attempt_model(cfg, "kimi-k2.6") == "deepseek-chat"
+    assert _resolve_attempt_model(cfg, "moonshot-v1-128k") == "deepseek-chat"
+    assert _resolve_attempt_model(cfg, "") == "deepseek-chat"
+    assert _resolve_attempt_model(cfg, "deepseek-chat") == "deepseek-chat"
+    assert _resolve_attempt_model(cfg, "deepseek-reasoner") == "deepseek-reasoner"
+
+
+def test_kimi_still_remaps_legacy_deepseek_pin(monkeypatch):
+    """Restoring DeepSeek must not send deepseek-chat to Moonshot."""
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    cfg = _llm_config()
+    assert _resolve_attempt_model(cfg, "deepseek-chat") == cfg["default_model"]
+    assert _resolve_attempt_model(cfg, "moonshot-v1-128k") == "moonshot-v1-128k"
