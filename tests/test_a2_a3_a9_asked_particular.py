@@ -17,6 +17,7 @@ already used elsewhere in this repo.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from app.agents.runtime import (
@@ -114,6 +115,32 @@ DRAWING_NOTES = (
     "Drawing general notes. Refer to the Engineer for clarification "
     "of dimensions. No appointment is stated on this sheet."
 )
+# Live A3 PARTIAL on cb24f2b: graft led with 90 days, then the model
+# stated 852 from DD-2023-118 Contract Data. Sectional / Vol-2 notice
+# / wrong-year lookalikes must lose the election.
+SECTIONAL_TFC_90 = (
+    "CONTRACT DATA particulars — filled-in amount / duration / "
+    f"percentage [{DD23_NAME}].\n"
+    "Particular Conditions Part A - Contract Data\n"
+    "1.1.75 Time for Completion for Section 2 of the Works: 90 days"
+)
+SPEC_NOTICE_90 = (
+    "Volume 2 — Specifications. The Time for Completion is stated in "
+    "the Contract Data. The Contractor shall submit as-built records "
+    "within 90 days of the Taking-Over Certificate."
+)
+DD22_WHOLE_WORKS_90 = (
+    "CONTRACT DATA particulars — filled-in amount / duration / "
+    "percentage [DD-2022-175_Vol 1 - Conditions of Contract.pdf].\n"
+    "Particular Conditions Part A - Contract Data\n"
+    "1.1.75 Time for Completion for the whole of the Works: 90 days"
+)
+A3_HEDGE_90_THEN_852 = (
+    "The Time for Completion for the whole of the Works is 90 days.\n\n"
+    "I found the answer in the Contract Data section of the document. "
+    "Under Clause 1.1.75, the Time for Completion (for the whole of "
+    f"the Works) is stated as: {A3_DAYS} from the Commencement Date."
+)
 
 ACTIVE = "p_master"
 CD_DOC = "cd118"
@@ -169,6 +196,9 @@ def test_a2_a3_a9_predicates():
     assert not query_asks_for_time_for_completion(
         "What is the Time for Completion for Milestone 2?"
     )
+    assert not query_asks_for_time_for_completion(
+        "What is the Time for Completion for Section 2 of the Works?"
+    )
     assert not query_asks_for_time_for_completion(A5_ASK)
 
     assert query_asks_who_the_engineer_is(A9_ASK)
@@ -182,6 +212,8 @@ def test_a2_a3_a9_predicates():
     assert chunk_states_time_for_completion(SCANNED_TFC)
     assert not chunk_states_time_for_completion(PERMIT_TRACKER)
     assert not chunk_states_time_for_completion(PSA_RECITALS)
+    assert not chunk_states_time_for_completion(SECTIONAL_TFC_90)
+    assert not chunk_states_time_for_completion(SPEC_NOTICE_90)
 
     assert chunk_states_engineer_identity(SCANNED_ENGINEER)
     assert chunk_states_engineer_identity(
@@ -195,6 +227,12 @@ def test_a2_a3_a9_predicates():
     assert amount == 2_017_680_124.69
     assert extract_aca_including_vat(COC_DELAY_CHUNK) is None
     assert extract_time_for_completion_days(SCANNED_TFC) == A3_DAYS
+    assert extract_time_for_completion_days(
+        SECTIONAL_TFC_90 + "\n\n" + SPEC_NOTICE_90 + "\n\n" + SCANNED_TFC,
+    ) == A3_DAYS
+    assert extract_time_for_completion_days(
+        DD22_WHOLE_WORKS_90 + "\n\n" + SCANNED_TFC,
+    ) == A3_DAYS
     assert extract_engineer_identity(SCANNED_ENGINEER) == A9_FIRM
 
 
@@ -478,3 +516,72 @@ def test_inject_hints_name_the_asked_particular():
     assert "delay damages" in a2.lower()
     assert "TIME FOR COMPLETION" in a3
     assert "ENGINEER APPOINTMENT" in a9
+    assert "90 days" in a3.lower()
+
+
+def test_extract_elects_852_over_sectional_and_spec_90():
+    from app.core.rag.retriever import extract_time_for_completion_days
+
+    rag = _sys(SECTIONAL_TFC_90, SPEC_NOTICE_90, SCANNED_TFC)
+    assert extract_time_for_completion_days(rag["content"]) == A3_DAYS
+
+
+def test_extract_elects_dd2023_852_over_dd2022_90():
+    from app.core.rag.retriever import extract_time_for_completion_days
+
+    rag = _sys(DD22_WHOLE_WORKS_90, SCANNED_TFC)
+    assert extract_time_for_completion_days(rag["content"]) == A3_DAYS
+
+
+def test_graft_a3_leads_with_852_not_the_90_day_hedge():
+    """Live A3 PARTIAL: opening 'is 90 days' then Contract Data 852."""
+    rag = _sys(SECTIONAL_TFC_90, SPEC_NOTICE_90, SCANNED_TFC)
+    msgs = [{"role": "user", "content": LIVE_A3}]
+    out = _graft_asked_contract_particular(A3_HEDGE_90_THEN_852, rag, msgs)
+    assert out.startswith("The Time for Completion")
+    assert A3_DAYS in out
+    first = out.split(".", 1)[0]
+    assert "852" in first
+    assert "90" not in first
+    assert not re.search(
+        r"(?i)time for completion for the whole of the works is 90 days",
+        out,
+    )
+
+
+def test_graft_a3_does_not_prepend_when_852_already_leads():
+    rag = _sys(SCANNED_TFC)
+    msgs = [{"role": "user", "content": LIVE_A3}]
+    already = (
+        f"The Time for Completion for the whole of the Works is {A3_DAYS} "
+        "from the Commencement Date."
+    )
+    assert _graft_asked_contract_particular(already, rag, msgs) == already
+
+
+def test_a3_retrieval_fences_sectional_90_when_852_is_in_the_pool(monkeypatch):
+    sectional = _chunk("sec", TFC_DOC, 0.93, SECTIONAL_TFC_90)
+    spec = _chunk("sp", "vol2", 0.90, SPEC_NOTICE_90)
+    tfc = _chunk("tfc", TFC_DOC, 0.21, SCANNED_TFC)
+    names = {TFC_DOC: DD23_NAME, "vol2": "DD-2023-118_DG2 Infra P1_Vol 2 - Specifications.pdf"}
+    ret = _install(
+        monkeypatch,
+        semantic=[sectional, spec],
+        rescue_hits=[tfc],
+        names=names,
+    )
+    chunks, _ = ret.retrieve_with_filter(LIVE_A3, ACTIVE, k=5)
+    blob = " ".join(c.text for c in chunks)
+    assert chunks
+    assert A3_DAYS in chunks[0].text
+    assert "Section 2" not in blob
+    assert "as-built records" not in blob
+
+
+def test_postprocess_a3_hedge_becomes_852_lead():
+    rag = _sys(SECTIONAL_TFC_90, SCANNED_TFC)
+    msgs = [{"role": "user", "content": LIVE_A3}]
+    out = _postprocess_answer(A3_HEDGE_90_THEN_852, rag, msgs)
+    assert out.startswith("The Time for Completion")
+    assert "852" in out.split(".", 1)[0]
+    assert "90 days" not in out.lower() or A3_DAYS in out.split("\n", 1)[0]

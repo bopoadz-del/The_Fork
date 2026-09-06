@@ -4743,6 +4743,38 @@ _MISSING_PARTICULAR_RE = re.compile(
     r"i can search again",
 )
 _DELAY_DAMAGES_ANSWER_RE = re.compile(r"(?i)delay\s+damages")
+# Live A3 PARTIAL: graft prepended "…is 90 days." then the model stated 852.
+_TFC_WHOLE_WORKS_CLAIM_RE = re.compile(
+    r"(?i)(?:the\s+)?time\s+for\s+completion\s+for\s+(?:the\s+)?"
+    r"whole\s+of\s+the\s+works\s+is\s+(\d{2,4})\s+days",
+)
+
+
+def _has_conflicting_whole_works_tfc_claim(text: str, elected_days: str) -> bool:
+    elected_num = (elected_days or "").split()[0]
+    if not elected_num:
+        return False
+    return any(
+        m.group(1) != elected_num
+        for m in _TFC_WHOLE_WORKS_CLAIM_RE.finditer(text or "")
+    )
+
+
+def _strip_conflicting_whole_works_tfc_claims(text: str, elected_days: str) -> str:
+    """Drop 'whole of the Works is N days' claims that are not the elected row."""
+    elected_num = (elected_days or "").split()[0]
+    raw = text or ""
+    if not elected_num or not raw:
+        return raw
+
+    def _keep_or_drop(match: re.Match[str]) -> str:
+        return match.group(0) if match.group(1) == elected_num else ""
+
+    cleaned = _TFC_WHOLE_WORKS_CLAIM_RE.sub(_keep_or_drop, raw)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r" {2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 def _graft_asked_contract_particular_enabled() -> bool:
@@ -4807,16 +4839,26 @@ def _graft_asked_contract_particular(
             line = (
                 f"The Time for Completion for the whole of the Works is {days}."
             )
-            if days.split()[0] in (text or "") and not _MISSING_PARTICULAR_RE.search(text or ""):
+            raw = text or ""
+            elected_num = days.split()[0]
+            if (
+                elected_num in raw
+                and not _MISSING_PARTICULAR_RE.search(raw)
+                and not _has_conflicting_whole_works_tfc_claim(raw, days)
+            ):
                 return text
             if (
-                _MISSING_PARTICULAR_RE.search(text or "")
-                or _GENERIC_ACK_RE.search(text or "")
-                or (text or "").strip() == _CG_REFUSAL
+                _MISSING_PARTICULAR_RE.search(raw)
+                or _GENERIC_ACK_RE.search(raw)
+                or raw.strip() == _CG_REFUSAL
             ):
                 return line
-            body = (text or "").strip()
-            return line if not body else f"{line}\n\n{body}"
+            cleaned = _strip_conflicting_whole_works_tfc_claims(raw, days)
+            if not cleaned:
+                return line
+            if cleaned.startswith(line):
+                return cleaned
+            return f"{line}\n\n{cleaned}"
         if query_asks_who_the_engineer_is(user):
             name = extract_engineer_identity(rag)
             if not name:
