@@ -2187,7 +2187,7 @@ def particulars_row_answers_asked_label(query: str, text: str) -> bool:
             key_l = key.lower()
             if not any(p in key_l for p in phrases):
                 continue
-            if want_whole_tfc and _tfc_key_is_not_whole_works(key):
+            if want_whole_tfc and not _tfc_row_is_whole_works(key, text):
                 continue
             return True
         return False
@@ -2497,6 +2497,52 @@ def _tfc_key_is_not_whole_works(key: str) -> bool:
     return bool(_TFC_SECTIONAL_RE.search(k))
 
 
+def _tfc_row_is_whole_works(key: str, chunk_text: str = "") -> bool:
+    """Positive test: this key is the whole-Works particular, not a lookalike.
+
+    A Vol-2 sentence that mentions Time for Completion and peels
+    ``within 90 days`` as a value is not clause 1.1.75.
+    """
+    k = key or ""
+    if not k or _CD_MILESTONE_CHUNK_RE.search(k) or _TFC_SECTIONAL_RE.search(k):
+        return False
+    if _TFC_POINTER_RE.search(k):
+        return False
+    if _CD_WHOLE_WORKS_QUERY_RE.search(k) or _TFC_CLAUSE_1175_RE.search(k):
+        return True
+    if not re.search(r"(?i)time\s+for\s+completion", k):
+        return False
+    if len(k) > 96:
+        return False
+    return bool(
+        _CD_PARTICULARS_PREFIX_RE.search(chunk_text or "")
+        or _TFC_CLAUSE_1175_RE.search(chunk_text or "")
+    )
+
+
+def _tfc_row_anchor_index(text: str, key: str, val: str, days_num: str) -> int:
+    """Index of this key+value, not the first lookalike with the same label."""
+    loc = (text or "").lower()
+    key_l = (key or "").lower()
+    val_l = (val or "").lower()
+    num = (days_num or "").split()[0]
+    if key_l:
+        start = 0
+        while True:
+            i = loc.find(key_l[:40], start)
+            if i < 0:
+                break
+            window = loc[i: i + max(len(key_l) + 80, 160)]
+            if num and num in window:
+                return i
+            if val_l and val_l[:24] in window:
+                return i
+            start = i + max(1, len(key_l[:40]))
+    if val_l:
+        return loc.find(val_l)
+    return -1
+
+
 def _tfc_days_from_block(block: str) -> Optional[str]:
     """Days figure tied to the TfC label, not a neighbouring notice period."""
     blob = _normalize_retrieval_ws(block)
@@ -2614,7 +2660,9 @@ def chunk_states_time_for_completion(text: str) -> bool:
         key_l = key.lower()
         if "time for completion" not in key_l:
             continue
-        if _tfc_key_is_not_whole_works(key):
+        if not _tfc_row_is_whole_works(key, t):
+            continue
+        if _CD_PARTICULARS_PREFIX_RE.search(val or ""):
             continue
         if _TFC_DAYS_RE.search(val) or _TFC_DAYS_RE.search(key):
             return True
@@ -2703,16 +2751,18 @@ def extract_time_for_completion_days(text: str) -> Optional[str]:
         key_l = key.lower()
         if "time for completion" not in key_l:
             continue
-        if _tfc_key_is_not_whole_works(key):
+        if not _tfc_row_is_whole_works(key, t):
             continue
         joined = f"{key} {val}"
         if _TFC_PERMIT_TRACKER_RE.search(joined):
+            continue
+        if _CD_PARTICULARS_PREFIX_RE.search(val or ""):
             continue
         m = _TFC_DAYS_RE.search(val) or _TFC_DAYS_RE.search(key)
         if not m:
             continue
         days = f"{m.group(1)} days"
-        idx = t.lower().find(key_l[:48]) if key_l else -1
+        idx = _tfc_row_anchor_index(t, key, val, m.group(1))
         local = t[max(0, idx - 240): idx + 280] if idx >= 0 else joined
         score = _score_tfc_candidate(days, joined + "\n" + local, from_particulars=True)
         cands.append((-score, order, days))
