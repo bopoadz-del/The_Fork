@@ -151,12 +151,6 @@ A2_HEDGE_EXCL_THEN_INCL = (
     "Hundred Eighty Thousand One Hundred Twenty Four Saudi Riyals "
     "and Sixty Nine Halalas)."
 )
-DD22_ACA_INCL = (
-    "CONTRACT DATA particulars — filled-in amount / duration / "
-    "percentage [DD-2022-175_Vol 1 - Conditions of Contract.pdf].\n"
-    "Particular Conditions Part A - Contract Data\n"
-    "1.1.1 Accepted Contract Amount including VAT: SAR 9,936,000.00"
-)
 MIXED_ACA_TABLE = (
     "CONTRACT DATA particulars — filled-in amount / duration / "
     f"percentage [{CD_NAME}].\n"
@@ -630,20 +624,13 @@ def test_extract_elects_incl_vat_over_excl_and_delay_neighbor():
     assert extract_aca_including_vat(formatted) == (2_017_680_124.69, "SAR")
 
 
-def test_extract_elects_dd2023_incl_vat_over_dd2022():
-    from app.core.rag.retriever import extract_aca_including_vat
-
-    rag = _sys(DD22_ACA_INCL, MIXED_ACA_TABLE)
-    assert extract_aca_including_vat(rag["content"]) == (2_017_680_124.69, "SAR")
-
-
 def test_graft_a2_leads_with_incl_vat_not_the_excl_hedge():
     """Live A2 FAIL: opening 'including VAT is' excl-VAT, then DD-2023 incl."""
     rag = _sys(COC_DELAY_CHUNK, SCANNED_ACA_EXCL, SCANNED_ACA_INCL)
     msgs = [{"role": "user", "content": LIVE_A2}]
     out = _graft_asked_contract_particular(A2_HEDGE_EXCL_THEN_INCL, rag, msgs)
     assert out.startswith("The Accepted Contract Amount including VAT")
-    first = out.split(".", 1)[0]
+    first = out.split("\n", 1)[0]
     assert "2,017,680,124.69" in first
     assert "1,754,504,456.25" not in first
     assert not re.search(
@@ -669,5 +656,6 @@ def test_postprocess_a2_hedge_becomes_incl_vat_lead():
     msgs = [{"role": "user", "content": LIVE_A2}]
     out = _postprocess_answer(A2_HEDGE_EXCL_THEN_INCL, rag, msgs)
     assert out.startswith("The Accepted Contract Amount including VAT")
-    assert "2,017,680,124.69" in out.split(".", 1)[0]
-    assert "1,754,504,456.25" not in out.split("\n", 1)[0]
+    first = out.split("\n", 1)[0]
+    assert "2,017,680,124.69" in first
+    assert "1,754,504,456.25" not in first

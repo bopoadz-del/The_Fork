@@ -2706,6 +2706,10 @@ def _aca_row_is_including_vat(key: str, val: str) -> bool:
     v = (val or "").strip()
     if not k or len(k) > 96:
         return False
+    # RAG system-message peels can glue the next [doc_id=…] chunk onto a
+    # short including-VAT key and steal the previous figure.
+    if "[doc_id=" in v or len(v) > 160:
+        return False
     joined = f"{k} {v}"
     if "accepted contract amount" not in joined.lower():
         return False
@@ -2727,8 +2731,12 @@ def _aca_row_is_including_vat(key: str, val: str) -> bool:
     ))
 
 
-def _aca_money_is_including_vat(tight: str, wide: str) -> bool:
-    """True when the figure's local label is including VAT, not excl-VAT."""
+def _aca_nearest_vat_is_including(lead: str) -> bool:
+    """True when the last VAT qualifier before the figure is including-VAT.
+
+    Adjacent excl/incl table rows share a 64-char window; first-excl-in-window
+    would reject the including-VAT amount sitting on the next line.
+    """
     try:
         from app.lib.construction_formulas_commercial import (
             _EXCL_VAT_RE,
@@ -2736,11 +2744,22 @@ def _aca_money_is_including_vat(tight: str, wide: str) -> bool:
         )
     except Exception:  # noqa: BLE001
         return False
+    last_incl = max((m.start() for m in _INCL_VAT_RE.finditer(lead or "")), default=-1)
+    last_excl = max((m.start() for m in _EXCL_VAT_RE.finditer(lead or "")), default=-1)
+    return last_incl >= 0 and last_incl > last_excl
+
+
+def _aca_money_is_including_vat(tight: str, wide: str) -> bool:
+    """True when the figure's local label is including VAT, not excl-VAT."""
+    try:
+        from app.lib.construction_formulas_commercial import _INCL_VAT_RE
+    except Exception:  # noqa: BLE001
+        return False
     if "accepted contract amount" not in (wide or "").lower():
         return False
     if not _INCL_VAT_RE.search(tight or ""):
         return False
-    if _EXCL_VAT_RE.search(tight or ""):
+    if not _aca_nearest_vat_is_including(tight or ""):
         return False
     if _DELAY_RATE_KEY_RE.search(wide or "") and re.search(
         r"(?i)per\s+(?:calendar\s+)?day", wide or "",
@@ -2819,8 +2838,10 @@ def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
                 continue
             amount = float(money.group(2).replace(",", ""))
             currency = money.group(1).upper()
+            idx = (t or "").lower().find((val or "").lower()[:24]) if val else -1
+            local = t[max(0, idx - 280): idx + 80] if idx >= 0 else f"{key} {val}"
             score = _score_aca_incl_candidate(
-                f"{key} {val}", from_particulars=True,
+                f"{key} {val}\n{local}", from_particulars=True,
             )
             cands.append((-score, order, (amount, currency)))
             order += 1
@@ -2834,7 +2855,8 @@ def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
             continue
         amount = float(m.group(2).replace(",", ""))
         currency = m.group(1).upper()
-        score = _score_aca_incl_candidate(wide, from_particulars=False)
+        score_ctx = blob[max(0, m.start() - 280): m.end() + 80]
+        score = _score_aca_incl_candidate(score_ctx, from_particulars=False)
         cands.append((-score, order, (amount, currency)))
         order += 1
     if not cands:
