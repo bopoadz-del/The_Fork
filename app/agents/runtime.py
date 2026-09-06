@@ -4069,6 +4069,16 @@ def _format_wbs_result(payload: dict[str, Any]) -> str:
     if scaffold.get("declaration"):
         lines.append(f"_{scaffold['declaration']}_")
         lines.append("")
+    # Numbered phase/package outline — leftover F1. generate_wbs already
+    # builds wbs_tree; the glass used to stop at headline metrics.
+    try:
+        from app.core.predefined_reasoning import format_wbs_outline
+        outline = format_wbs_outline(payload.get("wbs_tree"))
+    except Exception:  # noqa: BLE001 — formatter miss must not blank the glass
+        outline = ""
+    if outline:
+        lines.append(outline)
+        lines.append("")
     op = payload.get("operator_milestones") if isinstance(payload.get("operator_milestones"), dict) else {}
     if op.get("time_for_completion_days"):
         lines.append(
