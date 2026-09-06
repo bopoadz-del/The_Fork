@@ -3,6 +3,27 @@
 Autonomous-mode decisions with rationale, plus parked items awaiting Chadi.
 Newest first.
 
+## 2026-09-06 — DeepSeek restored as a first-class cloud LLM provider
+
+**Decision:** restore **DeepSeek native API** as an explicit-only cloud
+primary (`LLM_PROVIDER=deepseek`, `DEEPSEEK_API_KEY` required,
+`DEEPSEEK_MODEL=deepseek-chat` default; `deepseek-reasoner` or a current
+catalogue id is accepted). OpenRouter free is 402 on a $0-credit account;
+operators may pin DeepSeek and keep `LLM_FALLBACK_PROVIDER=kimi` or `groq`.
+
+DeepSeek is **not** auto-picked from a bare `DEEPSEEK_API_KEY`. Unset /
+unrecognised `LLM_PROVIDER` still resolves to Kimi (historical default).
+Do not reintroduce OpenAI. Temperature is not pinned (`fixed_temperature`
+is a Kimi-K2 constraint only).
+
+**Render dashboard:**
+```
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=…
+DEEPSEEK_MODEL=deepseek-chat
+LLM_FALLBACK_PROVIDER=kimi
+```
+
 ## 2026-09-05 — OpenRouter free models as a first-class cloud provider
 
 **Decision (operator, 2026-09-05):** production may use **OpenRouter free
