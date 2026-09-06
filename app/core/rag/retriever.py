@@ -9,6 +9,7 @@ where caching, dimension matching, and graceful-degradation policy live.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from app.core.contract_data_chunks import (
@@ -503,6 +504,8 @@ class _ContractScope:
         # prefix-only fence.
         self._delay_rate_in_pool = False
         self._engineer_identity_in_pool = False
+        self._aca_incl_vat_in_pool = False
+        self._tfc_in_pool = False
         self._schedule_labels: List[str] = []
         self._schedule_register_in_pool = False
         # OLD-pack G4: D529.3 Amount is Rate Only. Priced lookalikes
@@ -546,6 +549,20 @@ class _ContractScope:
                 self._engineer_identity_in_pool = any(
                     chunk_states_engineer_identity(text) for _n, text in docs
                 )
+            if (
+                aca_including_vat_rescue_enabled()
+                and query_asks_for_aca_including_vat(self.query)
+            ):
+                self._aca_incl_vat_in_pool = any(
+                    chunk_states_aca_including_vat(text) for _n, text in docs
+                )
+            if (
+                time_for_completion_rescue_enabled()
+                and query_asks_for_time_for_completion(self.query)
+            ):
+                self._tfc_in_pool = any(
+                    chunk_states_time_for_completion(text) for _n, text in docs
+                )
             # OLD-pack G1: a Schedule-N register row ("Schedule 10: Not Used")
             # is the answer. Vol 4 / Vol 5 / CPM mention "schedule" at length
             # and used to occupy every slot. Not #500/#501/#502/#503.
@@ -588,6 +605,12 @@ class _ContractScope:
                     return False
             if self._engineer_identity_in_pool:
                 if not chunk_states_engineer_identity(chunk_text):
+                    return False
+            if self._aca_incl_vat_in_pool:
+                if not chunk_states_aca_including_vat(chunk_text):
+                    return False
+            if self._tfc_in_pool:
+                if not chunk_states_time_for_completion(chunk_text):
                     return False
         if self._spec_identity_in_pool:
             titled = spec_title_filename_bonus(filename, self._title_phrases) > 0
@@ -1524,14 +1547,25 @@ def _apply_contract_data_filename_boost(
     scored: List[Tuple[float, Chunk]],
     name_by_id: Dict[str, str],
 ) -> None:
-    """In-place: lift Contract Data files on an Accepted Contract Amount ask."""
+    """In-place: lift Contract Data files on an A2 / A3 / A9 ask."""
     if not contract_data_filename_rescue_enabled():
         return
-    if not query_asks_for_accepted_contract_amount(query):
+    if not query_wants_contract_data_file(query):
         return
+    want_aca = query_asks_for_accepted_contract_amount(query)
+    want_tfc = query_asks_for_time_for_completion(query)
+    want_eng = query_asks_who_the_engineer_is(query)
     for i, (score, chunk) in enumerate(scored):
         name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
         if not filename_looks_like_contract_data(name):
+            continue
+        text = chunk.text or ""
+        # A2 keeps today's "any Contract Data file" lift. A3/A9 only
+        # lift the row that answers — an ACA-only Contract Data file
+        # must not steal Time for Completion (test_a3_is_not_stolen).
+        if want_tfc and not want_aca and not chunk_states_time_for_completion(text):
+            continue
+        if want_eng and not want_aca and not chunk_states_engineer_identity(text):
             continue
         boosted = score + _CONTRACT_DATA_FILENAME_BONUS
         chunk.score = round(boosted, 6)
@@ -1549,7 +1583,7 @@ def _rescue_contract_data_docs(
     names: Dict[str, str] = {}
     if not contract_data_filename_rescue_enabled():
         return names
-    if not query_asks_for_accepted_contract_amount(query):
+    if not query_wants_contract_data_file(query):
         return names
     try:
         from app.core.projects import documents_matching_title_phrase
@@ -1572,18 +1606,34 @@ def _rescue_contract_data_docs(
         for doc in matches:
             names[doc["id"]] = doc.get("original_name") or ""
         try:
-            hits = fetch(pid, [d["id"] for d in matches], k_per_doc=20)
+            hits = fetch(pid, [d["id"] for d in matches], k_per_doc=40)
         except Exception as exc:  # noqa: BLE001
             logger.warning("contract-data rescue fetch for %s failed: %s", pid, exc)
             continue
-        for chunk in hits:
+        keep = None
+        if query_asks_for_aca_including_vat(query):
+            keep = chunk_states_aca_including_vat
+        elif query_asks_for_time_for_completion(query):
+            keep = chunk_states_time_for_completion
+        elif query_asks_who_the_engineer_is(query):
+            keep = chunk_states_engineer_identity
+        paired = _pair_adjacent_keep_text(hits, keep) if keep else []
+        for chunk in paired:
             names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
-            if chunk.chunk_id in fused:
-                continue
-            fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+            fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
             recovered += 1
+        # A2 still needs every Contract Data window so the filename
+        # fence can see the including-VAT row. A3/A9 only keep the
+        # answering row — an ACA-only file must not fill top-k.
+        if query_asks_for_accepted_contract_amount(query):
+            for chunk in hits:
+                names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
+                if chunk.chunk_id in fused:
+                    continue
+                fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+                recovered += 1
     if recovered:
-        logger.info("contract-data rescue recovered %d chunk(s) for an ACA ask", recovered)
+        logger.info("contract-data rescue recovered %d chunk(s) for a particulars ask", recovered)
     return names
 
 
@@ -2218,7 +2268,16 @@ _PARTY_FIRM_RE = re.compile(
 )
 _SCANNED_ENGINEER_LINE_RE = re.compile(
     r"(?im)^[ \t]*(?:\d+(?:\.\d+)+\s*(?:\([a-z]\))?\s*)?"
+    r"(?:(?:the|name\s+of\s+the)\s+)?"
     r"engineer\b(?!\s*'?s\s+representative)[ \t]*[:|–-]?\s*(.*)$",
+)
+_ENGINEER_IS_RE = re.compile(
+    r"(?i)\b(?:the\s+|name\s+of\s+the\s+)?engineer\b"
+    r"(?!\s*'?s\s+representative)\s*(?:is|are|:)\s+(.{4,80})"
+)
+_ENGINEER_POINTER_VAL_RE = re.compile(
+    r"(?i)^(?:named|stated|identified|appointed|set\s+out|specified|"
+    r"defined|described|referred\s+to)\s+(?:in|as|under)\b"
 )
 
 
@@ -2226,6 +2285,8 @@ def _looks_like_appointed_party(val: str) -> bool:
     """True when a particulars value is a firm / person, not a role word."""
     name = re.sub(r"\s+", " ", (val or "")).strip(" \t.:;,-")
     if len(name) < 4 or _NOT_A_PARTY_NAME_RE.match(name):
+        return False
+    if _ENGINEER_POINTER_VAL_RE.search(name):
         return False
     if _PARTY_FIRM_RE.search(name):
         return True
@@ -2290,11 +2351,25 @@ def chunk_states_engineer_identity(text: str) -> bool:
             continue
         rest = (m.group(1) or "").strip()
         nxt = ""
+        nxt2 = ""
         if i + 1 < len(lines):
             nxt = lines[i + 1].strip()
-        for cand in (rest, nxt, f"{rest} {nxt}".strip()):
+        if i + 2 < len(lines):
+            nxt2 = lines[i + 2].strip()
+        for cand in (
+            rest, nxt, nxt2,
+            f"{rest} {nxt}".strip(),
+            f"{nxt} {nxt2}".strip(),
+        ):
             if _looks_like_appointed_party(cand):
                 return True
+    blob = _collapse_retrieval_ws(t)
+    for named in _ENGINEER_IS_RE.finditer(blob):
+        cand = named.group(1)
+        if _looks_like_appointed_party(cand) and (
+            _PARTY_FIRM_RE.search(cand) or re.search(r"\b[A-Z]{3,}\b", cand)
+        ):
+            return True
     return False
 
 
@@ -2312,6 +2387,12 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
     if engineer_identity_rescue_enabled() and query_asks_who_the_engineer_is(query):
         if chunk_states_engineer_identity(text):
             return True
+    if aca_including_vat_rescue_enabled() and query_asks_for_aca_including_vat(query):
+        if chunk_states_aca_including_vat(text):
+            return True
+    if time_for_completion_rescue_enabled() and query_asks_for_time_for_completion(query):
+        if chunk_states_time_for_completion(text):
+            return True
     return (
         is_contract_data_particulars_row(text)
         and particulars_row_answers_asked_label(query, text)
@@ -2326,8 +2407,253 @@ _DELAY_RATE_RESCUE_PHRASES = (
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
     "engineer limited",
+    "the engineer",
+    "name of the engineer",
+)
+_ACA_INCL_RESCUE_PHRASES = (
+    "accepted contract amount including vat",
+    "amount including vat",
+)
+_TFC_RESCUE_PHRASES = (
+    "time for completion for the whole of the works",
+    "1.1.75 time for completion",
 )
 _ASKED_PARTICULAR_VALUE_BONUS = 2.0
+_TFC_DAYS_RE = re.compile(r"(?i)\b(\d{2,4})\s+(?:calendar\s+|working\s+)?days\b")
+_TFC_PERMIT_TRACKER_RE = re.compile(
+    r"(?i)permit[- ]track|commencement[- ]completion|"
+    r"community\s+[a-z0-9-]+\s+\w{3}-\d{2}\s+to\s+\w{3}-\d{2}",
+)
+
+
+def aca_including_vat_rescue_enabled() -> bool:
+    """ON by default — live A2 answered delay damages / excl-VAT.
+
+    RAG_ACA_INCLUDING_VAT_RESCUE=0 restores filename-only ACA ranking.
+    """
+    return _env_flag_on("RAG_ACA_INCLUDING_VAT_RESCUE")
+
+
+def time_for_completion_rescue_enabled() -> bool:
+    """ON by default — live A3 missed the whole-Works TfC row.
+
+    RAG_TIME_FOR_COMPLETION_RESCUE=0 restores prefix-only ranking.
+    """
+    return _env_flag_on("RAG_TIME_FOR_COMPLETION_RESCUE")
+
+
+def query_asks_for_aca_including_vat(query: str) -> bool:
+    """True for A2 (including VAT), not A1 excluding or a definition."""
+    if not query_asks_for_accepted_contract_amount(query):
+        return False
+    return bool(_INCLUDING_VAT_RE.search(query or ""))
+
+
+def query_asks_for_time_for_completion(query: str) -> bool:
+    """True for A3 whole-Works TfC, not a milestone-only ask (A4)."""
+    q = query or ""
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if not re.search(r"(?i)time\s+for\s+completion", q):
+        return False
+    if _CD_MILESTONE_QUERY_RE.search(q) and not _CD_WHOLE_WORKS_QUERY_RE.search(q):
+        return False
+    return True
+
+
+def chunk_states_aca_including_vat(text: str) -> bool:
+    """True when the chunk states Accepted Contract Amount *including VAT*.
+
+    A delay-damages sentence that cites the excl-VAT ACA as the rate
+    base (live A2) is the neighboring field, not this answer.
+    """
+    t = text or ""
+    blob = _normalize_retrieval_ws(t).lower()
+    if "accepted contract amount" not in blob:
+        return False
+    if not _INCLUDING_VAT_RE.search(blob):
+        return False
+    if not _CD_MONETARY_VALUE_RE.search(t):
+        return False
+    if _DELAY_RATE_KEY_RE.search(blob) and re.search(
+        r"(?i)per\s+(?:calendar\s+)?day", blob,
+    ):
+        for key, val in filled_particulars_rows(t):
+            joined = f"{key} {val}".lower()
+            if (
+                "accepted contract amount" in joined
+                and _INCLUDING_VAT_RE.search(joined)
+                and _CD_MONETARY_VALUE_RE.search(val)
+            ):
+                return True
+        return False
+    return True
+
+
+def chunk_states_time_for_completion(text: str) -> bool:
+    """True when the chunk states whole-Works Time for Completion in days.
+
+    Permit-tracker / community commencement-completion tables (live A3)
+    mention completion dates but are not the Contract Data duration.
+    Milestone-only rows are not this class.
+    """
+    t = text or ""
+    if not t or _TFC_PERMIT_TRACKER_RE.search(t):
+        return False
+    blob = _normalize_retrieval_ws(t)
+    if not re.search(r"(?i)time\s+for\s+completion", blob):
+        return False
+    if _CD_MILESTONE_CHUNK_RE.search(blob) and not _CD_WHOLE_WORKS_QUERY_RE.search(blob):
+        return False
+    for key, val in filled_particulars_rows(t):
+        key_l = key.lower()
+        if "time for completion" not in key_l:
+            continue
+        if "milestone" in key_l:
+            continue
+        if _TFC_DAYS_RE.search(val) or _TFC_DAYS_RE.search(key):
+            return True
+    if _CD_MILESTONE_CHUNK_RE.search(blob):
+        return False
+    return bool(_TFC_DAYS_RE.search(blob))
+
+
+def extract_aca_including_vat(text: str) -> Optional[Tuple[float, str]]:
+    """Including-VAT ACA from client text, or None. Does not invent."""
+    t = text or ""
+    if not t:
+        return None
+    try:
+        from app.lib.construction_formulas_commercial import (
+            _INCL_VAT_RE,
+            _MONEY_RE,
+            _collapse_ws,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    found: List[Tuple[float, str]] = []
+    try:
+        for key, val in filled_particulars_rows(t):
+            joined = f"{key} {val}"
+            if "accepted contract amount" not in joined.lower():
+                continue
+            if not _INCL_VAT_RE.search(joined):
+                continue
+            money = _MONEY_RE.search(val) or _MONEY_RE.search(joined)
+            if money:
+                found.append((float(money.group(2).replace(",", "")), money.group(1).upper()))
+    except Exception:  # noqa: BLE001
+        logger.debug("including-VAT particulars parse failed", exc_info=True)
+    blob = _collapse_ws(t)
+    for m in _MONEY_RE.finditer(blob):
+        ctx = blob[max(0, m.start() - 160):m.end() + 24]
+        if "accepted contract amount" not in ctx.lower():
+            continue
+        if not _INCL_VAT_RE.search(ctx):
+            continue
+        found.append((float(m.group(2).replace(",", "")), m.group(1).upper()))
+    if not found:
+        return None
+    return found[0]
+
+
+def extract_time_for_completion_days(text: str) -> Optional[str]:
+    """Whole-Works TfC duration as written (e.g. ``852 days``), or None.
+
+    Walks rows even when a permit-tracker decoy shares the same blob
+    (graft reads the full RAG system message).
+    """
+    t = text or ""
+    if not t:
+        return None
+    for key, val in filled_particulars_rows(t):
+        key_l = key.lower()
+        if "time for completion" not in key_l or "milestone" in key_l:
+            continue
+        if _TFC_PERMIT_TRACKER_RE.search(f"{key} {val}"):
+            continue
+        m = _TFC_DAYS_RE.search(val) or _TFC_DAYS_RE.search(key)
+        if m:
+            return f"{m.group(1)} days"
+    for block in re.split(r"\n{2,}|\[doc_id=", t):
+        if chunk_states_time_for_completion(block):
+            m = _TFC_DAYS_RE.search(_normalize_retrieval_ws(block))
+            if m:
+                return f"{m.group(1)} days"
+    return None
+
+
+def extract_engineer_identity(text: str) -> Optional[str]:
+    """Appointed Engineer firm/name from client text, or None."""
+    t = text or ""
+    if not t:
+        return None
+    for key, val in filled_particulars_rows(t):
+        if _ENGINEER_REP_RE.search(key):
+            continue
+        if _ENGINEER_KEY_RE.search(key) and _looks_like_appointed_party(val):
+            return re.sub(r"\s+", " ", val).strip(" \t.:;,-")
+    lines = t.splitlines()
+    for i, line in enumerate(lines):
+        m = _SCANNED_ENGINEER_LINE_RE.match(line)
+        if not m:
+            continue
+        rest = (m.group(1) or "").strip()
+        nxt = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        nxt2 = lines[i + 2].strip() if i + 2 < len(lines) else ""
+        for cand in (rest, f"{rest} {nxt}".strip(), nxt, f"{nxt} {nxt2}".strip()):
+            if _looks_like_appointed_party(cand) and _PARTY_FIRM_RE.search(cand):
+                return re.sub(r"\s+", " ", cand).strip(" \t.:;,-")
+            if _looks_like_appointed_party(cand) and re.search(r"[A-Z]{3,}", cand):
+                return re.sub(r"\s+", " ", cand).strip(" \t.:;,-")
+    for m in _ENGINEER_IS_RE.finditer(_collapse_retrieval_ws(t)):
+        cand = m.group(1)
+        if _looks_like_appointed_party(cand) and (
+            _PARTY_FIRM_RE.search(cand) or re.search(r"\b[A-Z]{3,}\b", cand)
+        ):
+            return re.sub(r"\s+", " ", cand).strip(" \t.:;,-")
+    return None
+
+
+def query_wants_contract_data_file(query: str) -> bool:
+    """A2 / A3 / A9 live in a Contract Data file, not PSA / CPM / drawings."""
+    return (
+        query_asks_for_accepted_contract_amount(query)
+        or query_asks_for_time_for_completion(query)
+        or query_asks_who_the_engineer_is(query)
+    )
+
+
+def _pair_adjacent_keep_text(hits: List[Chunk], keep) -> List[Chunk]:
+    """Scanned Contract Data often splits a label and its value.
+
+    Live A9: ``Engineer`` on chunk N, ``JACOBS (CH2M Saudi Limited)`` on
+    N+1. Identifier keep() then fails on both. Pair consecutive same-doc
+    chunks so the appointment / TfC / including-VAT row is visible.
+    """
+    by_doc: Dict[str, List[Chunk]] = {}
+    for chunk in hits:
+        by_doc.setdefault(chunk.doc_id, []).append(chunk)
+    out: List[Chunk] = []
+    seen: Set[str] = set()
+    for group in by_doc.values():
+        group = sorted(group, key=lambda c: int(getattr(c, "chunk_index", 0) or 0))
+        for i, chunk in enumerate(group):
+            text = chunk.text or ""
+            if keep(text):
+                if chunk.chunk_id not in seen:
+                    out.append(chunk)
+                    seen.add(chunk.chunk_id)
+                continue
+            if i + 1 >= len(group):
+                continue
+            combined = f"{text}\n{group[i + 1].text or ''}"
+            if keep(combined):
+                paired = replace(chunk, text=combined)
+                if paired.chunk_id not in seen:
+                    out.append(paired)
+                    seen.add(paired.chunk_id)
+    return out
 
 
 def _rescue_chunks_matching(
@@ -2353,9 +2679,19 @@ def _rescue_chunks_matching(
     except Exception as exc:  # noqa: BLE001 — extras must not break the turn
         logger.warning("%s rescue for %s failed: %s", label, project_id, exc)
         return 0
-    for chunk in hits:
-        if not keep(chunk.text or ""):
-            continue
+    neighbors = getattr(store, "chunks_for_docs", None)
+    if callable(neighbors) and hits:
+        doc_ids = list({c.doc_id for c in hits if c.doc_id})
+        try:
+            extra = neighbors(project_id, doc_ids, k_per_doc=24)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s neighbor fetch for %s failed: %s", label, project_id, exc)
+            extra = []
+        by_id = {c.chunk_id: c for c in hits}
+        for chunk in extra:
+            by_id.setdefault(chunk.chunk_id, chunk)
+        hits = list(by_id.values())
+    for chunk in _pair_adjacent_keep_text(hits, keep):
         if chunk.chunk_id in fused:
             continue
         fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
@@ -2371,7 +2707,7 @@ def _rescue_asked_particular_value_chunks(
     fused: Dict[str, Tuple],
     store,
 ) -> int:
-    """Out-of-pool fetch for the A5 rate and A9 Engineer appointment."""
+    """Out-of-pool fetch for A2 incl-VAT, A3 TfC, A5 rate, A9 Engineer."""
     recovered = 0
     if delay_damages_rate_rescue_enabled() and query_asks_for_delay_damages_rate(query):
         recovered += _rescue_chunks_matching(
@@ -2383,6 +2719,16 @@ def _rescue_asked_particular_value_chunks(
             project_id, fused, store, _ENGINEER_IDENTITY_RESCUE_PHRASES,
             chunk_states_engineer_identity, label="engineer-identity",
         )
+    if aca_including_vat_rescue_enabled() and query_asks_for_aca_including_vat(query):
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _ACA_INCL_RESCUE_PHRASES,
+            chunk_states_aca_including_vat, label="aca-including-vat",
+        )
+    if time_for_completion_rescue_enabled() and query_asks_for_time_for_completion(query):
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _TFC_RESCUE_PHRASES,
+            chunk_states_time_for_completion, label="time-for-completion",
+        )
     return recovered
 
 
@@ -2390,7 +2736,7 @@ def _apply_asked_particular_value_boost(
     query: str,
     scored: List[Tuple[float, Chunk]],
 ) -> None:
-    """In-place: lift the rate / Engineer appointment over lookalikes."""
+    """In-place: lift the asked particular over neighboring-field lookalikes."""
     want_rate = (
         delay_damages_rate_rescue_enabled()
         and query_asks_for_delay_damages_rate(query)
@@ -2399,13 +2745,23 @@ def _apply_asked_particular_value_boost(
         engineer_identity_rescue_enabled()
         and query_asks_who_the_engineer_is(query)
     )
-    if not want_rate and not want_eng:
+    want_aca = (
+        aca_including_vat_rescue_enabled()
+        and query_asks_for_aca_including_vat(query)
+    )
+    want_tfc = (
+        time_for_completion_rescue_enabled()
+        and query_asks_for_time_for_completion(query)
+    )
+    if not (want_rate or want_eng or want_aca or want_tfc):
         return
     for i, (score, chunk) in enumerate(scored):
         text = chunk.text or ""
         hit = (
             (want_rate and chunk_states_delay_damages_rate(text))
             or (want_eng and chunk_states_engineer_identity(text))
+            or (want_aca and chunk_states_aca_including_vat(text))
+            or (want_tfc and chunk_states_time_for_completion(text))
         )
         if not hit:
             continue
