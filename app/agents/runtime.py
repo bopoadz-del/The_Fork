@@ -4746,7 +4746,7 @@ _DELAY_DAMAGES_ANSWER_RE = re.compile(r"(?i)delay\s+damages")
 # Live A3 PARTIAL: graft prepended "…is 90 days." then the model stated 852.
 _TFC_WHOLE_WORKS_CLAIM_RE = re.compile(
     r"(?i)(?:the\s+)?time\s+for\s+completion\s+for\s+(?:the\s+)?"
-    r"whole\s+of\s+the\s+works\s+is\s+(\d{2,4})\s+days",
+    r"whole\s+of\s+the\s+works\s+is\s+(\d{2,4})\s+days\.?",
 )
 
 
@@ -4771,6 +4771,7 @@ def _strip_conflicting_whole_works_tfc_claims(text: str, elected_days: str) -> s
         return match.group(0) if match.group(1) == elected_num else ""
 
     cleaned = _TFC_WHOLE_WORKS_CLAIM_RE.sub(_keep_or_drop, raw)
+    cleaned = re.sub(r"(?m)^\s*\.\s*$", "", cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = re.sub(r" {2,}", " ", cleaned)

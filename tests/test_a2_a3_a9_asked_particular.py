@@ -547,6 +547,7 @@ def test_graft_a3_leads_with_852_not_the_90_day_hedge():
         r"(?i)time for completion for the whole of the works is 90 days",
         out,
     )
+    assert "\n.\n" not in out
 
 
 def test_graft_a3_does_not_prepend_when_852_already_leads():
