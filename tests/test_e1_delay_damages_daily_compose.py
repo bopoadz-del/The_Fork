@@ -145,6 +145,15 @@ def test_aca_parser_prefers_excluding_vat_when_both_are_present():
     assert parse_accepted_contract_amount(RATE_ROW) is None
 
 
+def test_scanned_rate_adjacent_to_scanned_aca_still_parses():
+    """Live E1: rate and ACA are neighboring scanned chunks, no prefix."""
+    adjacent = SCANNED_RATE + "\n\n" + SCANNED_NET_ACA
+    assert parse_accepted_contract_amount(adjacent) == (NET_ACA, "SAR")
+    assert parse_delay_damages_rate_percent(adjacent) == 0.1
+    with_gross = adjacent + "\n\n" + GROSS_ACA_ROW
+    assert parse_accepted_contract_amount(with_gross) == (NET_ACA, "SAR")
+
+
 def test_compose_live_e1_is_point_one_percent_of_net_aca():
     excerpts = "\n\n".join((RATE_ROW, NET_ACA_ROW, GROSS_ACA_ROW, CAP_ROW))
     out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
@@ -174,6 +183,19 @@ def test_kill_switch_restores_the_no_compose_fail(monkeypatch):
     monkeypatch.setenv("COMPOSE_DELAY_DAMAGES_DAILY", "0")
     excerpts = "\n\n".join((RATE_ROW, NET_ACA_ROW))
     assert compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts) is None
+
+
+def test_graft_replaces_a_cannot_calculate_refusal():
+    rag = _sys(RATE_ROW, NET_ACA_ROW, GROSS_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    refusal = (
+        "I cannot calculate the delay damages per calendar day from the "
+        "reference context provided. Retrieved excerpts include the "
+        "Specification table of contents."
+    )
+    out = _graft_composed_delay_damages_daily(refusal, rag, msgs)
+    assert "1,754,504.46" in out
+    assert "cannot calculate" not in out.lower()
 
 
 def test_graft_states_the_daily_figure_when_the_model_quoted_sources_only():

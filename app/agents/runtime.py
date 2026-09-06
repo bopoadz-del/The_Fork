@@ -4995,9 +4995,23 @@ def _graft_composed_delay_damages_daily(
             v for _f, v in figs
             if abs(v - daily) > 1.0 and abs(v - base) > 1.0
         ]
-        if extras or (text or "").strip() == _CG_REFUSAL:
+        raw = text or ""
+        # Live E1: the model names Spec TOC / Daywork / insurance and
+        # says it cannot calculate. Once both operands are in the
+        # excerpts, replace that refusal — do not append under it.
+        if (
+            extras
+            or raw.strip() == _CG_REFUSAL
+            or _MISSING_PARTICULAR_RE.search(raw)
+            or _GENERIC_ACK_RE.search(raw)
+            or re.search(
+                r"(?i)cannot calculate|could not calculate|"
+                r"(?:do|does) not contain",
+                raw,
+            )
+        ):
             return line
-        body = (text or "").strip()
+        body = raw.strip()
         return line if not body else f"{line}\n\n{body}"
     except Exception:  # noqa: BLE001 — compose must never break a turn
         _LOG.exception("delay-damages daily compose failed; passing answer through")

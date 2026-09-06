@@ -629,10 +629,7 @@ class _ContractScope:
                 if not chunk_states_time_for_completion(chunk_text):
                     return False
             if self._e1_compose_in_pool:
-                if not (
-                    chunk_states_delay_damages_rate(chunk_text)
-                    or chunk_states_accepted_contract_amount(chunk_text)
-                ):
+                if not _chunk_keeps_for_e1_daily(filename, chunk_text):
                     return False
         if self._spec_identity_in_pool:
             titled = spec_title_filename_bonus(filename, self._title_phrases) > 0
@@ -1591,10 +1588,7 @@ def _apply_contract_data_filename_boost(
             continue
         if want_eng and not want_aca and not chunk_states_engineer_identity(text):
             continue
-        if want_e1 and not want_aca and not (
-            chunk_states_delay_damages_rate(text)
-            or chunk_states_accepted_contract_amount(text)
-        ):
+        if want_e1 and not want_aca and not chunk_states_delay_damages_rate(text):
             continue
         boosted = score + _CONTRACT_DATA_FILENAME_BONUS
         chunk.score = round(boosted, 6)
@@ -1649,9 +1643,15 @@ def _rescue_contract_data_docs(
         elif query_asks_delay_damages_daily_amount(query):
             keep = _chunk_is_e1_compose_operand
         paired = _pair_adjacent_keep_text(hits, keep) if keep else []
+        e1 = query_asks_delay_damages_daily_amount(query)
         for chunk in paired:
             names.setdefault(chunk.doc_id, names.get(chunk.doc_id, ""))
-            fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
+            # E1: rate earns the asked-value bonus; ACA enters at 0 so
+            # the monetary reservation still owns the last slot.
+            bonus = _ASKED_PARTICULAR_VALUE_BONUS
+            if e1 and not chunk_states_delay_damages_rate(chunk.text or ""):
+                bonus = 0.0
+            fused[chunk.chunk_id] = (chunk, 0.0, bonus)
             recovered += 1
         # A2 still needs every Contract Data window so the filename
         # fence can see the including-VAT row. A3/A9 only keep the
@@ -2710,6 +2710,26 @@ def _chunk_is_e1_compose_operand(text: str) -> bool:
     )
 
 
+def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
+    """Keep compose operands and Contract Data siblings; drop lookalikes.
+
+    Exclusive rate-or-ACA fencing deleted the particulars family and
+    shrank wave-2 E1 below k=5. Spec TOC / Daywork / insurance are not
+    Contract Data and must still drop once both operands are in-pool.
+    """
+    if _chunk_is_e1_compose_operand(text):
+        return True
+    if is_contract_data_particulars_row(text):
+        return True
+    if filename_looks_like_contract_data(filename or ""):
+        return True
+    t = text or ""
+    return bool(
+        _CD_HEADING_IN_CHUNK_RE.search(t)
+        and not contract_data_mention_is_only_a_cross_reference(t)
+    )
+
+
 def chunk_states_aca_including_vat(text: str) -> bool:
     """True when the chunk states Accepted Contract Amount *including VAT*.
 
@@ -3097,6 +3117,7 @@ def _rescue_chunks_matching(
     keep,
     *,
     label: str,
+    bonus: float = _ASKED_PARTICULAR_VALUE_BONUS,
 ) -> int:
     """Pull lexical hits that pass ``keep`` into ``fused``. Project-only.
 
@@ -3127,7 +3148,7 @@ def _rescue_chunks_matching(
     for chunk in _pair_adjacent_keep_text(hits, keep):
         if chunk.chunk_id in fused:
             continue
-        fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
+        fused[chunk.chunk_id] = (chunk, 0.0, bonus)
         recovered += 1
     if recovered:
         logger.info("%s rescue recovered %d chunk(s)", label, recovered)
@@ -3154,7 +3175,9 @@ def _rescue_asked_particular_value_chunks(
         )
         recovered += _rescue_chunks_matching(
             project_id, fused, store, _ACA_BASE_RESCUE_PHRASES,
-            chunk_states_accepted_contract_amount, label="delay-damages-daily-aca",
+            chunk_states_accepted_contract_amount,
+            label="delay-damages-daily-aca",
+            bonus=0.0,
         )
     if engineer_identity_rescue_enabled() and query_asks_who_the_engineer_is(query):
         recovered += _rescue_chunks_matching(
@@ -3183,10 +3206,6 @@ def _apply_asked_particular_value_boost(
         delay_damages_rate_rescue_enabled()
         and query_asks_for_delay_damages_rate(query)
     )
-    want_e1 = (
-        delay_damages_daily_rescue_enabled()
-        and query_asks_delay_damages_daily_amount(query)
-    )
     want_eng = (
         engineer_identity_rescue_enabled()
         and query_asks_who_the_engineer_is(query)
@@ -3199,13 +3218,12 @@ def _apply_asked_particular_value_boost(
         time_for_completion_rescue_enabled()
         and query_asks_for_time_for_completion(query)
     )
-    if not (want_rate or want_e1 or want_eng or want_aca or want_tfc):
+    if not (want_rate or want_eng or want_aca or want_tfc):
         return
     for i, (score, chunk) in enumerate(scored):
         text = chunk.text or ""
         hit = (
             (want_rate and chunk_states_delay_damages_rate(text))
-            or (want_e1 and _chunk_is_e1_compose_operand(text))
             or (want_eng and chunk_states_engineer_identity(text))
             or (want_aca and chunk_states_aca_including_vat(text))
             or (want_tfc and chunk_states_time_for_completion(text))

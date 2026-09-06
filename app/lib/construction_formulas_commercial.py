@@ -188,8 +188,14 @@ def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
     def _bucket(amount: float, currency: str, ctx: str) -> None:
         if amount < 1000:
             return
+        # A delay-damages *rate* sentence names Contract Price / ACA as
+        # the percentage base and is not itself the money row. Do not
+        # stain a real Accepted Contract Amount figure just because the
+        # 0.1%-per-day row sits in the same 160-char window (live E1
+        # scanned Contract Data: rate chunk then excl-VAT ACA).
         if _DD_ASK_RE.search(ctx) and "%" in ctx:
-            return
+            if not re.search(r"(?i)accepted\s+contract\s+amount", ctx):
+                return
         if not _ACA_LABEL_RE.search(ctx):
             return
         item = (amount, currency)
