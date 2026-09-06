@@ -141,6 +141,29 @@ A3_HEDGE_90_THEN_852 = (
     "Under Clause 1.1.75, the Time for Completion (for the whole of "
     f"the Works) is stated as: {A3_DAYS} from the Commencement Date."
 )
+# Live A2 FAIL on 153ec86 / #517: opening sentence labeled the excl-VAT
+# neighbor as including VAT, then restated DD-2023-118's including-VAT
+# figure. Delay-damages / excl-VAT first-in-blob must lose the election.
+A2_HEDGE_EXCL_THEN_INCL = (
+    f"The Accepted Contract Amount including VAT is {ACA_EXCL}.\n\n"
+    "The Accepted Contract Amount including VAT under contract "
+    f"DD-2023-118 is {ACA_INCL} (Two Billion Seventeen Million Six "
+    "Hundred Eighty Thousand One Hundred Twenty Four Saudi Riyals "
+    "and Sixty Nine Halalas)."
+)
+DD22_ACA_INCL = (
+    "CONTRACT DATA particulars — filled-in amount / duration / "
+    "percentage [DD-2022-175_Vol 1 - Conditions of Contract.pdf].\n"
+    "Particular Conditions Part A - Contract Data\n"
+    "1.1.1 Accepted Contract Amount including VAT: SAR 9,936,000.00"
+)
+MIXED_ACA_TABLE = (
+    "CONTRACT DATA particulars — filled-in amount / duration / "
+    f"percentage [{CD_NAME}].\n"
+    "Particular Conditions Part A - Contract Data\n"
+    f"1.1.1 Accepted Contract Amount excluding VAT: {ACA_EXCL}\n"
+    f"1.1.1 Accepted Contract Amount including VAT: {ACA_INCL}"
+)
 
 ACTIVE = "p_master"
 CD_DOC = "cd118"
@@ -226,6 +249,10 @@ def test_a2_a3_a9_predicates():
     assert currency == "SAR"
     assert amount == 2_017_680_124.69
     assert extract_aca_including_vat(COC_DELAY_CHUNK) is None
+    assert extract_aca_including_vat(
+        COC_DELAY_CHUNK + "\n\n" + SCANNED_ACA_EXCL + "\n\n" + SCANNED_ACA_INCL,
+    ) == (2_017_680_124.69, "SAR")
+    assert extract_aca_including_vat(MIXED_ACA_TABLE) == (2_017_680_124.69, "SAR")
     assert extract_time_for_completion_days(SCANNED_TFC) == A3_DAYS
     assert extract_time_for_completion_days(
         SECTIONAL_TFC_90 + "\n\n" + SPEC_NOTICE_90 + "\n\n" + SCANNED_TFC,
@@ -513,6 +540,7 @@ def test_inject_hints_name_the_asked_particular():
     a3 = format_chunks_as_system_message([tfc], 1, query=LIVE_A3)["content"]
     a9 = format_chunks_as_system_message([eng], 1, query=LIVE_A9)["content"]
     assert "INCLUDING VAT" in a2
+    assert "Lead with that including-VAT figure" in a2
     assert "delay damages" in a2.lower()
     assert "TIME FOR COMPLETION" in a3
     assert "ENGINEER APPOINTMENT" in a9
@@ -586,3 +614,60 @@ def test_postprocess_a3_hedge_becomes_852_lead():
     assert out.startswith("The Time for Completion")
     assert "852" in out.split(".", 1)[0]
     assert "90 days" not in out.lower() or A3_DAYS in out.split("\n", 1)[0]
+
+
+def test_extract_elects_incl_vat_over_excl_and_delay_neighbor():
+    from app.core.rag.inject import format_chunks_as_system_message
+    from app.core.rag.retriever import extract_aca_including_vat
+
+    rag = _sys(COC_DELAY_CHUNK, SCANNED_ACA_EXCL, SCANNED_ACA_INCL)
+    assert extract_aca_including_vat(rag["content"]) == (2_017_680_124.69, "SAR")
+    excl = _chunk("ex", CD_DOC, 0.9, SCANNED_ACA_EXCL)
+    incl = _chunk("in", CD_DOC, 0.8, SCANNED_ACA_INCL)
+    formatted = format_chunks_as_system_message(
+        [excl, incl], 1, query=LIVE_A2,
+    )["content"]
+    assert extract_aca_including_vat(formatted) == (2_017_680_124.69, "SAR")
+
+
+def test_extract_elects_dd2023_incl_vat_over_dd2022():
+    from app.core.rag.retriever import extract_aca_including_vat
+
+    rag = _sys(DD22_ACA_INCL, MIXED_ACA_TABLE)
+    assert extract_aca_including_vat(rag["content"]) == (2_017_680_124.69, "SAR")
+
+
+def test_graft_a2_leads_with_incl_vat_not_the_excl_hedge():
+    """Live A2 FAIL: opening 'including VAT is' excl-VAT, then DD-2023 incl."""
+    rag = _sys(COC_DELAY_CHUNK, SCANNED_ACA_EXCL, SCANNED_ACA_INCL)
+    msgs = [{"role": "user", "content": LIVE_A2}]
+    out = _graft_asked_contract_particular(A2_HEDGE_EXCL_THEN_INCL, rag, msgs)
+    assert out.startswith("The Accepted Contract Amount including VAT")
+    first = out.split(".", 1)[0]
+    assert "2,017,680,124.69" in first
+    assert "1,754,504,456.25" not in first
+    assert not re.search(
+        r"(?i)accepted contract amount including vat is "
+        r"sar 1,754,504,456\.25",
+        out,
+    )
+    assert "\n.\n" not in out
+
+
+def test_graft_a2_does_not_prepend_when_incl_vat_already_leads():
+    rag = _sys(SCANNED_ACA_INCL)
+    msgs = [{"role": "user", "content": LIVE_A2}]
+    already = (
+        "The Accepted Contract Amount including VAT is "
+        f"{ACA_INCL} per Contract Data clause 1.1.1."
+    )
+    assert _graft_asked_contract_particular(already, rag, msgs) == already
+
+
+def test_postprocess_a2_hedge_becomes_incl_vat_lead():
+    rag = _sys(SCANNED_ACA_EXCL, SCANNED_ACA_INCL)
+    msgs = [{"role": "user", "content": LIVE_A2}]
+    out = _postprocess_answer(A2_HEDGE_EXCL_THEN_INCL, rag, msgs)
+    assert out.startswith("The Accepted Contract Amount including VAT")
+    assert "2,017,680,124.69" in out.split(".", 1)[0]
+    assert "1,754,504,456.25" not in out.split("\n", 1)[0]
