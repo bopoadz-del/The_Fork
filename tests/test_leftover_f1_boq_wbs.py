@@ -16,7 +16,6 @@ template scaffold.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -297,7 +296,7 @@ async def test_f1_run_workflow_with_boq_items_is_not_building_template():
             "boq_items": _BOQ_ITEMS,
         },
     }
-    out = asyncio.run(run_workflow("generate_wbs", ctx, ProjectSession.new("f1-boq-wf")))
+    out = await run_workflow("generate_wbs", ctx, ProjectSession.new("f1-boq-wf"))
     assert out["handled"] and out["status"] == "success", out
     answer = out["answer"]
     assert "Template scaffold" not in answer
