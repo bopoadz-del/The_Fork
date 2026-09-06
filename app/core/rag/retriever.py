@@ -506,6 +506,9 @@ class _ContractScope:
         self._engineer_identity_in_pool = False
         self._aca_incl_vat_in_pool = False
         self._tfc_in_pool = False
+        # OLD-pack A6: Defects Notification Period. PSA / CPM TOC
+        # recitals used to occupy every slot after #522. Not C1.
+        self._dnp_in_pool = False
         # OLD-pack E1: rate × ACA. A5's exclusive rate fence would
         # drop the money row; E1 needs both operands in the top-k.
         self._e1_compose_in_pool = False
@@ -517,7 +520,7 @@ class _ContractScope:
         self._rate_only_codes: List[str] = []
         self._rate_only_in_pool = False
         # OLD-pack C1: Sub-Clause 1.5.1(d) intro ends "as follows";
-        # the precedence list is the next same-doc chunk. Not A2/A3/A5/A9.
+        # the precedence list is the next same-doc chunk. Not A2/A3/A5/A6/A9.
         self._spec_precedence_list_in_pool = False
         docs: Optional[List[Tuple[str, str]]] = (
             list(ranked_docs) if ranked_docs is not None else None
@@ -568,6 +571,14 @@ class _ContractScope:
             ):
                 self._tfc_in_pool = any(
                     chunk_states_time_for_completion(text) for _n, text in docs
+                )
+            if (
+                dnp_rescue_enabled()
+                and query_asks_for_defects_notification_period(self.query)
+            ):
+                self._dnp_in_pool = any(
+                    chunk_states_defects_notification_period(text)
+                    for _n, text in docs
                 )
             if (
                 delay_damages_daily_rescue_enabled()
@@ -640,6 +651,9 @@ class _ContractScope:
                     return False
             if self._tfc_in_pool:
                 if not chunk_states_time_for_completion(chunk_text):
+                    return False
+            if self._dnp_in_pool:
+                if not chunk_states_defects_notification_period(chunk_text):
                     return False
             if self._e1_compose_in_pool:
                 if not _chunk_keeps_for_e1_daily(filename, chunk_text):
@@ -1579,7 +1593,7 @@ def _apply_contract_data_filename_boost(
     scored: List[Tuple[float, Chunk]],
     name_by_id: Dict[str, str],
 ) -> None:
-    """In-place: lift Contract Data files on an A2 / A3 / A9 ask."""
+    """In-place: lift Contract Data files on an A2 / A3 / A6 / A9 ask."""
     if not contract_data_filename_rescue_enabled():
         return
     if not query_wants_contract_data_file(query):
@@ -1588,12 +1602,13 @@ def _apply_contract_data_filename_boost(
     want_tfc = query_asks_for_time_for_completion(query)
     want_eng = query_asks_who_the_engineer_is(query)
     want_e1 = query_asks_delay_damages_daily_amount(query)
+    want_dnp = query_asks_for_defects_notification_period(query)
     for i, (score, chunk) in enumerate(scored):
         name = name_by_id.get(chunk.doc_id, "") or getattr(chunk, "source_name", "") or ""
         if not filename_looks_like_contract_data(name):
             continue
         text = chunk.text or ""
-        # A2 keeps today's "any Contract Data file" lift. A3/A9 only
+        # A2 keeps today's "any Contract Data file" lift. A3/A6/A9 only
         # lift the row that answers — an ACA-only Contract Data file
         # must not steal Time for Completion (test_a3_is_not_stolen).
         # E1 lifts the two compose operands, not every CD sibling.
@@ -1602,6 +1617,8 @@ def _apply_contract_data_filename_boost(
         if want_eng and not want_aca and not chunk_states_engineer_identity(text):
             continue
         if want_e1 and not want_aca and not chunk_states_delay_damages_rate(text):
+            continue
+        if want_dnp and not want_aca and not chunk_states_defects_notification_period(text):
             continue
         boosted = score + _CONTRACT_DATA_FILENAME_BONUS
         chunk.score = round(boosted, 6)
@@ -1655,6 +1672,8 @@ def _rescue_contract_data_docs(
             keep = chunk_states_engineer_identity
         elif query_asks_delay_damages_daily_amount(query):
             keep = _chunk_is_e1_compose_operand
+        elif query_asks_for_defects_notification_period(query):
+            keep = chunk_states_defects_notification_period
         paired = _pair_adjacent_keep_text(hits, keep) if keep else []
         e1 = query_asks_delay_damages_daily_amount(query)
         for chunk in paired:
@@ -2475,6 +2494,9 @@ def chunk_answers_asked_particular(query: str, text: str) -> bool:
     if time_for_completion_rescue_enabled() and query_asks_for_time_for_completion(query):
         if chunk_states_time_for_completion(text):
             return True
+    if dnp_rescue_enabled() and query_asks_for_defects_notification_period(query):
+        if chunk_states_defects_notification_period(text):
+            return True
     return (
         is_contract_data_particulars_row(text)
         and particulars_row_answers_asked_label(query, text)
@@ -2503,6 +2525,11 @@ _ACA_INCL_RESCUE_PHRASES = (
 _TFC_RESCUE_PHRASES = (
     "time for completion for the whole of the works",
     "1.1.75 time for completion",
+)
+_DNP_RESCUE_PHRASES = (
+    "defects notification period",
+    "1.1.27 defects notification",
+    "defects notification period days",
 )
 _ASKED_PARTICULAR_VALUE_BONUS = 2.0
 _TFC_DAYS_RE = re.compile(r"(?i)\b(\d{2,4})\s+(?:calendar\s+|working\s+)?days\b")
@@ -2542,6 +2569,14 @@ def time_for_completion_rescue_enabled() -> bool:
     RAG_TIME_FOR_COMPLETION_RESCUE=0 restores prefix-only ranking.
     """
     return _env_flag_on("RAG_TIME_FOR_COMPLETION_RESCUE")
+
+
+def dnp_rescue_enabled() -> bool:
+    """ON by default — live A6 retrieved PSA / CPM TOC instead of DNP.
+
+    RAG_DNP_RESCUE=0 restores Cosine / particulars-family ranking.
+    """
+    return _env_flag_on("RAG_DNP_RESCUE")
 
 
 def query_asks_for_aca_including_vat(query: str) -> bool:
@@ -3080,13 +3115,193 @@ def extract_engineer_identity(text: str) -> Optional[str]:
     return None
 
 
+# ── Defects Notification Period (live OLD-pack A6) ────────────────────────
+#
+# Live Master Corpus A6 on 82eb9c5 (#522): "Answer only from the client
+# project documents. What is the Defects Notification Period?" retrieved
+# Long Form PSA / CPM TOC / recitals / document registers and refused.
+# Expected 365 days from Taking-Over Certificate / Contract Data under
+# DD-2023-118. A2/A3/A5/A9 already have exclusive asked-value fences;
+# A6 was surviving on family-bonus luck and was not named off the C1
+# path. Same shape as A3 TfC: state a duration, fence lookalikes.
+# Kill-switch: RAG_DNP_RESCUE=0.
+_DNP_ASK_RE = re.compile(
+    r"(?i)(?:defects\s+notification(?:\s+period)?"
+    r"|(?:what\s+is\s+(?:the\s+)?)dnp\b)"
+)
+_DNP_KEY_RE = re.compile(r"(?i)defects\s+notification(?:\s+period)?")
+_DNP_CLAUSE_RE = re.compile(r"(?i)\b1\.1\.27\b")
+_DNP_DURATION_RE = re.compile(
+    r"(?i)\b(\d{1,4})\s+(?:calendar\s+|working\s+)?"
+    r"(days?|months?|years?)\b"
+)
+_DNP_POINTER_RE = re.compile(
+    r"(?i)(?:stated|named|identified|set\s+out|specified|defined|"
+    r"described|referred\s+to)\s+in\s+(?:the\s+)?contract\s+data"
+)
+_DNP_GLOSSARY_RE = re.compile(
+    r"(?i)(?:defects\s+notification\s+period|\bdnp\b)\s+means\b"
+)
+_DNP_TOC_RE = re.compile(
+    r"(?i)table\s+of\s+contents|document\s+register|\brecitals?\b"
+)
+_DNP_TOC_ANCHOR_RE = re.compile(r"(?i)taking[- ]over")
+
+
+def query_asks_for_defects_notification_period(query: str) -> bool:
+    """True for A6 (Defects Notification Period), not A2/A3/A5/A9/C1/E1/F1."""
+    q = query or ""
+    if not q or _DEFINITION_QUESTION_RE.search(q):
+        return False
+    if not _DNP_ASK_RE.search(q):
+        return False
+    # Neighboring-field asks that happen to mention DNP stay off this path.
+    if _ACA_ASK_RE.search(q):
+        return False
+    if re.search(r"(?i)time\s+for\s+completion", q):
+        return False
+    if re.search(r"(?i)(?:delay|liquidated)\s+damages", q):
+        return False
+    if _CD_WHO_IS_RE.search(q):
+        return False
+    if _BOQ_SCOPE_ASK_RE.search(q):
+        return False
+    return True
+
+
+def _format_dnp_duration(match: re.Match) -> str:
+    num = match.group(1)
+    unit = (match.group(2) or "days").lower()
+    if unit.startswith("day"):
+        return f"{num} days"
+    if unit.startswith("month"):
+        return f"{num} months"
+    if unit.startswith("year"):
+        return f"{num} years"
+    return f"{num} {unit}"
+
+
+def _dnp_duration_from_text(text: str) -> Optional[str]:
+    """Duration tied to the DNP label, not a neighbouring notice period."""
+    blob = _normalize_retrieval_ws(text)
+    if not blob:
+        return None
+    for rx in (_DNP_KEY_RE, _DNP_CLAUSE_RE):
+        for m in rx.finditer(blob):
+            window = blob[m.start(): m.end() + 140]
+            if _DNP_POINTER_RE.search(window) and not _DNP_DURATION_RE.search(window):
+                continue
+            if rx is _DNP_CLAUSE_RE and not _DNP_KEY_RE.search(window):
+                continue
+            dm = _DNP_DURATION_RE.search(window)
+            if dm:
+                return _format_dnp_duration(dm)
+    return None
+
+
+def chunk_states_defects_notification_period(text: str) -> bool:
+    """True when the chunk states a Defects Notification Period duration.
+
+    PSA / CPM table-of-contents, recitals, and document registers that
+    only *name* the heading (live A6 on 82eb9c5) are lookalikes. A
+    General Conditions pointer (``as stated in the Contract Data``) and
+    a glossary ``means the period…`` are not the filled 1.1.27 row.
+    """
+    t = text or ""
+    if not t:
+        return False
+    if _DNP_GLOSSARY_RE.search(t) and not filled_particulars_rows(t):
+        return False
+    for key, val in filled_particulars_rows(t):
+        if not _DNP_KEY_RE.search(key):
+            continue
+        if _DNP_DURATION_RE.search(val) or _DNP_DURATION_RE.search(key):
+            return True
+    blob = _normalize_retrieval_ws(t)
+    if _DNP_POINTER_RE.search(blob) and not (
+        _CD_PARTICULARS_PREFIX_RE.search(t)
+        or (
+            _CD_HEADING_IN_CHUNK_RE.search(t)
+            and not contract_data_mention_is_only_a_cross_reference(t)
+        )
+    ):
+        return False
+    if _DNP_TOC_RE.search(blob) and not (
+        _CD_PARTICULARS_PREFIX_RE.search(t) or filled_particulars_rows(t)
+    ):
+        return False
+    return bool(_dnp_duration_from_text(t))
+
+
+def extract_defects_notification_period(text: str) -> Optional[str]:
+    """DNP duration as written (e.g. ``365 days``), or None.
+
+    Prefers clause 1.1.27 / Taking-Over / Contract Data over a
+    glossary or a TOC heading that happens to sit near a duration.
+    """
+    t = text or ""
+    if not t:
+        return None
+    cands: List[Tuple[int, int, str]] = []
+    order = 0
+    for key, val in filled_particulars_rows(t):
+        if not _DNP_KEY_RE.search(key):
+            continue
+        m = _DNP_DURATION_RE.search(val) or _DNP_DURATION_RE.search(key)
+        if not m:
+            continue
+        days = _format_dnp_duration(m)
+        joined = f"{key} {val}"
+        score = 60
+        if _DNP_CLAUSE_RE.search(joined) or _DNP_CLAUSE_RE.search(t):
+            score += 80
+        if _CD_PARTICULARS_PREFIX_RE.search(t):
+            score += 40
+        if _DNP_TOC_ANCHOR_RE.search(joined):
+            score += 30
+        ids = extract_contract_doc_ids(t)
+        if ids:
+            year, seq = max(_contract_id_recency(cid) for cid in ids)
+            if year > 0:
+                score += year
+            if seq > 0:
+                score += min(seq, 30)
+        cands.append((-score, order, days))
+        order += 1
+    for block in re.split(r"\n{2,}|\[doc_id=", t):
+        if not chunk_states_defects_notification_period(block):
+            continue
+        days = _dnp_duration_from_text(block)
+        if not days:
+            continue
+        score = 0
+        if _DNP_CLAUSE_RE.search(block):
+            score += 80
+        if _CD_PARTICULARS_PREFIX_RE.search(block):
+            score += 60
+        if _DNP_TOC_ANCHOR_RE.search(block):
+            score += 30
+        if _CD_HEADING_IN_CHUNK_RE.search(block):
+            score += 20
+        cands.append((-score, order, days))
+        order += 1
+    if not cands:
+        return None
+    cands.sort()
+    return cands[0][2]
+
+
 def query_wants_contract_data_file(query: str) -> bool:
-    """A2 / A3 / A9 / E1 live in a Contract Data file, not PSA / CPM / drawings."""
+    """A2 / A3 / A6 / A9 / E1 live in a Contract Data file, not PSA / CPM."""
     return (
         query_asks_for_accepted_contract_amount(query)
         or query_asks_for_time_for_completion(query)
         or query_asks_who_the_engineer_is(query)
         or query_asks_delay_damages_daily_amount(query)
+        or (
+            dnp_rescue_enabled()
+            and query_asks_for_defects_notification_period(query)
+        )
     )
 
 
@@ -3174,7 +3389,7 @@ def _rescue_asked_particular_value_chunks(
     fused: Dict[str, Tuple],
     store,
 ) -> int:
-    """Out-of-pool fetch for A2 incl-VAT, A3 TfC, A5 rate, A9 Engineer."""
+    """Out-of-pool fetch for A2 incl-VAT, A3 TfC, A5 rate, A6 DNP, A9 Engineer."""
     recovered = 0
     if delay_damages_rate_rescue_enabled() and query_asks_for_delay_damages_rate(query):
         recovered += _rescue_chunks_matching(
@@ -3207,6 +3422,12 @@ def _rescue_asked_particular_value_chunks(
             project_id, fused, store, _TFC_RESCUE_PHRASES,
             chunk_states_time_for_completion, label="time-for-completion",
         )
+    if dnp_rescue_enabled() and query_asks_for_defects_notification_period(query):
+        recovered += _rescue_chunks_matching(
+            project_id, fused, store, _DNP_RESCUE_PHRASES,
+            chunk_states_defects_notification_period,
+            label="defects-notification-period",
+        )
     return recovered
 
 
@@ -3231,7 +3452,11 @@ def _apply_asked_particular_value_boost(
         time_for_completion_rescue_enabled()
         and query_asks_for_time_for_completion(query)
     )
-    if not (want_rate or want_eng or want_aca or want_tfc):
+    want_dnp = (
+        dnp_rescue_enabled()
+        and query_asks_for_defects_notification_period(query)
+    )
+    if not (want_rate or want_eng or want_aca or want_tfc or want_dnp):
         return
     for i, (score, chunk) in enumerate(scored):
         text = chunk.text or ""
@@ -3240,6 +3465,7 @@ def _apply_asked_particular_value_boost(
             or (want_eng and chunk_states_engineer_identity(text))
             or (want_aca and chunk_states_aca_including_vat(text))
             or (want_tfc and chunk_states_time_for_completion(text))
+            or (want_dnp and chunk_states_defects_notification_period(text))
         )
         if not hit:
             continue
@@ -3559,8 +3785,8 @@ def spec_precedence_list_rescue_enabled() -> bool:
 def query_asks_for_spec_precedence_list(query: str) -> bool:
     """True for Sub-Clause 1.5.1(d) / Specification precedence (C1).
 
-    A2 VAT, A3 Time for Completion, A5 delay-damages, A9 Engineer,
-    and C2 titled-spec asks stay off this path.
+    A2 VAT, A3 Time for Completion, A5 delay-damages, A6 DNP,
+    A9 Engineer, and C2 titled-spec asks stay off this path.
     """
     return bool(_SPEC_PRECEDENCE_ASK_RE.search(query or ""))
 
