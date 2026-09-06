@@ -2759,23 +2759,50 @@ def _chunk_is_e1_compose_operand(text: str) -> bool:
 
 
 def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
-    """Keep compose operands and Contract Data siblings; drop lookalikes.
+    """Keep compose operands and filled particulars; drop GC lookalikes.
 
     Exclusive rate-or-ACA fencing deleted the particulars family and
     shrank wave-2 E1 below k=5. Spec TOC / Daywork / insurance are not
     Contract Data and must still drop once both operands are in-pool.
+
+    Live leftover E1 after #523: the bound Contract Data volume's
+    Sub-Clause 8.8 chunks (9–11) passed the filename keep, occupied
+    top-k, and the last-slot money reserve then elected the
+    including-VAT ACA. A filename match alone is not an operand.
     """
+    _ = filename  # operands are textual; a CD filename is not enough
     if _chunk_is_e1_compose_operand(text):
         return True
-    if is_contract_data_particulars_row(text):
-        return True
-    if filename_looks_like_contract_data(filename or ""):
-        return True
     t = text or ""
+    if _DELAY_RATE_POINTER_RE.search(t) and not chunk_states_delay_damages_rate(t):
+        return False
+    if is_contract_data_particulars_row(t):
+        return True
     return bool(
         _CD_HEADING_IN_CHUNK_RE.search(t)
         and not contract_data_mention_is_only_a_cross_reference(t)
     )
+
+
+def _e1_aca_preference(text: str) -> int:
+    """Higher wins for E1's rate base. Excl-VAT (2) > unlabeled (1) > incl (0)."""
+    if not chunk_states_accepted_contract_amount(text):
+        return -1
+    try:
+        from app.lib.construction_formulas_commercial import (
+            _EXCL_VAT_RE,
+            _INCL_VAT_RE,
+        )
+    except Exception:  # noqa: BLE001 — unlabeled ACA still ranks above none
+        return 1
+    blob = _normalize_retrieval_ws(text or "")
+    if _EXCL_VAT_RE.search(blob) and not _INCL_VAT_RE.search(blob):
+        return 2
+    if _INCL_VAT_RE.search(blob) and not _EXCL_VAT_RE.search(blob):
+        return 0
+    if _EXCL_VAT_RE.search(blob):
+        return 2
+    return 1
 
 
 def chunk_states_aca_including_vat(text: str) -> bool:
@@ -3440,6 +3467,10 @@ def _apply_asked_particular_value_boost(
         delay_damages_rate_rescue_enabled()
         and query_asks_for_delay_damages_rate(query)
     )
+    want_e1 = (
+        delay_damages_daily_rescue_enabled()
+        and query_asks_delay_damages_daily_amount(query)
+    )
     want_eng = (
         engineer_identity_rescue_enabled()
         and query_asks_who_the_engineer_is(query)
@@ -3456,12 +3487,14 @@ def _apply_asked_particular_value_boost(
         dnp_rescue_enabled()
         and query_asks_for_defects_notification_period(query)
     )
-    if not (want_rate or want_eng or want_aca or want_tfc or want_dnp):
+    if not (want_rate or want_e1 or want_eng or want_aca or want_tfc or want_dnp):
         return
     for i, (score, chunk) in enumerate(scored):
         text = chunk.text or ""
         hit = (
             (want_rate and chunk_states_delay_damages_rate(text))
+            or (want_e1 and chunk_states_delay_damages_rate(text))
+            or (want_e1 and _e1_aca_preference(text) >= 2)
             or (want_eng and chunk_states_engineer_identity(text))
             or (want_aca and chunk_states_aca_including_vat(text))
             or (want_tfc and chunk_states_time_for_completion(text))
@@ -4060,6 +4093,17 @@ def reserve_monetary_base_row(
     if any(_is_money_base(c.text or "") for c in kept):
         return False
     present = {c.chunk_id for c in kept}
+    replace_at = len(kept) - 1
+    if e1:
+        # Live leftover E1: particulars reserved the 0.1% row into the
+        # last slot, then this function overwrote it with including-VAT
+        # ACA. Never drop the rate operand for the money row.
+        for i in range(len(kept) - 1, -1, -1):
+            if not chunk_states_delay_damages_rate(kept[i].text or ""):
+                replace_at = i
+                break
+        else:
+            return False
     for chunk in ranked:
         if chunk.chunk_id in present:
             continue
@@ -4067,13 +4111,107 @@ def reserve_monetary_base_row(
             continue
         if allow is not None and not allow(chunk):
             continue
-        kept[-1] = chunk
+        kept[replace_at] = chunk
         logger.debug(
             "reserved a Contract Data money row for an arithmetic ask; "
             "a percentage alone cannot answer it",
         )
         return True
     return False
+
+
+def _e1_non_operand_index(
+    kept: List[Chunk],
+    *,
+    protect_rate: bool,
+    protect_aca: bool,
+) -> Optional[int]:
+    """Lowest-ranked slot that is not a protected E1 compose operand."""
+    for i in range(len(kept) - 1, -1, -1):
+        text = kept[i].text or ""
+        if protect_rate and chunk_states_delay_damages_rate(text):
+            continue
+        if protect_aca and chunk_states_accepted_contract_amount(text):
+            continue
+        return i
+    return None
+
+
+def reserve_e1_compose_operands(
+    query: str,
+    kept: List[Chunk],
+    ranked: List[Chunk],
+    *,
+    allow=None,
+) -> bool:
+    """Guarantee both E1 multiply operands in top-k, prefer excl-VAT ACA.
+
+    ``reserve_matching_particulars_row`` and ``reserve_monetary_base_row``
+    share one last slot. Live leftover E1 after #523: CoC 8.8 filled
+    kept, the money reserve elected including-VAT ACA, and compose never
+    saw the 0.1% row — the answer was the A2 particular. This pass
+    restores the rate and upgrades incl-VAT to excl-VAT when both twins
+    are reachable. Kill-switch: RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
+    """
+    if not kept:
+        return False
+    if not (
+        delay_damages_daily_rescue_enabled()
+        and query_asks_delay_damages_daily_amount(query)
+    ):
+        return False
+    changed = False
+    present = {c.chunk_id for c in kept}
+
+    if not any(chunk_states_delay_damages_rate(c.text or "") for c in kept):
+        idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+        if idx is not None:
+            for chunk in ranked:
+                if chunk.chunk_id in present:
+                    continue
+                if not chunk_states_delay_damages_rate(chunk.text or ""):
+                    continue
+                if allow is not None and not allow(chunk):
+                    continue
+                kept[idx] = chunk
+                present.add(chunk.chunk_id)
+                changed = True
+                break
+
+    best_chunk: Optional[Chunk] = None
+    best_rank = -1
+    for chunk in ranked:
+        if allow is not None and not allow(chunk):
+            continue
+        rank = _e1_aca_preference(chunk.text or "")
+        if rank > best_rank:
+            best_rank = rank
+            best_chunk = chunk
+    if best_chunk is None:
+        return changed
+
+    kept_best = max((_e1_aca_preference(c.text or "") for c in kept), default=-1)
+    if best_rank <= kept_best:
+        return changed
+    if best_chunk.chunk_id in {c.chunk_id for c in kept}:
+        return changed
+
+    idx = None
+    if kept_best >= 0:
+        worst_i = None
+        worst_rank = 99
+        for i, chunk in enumerate(kept):
+            rank = _e1_aca_preference(chunk.text or "")
+            if 0 <= rank < worst_rank:
+                worst_rank = rank
+                worst_i = i
+        idx = worst_i
+    if idx is None:
+        idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+    if idx is None:
+        return changed
+    kept[idx] = best_chunk
+    return True
 
 
 def reserve_matching_particulars_row(
@@ -4423,6 +4561,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     )
     reserve_matching_particulars_row(query, kept, candidates, allow=_allow)
     reserve_monetary_base_row(query, kept, candidates, allow=_allow)
+    reserve_e1_compose_operands(query, kept, candidates, allow=_allow)
     for chunk in kept:
         chunk.source_name = _name(chunk.doc_id)
     return kept, noise_filtered
@@ -5110,6 +5249,9 @@ def retrieve_with_filter(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
     reserve_monetary_base_row(
+        query, kept, [c for _, c in scored], allow=_allow_final,
+    )
+    reserve_e1_compose_operands(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
 
