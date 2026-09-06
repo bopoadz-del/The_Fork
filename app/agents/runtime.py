@@ -4066,8 +4066,15 @@ def _format_wbs_result(payload: dict[str, Any]) -> str:
     # reaches. Rendered from the tool's own `scaffold` record -- the model does
     # not write this line.
     scaffold = payload.get("scaffold") if isinstance(payload.get("scaffold"), dict) else {}
-    if scaffold.get("declaration"):
-        lines.append(f"_{scaffold['declaration']}_")
+    declaration = scaffold.get("declaration")
+    if (
+        declaration
+        and scaffold.get("derived_from_boq")
+        and "template scaffold" in str(declaration).lower()
+    ):
+        declaration = ""
+    if declaration:
+        lines.append(f"_{declaration}_")
         lines.append("")
     # Numbered phase/package outline — leftover F1. generate_wbs already
     # builds wbs_tree; the glass used to stop at headline metrics.
@@ -4103,10 +4110,17 @@ def _format_wbs_result(payload: dict[str, Any]) -> str:
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     if summary:
         lines.append("")
-        lines.append(
-            f"Template activities: {payload.get('actual_count') or summary.get('activity_count') or 0}. "
-            f"Project type: {payload.get('project_type') or '—'}."
-        )
+        count = payload.get("actual_count") or summary.get("activity_count") or 0
+        if scaffold.get("derived_from_boq"):
+            lines.append(
+                f"BOQ-derived items: {count}. "
+                f"Scope: {payload.get('project_type') or 'demolition_site_clearance'}."
+            )
+        else:
+            lines.append(
+                f"Template activities: {count}. "
+                f"Project type: {payload.get('project_type') or '—'}."
+            )
     if payload.get("assumptions"):
         lines.append("")
         for a in payload.get("assumptions") or []:
@@ -10353,12 +10367,13 @@ class Agent:
                 tc = 200
             from app.lib.wbs_duration_overrides import collect_overrides
             params = {
-                "brief": args.get("brief") or "",
+                "brief": args.get("brief") or user_message or "",
                 "target_count": tc,
                 "project_type": args.get("project_type"),
                 "start_date": args.get("start_date"),
                 "user_message": user_message,
                 "history": history,
+                "project_id": project_id,
                 "duration_overrides": collect_overrides(
                     user_message,
                     args.get("brief"),

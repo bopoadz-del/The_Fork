@@ -147,6 +147,8 @@ def build_schedule_plan(context: Dict[str, Any]) -> ExecutionPlan:
         "start_date": p.get("start_date"),
         "user_message": msg,
         "duration_overrides": duration_overrides or None,
+        "project_id": context.get("project_id") or p.get("project_id"),
+        "boq_items": p.get("boq_items") or context.get("boq_items"),
     }, description="build the WBS (+ long-lead procurement)"))
     steps.append(PlanStep(type="cost_load", args={
         "project_name": context.get("project_name") or "Project",
@@ -172,6 +174,34 @@ _WBS_OUTLINE_ASK_RE = re.compile(
 def message_wants_wbs_outline(message: str) -> bool:
     """True when the turn asked to see the WBS hierarchy, not only a schedule."""
     return bool(_WBS_OUTLINE_ASK_RE.search(message or ""))
+
+
+# Live leftover F1 after #521: the hierarchy rendered, but generate_wbs still
+# elected the building template. A demolition / site-clearance + BOQ WBS ask
+# must consume retrieved measured rows instead. A2/A3/A5/A9/C1/E1 stay off
+# this path — they are Contract Data / spec-precedence / delay-damages asks.
+_DEMO_SITE_CLEAR_ASK_RE = re.compile(
+    r"(?i)\b(?:demolition|site\s+clearance|site\s+clearing)\b",
+)
+
+
+def message_wants_boq_scope_wbs(message: str) -> bool:
+    """True for a high-level WBS over demolition / site-clearance BOQ scope.
+
+    Requires the WBS outline phrasing, the demolition/site-clearance scope,
+    and a bill-of-quantities ask. Kill-switch ``BOQ_SCOPE_WBS=0`` disables
+    the election so generate_wbs keeps the template scaffold.
+    """
+    from app.lib.boq_schedule import boq_scope_wbs_enabled
+    if not boq_scope_wbs_enabled():
+        return False
+    msg = message or ""
+    if not message_wants_wbs_outline(msg):
+        return False
+    if not _DEMO_SITE_CLEAR_ASK_RE.search(msg):
+        return False
+    from app.core.rag.retriever import query_asks_for_boq_scope
+    return query_asks_for_boq_scope(msg)
 
 
 def format_wbs_outline(wbs_tree: Any, *, title: str = "High-level WBS") -> str:
@@ -263,6 +293,13 @@ def deliver_schedule(session: ProjectSession, deliverable: bool,
     if message_wants_wbs_outline(message) and tree:
         blocks: list[str] = []
         declaration = scaffold.get("declaration")
+        # Template-scaffold wording is honest only when the tree is a scaffold.
+        if (
+            declaration
+            and scaffold.get("derived_from_boq")
+            and "template scaffold" in str(declaration).lower()
+        ):
+            declaration = ""
         if declaration:
             blocks.append(f"_{declaration}_")
         outline = format_wbs_outline(tree)

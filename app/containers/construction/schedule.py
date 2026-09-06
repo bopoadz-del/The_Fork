@@ -2476,6 +2476,40 @@ class ConstructionScheduleMixin:
             })
         return procurement + activities
 
+    def _elect_boq_scope_wbs_items(
+        self,
+        data: Dict[str, Any],
+        params: Dict[str, Any],
+        brief: str,
+        user_message: str,
+    ) -> List[Dict[str, Any]]:
+        """Return demolition / site-clearance BOQ rows when the ask elects them.
+
+        Empty list means keep the template scaffold. Retrieval failure or a
+        kill-switch also returns empty — we do not invent items.
+        """
+        from app.core.predefined_reasoning import message_wants_boq_scope_wbs
+        from app.lib.boq_schedule import (
+            filter_demolition_site_clearance_items,
+            retrieve_boq_scope_items,
+        )
+        if not (
+            message_wants_boq_scope_wbs(brief)
+            or message_wants_boq_scope_wbs(user_message)
+        ):
+            return []
+        raw = (
+            params.get("boq_items")
+            or data.get("boq_items")
+        )
+        if isinstance(raw, list) and raw:
+            return filter_demolition_site_clearance_items(raw)
+        project_id = params.get("project_id") or data.get("project_id")
+        query = brief if message_wants_boq_scope_wbs(brief) else user_message
+        if project_id:
+            return retrieve_boq_scope_items(query, str(project_id))
+        return []
+
     async def generate_wbs(self, input_data: Any, params: Dict) -> Dict:
         """Generate a CPM-ready Work Breakdown Structure from a project brief.
 
@@ -2500,12 +2534,30 @@ class ConstructionScheduleMixin:
             or p.get("brief")
             or "Generic data-center construction project."
         )
+        user_message = (
+            p.get("user_message")
+            or data.get("user_message")
+            or data.get("message")
+            or ""
+        )
+        # Leftover F1: a demolition / site-clearance + BOQ WBS ask must use
+        # retrieved measured rows, not the building template. Election is on
+        # the ask — handing generate_wbs a silent ``boq`` key on an office
+        # brief still does nothing (see test_passing_a_boq_changes_nothing).
+        boq_items = self._elect_boq_scope_wbs_items(data, p, brief, user_message)
+        boq_derived = bool(boq_items)
+
         # Clamp target_count to [20, 1000] BEFORE template scaling.
+        # A BOQ-derived high-level WBS keeps the retrieved row count — padding
+        # to 20 would invent packages that are not in the bill.
         try:
             target_count = int(p.get("target_count", data.get("target_count", 200)))
         except (TypeError, ValueError):
             target_count = 200
-        target_count = max(20, min(1000, target_count))
+        if not boq_derived:
+            target_count = max(20, min(1000, target_count))
+        else:
+            target_count = max(1, min(1000, target_count))
 
         stated_type = p.get("project_type") or data.get("project_type")
         project_type = stated_type or self._detect_project_type_from_brief(brief)
@@ -2524,8 +2576,16 @@ class ConstructionScheduleMixin:
         if not start_date:
             start_date = datetime.now(timezone.utc).date().isoformat()
 
-        template = self._WBS_TEMPLATES[project_type]
-        activities, wbs_tree = self._build_wbs_activities(template, target_count)
+        if boq_derived:
+            from app.lib.boq_schedule import (
+                activities_from_boq_scope_outline,
+                wbs_tree_from_boq_items,
+            )
+            activities = activities_from_boq_scope_outline(boq_items)
+            wbs_tree = wbs_tree_from_boq_items(boq_items)
+        else:
+            template = self._WBS_TEMPLATES[project_type]
+            activities, wbs_tree = self._build_wbs_activities(template, target_count)
 
         # Long-lead procurement + target milestones extracted from a BOD/RFP
         # (document_engine.downstream.schedule_engine). Injecting the real lead
@@ -2565,6 +2625,8 @@ class ConstructionScheduleMixin:
         )
 
         operator_ms = _operator_milestones_from_text(brief)
+        if boq_derived:
+            project_type = "demolition_site_clearance"
         result: Dict[str, Any] = {
             "status": "success",
             "wbs_id": f"wbs-{uuid.uuid4().hex[:8]}",
@@ -2585,34 +2647,67 @@ class ConstructionScheduleMixin:
                 }
                 for m in (operator_ms.get("milestones") or [])
             ],
-            "assumptions": [
+            "assumptions": (
+                [
+                    "Scope packages are the retrieved BOQ demolition / site-"
+                    "clearance rows; none were invented.",
+                    "Durations are placeholders (1 working day) so CPM can "
+                    "run; they are not productivity-derived from quantities.",
+                    "FS-only predecessors; no SS/FF/SF; zero lag.",
+                ] if boq_derived else [
                 "Rule-of-thumb activity durations; replace with project-specific data when available.",
                 "FS-only predecessors; no SS/FF/SF; zero lag.",
                 "Zone-multiplier scales repeatable activities to reach target_count.",
                 "Zone labels are placeholders ([Zone 1], [Zone 2], ...), not "
                 "named parts of this project.",
-            ],
+                ]
+            ),
         }
         # Self-declaration at the glass (owner's ruling R3, 2026-09-01). A
         # template scaffold that does not say it is one gets read as the
         # project's own structure -- gate battery F1/F2 on 13b2bf7. The
         # scaffold block is the EVIDENCE the answer layer renders its
         # provenance line from; the model does not compose it.
-        result["scaffold"] = {
-            "source": "template",
-            "project_type": project_type,
-            "project_type_inferred": type_inferred,
-            "derived_from_boq": False,
-            "zone_labels": "placeholder",
-            "declaration": (
-                f"Template scaffold, project_type "
-                f"{'inferred' if type_inferred else 'as given'}: {project_type} "
-                f"— not derived from this project's BOQ, drawings or contract. "
-                f"Activity and zone names come from the standard "
-                f"{project_type} template; zone labels are placeholders, not "
-                f"named parts of this project."
-            ),
-        }
+        # Leftover F1: when the tree is the retrieved BOQ rows, the
+        # template-scaffold line would be a lie in the other direction.
+        if boq_derived:
+            citations = []
+            for item in boq_items or []:
+                code = str((item or {}).get("item_key") or "").strip()
+                src = str((item or {}).get("source") or "").strip()
+                bit = " ".join(x for x in (code, src) if x)
+                if bit and bit not in citations:
+                    citations.append(bit)
+            result["scaffold"] = {
+                "source": "boq",
+                "project_type": "demolition_site_clearance",
+                "project_type_inferred": False,
+                "derived_from_boq": True,
+                "zone_labels": "none",
+                "citations": citations,
+                "declaration": (
+                    "High-level WBS derived from this project's BOQ "
+                    "demolition and site clearance items. Only retrieved "
+                    "measured rows are shown; no template packages were added."
+                    + (f" Items: {', '.join(citations)}." if citations else "")
+                ),
+            }
+        else:
+            result["scaffold"] = {
+                "source": "template",
+                "project_type": project_type,
+                "project_type_inferred": type_inferred,
+                "derived_from_boq": False,
+                "zone_labels": "placeholder",
+                "declaration": (
+                    f"Template scaffold, project_type "
+                    f"{'inferred' if type_inferred else 'as given'}: {project_type} "
+                    f"— not derived from this project's BOQ, drawings or contract. "
+                    f"Activity and zone names come from the standard "
+                    f"{project_type} template; zone labels are placeholders, not "
+                    f"named parts of this project."
+                ),
+            }
         if operator_ms:
             result["operator_milestones"] = operator_ms
             result["assumptions"].append(
