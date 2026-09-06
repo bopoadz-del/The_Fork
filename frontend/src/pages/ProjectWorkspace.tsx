@@ -772,6 +772,23 @@ type WorkspaceState =
   | { tag: 'error'; message: string }
   | { tag: 'ready'; project: ProjectDetail }
 
+/** Stamp the active UI project onto a server export URL.
+
+ * Chat remaps master_corpus → drive_archive for RAG. A download offer that
+ * keeps that backing id 404s (`Project 'drive_archive' not found`). The
+ * workspace URL is the project the user is in.
+ */
+export function exportEndpointForWorkspace(
+  endpoint: string,
+  workspaceProjectId: string | undefined,
+): string {
+  if (!workspaceProjectId || !endpoint) return endpoint
+  return endpoint.replace(
+    /^(\/v1\/projects\/)[^/?#]+/,
+    `$1${workspaceProjectId}`,
+  )
+}
+
 export default function ProjectWorkspace() {
   const { id } = useParams<{ id: string }>()
   return <ProjectWorkspaceInner key={id ?? 'none'} id={id} />
@@ -1497,11 +1514,14 @@ function ProjectWorkspaceInner({ id }: { id: string | undefined }) {
                 .catch((e) => alert(`Download error: ${(e as Error).message}`))
             }}
             onExport={(descriptor) => {
-              // Data-backed download offer (e.g. cost BOQ). The descriptor's
-              // endpoint is server-relative; generation happens server-side on
-              // click (bounded), not in the chat hot path.
+              // Data-backed download offer (e.g. cost BOQ / A1–A9 Word). The
+              // descriptor's endpoint is server-relative; generation happens
+              // server-side on click (bounded), not in the chat hot path.
+              // Rewrite a remapped RAG corpus id (drive_archive) to the
+              // workspace the user is actually in.
               const token = getToken() || ''
-              void fetch(`${API_BASE}${descriptor.endpoint}`, {
+              const endpoint = exportEndpointForWorkspace(descriptor.endpoint, id)
+              void fetch(`${API_BASE}${endpoint}`, {
                 method: descriptor.method || 'POST',
                 headers: {
                   Authorization: `Bearer ${token}`,
