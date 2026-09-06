@@ -3467,10 +3467,6 @@ def _apply_asked_particular_value_boost(
         delay_damages_rate_rescue_enabled()
         and query_asks_for_delay_damages_rate(query)
     )
-    want_e1 = (
-        delay_damages_daily_rescue_enabled()
-        and query_asks_delay_damages_daily_amount(query)
-    )
     want_eng = (
         engineer_identity_rescue_enabled()
         and query_asks_who_the_engineer_is(query)
@@ -3487,14 +3483,12 @@ def _apply_asked_particular_value_boost(
         dnp_rescue_enabled()
         and query_asks_for_defects_notification_period(query)
     )
-    if not (want_rate or want_e1 or want_eng or want_aca or want_tfc or want_dnp):
+    if not (want_rate or want_eng or want_aca or want_tfc or want_dnp):
         return
     for i, (score, chunk) in enumerate(scored):
         text = chunk.text or ""
         hit = (
             (want_rate and chunk_states_delay_damages_rate(text))
-            or (want_e1 and chunk_states_delay_damages_rate(text))
-            or (want_e1 and _e1_aca_preference(text) >= 2)
             or (want_eng and chunk_states_engineer_identity(text))
             or (want_aca and chunk_states_aca_including_vat(text))
             or (want_tfc and chunk_states_time_for_completion(text))
@@ -4097,13 +4091,13 @@ def reserve_monetary_base_row(
     if e1:
         # Live leftover E1: particulars reserved the 0.1% row into the
         # last slot, then this function overwrote it with including-VAT
-        # ACA. Never drop the rate operand for the money row.
+        # ACA. Prefer a non-rate slot. If every survivor is a rate
+        # (k=1 unit pin), still take the last slot so the money row
+        # can enter; earlier rate rows remain when k > 1.
         for i in range(len(kept) - 1, -1, -1):
             if not chunk_states_delay_damages_rate(kept[i].text or ""):
                 replace_at = i
                 break
-        else:
-            return False
     for chunk in ranked:
         if chunk.chunk_id in present:
             continue
