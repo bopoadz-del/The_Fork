@@ -128,6 +128,9 @@ def test_c1_ask_shape_and_list_gates():
     assert not query_asks_for_spec_precedence_list(
         "Who signed the letter about the UBCC Concrete Batching Plant?"
     )
+    assert not query_asks_for_spec_precedence_list(
+        "Under Sub-Clause 1.5.1, what is the priority of the contract documents?"
+    )
 
     assert chunk_is_open_list_intro(INTRO_TEXT)
     assert not chunk_is_open_list_intro(LIST_TEXT)

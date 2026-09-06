@@ -3391,14 +3391,14 @@ def _rescue_rate_only_item_chunks(
 # 852), not #502 (C2 SPE-identity), not #506 (G1), not #507 (G4).
 _SPEC_PRECEDENCE_LIST_BONUS = 2.0
 _SPEC_PRECEDENCE_ASK_RE = re.compile(
-    r"(?i)(?:1\.5\.1\s*\(?d\)?"
+    r"(?i)(?:1\.5\.1\s*\(\s*d\s*\)"
     r"|order\s+of\s+precedence.{0,80}specification"
     r"|specification.{0,80}order\s+of\s+precedence"
     r"|documents\s+within\s+the\s+specification)"
 )
 _AS_FOLLOWS_TAIL_RE = re.compile(r"(?i)as\s+follows\s*[:.]?\s*$")
 _SPEC_PRECEDENCE_INTRO_RE = re.compile(
-    r"(?i)(?:1\.5\.1\s*\(?d\)?"
+    r"(?i)(?:1\.5\.1\s*\(\s*d\s*\)"
     r"|specification\s+shall\s+be\s+set\s+out"
     r"|order\s+of\s+precedence"
     r"|within\s+the\s+specification)"
