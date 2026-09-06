@@ -618,28 +618,67 @@ def _chunk_looks_like_measured_boq(text: str, filename: str) -> bool:
     return False
 
 
-def retrieve_boq_scope_items(query: str, project_id: str) -> List[Dict[str, Any]]:
-    """Retrieve measured BOQ rows for a demolition / site-clearance WBS ask.
+# Live leftover F1 on Master Corpus: the WBS ask ranks Conditions-of-Contract
+# prose about demolition over the priced bill. Lexical / filename rescue
+# pulls the measured rows that query similarity missed. Kill-switch is the
+# existing ``BOQ_SCOPE_WBS=0`` (this helper is only reached after election).
+_DEMO_BOQ_RETRIEVE_QUERY = (
+    "demolition and site clearance BOQ CESMM D110 D290 D549 D599 "
+    "general site clearance removal of trees chain link fence"
+)
+_DEMO_BOQ_RESCUE_PHRASES: Tuple[str, ...] = (
+    "BOQ line item",
+    "General site clearance",
+    "Demolition and Site Clearance",
+    "site clearance",
+    "Removal of trees",
+    "chain link fence",
+    "D110",
+    "D290.1",
+    "D549.2",
+    "D599.5",
+)
+_DEMO_BOQ_FILENAME_TERMS = ("demolition", "boq", "site", "clearance")
 
-    Uses the existing BOQ-scope election in ``retrieve_with_filter``. Empty
-    when there is no project, retrieval fails, or no measured rows land.
+
+def resolve_boq_wbs_project_id(project_id: str) -> str:
+    """Chat's ``master_corpus`` alias stores no chunks — RAG lives on the source.
+
+    Live F1 after #524 called ``retrieve_with_filter`` with the alias. The
+    WBS-shaped query then ranked fallback contract prose, parsed zero
+    measured rows, and generate_wbs kept the building template.
     """
-    if not project_id or not (query or "").strip():
-        return []
+    if not project_id:
+        return project_id
     try:
-        from app.core.rag.retriever import _doc_name_for_id, retrieve_with_filter
-        chunks, _noise = retrieve_with_filter(query, project_id, k=8)
-    except Exception as exc:  # noqa: BLE001 — fall through to template scaffold
-        logger.warning("BOQ-scope WBS retrieval failed: %s", exc)
-        return []
+        from app.core.projects import _master_corpus_source
+        return _master_corpus_source(project_id) or project_id
+    except Exception:  # noqa: BLE001 — alias helper must not break WBS
+        return project_id
 
+
+def _chunk_source_name(chunk: Any, doc_name_for_id=None) -> str:
+    name = getattr(chunk, "source_name", "") or ""
+    if name:
+        return name
+    if doc_name_for_id is None:
+        try:
+            from app.core.rag.retriever import _doc_name_for_id
+            doc_name_for_id = _doc_name_for_id
+        except Exception:  # noqa: BLE001
+            return ""
+    try:
+        return doc_name_for_id(getattr(chunk, "doc_id", "") or "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _items_from_measured_chunks(chunks: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Parse CESMM / indexer rows from chunks that already look like a bill."""
     collected: List[Dict[str, Any]] = []
     for chunk in chunks or []:
         text = getattr(chunk, "text", "") or ""
-        filename = (
-            getattr(chunk, "source_name", "")
-            or _doc_name_for_id(getattr(chunk, "doc_id", "") or "")
-        )
+        filename = _chunk_source_name(chunk)
         if not _chunk_looks_like_measured_boq(text, filename):
             continue
         for row in parse_boq_measured_rows(text):
@@ -648,6 +687,127 @@ def retrieve_boq_scope_items(query: str, project_id: str) -> List[Dict[str, Any]
                 item["source"] = filename
             collected.append(item)
     return filter_demolition_site_clearance_items(collected)
+
+
+def _retrieve_measured_boq_items(query: str, project_id: str) -> List[Dict[str, Any]]:
+    try:
+        from app.core.rag.retriever import retrieve_with_filter
+        chunks, _noise = retrieve_with_filter(query, project_id, k=8)
+    except Exception as exc:  # noqa: BLE001 — fall through to lexical rescue
+        logger.warning("BOQ-scope WBS retrieval failed: %s", exc)
+        return []
+    return _items_from_measured_chunks(chunks)
+
+
+def _lexical_rescue_demolition_boq_chunks(project_id: str) -> List[Any]:
+    """Pull measured demolition-BOQ chunks by identifier / filename.
+
+    Project-only. Failures never raise — empty means keep the template.
+    """
+    try:
+        from app.core.rag.vector_store import get_store
+        store = get_store()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("BOQ-scope WBS store open failed: %s", exc)
+        return []
+
+    by_id: Dict[str, Any] = {}
+    fetch = getattr(store, "identifier_search", None)
+    if callable(fetch):
+        try:
+            hits = fetch(project_id, list(_DEMO_BOQ_RESCUE_PHRASES), k=20) or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("BOQ-scope WBS lexical rescue failed: %s", exc)
+            hits = []
+        for chunk in hits:
+            cid = getattr(chunk, "chunk_id", None) or id(chunk)
+            by_id[cid] = chunk
+        neighbors = getattr(store, "chunks_for_docs", None)
+        if callable(neighbors) and hits:
+            doc_ids = list({getattr(c, "doc_id", "") for c in hits if getattr(c, "doc_id", "")})
+            try:
+                extra = neighbors(project_id, doc_ids, k_per_doc=24) or []
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("BOQ-scope WBS neighbor fetch failed: %s", exc)
+                extra = []
+            for chunk in extra:
+                cid = getattr(chunk, "chunk_id", None) or id(chunk)
+                by_id.setdefault(cid, chunk)
+
+    try:
+        from app.core.projects import documents_matching_filename_terms
+        from app.core.rag.retriever import document_is_a_bill_of_quantities
+        named = documents_matching_filename_terms(
+            project_id,
+            list(_DEMO_BOQ_FILENAME_TERMS),
+            min_terms=2,
+            limit=8,
+        ) or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("BOQ-scope WBS filename rescue failed: %s", exc)
+        named = []
+        document_is_a_bill_of_quantities = None
+
+    demo_doc_ids: List[str] = []
+    names_by_id: Dict[str, str] = {}
+    for doc in named:
+        if not isinstance(doc, dict):
+            continue
+        doc_id = str(doc.get("id") or "")
+        filename = str(doc.get("original_name") or doc.get("file_path") or "")
+        if not doc_id or not filename:
+            continue
+        if document_is_a_bill_of_quantities and not document_is_a_bill_of_quantities(filename):
+            continue
+        if not re.search(r"(?i)(?:demolit|site[\s_-]*clear)", filename):
+            continue
+        demo_doc_ids.append(doc_id)
+        names_by_id[doc_id] = filename
+
+    neighbors = getattr(store, "chunks_for_docs", None)
+    if callable(neighbors) and demo_doc_ids:
+        try:
+            extra = neighbors(project_id, demo_doc_ids, k_per_doc=32) or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("BOQ-scope WBS demo-BOQ chunk fetch failed: %s", exc)
+            extra = []
+        for chunk in extra:
+            if not getattr(chunk, "source_name", ""):
+                chunk.source_name = names_by_id.get(getattr(chunk, "doc_id", "") or "", "")
+            cid = getattr(chunk, "chunk_id", None) or id(chunk)
+            by_id.setdefault(cid, chunk)
+    return list(by_id.values())
+
+
+def retrieve_boq_scope_items(query: str, project_id: str) -> List[Dict[str, Any]]:
+    """Retrieve measured BOQ rows for a demolition / site-clearance WBS ask.
+
+    Remaps the Master Corpus alias to the backing project, then prefers
+    measured rows from ``retrieve_with_filter``. When the WBS phrasing
+    ranks contract prose instead of the bill, a lexical / filename rescue
+    pulls CESMM D-rows that already exist in the corpus. Empty when there
+    is no project, retrieval fails, or no measured rows land.
+    """
+    if not project_id or not (query or "").strip():
+        return []
+    resolved = resolve_boq_wbs_project_id(str(project_id))
+    items = _retrieve_measured_boq_items(query, resolved)
+    if items:
+        return items
+    if query.strip() != _DEMO_BOQ_RETRIEVE_QUERY:
+        items = _retrieve_measured_boq_items(_DEMO_BOQ_RETRIEVE_QUERY, resolved)
+        if items:
+            return items
+    try:
+        rescued = _items_from_measured_chunks(
+            _lexical_rescue_demolition_boq_chunks(resolved)
+        )
+    except Exception as exc:  # noqa: BLE001 — fall through to template scaffold
+        logger.warning("BOQ-scope WBS rescue failed: %s", exc)
+        return []
+    if rescued:
+        logger.info("BOQ-scope WBS rescue recovered %d demolition row(s)", len(rescued))
+    return rescued
 
 
 def wbs_tree_from_boq_items(

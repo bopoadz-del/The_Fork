@@ -1552,6 +1552,7 @@ async def _predispatch_construction_draft(
     format_fn,
     instruction: str,
     operator_text: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any] | None:
     if os.getenv(env_key, "1") == "0":
         return None
@@ -1569,14 +1570,19 @@ async def _predispatch_construction_draft(
         if handler is None:
             return None
         params = {"user_message": user_msg, "brief": user_msg, "message": user_msg}
+        data = {"text": user_msg, "message": user_msg, "user_message": user_msg}
+        # Leftover F1: generate_wbs elects BOQ demolition rows only when it
+        # can retrieve against the project. Live chat predispatched the WBS
+        # without project_id, so the election returned empty and the building
+        # template won. Other deliverables stay unchanged.
+        if project_id and action == "generate_wbs":
+            params["project_id"] = project_id
+            data["project_id"] = project_id
         if action == "commissioning_checklist":
             inferred = _infer_commissioning_systems(user_msg)
             if inferred:
                 params["systems"] = inferred
-        result = await handler(
-            {"text": user_msg, "message": user_msg, "user_message": user_msg},
-            params,
-        )
+        result = await handler(data, params)
         if not isinstance(result, dict) or result.get("status") != "success":
             return None
         rendered = format_fn(result)
@@ -1696,6 +1702,7 @@ async def _predispatch_remaining_deliverables(
             format_fn=format_fn,
             instruction=instruction,
             operator_text=detect,
+            project_id=project_id,
         )
         if out:
             return out

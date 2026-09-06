@@ -34,6 +34,7 @@ from app.lib.boq_schedule import (
     activities_from_boq_scope_outline,
     filter_demolition_site_clearance_items,
     parse_boq_measured_rows,
+    resolve_boq_wbs_project_id,
     wbs_tree_from_boq_items,
 )
 from app.schemas.project_session import ProjectSession
@@ -47,9 +48,11 @@ F1_ASK = LIVE_PREFIX + CATALOG["cases"]["F1"]["ask"]
 A2_ASK = CATALOG["cases"]["A2"]["ask"]
 A3_ASK = CATALOG["cases"]["A3"]["ask"]
 A5_ASK = CATALOG["cases"]["A5"]["ask"]
+A6_ASK = CATALOG["cases"]["A6"]["ask"]
 A9_ASK = CATALOG["cases"]["A9"]["ask"]
 C1_ASK = CATALOG["cases"]["C1"]["ask"]
 E1_ASK = CATALOG["cases"]["E1"]["ask"]
+H1_EXPORT = "export this answer as a Word document"
 SCHEDULE_ONLY = "produce the schedule"
 
 S2_BOQ = (Path(__file__).parent / "fixtures" / "ui_phys" / "S2_demolition_boq.md").read_text(
@@ -75,8 +78,8 @@ def test_f1_elects_boq_scope_wbs_and_plain_schedule_does_not():
     )
 
 
-def test_a2_a3_a5_a9_c1_e1_do_not_elect_boq_scope_wbs():
-    """Contract Data / spec-precedence / delay-damages asks stay on RAG."""
+def test_a2_a3_a5_a6_a9_c1_e1_h1_do_not_elect_boq_scope_wbs():
+    """Contract Data / spec-precedence / delay-damages / export stay on RAG."""
     from app.core.rag.retriever import (
         query_asks_for_accepted_contract_amount,
         query_asks_for_delay_damages_rate,
@@ -85,7 +88,10 @@ def test_a2_a3_a5_a9_c1_e1_do_not_elect_boq_scope_wbs():
         query_needs_a_monetary_base,
     )
 
-    for ask in (A2_ASK, A3_ASK, A5_ASK, A9_ASK, C1_ASK, E1_ASK, LIVE_PREFIX + E1_ASK):
+    for ask in (
+        A2_ASK, A3_ASK, A5_ASK, A6_ASK, A9_ASK, C1_ASK, E1_ASK,
+        LIVE_PREFIX + A6_ASK, LIVE_PREFIX + E1_ASK, H1_EXPORT,
+    ):
         assert not message_wants_boq_scope_wbs(ask), ask
         assert not message_wants_wbs_outline(ask), ask
 
@@ -307,3 +313,139 @@ async def test_f1_run_workflow_with_boq_items_is_not_building_template():
     assert "Hall A" not in answer
     assert "High-level WBS" in answer
     assert "Schedule built:" in answer
+
+
+def test_master_corpus_alias_resolves_to_source():
+    from app.core.projects import MASTER_CORPUS_SOURCE_PROJECT_ID, _master_corpus_source
+    assert resolve_boq_wbs_project_id("master_corpus") == (
+        _master_corpus_source("master_corpus") or "master_corpus"
+    )
+    assert resolve_boq_wbs_project_id("master_corpus") == MASTER_CORPUS_SOURCE_PROJECT_ID
+    assert resolve_boq_wbs_project_id("drive_archive") == "drive_archive"
+    assert resolve_boq_wbs_project_id("") == ""
+
+
+def test_retrieve_remaps_master_corpus_before_filter(monkeypatch):
+    from app.lib import boq_schedule as bs
+
+    seen: list[str] = []
+
+    def fake_retrieve(query, project_id, k=8):
+        seen.append(project_id)
+        return ([], 0)
+
+    monkeypatch.setattr("app.core.rag.retriever.retrieve_with_filter", fake_retrieve)
+    monkeypatch.setattr(bs, "_lexical_rescue_demolition_boq_chunks", lambda *_a, **_k: [])
+    assert bs.retrieve_boq_scope_items(F1_ASK, "master_corpus") == []
+    assert seen
+    assert all(pid == resolve_boq_wbs_project_id("master_corpus") for pid in seen)
+    assert "master_corpus" not in seen
+
+
+def test_retrieve_rescues_when_wbs_query_returns_contract_prose(monkeypatch):
+    from app.core.rag.vector_store import Chunk
+    from app.lib import boq_schedule as bs
+
+    prose = Chunk(
+        chunk_id="c-prose",
+        project_id="p1",
+        doc_id="contract",
+        chunk_index=0,
+        text=(
+            "The Contractor shall execute the demolition and site clearance "
+            "scope described in the BOQ."
+        ),
+    )
+    prose.source_name = "Vol 1 - Conditions of Contract.pdf"
+    bill = Chunk(
+        chunk_id="c-boq",
+        project_id="p1",
+        doc_id="boq1",
+        chunk_index=0,
+        text=S2_BOQ,
+    )
+    bill.source_name = (
+        "DD-2023-118_the client project II Infrastructure Package 1_"
+        "Demolition and Site Clearance BOQ.pdf"
+    )
+    monkeypatch.setattr(
+        "app.core.rag.retriever.retrieve_with_filter",
+        lambda *a, **k: ([prose], 0),
+    )
+    monkeypatch.setattr(
+        bs, "_lexical_rescue_demolition_boq_chunks", lambda *_a, **_k: [bill],
+    )
+    items = bs.retrieve_boq_scope_items(F1_ASK, "p1")
+    codes = {i.get("item_key") for i in items}
+    assert "D110" in codes and "D549.2" in codes
+    assert not any("superstructure" in (i.get("description") or "").lower() for i in items)
+
+
+@pytest.mark.asyncio
+async def test_f1_run_workflow_on_master_corpus_is_not_building_template(monkeypatch):
+    """Live predefined path: project_id=master_corpus, no injected boq_items."""
+    from app.lib import boq_schedule as bs
+
+    monkeypatch.setattr(bs, "retrieve_boq_scope_items", lambda *_a, **_k: list(_BOQ_ITEMS))
+    ctx = {
+        "message": F1_ASK,
+        "project_name": "Master Corpus",
+        "project_id": "master_corpus",
+        "params": {"target_count": 40, "start_date": "2026-01-05"},
+    }
+    out = await run_workflow("generate_wbs", ctx, ProjectSession.new("f1-mc"))
+    assert out["handled"] and out["status"] == "success", out
+    answer = out["answer"]
+    assert "Template scaffold" not in answer
+    assert "Site Preparation" not in answer
+    assert "Superstructure" not in answer
+    assert "D110" in answer
+    assert "site clearance" in answer.lower()
+
+
+@pytest.mark.asyncio
+async def test_f1_predispatch_passes_project_id_and_renders_boq(monkeypatch):
+    """Agent path: live chat predispatched generate_wbs without project_id."""
+    from app.agents.runtime import _predispatch_remaining_deliverables
+
+    seen: dict = {}
+
+    class _Container:
+        async def generate_wbs(self, data, params):
+            seen["params"] = params
+            seen["data"] = data
+            return {
+                "status": "success",
+                "wbs_tree": wbs_tree_from_boq_items(_BOQ_ITEMS),
+                "scaffold": {
+                    "derived_from_boq": True,
+                    "declaration": (
+                        "High-level WBS derived from this project's BOQ "
+                        "demolition and site clearance items."
+                    ),
+                },
+                "actual_count": 4,
+                "project_type": "demolition_site_clearance",
+                "summary": {"activity_count": 4},
+                "activities": [],
+            }
+
+    monkeypatch.setattr(
+        "app.dependencies.get_block_instance",
+        lambda _name: _Container(),
+    )
+
+    class _A:
+        allowed_blocks = ["construction"]
+        name = "construction-pm"
+
+    msgs = [{"role": "user", "content": F1_ASK}]
+    out = await _predispatch_remaining_deliverables(_A(), msgs, "master_corpus")
+    assert out is not None
+    assert out["name"] == "generate_wbs"
+    assert seen["params"].get("project_id") == "master_corpus"
+    assert seen["data"].get("project_id") == "master_corpus"
+    glass = _format_wbs_result(out["result"])
+    assert "Template scaffold" not in glass
+    assert "D110" in glass
+    assert "Site Preparation" not in glass
