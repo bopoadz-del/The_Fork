@@ -17,6 +17,7 @@ already used elsewhere in this repo.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from app.agents.runtime import (
@@ -90,6 +91,24 @@ PERMIT_TRACKER = (
     "Permit tracking register. Southern Community I-01 Media "
     "Jan-24 to Jan-25 commencement-completion schedule. "
     "Community works completion dates are not Time for Completion."
+)
+# Live leftover after #516: a neighboring 90-day TfC leaked into the
+# graft lead-in ahead of 1.1.75 / 852 days.
+SECTIONAL_90 = (
+    "CONTRACT DATA particulars — sectional completion.\n"
+    "Time for Completion for Section A / Community I-01: 90 days"
+)
+A3_CORRECT_BODY = (
+    "I found the answer in the Contract Data section of the document. "
+    "Under Clause 1.1.75, the Time for Completion (for the whole of "
+    "the Works) is stated as: 852 days from the Commencement Date."
+)
+A3_LIVE_90_LEAD_IN = (
+    "The Time for Completion for the whole of the Works is 90 days.\n\n"
+    + A3_CORRECT_BODY
+)
+_LEADING_90_WHOLE_WORKS_RE = re.compile(
+    r"(?is)^\s*The Time for Completion for the whole of the Works is 90 days",
 )
 PSA_RECITALS = (
     "Long Form Professional Services Agreement recitals. The parties "
@@ -182,6 +201,11 @@ def test_a2_a3_a9_predicates():
     assert chunk_states_time_for_completion(SCANNED_TFC)
     assert not chunk_states_time_for_completion(PERMIT_TRACKER)
     assert not chunk_states_time_for_completion(PSA_RECITALS)
+    assert not chunk_states_time_for_completion(SECTIONAL_90)
+
+    mixed_tfc = SECTIONAL_90 + "\n\n" + SCANNED_TFC
+    assert extract_time_for_completion_days(mixed_tfc) == A3_DAYS
+    assert extract_time_for_completion_days(SECTIONAL_90) is None
 
     assert chunk_states_engineer_identity(SCANNED_ENGINEER)
     assert chunk_states_engineer_identity(
@@ -303,6 +327,25 @@ def test_a2_surfaces_including_vat_not_delay_damages(monkeypatch):
     assert "263,175.67" not in blob
 
 
+def test_a3_surfaces_852_days_not_90_day_sectional(monkeypatch):
+    """Neighboring 90-day TfC must not occupy top-k over 1.1.75 / 852."""
+    sectional = _chunk("s90", PERMIT_DOC, 0.92, SECTIONAL_90)
+    tfc = _chunk("tfc", TFC_DOC, 0.21, SCANNED_TFC)
+    names = {PERMIT_DOC: PERMIT_NAME, TFC_DOC: DD23_NAME}
+    ret = _install(
+        monkeypatch,
+        semantic=[sectional],
+        rescue_hits=[tfc],
+        names=names,
+    )
+    chunks, _ = ret.retrieve_with_filter(LIVE_A3, ACTIVE, k=5)
+    blob = " ".join(c.text for c in chunks)
+    assert chunks
+    assert A3_DAYS in blob
+    assert A3_DAYS in chunks[0].text
+    assert "90 days" not in blob
+
+
 def test_a3_surfaces_852_days_not_permit_tracker(monkeypatch):
     permit = _chunk("pm", PERMIT_DOC, 0.91, PERMIT_TRACKER)
     psa = _chunk("psa", PSA_DOC, 0.88, PSA_RECITALS)
@@ -412,6 +455,44 @@ def test_graft_a2_replaces_delay_damages_with_including_vat():
     assert "including VAT" in out
     assert "263,175.67" not in out
     assert "delay damages" not in out.lower()
+
+
+def test_graft_a3_does_not_lead_with_90_when_852_is_known():
+    """Live leftover #516: 90-day neighbor must not open the answer."""
+    rag = _sys(SECTIONAL_90, SCANNED_TFC)
+    msgs = [{"role": "user", "content": LIVE_A3}]
+    out = _graft_asked_contract_particular(A3_CORRECT_BODY, rag, msgs)
+    assert A3_DAYS in out
+    assert not _LEADING_90_WHOLE_WORKS_RE.search(out)
+    first_whole = re.search(
+        r"(?i)Time for Completion for the whole of the Works is\s+(\d+)\s+days",
+        out,
+    )
+    if first_whole:
+        assert first_whole.group(1) == "852"
+
+
+def test_graft_a3_strips_spurious_90_lead_in_alongside_852():
+    """Pin: a leading 90-day whole-Works claim next to 852 is a fail."""
+    rag = _sys(SECTIONAL_90, SCANNED_TFC)
+    msgs = [{"role": "user", "content": LIVE_A3}]
+    out = _graft_asked_contract_particular(A3_LIVE_90_LEAD_IN, rag, msgs)
+    assert A3_DAYS in out
+    assert not _LEADING_90_WHOLE_WORKS_RE.search(out)
+    assert not out.lstrip().startswith(
+        "The Time for Completion for the whole of the Works is 90 days"
+    )
+    before_852 = out.split("852", 1)[0]
+    assert "90 days" not in before_852
+
+
+def test_postprocess_a3_drops_90_lead_in_when_852_is_in_excerpts():
+    rag = _sys(SECTIONAL_90, SCANNED_TFC)
+    msgs = [{"role": "user", "content": LIVE_A3}]
+    out = _postprocess_answer(A3_LIVE_90_LEAD_IN, rag, msgs)
+    assert A3_DAYS in out
+    assert not _LEADING_90_WHOLE_WORKS_RE.search(out)
+    assert out != _CG_REFUSAL
 
 
 def test_graft_a3_states_852_days_when_model_said_absent():

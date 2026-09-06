@@ -2424,6 +2424,49 @@ _TFC_PERMIT_TRACKER_RE = re.compile(
     r"(?i)permit[- ]track|commencement[- ]completion|"
     r"community\s+[a-z0-9-]+\s+\w{3}-\d{2}\s+to\s+\w{3}-\d{2}",
 )
+# Live A3 after #516: graft prepended a neighboring 90-day TfC (sectional /
+# community / zone) because extract returned the first "N days" row.
+# Prefer 1.1.75 / whole-of-Works. Do not treat bare "section" as a neighbor
+# ("Contract Data section" is prose, not a sectional duration).
+_TFC_WHOLE_WORKS_RE = re.compile(
+    r"(?i)whole\s+of\s+the\s+works|whole\s+works|works\s+as\s+a\s+whole|"
+    r"\b1\.1\.75\b",
+)
+_TFC_NEIGHBOR_SCOPE_RE = re.compile(
+    r"(?i)(?:sectional|"
+    r"time\s+for\s+completion\s+for\s+(?:section|portion|community|zone|stage|phase)|"
+    r"\bsection\s+[A-Z0-9]|"
+    r"\bcommunity\s+[A-Z0-9]|"
+    r"part\s+of\s+the\s+works)",
+)
+
+
+def _tfc_blob_is_whole_works(blob: str) -> bool:
+    return bool(_TFC_WHOLE_WORKS_RE.search(blob or ""))
+
+
+def _tfc_blob_is_neighbor_scope(blob: str) -> bool:
+    """True for sectional / community TfC, not the whole-Works particular."""
+    t = blob or ""
+    if _tfc_blob_is_whole_works(t):
+        return False
+    return bool(_TFC_NEIGHBOR_SCOPE_RE.search(t))
+
+
+def _tfc_days_from_row(key: str, val: str) -> Optional[str]:
+    if "time for completion" not in (key or "").lower():
+        return None
+    if "milestone" in (key or "").lower():
+        return None
+    joined = f"{key} {val}"
+    if _TFC_PERMIT_TRACKER_RE.search(joined):
+        return None
+    if _tfc_blob_is_neighbor_scope(joined):
+        return None
+    m = _TFC_DAYS_RE.search(val or "") or _TFC_DAYS_RE.search(key or "")
+    if not m:
+        return None
+    return f"{m.group(1)} days"
 
 
 def aca_including_vat_rescue_enabled() -> bool:
@@ -2505,15 +2548,19 @@ def chunk_states_time_for_completion(text: str) -> bool:
         return False
     if _CD_MILESTONE_CHUNK_RE.search(blob) and not _CD_WHOLE_WORKS_QUERY_RE.search(blob):
         return False
+    found_plain = False
     for key, val in filled_particulars_rows(t):
-        key_l = key.lower()
-        if "time for completion" not in key_l:
+        days = _tfc_days_from_row(key, val)
+        if not days:
             continue
-        if "milestone" in key_l:
-            continue
-        if _TFC_DAYS_RE.search(val) or _TFC_DAYS_RE.search(key):
+        if _tfc_blob_is_whole_works(f"{key} {val}"):
             return True
+        found_plain = True
+    if found_plain:
+        return True
     if _CD_MILESTONE_CHUNK_RE.search(blob):
+        return False
+    if _tfc_blob_is_neighbor_scope(blob):
         return False
     return bool(_TFC_DAYS_RE.search(blob))
 
@@ -2561,25 +2608,44 @@ def extract_time_for_completion_days(text: str) -> Optional[str]:
     """Whole-Works TfC duration as written (e.g. ``852 days``), or None.
 
     Walks rows even when a permit-tracker decoy shares the same blob
-    (graft reads the full RAG system message).
+    (graft reads the full RAG system message). Live #516 leftover: a
+    neighboring 90-day sectional / community TfC must not win over
+    1.1.75 / whole-of-Works 852 days.
     """
     t = text or ""
     if not t:
         return None
+    whole: List[str] = []
+    plain: List[str] = []
     for key, val in filled_particulars_rows(t):
-        key_l = key.lower()
-        if "time for completion" not in key_l or "milestone" in key_l:
+        days = _tfc_days_from_row(key, val)
+        if not days:
             continue
-        if _TFC_PERMIT_TRACKER_RE.search(f"{key} {val}"):
-            continue
-        m = _TFC_DAYS_RE.search(val) or _TFC_DAYS_RE.search(key)
-        if m:
-            return f"{m.group(1)} days"
+        if _tfc_blob_is_whole_works(f"{key} {val}"):
+            whole.append(days)
+        else:
+            plain.append(days)
+    if whole:
+        return whole[0]
     for block in re.split(r"\n{2,}|\[doc_id=", t):
-        if chunk_states_time_for_completion(block):
-            m = _TFC_DAYS_RE.search(_normalize_retrieval_ws(block))
-            if m:
-                return f"{m.group(1)} days"
+        if not chunk_states_time_for_completion(block):
+            continue
+        norm = _normalize_retrieval_ws(block)
+        for m in _TFC_DAYS_RE.finditer(norm):
+            ctx = norm[max(0, m.start() - 96):m.end() + 48]
+            if _tfc_blob_is_neighbor_scope(ctx):
+                continue
+            days = f"{m.group(1)} days"
+            if _tfc_blob_is_whole_works(ctx) or _tfc_blob_is_whole_works(norm):
+                whole.append(days)
+            else:
+                plain.append(days)
+        if whole:
+            return whole[0]
+    if whole:
+        return whole[0]
+    if plain:
+        return plain[0]
     return None
 
 

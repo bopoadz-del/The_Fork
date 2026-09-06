@@ -4743,6 +4743,12 @@ _MISSING_PARTICULAR_RE = re.compile(
     r"i can search again",
 )
 _DELAY_DAMAGES_ANSWER_RE = re.compile(r"(?i)delay\s+damages")
+# Live A3 after #516: graft prepended this exact sentence with 90 days
+# (neighboring TfC) in front of the correct 852-day Contract Data body.
+_LEADING_WHOLE_WORKS_TFC_RE = re.compile(
+    r"(?is)^\s*The Time for Completion for the whole of the Works is\s+"
+    r"(\d{2,4})\s+days\.?\s*",
+)
 
 
 def _graft_asked_contract_particular_enabled() -> bool:
@@ -4807,15 +4813,22 @@ def _graft_asked_contract_particular(
             line = (
                 f"The Time for Completion for the whole of the Works is {days}."
             )
-            if days.split()[0] in (text or "") and not _MISSING_PARTICULAR_RE.search(text or ""):
+            asked_n = days.split()[0]
+            body = (text or "").strip()
+            lead = _LEADING_WHOLE_WORKS_TFC_RE.match(body)
+            if lead and lead.group(1) != asked_n:
+                rest = body[lead.end():].lstrip()
+                if asked_n in rest and not _MISSING_PARTICULAR_RE.search(rest):
+                    return rest
+                return line if not rest else f"{line}\n\n{rest}"
+            if asked_n in body and not _MISSING_PARTICULAR_RE.search(body):
                 return text
             if (
-                _MISSING_PARTICULAR_RE.search(text or "")
-                or _GENERIC_ACK_RE.search(text or "")
-                or (text or "").strip() == _CG_REFUSAL
+                _MISSING_PARTICULAR_RE.search(body)
+                or _GENERIC_ACK_RE.search(body)
+                or body == _CG_REFUSAL
             ):
                 return line
-            body = (text or "").strip()
             return line if not body else f"{line}\n\n{body}"
         if query_asks_who_the_engineer_is(user):
             name = extract_engineer_identity(rag)
