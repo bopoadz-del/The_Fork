@@ -165,6 +165,8 @@ def _install_a2_corpus(monkeypatch, *, cd_in_semantic: bool):
     monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
     monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
     monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
     monkeypatch.delenv("RAG_LAYERED", raising=False)
     return ret
 
@@ -222,5 +224,6 @@ def test_definition_question_is_not_forced_onto_contract_data(monkeypatch):
 def test_mutation_filename_bonus_is_what_lifts_contract_data(monkeypatch):
     ret = _install_a2_corpus(monkeypatch, cd_in_semantic=True)
     monkeypatch.setattr(ret, "filename_looks_like_contract_data", lambda *_a, **_k: False)
+    monkeypatch.setattr(ret, "aca_including_vat_rescue_enabled", lambda: False)
     chunks, _ = ret.retrieve_with_filter(A2_ASK, ACTIVE, k=5)
     assert chunks[0].doc_id == PSA_DOC

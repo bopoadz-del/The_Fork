@@ -216,11 +216,17 @@ def format_chunks_as_system_message(
     # "answer only from the documents" and never named the row. Do not
     # invent contents — only fire when an excerpt already says Not Used.
     from app.core.rag.retriever import (
+        chunk_states_aca_including_vat,
+        chunk_states_engineer_identity,
         chunk_states_rate_only_item,
         chunk_states_schedule_not_used,
+        chunk_states_time_for_completion,
         extract_asked_cesmm_codes,
         extract_contract_doc_ids,
+        query_asks_for_aca_including_vat,
         query_asks_for_boq_item_amount,
+        query_asks_for_time_for_completion,
+        query_asks_who_the_engineer_is,
         rate_only_rescue_enabled,
     )
     if any(chunk_states_schedule_not_used(c.text or "") for c in chunks):
@@ -251,6 +257,32 @@ def format_chunks_as_system_message(
                 "item is Rate Only. That IS the answer. State Rate Only "
                 "and that no amount exists. Do not invent a money total, "
                 "and do not give a generic acknowledgement.\n"
+            )
+
+    if query and query_asks_for_aca_including_vat(query):
+        if any(chunk_states_aca_including_vat(c.text or "") for c in chunks):
+            header += (
+                "ACCEPTED CONTRACT AMOUNT INCLUDING VAT — an excerpt below "
+                "states the Accepted Contract Amount including VAT. That IS "
+                "the answer. State that including-VAT figure. Do not answer "
+                "delay damages, a daily rate, or the excluding-VAT amount "
+                "instead.\n"
+            )
+    if query and query_asks_for_time_for_completion(query):
+        if any(chunk_states_time_for_completion(c.text or "") for c in chunks):
+            header += (
+                "TIME FOR COMPLETION — an excerpt below states the Time for "
+                "Completion for the whole of the Works in days. That IS the "
+                "answer. State that duration. Do not answer from a permit "
+                "tracker, community schedule, or PSA recital instead.\n"
+            )
+    if query and query_asks_who_the_engineer_is(query):
+        if any(chunk_states_engineer_identity(c.text or "") for c in chunks):
+            header += (
+                "ENGINEER APPOINTMENT — an excerpt below names the Engineer. "
+                "That IS the answer. State the appointed firm. Do not say "
+                "the identity is absent, and do not answer from a Conditions "
+                "of Contract glossary or drawing note instead.\n"
             )
 
     cited_contract_ids: List[str] = []
