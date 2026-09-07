@@ -2338,6 +2338,11 @@ def query_asks_delay_damages_daily_amount(query: str) -> bool:
     Reuses the monetary-base ask class so A5 stays a particular lookup
     and this path stays compose-only. Twin of
     ``construction_formulas_commercial.query_asks_delay_damages_daily_amount``.
+
+    Wave-1 A2 ("Accepted Contract Amount including VAT") has no
+    delay-damages token, so it stays off this path. A combined
+    "calculate delay damages … including VAT" remains E1 — leftover
+    E1 after #523 must not be stolen back onto the A2 particular.
     """
     q = query or ""
     if not q or not _DELAY_RATE_KEY_RE.search(q):
@@ -2563,6 +2568,18 @@ _ENGINEER_IDENTITY_RESCUE_PHRASES = (
 _ACA_INCL_RESCUE_PHRASES = (
     "accepted contract amount including vat",
     "amount including vat",
+    "accepted contract amount (including vat)",
+    "amount (including vat)",
+    "1.1.1 including vat",
+)
+# Live Wave-1 A2 on 9ad62cc: identifier_search + first-N neighbors
+# stay on Contract Data chunk #0 (delay damages × a partial ACA).
+# Scanned 1.1.1 including-VAT sits later in the same volume.
+_A2_INCL_TEXT_NEEDLES = (
+    ("1.1.1", "including"),
+    ("including", "vat"),
+    ("accepted", "including"),
+    ("amount", "including"),
 )
 _TFC_RESCUE_PHRASES = (
     "time for completion for the whole of the works",
@@ -2626,6 +2643,19 @@ def query_asks_for_aca_including_vat(query: str) -> bool:
     if not query_asks_for_accepted_contract_amount(query):
         return False
     return bool(_INCLUDING_VAT_RE.search(query or ""))
+
+
+def query_is_aca_including_vat_particular(query: str) -> bool:
+    """True for Wave-1 A2, not leftover-E1 daily compose.
+
+    Live 9ad62cc: the including-VAT particular retrieved Contract Data
+    chunk #0 (delay damages × a partial ACA) and leftover-E1 compose
+    stated SAR/day. An including-VAT ask is not rate × ACA. A combined
+    "calculate delay damages … including VAT" stays E1.
+    """
+    if not query_asks_for_aca_including_vat(query):
+        return False
+    return not query_asks_delay_damages_daily_amount(query)
 
 
 def query_asks_for_time_for_completion(query: str) -> bool:
@@ -3049,9 +3079,23 @@ def _aca_row_is_including_vat(key: str, val: str) -> bool:
         return False
     if _EXCL_VAT_RE.search(joined) and not _INCL_VAT_RE.search(k):
         return False
-    return bool(_INCL_VAT_RE.search(k) or (
-        _INCL_VAT_RE.search(joined) and not _EXCL_VAT_RE.search(joined)
-    ))
+    if _INCL_VAT_RE.search(k):
+        return True
+    # Live Wave-1 A2 on 9ad62cc: filled_particulars_rows glued chunk #0
+    # (delay damages × SAR 39,098,392.98) onto the later including-VAT
+    # label. Including-VAT in the value must precede the first figure —
+    # otherwise the partial ACA is peeled as the including-VAT amount.
+    incl = _INCL_VAT_RE.search(v)
+    if not incl:
+        return False
+    try:
+        from app.lib.construction_formulas_commercial import _MONEY_RE
+        first_money = _MONEY_RE.search(v)
+    except Exception:  # noqa: BLE001
+        first_money = None
+    if first_money is not None and first_money.start() < incl.start():
+        return False
+    return not (_EXCL_VAT_RE.search(v) and not _INCL_VAT_RE.search(v[:incl.end()]))
 
 
 def _aca_nearest_vat_is_including(lead: str) -> bool:
@@ -3491,6 +3535,18 @@ def _pair_adjacent_keep_text(
             for width in range(2, span + 1):
                 if i + width - 1 >= len(group):
                     break
+                idxs = [
+                    int(getattr(group[i + j], "chunk_index", 0) or 0)
+                    for j in range(width)
+                ]
+                # Sparse fetches (chunk #0 + appendix 80) must not glue
+                # a delay-damages window onto the including-VAT row.
+                # Equal indexes (tests that omit chunk_index) keep the
+                # old list-adjacency pairing.
+                if len(set(idxs)) > 1 and any(
+                    idxs[j] != idxs[0] + j for j in range(width)
+                ):
+                    continue
                 combined = "\n".join(
                     (group[i + j].text or "") for j in range(width)
                 )
@@ -3892,6 +3948,327 @@ def e1_compose_excerpts_from_loaded_cd_volume(
     if not rate_parts or not aca_parts:
         return ""
     return "\n\n".join(rate_parts[:3] + aca_parts[:3])
+
+
+def _a2_fused_chunk(entry) -> Optional[Chunk]:
+    if isinstance(entry, tuple) and entry:
+        chunk = entry[0]
+    else:
+        chunk = entry
+    return chunk if isinstance(chunk, Chunk) else None
+
+
+def _a2_pool_doc_ids_for_late_incl(fused: Dict[str, Tuple]) -> List[str]:
+    """Contract Data / CoC volume docs already in fused for an A2 scan."""
+    doc_ids: List[str] = []
+    seen: Set[str] = set()
+    for entry in fused.values():
+        chunk = _a2_fused_chunk(entry)
+        if chunk is None or not chunk.doc_id or chunk.doc_id in seen:
+            continue
+        text = chunk.text or ""
+        name = getattr(chunk, "source_name", "") or ""
+        if not name:
+            try:
+                name = _doc_name_for_id(chunk.doc_id) or ""
+            except Exception:  # noqa: BLE001 — filename is optional
+                name = ""
+        if not (
+            filename_looks_like_contract_data(name)
+            or filename_looks_like_e1_rate_volume(name)
+            or "accepted contract amount" in _normalize_retrieval_ws(text).lower()
+        ):
+            continue
+        seen.add(chunk.doc_id)
+        doc_ids.append(chunk.doc_id)
+    return doc_ids
+
+
+def _a2_fetch_late_incl_chunks(store, project_id: str, doc_ids: List[str]) -> List[Chunk]:
+    """Every chunk of the A2 CD volume — do not stop on a partial ACA.
+
+    Live Wave-1 A2 on 9ad62cc: chunk #0 stated delay damages ×
+    SAR 39,098,392.98. That figure is a real money amount, so the E1
+    late-scan early-return (any non-toy ACA) would keep first-N and
+    miss SAR 2,017,680,124.69. Always also run prefix / tail / incl
+    needles. Kill-switch: RAG_ACA_INCLUDING_VAT_RESCUE=0.
+    """
+    by_id: Dict[str, Chunk] = {}
+    allowed = set(doc_ids)
+    fetch = getattr(store, "chunks_for_docs", None)
+    if callable(fetch):
+        extra = []
+        try:
+            extra = fetch(project_id, doc_ids, all_rows=True)
+        except TypeError:
+            try:
+                extra = fetch(project_id, doc_ids, k_per_doc=1_000_000)
+            except TypeError:
+                extra = []
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "a2 late-incl full scan for %s failed: %s", project_id, exc,
+                )
+                extra = []
+        except Exception as exc:  # noqa: BLE001 — extras must not break
+            logger.warning(
+                "a2 late-incl full scan for %s failed: %s", project_id, exc,
+            )
+            extra = []
+        for chunk in extra or []:
+            if chunk.doc_id and chunk.doc_id not in allowed:
+                continue
+            by_id.setdefault(chunk.chunk_id, chunk)
+        for from_end in (False, True):
+            try:
+                try:
+                    extra = fetch(
+                        project_id, doc_ids,
+                        k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                        from_end=from_end,
+                    )
+                except TypeError:
+                    extra = (
+                        [] if from_end
+                        else fetch(
+                            project_id, doc_ids,
+                            k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 — extras must not break
+                logger.warning(
+                    "a2 late-incl %s scan for %s failed: %s",
+                    "tail" if from_end else "prefix", project_id, exc,
+                )
+                extra = []
+            for chunk in extra or []:
+                if chunk.doc_id and chunk.doc_id not in allowed:
+                    continue
+                by_id.setdefault(chunk.chunk_id, chunk)
+
+    containing = getattr(store, "chunks_containing_all", None)
+    if callable(containing):
+        for needles in _A2_INCL_TEXT_NEEDLES:
+            try:
+                try:
+                    hits = containing(
+                        project_id, list(needles),
+                        k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                    )
+                except TypeError:
+                    hits = containing(
+                        project_id, list(needles), k=_E1_REAL_ACA_TEXT_K,
+                    )
+            except Exception as exc:  # noqa: BLE001 — extras must not break
+                logger.warning(
+                    "a2 late-incl text scan for %s failed: %s", project_id, exc,
+                )
+                hits = []
+            for chunk in hits or []:
+                if chunk.doc_id and chunk.doc_id not in allowed:
+                    continue
+                by_id.setdefault(chunk.chunk_id, chunk)
+    return list(by_id.values())
+
+
+def _rescue_a2_including_vat_from_pool_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+) -> int:
+    """Surface a filled including-VAT ACA that sits past first-N chunk #0.
+
+    Live Wave-1 A2 on 9ad62cc: cosine / filename rescue kept Contract
+    Data chunk #0 (delay damages × a partial ACA). Identifier search
+    + first-24 neighbors never reached the filled 1.1.1 including-VAT
+    row. Kill-switch: RAG_ACA_INCLUDING_VAT_RESCUE=0.
+    """
+    if not (
+        aca_including_vat_rescue_enabled()
+        and query_is_aca_including_vat_particular(query)
+    ):
+        return 0
+
+    def _fused_chunk(entry) -> Optional[Chunk]:
+        return _a2_fused_chunk(entry)
+
+    fused_chunks = [
+        c for c in (_fused_chunk(e) for e in fused.values()) if c is not None
+    ]
+    if any(chunk_states_aca_including_vat(c.text or "") for c in fused_chunks):
+        return 0
+    doc_ids = _a2_pool_doc_ids_for_late_incl(fused)
+    if not doc_ids:
+        try:
+            from app.core.projects import documents_matching_title_phrase
+            for phrase in ("contract data", "conditions of contract"):
+                try:
+                    matches = documents_matching_title_phrase(
+                        project_id, phrase,
+                    ) or []
+                except Exception:  # noqa: BLE001 — listing is optional
+                    matches = []
+                for doc in matches:
+                    did = doc.get("id") or ""
+                    if did and did not in doc_ids:
+                        doc_ids.append(did)
+        except Exception:  # noqa: BLE001 — fused doc_ids may still be enough
+            logger.debug("a2 late-incl title listing failed", exc_info=True)
+    if not doc_ids:
+        return 0
+    extra = _a2_fetch_late_incl_chunks(store, project_id, doc_ids)
+    recovered = 0
+    for chunk in _pair_adjacent_keep_text(
+        extra or [],
+        chunk_states_aca_including_vat,
+        window=_E1_REAL_ACA_PAIR_WINDOW,
+    ):
+        if chunk.chunk_id in fused:
+            continue
+        if not chunk_states_aca_including_vat(chunk.text or ""):
+            continue
+        fused[chunk.chunk_id] = (chunk, 0.0, _ASKED_PARTICULAR_VALUE_BONUS)
+        recovered += 1
+    if recovered:
+        logger.info(
+            "a2 late-incl scan recovered %d chunk(s) past Contract Data chunk #0",
+            recovered,
+        )
+    return recovered
+
+
+def a2_including_vat_excerpts_from_loaded_cd_volume(
+    query: str,
+    project_id: str,
+    store=None,
+    *,
+    rag_context: str = "",
+    doc_ids: Optional[List[str]] = None,
+) -> str:
+    """Join including-VAT ACA rows from the loaded CD volume.
+
+    Live Wave-1 A2 on 9ad62cc: top-k stayed on Contract Data chunk #0
+    (delay damages × SAR 39,098,392.98). When the filled including-VAT
+    row exists later in the same loaded volume, return it so graft can
+    state SAR 2,017,680,124.69 — do not invent a figure and do not
+    compose delay damages. Kill-switch: RAG_ACA_INCLUDING_VAT_RESCUE=0.
+    """
+    if not (
+        aca_including_vat_rescue_enabled()
+        and query_is_aca_including_vat_particular(query)
+        and project_id
+    ):
+        return ""
+    ids: List[str] = []
+    seen: Set[str] = set()
+
+    def _add(did: str) -> None:
+        if did and did not in seen:
+            seen.add(did)
+            ids.append(did)
+
+    for did in doc_ids or []:
+        _add(did)
+    for did in e1_doc_ids_from_rag_context(rag_context):
+        _add(did)
+
+    try:
+        from app.core.projects import documents_matching_title_phrase
+        for phrase in ("contract data", "conditions of contract"):
+            try:
+                matches = documents_matching_title_phrase(project_id, phrase) or []
+            except Exception:  # noqa: BLE001 — listing is optional
+                logger.debug(
+                    "a2 loaded-volume title listing failed for %r",
+                    phrase, exc_info=True,
+                )
+                matches = []
+            for doc in matches:
+                _add(doc.get("id") or "")
+    except Exception:  # noqa: BLE001 — rag doc_ids may still be enough
+        logger.debug("a2 loaded-volume projects import failed", exc_info=True)
+
+    if not ids:
+        return ""
+    if store is None:
+        try:
+            store = get_lexical_store()
+        except Exception:  # noqa: BLE001 — never break a turn over the store
+            logger.debug("a2 loaded-volume store open failed", exc_info=True)
+            return ""
+
+    extra = _a2_fetch_late_incl_chunks(store, project_id, ids)
+    parts: List[str] = []
+    for chunk in _pair_adjacent_keep_text(
+        extra or [],
+        chunk_states_aca_including_vat,
+        window=_E1_REAL_ACA_PAIR_WINDOW,
+    ):
+        text = chunk.text or ""
+        if chunk_states_aca_including_vat(text) and text not in parts:
+            parts.append(text)
+    if not parts:
+        for chunk in extra or []:
+            text = chunk.text or ""
+            if chunk_states_aca_including_vat(text) and text not in parts:
+                parts.append(text)
+    if not parts:
+        return ""
+    return "\n\n".join(parts[:3])
+
+
+def ensure_a2_kept_has_including_vat(
+    query: str,
+    kept: List[Chunk],
+    ranked: List[Chunk],
+    *,
+    allow=None,
+) -> bool:
+    """Put the including-VAT row in top-k when it is already ranked.
+
+    Live Wave-1 A2 on 9ad62cc: kept stayed on Contract Data chunk #0
+    (delay damages × a partial ACA) after the late scan added the
+    filled including-VAT row to ranked. Prefer replacing a delay-
+    damages window. Kill-switch: RAG_ACA_INCLUDING_VAT_RESCUE=0.
+    """
+    if not kept:
+        return False
+    if not (
+        aca_including_vat_rescue_enabled()
+        and query_is_aca_including_vat_particular(query)
+    ):
+        return False
+    if any(chunk_states_aca_including_vat(c.text or "") for c in kept):
+        return False
+
+    def _ok(chunk: Chunk) -> bool:
+        return allow is None or allow(chunk)
+
+    incl: Optional[Chunk] = None
+    for chunk in ranked:
+        if not _ok(chunk):
+            continue
+        if chunk_states_aca_including_vat(chunk.text or ""):
+            incl = chunk
+            break
+    if incl is None:
+        return False
+    present = {c.chunk_id for c in kept}
+    if incl.chunk_id in present:
+        return False
+    replace_at = 0
+    for i, chunk in enumerate(kept):
+        text = chunk.text or ""
+        if chunk_states_delay_damages_rate(text) or (
+            chunk_states_accepted_contract_amount(text)
+            and not chunk_states_aca_including_vat(text)
+        ):
+            replace_at = i
+            break
+        replace_at = i
+    kept[replace_at] = incl
+    return True
 
 
 def _rescue_e1_real_aca_from_pool_docs(
@@ -5200,6 +5577,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     _rescue_e1_real_aca_from_pool_docs(
         query, project_id, fused_lex, store,
     )
+    _rescue_a2_including_vat_from_pool_docs(
+        query, project_id, fused_lex, store,
+    )
     _rescue_schedule_register_chunks(
         query, project_id, fused_lex, store,
         extra_pids=extra_lex_pids,
@@ -5270,6 +5650,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     reserve_monetary_base_row(query, kept, candidates, allow=_allow)
     reserve_e1_compose_operands(query, kept, candidates, allow=_allow)
     ensure_e1_kept_can_compose(query, kept, candidates, allow=_allow)
+    ensure_a2_kept_has_including_vat(query, kept, candidates, allow=_allow)
     for chunk in kept:
         chunk.source_name = _name(chunk.doc_id)
     return kept, noise_filtered
@@ -5712,6 +6093,7 @@ def retrieve_with_filter(
     # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
     _rescue_asked_particular_value_chunks(query, project_id, fused, store)
     _rescue_e1_real_aca_from_pool_docs(query, project_id, fused, store)
+    _rescue_a2_including_vat_from_pool_docs(query, project_id, fused, store)
     _rescue_schedule_register_chunks(
         query,
         project_id,
@@ -5964,6 +6346,9 @@ def retrieve_with_filter(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
     ensure_e1_kept_can_compose(
+        query, kept, [c for _, c in scored], allow=_allow_final,
+    )
+    ensure_a2_kept_has_including_vat(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
 
