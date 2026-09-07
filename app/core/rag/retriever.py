@@ -4851,8 +4851,6 @@ def _parse_priced_cesmm_window(window: str, code: str) -> Optional[Dict[str, Any
     """Qty / unit / rate / amount from one isolated CESMM row. None if Rate Only."""
     if not window or _RATE_ONLY_RE.search(window):
         return None
-    if re.search(r"(?i)\bexcluded\b", window):
-        return None
     blob = _normalize_retrieval_ws((window or "").replace("|", " "))
     match = _PRICED_BOQ_TRIPLE_RE.search(blob)
     if not match:

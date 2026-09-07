@@ -180,6 +180,12 @@ def test_compose_still_parses_b4_with_currency_prefix():
 def test_compose_does_not_invent_from_rate_only_or_excluded():
     assert compose_priced_boq_row(LIVE_G4, SOUP) is None
     assert compose_priced_boq_row(LIVE_B4, EXCLUDED_CULVERT) is None
+    # Currency-enabled lookalike: do not treat Excluded sum 1 as 1 × 80.
+    priced_excluded = (
+        "J |Breakout and remove existing storm water culverts D599.5 "
+        "| sum 1 Excluded @ SAR 80.00 = SAR 80.00"
+    )
+    assert compose_priced_boq_row(LIVE_B4, priced_excluded) is None
 
 
 def test_kill_switch_restores_the_empty_hang(monkeypatch):
