@@ -507,3 +507,5 @@ def test_graft_replaces_cost_refusal_when_late_excl_vat_is_present():
     assert posted != _CG_REFUSAL
     assert "upload your priced BOQ" not in posted.lower()
     assert "10,000.00" not in posted.split("\n", 1)[0]
+    assert "0.015%" not in posted
+    assert "263,175.67" not in posted

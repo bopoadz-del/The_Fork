@@ -919,6 +919,7 @@ class VectorStore:
         doc_ids: List[str],
         *,
         k_per_doc: int = 12,
+        from_end: bool = False,
     ) -> List[Chunk]:
         """Return indexed chunks for specific documents, ordered by chunk_index.
 
@@ -927,6 +928,10 @@ class VectorStore:
         without competing against a Volume 5 / demolition-spec flood in
         ``identifier_search``. Empty ``doc_ids`` or a store miss returns
         ``[]``; failures never raise into the answer path.
+
+        ``from_end=True`` takes the last ``k_per_doc`` rows per file
+        (Contract Data appendix after a long Conditions body). Default
+        stays first-N so existing callers are unchanged.
         """
         if not project_id or not doc_ids:
             return []
@@ -960,25 +965,36 @@ class VectorStore:
                 project_id, unique, exc,
             )
             return []
+
+        def _as_chunk(r) -> Chunk:
+            return Chunk(
+                chunk_id=r.chunk_id,
+                project_id=r.project_id,
+                doc_id=r.doc_id,
+                chunk_index=int(r.chunk_index),
+                text=r.text or "",
+                score=0.0,
+                knowledge_layer=getattr(r, "knowledge_layer", None),
+                authority=getattr(r, "authority", None),
+            )
+
+        if from_end:
+            by_doc: Dict[str, List] = {}
+            for r in rows:
+                by_doc.setdefault(r.doc_id, []).append(r)
+            out: List[Chunk] = []
+            for did in unique:
+                group = by_doc.get(did, [])
+                out.extend(_as_chunk(r) for r in group[-per:])
+            return out
         taken: Dict[str, int] = {}
-        out: List[Chunk] = []
+        out = []
         for r in rows:
             n = taken.get(r.doc_id, 0)
             if n >= per:
                 continue
             taken[r.doc_id] = n + 1
-            out.append(
-                Chunk(
-                    chunk_id=r.chunk_id,
-                    project_id=r.project_id,
-                    doc_id=r.doc_id,
-                    chunk_index=int(r.chunk_index),
-                    text=r.text or "",
-                    score=0.0,
-                    knowledge_layer=getattr(r, "knowledge_layer", None),
-                    authority=getattr(r, "authority", None),
-                )
-            )
+            out.append(_as_chunk(r))
         return out
 
     def chunks_containing_all(
@@ -987,6 +1003,7 @@ class VectorStore:
         needles: List[str],
         *,
         k: int = 20,
+        doc_ids: Optional[List[str]] = None,
     ) -> List[Chunk]:
         """Chunks whose text contains every ``needle`` (case-insensitive).
 
@@ -999,6 +1016,8 @@ class VectorStore:
 
         Needles are sanitised (no LIKE wildcards, min length 3). Empty
         ``needles`` or a store miss returns ``[]``; failures never raise.
+        Optional ``doc_ids`` scopes the LIKE to those files so a
+        first-N prefix cannot hide a later appendix row.
         """
         if not project_id or not needles:
             return []
@@ -1022,12 +1041,28 @@ class VectorStore:
         for i, tok in enumerate(cleaned):
             clauses.append(f"LOWER(text) LIKE :n{i}")
             params[f"n{i}"] = f"%{tok}%"
+        extra_doc = ""
+        if doc_ids:
+            unique_docs: List[str] = []
+            seen_d: Set[str] = set()
+            for did in doc_ids:
+                if did and did not in seen_d:
+                    seen_d.add(did)
+                    unique_docs.append(did)
+            if unique_docs:
+                ph = []
+                for i, did in enumerate(unique_docs):
+                    key = f"did{i}"
+                    ph.append(f":{key}")
+                    params[key] = did
+                extra_doc = f" AND doc_id IN ({', '.join(ph)}) "
         sql = text(
             "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
             "knowledge_layer, authority "
             f"FROM {self._table_name} "
             "WHERE project_id = :project_id "
             f"AND {' AND '.join(clauses)} "
+            f"{extra_doc}"
             "LIMIT :k"
         )
         try:
