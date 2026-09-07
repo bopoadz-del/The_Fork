@@ -555,8 +555,8 @@ def parse_boq_measured_rows(text: str) -> List[Dict[str, Any]]:
     try:
         from app.core.rag.vector_store import normalize_cesmm_item_codes
         blob = normalize_cesmm_item_codes(blob) or blob
-    except Exception:  # noqa: BLE001 — parse the raw excerpt if normalize is down
-        pass
+    except Exception as exc:  # noqa: BLE001 — parse the raw excerpt if normalize is down
+        logger.warning("CESMM normalize skipped; parsing raw excerpt: %s", exc)
     found: List[Dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     seen_codes: set[str] = set()
