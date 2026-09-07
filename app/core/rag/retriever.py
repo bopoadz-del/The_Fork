@@ -2546,6 +2546,10 @@ _ACA_BASE_RESCUE_PHRASES = (
 # chunks 9–11). Walk every chunk of those docs. Kill-switch:
 # RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
 _E1_REAL_ACA_DOC_SCAN = 400
+# Walk mid-volume windows up to this index. Live leftover E1 after
+# #541: a store that caps k_per_doc at 400 (and ignores all_rows)
+# never sees chunk 500 of a 1200-row combined volume via prefix+tail.
+_E1_REAL_ACA_MID_SCAN_MAX = 8000
 _E1_REAL_ACA_TEXT_K = 400
 _E1_REAL_ACA_PAIR_WINDOW = 3
 # Pin rescued 0.1% / excl-VAT rows above Cosine 9–11 (~0.95) so
@@ -2566,6 +2570,10 @@ _E1_REAL_ACA_TEXT_NEEDLES = (
     # "%" is stripped by chunks_containing_all — use price tokens.
     ("damages", "price"),
     ("delay", "price"),
+    # Scanned 0.1% of Contract Price — "%" is stripped by
+    # chunks_containing_all, so the decimal + price tokens remain.
+    ("0.1", "price"),
+    ("0.1", "calendar"),
 )
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
@@ -2893,6 +2901,31 @@ def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
         _CD_HEADING_IN_CHUNK_RE.search(t)
         and not contract_data_mention_is_only_a_cross_reference(t)
     )
+
+
+def _e1_is_cap_noise(text: str) -> bool:
+    """True for CoC 0.015% or pointer-only 8.8 windows that crowd the cap.
+
+    Live leftover E1 after #541: HIGH chunks 9–11 (pointer or 0.015% of
+    the filled ACA) fill ``MAX_RAG_TOKENS`` and drop the 0.0-score
+    Contract Data 0.1% / excl-VAT operands. Those windows are never
+    the E1 product — evict them once both operands are protected.
+    """
+    t = text or ""
+    if not t:
+        return False
+    try:
+        if _e1_rate_preference(t) >= 2:
+            return False
+        if _e1_has_standalone_excl_vat(t):
+            return False
+    except Exception:  # noqa: BLE001 — treat as noise-unknown, keep the row
+        return False
+    if re.search(r"0\.015\s*%", t) and _DELAY_RATE_KEY_RE.search(t):
+        return True
+    if _DELAY_RATE_POINTER_RE.search(t) and not chunk_states_delay_damages_rate(t):
+        return True
+    return False
 
 
 def _e1_has_standalone_excl_vat(text: str) -> bool:
@@ -3871,6 +3904,37 @@ def _e1_fetch_late_aca_chunks(
                     _keep(chunk)
             if _e1_chunks_have_both_operands(by_id.values()):
                 return list(by_id.values())
+            # Mid-volume windows: prefix-400 + last-400 miss chunk 500
+            # of a 1200-row volume when the store also caps k_per_doc
+            # (k=1_000_000 still returns first-400). Walk offset=400,
+            # 800, … until both operands exist. TypeError means the
+            # store has no offset — fall through to needles.
+            offset = _E1_REAL_ACA_DOC_SCAN
+            while offset < _E1_REAL_ACA_MID_SCAN_MAX:
+                try:
+                    extra = fetch(
+                        pid, doc_ids,
+                        k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                        offset=offset,
+                    )
+                except TypeError:
+                    break
+                except Exception as exc:  # noqa: BLE001 — extras must not break
+                    logger.warning(
+                        "e1 late-ACA mid-window scan offset=%s for %s failed: %s",
+                        offset, pid, exc,
+                    )
+                    break
+                got = list(extra or [])
+                if not got:
+                    break
+                for chunk in got:
+                    _keep(chunk)
+                if _e1_chunks_have_both_operands(by_id.values()):
+                    return list(by_id.values())
+                if len(got) < _E1_REAL_ACA_DOC_SCAN:
+                    break
+                offset += _E1_REAL_ACA_DOC_SCAN
 
     containing = getattr(store, "chunks_containing_all", None)
     if callable(containing):
