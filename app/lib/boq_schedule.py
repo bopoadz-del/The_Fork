@@ -495,7 +495,8 @@ _CESMM_PROSE_ROW_RE = re.compile(
 )
 _SKIP_BOQ_DESC_RE = re.compile(
     r"(?i)\b(?:part\s+summary|grand\s+total|carried\s+forward|"
-    r"total\s+this\s+page|brought\s+forward|item\s*$|description\s*$)\b",
+    r"total\s+this\s+page|brought\s+forward|item\s*$|description\s*$)\b|"
+    r"^(?:is\s+a\b|rate\s+only\b)",
 )
 _TRAILING_MEASURED_RE = re.compile(
     r"\s+\d[\d,]*(?:\.\d+)?\s*"
@@ -558,6 +559,7 @@ def parse_boq_measured_rows(text: str) -> List[Dict[str, Any]]:
         pass
     found: List[Dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    seen_codes: set[str] = set()
 
     def _add(code: str, desc: str) -> None:
         item_key = _compact_cesmm_code(code)
@@ -566,10 +568,16 @@ def parse_boq_measured_rows(text: str) -> List[Dict[str, Any]]:
             return
         if item_key and not re.match(r"(?i)^[A-Z]\d{2,4}(?:\.\d+)?$", item_key):
             return
+        # One package per CESMM code. A later "D529.3 is a Rate Only
+        # item…" sentence is the same row, not a second work package.
+        if item_key and item_key in seen_codes:
+            return
         key = (item_key, _norm_desc(description))
         if not key[1] or key in seen:
             return
         seen.add(key)
+        if item_key:
+            seen_codes.add(item_key)
         found.append({
             "item_key": item_key or None,
             "description": description,
@@ -601,18 +609,24 @@ def filter_demolition_site_clearance_items(
     """Keep retrieved demolition / site-clearance rows only."""
     out: List[Dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    seen_codes: set[str] = set()
     for item in items or []:
         if not isinstance(item, dict):
             continue
         if not item_is_demolition_or_site_clearance(item):
             continue
+        code = _compact_cesmm_code(str(item.get("item_key") or ""))
         key = (
-            _compact_cesmm_code(str(item.get("item_key") or "")),
+            code,
             _norm_desc(item.get("description") or item.get("item_key")),
         )
         if not key[1] or key in seen:
             continue
+        if code and code in seen_codes:
+            continue
         seen.add(key)
+        if code:
+            seen_codes.add(code)
         out.append(item)
     return out
 

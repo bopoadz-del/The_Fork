@@ -106,16 +106,18 @@ def test_a2_a3_a5_a9_c1_e1_do_not_elect_boq_scope_wbs():
 
 def test_parse_s2_fixture_rows_does_not_invent():
     rows = parse_boq_measured_rows(S2_BOQ)
-    codes = {r.get("item_key") for r in rows}
+    codes = [r.get("item_key") for r in rows]
     assert "D110" in codes
     assert "D290.1" in codes
     assert "D549.2" in codes
     assert "D599.5" in codes
+    assert codes.count("D529.3") == 1
     descs = " ".join(r.get("description") or "" for r in rows).lower()
     assert "site clearance" in descs
     assert "trees" in descs
     assert "superstructure" not in descs
     assert "hall a" not in descs
+    assert "no quantity is priced" not in descs
     assert not any("part summary" in (r.get("description") or "").lower() for r in rows)
 
 
@@ -516,3 +518,6 @@ async def test_f1_run_workflow_pool_is_not_building_template(monkeypatch):
     assert "Superstructure" not in answer
     assert "Hall A" not in answer
     assert "High-level WBS" in answer
+    assert "no quantity is priced" not in answer.lower()
+    packages = [ln for ln in answer.splitlines() if ln.startswith("1.")]
+    assert len([p for p in packages if "D529.3" in p]) <= 1
