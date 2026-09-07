@@ -522,16 +522,22 @@ def test_graft_a2_last_chance_scans_cited_chunk_owner_pid(monkeypatch):
         "app.core.projects.documents_matching_title_phrase",
         lambda *a, **k: [],
     )
+    monkeypatch.setattr(
+        "app.core.rag.retriever.get_lexical_store",
+        lambda: _Store(),
+    )
     monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
+    rag_ctx = (
+        f"[doc_id={CD_DOC} chunk=0 score=0.80] {CHUNK0_DELAY_PARTIAL}"
+    )
     extra = a2_including_vat_excerpts_from_loaded_cd_volume(
         LIVE_A2, ACTIVE, _Store(),
-        rag_context=_sys(CHUNK0_DELAY_PARTIAL)["content"],
-        doc_ids=[CD_DOC],
+        rag_context=rag_ctx,
         extra_pids=[source_pid],
     )
     assert ACA_INCL in extra
     assert PARTIAL_ACA_TXT not in extra
-    rag = _sys(CHUNK0_DELAY_PARTIAL)
+    rag = {"role": "system", "content": "Reference context:\n" + rag_ctx}
     msgs = [{"role": "user", "content": LIVE_A2}]
     _apply_rag_context(msgs, rag)
     out = _graft_asked_contract_particular(
