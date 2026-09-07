@@ -2747,11 +2747,24 @@ def chunk_states_accepted_contract_amount(text: str) -> bool:
             ):
                 break
         else:
-            return False
+            # Rate sentence is not the money row. A paired scanned
+            # window that also carries the filled excl-VAT ACA still
+            # is — do not drop it just because 8.8 shares the chunk.
+            try:
+                from app.lib.construction_formulas_commercial import (
+                    chunk_has_real_accepted_contract_amount,
+                )
+                if not chunk_has_real_accepted_contract_amount(t):
+                    return False
+            except Exception:  # noqa: BLE001 — rate-only window is not ACA
+                return False
     try:
         from app.lib.construction_formulas_commercial import (
             chunk_accepted_contract_amount_is_only_toy,
+            chunk_has_real_accepted_contract_amount,
         )
+        if chunk_has_real_accepted_contract_amount(t):
+            return True
         if chunk_accepted_contract_amount_is_only_toy(t):
             return False
     except Exception:  # noqa: BLE001 — never break a turn over an import
@@ -4100,10 +4113,12 @@ def reserve_monetary_base_row(
         if e1:
             try:
                 from app.lib.construction_formulas_commercial import (
-                    chunk_accepted_contract_amount_is_only_toy,
+                    chunk_has_real_accepted_contract_amount,
                 )
-                if chunk_accepted_contract_amount_is_only_toy(text):
-                    return False
+                # Toy 8.8 windows and particulars-prefixed 10M examples
+                # are not the rate base. Only a non-toy ACA (live:
+                # excl-VAT SAR 1,754,504,456.25) satisfies reservation.
+                return chunk_has_real_accepted_contract_amount(text)
             except Exception:  # noqa: BLE001 — fall through to the usual tests
                 logger.debug("toy-ACA money-base test failed", exc_info=True)
         if particulars_row_states_an_amount_of_money(text):
@@ -4228,6 +4243,19 @@ def reserve_e1_compose_operands(
         idx = worst_i
     if idx is None:
         idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+    if idx is None:
+        # Live leftover E1 after #529: toy 8.8 windows occupy every
+        # slot as rate operands. Skipping the toy cleared the money
+        # operand without a free slot — still replace a surplus rate
+        # so the excl-VAT ACA can enter. Keep at least one rate row.
+        rate_idxs = [
+            i for i, chunk in enumerate(kept)
+            if chunk_states_delay_damages_rate(chunk.text or "")
+        ]
+        if len(rate_idxs) > 1:
+            idx = rate_idxs[-1]
+        elif kept_best < 0:
+            idx = len(kept) - 1
     if idx is None:
         return changed
     kept[idx] = best_chunk
