@@ -4629,11 +4629,26 @@ def query_asks_for_boq_item_amount(query: str) -> bool:
     return bool(extract_asked_cesmm_codes(q))
 
 
+# A new BOQ row starts with a CESMM code (optionally after a pipe).
+# CESMM4 is letter + 2-3 digits (D529.3 / D110). Do not treat a
+# unit + rate ("m 1370.00") as the next item — four-digit quantities
+# fail ``\d{2,3}\b`` (the digit after the 3-digit prefix blocks ``\b``).
+_NEXT_CESMM_ROW_RE = re.compile(
+    r"(?i)(?:\s*[|]\s*|\s+)([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b",
+)
+_CESMM_ROW_TAIL_CHARS = 220
+
+
 def _cesmm_row_windows(text: str, code: str) -> List[str]:
-    """Local row / next-line windows around one CESMM code.
+    """Local row windows around one CESMM code.
 
     Amount sits to the right of the item code. A previous row's
-    Rate Only must not stain the next item on a mixed BOQ page.
+    Rate Only must not stain the next item on a mixed BOQ page —
+    including same-line OCR soup (live WAVE 2 B4/B5 on fa07b2f:
+    D529.3 Rate Only + D549.2 fence + D599.5 carriageway in one
+    scanned line). Cut at the next CESMM item on this or the next
+    line; keep one continuation line so ``D 529.3`` / next-line
+    ``Rate Only`` still belongs to D529.3.
     """
     compact = normalize_cesmm_item_codes(code or "")
     if not compact:
@@ -4643,35 +4658,16 @@ def _cesmm_row_windows(text: str, code: str) -> List[str]:
         rf"(?i)(?<![A-Za-z0-9]){re.escape(letter)}\s*{re.escape(rest)}"
         r"(?![A-Za-z0-9])",
     )
-    # A new BOQ row starts with a CESMM code (optionally after a pipe).
-    # CESMM4 is letter + 2-3 digits (D529.3 / D110). Do not treat a
-    # unit + rate ("m 1370.00") as the next item.
-    other_re = re.compile(
-        r"(?i)^(?:\s*[|]\s*)?([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b",
-    )
     blob = text or ""
     windows: List[str] = []
-    lines = blob.splitlines() or [blob]
-    for i, line in enumerate(lines):
-        if not item_re.search(line):
-            continue
-        nxt = lines[i + 1] if i + 1 < len(lines) else ""
-        if other_re.match(nxt.strip()) and not item_re.search(nxt):
-            nxt = ""
-        windows.append(_normalize_retrieval_ws(f"{line} {nxt}"))
-    if windows:
-        return windows
-    # One-line OCR / table soup: cut at the next pipe-led CESMM item,
-    # not at a unit + rate ("m 1370.00").
-    next_item = re.compile(
-        r"(?i)(?:\s*[|]\s+)([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b",
-    )
     for match in item_re.finditer(blob):
-        tail = blob[match.end(): match.end() + 160]
-        cut = next_item.search(tail)
+        tail = blob[match.end(): match.end() + _CESMM_ROW_TAIL_CHARS]
+        cut = _NEXT_CESMM_ROW_RE.search(tail)
         if cut:
             tail = tail[:cut.start()]
-        windows.append(_normalize_retrieval_ws(blob[match.start(): match.end()] + tail))
+        windows.append(
+            _normalize_retrieval_ws(blob[match.start(): match.end()] + tail)
+        )
     return windows
 
 
@@ -4705,11 +4701,17 @@ def chunk_states_rate_only_row(text: str) -> bool:
 
 
 def format_rate_only_line(codes: List[str], excerpt: str = "") -> str:
-    """User-facing Rate Only sentence. Does not invent a money total."""
+    """User-facing Rate Only sentence. Does not invent a money total.
+
+    Description is taken from the asked item's isolated row only.
+    A storm-water neighbor on the same OCR page must not be grafted
+    onto D599.5 / D549.2 (live WAVE 2 B4/B5).
+    """
     code = (codes[0] if codes else "the item")
     pretty = f"{code[0].upper()}{code[1:]}" if code and code[0].isalpha() else code
     desc = ""
-    collapsed = _normalize_retrieval_ws(excerpt or "")
+    windows = _cesmm_row_windows(excerpt or "", code) if code else []
+    collapsed = _normalize_retrieval_ws(" ".join(windows))
     if re.search(r"(?i)storm\s+water\s+culvert", collapsed):
         desc = " (removal of storm water culverts)"
     return (
