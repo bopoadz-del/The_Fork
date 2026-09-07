@@ -4630,11 +4630,14 @@ def query_asks_for_boq_item_amount(query: str) -> bool:
 
 
 # A new BOQ row starts with a CESMM code (optionally after a pipe).
-# CESMM4 is letter + 2-3 digits (D529.3 / D110). Do not treat a
-# unit + rate ("m 1370.00") as the next item — four-digit quantities
-# fail ``\d{2,3}\b`` (the digit after the 3-digit prefix blocks ``\b``).
+# CESMM4 is letter + 3 digits (D529.3 / D110). Same-line unit+rate
+# ("m 80.00", "m 15.00") is letter + 2-digit money and must not cut
+# the asked row — that was dropping 280,320 from D549.2. Pipe-led
+# rows still allow 2-3 digits (``| I12 |``). Four-digit quantities
+# fail ``\d{3}\b`` (the digit after the 3-digit prefix blocks ``\b``).
 _NEXT_CESMM_ROW_RE = re.compile(
-    r"(?i)(?:\s*[|]\s*|\s+)([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b",
+    r"(?i)(?:\s*[|]\s*([A-Z])\s*(\d{2,3}(?:\.\d{1,2})?)\b"
+    r"|\s+([A-Z])\s*(\d{3}(?:\.\d{1,2})?)\b)",
 )
 _CESMM_ROW_TAIL_CHARS = 220
 
