@@ -2588,6 +2588,8 @@ _A2_INCL_TEXT_NEEDLES = (
     ("including", "vat"),
     ("accepted", "including"),
     ("amount", "including"),
+    ("incl", "vat"),
+    ("1.1.1", "vat"),
 )
 _TFC_RESCUE_PHRASES = (
     "time for completion for the whole of the works",
@@ -4056,90 +4058,102 @@ def _a2_pool_doc_ids_for_late_incl(fused: Dict[str, Tuple]) -> List[str]:
     return doc_ids
 
 
-def _a2_fetch_late_incl_chunks(store, project_id: str, doc_ids: List[str]) -> List[Chunk]:
+def _a2_fetch_late_incl_chunks(
+    store,
+    project_id: str,
+    doc_ids: List[str],
+    extra_pids: Optional[Iterable[str]] = None,
+    fused: Optional[Dict[str, Tuple]] = None,
+) -> List[Chunk]:
     """Every chunk of the A2 CD volume — do not stop on a partial ACA.
 
-    Live Wave-1 A2 on 9ad62cc: chunk #0 stated delay damages ×
-    SAR 39,098,392.98. That figure is a real money amount, so the E1
+    Live Wave-1 A2 on 9ad62cc / 396cc7b: chunk #0 stated delay damages
+    × SAR 39,098,392.98. That figure is a real money amount, so the E1
     late-scan early-return (any non-toy ACA) would keep first-N and
     miss SAR 2,017,680,124.69. Always also run prefix / tail / incl
-    needles. Kill-switch: RAG_ACA_INCLUDING_VAT_RESCUE=0.
+    needles. Retry cited chunk owners — Master Corpus UI id is not
+    always the row owner. Kill-switch: RAG_ACA_INCLUDING_VAT_RESCUE=0.
     """
     by_id: Dict[str, Chunk] = {}
     allowed = set(doc_ids)
     fetch = getattr(store, "chunks_for_docs", None)
+    pids = _e1_scan_project_ids(project_id, extra_pids, fused)
+    if not pids and project_id:
+        pids = [project_id]
+
+    def _keep(chunk: Chunk) -> None:
+        if chunk.doc_id and chunk.doc_id not in allowed:
+            return
+        by_id.setdefault(chunk.chunk_id, chunk)
+
     if callable(fetch):
-        extra = []
-        try:
-            extra = fetch(project_id, doc_ids, all_rows=True)
-        except TypeError:
-            try:
-                extra = fetch(project_id, doc_ids, k_per_doc=1_000_000)
-            except TypeError:
-                extra = []
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "a2 late-incl full scan for %s failed: %s", project_id, exc,
-                )
-                extra = []
-        except Exception as exc:  # noqa: BLE001 — extras must not break
-            logger.warning(
-                "a2 late-incl full scan for %s failed: %s", project_id, exc,
-            )
+        for pid in pids:
             extra = []
-        for chunk in extra or []:
-            if chunk.doc_id and chunk.doc_id not in allowed:
-                continue
-            by_id.setdefault(chunk.chunk_id, chunk)
-        for from_end in (False, True):
             try:
+                extra = fetch(pid, doc_ids, all_rows=True)
+            except TypeError:
                 try:
-                    extra = fetch(
-                        project_id, doc_ids,
-                        k_per_doc=_E1_REAL_ACA_DOC_SCAN,
-                        from_end=from_end,
-                    )
+                    extra = fetch(pid, doc_ids, k_per_doc=1_000_000)
                 except TypeError:
-                    extra = (
-                        [] if from_end
-                        else fetch(
-                            project_id, doc_ids,
-                            k_per_doc=_E1_REAL_ACA_DOC_SCAN,
-                        )
+                    extra = []
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "a2 late-incl full scan for %s failed: %s", pid, exc,
                     )
+                    extra = []
             except Exception as exc:  # noqa: BLE001 — extras must not break
                 logger.warning(
-                    "a2 late-incl %s scan for %s failed: %s",
-                    "tail" if from_end else "prefix", project_id, exc,
+                    "a2 late-incl full scan for %s failed: %s", pid, exc,
                 )
                 extra = []
             for chunk in extra or []:
-                if chunk.doc_id and chunk.doc_id not in allowed:
-                    continue
-                by_id.setdefault(chunk.chunk_id, chunk)
+                _keep(chunk)
+            for from_end in (False, True):
+                try:
+                    try:
+                        extra = fetch(
+                            pid, doc_ids,
+                            k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                            from_end=from_end,
+                        )
+                    except TypeError:
+                        extra = (
+                            [] if from_end
+                            else fetch(
+                                pid, doc_ids,
+                                k_per_doc=_E1_REAL_ACA_DOC_SCAN,
+                            )
+                        )
+                except Exception as exc:  # noqa: BLE001 — extras must not break
+                    logger.warning(
+                        "a2 late-incl %s scan for %s failed: %s",
+                        "tail" if from_end else "prefix", pid, exc,
+                    )
+                    extra = []
+                for chunk in extra or []:
+                    _keep(chunk)
 
     containing = getattr(store, "chunks_containing_all", None)
     if callable(containing):
-        for needles in _A2_INCL_TEXT_NEEDLES:
-            try:
+        for pid in pids:
+            for needles in _A2_INCL_TEXT_NEEDLES:
                 try:
-                    hits = containing(
-                        project_id, list(needles),
-                        k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                    try:
+                        hits = containing(
+                            pid, list(needles),
+                            k=_E1_REAL_ACA_TEXT_K, doc_ids=doc_ids,
+                        )
+                    except TypeError:
+                        hits = containing(
+                            pid, list(needles), k=_E1_REAL_ACA_TEXT_K,
+                        )
+                except Exception as exc:  # noqa: BLE001 — extras must not break
+                    logger.warning(
+                        "a2 late-incl text scan for %s failed: %s", pid, exc,
                     )
-                except TypeError:
-                    hits = containing(
-                        project_id, list(needles), k=_E1_REAL_ACA_TEXT_K,
-                    )
-            except Exception as exc:  # noqa: BLE001 — extras must not break
-                logger.warning(
-                    "a2 late-incl text scan for %s failed: %s", project_id, exc,
-                )
-                hits = []
-            for chunk in hits or []:
-                if chunk.doc_id and chunk.doc_id not in allowed:
-                    continue
-                by_id.setdefault(chunk.chunk_id, chunk)
+                    hits = []
+                for chunk in hits or []:
+                    _keep(chunk)
     return list(by_id.values())
 
 
@@ -4171,25 +4185,31 @@ def _rescue_a2_including_vat_from_pool_docs(
     if any(chunk_states_aca_including_vat(c.text or "") for c in fused_chunks):
         return 0
     doc_ids = _a2_pool_doc_ids_for_late_incl(fused)
+    pids = _e1_scan_project_ids(project_id, None, fused)
     if not doc_ids:
         try:
             from app.core.projects import documents_matching_title_phrase
-            for phrase in ("contract data", "conditions of contract"):
-                try:
-                    matches = documents_matching_title_phrase(
-                        project_id, phrase,
-                    ) or []
-                except Exception:  # noqa: BLE001 — listing is optional
-                    matches = []
-                for doc in matches:
-                    did = doc.get("id") or ""
-                    if did and did not in doc_ids:
-                        doc_ids.append(did)
+            for pid in pids or [project_id]:
+                if not pid:
+                    continue
+                for phrase in ("contract data", "conditions of contract"):
+                    try:
+                        matches = documents_matching_title_phrase(
+                            pid, phrase,
+                        ) or []
+                    except Exception:  # noqa: BLE001 — listing is optional
+                        matches = []
+                    for doc in matches:
+                        did = doc.get("id") or ""
+                        if did and did not in doc_ids:
+                            doc_ids.append(did)
         except Exception:  # noqa: BLE001 — fused doc_ids may still be enough
             logger.debug("a2 late-incl title listing failed", exc_info=True)
     if not doc_ids:
         return 0
-    extra = _a2_fetch_late_incl_chunks(store, project_id, doc_ids)
+    extra = _a2_fetch_late_incl_chunks(
+        store, project_id, doc_ids, extra_pids=pids, fused=fused,
+    )
     recovered = 0
     for chunk in _pair_adjacent_keep_text(
         extra or [],
@@ -4217,19 +4237,22 @@ def a2_including_vat_excerpts_from_loaded_cd_volume(
     *,
     rag_context: str = "",
     doc_ids: Optional[List[str]] = None,
+    extra_pids: Optional[Iterable[str]] = None,
 ) -> str:
     """Join including-VAT ACA rows from the loaded CD volume.
 
-    Live Wave-1 A2 on 9ad62cc: top-k stayed on Contract Data chunk #0
-    (delay damages × SAR 39,098,392.98). When the filled including-VAT
-    row exists later in the same loaded volume, return it so graft can
-    state SAR 2,017,680,124.69 — do not invent a figure and do not
+    Live Wave-1 A2 on 9ad62cc / 396cc7b: top-k stayed on Contract Data
+    chunk #0 (delay damages × SAR 39,098,392.98). When the filled
+    including-VAT row exists later in the same loaded volume — possibly
+    owned by a cited source project, not the UI id — return it so graft
+    can state SAR 2,017,680,124.69. Do not invent a figure and do not
     compose delay damages. Kill-switch: RAG_ACA_INCLUDING_VAT_RESCUE=0.
     """
+    pids = _e1_scan_project_ids(project_id, extra_pids)
     if not (
         aca_including_vat_rescue_enabled()
         and query_is_aca_including_vat_particular(query)
-        and project_id
+        and (pids or project_id)
     ):
         return ""
     ids: List[str] = []
@@ -4247,17 +4270,20 @@ def a2_including_vat_excerpts_from_loaded_cd_volume(
 
     try:
         from app.core.projects import documents_matching_title_phrase
-        for phrase in ("contract data", "conditions of contract"):
-            try:
-                matches = documents_matching_title_phrase(project_id, phrase) or []
-            except Exception:  # noqa: BLE001 — listing is optional
-                logger.debug(
-                    "a2 loaded-volume title listing failed for %r",
-                    phrase, exc_info=True,
-                )
-                matches = []
-            for doc in matches:
-                _add(doc.get("id") or "")
+        for pid in pids or [project_id]:
+            if not pid:
+                continue
+            for phrase in ("contract data", "conditions of contract"):
+                try:
+                    matches = documents_matching_title_phrase(pid, phrase) or []
+                except Exception:  # noqa: BLE001 — listing is optional
+                    logger.debug(
+                        "a2 loaded-volume title listing failed for %r",
+                        phrase, exc_info=True,
+                    )
+                    matches = []
+                for doc in matches:
+                    _add(doc.get("id") or "")
     except Exception:  # noqa: BLE001 — rag doc_ids may still be enough
         logger.debug("a2 loaded-volume projects import failed", exc_info=True)
 
@@ -4270,7 +4296,9 @@ def a2_including_vat_excerpts_from_loaded_cd_volume(
             logger.debug("a2 loaded-volume store open failed", exc_info=True)
             return ""
 
-    extra = _a2_fetch_late_incl_chunks(store, project_id, ids)
+    extra = _a2_fetch_late_incl_chunks(
+        store, project_id or (pids[0] if pids else ""), ids, extra_pids=pids,
+    )
     parts: List[str] = []
     for chunk in _pair_adjacent_keep_text(
         extra or [],
