@@ -327,9 +327,10 @@ def format_chunks_as_system_message(
                 "and do not give a generic acknowledgement.\n"
             )
 
-    # WAVE 2 B4: priced D599.5 is already in the excerpts. Without
-    # this the model echoed the ask / promised to search and never
-    # wrote quantity + amount. G4 Rate Only stays on the block above.
+    # WAVE 2 B4/B5: priced D599.5 / D549.2 is already in the excerpts.
+    # Without this the model echoed the ask / promised to search and
+    # never wrote quantity + amount. G4 Rate Only stays on the block
+    # above.
     if (
         query
         and priced_boq_compose_enabled()
