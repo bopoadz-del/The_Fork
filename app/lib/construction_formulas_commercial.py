@@ -102,6 +102,19 @@ _MONEY_RE = re.compile(
 _POINTER_RE = re.compile(
     r"(?i)at\s+the\s+rate\s+stated\s+in\s+the\s+contract\s+data",
 )
+_CONTRACT_PRICE_RE = re.compile(r"(?i)\bcontract\s+price\b")
+_CONTRACT_DATA_CTX_RE = re.compile(
+    r"(?i)\b(?:contract\s+data|particulars|8\.8)\b",
+)
+_WHOLE_WORKS_RE = re.compile(r"(?i)\bwhole\s+of\s+the\s+works\b")
+_SUBCLAUSE_87_RE = re.compile(r"(?i)\b(?:sub[- ]?clause\s+)?8\.7\b")
+# Live leftover E1 after #535: CoC 8.7/8.8 windows state 0.015% of the
+# excl-VAT ACA (SAR 263,175.67/day). Contract Data 8.8 is 0.1% of the
+# Contract Price (SAR 1,754,504.46/day). First-match compose elected
+# 0.015% whenever that window led the excerpts. Kill-switch
+# COMPOSE_REJECT_E1_LOOKALIKE_RATE=0 restores electing 0.015%.
+_LOOKALIKE_RATE_PERCENT = 0.015
+_PREFERRED_WHOLE_WORKS_RATE = 0.1
 # Live leftover E1 on c5c6dfa: Contract Data 8.8 chunks 9–11 carried a
 # FIDIC worked-example ACA of SAR 10,000,000. Compose elected it
 # (0.1% → SAR 10,000/day) instead of the filled excl-VAT row
@@ -126,6 +139,56 @@ def reject_e1_toy_aca_enabled() -> bool:
     """ON by default. ``COMPOSE_REJECT_E1_TOY_ACA=0`` restores the 10M FAIL."""
     raw = (os.getenv("COMPOSE_REJECT_E1_TOY_ACA", "1") or "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
+
+
+def reject_e1_lookalike_rate_enabled() -> bool:
+    """ON by default. ``COMPOSE_REJECT_E1_LOOKALIKE_RATE=0`` keeps 0.015%."""
+    raw = (
+        os.getenv("COMPOSE_REJECT_E1_LOOKALIKE_RATE", "1") or "1"
+    ).strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def delay_damages_rate_is_coc_lookalike(rate: float, ctx: str = "") -> bool:
+    """True for CoC 8.7/8.8 0.015%-of-ACA, not Contract Data 0.1% of Price.
+
+    Live leftover E1: chunks 9–11 restated delay damages as 0.015% of
+    the filled excl-VAT ACA. That product is SAR 263,175.67/day. The
+    Contract Data particular is 0.1% of the Contract Price. A genuine
+    Contract Data row that itself says 0.015% of the Contract Price is
+    not a lookalike.
+    """
+    if not reject_e1_lookalike_rate_enabled():
+        return False
+    if abs(float(rate) - _LOOKALIKE_RATE_PERCENT) > 1e-9:
+        return False
+    ctx = ctx or ""
+    if _CONTRACT_PRICE_RE.search(ctx) and _CONTRACT_DATA_CTX_RE.search(ctx):
+        return False
+    if _SUBCLAUSE_87_RE.search(ctx):
+        return True
+    if _ACA_LABEL_RE.search(ctx) and not _CONTRACT_PRICE_RE.search(ctx):
+        return True
+    return True
+
+
+def delay_damages_rate_preference_score(rate: float, ctx: str = "") -> int:
+    """Higher wins for whole-of-Works E1. Contract Data 0.1% beats 0.015%."""
+    ctx = ctx or ""
+    if _DD_CAP_KEY_RE.search(ctx):
+        return -1
+    if delay_damages_rate_is_coc_lookalike(rate, ctx):
+        return 0
+    score = 1
+    if _CONTRACT_DATA_CTX_RE.search(ctx):
+        score += 4
+    if _CONTRACT_PRICE_RE.search(ctx):
+        score += 3
+    if _WHOLE_WORKS_RE.search(ctx):
+        score += 2
+    if abs(float(rate) - _PREFERRED_WHOLE_WORKS_RATE) <= 1e-9:
+        score += 2
+    return score
 
 
 def aca_amount_is_toy_example(amount: float, ctx: str = "") -> bool:
@@ -190,15 +253,19 @@ def _collapse_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def parse_delay_damages_rate_percent(text: str) -> float | None:
-    """Daily Delay Damages *rate* as a percentage, or None.
-
-    A cap row (``Maximum amount of delay damages: 10%…``) and a General
-    Conditions pointer are not the rate. Does not invent a percentage.
-    """
+def _iter_delay_rate_candidates(text: str) -> list[tuple[float, int]]:
+    """``(rate_percent, preference)`` whole-of-Works daily rates in ``text``."""
     t = text or ""
     if not t:
-        return None
+        return []
+    out: list[tuple[float, int]] = []
+
+    def _add(pct: float, ctx: str) -> None:
+        score = delay_damages_rate_preference_score(pct, ctx)
+        if score < 0:
+            return
+        out.append((pct, score))
+
     try:
         from app.core.contract_data_chunks import filled_particulars_rows
         for key, val in filled_particulars_rows(t):
@@ -210,21 +277,44 @@ def parse_delay_damages_rate_percent(text: str) -> float | None:
                 continue
             m = re.search(r"(\d+(?:\.\d+)?)\s*%", val)
             if m:
-                return float(m.group(1))
+                _add(float(m.group(1)), f"{key} {val}")
     except Exception:  # noqa: BLE001 — fall through to the scanned regex
         logger.debug("particulars rate parse failed; using scanned regex", exc_info=True)
     blob = _collapse_ws(t)
     if _POINTER_RE.search(blob) and not _DD_RATE_PCT_RE.search(blob):
-        return None
-    m = _DD_RATE_PCT_RE.search(blob)
-    if m:
-        return float(m.group(1))
+        return out
+    for m in _DD_RATE_PCT_RE.finditer(blob):
+        ctx = blob[max(0, m.start() - 96):m.end() + 48]
+        _add(float(m.group(1)), ctx)
     for m in _DD_RATE_NEAR_LABEL_RE.finditer(blob):
         window = blob[max(0, m.start() - 48):m.end()]
         if _DD_CAP_KEY_RE.search(window):
             continue
-        return float(m.group(1))
-    return None
+        ctx = blob[max(0, m.start() - 96):m.end() + 48]
+        _add(float(m.group(1)), ctx)
+    return out
+
+
+def parse_delay_damages_rate_percent(text: str) -> float | None:
+    """Daily Delay Damages *rate* as a percentage, or None.
+
+    A cap row (``Maximum amount of delay damages: 10%…``) and a General
+    Conditions pointer are not the rate. When a CoC 8.7/8.8 window
+    restates 0.015% of the ACA next to the Contract Data 0.1% of
+    Contract Price, the Contract Data particular wins — first-match
+    used to emit SAR 263,175.67/day. Does not invent a percentage.
+    """
+    cands = _iter_delay_rate_candidates(text)
+    if not cands:
+        return None
+    preferred = [(pct, score) for pct, score in cands if score >= 2]
+    # Score 0 is the CoC 0.015% lookalike. Do not compose 263,175.67
+    # from that alone — retrieval must still surface Contract Data 0.1%.
+    pool = preferred or [(pct, score) for pct, score in cands if score >= 1]
+    if not pool:
+        return None
+    pool.sort(key=lambda item: -item[1])
+    return pool[0][0]
 
 
 def _iter_aca_candidates(text: str) -> list[tuple[float, str, str, bool]]:
