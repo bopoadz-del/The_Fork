@@ -1563,6 +1563,10 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
         ret, "reserve_monetary_base_row",
         lambda *_a, **_kw: False,
     )
+    monkeypatch.setattr(
+        ret, "reserve_e1_compose_operands",
+        lambda *_a, **_kw: False,
+    )
     top = top_k(E1)
 
     assert top

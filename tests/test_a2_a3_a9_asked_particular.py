@@ -207,6 +207,11 @@ def test_a2_a3_a9_predicates():
         "What is the Accepted Contract Amount, excluding VAT?"
     )
     assert not query_asks_for_aca_including_vat(A5_ASK)
+    assert not query_asks_for_aca_including_vat(
+        "Answer only from the client project documents. "
+        "Calculate the delay damages per calendar day in SAR for the "
+        "whole of the Works."
+    )
 
     assert query_asks_for_time_for_completion(A3_ASK)
     assert query_asks_for_time_for_completion(LIVE_A3)

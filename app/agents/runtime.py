@@ -4871,6 +4871,7 @@ def _graft_asked_contract_particular(
             extract_defects_notification_period,
             extract_engineer_identity,
             extract_time_for_completion_days,
+            query_asks_delay_damages_daily_amount,
             query_asks_for_aca_including_vat,
             query_asks_for_defects_notification_period,
             query_asks_for_time_for_completion,
@@ -4879,6 +4880,11 @@ def _graft_asked_contract_particular(
         user = _latest_user_text(messages)
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         if not user or not rag:
+            return text
+        # Live leftover E1: compose already owns rate × ACA. The A2
+        # including-VAT election must not replace a daily figure (or a
+        # pending compose) with the neighboring particular.
+        if query_asks_delay_damages_daily_amount(user):
             return text
         line = ""
         if query_asks_for_aca_including_vat(user):
@@ -5042,11 +5048,19 @@ def _graft_composed_delay_damages_daily(
             if abs(v - daily) > 1.0 and abs(v - base) > 1.0
         ]
         raw = text or ""
-        # Live E1: the model names Spec TOC / Daywork / insurance and
-        # says it cannot calculate. Once both operands are in the
-        # excerpts, replace that refusal — do not append under it.
+        # Live leftover E1 after #523: the model (or the A2 graft) led
+        # with including-VAT ACA and never stated SAR/day. Once both
+        # operands are in the excerpts, replace that particular — do
+        # not prepend under an A2-shaped lead. Same for a cannot-
+        # calculate refusal over Spec TOC / Daywork / insurance.
+        aca_lead = bool(_ACA_INCL_CLAIM_RE.search(raw))
+        no_daily = not answer_states_daily_amount(raw, daily) and not re.search(
+            r"(?i)\bper\s+(?:calendar\s+)?day\b", raw,
+        )
         if (
             extras
+            or aca_lead
+            or no_daily
             or raw.strip() == _CG_REFUSAL
             or _MISSING_PARTICULAR_RE.search(raw)
             or _GENERIC_ACK_RE.search(raw)

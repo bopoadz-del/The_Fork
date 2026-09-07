@@ -217,12 +217,15 @@ def format_chunks_as_system_message(
     # invent contents — only fire when an excerpt already says Not Used.
     from app.core.rag.retriever import (
         chunk_states_aca_including_vat,
+        chunk_states_accepted_contract_amount,
+        chunk_states_delay_damages_rate,
         chunk_states_engineer_identity,
         chunk_states_rate_only_item,
         chunk_states_schedule_not_used,
         chunk_states_time_for_completion,
         extract_asked_cesmm_codes,
         extract_contract_doc_ids,
+        query_asks_delay_damages_daily_amount,
         query_asks_for_aca_including_vat,
         query_asks_for_boq_item_amount,
         query_asks_for_time_for_completion,
@@ -267,6 +270,21 @@ def format_chunks_as_system_message(
                 "the answer. Lead with that including-VAT figure. Do not "
                 "open with the excluding-VAT amount, and do not answer "
                 "delay damages or a daily rate instead.\n"
+            )
+    if query and query_asks_delay_damages_daily_amount(query):
+        _e1_texts = [c.text or "" for c in chunks]
+        if (
+            any(chunk_states_delay_damages_rate(t) for t in _e1_texts)
+            and any(chunk_states_accepted_contract_amount(t) for t in _e1_texts)
+        ):
+            header += (
+                "DELAY DAMAGES PER CALENDAR DAY — excerpts below state the "
+                "delay-damages rate and an Accepted Contract Amount. Compose "
+                "rate × Accepted Contract Amount into a money-per-calendar-day "
+                "figure. Prefer the excluding-VAT Accepted Contract Amount "
+                "unless the documents apply the rate to the including-VAT "
+                "amount. Do not answer with only the Accepted Contract Amount "
+                "including VAT.\n"
             )
     if query and query_asks_for_time_for_completion(query):
         if any(chunk_states_time_for_completion(c.text or "") for c in chunks):

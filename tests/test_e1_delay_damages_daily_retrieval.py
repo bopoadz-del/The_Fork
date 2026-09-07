@@ -454,3 +454,85 @@ def test_incl_vat_twin_does_not_replace_the_net_base(monkeypatch):
     assert out["contract_amount"] == NET_ACA
     assert out["daily_amount"] == DAILY
     assert GROSS_ACA != out["contract_amount"]
+
+
+def test_e1_is_not_classified_as_a2():
+    from app.core.rag.retriever import query_asks_for_aca_including_vat
+
+    assert not query_asks_for_aca_including_vat(LIVE_E1)
+    assert not query_asks_for_aca_including_vat(E1_ASK)
+    assert query_asks_delay_damages_daily_amount(LIVE_E1)
+
+
+def test_e1_surfaces_rate_and_excl_when_coc_and_incl_vat_lead(monkeypatch):
+    """Live leftover E1 after #523: CoC 8.8 chunks 9–11 + including-VAT.
+
+    The bound Contract Data volume's Sub-Clause 8.8 windows occupied
+    top-k (filename keep) and the last-slot money reserve elected the
+    A2 including-VAT twin. Compose never saw 0.1%; the answer was
+    only SAR 2,017,680,124.69.
+    """
+    gc9 = _chunk("gc9", GC_DOC, 0.94, GC_8_8)
+    gc10 = _chunk("gc10", GC_DOC, 0.93, GC_8_8)
+    gc11 = _chunk("gc11", GC_DOC, 0.92, GC_8_8)
+    gross = _chunk("gross", GROSS_DOC, 0.91, SCANNED_GROSS_ACA)
+    rate = _chunk("rate", RATE_DOC, 0.22, SCANNED_RATE)
+    aca = _chunk("aca", ACA_DOC, 0.21, SCANNED_NET_ACA)
+    names = {
+        GC_DOC: CD_SCANNED_NAME,
+        GROSS_DOC: CD_SCANNED_NAME,
+        RATE_DOC: CD_SCANNED_NAME,
+        ACA_DOC: CD_SCANNED_NAME,
+    }
+    seeded = [
+        {"id": RATE_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+        {"id": ACA_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+        {"id": GROSS_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+        {"id": GC_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+    ]
+    ret = _install_e1_corpus(
+        monkeypatch,
+        semantic=[gc9, gc10, gc11, gross],
+        rescue_hits=[rate, aca, gross],
+        names=names,
+        seeded=seeded,
+    )
+    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=5)
+    blob = " ".join(c.text for c in chunks)
+    assert RATE in blob
+    assert NET_ACA_TXT in blob
+    excerpts = "\n\n".join(c.text or "" for c in chunks)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    assert out["currency"] == "SAR"
+
+    rag = _sys(*(c.text or "" for c in chunks))
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    live_fail = (
+        "The Accepted Contract Amount including VAT is "
+        f"{GROSS_ACA_TXT}."
+    )
+    posted = _postprocess_answer(live_fail, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != live_fail
+    assert posted != _CG_REFUSAL
+
+
+def test_e1_inject_hint_is_compose_not_including_vat():
+    from app.core.rag.inject import format_chunks_as_system_message
+
+    rate = _chunk("rate", RATE_DOC, 0.9, SCANNED_RATE)
+    aca = _chunk("aca", ACA_DOC, 0.8, SCANNED_NET_ACA)
+    gross = _chunk("gross", GROSS_DOC, 0.7, SCANNED_GROSS_ACA)
+    e1 = format_chunks_as_system_message(
+        [rate, aca, gross], 1, query=LIVE_E1,
+    )["content"]
+    assert "DELAY DAMAGES PER CALENDAR DAY" in e1
+    assert "including VAT. That IS the answer" not in e1
+    a2 = format_chunks_as_system_message(
+        [gross], 1, query=LIVE_PREFIX + A2_ASK,
+    )["content"]
+    assert "INCLUDING VAT" in a2
+    assert "Lead with that including-VAT figure" in a2
