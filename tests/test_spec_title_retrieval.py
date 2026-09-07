@@ -483,6 +483,52 @@ def test_chunks_containing_all_finds_the_register_among_section_decoys(project_s
     assert all("SPE-" in (c.text or "") for c in hits)
 
 
+def test_chunks_containing_all_later_first_in_doc_skips_early_toy(
+    project_store, monkeypatch,
+):
+    """E1 store pin: 1.1.1 excl-VAT later in the same doc beats the 8.8 toy."""
+    from app.core.rag import embeddings as _emb, vector_store as _vs
+
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    _emb.reset_embedder_cache()
+    _vs.reset_store_cache()
+    from app.core.rag.embeddings import Embedder
+    from app.core.rag.vector_store import get_store
+
+    e = Embedder(model_name="fake")
+    store = get_store(dim=e.dim)
+    p = project_store.create_project("E1 late ACA SQL")
+    pid = p["id"]
+    vol = project_store.add_document(pid, "DD-2023-118_Contract Data.pdf", size=40)
+    other = project_store.add_document(pid, "other.pdf", size=8)
+    early_toy = (
+        "8.8 Delay Damages. For example, if the Accepted Contract Amount "
+        "excluding VAT is SAR 10,000,000.00."
+    )
+    late_row = (
+        "1.1.1 Accepted Contract Amount (excluding VAT) "
+        "SAR 1,754,504,456.25"
+    )
+    store.upsert_chunks(
+        pid, vol["id"],
+        [early_toy, "padding", late_row],
+        e.encode([early_toy, "padding", late_row]),
+    )
+    store.upsert_chunks(
+        pid, other["id"],
+        [late_row],
+        e.encode([late_row]),
+    )
+    scoped = store.chunks_containing_all(
+        pid, ["1.1.1", "excluding", "vat"],
+        k=8, doc_ids=[vol["id"]], later_first=True,
+    )
+    assert scoped
+    assert all(c.doc_id == vol["id"] for c in scoped)
+    assert "1,754,504,456.25" in scoped[0].text
+    assert "10,000,000.00" not in scoped[0].text
+
+
 def test_c2_kill_switch_restores_the_vol2_section(monkeypatch):
     ret = _install_c2_vol2_corpus(monkeypatch, register_in_semantic=False)
     monkeypatch.setenv("RAG_SPEC_TITLE_RESCUE", "0")

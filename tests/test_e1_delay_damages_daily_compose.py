@@ -507,3 +507,33 @@ def test_graft_replaces_cost_refusal_when_late_excl_vat_is_present():
     assert posted != _CG_REFUSAL
     assert "upload your priced BOQ" not in posted.lower()
     assert "10,000.00" not in posted.split("\n", 1)[0]
+
+
+# Live leftover E1 after #532: fused excerpts are pointer+0.1%+toy 8.8
+# windows only. Compose must refuse (no invented daily). When the late
+# 1.1.1 excl-VAT row is attached, graft replaces the cost-grounding refuse.
+LIVE_8_8_POINTER_TOY = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 8.8 Delay Damages. "
+    "The Contractor shall pay delay damages for the whole of the Works "
+    "at the rate stated in the Contract Data for every calendar day. "
+    f"{RATE}. For example, if the Accepted Contract Amount "
+    "excluding VAT is SAR 10,000,000.00, the daily amount is "
+    "SAR 10,000.00."
+)
+
+
+def test_compose_refuses_pointer_toy_windows_until_late_excl_vat_attaches():
+    toys = "\n\n".join((LIVE_8_8_POINTER_TOY,) * 3)
+    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, toys) is None
+    with_late = toys + "\n\n" + NET_ACA_ROW
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, with_late)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    assert out["daily_amount"] != TOY_DAILY
+    rag = _sys(LIVE_8_8_POINTER_TOY, LIVE_8_8_POINTER_TOY, LIVE_8_8_POINTER_TOY, NET_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(_CG_REFUSAL, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()

@@ -103,6 +103,17 @@ GC_8_8 = (
     "The Contractor shall pay delay damages for the whole of the Works "
     "at the rate stated in the Contract Data for every calendar day."
 )
+# Live leftover E1 after #532: chunks 9–11 carry the pointer, the 0.1%
+# rate, and the FIDIC toy 10M. Pointer-only used to stain the window so
+# late scan never chose the volume.
+LIVE_8_8_POINTER_TOY = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 8.8 Delay Damages. "
+    "The Contractor shall pay delay damages for the whole of the Works "
+    "at the rate stated in the Contract Data for every calendar day. "
+    f"{RATE}. For example, if the Accepted Contract Amount "
+    "excluding VAT is SAR 10,000,000.00, the daily amount is "
+    "SAR 10,000.00."
+)
 # Live leftover E1 on c5c6dfa: chunks 9–11 of the bound Contract Data
 # volume stated the 0.1% rate AND a FIDIC worked-example ACA of
 # SAR 10,000,000. Retrieval treated that as the money operand, so
@@ -207,6 +218,8 @@ def test_scanned_operands_and_lookalikes():
     assert not chunk_states_delay_damages_rate(GC_8_8)
     assert not chunk_states_accepted_contract_amount(COC_8_8_TOY_ACA)
     assert chunk_states_delay_damages_rate(COC_8_8_TOY_ACA)
+    # Live chunks 9–11: pointer language plus the filled 0.1% is still a rate.
+    assert chunk_states_delay_damages_rate(LIVE_8_8_POINTER_TOY)
 
     assert chunk_answers_asked_particular(LIVE_E1, SCANNED_RATE)
     assert chunk_answers_asked_particular(LIVE_E1, SCANNED_NET_ACA)
@@ -746,6 +759,20 @@ def _install_live_e1_late_aca_corpus(monkeypatch):
             out.extend(rows[: max(1, int(k_per_doc or 12))])
         return out
 
+    def fake_containing_all(
+        self, project_id, needles, k=20, doc_ids=None, later_first=False,
+    ):
+        need = [n.lower() for n in (needles or [])]
+        hits = []
+        for chunk in all_chunks:
+            if doc_ids is not None and chunk.doc_id not in doc_ids:
+                continue
+            blob = (chunk.text or "").lower()
+            if all(n in blob for n in need):
+                hits.append(chunk)
+        hits.sort(key=lambda c: c.chunk_index, reverse=bool(later_first))
+        return hits[: max(1, int(k or 20))]
+
     def fake_title_match(pid, phrase, limit=8):
         if "contract data" not in (phrase or "").lower():
             return []
@@ -758,6 +785,10 @@ def _install_live_e1_late_aca_corpus(monkeypatch):
     monkeypatch.setattr(
         "app.core.rag.vector_store.VectorStore.chunks_for_docs",
         fake_chunks_for_docs,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_containing_all",
+        fake_containing_all,
     )
     monkeypatch.setattr(
         "app.core.rag.vector_store.VectorStore.count", lambda self, pid=None: 4,
@@ -884,3 +915,263 @@ def test_e1_late_aca_helper_scans_past_first_n_on_rate_docs():
     assert out is not None
     assert out["daily_amount"] == DAILY
     assert out["contract_amount"] != 10_000_000.0
+
+
+# Live leftover E1 after #532 (tip eb278c0): 3/3 New-chat refuses. Sources
+# were only Contract Data 8.8 chunks 9–11. first-400 chunks_for_docs still
+# misses a late appendix (or times out loading the volume). identifier_search
+# LIMIT stays on the toys. The filled 1.1.1 excl-VAT row must enter via a
+# doc-scoped later-first text scan so compose states SAR 1,754,504.46/day
+# instead of the cost-grounding refuse.
+PAST_PREFIX_ACA_INDEX = 500
+C1_ASK = CATALOG["cases"]["C1"]["ask"]
+F1_ASK = CATALOG["cases"]["F1"]["ask"]
+
+
+def _install_live_e1_past_prefix_corpus(monkeypatch):
+    """Toy 8.8 at 9–11; first-400 is Conditions body; 1.1.1 at chunk 500."""
+    from app.core.rag import retriever as ret
+    from app.core.rag.retriever import chunk_states_delay_damages_rate
+
+    toys = [
+        _chunk(
+            f"gc{i}", GC_DOC, 0.95 - i * 0.01, LIVE_8_8_POINTER_TOY,
+            chunk_index=9 + i,
+        )
+        for i in range(3)
+    ]
+    dummies = [
+        _chunk(f"pre{i}", GC_DOC, 0.10, GC_8_8, chunk_index=i)
+        for i in range(400)
+        if i not in (9, 10, 11)
+    ]
+    aca = _chunk(
+        "aca500", GC_DOC, 0.21, SCANNED_NET_ACA,
+        chunk_index=PAST_PREFIX_ACA_INDEX,
+    )
+    all_chunks = list(dummies) + list(toys) + [aca]
+    names = {GC_DOC: CD_SCANNED_NAME}
+    seeded = [
+        {"id": GC_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+    ]
+
+    def fake_search(self, project_id, qvec, k, query_text=None):
+        return [c for c in toys if c.project_id == project_id][:k]
+
+    def fake_id_search(self, project_id, identifiers, k=20):
+        blob = " ".join(identifiers or []).lower()
+        out = []
+        for chunk in all_chunks:
+            text_l = (chunk.text or "").lower()
+            if "delay" in blob and "damages" in blob and "0.1%" in text_l:
+                out.append(chunk)
+            elif "accepted contract" in blob:
+                if chunk_states_delay_damages_rate(chunk.text or ""):
+                    out.append(chunk)
+        return out[:k]
+
+    def fake_chunks_for_docs(self, project_id, doc_ids, k_per_doc=12):
+        by_doc: dict[str, list] = {}
+        for chunk in all_chunks:
+            if chunk.doc_id in (doc_ids or []):
+                by_doc.setdefault(chunk.doc_id, []).append(chunk)
+        out = []
+        for did in doc_ids or []:
+            rows = sorted(by_doc.get(did, []), key=lambda c: c.chunk_index)
+            out.extend(rows[: max(1, int(k_per_doc or 12))])
+        return out
+
+    def fake_containing_all(
+        self, project_id, needles, k=20, doc_ids=None, later_first=False,
+    ):
+        need = [n.lower() for n in (needles or [])]
+        if not any("1.1.1" in n for n in need):
+            return []
+        if not any("exclud" in n or "accepted" in n for n in need):
+            return []
+        hits = []
+        for chunk in all_chunks:
+            if doc_ids is not None and chunk.doc_id not in doc_ids:
+                continue
+            blob = (chunk.text or "").lower()
+            if all(n in blob for n in need):
+                hits.append(chunk)
+        hits.sort(key=lambda c: c.chunk_index, reverse=bool(later_first))
+        return hits[: max(1, int(k or 20))]
+
+    def fake_title_match(pid, phrase, limit=8):
+        if "contract data" not in (phrase or "").lower():
+            return []
+        return list(seeded)
+
+    monkeypatch.setattr("app.core.rag.vector_store.VectorStore.search", fake_search)
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.identifier_search", fake_id_search,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_for_docs",
+        fake_chunks_for_docs,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.chunks_containing_all",
+        fake_containing_all,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore.count", lambda self, pid=None: 4,
+    )
+    monkeypatch.setattr(
+        "app.core.rag.vector_store.VectorStore._verify_embedding_identity",
+        lambda self: None,
+    )
+    monkeypatch.setattr(ret, "_doc_name_for_id", lambda did: names.get(did, ""),
+                        raising=False)
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_title_phrase",
+        fake_title_match,
+    )
+    monkeypatch.setattr(
+        "app.core.projects.documents_matching_filename_terms",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_GENERAL_KNOWLEDGE_PROJECTS", "")
+    monkeypatch.delenv("MASTER_CORPUS_SOURCE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_E1_LATE_ACA_TEXT_SCAN", raising=False)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_RATE_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ACA_INCLUDING_VAT_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_TIME_FOR_COMPLETION_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_ENGINEER_IDENTITY_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_CONTRACT_DATA_FILENAME_RESCUE", raising=False)
+    monkeypatch.delenv("RAG_LAYERED", raising=False)
+    return ret, toys, aca
+
+
+def test_e1_text_scan_composes_when_first_n_is_only_8_8_toys(monkeypatch):
+    """Live refuse path: first-400 is toys; 1.1.1 at 500 still composes."""
+    from app.core.rag.retriever import _E1_REAL_ACA_DOC_SCAN
+
+    ret, _toys, _aca = _install_live_e1_past_prefix_corpus(monkeypatch)
+    assert PAST_PREFIX_ACA_INDEX > _E1_REAL_ACA_DOC_SCAN
+    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=5)
+    blob = " ".join(c.text for c in chunks)
+    assert RATE in blob
+    assert NET_ACA_TXT in blob
+    excerpts = "\n\n".join(c.text or "" for c in chunks)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    assert out["currency"] == "SAR"
+    assert out["daily_amount"] != 10_000.0
+    assert out["contract_amount"] != 10_000_000.0
+
+    rag = _sys(*(c.text or "" for c in chunks))
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(_CG_REFUSAL, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "10,000.00" not in posted.split("\n", 1)[0]
+
+
+def test_e1_text_scan_kill_switch_restores_first_n_miss(monkeypatch):
+    ret, _toys, _aca = _install_live_e1_past_prefix_corpus(monkeypatch)
+    monkeypatch.setenv("RAG_E1_LATE_ACA_TEXT_SCAN", "0")
+    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=5)
+    blob = " ".join(c.text for c in chunks)
+    assert NET_ACA_TXT not in blob
+    excerpts = "\n\n".join(c.text or "" for c in chunks)
+    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts) is None
+
+
+def test_e1_text_scan_helper_finds_1_1_1_when_first_n_misses():
+    """Direct: first-400 miss chunk 500; 1.1.1 + excl-VAT text scan hits."""
+    from app.core.rag.retriever import (
+        _E1_REAL_ACA_DOC_SCAN,
+        _rescue_e1_real_aca_from_pool_docs,
+    )
+    from app.lib.construction_formulas_commercial import (
+        chunk_has_real_accepted_contract_amount,
+    )
+
+    toys = [
+        _chunk(f"gc{i}", GC_DOC, 0.9, LIVE_8_8_POINTER_TOY, chunk_index=9 + i)
+        for i in range(3)
+    ]
+    dummies = [
+        _chunk(f"pre{i}", GC_DOC, 0.1, GC_8_8, chunk_index=i)
+        for i in range(400)
+        if i not in (9, 10, 11)
+    ]
+    aca = _chunk(
+        "aca500", GC_DOC, 0.2, SCANNED_NET_ACA, chunk_index=PAST_PREFIX_ACA_INDEX,
+    )
+    all_chunks = list(dummies) + list(toys) + [aca]
+    for toy in toys:
+        toy.source_name = CD_SCANNED_NAME
+
+    class _Store:
+        def chunks_for_docs(self, project_id, doc_ids, k_per_doc=12):
+            rows = sorted(
+                [c for c in all_chunks if c.doc_id in (doc_ids or [])],
+                key=lambda c: c.chunk_index,
+            )
+            return rows[: max(1, int(k_per_doc or 12))]
+
+        def chunks_containing_all(
+            self, project_id, needles, k=20, doc_ids=None, later_first=False,
+        ):
+            need = [n.lower() for n in (needles or [])]
+            hits = []
+            for chunk in all_chunks:
+                if doc_ids is not None and chunk.doc_id not in doc_ids:
+                    continue
+                blob = (chunk.text or "").lower()
+                if all(n in blob for n in need):
+                    hits.append(chunk)
+            hits.sort(key=lambda c: c.chunk_index, reverse=bool(later_first))
+            return hits[: max(1, int(k or 20))]
+
+    fused = {c.chunk_id: (c, c.score or 0.0, 0.0) for c in toys}
+    prefix = _Store().chunks_for_docs(ACTIVE, [GC_DOC], k_per_doc=400)
+    assert all(c.chunk_index < PAST_PREFIX_ACA_INDEX for c in prefix)
+    assert _E1_REAL_ACA_DOC_SCAN < PAST_PREFIX_ACA_INDEX
+    recovered = _rescue_e1_real_aca_from_pool_docs(
+        LIVE_E1, ACTIVE, fused, _Store(),
+    )
+    assert recovered >= 1
+    assert any(
+        chunk_has_real_accepted_contract_amount(c.text or "")
+        for c, _s, _b in fused.values()
+    )
+    excerpts = "\n\n".join(c.text or "" for c, _s, _b in fused.values())
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    assert out["contract_amount"] != 10_000_000.0
+
+
+def test_c1_f1_h1_are_not_e1_daily_asks():
+    from app.core.rag.retriever import (
+        query_asks_delay_damages_daily_amount,
+        query_asks_for_delay_damages_rate,
+    )
+
+    assert not query_asks_delay_damages_daily_amount(C1_ASK)
+    assert not query_asks_delay_damages_daily_amount(F1_ASK)
+    assert not query_asks_for_delay_damages_rate(C1_ASK)
+    assert not query_asks_for_delay_damages_rate(F1_ASK)
+    assert not query_asks_delay_damages_daily_amount(
+        "Export this conversation to Word",
+    )
+
+
+def test_c1_f1_do_not_take_the_e1_late_aca_text_scan(monkeypatch):
+    ret, _toys, _aca = _install_live_e1_past_prefix_corpus(monkeypatch)
+    for ask in (C1_ASK, F1_ASK, LIVE_PREFIX + C1_ASK, LIVE_PREFIX + F1_ASK):
+        chunks, _ = ret.retrieve_with_filter(ask, ACTIVE, k=5)
+        blob = " ".join(c.text for c in chunks)
+        assert NET_ACA_TXT not in blob, ask
+        assert compose_delay_damages_daily_from_excerpts(ask, blob) is None

@@ -987,6 +987,8 @@ class VectorStore:
         needles: List[str],
         *,
         k: int = 20,
+        doc_ids: Optional[List[str]] = None,
+        later_first: bool = False,
     ) -> List[Chunk]:
         """Chunks whose text contains every ``needle`` (case-insensitive).
 
@@ -996,6 +998,13 @@ class VectorStore:
         Adjustments`` in the same volume floods the semantic pool. Exact
         substring AND on the needles (``SPE-`` + the title phrase) is the
         discriminator a CSI section heading cannot fake.
+
+        Optional ``doc_ids`` scopes the AND to those documents (live E1:
+        the 8.8 volume, not the 3348-doc project). ``later_first`` orders
+        by ``chunk_index DESC`` so an appendix 1.1.1 row wins over an
+        early 8.8 worked example that also says "excluding VAT".
+        ``identifier_search`` / first-N ``chunks_for_docs`` cannot do
+        that — Neon ``LIMIT`` without ``ORDER BY`` returns the toys.
 
         Needles are sanitised (no LIKE wildcards, min length 3). Empty
         ``needles`` or a store miss returns ``[]``; failures never raise.
@@ -1018,16 +1027,37 @@ class VectorStore:
             return []
         limit = max(1, int(k or 20))
         params: Dict[str, Any] = {"project_id": project_id, "k": limit}
+        extra_where = ""
+        if doc_ids is not None:
+            unique: List[str] = []
+            seen_docs: Set[str] = set()
+            for raw_id in doc_ids:
+                did = (raw_id or "").strip()
+                if not did or did in seen_docs:
+                    continue
+                seen_docs.add(did)
+                unique.append(did)
+                if len(unique) >= 8:
+                    break
+            if not unique:
+                return []
+            in_clause = ", ".join(f":d{i}" for i in range(len(unique)))
+            extra_where = f"AND doc_id IN ({in_clause}) "
+            for i, did in enumerate(unique):
+                params[f"d{i}"] = did
         clauses: List[str] = []
         for i, tok in enumerate(cleaned):
             clauses.append(f"LOWER(text) LIKE :n{i}")
             params[f"n{i}"] = f"%{tok}%"
+        order = "ORDER BY chunk_index DESC " if later_first else ""
         sql = text(
             "SELECT chunk_id, project_id, doc_id, chunk_index, text, "
             "knowledge_layer, authority "
             f"FROM {self._table_name} "
             "WHERE project_id = :project_id "
+            f"{extra_where}"
             f"AND {' AND '.join(clauses)} "
+            f"{order}"
             "LIMIT :k"
         )
         try:

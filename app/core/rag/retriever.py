@@ -2288,6 +2288,15 @@ def delay_damages_daily_rescue_enabled() -> bool:
     return _env_flag_on("RAG_DELAY_DAMAGES_DAILY_RESCUE")
 
 
+def e1_late_aca_text_scan_enabled() -> bool:
+    """ON by default — live E1 1.1.1 excl-VAT past first-N / Neon LIMIT.
+
+    RAG_E1_LATE_ACA_TEXT_SCAN=0 restores the #532 first-N prefix scan
+    (chunks 9–11 stay fused; compose refuses).
+    """
+    return _env_flag_on("RAG_E1_LATE_ACA_TEXT_SCAN")
+
+
 def engineer_identity_rescue_enabled() -> bool:
     """ON by default — live A9 Engineer appointment vs PSA parties.
 
@@ -2405,13 +2414,15 @@ def chunk_states_delay_damages_rate(text: str) -> bool:
     per-calendar-day figure. The rate lives in a different chunk.
     """
     t = text or ""
-    if not t or _DELAY_RATE_POINTER_RE.search(t):
+    if not t:
         return False
     for key, val in filled_particulars_rows(t):
         if _delay_damages_key_is_rate(key) and _DELAY_RATE_VALUE_RE.search(val):
             return True
     blob = _collapse_retrieval_ws(t)
-    if _DELAY_RATE_POINTER_RE.search(blob):
+    # Pointer-only GC 8.8 is not the rate. A bound 8.8 window that also
+    # states 0.1% per calendar day is — live leftover E1 chunks 9–11.
+    if _DELAY_RATE_POINTER_RE.search(blob) and not _DELAY_RATE_VALUE_RE.search(blob):
         return False
     if _DELAY_CAP_KEY_RE.search(blob) and not _DELAY_RATE_VALUE_RE.search(blob):
         return False
@@ -2516,6 +2527,15 @@ _ACA_BASE_RESCUE_PHRASES = (
 # and the filled 1.1.1 excl-VAT row in a later appendix. identifier_search
 # LIMIT and first-N chunks_for_docs stay on the 8.8 toy windows.
 _E1_REAL_ACA_DOC_SCAN = 400
+# Live leftover E1 after #532: first-400 still misses a late appendix, and
+# Neon LIMIT without ORDER BY returns the 8.8 toys. 1.1.1 is the
+# discriminator those worked examples do not carry. Kill-switch:
+# RAG_E1_LATE_ACA_TEXT_SCAN=0 restores first-N-only (#532 FAIL).
+_E1_REAL_ACA_TEXT_NEEDLE_SETS: Tuple[Tuple[str, ...], ...] = (
+    ("1.1.1", "excluding", "vat"),
+    ("1.1.1", "accepted contract amount"),
+)
+_E1_REAL_ACA_TEXT_SCAN_K = 40
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
     "engineer limited",
@@ -3457,8 +3477,14 @@ def _rescue_e1_real_aca_from_pool_docs(
     9–11) and LIMIT returns those first. ``chunks_for_docs`` then takes
     the first 24/40 by index — still the Conditions body — so the filled
     1.1.1 row never enters fused. Compose skips the toy 10M and the cost
-    gate refuses. Scan rate-window docs already in-pool past that prefix
-    for a non-toy ACA. Kill-switch: RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
+    gate refuses.
+
+    Live leftover E1 after #532: first-400 still misses a late appendix
+    (or times out loading the whole Neon volume). Prefer a doc-scoped
+    1.1.1 + excl-VAT text scan (later-first) so the filled row attaches
+    before compose / cost-grounding. First-N remains the fallback.
+    Kill-switch: RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
+    Text-scan kill-switch: RAG_E1_LATE_ACA_TEXT_SCAN=0.
     """
     if not (
         delay_damages_daily_rescue_enabled()
@@ -3488,38 +3514,91 @@ def _rescue_e1_real_aca_from_pool_docs(
         return 0
     doc_ids: List[str] = []
     seen: Set[str] = set()
+
+    def _remember(doc_id: str) -> None:
+        if not doc_id or doc_id in seen:
+            return
+        seen.add(doc_id)
+        doc_ids.append(doc_id)
+
     for entry in fused.values():
         chunk = _fused_chunk(entry)
         if chunk is None or not chunk.doc_id:
             continue
-        if not chunk_states_delay_damages_rate(chunk.text or ""):
-            continue
-        if chunk.doc_id in seen:
-            continue
-        seen.add(chunk.doc_id)
-        doc_ids.append(chunk.doc_id)
+        text = chunk.text or ""
+        name = getattr(chunk, "source_name", "") or ""
+        if not name:
+            try:
+                name = _doc_name_for_id(chunk.doc_id) or ""
+            except Exception:  # noqa: BLE001 — filename is optional
+                name = ""
+        if (
+            chunk_states_delay_damages_rate(text)
+            or filename_looks_like_contract_data(name)
+        ):
+            _remember(chunk.doc_id)
     if not doc_ids:
         return 0
+
+    def _attach(hits: List[Chunk], *, bonus: float) -> int:
+        recovered = 0
+        for chunk in _pair_adjacent_keep_text(
+            hits, chunk_states_accepted_contract_amount,
+        ):
+            if chunk.chunk_id in fused:
+                continue
+            if not chunk_has_real_accepted_contract_amount(chunk.text or ""):
+                continue
+            fused[chunk.chunk_id] = (chunk, 0.0, bonus)
+            recovered += 1
+        return recovered
+
+    recovered = 0
+    text_fetch = getattr(store, "chunks_containing_all", None)
+    if e1_late_aca_text_scan_enabled() and callable(text_fetch):
+        extra: List[Chunk] = []
+        seen_hits: Set[str] = set()
+        for needles in _E1_REAL_ACA_TEXT_NEEDLE_SETS:
+            try:
+                hits = text_fetch(
+                    project_id,
+                    list(needles),
+                    k=_E1_REAL_ACA_TEXT_SCAN_K,
+                    doc_ids=doc_ids,
+                    later_first=True,
+                )
+            except TypeError:
+                # Older store signature (needles only) — skip text scan.
+                hits = []
+            except Exception as exc:  # noqa: BLE001 — fall back to first-N
+                logger.warning(
+                    "e1 late-ACA text scan for %s failed: %s", project_id, exc,
+                )
+                hits = []
+            for chunk in hits or []:
+                if chunk.chunk_id in seen_hits:
+                    continue
+                seen_hits.add(chunk.chunk_id)
+                extra.append(chunk)
+        recovered = _attach(extra, bonus=_ASKED_PARTICULAR_VALUE_BONUS)
+        if recovered:
+            logger.info(
+                "e1 late-ACA text scan recovered %d chunk(s) past first-N 8.8 windows",
+                recovered,
+            )
+            return recovered
+
     fetch = getattr(store, "chunks_for_docs", None)
     if not callable(fetch):
-        return 0
+        return recovered
     try:
         extra = fetch(project_id, doc_ids, k_per_doc=_E1_REAL_ACA_DOC_SCAN)
     except Exception as exc:  # noqa: BLE001 — extras must not break the turn
         logger.warning(
             "e1 late-ACA scan for %s failed: %s", project_id, exc,
         )
-        return 0
-    recovered = 0
-    for chunk in _pair_adjacent_keep_text(
-        extra or [], chunk_states_accepted_contract_amount,
-    ):
-        if chunk.chunk_id in fused:
-            continue
-        if not chunk_has_real_accepted_contract_amount(chunk.text or ""):
-            continue
-        fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
-        recovered += 1
+        return recovered
+    recovered = _attach(extra or [], bonus=0.0)
     if recovered:
         logger.info(
             "e1 late-ACA scan recovered %d chunk(s) past first-N 8.8 windows",
