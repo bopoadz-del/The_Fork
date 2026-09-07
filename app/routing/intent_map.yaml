@@ -68,8 +68,8 @@ rows:
   # the kit is vendored through the Store like every other kit; no kit code
   # lives in this repo.
   #
-  # Vendored ref: Cerebrum-Blocks main @ d7cff230453efd273388491e1cbf1d18f3ebefd5
-  # (PR #108, the full 7-block kit). #512 landed while the kit was still on
+  # Vendored ref: Cerebrum-Blocks main @ ef83c060b857ed0f704b9ab33b93a98297ddeeeb
+  # (PR #110, after #108/#109). #512 landed while the kit was still on
   # branch docs/mep-inventory; a hat vendored from a branch breaks on the next
   # rebase, so the ref is recorded here against main and nothing else.
   #
