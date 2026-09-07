@@ -2745,8 +2745,17 @@ def chunk_states_accepted_contract_amount(text: str) -> bool:
                 and _CD_MONETARY_VALUE_RE.search(val)
                 and not _DELAY_RATE_KEY_RE.search(key)
             ):
-                return True
-        return False
+                break
+        else:
+            return False
+    try:
+        from app.lib.construction_formulas_commercial import (
+            chunk_accepted_contract_amount_is_only_toy,
+        )
+        if chunk_accepted_contract_amount_is_only_toy(t):
+            return False
+    except Exception:  # noqa: BLE001 — never break a turn over an import
+        logger.debug("toy-ACA test unavailable; treating money as ACA", exc_info=True)
     return True
 
 
@@ -2786,6 +2795,14 @@ def _chunk_keeps_for_e1_daily(filename: str, text: str) -> bool:
 
 def _e1_aca_preference(text: str) -> int:
     """Higher wins for E1's rate base. Excl-VAT (2) > unlabeled (1) > incl (0)."""
+    try:
+        from app.lib.construction_formulas_commercial import (
+            chunk_accepted_contract_amount_is_only_toy,
+        )
+        if chunk_accepted_contract_amount_is_only_toy(text):
+            return -1
+    except Exception:  # noqa: BLE001 — unlabeled ACA still ranks above none
+        logger.debug("toy-ACA preference test failed", exc_info=True)
     if not chunk_states_accepted_contract_amount(text):
         return -1
     try:
@@ -4080,6 +4097,15 @@ def reserve_monetary_base_row(
     )
 
     def _is_money_base(text: str) -> bool:
+        if e1:
+            try:
+                from app.lib.construction_formulas_commercial import (
+                    chunk_accepted_contract_amount_is_only_toy,
+                )
+                if chunk_accepted_contract_amount_is_only_toy(text):
+                    return False
+            except Exception:  # noqa: BLE001 — fall through to the usual tests
+                logger.debug("toy-ACA money-base test failed", exc_info=True)
         if particulars_row_states_an_amount_of_money(text):
             return True
         return bool(e1 and chunk_states_accepted_contract_amount(text))
