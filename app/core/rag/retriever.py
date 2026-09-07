@@ -2512,6 +2512,10 @@ _ACA_BASE_RESCUE_PHRASES = (
     "accepted contract amount excluding vat",
     "accepted contract amount",
 )
+# Combined GC+Contract Data volumes put Sub-Clause 8.8 at chunks 9–11
+# and the filled 1.1.1 excl-VAT row in a later appendix. identifier_search
+# LIMIT and first-N chunks_for_docs stay on the 8.8 toy windows.
+_E1_REAL_ACA_DOC_SCAN = 400
 _ENGINEER_IDENTITY_RESCUE_PHRASES = (
     "1.3.1 engineer",
     "engineer limited",
@@ -2747,11 +2751,24 @@ def chunk_states_accepted_contract_amount(text: str) -> bool:
             ):
                 break
         else:
-            return False
+            # Rate sentence is not the money row. A paired scanned
+            # window that also carries the filled excl-VAT ACA still
+            # is — do not drop it just because 8.8 shares the chunk.
+            try:
+                from app.lib.construction_formulas_commercial import (
+                    chunk_has_real_accepted_contract_amount,
+                )
+                if not chunk_has_real_accepted_contract_amount(t):
+                    return False
+            except Exception:  # noqa: BLE001 — rate-only window is not ACA
+                return False
     try:
         from app.lib.construction_formulas_commercial import (
             chunk_accepted_contract_amount_is_only_toy,
+            chunk_has_real_accepted_contract_amount,
         )
+        if chunk_has_real_accepted_contract_amount(t):
+            return True
         if chunk_accepted_contract_amount_is_only_toy(t):
             return False
     except Exception:  # noqa: BLE001 — never break a turn over an import
@@ -3424,6 +3441,90 @@ def _rescue_chunks_matching(
         recovered += 1
     if recovered:
         logger.info("%s rescue recovered %d chunk(s)", label, recovered)
+    return recovered
+
+
+def _rescue_e1_real_aca_from_pool_docs(
+    query: str,
+    project_id: str,
+    fused: Dict[str, Tuple],
+    store,
+) -> int:
+    """Surface a filled excl-VAT ACA that sits past first-N on an 8.8 doc.
+
+    Live leftover E1 after #530: identifier_search for ``accepted contract
+    amount excluding vat`` matches the 8.8 worked-example windows (chunks
+    9–11) and LIMIT returns those first. ``chunks_for_docs`` then takes
+    the first 24/40 by index — still the Conditions body — so the filled
+    1.1.1 row never enters fused. Compose skips the toy 10M and the cost
+    gate refuses. Scan rate-window docs already in-pool past that prefix
+    for a non-toy ACA. Kill-switch: RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
+    """
+    if not (
+        delay_damages_daily_rescue_enabled()
+        and query_asks_delay_damages_daily_amount(query)
+    ):
+        return 0
+    try:
+        from app.lib.construction_formulas_commercial import (
+            chunk_has_real_accepted_contract_amount,
+        )
+    except Exception:  # noqa: BLE001 — never break a turn over an import
+        logger.debug("e1 late-ACA import failed", exc_info=True)
+        return 0
+
+    def _fused_chunk(entry) -> Optional[Chunk]:
+        if isinstance(entry, tuple) and entry:
+            chunk = entry[0]
+        else:
+            chunk = entry
+        return chunk if isinstance(chunk, Chunk) else None
+
+    if any(
+        chunk_has_real_accepted_contract_amount((c.text or ""))
+        for c in (_fused_chunk(e) for e in fused.values())
+        if c is not None
+    ):
+        return 0
+    doc_ids: List[str] = []
+    seen: Set[str] = set()
+    for entry in fused.values():
+        chunk = _fused_chunk(entry)
+        if chunk is None or not chunk.doc_id:
+            continue
+        if not chunk_states_delay_damages_rate(chunk.text or ""):
+            continue
+        if chunk.doc_id in seen:
+            continue
+        seen.add(chunk.doc_id)
+        doc_ids.append(chunk.doc_id)
+    if not doc_ids:
+        return 0
+    fetch = getattr(store, "chunks_for_docs", None)
+    if not callable(fetch):
+        return 0
+    try:
+        extra = fetch(project_id, doc_ids, k_per_doc=_E1_REAL_ACA_DOC_SCAN)
+    except Exception as exc:  # noqa: BLE001 — extras must not break the turn
+        logger.warning(
+            "e1 late-ACA scan for %s failed: %s", project_id, exc,
+        )
+        return 0
+    recovered = 0
+    for chunk in _pair_adjacent_keep_text(
+        extra or [], chunk_states_accepted_contract_amount,
+    ):
+        if chunk.chunk_id in fused:
+            continue
+        if not chunk_has_real_accepted_contract_amount(chunk.text or ""):
+            continue
+        fused[chunk.chunk_id] = (chunk, 0.0, 0.0)
+        recovered += 1
+    if recovered:
+        logger.info(
+            "e1 late-ACA scan recovered %d chunk(s) past first-N 8.8 windows",
+            recovered,
+        )
     return recovered
 
 
@@ -4100,10 +4201,12 @@ def reserve_monetary_base_row(
         if e1:
             try:
                 from app.lib.construction_formulas_commercial import (
-                    chunk_accepted_contract_amount_is_only_toy,
+                    chunk_has_real_accepted_contract_amount,
                 )
-                if chunk_accepted_contract_amount_is_only_toy(text):
-                    return False
+                # Toy 8.8 windows and particulars-prefixed 10M examples
+                # are not the rate base. Only a non-toy ACA (live:
+                # excl-VAT SAR 1,754,504,456.25) satisfies reservation.
+                return chunk_has_real_accepted_contract_amount(text)
             except Exception:  # noqa: BLE001 — fall through to the usual tests
                 logger.debug("toy-ACA money-base test failed", exc_info=True)
         if particulars_row_states_an_amount_of_money(text):
@@ -4228,6 +4331,19 @@ def reserve_e1_compose_operands(
         idx = worst_i
     if idx is None:
         idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+    if idx is None:
+        # Live leftover E1 after #529: toy 8.8 windows occupy every
+        # slot as rate operands. Skipping the toy cleared the money
+        # operand without a free slot — still replace a surplus rate
+        # so the excl-VAT ACA can enter. Keep at least one rate row.
+        rate_idxs = [
+            i for i, chunk in enumerate(kept)
+            if chunk_states_delay_damages_rate(chunk.text or "")
+        ]
+        if len(rate_idxs) > 1:
+            idx = rate_idxs[-1]
+        elif kept_best < 0:
+            idx = len(kept) - 1
     if idx is None:
         return changed
     kept[idx] = best_chunk
@@ -4511,6 +4627,9 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
         extra_pids=extra_lex_pids,
     )
     _rescue_asked_particular_value_chunks(
+        query, project_id, fused_lex, store,
+    )
+    _rescue_e1_real_aca_from_pool_docs(
         query, project_id, fused_lex, store,
     )
     _rescue_schedule_register_chunks(
@@ -5023,6 +5142,7 @@ def retrieve_with_filter(
     # unprefixed chunk cosine never fetched. Rescue is project-only so
     # the FIDIC note's illustrative 0.05% cannot impersonate the rate.
     _rescue_asked_particular_value_chunks(query, project_id, fused, store)
+    _rescue_e1_real_aca_from_pool_docs(query, project_id, fused, store)
     _rescue_schedule_register_chunks(
         query,
         project_id,

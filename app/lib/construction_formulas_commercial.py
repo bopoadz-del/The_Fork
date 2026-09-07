@@ -108,13 +108,12 @@ _POINTER_RE = re.compile(
 # (~SAR 1,754,504,456.25). Kill-switch COMPOSE_REJECT_E1_TOY_ACA=0
 # restores electing the first match (the FAIL).
 _TOY_ACA_AMOUNT = 10_000_000.0
-_EXAMPLE_ACA_RE = re.compile(
-    r"(?i)\b(?:e\.g\.|eg\.|for\s+example|for\s+instance|"
-    r"illustrative|worked\s+example|say\s+|insert\b|"
-    r"placeholder|specimen|sample\s+amount|"
-    r"if\s+the\s+accepted\s+contract\s+amount\s+is)\b"
-)
+_TOY_DAILY_AMOUNT = 10_000.0
 _CLAUSE_111_RE = re.compile(r"(?i)\b1\.1\.1\b")
+_TOY_EXAMPLE_CUE_RE = re.compile(
+    r"(?i)\b(?:for\s+example|worked\s+example|daily\s+amount|"
+    r"if\s+the\s+accepted\s+contract\s+amount)\b",
+)
 
 
 def compose_delay_damages_daily_enabled() -> bool:
@@ -132,19 +131,33 @@ def reject_e1_toy_aca_enabled() -> bool:
 def aca_amount_is_toy_example(amount: float, ctx: str = "") -> bool:
     """True for a FIDIC worked-example / placeholder ACA, not a filled row.
 
-    Live E1: unlabeled ``SAR 10,000,000`` in an 8.8 window. A filled
-    1.1.1 excluding-VAT particular of exactly 10M is not a toy.
+    Live E1: unlabeled ``SAR 10,000,000`` in an 8.8 window and its
+    0.1% daily product ``SAR 10,000``. A filled 1.1.1 excluding-VAT
+    particular of exactly 10M is not a toy. Non-10M/10k figures are
+    never the worked example — Contract Data template cues
+    (``insert``, ``for example``) must not stain the filled excl-VAT
+    ACA (~SAR 1,754,504,456.25).
     """
     if not reject_e1_toy_aca_enabled():
         return False
-    ctx = ctx or ""
-    if _EXAMPLE_ACA_RE.search(ctx):
-        return True
-    if abs(float(amount) - _TOY_ACA_AMOUNT) > 0.005:
+    amt = float(amount)
+    is_10m = abs(amt - _TOY_ACA_AMOUNT) <= 0.005
+    is_10k = abs(amt - _TOY_DAILY_AMOUNT) <= 0.005
+    if not (is_10m or is_10k):
         return False
-    if _CLAUSE_111_RE.search(ctx) and _EXCL_VAT_RE.search(ctx):
+    ctx = ctx or ""
+    if is_10m and _CLAUSE_111_RE.search(ctx) and _EXCL_VAT_RE.search(ctx):
+        # A neighboring filled 1.1.1 row must not un-toy the 8.8
+        # worked example when excerpts are concatenated.
+        if _TOY_EXAMPLE_CUE_RE.search(ctx):
+            return True
         return False
     return True
+
+
+def chunk_has_real_accepted_contract_amount(text: str) -> bool:
+    """True when ``text`` states a non-toy ACA money figure."""
+    return any(not toy for _amt, _cur, _kind, toy in _iter_aca_candidates(text))
 
 
 def chunk_accepted_contract_amount_is_only_toy(text: str) -> bool:
@@ -293,7 +306,15 @@ def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
         (toys if toy else buckets)[kind].append(item)
 
     any_real = any(buckets[k] for k in ("excl", "neutral", "incl"))
-    source = buckets if any_real else toys
+    if not any_real:
+        # Live leftover E1 after #529: electing the toy when no real
+        # row is in-window produced SAR 10,000/day. Skip it so the
+        # reservation can still surface the filled excl-VAT ACA.
+        if reject_e1_toy_aca_enabled():
+            return None
+        source = toys
+    else:
+        source = buckets
     picked = source["excl"] or source["neutral"] or source["incl"]
     if not picked:
         return None
