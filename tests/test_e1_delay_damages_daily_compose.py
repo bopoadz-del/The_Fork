@@ -587,3 +587,81 @@ def test_lookalike_rate_kill_switch_restores_electing_015(monkeypatch):
     assert out is not None
     assert out["rate_percent"] == 0.015
     assert out["daily_amount"] == LOOKALIKE_DAILY
+
+
+# Live leftover E1 after #536 (fdd60275): sources stayed on Contract Data
+# chunks 9–11 that do not surface both operands. The CoC 0.015% path did
+# not fire; the dominant FAIL is the cost-grounding refuse. Loaded CD
+# volume still has 0.1% + excl-VAT ACA.
+REFUSE_PRONE_8_8 = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 8.8 Delay Damages. "
+    "The Contractor shall pay delay damages for the whole of the Works "
+    "at the rate stated in the Contract Data for every calendar day."
+)
+
+
+def test_compose_from_refuse_prone_top_k_alone_is_none():
+    """Chunks 9–11 pointer windows cannot ground SAR/day by themselves."""
+    excerpts = "\n\n".join((REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8))
+    assert parse_delay_damages_rate_percent(excerpts) is None
+    assert parse_accepted_contract_amount(excerpts) is None
+    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts) is None
+
+
+def test_graft_composes_from_loaded_cd_when_top_k_is_refuse_prone(monkeypatch):
+    """Refuse-prone top-k + loaded 0.1% × excl-VAT ACA → SAR 1,754,504.46/day."""
+    volume = "\n\n".join((RATE_ROW, NET_ACA_ROW))
+    monkeypatch.setattr(
+        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        lambda *a, **k: volume,
+    )
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    rag = _sys(REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, rag["content"]) is None
+    grafted = _graft_composed_delay_damages_daily(
+        _CG_REFUSAL, rag, msgs, project_id="p_master",
+    )
+    assert "1,754,504.46" in grafted
+    assert "263,175.67" not in grafted
+    assert "0.015%" not in grafted
+    posted = _postprocess_answer(
+        _CG_REFUSAL, rag, msgs, project_id="p_master",
+    )
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "263,175.67" not in posted
+
+
+def test_graft_loaded_cd_refuse_path_respects_daily_rescue_kill_switch(
+    monkeypatch,
+):
+    monkeypatch.setenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", "0")
+    rag = _sys(REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    from app.core.rag.retriever import e1_compose_excerpts_from_loaded_cd_volume
+    assert e1_compose_excerpts_from_loaded_cd_volume(
+        LIVE_E1, "p_master", rag_context=rag["content"],
+    ) == ""
+    grafted = _graft_composed_delay_damages_daily(
+        _CG_REFUSAL, rag, msgs, project_id="p_master",
+    )
+    assert grafted == _CG_REFUSAL
+    assert "1,754,504.46" not in grafted
+
+
+def test_graft_loaded_cd_still_rejects_015_lookalike(monkeypatch):
+    """Volume last-chance must keep #536 lookalike rejection."""
+    monkeypatch.setattr(
+        "app.core.rag.retriever.e1_compose_excerpts_from_loaded_cd_volume",
+        lambda *a, **k: "\n\n".join((COC_015_WINDOW, NET_ACA_ROW)),
+    )
+    rag = _sys(REFUSE_PRONE_8_8, REFUSE_PRONE_8_8, REFUSE_PRONE_8_8)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    grafted = _graft_composed_delay_damages_daily(
+        _CG_REFUSAL, rag, msgs, project_id="p_master",
+    )
+    assert grafted == _CG_REFUSAL
+    assert "263,175.67" not in grafted
+    assert "1,754,504.46" not in grafted

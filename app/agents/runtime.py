@@ -4677,6 +4677,7 @@ def gate_cost_answer(
     rag_context: str = "",
     authoritative_texts: list[str] | None = None,
     user_message: str | None = None,
+    project_id: str | None = None,
 ) -> str:
     """Run the tested cost-grounding gate over an answer produced by a NON-agent
     answer path (``/chat``, ``/v1/project/ask``) that doesn't itself build the
@@ -4703,7 +4704,9 @@ def gate_cost_answer(
         for t in authoritative_texts or []:
             if t:
                 messages.append({"role": "tool", "content": str(t)})
-        text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
+        text = _graft_composed_delay_damages_daily(
+            text, rag_sys_msg, messages, project_id=project_id,
+        )
         text = _graft_asked_contract_particular(text, rag_sys_msg, messages)
         return _cost_grounding_gate(text, rag_sys_msg, messages)
     except Exception:  # noqa: BLE001 — a gate must never break an answer
@@ -5001,15 +5004,19 @@ def _graft_composed_delay_damages_daily(
     text: str,
     rag_sys_msg: dict[str, Any] | None,
     messages: list[dict[str, Any]] | None,
+    project_id: str | None = None,
 ) -> str:
     """OLD-pack E1: state rate × ACA as a daily figure when both are in docs.
 
     The live FAIL quoted Contract Data sources and never multiplied.
     Compose from retrieved excerpts only — no invented operands. A
-    fabricated SAR/day still loses when the ACA is absent. The composed
-    envelope is appended as a tool message so the cost gate can ground
-    the product (0.1% × ACA is not a pairwise product of the raw
-    numbers 0.1 and the ACA).
+    fabricated SAR/day still loses when the ACA is absent. When top-k
+    is refuse-prone, a last-chance scan of the loaded CD volume may
+    still supply both operands (kill-switch
+    RAG_DELAY_DAMAGES_DAILY_RESCUE=0). The composed envelope is
+    appended as a tool message so the cost gate can ground the product
+    (0.1% × ACA is not a pairwise product of the raw numbers 0.1 and
+    the ACA).
     """
     try:
         from app.lib.construction_formulas_commercial import (
@@ -5020,6 +5027,29 @@ def _graft_composed_delay_damages_daily(
         user = _latest_user_text(messages)
         rag = (rag_sys_msg or {}).get("content", "") if rag_sys_msg else ""
         composed = compose_delay_damages_daily_from_excerpts(user, rag)
+        if not composed:
+            # Live leftover E1 after #536: top-k is refuse-prone Contract
+            # Data chunks 9–11 that do not surface both operands. When
+            # excl-VAT ACA + Contract Data 0.1% exist in the loaded CD
+            # volume, compose from those rows — do not invent a figure
+            # and do not fall through to the cost-grounding refuse.
+            try:
+                from app.core.rag.retriever import (
+                    e1_compose_excerpts_from_loaded_cd_volume,
+                )
+                extra = e1_compose_excerpts_from_loaded_cd_volume(
+                    user, project_id or "", rag_context=rag,
+                )
+                if extra:
+                    composed = compose_delay_damages_daily_from_excerpts(
+                        user, extra,
+                    )
+            except Exception:  # noqa: BLE001 — volume scan must never break
+                _LOG.debug(
+                    "e1 loaded-volume compose failed; keeping excerpt compose",
+                    exc_info=True,
+                )
+                composed = None
         if not composed:
             return text
         line = format_delay_damages_daily_line(composed)
@@ -5155,8 +5185,12 @@ def _postprocess_answer(
     text = _graft_operator_claim_facts(text, _operator_user_text(messages))
     # OLD-pack E1: compose rate × ACA into SAR/day from retrieved client
     # text before the cost gate. A percentage-only excerpt still cannot
-    # invent a daily figure; both operands must be in the excerpts.
-    text = _graft_composed_delay_damages_daily(text, rag_sys_msg, messages)
+    # invent a daily figure; both operands must be in the excerpts or
+    # the loaded CD volume (last-chance after refuse-prone top-k).
+    pid = project_id or (audit_rec or {}).get("project_id")
+    text = _graft_composed_delay_damages_daily(
+        text, rag_sys_msg, messages, project_id=pid,
+    )
     # Wave-1 DeepSeek: A2 answered delay damages, A3/A9 said the
     # particular was absent. Graft the asked row from excerpts only.
     text = _graft_asked_contract_particular(text, rag_sys_msg, messages)

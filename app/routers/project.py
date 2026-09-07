@@ -144,6 +144,7 @@ async def project_ask(
             rag_context=format_excerpts_as_rag_context(grounding.get("excerpts")),
             authoritative_texts=[results_text] if results_text.strip() else None,
             user_message=body.request,
+            project_id=retrieval_project_id,
         )
     except Exception:
         logger.exception(
