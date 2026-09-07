@@ -25,6 +25,7 @@ from app.agents.runtime import (
     _postprocess_answer,
 )
 from app.lib.construction_formulas_commercial import (
+    aca_amount_is_toy_example,
     answer_states_daily_amount,
     compose_delay_damages_daily_from_excerpts,
     delay_damages_daily,
@@ -332,3 +333,94 @@ def test_a2_graft_does_not_steal_an_e1_daily_compose():
     assert _graft_asked_contract_particular(LIVE_E1_ACA_ONLY, rag, msgs) == (
         LIVE_E1_ACA_ONLY
     )
+
+
+# Live leftover E1 on c5c6dfa: compose elected a FIDIC worked-example
+# ACA of SAR 10,000,000 from Contract Data 8.8 chunks 9–11
+# (0.1% → SAR 10,000/day) instead of the filled excl-VAT row.
+TOY_ACA = 10_000_000.00
+TOY_DAILY = 10_000.00
+TOY_ACA_ROW = (
+    "CONTRACT DATA particulars — filled-in amount / duration / percentage.\n"
+    "1.1.1 Accepted Contract Amount | SAR 10,000,000.00"
+)
+# Stained excl-VAT: the 8.8 worked example names the net base so
+# first-in-excl-bucket used to elect 10M over the filled 1.1.1 row.
+TOY_EXAMPLE_WINDOW = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 8.8 Delay Damages. "
+    "The Contractor shall pay delay damages for the whole of the Works "
+    f"at {RATE}. For example, if the Accepted Contract Amount "
+    "excluding VAT is SAR 10,000,000.00, the daily amount is "
+    "SAR 10,000.00."
+)
+LIVE_E1_TOY_ANSWER = (
+    "Delay damages for the whole of the Works are "
+    "SAR 10,000.00 per calendar day "
+    "(0.1% of Accepted Contract Amount SAR 10,000,000.00)."
+)
+
+
+def test_ten_million_is_a_toy_aca_unless_it_is_a_filled_excl_row():
+    assert aca_amount_is_toy_example(TOY_ACA, "Accepted Contract Amount")
+    assert aca_amount_is_toy_example(
+        TOY_ACA,
+        "For example, if the Accepted Contract Amount is SAR 10,000,000.00",
+    )
+    assert not aca_amount_is_toy_example(
+        TOY_ACA,
+        "1.1.1 Accepted Contract Amount excluding VAT | SAR 10,000,000.00",
+    )
+    assert not aca_amount_is_toy_example(NET_ACA, NET_ACA_ROW)
+    assert not aca_amount_is_toy_example(8_640_000.00, DEMO_ACA_ROW)
+
+
+def test_aca_parser_rejects_toy_ten_million_when_excl_vat_is_also_present():
+    """Leftover E1: 10M example must lose to the filled excl-VAT ACA."""
+    both = "\n\n".join((TOY_EXAMPLE_WINDOW, NET_ACA_ROW, GROSS_ACA_ROW))
+    assert parse_accepted_contract_amount(both) == (NET_ACA, "SAR")
+    unlabeled_then_excl = "\n\n".join((TOY_ACA_ROW, NET_ACA_ROW))
+    assert parse_accepted_contract_amount(unlabeled_then_excl) == (NET_ACA, "SAR")
+    excl_then_toy = "\n\n".join((NET_ACA_ROW, TOY_EXAMPLE_WINDOW))
+    assert parse_accepted_contract_amount(excl_then_toy) == (NET_ACA, "SAR")
+
+
+def test_compose_leftover_e1_prefers_excl_vat_over_toy_ten_million():
+    excerpts = "\n\n".join((
+        RATE_ROW, TOY_EXAMPLE_WINDOW, TOY_ACA_ROW, NET_ACA_ROW, GROSS_ACA_ROW,
+    ))
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["rate_percent"] == 0.1
+    assert out["contract_amount"] == NET_ACA
+    assert out["currency"] == "SAR"
+    assert out["contract_amount"] != TOY_ACA
+    assert out["daily_amount"] != TOY_DAILY
+
+
+def test_graft_replaces_the_live_ten_thousand_per_day_fail():
+    rag = _sys(RATE_ROW, TOY_EXAMPLE_WINDOW, NET_ACA_ROW, GROSS_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    out = _graft_composed_delay_damages_daily(LIVE_E1_TOY_ANSWER, rag, msgs)
+    assert "1,754,504.46" in out
+    assert "10,000.00" not in out.split("\n", 1)[0]
+    first = out.split("\n", 1)[0]
+    assert "1,754,504.46" in first
+    assert "10,000,000.00" not in first
+
+
+def test_postprocess_e1_cannot_answer_with_the_toy_ten_million_aca():
+    rag = _sys(RATE_ROW, TOY_EXAMPLE_WINDOW, NET_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    out = _postprocess_answer(LIVE_E1_TOY_ANSWER, rag, msgs)
+    assert "1,754,504.46" in out
+    assert out != LIVE_E1_TOY_ANSWER
+    assert out != _CG_REFUSAL
+    assert "10,000,000.00" not in out.split("\n", 1)[0]
+
+
+def test_toy_aca_kill_switch_restores_electing_ten_million(monkeypatch):
+    monkeypatch.setenv("COMPOSE_REJECT_E1_TOY_ACA", "0")
+    # Example language is ignored; 10M is first in the excl-VAT bucket.
+    both = "\n\n".join((TOY_EXAMPLE_WINDOW, NET_ACA_ROW))
+    assert parse_accepted_contract_amount(both) == (TOY_ACA, "SAR")

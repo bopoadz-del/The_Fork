@@ -103,6 +103,18 @@ GC_8_8 = (
     "The Contractor shall pay delay damages for the whole of the Works "
     "at the rate stated in the Contract Data for every calendar day."
 )
+# Live leftover E1 on c5c6dfa: chunks 9–11 of the bound Contract Data
+# volume stated the 0.1% rate AND a FIDIC worked-example ACA of
+# SAR 10,000,000. Retrieval treated that as the money operand, so
+# compose emitted SAR 10,000/day.
+COC_8_8_TOY_ACA = (
+    "Volume 1 - Conditions of Contract. Sub-Clause 8.8 Delay Damages. "
+    "The Contractor shall pay delay damages for the whole of the Works "
+    f"at {RATE}. For example, if the Accepted Contract Amount "
+    "excluding VAT is SAR 10,000,000.00, the daily amount is "
+    "SAR 10,000.00."
+)
+TOY_ACA_TXT = "SAR 10,000,000.00"
 PREFIXED_TFC = (
     "CONTRACT DATA particulars — filled-in amount / duration / "
     f"percentage [{DD23_NAME}].\n"
@@ -193,6 +205,8 @@ def test_scanned_operands_and_lookalikes():
     assert not chunk_states_accepted_contract_amount(INSURANCE)
     assert not chunk_states_accepted_contract_amount(DAYWORK)
     assert not chunk_states_delay_damages_rate(GC_8_8)
+    assert not chunk_states_accepted_contract_amount(COC_8_8_TOY_ACA)
+    assert chunk_states_delay_damages_rate(COC_8_8_TOY_ACA)
 
     assert chunk_answers_asked_particular(LIVE_E1, SCANNED_RATE)
     assert chunk_answers_asked_particular(LIVE_E1, SCANNED_NET_ACA)
@@ -536,3 +550,59 @@ def test_e1_inject_hint_is_compose_not_including_vat():
     )["content"]
     assert "INCLUDING VAT" in a2
     assert "Lead with that including-VAT figure" in a2
+
+
+def test_e1_surfaces_excl_vat_when_coc_chunks_carry_toy_ten_million(monkeypatch):
+    """Live leftover E1 on c5c6dfa: chunks 9–11 + toy ACA 10,000,000.
+
+    The bound Contract Data volume's Sub-Clause 8.8 windows stated the
+    0.1% rate and a FIDIC worked-example ACA of SAR 10,000,000. That
+    money satisfied the reservation, so the filled excl-VAT row never
+    entered top-k and compose emitted SAR 10,000/day.
+    """
+    gc9 = _chunk("gc9", GC_DOC, 0.94, COC_8_8_TOY_ACA)
+    gc10 = _chunk("gc10", GC_DOC, 0.93, COC_8_8_TOY_ACA)
+    gc11 = _chunk("gc11", GC_DOC, 0.92, COC_8_8_TOY_ACA)
+    rate = _chunk("rate", RATE_DOC, 0.22, SCANNED_RATE)
+    aca = _chunk("aca", ACA_DOC, 0.21, SCANNED_NET_ACA)
+    names = {
+        GC_DOC: CD_SCANNED_NAME,
+        RATE_DOC: CD_SCANNED_NAME,
+        ACA_DOC: CD_SCANNED_NAME,
+    }
+    seeded = [
+        {"id": RATE_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+        {"id": ACA_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+        {"id": GC_DOC, "original_name": CD_SCANNED_NAME, "file_path": CD_SCANNED_NAME},
+    ]
+    ret = _install_e1_corpus(
+        monkeypatch,
+        semantic=[gc9, gc10, gc11],
+        rescue_hits=[rate, aca],
+        names=names,
+        seeded=seeded,
+    )
+    chunks, _ = ret.retrieve_with_filter(LIVE_E1, ACTIVE, k=5)
+    blob = " ".join(c.text for c in chunks)
+    assert RATE in blob
+    assert NET_ACA_TXT in blob
+    excerpts = "\n\n".join(c.text or "" for c in chunks)
+    out = compose_delay_damages_daily_from_excerpts(LIVE_E1, excerpts)
+    assert out is not None
+    assert out["daily_amount"] == DAILY
+    assert out["contract_amount"] == NET_ACA
+    assert out["currency"] == "SAR"
+    assert out["contract_amount"] != 10_000_000.0
+
+    rag = _sys(*(c.text or "" for c in chunks))
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    live_fail = (
+        "Delay damages for the whole of the Works are "
+        "SAR 10,000.00 per calendar day "
+        f"(0.1% of Accepted Contract Amount {TOY_ACA_TXT})."
+    )
+    posted = _postprocess_answer(live_fail, rag, msgs)
+    assert "1,754,504.46" in posted
+    assert posted != live_fail
+    assert posted != _CG_REFUSAL
+    assert "10,000,000.00" not in posted.split("\n", 1)[0]

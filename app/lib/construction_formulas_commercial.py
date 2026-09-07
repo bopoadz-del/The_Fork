@@ -102,12 +102,55 @@ _MONEY_RE = re.compile(
 _POINTER_RE = re.compile(
     r"(?i)at\s+the\s+rate\s+stated\s+in\s+the\s+contract\s+data",
 )
+# Live leftover E1 on c5c6dfa: Contract Data 8.8 chunks 9–11 carried a
+# FIDIC worked-example ACA of SAR 10,000,000. Compose elected it
+# (0.1% → SAR 10,000/day) instead of the filled excl-VAT row
+# (~SAR 1,754,504,456.25). Kill-switch COMPOSE_REJECT_E1_TOY_ACA=0
+# restores electing the first match (the FAIL).
+_TOY_ACA_AMOUNT = 10_000_000.0
+_EXAMPLE_ACA_RE = re.compile(
+    r"(?i)\b(?:e\.g\.|eg\.|for\s+example|for\s+instance|"
+    r"illustrative|worked\s+example|say\s+|insert\b|"
+    r"placeholder|specimen|sample\s+amount|"
+    r"if\s+the\s+accepted\s+contract\s+amount\s+is)\b"
+)
+_CLAUSE_111_RE = re.compile(r"(?i)\b1\.1\.1\b")
 
 
 def compose_delay_damages_daily_enabled() -> bool:
     """ON by default. ``COMPOSE_DELAY_DAMAGES_DAILY=0`` is the kill-switch."""
     raw = (os.getenv("COMPOSE_DELAY_DAMAGES_DAILY", "1") or "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
+
+
+def reject_e1_toy_aca_enabled() -> bool:
+    """ON by default. ``COMPOSE_REJECT_E1_TOY_ACA=0`` restores the 10M FAIL."""
+    raw = (os.getenv("COMPOSE_REJECT_E1_TOY_ACA", "1") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def aca_amount_is_toy_example(amount: float, ctx: str = "") -> bool:
+    """True for a FIDIC worked-example / placeholder ACA, not a filled row.
+
+    Live E1: unlabeled ``SAR 10,000,000`` in an 8.8 window. A filled
+    1.1.1 excluding-VAT particular of exactly 10M is not a toy.
+    """
+    if not reject_e1_toy_aca_enabled():
+        return False
+    ctx = ctx or ""
+    if _EXAMPLE_ACA_RE.search(ctx):
+        return True
+    if abs(float(amount) - _TOY_ACA_AMOUNT) > 0.005:
+        return False
+    if _CLAUSE_111_RE.search(ctx) and _EXCL_VAT_RE.search(ctx):
+        return False
+    return True
+
+
+def chunk_accepted_contract_amount_is_only_toy(text: str) -> bool:
+    """True when every ACA money figure in ``text`` is a toy/example."""
+    cands = _iter_aca_candidates(text)
+    return bool(cands) and all(toy for _amt, _cur, _kind, toy in cands)
 
 
 def query_asks_delay_damages_daily_amount(query: str) -> bool:
@@ -171,19 +214,16 @@ def parse_delay_damages_rate_percent(text: str) -> float | None:
     return None
 
 
-def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
-    """ACA / Contract Price money amount from client text, or None.
+def _iter_aca_candidates(text: str) -> list[tuple[float, str, str, bool]]:
+    """``(amount, currency, vat_kind, is_toy)`` ACA figures in ``text``.
 
-    Prefers an excluding-VAT figure when both incl/excl are present
-    (FIDIC Contract Price / the rate's base is the net amount). Does
-    not invent a figure; a percentage-of-ACA cap row is skipped.
+    ``vat_kind`` is ``excl``, ``neutral``, or ``incl``. Filled particulars
+    rows first, then a 160-char scanned window. Does not invent a figure.
     """
     t = text or ""
     if not t:
-        return None
-    excl: list[tuple[float, str]] = []
-    neutral: list[tuple[float, str]] = []
-    incl: list[tuple[float, str]] = []
+        return []
+    out: list[tuple[float, str, str, bool]] = []
 
     def _bucket(amount: float, currency: str, ctx: str) -> None:
         if amount < 1000:
@@ -198,13 +238,15 @@ def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
                 return
         if not _ACA_LABEL_RE.search(ctx):
             return
-        item = (amount, currency)
         if _EXCL_VAT_RE.search(ctx):
-            excl.append(item)
+            kind = "excl"
         elif _INCL_VAT_RE.search(ctx):
-            incl.append(item)
+            kind = "incl"
         else:
-            neutral.append(item)
+            kind = "neutral"
+        out.append(
+            (amount, currency, kind, aca_amount_is_toy_example(amount, ctx)),
+        )
 
     try:
         from app.core.contract_data_chunks import filled_particulars_rows
@@ -224,10 +266,37 @@ def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
         ctx = blob[start:m.end() + 24]
         _bucket(amount, m.group(1).upper(), ctx)
 
-    picked = excl or neutral or incl
+    return out
+
+
+def parse_accepted_contract_amount(text: str) -> tuple[float, str] | None:
+    """ACA / Contract Price money amount from client text, or None.
+
+    Prefers an excluding-VAT figure when both incl/excl are present
+    (FIDIC Contract Price / the rate's base is the net amount). When
+    a FIDIC worked-example ACA (live: SAR 10,000,000) sits next to a
+    filled excl-VAT row, the toy is dropped — the product must not
+    invent a figure and must not elect the example. A percentage-of-
+    ACA cap row is skipped.
+    """
+    t = text or ""
+    if not t:
+        return None
+    buckets: dict[str, list[tuple[float, str]]] = {
+        "excl": [], "neutral": [], "incl": [],
+    }
+    toys: dict[str, list[tuple[float, str]]] = {
+        "excl": [], "neutral": [], "incl": [],
+    }
+    for amount, currency, kind, toy in _iter_aca_candidates(t):
+        item = (amount, currency)
+        (toys if toy else buckets)[kind].append(item)
+
+    any_real = any(buckets[k] for k in ("excl", "neutral", "incl"))
+    source = buckets if any_real else toys
+    picked = source["excl"] or source["neutral"] or source["incl"]
     if not picked:
         return None
-    # Dedup while preferring the first match in the preferred bucket.
     seen: set[tuple[float, str]] = set()
     ordered: list[tuple[float, str]] = []
     for item in picked:
