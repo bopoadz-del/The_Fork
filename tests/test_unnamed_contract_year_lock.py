@@ -1557,6 +1557,11 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
     capped label bonus and their order among themselves is arbitrary. That
     makes the fixture a hard test of the reservation and a useless one for
     any claim about where the rate row lands.
+
+    ``ensure_e1_kept_can_compose`` is the leftover-E1 last-chance twin of
+    ``reserve_e1_compose_operands`` (refuse-prone top-k). The probe must
+    disable that path too, or the amount is still reachable and the
+    reservation is no longer what the probe measures.
     """
     ret, top_k = wave2_corpus
     monkeypatch.setattr(
@@ -1565,6 +1570,10 @@ def test_mutation_probe_e1_needs_the_reservation(wave2_corpus, monkeypatch):
     )
     monkeypatch.setattr(
         ret, "reserve_e1_compose_operands",
+        lambda *_a, **_kw: False,
+    )
+    monkeypatch.setattr(
+        ret, "ensure_e1_kept_can_compose",
         lambda *_a, **_kw: False,
     )
     top = top_k(E1)
