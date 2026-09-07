@@ -3683,6 +3683,108 @@ def _e1_fetch_late_aca_chunks(store, project_id: str, doc_ids: List[str]) -> Lis
     return list(by_id.values())
 
 
+_E1_RAG_DOC_ID_RE = re.compile(r"\[doc_id=([^\]\s]+)")
+
+
+def e1_doc_ids_from_rag_context(rag_context: str) -> List[str]:
+    """Doc ids from ``[doc_id=…]`` markers in the injected RAG context."""
+    out: List[str] = []
+    seen: Set[str] = set()
+    for match in _E1_RAG_DOC_ID_RE.finditer(rag_context or ""):
+        did = (match.group(1) or "").strip()
+        if did and did not in seen:
+            seen.add(did)
+            out.append(did)
+    return out
+
+
+def e1_compose_excerpts_from_loaded_cd_volume(
+    query: str,
+    project_id: str,
+    store=None,
+    *,
+    rag_context: str = "",
+    doc_ids: Optional[List[str]] = None,
+) -> str:
+    """Join Contract Data 0.1% + excl-VAT ACA from the loaded CD volume.
+
+    Live leftover E1 after #536: top-k stayed on Contract Data chunks
+    9–11 that do not surface both operands, so compose returned None
+    and the cost-grounding gate refused. When those rows exist later
+    in the same loaded volume, return them so compose can state
+    SAR/day — do not invent a figure and do not elect CoC 0.015%.
+    Kill-switch: RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
+    """
+    if not (
+        delay_damages_daily_rescue_enabled()
+        and query_asks_delay_damages_daily_amount(query)
+        and project_id
+    ):
+        return ""
+    ids: List[str] = []
+    seen: Set[str] = set()
+
+    def _add(did: str) -> None:
+        if did and did not in seen:
+            seen.add(did)
+            ids.append(did)
+
+    for did in doc_ids or []:
+        _add(did)
+    for did in e1_doc_ids_from_rag_context(rag_context):
+        _add(did)
+
+    try:
+        from app.core.projects import documents_matching_title_phrase
+        for phrase in ("contract data", "conditions of contract"):
+            try:
+                matches = documents_matching_title_phrase(project_id, phrase) or []
+            except Exception:  # noqa: BLE001 — listing is optional
+                logger.debug(
+                    "e1 loaded-volume title listing failed for %r",
+                    phrase, exc_info=True,
+                )
+                matches = []
+            for doc in matches:
+                _add(doc.get("id") or "")
+    except Exception:  # noqa: BLE001 — rag doc_ids may still be enough
+        logger.debug("e1 loaded-volume projects import failed", exc_info=True)
+
+    if not ids:
+        return ""
+    if store is None:
+        try:
+            store = get_lexical_store()
+        except Exception:  # noqa: BLE001 — never break a turn over the store
+            logger.debug("e1 loaded-volume store open failed", exc_info=True)
+            return ""
+
+    extra = _e1_fetch_late_aca_chunks(store, project_id, ids)
+    rate_parts: List[str] = []
+    aca_parts: List[str] = []
+
+    def _collect(text: str) -> None:
+        if _e1_rate_preference(text) >= 2 and text not in rate_parts:
+            rate_parts.append(text)
+        if _e1_has_standalone_excl_vat(text) and text not in aca_parts:
+            aca_parts.append(text)
+
+    for chunk in extra or []:
+        _collect(chunk.text or "")
+    if not rate_parts or not aca_parts:
+        for chunk in _pair_adjacent_keep_text(
+            extra or [],
+            lambda t: (
+                _e1_rate_preference(t) >= 2 or _e1_has_standalone_excl_vat(t)
+            ),
+            window=_E1_REAL_ACA_PAIR_WINDOW,
+        ):
+            _collect(chunk.text or "")
+    if not rate_parts or not aca_parts:
+        return ""
+    return "\n\n".join(rate_parts[:3] + aca_parts[:3])
+
+
 def _rescue_e1_real_aca_from_pool_docs(
     query: str,
     project_id: str,
@@ -4625,6 +4727,88 @@ def reserve_e1_compose_operands(
     return True
 
 
+def ensure_e1_kept_can_compose(
+    query: str,
+    kept: List[Chunk],
+    ranked: List[Chunk],
+    *,
+    allow=None,
+) -> bool:
+    """Force both compose operands into kept when top-k is refuse-prone.
+
+    Live leftover E1 after #536: Cosine kept Contract Data chunks 9–11
+    that do not parse as rate × excl-VAT ACA. The operands already sit
+    in ``ranked`` after the all-chunk scan. Put them in kept so compose
+    does not fall through to the cost-grounding refuse. Kill-switch:
+    RAG_DELAY_DAMAGES_DAILY_RESCUE=0.
+    """
+    if not kept:
+        return False
+    if not (
+        delay_damages_daily_rescue_enabled()
+        and query_asks_delay_damages_daily_amount(query)
+    ):
+        return False
+    try:
+        from app.lib.construction_formulas_commercial import (
+            compose_delay_damages_daily_from_excerpts,
+        )
+    except Exception:  # noqa: BLE001 — never break a turn over an import
+        logger.debug("e1 kept-compose import failed", exc_info=True)
+        return False
+    if compose_delay_damages_daily_from_excerpts(
+        query, "\n\n".join(c.text or "" for c in kept),
+    ):
+        return False
+
+    def _ok(chunk: Chunk) -> bool:
+        return allow is None or allow(chunk)
+
+    rate: Optional[Chunk] = None
+    aca: Optional[Chunk] = None
+    for chunk in ranked:
+        if not _ok(chunk):
+            continue
+        text = chunk.text or ""
+        if rate is None and _e1_rate_preference(text) >= 2:
+            rate = chunk
+        if aca is None and _e1_has_standalone_excl_vat(text):
+            aca = chunk
+        if rate is not None and aca is not None:
+            break
+    if rate is None or aca is None:
+        return False
+    changed = False
+    present = {c.chunk_id for c in kept}
+    if rate.chunk_id not in present:
+        idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+        if idx is None:
+            idx = len(kept) - 1
+        kept[idx] = rate
+        present.add(rate.chunk_id)
+        changed = True
+    if aca.chunk_id not in present:
+        idx = _e1_non_operand_index(kept, protect_rate=True, protect_aca=True)
+        if idx is None:
+            rate_idxs = [
+                i for i, chunk in enumerate(kept)
+                if chunk.chunk_id == rate.chunk_id
+                or chunk_states_delay_damages_rate(chunk.text or "")
+            ]
+            if len(rate_idxs) > 1:
+                idx = next(
+                    (i for i in reversed(rate_idxs) if kept[i].chunk_id != rate.chunk_id),
+                    rate_idxs[-1],
+                )
+            else:
+                idx = 0 if kept[-1].chunk_id == rate.chunk_id else len(kept) - 1
+        if kept[idx].chunk_id == rate.chunk_id and len(kept) > 1:
+            idx = 0 if idx != 0 else 1
+        kept[idx] = aca
+        changed = True
+    return changed
+
+
 def reserve_matching_particulars_row(
     query: str,
     kept: List[Chunk],
@@ -4976,6 +5160,7 @@ def _lexical_only_retrieve(query: str, project_id: str, k: int) -> tuple:
     reserve_matching_particulars_row(query, kept, candidates, allow=_allow)
     reserve_monetary_base_row(query, kept, candidates, allow=_allow)
     reserve_e1_compose_operands(query, kept, candidates, allow=_allow)
+    ensure_e1_kept_can_compose(query, kept, candidates, allow=_allow)
     for chunk in kept:
         chunk.source_name = _name(chunk.doc_id)
     return kept, noise_filtered
@@ -5667,6 +5852,9 @@ def retrieve_with_filter(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
     reserve_e1_compose_operands(
+        query, kept, [c for _, c in scored], allow=_allow_final,
+    )
+    ensure_e1_kept_can_compose(
         query, kept, [c for _, c in scored], allow=_allow_final,
     )
 

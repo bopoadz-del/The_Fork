@@ -701,6 +701,7 @@ async def chat(request: ChatRequest, auth: dict = Depends(require_user)):
                 rag_context=format_excerpts_as_rag_context(doc_snippets),
                 authoritative_texts=[memory_ctx] if memory_ctx.strip() else None,
                 user_message=request.message,
+                project_id=request.project_id,
             )
         except Exception:
             logger.exception("chat: cost-grounding gate failed; passing answer through")
