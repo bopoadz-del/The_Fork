@@ -91,6 +91,27 @@ def test_leftover_l7_prompt_is_self_contained_and_skips_rag_miss():
     assert _should_short_circuit_rag_miss(audit, None, L7_PROMPT) is False
 
 
+def test_e4_volume_claim_does_not_force_synthesis_on_validation():
+    """Leftover E4: validating the raft ask must not disarm construction_calc.
+
+    L4 (beam claim, no calc verb) still forces synthesis — pinned below.
+    """
+    rec = {
+        "name": "validation_pipeline",
+        "ok": True,
+        "result": {
+            "status": "success",
+            "overall": "pass",
+            "stages": {"syntactic": {"pass": True, "reason": "ok"}},
+            "claim": (
+                "Concrete volume for a raft 30×20×1.5 m including your "
+                "documented waste factor."
+            ),
+        },
+    }
+    assert _should_force_synthesis(rec) is False
+
+
 def test_empty_sympy_does_not_force_synthesis():
     rec = {
         "name": "sympy_reasoning",
@@ -242,6 +263,29 @@ def test_leftover_l4_xml_synthesis_grafts_physical_tier4():
     recovered = _recover_tool_calls_from_content(L4_XML_LEAK)
     assert recovered
     assert recovered[0]["function"]["name"] == "formula_executor_v2"
+
+
+def test_leftover_l4_validation_still_forces_synthesis():
+    """E4's checker carve-out must not disarm leftover L4's verdict."""
+    rec = {
+        "name": "validation_pipeline",
+        "ok": True,
+        "result": {
+            "status": "success",
+            "overall": "fail",
+            "first_failure": "physical",
+            "tier": 4,
+            "stages": {
+                "syntactic": {"pass": True, "reason": "prose claim"},
+                "physical": {"pass": False, "reason": "implausible"},
+            },
+            "claim": (
+                "office floor beam forty metres long on a fifty millimetre "
+                "steel I-section carrying eight hundred kilonewtons per metre"
+            ),
+        },
+    }
+    assert _should_force_synthesis(rec) is True
 
 
 # ── L2: clash detection off by default ──────────────────────────────────────
