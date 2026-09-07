@@ -114,8 +114,11 @@ detail see `README.md`, `.env.example`, and `.claude/skills/run-the-fork/SKILL.m
   render `wbs_tree` as a numbered hierarchy (phase headings + package
   codes), not only "Schedule built: N activities" + a workbook offer.
   `deliver_schedule` reads the tree already staged by `generate_wbs`.
-  Keep the template-scaffold declaration first. Do not invent BOQ items
-  — a BOQ-derived WBS is a different capability.
+  When the ask names demolition / site clearance / BOQ and measured
+  CESMM D-rows are in the project document pool, elect those rows —
+  do not print the building-template scaffold. Keep the template
+  declaration only when no measured rows were retrieved. Do not invent
+  BOQ items.
 - Currency rate units (`AED/m2`, `USD/ft2`) are not document identifiers.
   Pinned self-coding conversions must not hit the RAG-miss short-circuit.
 - Contract Data Q&A (Time for Completion, milestones, delay damages, DNP,
