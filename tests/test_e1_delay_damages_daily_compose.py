@@ -665,3 +665,154 @@ def test_graft_loaded_cd_still_rejects_015_lookalike(monkeypatch):
     assert grafted == _CG_REFUSAL
     assert "263,175.67" not in grafted
     assert "1,754,504.46" not in grafted
+
+
+def _ignore_all_rows_store(all_chunks, owner_pid=None):
+    class _Store:
+        def chunks_for_docs(
+            self, project_id, doc_ids, k_per_doc=12, from_end=False,
+            all_rows=False,
+        ):
+            if owner_pid is not None and project_id != owner_pid:
+                return []
+            rows = sorted(
+                [c for c in all_chunks if getattr(c, "doc_id", None) in (doc_ids or [])],
+                key=lambda c: c.chunk_index,
+            )
+            n = max(1, int(k_per_doc or 12))
+            return rows[-n:] if from_end else rows[:n]
+
+        def chunks_containing_all(self, project_id, needles, k=20, doc_ids=None):
+            return []
+
+    return _Store()
+
+
+def _live_refuse_sys(texts, doc_id="gc118"):
+    src = "DD-2023-118_DG2 Infra P1_Vol 1.0_Con..."
+    body = "\n\n".join(
+        f"[doc_id={doc_id} chunk={9 + i} score=0.950 "
+        f"class=project_corpus src={src}] {t}"
+        for i, t in enumerate(texts)
+    )
+    return {"role": "system", "content": "Reference context:\n" + body}
+
+
+def test_graft_composes_when_operands_anywhere_in_loaded_cd_volume(monkeypatch):
+    """Live 9ad62cc attempt-3: Sources 9–11 + BOQ refuse wording.
+
+    Store ignores all_rows (first-N stay on the refuse window). 0.1% and
+    excl-VAT sit mid-volume. Graft must still state SAR 1,754,504.46/day
+    from those rows — no invented figure, no 0.015%.
+    """
+    from app.core.rag.vector_store import Chunk
+    from tests.test_e1_delay_damages_daily_retrieval import (
+        ACTIVE,
+        CD_POINT_ONE_RATE,
+        CD_RATE_INDEX,
+        GC_DOC,
+        LIVE_SCANNED_EXCL_ACA,
+        MIDDLE_ACA_INDEX,
+        MIDDLE_DOC_LEN,
+        REFUSE_PRONE_8_8,
+    )
+
+    windows = [
+        Chunk(
+            chunk_id=f"gc{i}", project_id=ACTIVE, doc_id=GC_DOC,
+            chunk_index=9 + i, text=REFUSE_PRONE_8_8, score=0.95 - i * 0.01,
+        )
+        for i in range(3)
+    ]
+    dummies = [
+        Chunk(
+            chunk_id=f"pre{i}", project_id=ACTIVE, doc_id=GC_DOC,
+            chunk_index=i, text=GC_POINTER, score=0.10,
+        )
+        for i in range(MIDDLE_DOC_LEN)
+        if i not in (9, 10, 11, CD_RATE_INDEX, MIDDLE_ACA_INDEX)
+    ]
+    rate = Chunk(
+        chunk_id="cdrate", project_id=ACTIVE, doc_id=GC_DOC,
+        chunk_index=CD_RATE_INDEX, text=CD_POINT_ONE_RATE, score=0.20,
+    )
+    aca = Chunk(
+        chunk_id="aca500", project_id=ACTIVE, doc_id=GC_DOC,
+        chunk_index=MIDDLE_ACA_INDEX, text=LIVE_SCANNED_EXCL_ACA, score=0.21,
+    )
+    all_chunks = list(dummies) + list(windows) + [rate, aca]
+    store = _ignore_all_rows_store(all_chunks)
+    monkeypatch.setattr("app.core.rag.retriever.get_lexical_store", lambda: store)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    rag = _live_refuse_sys((REFUSE_PRONE_8_8,) * 3, doc_id=GC_DOC)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    assert compose_delay_damages_daily_from_excerpts(LIVE_E1, rag["content"]) is None
+    grafted = _graft_composed_delay_damages_daily(
+        _CG_REFUSAL, rag, msgs, project_id=ACTIVE,
+    )
+    assert "1,754,504.46" in grafted
+    assert "263,175.67" not in grafted
+    assert "0.015%" not in grafted
+    assert "upload your priced BOQ" not in grafted.lower()
+    posted = _postprocess_answer(
+        _CG_REFUSAL, rag, msgs,
+        audit_rec={
+            "project_id": ACTIVE,
+            "chunks": [
+                {"project_id": ACTIVE, "doc_id": GC_DOC, "chunk_index": 9},
+                {"project_id": ACTIVE, "doc_id": GC_DOC, "chunk_index": 10},
+                {"project_id": ACTIVE, "doc_id": GC_DOC, "chunk_index": 11},
+            ],
+        },
+    )
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "upload your priced BOQ" not in posted.lower()
+    assert "263,175.67" not in posted
+
+
+def test_graft_uses_audit_chunk_project_id_when_ui_pid_misses(monkeypatch):
+    """Gate must not race the graft when the UI pid has no rows."""
+    from app.core.rag.vector_store import Chunk
+    from tests.test_e1_delay_damages_daily_retrieval import (
+        CD_POINT_ONE_RATE,
+        CD_RATE_INDEX,
+        GC_DOC,
+        LIVE_SCANNED_EXCL_ACA,
+        MIDDLE_ACA_INDEX,
+        REFUSE_PRONE_8_8,
+    )
+
+    source = "p_source"
+    windows = [
+        Chunk(
+            chunk_id=f"gc{i}", project_id=source, doc_id=GC_DOC,
+            chunk_index=9 + i, text=REFUSE_PRONE_8_8, score=0.95,
+        )
+        for i in range(3)
+    ]
+    rate = Chunk(
+        chunk_id="cdrate", project_id=source, doc_id=GC_DOC,
+        chunk_index=CD_RATE_INDEX, text=CD_POINT_ONE_RATE, score=0.20,
+    )
+    aca = Chunk(
+        chunk_id="aca500", project_id=source, doc_id=GC_DOC,
+        chunk_index=MIDDLE_ACA_INDEX, text=LIVE_SCANNED_EXCL_ACA, score=0.21,
+    )
+    store = _ignore_all_rows_store(list(windows) + [rate, aca], owner_pid=source)
+    monkeypatch.setattr("app.core.rag.retriever.get_lexical_store", lambda: store)
+    monkeypatch.delenv("RAG_DELAY_DAMAGES_DAILY_RESCUE", raising=False)
+    rag = _live_refuse_sys((REFUSE_PRONE_8_8,) * 3, doc_id=GC_DOC)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    posted = _postprocess_answer(
+        _CG_REFUSAL, rag, msgs,
+        audit_rec={
+            "project_id": "p_master",
+            "chunks": [
+                {"project_id": source, "doc_id": GC_DOC, "chunk_index": 9},
+            ],
+        },
+    )
+    assert "1,754,504.46" in posted
+    assert posted != _CG_REFUSAL
+    assert "263,175.67" not in posted
