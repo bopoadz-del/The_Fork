@@ -128,7 +128,10 @@ def apply_token_cap(
             from app.core.rag.retriever import _e1_is_cap_noise
             rest = [c for c in rest if not _e1_is_cap_noise(c.text or "")]
         except Exception:  # noqa: BLE001 — keep rest if noise class fails
-            pass
+            _LOG.debug(
+                "e1 token-cap noise filter failed; keeping rest",
+                exc_info=True,
+            )
     protected.sort(key=lambda c: -(c.score or 0))
     rest.sort(key=lambda c: -(c.score or 0))
     kept: List[Chunk] = []
