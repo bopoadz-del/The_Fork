@@ -271,3 +271,64 @@ def test_answer_states_daily_amount_accepts_formatted_and_compact():
     assert answer_states_daily_amount("SAR 1,754,504.46/day", DAILY)
     assert answer_states_daily_amount("SAR 1754504.46 per calendar day", DAILY)
     assert not answer_states_daily_amount(SOURCES_ONLY, DAILY)
+
+
+LIVE_E1_ACA_ONLY = (
+    "The Accepted Contract Amount including VAT is "
+    f"SAR {GROSS_ACA:,.2f}."
+)
+
+
+def test_e1_is_not_an_a2_including_vat_election():
+    from app.core.rag.retriever import query_asks_for_aca_including_vat
+
+    assert query_asks_delay_damages_daily_amount(LIVE_E1)
+    assert not query_asks_for_aca_including_vat(LIVE_E1)
+    assert not query_asks_for_aca_including_vat(E1_ASK)
+
+
+def test_graft_replaces_including_vat_aca_only_answer():
+    """Live leftover E1 after #523: answer was only the A2 particular."""
+    rag = _sys(RATE_ROW, NET_ACA_ROW, GROSS_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    out = _graft_composed_delay_damages_daily(LIVE_E1_ACA_ONLY, rag, msgs)
+    assert "1,754,504.46" in out
+    assert "per calendar day" in out.lower()
+    assert out != LIVE_E1_ACA_ONLY
+    first = out.split("\n", 1)[0]
+    assert "1,754,504.46" in first
+    assert f"{GROSS_ACA:,.2f}" not in first
+
+
+def test_postprocess_e1_cannot_answer_with_only_including_vat_aca():
+    rag = _sys(RATE_ROW, NET_ACA_ROW, GROSS_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    out = _postprocess_answer(LIVE_E1_ACA_ONLY, rag, msgs)
+    assert "1,754,504.46" in out
+    assert "per calendar day" in out.lower()
+    assert out != LIVE_E1_ACA_ONLY
+    assert out != _CG_REFUSAL
+    # Must not remain an A2-shaped including-VAT-only particular.
+    body = out.strip()
+    assert body != LIVE_E1_ACA_ONLY
+    assert not (
+        "including VAT" in body
+        and "1,754,504.46" not in body
+        and "per calendar day" not in body.lower()
+    )
+
+
+def test_a2_graft_does_not_steal_an_e1_daily_compose():
+    from app.agents.runtime import _graft_asked_contract_particular
+
+    rag = _sys(RATE_ROW, NET_ACA_ROW, GROSS_ACA_ROW)
+    msgs = [{"role": "user", "content": LIVE_E1}]
+    daily = (
+        "Delay damages for the whole of the Works are "
+        f"SAR {DAILY:,.2f} per calendar day "
+        f"(0.1% of Accepted Contract Amount SAR {NET_ACA:,.2f})."
+    )
+    assert _graft_asked_contract_particular(daily, rag, msgs) == daily
+    assert _graft_asked_contract_particular(LIVE_E1_ACA_ONLY, rag, msgs) == (
+        LIVE_E1_ACA_ONLY
+    )
